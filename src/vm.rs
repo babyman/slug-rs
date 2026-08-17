@@ -333,6 +333,7 @@ impl Vm {
                     }
                 }
                 Op::Call(count) => self.call(program, count, span)?,
+                Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
                     let frame = self
@@ -484,6 +485,46 @@ impl Vm {
                 ));
             }
         }
+        Ok(())
+    }
+
+    fn recur(&mut self, program: &Program, count: usize, span: Option<SourceSpan>) -> VmResult<()> {
+        let arity = self.current_chunk(program)?.arity;
+        if count != arity {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("recur expects {arity} arguments, got {count}"),
+                span,
+            ));
+        }
+        let (_, locals, stack_base) = self
+            .frames
+            .last()
+            .map(|frame| (frame.closure.chunk, frame.locals.len(), frame.stack_base))
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "no active call frame".into(),
+                    span.clone(),
+                )
+            })?;
+        if locals < arity {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("active function has {locals} local slots for {arity} parameters"),
+                span,
+            ));
+        }
+        let arguments = self.pop_values(count, span.clone())?;
+        self.stack.truncate(stack_base);
+        let frame = self.frames.last_mut().expect("active frame was checked");
+        for (cell, value) in frame.locals.iter().take(arity).zip(arguments) {
+            *cell.borrow_mut() = value;
+        }
+        for cell in frame.locals.iter().skip(arity) {
+            *cell.borrow_mut() = Value::Nil;
+        }
+        frame.ip = 0;
         Ok(())
     }
 

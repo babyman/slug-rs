@@ -15,7 +15,7 @@ fn help_describes_the_current_public_capability() {
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
-        "bindings, functions, blocks, conditionals, return, collections, arithmetic and logic, calls, and println"
+        "bindings, functions, blocks, conditionals, return, recur, collections, arithmetic and logic, calls, and println"
     ));
     assert!(output.stderr.is_empty());
 }
@@ -136,6 +136,81 @@ fn returns_early_from_nested_function_control_flow() {
         "5 7 -1\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn reuses_function_frames_for_tail_recursion() {
+    let path = fixture_path("recur");
+    fs::write(
+        &path,
+        "val countTo = fn(n, total) {\n\
+           if (n == 0) { total } else { recur(n - 1, total + 1) }\n\
+         }\n\
+         println(countTo(100_000, 0))\n",
+    )
+    .expect("write recur source");
+    let output = slug().arg(&path).output().expect("run recur source");
+    fs::remove_file(path).expect("remove recur source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "100000\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_recur_outside_a_function_or_tail_position() {
+    let top_level = fixture_path("top-level-recur");
+    fs::write(&top_level, "recur()\n").expect("write invalid recur source");
+    let output = slug()
+        .arg(&top_level)
+        .output()
+        .expect("run invalid recur source");
+    fs::remove_file(top_level).expect("remove invalid recur source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: recur is only valid inside a function")
+    );
+
+    let non_tail = fixture_path("non-tail-recur");
+    fs::write(&non_tail, "val invalid = fn(n) { recur(n) + 1 }\n")
+        .expect("write non-tail recur source");
+    let output = slug()
+        .arg(&non_tail)
+        .output()
+        .expect("run non-tail recur source");
+    fs::remove_file(non_tail).expect("remove non-tail recur source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: recur is only valid in tail position")
+    );
+
+    let wrong_arity = fixture_path("wrong-arity-recur");
+    fs::write(&wrong_arity, "val invalid = fn(n) { recur() }\n")
+        .expect("write wrong-arity recur source");
+    let output = slug()
+        .arg(&wrong_arity)
+        .output()
+        .expect("run wrong-arity recur source");
+    fs::remove_file(wrong_arity).expect("remove wrong-arity recur source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: recur expects 1 arguments, got 0")
+    );
 }
 
 #[test]

@@ -90,6 +90,7 @@ pub enum Op {
     Jump(usize),
     JumpIfFalse(usize),
     Call(usize),
+    Recur(usize),
     Return,
 }
 

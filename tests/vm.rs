@@ -23,6 +23,44 @@ fn executes_integer_arithmetic() {
 }
 
 #[test]
+fn reuses_a_frame_for_tail_recursion() {
+    let mut countdown = Chunk::new("countdown", 1);
+    let zero = countdown.constant(Value::Int(0));
+    let one = countdown.constant(Value::Int(1));
+    countdown
+        .emit(Op::GetLocal(0))
+        .emit(Op::Constant(zero))
+        .emit(Op::Equal)
+        .emit(Op::JumpIfFalse(7))
+        .emit(Op::Pop)
+        .emit(Op::GetLocal(0))
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::GetLocal(0))
+        .emit(Op::Constant(one))
+        .emit(Op::Subtract)
+        .emit(Op::Recur(1));
+
+    let mut main = Chunk::new("main", 0);
+    let iterations = main.constant(Value::Int(100_000));
+    main.emit(Op::MakeClosure {
+        chunk: 0,
+        captures: vec![],
+    })
+    .emit(Op::Constant(iterations))
+    .emit(Op::Call(1))
+    .emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(countdown);
+    program.add_chunk(main);
+    assert_eq!(
+        Vm::new().run_named(&program, "main").unwrap(),
+        Value::Int(0)
+    );
+}
+
+#[test]
 fn preserves_integer_precision_and_rejects_oversized_calls() {
     let mut main = Chunk::new("main", 0);
     let lower = main.constant(Value::Int(9_007_199_254_740_992));

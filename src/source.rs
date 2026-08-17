@@ -78,6 +78,7 @@ enum ExprKind {
     Return {
         value: Box<Expr>,
     },
+    Recur(Vec<Expr>),
     Binary {
         left: Box<Expr>,
         operator: Binary,
@@ -145,6 +146,7 @@ enum TokenKind {
     If,
     Else,
     Return,
+    Recur,
     True,
     False,
     Nil,
@@ -453,6 +455,7 @@ impl Lexer {
                         "if" => TokenKind::If,
                         "else" => TokenKind::Else,
                         "return" => TokenKind::Return,
+                        "recur" => TokenKind::Recur,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "nil" => TokenKind::Nil,
@@ -734,6 +737,7 @@ impl Parser {
             TokenKind::LBrace => return self.map_or_block(span),
             TokenKind::Fn => return self.function(span),
             TokenKind::If => return self.if_expression(span),
+            TokenKind::Recur => return self.recur(span),
             _ => return Err(SourceError::at("expected expression", span)),
         };
         Ok(Expr { kind, span })
@@ -898,6 +902,29 @@ impl Parser {
             span,
         })
     }
+    fn recur(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let delimiter = self.consume(&TokenKind::LParen, "expected (")?;
+        self.enter_nesting(delimiter.span)?;
+        let mut arguments = Vec::new();
+        if !self.matches(&TokenKind::RParen) {
+            loop {
+                arguments.push(self.expression()?);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                if self.matches(&TokenKind::RParen) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RParen, "expected )")?;
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Recur(arguments),
+            span,
+        })
+    }
     fn if_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.consume(&TokenKind::LParen, "expected (")?;
         let condition = self.expression()?;
@@ -1054,8 +1081,20 @@ impl Compiler {
                         expression.span.clone(),
                     ));
                 }
-                self.expression(state, value)?;
+                self.tail_expression(state, value)?;
                 state.emit(Op::Return, &expression.span);
+            }
+            ExprKind::Recur(_) => {
+                if !state.allows_return() {
+                    return Err(SourceError::semantic(
+                        "recur is only valid inside a function",
+                        expression.span.clone(),
+                    ));
+                }
+                return Err(SourceError::semantic(
+                    "recur is only valid in tail position",
+                    expression.span.clone(),
+                ));
             }
             ExprKind::Binary {
                 left,
@@ -1208,6 +1247,68 @@ impl Compiler {
         }
         Ok(())
     }
+    fn tail_expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
+        match &expression.kind {
+            ExprKind::Recur(arguments) => {
+                if !state.allows_return() {
+                    return Err(SourceError::semantic(
+                        "recur is only valid inside a function",
+                        expression.span.clone(),
+                    ));
+                }
+                if arguments.len() != state.arity() {
+                    return Err(SourceError::semantic(
+                        format!(
+                            "recur expects {} arguments, got {}",
+                            state.arity(),
+                            arguments.len()
+                        ),
+                        expression.span.clone(),
+                    ));
+                }
+                for argument in arguments {
+                    self.expression(state, argument)?;
+                }
+                state.emit(Op::Recur(arguments.len()), &expression.span);
+            }
+            ExprKind::Block(values) => {
+                state.enter_scope();
+                for (index, value) in values.iter().enumerate() {
+                    if index + 1 == values.len() {
+                        self.tail_expression(state, value)?;
+                    } else {
+                        self.expression(state, value)?;
+                        state.emit(Op::Pop, &value.span);
+                    }
+                }
+                if values.is_empty() {
+                    state.emit(Op::Nil, &expression.span);
+                }
+                state.leave_scope();
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expression(state, condition)?;
+                let otherwise = state.jump_if_false(&expression.span);
+                state.emit(Op::Pop, &expression.span);
+                self.tail_expression(state, then_branch)?;
+                let end = state.jump(&expression.span);
+                state.patch(otherwise);
+                state.emit(Op::Pop, &expression.span);
+                if let Some(otherwise) = else_branch {
+                    self.tail_expression(state, otherwise)?;
+                } else {
+                    state.emit(Op::Nil, &expression.span);
+                }
+                state.patch(end);
+            }
+            _ => self.expression(state, expression)?,
+        }
+        Ok(())
+    }
     fn function(
         &mut self,
         parameters: &[String],
@@ -1215,7 +1316,7 @@ impl Compiler {
         visible: HashMap<String, Binding>,
     ) -> Result<(Chunk, Vec<Capture>), SourceError> {
         let mut state = State::function(parameters, visible);
-        self.expression(&mut state, body)?;
+        self.tail_expression(&mut state, body)?;
         state.emit(Op::Return, &body.span);
         let captures = state.captures.clone();
         Ok((state.finish("<fn>", parameters.len()), captures))
@@ -1323,6 +1424,9 @@ impl State {
     }
     fn allows_return(&self) -> bool {
         !self.root
+    }
+    fn arity(&self) -> usize {
+        self.chunk.arity
     }
     fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
