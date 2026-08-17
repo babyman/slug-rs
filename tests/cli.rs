@@ -15,7 +15,7 @@ fn help_describes_the_current_public_capability() {
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
-        "bindings, functions, blocks, conditionals, collections, arithmetic and logic, calls, and println"
+        "bindings, functions, blocks, conditionals, return, collections, arithmetic and logic, calls, and println"
     ));
     assert!(output.stderr.is_empty());
 }
@@ -109,6 +109,50 @@ fn executes_core_functions_blocks_conditionals_and_collections() {
         "9 42 42 30 Slug 7\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn returns_early_from_nested_function_control_flow() {
+    let path = fixture_path("explicit-return");
+    fs::write(
+        &path,
+        "val firstPositive = fn(a, b) {\n\
+           if (a > 0) { return a }\n\
+           if (b > 0) { return b }\n\
+           0 - 1\n\
+         }\n\
+         println(firstPositive(5, 9), firstPositive(-1, 7), firstPositive(-1, -2))\n",
+    )
+    .expect("write explicit return source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run explicit return source");
+    fs::remove_file(path).expect("remove explicit return source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "5 7 -1\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_top_level_return_with_a_location() {
+    let path = fixture_path("top-level-return");
+    fs::write(&path, "{\nreturn 1\n}\n").expect("write invalid return source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid return source");
+    fs::remove_file(path).expect("remove invalid return source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.starts_with("slug: semantic error: return is only valid inside a function at "));
+    assert!(stderr.ends_with(":2:1\n"));
 }
 
 #[test]

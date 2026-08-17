@@ -75,6 +75,9 @@ enum ExprKind {
         name: String,
         value: Box<Expr>,
     },
+    Return {
+        value: Box<Expr>,
+    },
     Binary {
         left: Box<Expr>,
         operator: Binary,
@@ -141,6 +144,7 @@ enum TokenKind {
     Fn,
     If,
     Else,
+    Return,
     True,
     False,
     Nil,
@@ -448,6 +452,7 @@ impl Lexer {
                         "fn" => TokenKind::Fn,
                         "if" => TokenKind::If,
                         "else" => TokenKind::Else,
+                        "return" => TokenKind::Return,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "nil" => TokenKind::Nil,
@@ -535,6 +540,16 @@ impl Parser {
         Ok(expressions)
     }
     fn statement(&mut self) -> Result<Expr, SourceError> {
+        if matches!(self.kind(), TokenKind::Return) {
+            let span = self.next().span;
+            let value = self.expression()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Return {
+                    value: Box::new(value),
+                },
+            });
+        }
         if matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
             let mutable = matches!(self.next().kind, TokenKind::Var);
             let token = self.next();
@@ -1032,6 +1047,16 @@ impl Compiler {
                 }
                 state.emit(Op::Nil, &expression.span);
             }
+            ExprKind::Return { value } => {
+                if !state.allows_return() {
+                    return Err(SourceError::semantic(
+                        "return is only valid inside a function",
+                        expression.span.clone(),
+                    ));
+                }
+                self.expression(state, value)?;
+                state.emit(Op::Return, &expression.span);
+            }
             ExprKind::Binary {
                 left,
                 operator,
@@ -1295,6 +1320,9 @@ impl State {
     }
     fn is_root(&self) -> bool {
         self.root && self.scopes.len() == 1
+    }
+    fn allows_return(&self) -> bool {
+        !self.root
     }
     fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());

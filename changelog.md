@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added explicit `return expression` for early exit from source functions.
 - Removed symbols from the language value model. Bare map keys, map patterns,
   dot access, module exports, and configuration keys now use strings.
 - Preserved integer precision in integer arithmetic and comparisons; rejected

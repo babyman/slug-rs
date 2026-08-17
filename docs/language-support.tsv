@@ -4,6 +4,7 @@ Literals: integers, strings, booleans, nil, lists, and maps|implemented|`tests/c
 Arithmetic and comparisons|implemented|`tests/cli.rs` and `tests/vm.rs`
 Short-circuit logical `&&` and `||`|implemented|`tests/cli.rs`
 Functions, blocks, conditionals, and captures|implemented|`tests/cli.rs` and `tests/vm.rs`
+Explicit function return|implemented|`tests/cli.rs`
 List, map, and dot indexing|implemented|`tests/cli.rs`
 Native function calls and `println`|implemented|`tests/cli.rs` and `tests/vm.rs`
 Checked source and runtime diagnostics with locations|implemented|`tests/cli.rs` and `tests/vm.rs`
