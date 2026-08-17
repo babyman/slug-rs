@@ -1,0 +1,23 @@
+[package]
+name = "slug-vm"
+version = "0.1.0"
+edition = "2024"
+description = "A clean-room Rust virtual machine for the Slug language"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sluglang/slug"
+
+[lib]
+name = "slug_vm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "slug"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[dependencies]
