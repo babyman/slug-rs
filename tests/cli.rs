@@ -15,7 +15,7 @@ fn help_describes_the_current_public_capability() {
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
-        "bindings, functions, blocks, conditionals, collections, arithmetic, calls, and println"
+        "bindings, functions, blocks, conditionals, collections, arithmetic and logic, calls, and println"
     ));
     assert!(output.stderr.is_empty());
 }
@@ -146,6 +146,41 @@ fn closures_share_mutable_lexical_bindings() {
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
         "1 2 2\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn short_circuits_logical_operators_and_continues_across_newlines() {
+    let path = fixture_path("logical-operators");
+    fs::write(
+        &path,
+        "var calls = 0\n\
+         val bump = fn() {\n\
+           calls = calls + 1\n\
+           true\n\
+         }\n\
+         false &&\n\
+           bump()\n\
+         true\n\
+           || bump()\n\
+         val both = true &&\n\
+           true\n\
+         val either = false\n\
+           || true\n\
+         println(calls, both, either)\n",
+    )
+    .expect("write logical operator source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run logical operator source");
+    fs::remove_file(path).expect("remove logical operator source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "0 true true\n"
     );
     assert!(output.stderr.is_empty());
 }

@@ -107,6 +107,8 @@ enum ExprKind {
 }
 #[derive(Clone, Copy, Debug)]
 enum Binary {
+    Or,
+    And,
     Add,
     Subtract,
     Multiply,
@@ -154,6 +156,8 @@ enum TokenKind {
     LessEq,
     Greater,
     GreaterEq,
+    AndAnd,
+    OrOr,
     LParen,
     RParen,
     LBrace,
@@ -201,6 +205,38 @@ impl Lexer {
         }
         Some(value)
     }
+    fn newline_continues(&self, tokens: &[Token]) -> bool {
+        matches!(
+            tokens.last().map(|token| &token.kind),
+            Some(
+                TokenKind::Eq
+                    | TokenKind::EqEq
+                    | TokenKind::BangEq
+                    | TokenKind::Less
+                    | TokenKind::LessEq
+                    | TokenKind::Greater
+                    | TokenKind::GreaterEq
+                    | TokenKind::AndAnd
+                    | TokenKind::OrOr
+                    | TokenKind::Plus
+                    | TokenKind::Minus
+                    | TokenKind::Star
+                    | TokenKind::Slash
+                    | TokenKind::Colon
+                    | TokenKind::Dot
+            )
+        ) || self.next_starts_infix()
+    }
+    fn next_starts_infix(&self) -> bool {
+        let mut index = self.index + 1;
+        while matches!(self.input.get(index), Some(' ' | '\t' | '\r')) {
+            index += 1;
+        }
+        matches!(
+            self.input.get(index),
+            Some('+' | '-' | '*' | '/' | '<' | '>' | '=' | '!' | '&' | '|' | '.')
+        )
+    }
     fn push(tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {
         tokens.push(Token { kind, span });
     }
@@ -213,9 +249,15 @@ impl Lexer {
                 ' ' | '\t' | '\r' => {
                     self.next();
                 }
-                '\n' | ';' => {
+                ';' => {
                     self.next();
                     Self::push(&mut result, TokenKind::Sep, span);
+                }
+                '\n' => {
+                    self.next();
+                    if !self.newline_continues(&result) {
+                        Self::push(&mut result, TokenKind::Sep, span);
+                    }
                 }
                 '#' => while self.next().is_some_and(|value| value != '\n') {},
                 '+' => {
@@ -233,6 +275,22 @@ impl Lexer {
                 '/' => {
                     self.next();
                     Self::push(&mut result, TokenKind::Slash, span);
+                }
+                '&' => {
+                    self.next();
+                    if self.peek() != Some('&') {
+                        return Err(SourceError::at("expected & after &", span));
+                    }
+                    self.next();
+                    Self::push(&mut result, TokenKind::AndAnd, span);
+                }
+                '|' => {
+                    self.next();
+                    if self.peek() != Some('|') {
+                        return Err(SourceError::at("expected | after |", span));
+                    }
+                    self.next();
+                    Self::push(&mut result, TokenKind::OrOr, span);
                 }
                 '(' => {
                     self.next();
@@ -472,16 +530,18 @@ impl Parser {
         let mut left = self.prefix()?;
         loop {
             let (operator, precedence) = match self.kind() {
-                TokenKind::EqEq => (Binary::Equal, 1),
-                TokenKind::BangEq => (Binary::NotEqual, 1),
-                TokenKind::Less => (Binary::Less, 2),
-                TokenKind::LessEq => (Binary::LessEqual, 2),
-                TokenKind::Greater => (Binary::Greater, 2),
-                TokenKind::GreaterEq => (Binary::GreaterEqual, 2),
-                TokenKind::Plus => (Binary::Add, 3),
-                TokenKind::Minus => (Binary::Subtract, 3),
-                TokenKind::Star => (Binary::Multiply, 4),
-                TokenKind::Slash => (Binary::Divide, 4),
+                TokenKind::OrOr => (Binary::Or, 1),
+                TokenKind::AndAnd => (Binary::And, 2),
+                TokenKind::EqEq => (Binary::Equal, 3),
+                TokenKind::BangEq => (Binary::NotEqual, 3),
+                TokenKind::Less => (Binary::Less, 4),
+                TokenKind::LessEq => (Binary::LessEqual, 4),
+                TokenKind::Greater => (Binary::Greater, 4),
+                TokenKind::GreaterEq => (Binary::GreaterEqual, 4),
+                TokenKind::Plus => (Binary::Add, 5),
+                TokenKind::Minus => (Binary::Subtract, 5),
+                TokenKind::Star => (Binary::Multiply, 6),
+                TokenKind::Slash => (Binary::Divide, 6),
                 _ => break,
             };
             if precedence < minimum {
@@ -884,27 +944,64 @@ impl Compiler {
                 right,
             } => {
                 self.expression(state, left)?;
-                self.expression(state, right)?;
                 match operator {
+                    Binary::And => {
+                        let end = state.jump_if_false(&expression.span);
+                        state.emit(Op::Pop, &expression.span);
+                        self.expression(state, right)?;
+                        state.patch(end);
+                    }
+                    Binary::Or => {
+                        let right_hand_side = state.jump_if_false(&expression.span);
+                        let end = state.jump(&expression.span);
+                        state.patch(right_hand_side);
+                        state.emit(Op::Pop, &expression.span);
+                        self.expression(state, right)?;
+                        state.patch(end);
+                    }
                     Binary::NotEqual => {
+                        self.expression(state, right)?;
                         state.emit(Op::Equal, &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::GreaterEqual => {
+                        self.expression(state, right)?;
                         state.emit(Op::Less, &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::LessEqual => {
+                        self.expression(state, right)?;
                         state.emit(Op::Greater, &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
-                    Binary::Add => state.emit(Op::Add, &expression.span),
-                    Binary::Subtract => state.emit(Op::Subtract, &expression.span),
-                    Binary::Multiply => state.emit(Op::Multiply, &expression.span),
-                    Binary::Divide => state.emit(Op::Divide, &expression.span),
-                    Binary::Equal => state.emit(Op::Equal, &expression.span),
-                    Binary::Greater => state.emit(Op::Greater, &expression.span),
-                    Binary::Less => state.emit(Op::Less, &expression.span),
+                    Binary::Add => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Add, &expression.span);
+                    }
+                    Binary::Subtract => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Subtract, &expression.span);
+                    }
+                    Binary::Multiply => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Multiply, &expression.span);
+                    }
+                    Binary::Divide => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Divide, &expression.span);
+                    }
+                    Binary::Equal => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Equal, &expression.span);
+                    }
+                    Binary::Greater => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Greater, &expression.span);
+                    }
+                    Binary::Less => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Less, &expression.span);
+                    }
                 }
             }
             ExprKind::Prefix { operator, value } => {

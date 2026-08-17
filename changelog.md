@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added short-circuit `&&` and `||` expressions with operator-aware newline
+  continuation.
 - Added shared mutable binding cells so closures and sibling closures observe
   assignments to captured `var` bindings.
 - Added a span-aware Rust source frontend for lexical bindings, functions and

@@ -7,6 +7,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Lexical bindings and assignment | implemented | `tests/cli.rs` |
 | Literals: integers, strings, booleans, nil, lists, and maps | implemented | `tests/cli.rs` |
 | Arithmetic and comparisons | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Short-circuit logical `&&` and ` |  | `|implemented|`tests/cli.rs` |
 | Functions, blocks, conditionals, and captures | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | List, map, and dot indexing | implemented | `tests/cli.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
