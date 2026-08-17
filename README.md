@@ -2,8 +2,9 @@
 
 This repository is a clean-room Rust implementation of the Slug language.
 It starts with the execution boundary recommended by the language package: a
-small, checked VM with internal Slug-specific bytecode. The bytecode is not a
-file format or compatibility commitment.
+small, checked VM with internal Slug-specific bytecode. Private VM bytecode is
+not a file format or compatibility commitment; the planned, portable
+compiled-module contract is documented separately as `.cslug`.
 
 ## Current milestone
 
@@ -16,6 +17,8 @@ file format or compatibility commitment.
   assignment, literals, arithmetic, calls, comments, and `println`.
 - The lexer, parser, compiler, module loader, standard library, pattern matcher,
   and structured concurrency remain progressive milestones beyond this subset.
+- Portable `.cslug` compiled modules are an adopted compatibility target; no
+  encoder or loader is implemented yet.
 
 ## Bytecode design
 
@@ -29,6 +32,13 @@ The VM uses an operand stack. Function calls use separate frame-local slots,
 with closures copying only the declared captured slots. The current model
 intentionally favors clear semantics and diagnostics over compact bytecode or
 performance.
+
+## Portable compiled modules
+
+`.cslug` will be a versioned, portable compiled-module format. It will remain
+separate from `Program`, `Chunk`, and `Op`, which are private Rust structures
+and may change freely. See [compiled artifacts](docs/compiled-artifacts.md)
+for the adopted contract and the requirements before version 1 is implemented.
 
 ## Development
 

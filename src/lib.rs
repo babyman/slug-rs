@@ -1,9 +1,10 @@
 //! Slug's clean-room bytecode runtime.
 //!
-//! This crate deliberately keeps bytecode an implementation detail. The public
-//! source-language specification makes no promise about opcode values or a
-//! serialised format. `Program`, `Chunk`, and `Op` are therefore a compiler-to-VM
-//! boundary, designed for clarity and validation rather than persistence.
+//! This crate deliberately keeps its VM bytecode an implementation detail.
+//! `Program`, `Chunk`, and `Op` are a compiler-to-VM boundary, designed for
+//! clarity and validation rather than persistence. They are distinct from the
+//! future portable `.cslug` compiled-module format documented in
+//! `docs/compiled-artifacts.md`.
 
 mod bytecode;
 mod source;

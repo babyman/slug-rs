@@ -33,6 +33,21 @@ fn version_is_available_without_loading_source() {
 }
 
 #[test]
+fn executes_a_minimal_calculation_through_the_public_cli() {
+    let path = fixture_path("minimal-calculation");
+    fs::write(&path, "println(1 + 1)\n").expect("write minimal Slug source");
+    let output = slug().arg(&path).output().expect("run minimal Slug source");
+    fs::remove_file(path).expect("remove minimal Slug source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "2\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn executes_source_through_the_public_cli() {
     let path = fixture_path("success");
     fs::write(&path, "val total = 6 * 7\nprintln(total)\n").expect("write Slug source");

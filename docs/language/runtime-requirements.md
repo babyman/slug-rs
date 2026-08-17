@@ -9,11 +9,13 @@ developer must be able to implement the language from this document, the
 sources, and source-level conformance fixtures without reading or copying an
 existing implementation.
 
-These requirements deliberately do **not** standardize Slug bytecode, opcode
-numbers, instruction layout, stack layout, garbage collection, host threading,
-or a foreign-function ABI. Those are implementation choices. In particular,
-the current bytecode is internal and must not be serialized or treated as a
-cross-version interface.
+These requirements deliberately do **not** standardize private VM bytecode,
+opcode numbers, instruction layout, stack layout, garbage collection, host
+threading, or a foreign-function ABI. Those are implementation choices. The
+private bytecode must not be serialized or treated as a cross-version
+interface. The separate `.cslug` compiled-module contract is specified in
+[`../compiled-artifacts.md`](../compiled-artifacts.md); it is not a promise
+about an implementation's private bytecode.
 
 The requirements cover evaluation, host services, errors and cleanup, recursion,
 and structured concurrency. An implementation may use an interpreter, bytecode

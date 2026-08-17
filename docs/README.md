@@ -28,6 +28,7 @@ a specified feature is implemented.
 | [development.md](development.md) | Local workflow, validation ladder, and change process. |
 | [testing.md](testing.md) | Test-layer selection and regression policy. |
 | [compatibility.md](compatibility.md) | Promises and intentional non-promises. |
+| [compiled-artifacts.md](compiled-artifacts.md) | Portable `.cslug` compiled-module contract. |
 | [language/](language/README.md) | Normative language specifications and grammar. |
 | [decisions/](decisions/README.md) | Durable architecture and language decisions. |
 
