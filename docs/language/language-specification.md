@@ -332,6 +332,22 @@ val headOrZero = fn(xs) {
 language-level error propagation. `recur(...)` is a function-level tail-call
 operation and is valid only in tail position.
 
+## Recursion and repetition
+
+Recursion is Slug's only source-language looping construct. Slug has no
+`while`, `for`, or `loop` form, and it has no `break` or `continue` statement.
+Programs express repetition by calling a function recursively. In a tail
+position, `recur(...)` is the stack-safe form: it restarts the current function
+with new argument values instead of making another call.
+
+```slug
+val sumTo = fn(n, total = 0) {
+  if (n == 0) { total } else { recur(n - 1, total + n) }
+}
+
+sumTo(10) // 55
+```
+
 `defer` registers work to run when its enclosing scope exits. `defer onsuccess`
 runs only after successful completion. `defer onerror(name)` runs only during
 error propagation and binds the error to `name`.

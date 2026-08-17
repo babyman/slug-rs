@@ -327,6 +327,12 @@ follows ordinary error unwinding and cannot bypass cleanup.
 
 ## `recur`
 
+`recur` is Slug's only stack-safe looping mechanism. The language has no
+`while`, `for`, or `loop` construct, and no `break` or `continue` statement;
+programs express repetition through recursive functions. A `recur(...)` in a
+valid tail position restarts the current function rather than making a new
+recursive call.
+
 `recur` reuses the current function execution rather than growing either the
 VM call stack or host call stack. It evaluates all next arguments before
 rebinding function parameters.

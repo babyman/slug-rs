@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clarified that Slug uses recursion, including tail-position `recur(...)`, for
+  repetition and has no `while`, `for`, `loop`, `break`, or `continue` forms.
 - Added explicit `return expression` for early exit from source functions.
 - Removed symbols from the language value model. Bare map keys, map patterns,
   dot access, module exports, and configuration keys now use strings.
