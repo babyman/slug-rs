@@ -672,7 +672,7 @@ impl Parser {
                 };
                 let index = Expr {
                     span: span.clone(),
-                    kind: ExprKind::Value(Value::symbol(name)),
+                    kind: ExprKind::Value(Value::string(name)),
                 };
                 value = Expr {
                     span,
@@ -805,7 +805,7 @@ impl Parser {
                 };
                 Expr {
                     span: token.span,
-                    kind: ExprKind::Value(Value::symbol(name)),
+                    kind: ExprKind::Value(Value::string(name)),
                 }
             };
             self.consume(&TokenKind::Colon, "expected :")?;

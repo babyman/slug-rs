@@ -8,7 +8,7 @@ compiled-module contract is documented separately as `.cslug`.
 
 ## Current milestone
 
-- Dynamic Slug values: `nil`, booleans, numbers, strings, bytes, symbols,
+- Dynamic Slug values: `nil`, booleans, numbers, strings, bytes,
   lists, maps, closures, and explicitly registered native functions.
 - Chunks, constants, lexical captures, locals, globals, calls, branches, and
   arithmetic/comparison operations.

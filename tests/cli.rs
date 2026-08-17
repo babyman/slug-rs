@@ -112,6 +112,47 @@ fn executes_core_functions_blocks_conditionals_and_collections() {
 }
 
 #[test]
+fn bare_map_keys_and_dot_access_use_strings() {
+    let path = fixture_path("string-map-keys");
+    fs::write(
+        &path,
+        "val key = \"name\"\nval user = {name: \"Slug\"}\nprintln(user.name, user[key], user[\"name\"])\n",
+    )
+    .expect("write string-keyed map source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run string-keyed map source");
+    fs::remove_file(path).expect("remove string-keyed map source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "Slug Slug Slug\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_removed_symbol_literals() {
+    let path = fixture_path("removed-symbol-literal");
+    fs::write(&path, "println(:name)\n").expect("write removed symbol literal source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run removed symbol literal source");
+    fs::remove_file(path).expect("remove symbol literal source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: parse error: expected expression")
+    );
+}
+
+#[test]
 fn closures_share_mutable_lexical_bindings() {
     let path = fixture_path("mutable-capture");
     fs::write(
@@ -216,7 +257,7 @@ fn handles_comments_and_multiline_delimited_expressions() {
 }
 
 #[test]
-fn supports_all_documented_comment_forms_and_dot_string_fallback() {
+fn supports_all_documented_comment_forms_and_dot_string_lookup() {
     let path = fixture_path("comments-and-dot-access");
     fs::write(
         &path,

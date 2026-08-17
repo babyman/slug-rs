@@ -142,7 +142,7 @@ index_args = expression
 map_literal = "{" , [ map_entries ] , "}" ;
 map_entries = map_entry , { "," , map_entry } , [ "," ] ;
 map_entry = map_key , ":" , expression ;
-(* Bare identifiers are coerced to symbol keys unless bracketed. *)
+(* Bare identifiers denote string keys unless bracketed. *)
 map_key = expression | "[" , expression , "]" ;
 
 struct_schema = "struct" , "{" , [ struct_schema_fields ] , "}" ;
@@ -189,6 +189,7 @@ map_pattern = "{" , [ map_pattern_body ] , "}"
 (* Exact map patterns ("{| ... |}") disallow spread entries. *)
 map_pattern_body = "*" | map_pattern_entry , { "," , map_pattern_entry } , [ "," ] ;
 map_pattern_entry = spread_pattern | map_pattern_key , [ ":" , match_pattern ] ;
+(* Bare identifier pattern keys denote string keys unless bracketed. *)
 map_pattern_key = expression | "[" , expression , "]" ;
 
 struct_pattern = identifier , "{" , [ struct_pattern_fields ] , "}" ;
@@ -199,10 +200,9 @@ block = "{" , { statement_sep } , { statement , { statement_sep } } , "}" ;
 (* In expression position, braces are classified structurally: map-entry shapes
    are map literals; all other shapes are blocks. *)
 
-literal = number | string | bytes | boolean | nil | symbol ;
+literal = number | string | bytes | boolean | nil ;
 boolean = "true" | "false" ;
 nil = "nil" ;
-symbol = ":" , ( identifier | string ) ;
 
 (* Type annotations are parsed as type text. These are the supported structural forms. *)
 type_annotation = type_term , { "|" , type_term } ;

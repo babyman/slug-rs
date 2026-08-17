@@ -113,7 +113,7 @@ list of its values. A dotted key is absolute. A non-dotted key is entry-module
 sugar, so `slug server.slug --port 3002` sets `server.port`.
 
 `argv()` returns every argument following the program name. `argm()` returns a
-map with `:options` and `:positional` entries using the same option parser.
+map with `"options"` and `"positional"` entries using the same option parser.
 Use `--` to stop option parsing and treat all remaining arguments as positional.
 
 ## Values and conversion

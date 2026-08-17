@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Removed symbols from the language value model. Bare map keys, map patterns,
+  dot access, module exports, and configuration keys now use strings.
 - Preserved integer precision in integer arithmetic and comparisons; rejected
   oversized bytecode calls without host overflow; and improved map dot lookup
   plus runtime frame names and call-site spans.

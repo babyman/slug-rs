@@ -28,7 +28,6 @@ pub enum Value {
     Float(f64),
     Str(Rc<str>),
     Bytes(Rc<[u8]>),
-    Symbol(Rc<str>),
     List(Rc<Vec<Value>>),
     Map(Rc<Vec<(Value, Value)>>),
     Closure(Rc<Closure>),
@@ -45,11 +44,6 @@ impl Value {
     }
 
     #[must_use]
-    pub fn symbol(value: impl Into<Rc<str>>) -> Self {
-        Self::Symbol(value.into())
-    }
-
-    #[must_use]
     pub fn is_truthy(&self) -> bool {
         !matches!(self, Self::Nil | Self::Bool(false))
     }
@@ -62,7 +56,6 @@ impl Value {
             Self::Int(_) | Self::Float(_) => "num",
             Self::Str(_) => "str",
             Self::Bytes(_) => "bytes",
-            Self::Symbol(_) => "sym",
             Self::List(_) => "list",
             Self::Map(_) => "map",
             Self::Closure(_) | Self::Native { .. } => "fn",
@@ -80,7 +73,7 @@ impl PartialEq for Value {
             (Self::Int(a), Self::Float(b)) | (Self::Float(b), Self::Int(a)) => {
                 int_as_float(*a) == *b
             }
-            (Self::Str(a), Self::Str(b)) | (Self::Symbol(a), Self::Symbol(b)) => a == b,
+            (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::List(a), Self::List(b)) => a == b,
             (Self::Map(a), Self::Map(b)) => a == b,
@@ -102,7 +95,6 @@ impl fmt::Debug for Value {
             Self::Float(value) => write!(f, "{value}"),
             Self::Str(value) => write!(f, "{value:?}"),
             Self::Bytes(value) => write!(f, "0x\"{}\"", hex(value)),
-            Self::Symbol(value) => write!(f, ":{value}"),
             Self::List(values) => f.debug_list().entries(values.iter()).finish(),
             Self::Map(entries) => f
                 .debug_map()

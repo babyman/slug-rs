@@ -79,18 +79,21 @@ Slug has the following literal value forms:
 | Numbers | `42`, `1_000`, `0x10` |
 | Strings | `"slug"`, `'raw text'` |
 | Bytes | `0x"414243"` |
-| Symbols | `:ok`, `:"Content-Type"` |
 | Lists | `[1, 2, 3]` |
 | Maps | `{name: "Slug"}` |
 | Functions | `fn(x) { x + 1 }` |
 
+Strings are Slug's only textual value type. The language does not expose a
+separate symbol or atom value; implementations may still intern identifiers
+internally.
+
 Numbers may contain underscore separators. A bare identifier used as a map key
-is a symbol key, so `{name: "Slug"}` has the same key as `:name`. A bracketed
+is a string key, so `{name: "Slug"}` is indexed with `["name"]`. A bracketed
 map key evaluates an expression instead:
 
 ```slug
 val key = "name"
-val bySymbol = {name: "Slug"}
+val byName = {name: "Slug"}
 val byValue = {[key]: "Slug"}
 ```
 
@@ -269,12 +272,12 @@ xs[1:3]
 xs[0:1]
 ```
 
-Dot access is shorthand for symbol-key map access where supported:
+Dot access is shorthand for string-key map access where supported:
 
 ```slug
 val user = {name: "Slug"}
 user.name
-user[:name]
+user["name"]
 ```
 
 A struct expression defines a schema. Applying a schema to `{...}` creates a
@@ -352,7 +355,8 @@ val divide = fn(a, b) {
 
 ## Modules, imports, and exports
 
-`import(name)` loads a named module and returns a map of its exported bindings.
+`import(name)` loads a named module and returns a string-keyed map of its
+exported bindings.
 Module names use dot-separated paths such as `slug.std` and `slug.channel`.
 An implementation resolves a module relative to the importing source before
 searching its configured library root. A missing or malformed module is a
@@ -360,7 +364,7 @@ language error.
 
 ```slug
 val math = import("mod.simple")
-val answer = math[:forty]
+val answer = math["forty"]
 val next = math.inc(answer)
 ```
 
@@ -440,7 +444,7 @@ enabled, type diagnostics prevent execution. Without it, type tags remain
 metadata and unsupported operations fail through normal runtime errors.
 
 The checker recognizes the built-in value categories `nil`, `bool`, `num`,
-`str`, `bytes`, `sym`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus
+`str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus
 unions and generic parameters. Its diagnostic precision is an implementation
 feature and does not add runtime coercions or change the language's dynamic
 value model.
@@ -517,7 +521,7 @@ its direct child spawns.
 val result = nursery fn() {
   val tasks = import("slug.channel")
   val task = spawn { 20 + 22 }
-  tasks[:await](task)
+  tasks["await"](task)
 }
 ```
 

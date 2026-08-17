@@ -693,12 +693,7 @@ fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)
 fn is_map_key(value: &Value) -> bool {
     matches!(
         value,
-        Value::Bool(_)
-            | Value::Int(_)
-            | Value::Float(_)
-            | Value::Str(_)
-            | Value::Bytes(_)
-            | Value::Symbol(_)
+        Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bytes(_)
     )
 }
 
@@ -716,18 +711,11 @@ fn index_value(collection: Value, index: &Value) -> Result<Value, String> {
                 .cloned()
                 .ok_or_else(|| "list index is out of bounds".into())
         }
-        Value::Map(entries) => {
-            let exact = entries.iter().rev().find(|(key, _)| key == index);
-            let fallback = match index {
-                Value::Symbol(name) => entries.iter().rev().find(
-                    |(key, _)| matches!(key, Value::Str(value) if value.as_ref() == name.as_ref()),
-                ),
-                _ => None,
-            };
-            Ok(exact
-                .or(fallback)
-                .map_or(Value::Nil, |(_, value)| value.clone()))
-        }
+        Value::Map(entries) => Ok(entries
+            .iter()
+            .rev()
+            .find(|(key, _)| key == index)
+            .map_or(Value::Nil, |(_, value)| value.clone())),
         value => Err(format!("cannot index {}", value.type_name())),
     }
 }

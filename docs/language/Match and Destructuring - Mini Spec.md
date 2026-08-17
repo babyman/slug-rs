@@ -29,7 +29,7 @@ value /> match { [head, ...] => head; _ => nil }
 
 The implemented pattern forms are:
 
-- literals, including `nil`, numbers, strings, booleans, and symbols;
+- literals, including `nil`, numbers, strings, and booleans;
 - `_` for a wildcard;
 - an identifier to bind the matched value;
 - `^name` to compare with an existing enclosing binding;
@@ -41,7 +41,7 @@ do not allow a spread entry; and
 - struct patterns such as `User {name}`.
 
 A map entry without `:` uses the key name and binds it to a same-named
-identifier. For example, `{name}` requires the `:name` key and binds its value
+identifier. For example, `{name}` requires the `"name"` key and binds its value
 to `name`. A map-pattern key may be bracketed to evaluate a key expression.
 
 ```slug
