@@ -161,6 +161,32 @@ fn reuses_function_frames_for_tail_recursion() {
 }
 
 #[test]
+fn recur_preserves_values_captured_by_earlier_iterations() {
+    let path = fixture_path("recur-capture");
+    fs::write(
+        &path,
+        "val retain = fn(n, saved) {\n\
+           val current = n\n\
+           if (n == 0) { saved() } else { recur(n - 1, fn() { current }) }\n\
+         }\n\
+         println(retain(1, fn() { nil }))\n",
+    )
+    .expect("write recur capture source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run recur capture source");
+    fs::remove_file(path).expect("remove recur capture source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn rejects_recur_outside_a_function_or_tail_position() {
     let top_level = fixture_path("top-level-recur");
     fs::write(&top_level, "recur()\n").expect("write invalid recur source");

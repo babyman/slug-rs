@@ -1,4 +1,4 @@
-use slug_vm::{Capture, Chunk, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm};
+use slug_vm::{Capture, Chunk, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm, compile};
 
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
@@ -57,6 +57,24 @@ fn reuses_a_frame_for_tail_recursion() {
     assert_eq!(
         Vm::new().run_named(&program, "main").unwrap(),
         Value::Int(0)
+    );
+}
+
+#[test]
+fn recur_preserves_cells_captured_by_an_earlier_iteration() {
+    let program = compile(
+        "recur-capture.slug",
+        "val retain = fn(n, saved) {\n\
+           val current = n\n\
+           if (n == 0) { saved() } else { recur(n - 1, fn() { current }) }\n\
+         }\n\
+         retain(1, fn() { nil })\n",
+    )
+    .expect("compile recur capture source");
+
+    assert_eq!(
+        Vm::new().run_named(&program, "main").unwrap(),
+        Value::Int(1)
     );
 }
 

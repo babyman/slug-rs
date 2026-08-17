@@ -497,7 +497,7 @@ impl Vm {
                 span,
             ));
         }
-        let (_, locals, stack_base) = self
+        let (_, local_count, stack_base) = self
             .frames
             .last()
             .map(|frame| (frame.closure.chunk, frame.locals.len(), frame.stack_base))
@@ -508,22 +508,19 @@ impl Vm {
                     span.clone(),
                 )
             })?;
-        if locals < arity {
+        if local_count < arity {
             return Err(self.error(
                 RuntimeErrorKind::InvalidBytecode,
-                format!("active function has {locals} local slots for {arity} parameters"),
+                format!("active function has {local_count} local slots for {arity} parameters"),
                 span,
             ));
         }
         let arguments = self.pop_values(count, span.clone())?;
         self.stack.truncate(stack_base);
+        let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
+        locals.resize_with(local_count, || binding_cell(Value::Nil));
         let frame = self.frames.last_mut().expect("active frame was checked");
-        for (cell, value) in frame.locals.iter().take(arity).zip(arguments) {
-            *cell.borrow_mut() = value;
-        }
-        for cell in frame.locals.iter().skip(arity) {
-            *cell.borrow_mut() = Value::Nil;
-        }
+        frame.locals = locals;
         frame.ip = 0;
         Ok(())
     }

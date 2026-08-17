@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserved escaping closure captures across `recur(...)` iterations.
 - Added stack-safe tail recursion through `recur(...)`.
 - Clarified that Slug uses recursion, including tail-position `recur(...)`, for
   repetition and has no `while`, `for`, `loop`, `break`, or `continue` forms.
