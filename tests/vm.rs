@@ -79,6 +79,48 @@ fn recur_preserves_cells_captured_by_an_earlier_iteration() {
 }
 
 #[test]
+fn matches_list_patterns_and_exposes_bindings() {
+    let mut main = Chunk::new("main", 0);
+    let values = main.constant(Value::List(std::rc::Rc::new(vec![
+        Value::Int(1),
+        Value::Int(2),
+        Value::Int(3),
+    ])));
+    main.emit(Op::Constant(values))
+        .emit(Op::Duplicate)
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::List {
+                items: vec![slug_vm::MatchPattern::Binding],
+                rest: true,
+            },
+            bindings: 2,
+        })
+        .emit(Op::JumpIfFalse(12))
+        .emit(Op::Pop)
+        .emit(Op::DefineGlobal("tail".into()))
+        .emit(Op::DefineGlobal("head".into()))
+        .emit(Op::Pop)
+        .emit(Op::GetGlobal("head".into()))
+        .emit(Op::GetGlobal("tail".into()))
+        .emit(Op::List(2))
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::List(std::rc::Rc::new(vec![
+            Value::Int(1),
+            Value::List(std::rc::Rc::new(vec![Value::Int(2), Value::Int(3)])),
+        ]))
+    );
+}
+
+#[test]
 fn preserves_integer_precision_and_rejects_oversized_calls() {
     let mut main = Chunk::new("main", 0);
     let lower = main.constant(Value::Int(9_007_199_254_740_992));

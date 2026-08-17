@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap, fmt, rc::Rc};
 
 use crate::{
-    Capture, Program, SourceSpan, Value,
+    Capture, MatchPattern, Program, SourceSpan, Value,
     bytecode::Op,
     value::{BindingCell, Closure, binding_cell},
 };
@@ -189,6 +189,7 @@ impl Vm {
                 Op::Pop => {
                     self.pop(span)?;
                 }
+                Op::Duplicate => self.stack.push(self.peek(span)?.clone()),
                 Op::GetLocal(slot) => self.stack.push(self.local(slot, span)?.borrow().clone()),
                 Op::SetLocal(slot) => {
                     let value = self.pop(span.clone())?;
@@ -333,6 +334,24 @@ impl Vm {
                     }
                 }
                 Op::Call(count) => self.call(program, count, span)?,
+                Op::TryMatch { pattern, bindings } => {
+                    let value = self.pop(span.clone())?;
+                    let mut values = Vec::new();
+                    let matched = matches_pattern(&pattern, &value, &mut values);
+                    if matched && values.len() != bindings {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "match pattern binding count is invalid".into(),
+                            span,
+                        ));
+                    }
+                    if matched {
+                        self.stack.extend(values);
+                    } else {
+                        self.stack.extend((0..bindings).map(|_| Value::Nil));
+                    }
+                    self.stack.push(Value::Bool(matched));
+                }
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
@@ -725,6 +744,36 @@ fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)
         Err((RuntimeErrorKind::DivideByZero, "division by zero".into()))
     } else {
         Ok(Value::Float(a % b))
+    }
+}
+
+fn matches_pattern(pattern: &MatchPattern, value: &Value, bindings: &mut Vec<Value>) -> bool {
+    match pattern {
+        MatchPattern::Literal(expected) => value == expected,
+        MatchPattern::Wildcard => true,
+        MatchPattern::Binding => {
+            bindings.push(value.clone());
+            true
+        }
+        MatchPattern::List { items, rest } => {
+            let Value::List(values) = value else {
+                return false;
+            };
+            if values.len() < items.len() || (!rest && values.len() != items.len()) {
+                return false;
+            }
+            let binding_start = bindings.len();
+            for (item, value) in items.iter().zip(values.iter()) {
+                if !matches_pattern(item, value, bindings) {
+                    bindings.truncate(binding_start);
+                    return false;
+                }
+            }
+            if *rest {
+                bindings.push(Value::List(Rc::new(values[items.len()..].to_vec())));
+            }
+            true
+        }
     }
 }
 

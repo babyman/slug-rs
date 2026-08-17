@@ -15,7 +15,7 @@ fn help_describes_the_current_public_capability() {
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
-        "bindings, functions, blocks, conditionals, return, recur, collections, arithmetic and logic, calls, and println"
+        "bindings, functions, blocks, conditionals, match, return, recur, collections, arithmetic and logic, calls, and println"
     ));
     assert!(output.stderr.is_empty());
 }
@@ -182,6 +182,38 @@ fn recur_preserves_values_captured_by_earlier_iterations() {
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
         "1\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn matches_literals_and_lists_with_case_local_bindings() {
+    let path = fixture_path("match");
+    fs::write(
+        &path,
+        "val describe = fn(value) {\n\
+           match value {\n\
+             0 => \"zero\"\n\
+             [head, ...tail] => head + tail[0]\n\
+             _ => \"other\"\n\
+           }\n\
+         }\n\
+         val sum = fn(xs, total) {\n\
+           match xs {\n\
+             [] => total\n\
+             [head, ...tail] => recur(tail, total + head)\n\
+           }\n\
+         }\n\
+         println(describe(0), describe([4, 5]), describe(true), sum([1, 2, 3], 0), match 1 { 0 => \"no\" })\n",
+    )
+    .expect("write match source");
+    let output = slug().arg(&path).output().expect("run match source");
+    fs::remove_file(path).expect("remove match source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "zero 9 other 6 nil\n"
     );
     assert!(output.stderr.is_empty());
 }

@@ -35,6 +35,18 @@ pub enum Capture {
     Capture(usize),
 }
 
+/// The subset of source patterns lowered by the current compiler.
+#[derive(Clone, Debug)]
+pub enum MatchPattern {
+    Literal(Value),
+    Wildcard,
+    Binding,
+    List {
+        items: Vec<MatchPattern>,
+        rest: bool,
+    },
+}
+
 /// One VM instruction. Opcode numbers are intentionally not stable.
 #[derive(Clone, Debug)]
 pub struct Instruction {
@@ -63,6 +75,7 @@ pub enum Op {
     True,
     False,
     Pop,
+    Duplicate,
     GetLocal(usize),
     SetLocal(usize),
     GetCapture(usize),
@@ -90,6 +103,10 @@ pub enum Op {
     Jump(usize),
     JumpIfFalse(usize),
     Call(usize),
+    TryMatch {
+        pattern: MatchPattern,
+        bindings: usize,
+    },
     Recur(usize),
     Return,
 }

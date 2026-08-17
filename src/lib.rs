@@ -11,7 +11,7 @@ mod source;
 mod value;
 mod vm;
 
-pub use bytecode::{Capture, Chunk, Constant, Instruction, Op, Program, SourceSpan};
+pub use bytecode::{Capture, Chunk, Constant, Instruction, MatchPattern, Op, Program, SourceSpan};
 pub use source::{SourceError, SourceErrorKind, compile};
 pub use value::{Closure, NativeFunction, Value};
 pub use vm::{CallFrame, RuntimeError, RuntimeErrorKind, Vm, VmResult};

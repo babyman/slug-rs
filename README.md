@@ -15,8 +15,8 @@ compiled-module contract is documented separately as `.cslug`.
 - Checked errors with Slug source spans and call frames instead of host panics.
 - Source execution for a core subset: lexical `val`/`var` bindings, assignment,
   literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
-  `return`, tail-position `recur(...)`, lists/maps/indexing, calls, comments,
-  and `println`.
+  basic literal/list `match`, `return`, tail-position `recur(...)`,
+  lists/maps/indexing, calls, comments, and `println`.
 - The module loader, standard library, pattern matcher, type annotations,
   structured concurrency, and the remaining language forms are progressive
   milestones beyond this subset.

@@ -1,9 +1,12 @@
 //! The Rust source front end. Its AST and bytecode lowering are deliberately
 //! private while the language surface is still growing.
 
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
-use crate::{Capture, Chunk, Op, Program, SourceSpan, Value};
+use crate::{Capture, Chunk, MatchPattern, Op, Program, SourceSpan, Value};
 
 #[derive(Clone, Debug)]
 pub struct SourceError {
@@ -79,6 +82,10 @@ enum ExprKind {
         value: Box<Expr>,
     },
     Recur(Vec<Expr>),
+    Match {
+        subject: Box<Expr>,
+        cases: Vec<MatchCase>,
+    },
     Binary {
         left: Box<Expr>,
         operator: Binary,
@@ -107,6 +114,22 @@ enum ExprKind {
     Index {
         collection: Box<Expr>,
         index: Box<Expr>,
+    },
+}
+#[derive(Clone, Debug)]
+struct MatchCase {
+    pattern: Pattern,
+    value: Expr,
+    span: SourceSpan,
+}
+#[derive(Clone, Debug)]
+enum Pattern {
+    Literal(Value),
+    Wildcard,
+    Binding(String),
+    List {
+        items: Vec<Pattern>,
+        rest: Option<String>,
     },
 }
 #[derive(Clone, Copy, Debug)]
@@ -147,6 +170,7 @@ enum TokenKind {
     Else,
     Return,
     Recur,
+    Match,
     True,
     False,
     Nil,
@@ -173,6 +197,8 @@ enum TokenKind {
     Comma,
     Colon,
     Dot,
+    Ellipsis,
+    Arrow,
     Sep,
     End,
 }
@@ -364,13 +390,26 @@ impl Lexer {
                 }
                 '.' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Dot, span);
+                    let kind = if self.peek() == Some('.') {
+                        self.next();
+                        if self.peek() != Some('.') {
+                            return Err(SourceError::at("expected . after ..", span));
+                        }
+                        self.next();
+                        TokenKind::Ellipsis
+                    } else {
+                        TokenKind::Dot
+                    };
+                    Self::push(&mut result, kind, span);
                 }
                 '=' => {
                     self.next();
                     let kind = if self.peek() == Some('=') {
                         self.next();
                         TokenKind::EqEq
+                    } else if self.peek() == Some('>') {
+                        self.next();
+                        TokenKind::Arrow
                     } else {
                         TokenKind::Eq
                     };
@@ -456,6 +495,7 @@ impl Lexer {
                         "else" => TokenKind::Else,
                         "return" => TokenKind::Return,
                         "recur" => TokenKind::Recur,
+                        "match" => TokenKind::Match,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "nil" => TokenKind::Nil,
@@ -738,6 +778,7 @@ impl Parser {
             TokenKind::Fn => return self.function(span),
             TokenKind::If => return self.if_expression(span),
             TokenKind::Recur => return self.recur(span),
+            TokenKind::Match => return self.match_expression(span),
             _ => return Err(SourceError::at("expected expression", span)),
         };
         Ok(Expr { kind, span })
@@ -925,6 +966,93 @@ impl Parser {
             span,
         })
     }
+    fn match_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let subject = self.expression()?;
+        let delimiter = self.consume(&TokenKind::LBrace, "expected { after match subject")?;
+        self.enter_nesting(delimiter.span)?;
+        let mut cases = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            if self.matches(&TokenKind::End) {
+                return Err(SourceError::at("expected }", self.peek().span.clone()));
+            }
+            let pattern = self.pattern()?;
+            let case_span = self
+                .consume(&TokenKind::Arrow, "expected => after match pattern")?
+                .span;
+            let value = self.statement()?;
+            cases.push(MatchCase {
+                pattern,
+                value,
+                span: case_span,
+            });
+            if !matches!(self.kind(), TokenKind::RBrace | TokenKind::Sep) {
+                return Err(SourceError::at(
+                    "expected match case separator",
+                    self.peek().span.clone(),
+                ));
+            }
+            self.separators();
+        }
+        self.next();
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Match {
+                subject: Box::new(subject),
+                cases,
+            },
+            span,
+        })
+    }
+    fn pattern(&mut self) -> Result<Pattern, SourceError> {
+        let token = self.next();
+        match token.kind {
+            TokenKind::Int(value) => Ok(Pattern::Literal(Value::Int(value))),
+            TokenKind::Str(value) => Ok(Pattern::Literal(Value::string(value))),
+            TokenKind::True => Ok(Pattern::Literal(Value::Bool(true))),
+            TokenKind::False => Ok(Pattern::Literal(Value::Bool(false))),
+            TokenKind::Nil => Ok(Pattern::Literal(Value::Nil)),
+            TokenKind::Name(name) if name == "_" => Ok(Pattern::Wildcard),
+            TokenKind::Name(name) => Ok(Pattern::Binding(name)),
+            TokenKind::LBracket => self.list_pattern(&token.span),
+            _ => Err(SourceError::at("expected match pattern", token.span)),
+        }
+    }
+    fn list_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut items = Vec::new();
+        let mut rest = None;
+        if !self.matches(&TokenKind::RBracket) {
+            loop {
+                if self.matches(&TokenKind::Ellipsis) {
+                    self.next();
+                    let token = self.next();
+                    let TokenKind::Name(name) = token.kind else {
+                        return Err(SourceError::at("expected list spread binding", token.span));
+                    };
+                    rest = Some(name);
+                    if !self.matches(&TokenKind::RBracket) {
+                        return Err(SourceError::at(
+                            "list spread pattern must be final",
+                            self.peek().span.clone(),
+                        ));
+                    }
+                    break;
+                }
+                items.push(self.pattern()?);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                if self.matches(&TokenKind::RBracket) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RBracket, "expected ]")?;
+        self.leave_nesting();
+        Ok(Pattern::List { items, rest })
+    }
     fn if_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.consume(&TokenKind::LParen, "expected (")?;
         let condition = self.expression()?;
@@ -1096,6 +1224,9 @@ impl Compiler {
                     expression.span.clone(),
                 ));
             }
+            ExprKind::Match { subject, cases } => {
+                self.compile_match(state, subject, cases, false)?;
+            }
             ExprKind::Binary {
                 left,
                 operator,
@@ -1247,6 +1378,55 @@ impl Compiler {
         }
         Ok(())
     }
+    fn compile_match(
+        &mut self,
+        state: &mut State,
+        subject: &Expr,
+        cases: &[MatchCase],
+        tail: bool,
+    ) -> Result<(), SourceError> {
+        self.expression(state, subject)?;
+        let mut ends = Vec::new();
+        for case in cases {
+            let names = pattern_bindings(&case.pattern, &case.span)?;
+            state.emit(Op::Duplicate, &case.span);
+            state.emit(
+                Op::TryMatch {
+                    pattern: lower_pattern(&case.pattern),
+                    bindings: names.len(),
+                },
+                &case.span,
+            );
+            state.enter_scope();
+            let slots = names
+                .into_iter()
+                .map(|name| state.declare(name, false))
+                .collect::<Vec<_>>();
+            let next = state.jump_if_false(&case.span);
+            state.emit(Op::Pop, &case.span);
+            for slot in slots.iter().rev() {
+                state.emit(Op::SetLocal(*slot), &case.span);
+            }
+            if tail {
+                self.tail_expression(state, &case.value)?;
+            } else {
+                self.expression(state, &case.value)?;
+            }
+            state.leave_scope();
+            ends.push(state.jump(&case.span));
+            state.patch(next);
+            state.emit(Op::Pop, &case.span);
+            for _ in slots {
+                state.emit(Op::Pop, &case.span);
+            }
+        }
+        state.emit(Op::Pop, &subject.span);
+        state.emit(Op::Nil, &subject.span);
+        for end in ends {
+            state.patch(end);
+        }
+        Ok(())
+    }
     fn tail_expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
             ExprKind::Recur(arguments) => {
@@ -1305,6 +1485,9 @@ impl Compiler {
                 }
                 state.patch(end);
             }
+            ExprKind::Match { subject, cases } => {
+                self.compile_match(state, subject, cases, true)?;
+            }
             _ => self.expression(state, expression)?,
         }
         Ok(())
@@ -1321,6 +1504,46 @@ impl Compiler {
         let captures = state.captures.clone();
         Ok((state.finish("<fn>", parameters.len()), captures))
     }
+}
+
+fn lower_pattern(pattern: &Pattern) -> MatchPattern {
+    match pattern {
+        Pattern::Literal(value) => MatchPattern::Literal(value.clone()),
+        Pattern::Wildcard => MatchPattern::Wildcard,
+        Pattern::Binding(_) => MatchPattern::Binding,
+        Pattern::List { items, rest } => MatchPattern::List {
+            items: items.iter().map(lower_pattern).collect(),
+            rest: rest.is_some(),
+        },
+    }
+}
+
+fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>, SourceError> {
+    fn collect(pattern: &Pattern, names: &mut Vec<String>) {
+        match pattern {
+            Pattern::Binding(name) => names.push(name.clone()),
+            Pattern::List { items, rest } => {
+                for item in items {
+                    collect(item, names);
+                }
+                if let Some(name) = rest {
+                    names.push(name.clone());
+                }
+            }
+            Pattern::Literal(_) | Pattern::Wildcard => {}
+        }
+    }
+
+    let mut names = Vec::new();
+    collect(pattern, &mut names);
+    let mut seen = HashSet::new();
+    if let Some(name) = names.iter().find(|name| !seen.insert(name.as_str())) {
+        return Err(SourceError::semantic(
+            format!("duplicate match binding `{name}`"),
+            span.clone(),
+        ));
+    }
+    Ok(names)
 }
 
 struct State {
