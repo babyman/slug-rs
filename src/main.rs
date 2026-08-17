@@ -12,7 +12,7 @@ fn main() -> ExitCode {
         }
         Some("--help" | "-h") | None => {
             println!(
-                "Usage: {executable} program.slug\n\nSupports the initial Slug core: bindings, assignments, literals, arithmetic, calls, and println."
+                "Usage: {executable} program.slug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, collections, arithmetic, calls, and println."
             );
             ExitCode::SUCCESS
         }

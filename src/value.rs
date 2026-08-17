@@ -1,12 +1,19 @@
-use std::{fmt, fmt::Write as _, rc::Rc};
+use std::{cell::RefCell, fmt, fmt::Write as _, rc::Rc};
 
 /// Host functions installed deliberately through the VM API.
 pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
 
+/// Shared storage for a lexical binding captured by one or more closures.
+pub(crate) type BindingCell = Rc<RefCell<Value>>;
+
+pub(crate) fn binding_cell(value: Value) -> BindingCell {
+    Rc::new(RefCell::new(value))
+}
+
 #[derive(Clone, Debug)]
 pub struct Closure {
     pub(crate) chunk: usize,
-    pub(crate) captures: Vec<Value>,
+    pub(crate) captures: Vec<BindingCell>,
 }
 
 /// The dynamic values used by the initial Slug VM core.

@@ -101,6 +101,54 @@ fn calls_closures_and_preserves_captured_values() {
 }
 
 #[test]
+fn closures_share_mutable_captures() {
+    let mut counter = Chunk::new("counter", 0);
+    let one = counter.constant(Value::Int(1));
+    counter
+        .emit(Op::GetCapture(0))
+        .emit(Op::Constant(one))
+        .emit(Op::Add)
+        .emit(Op::SetCapture(0))
+        .emit(Op::GetCapture(0))
+        .emit(Op::Return);
+
+    let mut factory = Chunk::new("factory", 0);
+    factory.locals = 1;
+    let zero = factory.constant(Value::Int(0));
+    factory
+        .emit(Op::Constant(zero))
+        .emit(Op::SetLocal(0))
+        .emit(Op::MakeClosure {
+            chunk: 0,
+            captures: vec![Capture::Local(0)],
+        })
+        .emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::MakeClosure {
+        chunk: 1,
+        captures: vec![],
+    })
+    .emit(Op::Call(0))
+    .emit(Op::DefineGlobal("counter".into()))
+    .emit(Op::GetGlobal("counter".into()))
+    .emit(Op::Call(0))
+    .emit(Op::Pop)
+    .emit(Op::GetGlobal("counter".into()))
+    .emit(Op::Call(0))
+    .emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(counter);
+    program.add_chunk(factory);
+    program.add_chunk(main);
+    assert_eq!(
+        Vm::new().run_named(&program, "main").unwrap(),
+        Value::Int(2)
+    );
+}
+
+#[test]
 fn keeps_globals_across_runs_and_calls_explicit_native_functions() {
     fn double(args: &[Value]) -> Result<Value, String> {
         match args {

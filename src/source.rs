@@ -864,12 +864,6 @@ impl Compiler {
                         expression.span.clone(),
                     ));
                 }
-                if matches!(binding, Binding::Capture { .. }) {
-                    return Err(SourceError::semantic(
-                        "assignment to a captured var is not supported yet",
-                        expression.span.clone(),
-                    ));
-                }
                 self.expression(state, value)?;
                 match binding {
                     Binding::Global { .. } => {
@@ -878,7 +872,9 @@ impl Compiler {
                     Binding::Local { slot, .. } => {
                         state.emit(Op::SetLocal(slot), &expression.span);
                     }
-                    Binding::Capture { .. } => unreachable!(),
+                    Binding::Capture { slot, .. } => {
+                        state.emit(Op::SetCapture(slot), &expression.span);
+                    }
                 }
                 state.emit(Op::Nil, &expression.span);
             }

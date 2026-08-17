@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added shared mutable binding cells so closures and sibling closures observe
+  assignments to captured `var` bindings.
 - Added a span-aware Rust source frontend for lexical bindings, functions and
   captures, blocks, conditionals, comparisons, and list/map indexing.
 - Added source-located parse and semantic diagnostics plus source spans on

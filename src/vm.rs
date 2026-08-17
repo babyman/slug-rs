@@ -1,6 +1,10 @@
 use std::{collections::HashMap, fmt, rc::Rc};
 
-use crate::{Capture, Program, SourceSpan, Value, bytecode::Op, value::Closure};
+use crate::{
+    Capture, Program, SourceSpan, Value,
+    bytecode::Op,
+    value::{BindingCell, Closure, binding_cell},
+};
 
 pub type VmResult<T> = Result<T, RuntimeError>;
 
@@ -50,7 +54,7 @@ struct Frame {
     closure: Rc<Closure>,
     ip: usize,
     stack_base: usize,
-    locals: Vec<Value>,
+    locals: Vec<BindingCell>,
 }
 
 /// A small, checked stack VM for compiler-produced Slug bytecode.
@@ -126,7 +130,9 @@ impl Vm {
             }),
             ip: 0,
             stack_base: 0,
-            locals: vec![Value::Nil; chunk.locals],
+            locals: (0..chunk.locals)
+                .map(|_| binding_cell(Value::Nil))
+                .collect(),
         });
         self.execute(program)
     }
@@ -179,7 +185,7 @@ impl Vm {
                 Op::Pop => {
                     self.pop(span)?;
                 }
-                Op::GetLocal(slot) => self.stack.push(self.local(slot, span)?.clone()),
+                Op::GetLocal(slot) => self.stack.push(self.local(slot, span)?.borrow().clone()),
                 Op::SetLocal(slot) => {
                     let value = self.pop(span.clone())?;
                     self.set_local(slot, value, span)?;
@@ -189,7 +195,7 @@ impl Vm {
                         .frames
                         .last()
                         .and_then(|frame| frame.closure.captures.get(slot))
-                        .cloned()
+                        .map(|cell| cell.borrow().clone())
                         .ok_or_else(|| {
                             self.error(
                                 RuntimeErrorKind::InvalidBytecode,
@@ -198,6 +204,21 @@ impl Vm {
                             )
                         })?;
                     self.stack.push(value);
+                }
+                Op::SetCapture(slot) => {
+                    let value = self.pop(span.clone())?;
+                    let capture = self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.closure.captures.get(slot))
+                        .ok_or_else(|| {
+                            self.error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                format!("capture {slot} does not exist"),
+                                span.clone(),
+                            )
+                        })?;
+                    *capture.borrow_mut() = value;
                 }
                 Op::GetGlobal(name) => {
                     let value = self.globals.get(&name).cloned().ok_or_else(|| {
@@ -235,7 +256,7 @@ impl Vm {
                     let captures = captures
                         .into_iter()
                         .map(|capture| match capture {
-                            Capture::Local(slot) => self.local(slot, span.clone()).cloned(),
+                            Capture::Local(slot) => self.local(slot, span.clone()),
                             Capture::Capture(slot) => self
                                 .frames
                                 .last()
@@ -417,8 +438,12 @@ impl Vm {
                         span,
                     ));
                 }
-                let mut locals = self.stack[base + 1..].to_vec();
-                locals.resize(chunk.locals, Value::Nil);
+                let mut locals = self.stack[base + 1..]
+                    .iter()
+                    .cloned()
+                    .map(binding_cell)
+                    .collect::<Vec<_>>();
+                locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
                 self.frames.push(Frame {
                     closure,
                     ip: 0,
@@ -504,10 +529,11 @@ impl Vm {
             )
         })
     }
-    fn local(&self, slot: usize, span: Option<SourceSpan>) -> VmResult<&Value> {
+    fn local(&self, slot: usize, span: Option<SourceSpan>) -> VmResult<BindingCell> {
         self.frames
             .last()
             .and_then(|frame| frame.locals.get(slot))
+            .cloned()
             .ok_or_else(|| {
                 self.error(
                     RuntimeErrorKind::InvalidBytecode,
@@ -535,10 +561,12 @@ impl Vm {
                 None,
             ));
         }
-        self.frames
+        *self
+            .frames
             .last_mut()
             .expect("active frame was checked")
-            .locals[slot] = value;
+            .locals[slot]
+            .borrow_mut() = value;
         Ok(())
     }
     fn jump(&mut self, target: usize, span: Option<SourceSpan>) -> VmResult<()> {

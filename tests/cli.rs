@@ -14,7 +14,9 @@ fn help_describes_the_current_public_capability() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
-    assert!(stdout.contains("bindings, assignments, literals, arithmetic, calls, and println"));
+    assert!(stdout.contains(
+        "bindings, functions, blocks, conditionals, collections, arithmetic, calls, and println"
+    ));
     assert!(output.stderr.is_empty());
 }
 
@@ -105,6 +107,45 @@ fn executes_core_functions_blocks_conditionals_and_collections() {
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
         "9 42 42 30 Slug 7\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn closures_share_mutable_lexical_bindings() {
+    let path = fixture_path("mutable-capture");
+    fs::write(
+        &path,
+        "val makeCounter = fn() {\n\
+           var value = 0\n\
+           fn() {\n\
+             value = value + 1\n\
+             value\n\
+           }\n\
+         }\n\
+         val counter = makeCounter()\n\
+         val makePair = fn() {\n\
+           var value = 0\n\
+           val increment = fn() { value = value + 1 }\n\
+           val current = fn() { value }\n\
+           [increment, current]\n\
+         }\n\
+         val pair = makePair()\n\
+         pair[0]()\n\
+         pair[0]()\n\
+         println(counter(), counter(), pair[1]())\n",
+    )
+    .expect("write mutable capture source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run mutable capture source");
+    fs::remove_file(path).expect("remove mutable capture source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1 2 2\n"
     );
     assert!(output.stderr.is_empty());
 }

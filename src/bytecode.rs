@@ -66,6 +66,7 @@ pub enum Op {
     GetLocal(usize),
     SetLocal(usize),
     GetCapture(usize),
+    SetCapture(usize),
     GetGlobal(String),
     DefineGlobal(String),
     SetGlobal(String),
