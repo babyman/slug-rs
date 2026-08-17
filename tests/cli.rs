@@ -48,6 +48,28 @@ fn executes_source_through_the_public_cli() {
 }
 
 #[test]
+fn executes_bindings_assignments_comments_and_strings() {
+    let path = fixture_path("state");
+    fs::write(
+        &path,
+        "# track mutable state\nvar label = \"Slug\"\nlabel = label + \" VM\"\nprintln(label)\n",
+    )
+    .expect("write stateful Slug source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run stateful Slug source");
+    fs::remove_file(path).expect("remove stateful Slug source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "Slug VM\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn reports_source_parse_errors_without_a_host_crash() {
     let path = fixture_path("invalid");
     fs::write(&path, "val = 1\n").expect("write invalid Slug source");
