@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt, rc::Rc};
 
-use crate::{Program, SourceSpan, Value, bytecode::Op, value::Closure};
+use crate::{Capture, Program, SourceSpan, Value, bytecode::Op, value::Closure};
 
 pub type VmResult<T> = Result<T, RuntimeError>;
 
@@ -107,6 +107,16 @@ impl Vm {
                 None,
             ));
         }
+        if chunk.locals < chunk.arity {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                format!(
+                    "entry function `{}` has {} local slots for {} parameters",
+                    chunk.name, chunk.locals, chunk.arity
+                ),
+                None,
+            ));
+        }
         self.stack.clear();
         self.frames.clear();
         self.frames.push(Frame {
@@ -116,7 +126,7 @@ impl Vm {
             }),
             ip: 0,
             stack_base: 0,
-            locals: Vec::new(),
+            locals: vec![Value::Nil; chunk.locals],
         });
         self.execute(program)
     }
@@ -215,7 +225,7 @@ impl Vm {
                     self.globals.insert(name, value);
                 }
                 Op::MakeClosure { chunk, captures } => {
-                    let function = program.chunk(chunk).ok_or_else(|| {
+                    program.chunk(chunk).ok_or_else(|| {
                         self.error(
                             RuntimeErrorKind::InvalidBytecode,
                             format!("function chunk {chunk} does not exist"),
@@ -224,18 +234,56 @@ impl Vm {
                     })?;
                     let captures = captures
                         .into_iter()
-                        .map(|slot| self.local(slot, span.clone()).cloned())
+                        .map(|capture| match capture {
+                            Capture::Local(slot) => self.local(slot, span.clone()).cloned(),
+                            Capture::Capture(slot) => self
+                                .frames
+                                .last()
+                                .and_then(|frame| frame.closure.captures.get(slot))
+                                .cloned()
+                                .ok_or_else(|| {
+                                    self.error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        format!("capture {slot} does not exist"),
+                                        span.clone(),
+                                    )
+                                }),
+                        })
                         .collect::<VmResult<Vec<_>>>()?;
-                    self.stack.push(Value::Closure(Rc::new(Closure {
-                        chunk: program.find_chunk(&function.name).unwrap_or(chunk),
-                        captures,
-                    })));
+                    self.stack
+                        .push(Value::Closure(Rc::new(Closure { chunk, captures })));
                 }
                 Op::Add => self.binary(span, add)?,
                 Op::Subtract => self.binary(span, subtract)?,
                 Op::Multiply => self.binary(span, multiply)?,
                 Op::Divide => self.binary(span, divide)?,
                 Op::Modulo => self.binary(span, modulo)?,
+                Op::List(count) => {
+                    let values = self.pop_values(count, span.clone())?;
+                    self.stack.push(Value::List(Rc::new(values)));
+                }
+                Op::Map(count) => {
+                    let values = self.pop_values(count.saturating_mul(2), span.clone())?;
+                    let mut entries = Vec::with_capacity(count);
+                    for pair in values.chunks_exact(2) {
+                        if !is_map_key(&pair[0]) {
+                            return Err(self.error(
+                                RuntimeErrorKind::Type,
+                                format!("{} cannot be used as a map key", pair[0].type_name()),
+                                span,
+                            ));
+                        }
+                        entries.push((pair[0].clone(), pair[1].clone()));
+                    }
+                    self.stack.push(Value::Map(Rc::new(entries)));
+                }
+                Op::GetIndex => {
+                    let (collection, index) = self.pop_pair(span.clone())?;
+                    self.stack
+                        .push(index_value(collection, &index).map_err(|message| {
+                            self.error(RuntimeErrorKind::Type, message, span)
+                        })?);
+                }
                 Op::Negate => {
                     let value = self.pop(span.clone())?;
                     self.stack
@@ -359,7 +407,18 @@ impl Vm {
                         span,
                     ));
                 }
-                let locals = self.stack[base + 1..].to_vec();
+                if chunk.locals < chunk.arity {
+                    return Err(self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!(
+                            "function `{}` has {} local slots for {} parameters",
+                            chunk.name, chunk.locals, chunk.arity
+                        ),
+                        span,
+                    ));
+                }
+                let mut locals = self.stack[base + 1..].to_vec();
+                locals.resize(chunk.locals, Value::Nil);
                 self.frames.push(Frame {
                     closure,
                     ip: 0,
@@ -416,6 +475,16 @@ impl Vm {
         let right = self.pop(span.clone())?;
         let left = self.pop(span)?;
         Ok((left, right))
+    }
+    fn pop_values(&mut self, count: usize, span: Option<SourceSpan>) -> VmResult<Vec<Value>> {
+        if self.stack.len() < count {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "stack underflow".into(),
+                span,
+            ));
+        }
+        Ok(self.stack.split_off(self.stack.len() - count))
     }
     fn pop(&mut self, span: Option<SourceSpan>) -> VmResult<Value> {
         self.stack.pop().ok_or_else(|| {
@@ -554,6 +623,41 @@ fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)
         Err((RuntimeErrorKind::DivideByZero, "division by zero".into()))
     } else {
         Ok(Value::Float(a % b))
+    }
+}
+
+fn is_map_key(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Bool(_)
+            | Value::Int(_)
+            | Value::Float(_)
+            | Value::Str(_)
+            | Value::Bytes(_)
+            | Value::Symbol(_)
+    )
+}
+
+fn index_value(collection: Value, index: &Value) -> Result<Value, String> {
+    match collection {
+        Value::List(values) => {
+            let Value::Int(index) = index else {
+                return Err("list index must be an integer".into());
+            };
+            let length = i64::try_from(values.len()).map_err(|_| "list is too large".to_owned())?;
+            let index = if *index < 0 { length + *index } else { *index };
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| values.get(index))
+                .cloned()
+                .ok_or_else(|| "list index is out of bounds".into())
+        }
+        Value::Map(entries) => Ok(entries
+            .iter()
+            .rev()
+            .find(|(key, _)| key == index)
+            .map_or(Value::Nil, |(_, value)| value.clone())),
+        value => Err(format!("cannot index {}", value.type_name())),
     }
 }
 fn numeric(

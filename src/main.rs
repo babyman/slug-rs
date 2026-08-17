@@ -1,6 +1,6 @@
 use std::{env, fs, process::ExitCode};
 
-use slug_vm::{Value, Vm, compile};
+use slug_vm::{SourceErrorKind, Value, Vm, compile};
 
 fn main() -> ExitCode {
     let mut args = env::args();
@@ -31,7 +31,11 @@ fn run(path: &str) -> ExitCode {
     let program = match compile(path, &source) {
         Ok(program) => program,
         Err(error) => {
-            eprintln!("slug: parse error: {}", error.0);
+            let category = match error.kind {
+                SourceErrorKind::Parse => "parse",
+                SourceErrorKind::Semantic => "semantic",
+            };
+            eprintln!("slug: {category} error: {error}");
             return ExitCode::from(1);
         }
     };

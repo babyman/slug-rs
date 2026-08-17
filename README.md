@@ -13,10 +13,12 @@ compiled-module contract is documented separately as `.cslug`.
 - Chunks, constants, lexical captures, locals, globals, calls, branches, and
   arithmetic/comparison operations.
 - Checked errors with Slug source spans and call frames instead of host panics.
-- Source execution for an initial core subset: `val`/`var` bindings,
-  assignment, literals, arithmetic, calls, comments, and `println`.
-- The lexer, parser, compiler, module loader, standard library, pattern matcher,
-  and structured concurrency remain progressive milestones beyond this subset.
+- Source execution for a core subset: lexical `val`/`var` bindings, assignment,
+  literals, arithmetic/comparisons, functions and captures, blocks, `if`,
+  lists/maps/indexing, calls, comments, and `println`.
+- The module loader, standard library, pattern matcher, type annotations,
+  structured concurrency, and the remaining language forms are progressive
+  milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no
   encoder or loader is implemented yet.
 

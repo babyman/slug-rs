@@ -28,6 +28,13 @@ pub enum Constant {
     Function(usize),
 }
 
+/// The enclosing slot from which a closure captures a value.
+#[derive(Clone, Debug)]
+pub enum Capture {
+    Local(usize),
+    Capture(usize),
+}
+
 /// One VM instruction. Opcode numbers are intentionally not stable.
 #[derive(Clone, Debug)]
 pub struct Instruction {
@@ -62,7 +69,13 @@ pub enum Op {
     GetGlobal(String),
     DefineGlobal(String),
     SetGlobal(String),
-    MakeClosure { chunk: usize, captures: Vec<usize> },
+    MakeClosure {
+        chunk: usize,
+        captures: Vec<Capture>,
+    },
+    List(usize),
+    Map(usize),
+    GetIndex,
     Add,
     Subtract,
     Multiply,
@@ -84,6 +97,8 @@ pub enum Op {
 pub struct Chunk {
     pub name: String,
     pub arity: usize,
+    /// Number of frame-local slots, including parameters.
+    pub locals: usize,
     pub constants: Vec<Constant>,
     pub code: Vec<Instruction>,
 }
@@ -94,6 +109,7 @@ impl Chunk {
         Self {
             name: name.into(),
             arity,
+            locals: arity,
             constants: Vec::new(),
             code: Vec::new(),
         }

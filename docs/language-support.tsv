@@ -1,8 +1,10 @@
 # feature|status|evidence
-Bindings and assignment|implemented|`tests/cli.rs`
-Literals: integers, strings, booleans, and nil|implemented|`tests/cli.rs`
-Arithmetic: `+`, `-`, `*`, and `/`|implemented|`tests/cli.rs` and `tests/vm.rs`
+Lexical bindings and assignment|implemented|`tests/cli.rs`
+Literals: integers, strings, booleans, nil, lists, and maps|implemented|`tests/cli.rs`
+Arithmetic and comparisons|implemented|`tests/cli.rs` and `tests/vm.rs`
+Functions, blocks, conditionals, and captures|implemented|`tests/cli.rs` and `tests/vm.rs`
+List, map, and dot indexing|implemented|`tests/cli.rs`
 Native function calls and `println`|implemented|`tests/cli.rs` and `tests/vm.rs`
-Checked source and runtime diagnostics|implemented|`tests/cli.rs` and `tests/vm.rs`
+Checked source and runtime diagnostics with locations|implemented|`tests/cli.rs` and `tests/vm.rs`
 Full language specification|specified only|`language/language-specification.md`
 Modules, standard library, and concurrency|specified only|`language/runtime-requirements.md`

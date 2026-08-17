@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a span-aware Rust source frontend for lexical bindings, functions and
+  captures, blocks, conditionals, comparisons, and list/map indexing.
+- Added source-located parse and semantic diagnostics plus source spans on
+  emitted runtime instructions.
 - Adopted a portable `.cslug` compiled-module compatibility contract and
   documented the required versioning, validation, and implementation gate.
 - Added the Rust Slug bytecode VM foundation.

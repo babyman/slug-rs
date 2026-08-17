@@ -1,4 +1,4 @@
-use slug_vm::{Chunk, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm};
+use slug_vm::{Capture, Chunk, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm};
 
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
@@ -19,6 +19,25 @@ fn executes_integer_arithmetic() {
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
         Value::Int(42)
+    );
+}
+
+#[test]
+fn constructs_and_indexes_collections() {
+    let mut main = Chunk::new("main", 0);
+    let ten = main.constant(Value::Int(10));
+    let twenty = main.constant(Value::Int(20));
+    let minus_one = main.constant(Value::Int(-1));
+    main.emit(Op::Constant(ten))
+        .emit(Op::Constant(twenty))
+        .emit(Op::List(2))
+        .emit(Op::Constant(minus_one))
+        .emit(Op::GetIndex)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Int(20)
     );
 }
 
@@ -56,7 +75,7 @@ fn calls_closures_and_preserves_captured_values() {
     factory
         .emit(Op::MakeClosure {
             chunk: 0,
-            captures: vec![0],
+            captures: vec![Capture::Local(0)],
         })
         .emit(Op::Return);
 
