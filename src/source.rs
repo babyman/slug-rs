@@ -81,7 +81,7 @@ enum ExprKind {
         right: Box<Expr>,
     },
     Prefix {
-        operator: Prefix,
+        operators: Vec<(Prefix, SourceSpan)>,
         value: Box<Expr>,
     },
     Call {
@@ -228,7 +228,7 @@ impl Lexer {
         ) || self.next_starts_infix()
     }
     fn next_starts_infix(&self) -> bool {
-        let mut index = self.index + 1;
+        let mut index = self.index;
         while matches!(self.input.get(index), Some(' ' | '\t' | '\r')) {
             index += 1;
         }
@@ -243,6 +243,7 @@ impl Lexer {
     #[allow(clippy::too_many_lines)]
     fn tokens(mut self) -> Result<Vec<Token>, SourceError> {
         let mut result = Vec::new();
+        let mut delimiters = 0usize;
         while let Some(character) = self.peek() {
             let span = self.span();
             match character {
@@ -255,11 +256,16 @@ impl Lexer {
                 }
                 '\n' => {
                     self.next();
-                    if !self.newline_continues(&result) {
+                    if delimiters == 0 && !self.newline_continues(&result) {
                         Self::push(&mut result, TokenKind::Sep, span);
                     }
                 }
-                '#' => while self.next().is_some_and(|value| value != '\n') {},
+                '#' => {
+                    self.next();
+                    while self.peek().is_some_and(|value| value != '\n') {
+                        self.next();
+                    }
+                }
                 '+' => {
                     self.next();
                     Self::push(&mut result, TokenKind::Plus, span);
@@ -294,10 +300,12 @@ impl Lexer {
                 }
                 '(' => {
                     self.next();
+                    delimiters += 1;
                     Self::push(&mut result, TokenKind::LParen, span);
                 }
                 ')' => {
                     self.next();
+                    delimiters = delimiters.saturating_sub(1);
                     Self::push(&mut result, TokenKind::RParen, span);
                 }
                 '{' => {
@@ -310,10 +318,12 @@ impl Lexer {
                 }
                 '[' => {
                     self.next();
+                    delimiters += 1;
                     Self::push(&mut result, TokenKind::LBracket, span);
                 }
                 ']' => {
                     self.next();
+                    delimiters = delimiters.saturating_sub(1);
                     Self::push(&mut result, TokenKind::RBracket, span);
                 }
                 ',' => {
@@ -561,20 +571,15 @@ impl Parser {
         Ok(left)
     }
     fn prefix(&mut self) -> Result<Expr, SourceError> {
-        if self.matches(&TokenKind::Minus) || self.matches(&TokenKind::Bang) {
+        let mut operators = Vec::new();
+        while self.matches(&TokenKind::Minus) || self.matches(&TokenKind::Bang) {
             let token = self.next();
             let operator = if matches!(token.kind, TokenKind::Minus) {
                 Prefix::Negate
             } else {
                 Prefix::Not
             };
-            return Ok(Expr {
-                span: token.span,
-                kind: ExprKind::Prefix {
-                    operator,
-                    value: Box::new(self.prefix()?),
-                },
-            });
+            operators.push((operator, token.span));
         }
         let mut value = self.primary()?;
         loop {
@@ -634,7 +639,18 @@ impl Parser {
                 break;
             }
         }
-        Ok(value)
+        if operators.is_empty() {
+            Ok(value)
+        } else {
+            let span = operators[0].1.clone();
+            Ok(Expr {
+                span,
+                kind: ExprKind::Prefix {
+                    operators,
+                    value: Box::new(value),
+                },
+            })
+        }
     }
     fn primary(&mut self) -> Result<Expr, SourceError> {
         let token = self.next();
@@ -692,12 +708,36 @@ impl Parser {
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
                 Some(TokenKind::Colon)
             ))
-            || self.matches(&TokenKind::LBracket);
+            || self.starts_computed_map_key();
         if map {
             self.map(span)
         } else {
             self.block_after_open(span)
         }
+    }
+    fn starts_computed_map_key(&self) -> bool {
+        if !self.matches(&TokenKind::LBracket) {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (offset, token) in self.tokens[self.index..].iter().enumerate() {
+            match token.kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(
+                            self.tokens
+                                .get(self.index + offset + 1)
+                                .map(|token| &token.kind),
+                            Some(TokenKind::Colon)
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
     fn map(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         let mut entries = Vec::new();
@@ -1004,15 +1044,17 @@ impl Compiler {
                     }
                 }
             }
-            ExprKind::Prefix { operator, value } => {
+            ExprKind::Prefix { operators, value } => {
                 self.expression(state, value)?;
-                state.emit(
-                    match operator {
-                        Prefix::Negate => Op::Negate,
-                        Prefix::Not => Op::Not,
-                    },
-                    &expression.span,
-                );
+                for (operator, span) in operators.iter().rev() {
+                    state.emit(
+                        match operator {
+                            Prefix::Negate => Op::Negate,
+                            Prefix::Not => Op::Not,
+                        },
+                        span,
+                    );
+                }
             }
             ExprKind::Call { callee, arguments } => {
                 self.expression(state, callee)?;

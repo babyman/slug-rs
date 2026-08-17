@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed parser stack overflow risks for long prefix sequences and corrected
+  comments, infix continuation, delimited multiline expressions, and brace
+  disambiguation at source newlines.
 - Added short-circuit `&&` and `||` expressions with operator-aware newline
   continuation.
 - Added shared mutable binding cells so closures and sibling closures observe

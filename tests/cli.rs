@@ -186,6 +186,55 @@ fn short_circuits_logical_operators_and_continues_across_newlines() {
 }
 
 #[test]
+fn handles_comments_and_multiline_delimited_expressions() {
+    let path = fixture_path("newlines");
+    fs::write(
+        &path,
+        "println(1) # comment\n\
+         println(2)\n\
+         println(1\n\
+         - 2)\n\
+         println(\n\
+           3\n\
+         )\n\
+         println([\n\
+           1,\n\
+           2\n\
+         ][-1])\n\
+         println({ [1, 2] })\n",
+    )
+    .expect("write multiline source");
+    let output = slug().arg(&path).output().expect("run multiline source");
+    fs::remove_file(path).expect("remove multiline source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1\n2\n-1\n3\n2\n[1, 2]\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn parses_long_prefix_sequences_without_recursion() {
+    let path = fixture_path("prefix-depth");
+    let source = format!("println({}true)\n", "!".repeat(100_000));
+    fs::write(&path, source).expect("write deeply prefixed source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run deeply prefixed source");
+    fs::remove_file(path).expect("remove deeply prefixed source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "true\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn rejects_assignment_to_an_immutable_binding_with_a_location() {
     let path = fixture_path("immutable-binding");
     fs::write(&path, "val answer = 1\nanswer = 2\n").expect("write invalid assignment");
