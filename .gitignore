@@ -1,0 +1,12 @@
+# Rust build artifacts
+/target/
+
+# Rust backup files
+**/*.rs.bk
+
+# IDE settings
+/.idea/
+/.vscode/
+
+# macOS Finder metadata
+.DS_Store
