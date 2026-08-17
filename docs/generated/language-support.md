@@ -1,0 +1,13 @@
+# Language Support Matrix
+
+Generated from `docs/language-support.tsv`; do not edit directly.
+
+| Feature | Status | Evidence |
+|---|---|---|
+| Bindings and assignment | implemented | `tests/cli.rs` |
+| Literals: integers, strings, booleans, and nil | implemented | `tests/cli.rs` |
+| Arithmetic: `+`, `-`, `*`, and `/` | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Checked source and runtime diagnostics | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Full language specification | specified only | `language/language-specification.md` |
+| Modules, standard library, and concurrency | specified only | `language/runtime-requirements.md` |

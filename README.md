@@ -33,9 +33,22 @@ performance.
 ## Development
 
 ```sh
-cargo test
+make check
 cargo run -- --help
 ```
 
+`make check` runs formatting validation, Clippy with warnings denied, and all
+unit and integration tests. Use `make test-vm` or `make test-cli` for the
+focused test loop. Agent-specific development rules and language-change
+workflow guidance are in [AGENTS.md](AGENTS.md).
+
 The integration tests construct small programs directly, covering arithmetic,
 branching, closures, globals, native calls, and source-located runtime errors.
+
+## Documentation
+
+The [documentation index](docs/README.md) defines the authority of language
+specifications, architecture notes, development process, and compatibility
+promises. The [language support matrix](docs/generated/language-support.md)
+separates the target language specification from the currently implemented
+Rust subset.

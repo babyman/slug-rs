@@ -1,4 +1,12 @@
-# Slug Clean-Room Language Package
+# Slug Language Documentation
+
+## Implementation status
+
+These documents define Slug's target conformance surface. The Rust VM in this
+repository implements only the subset listed in
+[`../generated/language-support.md`](../generated/language-support.md). A
+specified feature is not implemented merely because it appears in this
+directory.
 
 ## Purpose
 
@@ -19,6 +27,13 @@ normative.
 | `slug.ebnf` | Parser grammar derived from the accepted source syntax. |
 | `runtime-requirements.md` | Observable evaluation, module, diagnostic, configuration, and concurrency requirements. |
 | `configuration.md` | The `cfg` contract, configuration sources, namespaces, precedence, and conversions. |
+| `Automatic Semicolon Insertion (ASI) Rules.md` | Automatic statement termination rules. |
+| `Errors - Mini Spec.md` | Error categories and diagnostic behavior. |
+| `Map Syntax and Behavior - Mini Spec.md` | Map literals, keys, and operations. |
+| `Match and Destructuring - Mini Spec.md` | Match expressions and destructuring patterns. |
+| `Strings - Mini Spec.md` | String literals and string operations. |
+| `Value Pinning in match Patterns.md` | Pinning existing values in match patterns. |
+| `Variadic Functions and Spread Syntax - Mini Spec.md` | Variadic parameters and spread arguments. |
 
 The package also includes focused supplemental notes for automatic semicolon
 insertion, errors, maps, matching and destructuring, strings, value pinning,
@@ -39,7 +54,7 @@ handoff MUST preserve this repository layout:
 
 ```text
 slug/
-├── extras/
+├── docs/
 │   └── language/                 # this package
 ├── lib/
 │   └── slug/                     # public standard-library source
@@ -79,7 +94,7 @@ goroutines, or Go object representations to satisfy this package.
 
 Before sending the package, verify that the recipient receives:
 
-- this `extras/language` directory;
+- this `docs/language` directory;
 - `lib/slug` and `tests/vm-conformance` at the relative paths above;
 - the intended Slug version or commit identifier;
 - a fixture manifest or an explicit statement that the current source-only
