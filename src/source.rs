@@ -280,7 +280,29 @@ impl Lexer {
                 }
                 '/' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Slash, span);
+                    match self.peek() {
+                        Some('/') => {
+                            self.next();
+                            while self.peek().is_some_and(|value| value != '\n') {
+                                self.next();
+                            }
+                        }
+                        Some('*') => {
+                            self.next();
+                            let mut closed = false;
+                            while let Some(value) = self.next() {
+                                if value == '*' && self.peek() == Some('/') {
+                                    self.next();
+                                    closed = true;
+                                    break;
+                                }
+                            }
+                            if !closed {
+                                return Err(SourceError::at("unterminated block comment", span));
+                            }
+                        }
+                        _ => Self::push(&mut result, TokenKind::Slash, span),
+                    }
                 }
                 '&' => {
                     self.next();
@@ -446,13 +468,20 @@ impl Lexer {
     }
 }
 
+const MAX_PARSE_NESTING: usize = 512;
+
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    nesting: usize,
 }
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, index: 0 }
+        Self {
+            tokens,
+            index: 0,
+            nesting: 0,
+        }
     }
     fn peek(&self) -> &Token {
         &self.tokens[self.index]
@@ -479,6 +508,16 @@ impl Parser {
         while self.matches(&TokenKind::Sep) {
             self.next();
         }
+    }
+    fn enter_nesting(&mut self, span: SourceSpan) -> Result<(), SourceError> {
+        if self.nesting == MAX_PARSE_NESTING {
+            return Err(SourceError::at("source nesting limit exceeded", span));
+        }
+        self.nesting += 1;
+        Ok(())
+    }
+    fn leave_nesting(&mut self) {
+        self.nesting -= 1;
     }
     fn parse(&mut self) -> Result<Vec<Expr>, SourceError> {
         let mut expressions = Vec::new();
@@ -526,11 +565,14 @@ impl Parser {
         {
             let span = self.next().span;
             self.next();
+            self.enter_nesting(span.clone())?;
+            let value = self.expression()?;
+            self.leave_nesting();
             return Ok(Expr {
                 span,
                 kind: ExprKind::Assign {
                     name,
-                    value: Box::new(self.expression()?),
+                    value: Box::new(value),
                 },
             });
         }
@@ -584,7 +626,8 @@ impl Parser {
         let mut value = self.primary()?;
         loop {
             if self.matches(&TokenKind::LParen) {
-                self.next();
+                let delimiter = self.next();
+                self.enter_nesting(delimiter.span)?;
                 let mut arguments = Vec::new();
                 if !self.matches(&TokenKind::RParen) {
                     loop {
@@ -599,6 +642,7 @@ impl Parser {
                     }
                 }
                 self.consume(&TokenKind::RParen, "expected )")?;
+                self.leave_nesting();
                 let span = value.span.clone();
                 value = Expr {
                     span,
@@ -609,8 +653,10 @@ impl Parser {
                 };
             } else if self.matches(&TokenKind::LBracket) {
                 let span = self.next().span;
+                self.enter_nesting(span.clone())?;
                 let index = self.expression()?;
                 self.consume(&TokenKind::RBracket, "expected ]")?;
+                self.leave_nesting();
                 value = Expr {
                     span,
                     kind: ExprKind::Index {
@@ -663,8 +709,10 @@ impl Parser {
             TokenKind::Nil => ExprKind::Value(Value::Nil),
             TokenKind::Name(value) => ExprKind::Name(value),
             TokenKind::LParen => {
+                self.enter_nesting(span.clone())?;
                 let value = self.expression()?;
                 self.consume(&TokenKind::RParen, "expected )")?;
+                self.leave_nesting();
                 return Ok(value);
             }
             TokenKind::LBracket => return self.list(span),
@@ -676,6 +724,7 @@ impl Parser {
         Ok(Expr { kind, span })
     }
     fn list(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.enter_nesting(span.clone())?;
         let mut values = Vec::new();
         if !self.matches(&TokenKind::RBracket) {
             loop {
@@ -690,6 +739,7 @@ impl Parser {
             }
         }
         self.consume(&TokenKind::RBracket, "expected ]")?;
+        self.leave_nesting();
         Ok(Expr {
             kind: ExprKind::List(values),
             span,
@@ -740,6 +790,7 @@ impl Parser {
         false
     }
     fn map(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.enter_nesting(span.clone())?;
         let mut entries = Vec::new();
         loop {
             let key = if self.matches(&TokenKind::LBracket) {
@@ -769,12 +820,14 @@ impl Parser {
             }
         }
         self.consume(&TokenKind::RBrace, "expected }")?;
+        self.leave_nesting();
         Ok(Expr {
             kind: ExprKind::Map(entries),
             span,
         })
     }
     fn block_after_open(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.enter_nesting(span.clone())?;
         let mut values = Vec::new();
         self.separators();
         while !self.matches(&TokenKind::RBrace) {
@@ -791,6 +844,7 @@ impl Parser {
             self.separators();
         }
         self.next();
+        self.leave_nesting();
         Ok(Expr {
             kind: ExprKind::Block(values),
             span,
@@ -1114,8 +1168,9 @@ impl Compiler {
                 state.patch(end);
             }
             ExprKind::Function { parameters, body } => {
-                let (chunk, captures) = self.function(parameters, body, state.visible())?;
+                let (mut chunk, captures) = self.function(parameters, body, state.visible())?;
                 let index = self.chunks.len();
+                chunk.name = format!("<fn #{index}>");
                 self.chunks.push(chunk);
                 state.emit(
                     Op::MakeClosure {

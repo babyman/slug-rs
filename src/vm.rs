@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, rc::Rc};
+use std::{cmp::Ordering, collections::HashMap, fmt, rc::Rc};
 
 use crate::{
     Capture, Program, SourceSpan, Value,
@@ -52,6 +52,8 @@ impl std::error::Error for RuntimeError {}
 #[derive(Clone)]
 struct Frame {
     closure: Rc<Closure>,
+    function: String,
+    call_span: Option<SourceSpan>,
     ip: usize,
     stack_base: usize,
     locals: Vec<BindingCell>,
@@ -128,6 +130,8 @@ impl Vm {
                 chunk: entry,
                 captures: Vec::new(),
             }),
+            function: chunk.name.clone(),
+            call_span: None,
             ip: 0,
             stack_base: 0,
             locals: (0..chunk.locals)
@@ -320,8 +324,8 @@ impl Vm {
                     let (left, right) = self.pop_pair(span.clone())?;
                     self.stack.push(Value::Bool(left == right));
                 }
-                Op::Greater => self.compare(span, |a, b| a > b)?,
-                Op::Less => self.compare(span, |a, b| a < b)?,
+                Op::Greater => self.compare(span, Ordering::Greater)?,
+                Op::Less => self.compare(span, Ordering::Less)?,
                 Op::Jump(target) => self.jump(target, span)?,
                 Op::JumpIfFalse(target) => {
                     if !self.peek(span.clone())?.is_truthy() {
@@ -401,7 +405,14 @@ impl Vm {
     }
 
     fn call(&mut self, program: &Program, count: usize, span: Option<SourceSpan>) -> VmResult<()> {
-        let base = self.stack.len().checked_sub(count + 1).ok_or_else(|| {
+        let required = count.checked_add(1).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "call argument count is too large".into(),
+                span.clone(),
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
                 "call has too few stack values".into(),
@@ -446,6 +457,8 @@ impl Vm {
                 locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
                 self.frames.push(Frame {
                     closure,
+                    function: chunk.name.clone(),
+                    call_span: span,
                     ip: 0,
                     stack_base: base,
                     locals,
@@ -485,15 +498,17 @@ impl Vm {
         );
         Ok(())
     }
-    fn compare(
-        &mut self,
-        span: Option<SourceSpan>,
-        operation: fn(f64, f64) -> bool,
-    ) -> VmResult<()> {
+    fn compare(&mut self, span: Option<SourceSpan>, expected: Ordering) -> VmResult<()> {
         let (left, right) = self.pop_pair(span.clone())?;
-        let (left, right) = numbers(left, right)
-            .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?;
-        self.stack.push(Value::Bool(operation(left, right)));
+        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+            left.cmp(right) == expected
+        } else {
+            let (left, right) = numbers(left, right)
+                .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?;
+            left.partial_cmp(&right)
+                .is_some_and(|ordering| ordering == expected)
+        };
+        self.stack.push(Value::Bool(result));
         Ok(())
     }
     fn pop_pair(&mut self, span: Option<SourceSpan>) -> VmResult<(Value, Value)> {
@@ -596,8 +611,8 @@ impl Vm {
                 .iter()
                 .rev()
                 .map(|frame| CallFrame {
-                    function: format!("chunk #{}", frame.closure.chunk),
-                    span: span.clone(),
+                    function: frame.function.clone(),
+                    span: frame.call_span.clone(),
                 })
                 .collect(),
         }
@@ -632,12 +647,24 @@ fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     }
 }
 fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
-    numeric(left, right, |a, b| a - b)
+    integer_or_float(left, right, i64::checked_sub, |a, b| a - b)
 }
 fn multiply(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
-    numeric(left, right, |a, b| a * b)
+    integer_or_float(left, right, i64::checked_mul, |a, b| a * b)
 }
 fn divide(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+        if *right == 0 {
+            return Err((RuntimeErrorKind::DivideByZero, "division by zero".into()));
+        }
+        if let Some(value) = left.checked_div(*right) {
+            if left % right == 0 {
+                return Ok(Value::Int(value));
+            }
+        } else {
+            return Err((RuntimeErrorKind::Type, "integer overflow".into()));
+        }
+    }
     let (a, b) = numbers(left, right).map_err(|message| (RuntimeErrorKind::Type, message))?;
     if b == 0.0 {
         Err((RuntimeErrorKind::DivideByZero, "division by zero".into()))
@@ -646,6 +673,15 @@ fn divide(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)
     }
 }
 fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+        return left.checked_rem(*right).map(Value::Int).ok_or_else(|| {
+            if *right == 0 {
+                (RuntimeErrorKind::DivideByZero, "division by zero".into())
+            } else {
+                (RuntimeErrorKind::Type, "integer overflow".into())
+            }
+        });
+    }
     let (a, b) = numbers(left, right).map_err(|message| (RuntimeErrorKind::Type, message))?;
     if b == 0.0 {
         Err((RuntimeErrorKind::DivideByZero, "division by zero".into()))
@@ -680,19 +716,32 @@ fn index_value(collection: Value, index: &Value) -> Result<Value, String> {
                 .cloned()
                 .ok_or_else(|| "list index is out of bounds".into())
         }
-        Value::Map(entries) => Ok(entries
-            .iter()
-            .rev()
-            .find(|(key, _)| key == index)
-            .map_or(Value::Nil, |(_, value)| value.clone())),
+        Value::Map(entries) => {
+            let exact = entries.iter().rev().find(|(key, _)| key == index);
+            let fallback = match index {
+                Value::Symbol(name) => entries.iter().rev().find(
+                    |(key, _)| matches!(key, Value::Str(value) if value.as_ref() == name.as_ref()),
+                ),
+                _ => None,
+            };
+            Ok(exact
+                .or(fallback)
+                .map_or(Value::Nil, |(_, value)| value.clone()))
+        }
         value => Err(format!("cannot index {}", value.type_name())),
     }
 }
-fn numeric(
+fn integer_or_float(
     left: Value,
     right: Value,
+    integer_operation: fn(i64, i64) -> Option<i64>,
     operation: fn(f64, f64) -> f64,
 ) -> Result<Value, (RuntimeErrorKind, String)> {
+    if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+        return integer_operation(*left, *right)
+            .map(Value::Int)
+            .ok_or((RuntimeErrorKind::Type, "integer overflow".into()));
+    }
     let (a, b) = numbers(left, right).map_err(|message| (RuntimeErrorKind::Type, message))?;
     Ok(Value::Float(operation(a, b)))
 }

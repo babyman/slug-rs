@@ -23,6 +23,33 @@ fn executes_integer_arithmetic() {
 }
 
 #[test]
+fn preserves_integer_precision_and_rejects_oversized_calls() {
+    let mut main = Chunk::new("main", 0);
+    let lower = main.constant(Value::Int(9_007_199_254_740_992));
+    let higher = main.constant(Value::Int(9_007_199_254_740_993));
+    main.emit(Op::Constant(lower))
+        .emit(Op::Constant(higher))
+        .emit(Op::Less)
+        .emit(Op::Constant(higher))
+        .emit(Op::Constant(lower))
+        .emit(Op::Subtract)
+        .emit(Op::List(2))
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::List(std::rc::Rc::new(vec![Value::Bool(true), Value::Int(1)]))
+    );
+
+    let mut invalid = Chunk::new("main", 0);
+    invalid.emit(Op::Call(usize::MAX)).emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(invalid), 0)
+        .expect_err("oversized call must be rejected");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert_eq!(error.message, "call argument count is too large");
+}
+
+#[test]
 fn constructs_and_indexes_collections() {
     let mut main = Chunk::new("main", 0);
     let ten = main.constant(Value::Int(10));
@@ -189,4 +216,53 @@ fn turns_runtime_faults_into_slug_errors_with_source_locations() {
     assert_eq!(error.kind, RuntimeErrorKind::DivideByZero);
     assert_eq!(error.span, Some(SourceSpan::new("example.slug", 2, 8)));
     assert!(!error.frames.is_empty());
+}
+
+#[test]
+fn reports_function_names_and_call_sites_in_frames() {
+    let mut inner = Chunk::new("inner", 0);
+    let one = inner.constant(Value::Int(1));
+    let zero = inner.constant(Value::Int(0));
+    inner
+        .emit(Op::Constant(one))
+        .emit(Op::Constant(zero))
+        .emit_at(Op::Divide, SourceSpan::new("inner.slug", 3, 5))
+        .emit(Op::Return);
+
+    let mut outer = Chunk::new("outer", 0);
+    outer
+        .emit(Op::MakeClosure {
+            chunk: 0,
+            captures: vec![],
+        })
+        .emit_at(Op::Call(0), SourceSpan::new("outer.slug", 7, 3))
+        .emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::MakeClosure {
+        chunk: 1,
+        captures: vec![],
+    })
+    .emit_at(Op::Call(0), SourceSpan::new("main.slug", 2, 1))
+    .emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(inner);
+    program.add_chunk(outer);
+    program.add_chunk(main);
+    let error = Vm::new()
+        .run_named(&program, "main")
+        .expect_err("division should fail");
+    assert_eq!(error.frames[0].function, "inner");
+    assert_eq!(
+        error.frames[0].span,
+        Some(SourceSpan::new("outer.slug", 7, 3))
+    );
+    assert_eq!(error.frames[1].function, "outer");
+    assert_eq!(
+        error.frames[1].span,
+        Some(SourceSpan::new("main.slug", 2, 1))
+    );
+    assert_eq!(error.frames[2].function, "main");
+    assert_eq!(error.frames[2].span, None);
 }

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserved integer precision in integer arithmetic and comparisons; rejected
+  oversized bytecode calls without host overflow; and improved map dot lookup
+  plus runtime frame names and call-site spans.
+- Added parser nesting limits and support for `//`, `/* ... */`, and `/** ... */`
+  comments.
 - Fixed parser stack overflow risks for long prefix sequences and corrected
   comments, infix continuation, delimited multiline expressions, and brace
   disambiguation at source newlines.

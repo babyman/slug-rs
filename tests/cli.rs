@@ -216,6 +216,28 @@ fn handles_comments_and_multiline_delimited_expressions() {
 }
 
 #[test]
+fn supports_all_documented_comment_forms_and_dot_string_fallback() {
+    let path = fixture_path("comments-and-dot-access");
+    fs::write(
+        &path,
+        "val user = {[\"name\"]: 1}\n\
+         // line comment\n\
+         /** documentation comment */\n\
+         println(user.name) /* block comment */\n",
+    )
+    .expect("write comment source");
+    let output = slug().arg(&path).output().expect("run comment source");
+    fs::remove_file(path).expect("remove comment source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn parses_long_prefix_sequences_without_recursion() {
     let path = fixture_path("prefix-depth");
     let source = format!("println({}true)\n", "!".repeat(100_000));
@@ -232,6 +254,26 @@ fn parses_long_prefix_sequences_without_recursion() {
         "true\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_deeply_nested_source_without_aborting() {
+    let path = fixture_path("nesting-depth");
+    let source = format!("println({}true{})\n", "(".repeat(600), ")".repeat(600));
+    fs::write(&path, source).expect("write deeply nested source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run deeply nested source");
+    fs::remove_file(path).expect("remove deeply nested source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .contains("slug: parse error: source nesting limit exceeded")
+    );
 }
 
 #[test]
@@ -265,7 +307,7 @@ fn retains_source_locations_for_runtime_faults_from_source() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(stderr.starts_with("slug: runtime error: division by zero at "));
-    assert!(stderr.ends_with(":2:11\n  in chunk #0\n"));
+    assert!(stderr.ends_with(":2:11\n  in main\n"));
 }
 
 #[test]
