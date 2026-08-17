@@ -4,6 +4,10 @@ fn slug() -> Command {
     Command::new(env!("CARGO_BIN_EXE_slug"))
 }
 
+fn fixture_path(kind: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("slug-cli-{kind}-{}.slug", std::process::id()))
+}
+
 #[test]
 fn help_describes_the_current_public_capability() {
     let output = slug().arg("--help").output().expect("run slug --help");
@@ -30,7 +34,7 @@ fn version_is_available_without_loading_source() {
 
 #[test]
 fn executes_source_through_the_public_cli() {
-    let path = std::env::temp_dir().join(format!("slug-cli-{}.slug", std::process::id()));
+    let path = fixture_path("success");
     fs::write(&path, "val total = 6 * 7\nprintln(total)\n").expect("write Slug source");
     let output = slug().arg(&path).output().expect("run Slug source");
     fs::remove_file(path).expect("remove Slug source");
@@ -41,4 +45,38 @@ fn executes_source_through_the_public_cli() {
         "42\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn reports_source_parse_errors_without_a_host_crash() {
+    let path = fixture_path("invalid");
+    fs::write(&path, "val = 1\n").expect("write invalid Slug source");
+    let output = slug().arg(&path).output().expect("run invalid Slug source");
+    fs::remove_file(path).expect("remove invalid Slug source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("stderr is UTF-8"),
+        "slug: parse error: expected binding name\n"
+    );
+}
+
+#[test]
+fn reports_runtime_faults_without_a_host_crash() {
+    let path = fixture_path("runtime");
+    fs::write(&path, "println(1 / 0)\n").expect("write faulting Slug source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run faulting Slug source");
+    fs::remove_file(path).expect("remove faulting Slug source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: runtime error: division by zero")
+    );
 }
