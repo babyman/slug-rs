@@ -1,6 +1,5 @@
 /// Stateful source scanner. Tokenization methods remain in the parent module
 /// during this first extraction step so lexer behavior stays unchanged.
-use super::ast::{Token, TokenKind};
 use crate::SourceSpan;
 
 pub(super) struct Lexer {
@@ -42,39 +41,4 @@ impl Lexer {
         Some(value)
     }
 
-    pub(super) fn newline_continues(&self, tokens: &[Token]) -> bool {
-        matches!(
-            tokens.last().map(|token| &token.kind),
-            Some(
-                TokenKind::Plus
-                    | TokenKind::Minus
-                    | TokenKind::Star
-                    | TokenKind::Slash
-                    | TokenKind::EqEq
-                    | TokenKind::BangEq
-                    | TokenKind::Less
-                    | TokenKind::LessEq
-                    | TokenKind::Greater
-                    | TokenKind::GreaterEq
-                    | TokenKind::AndAnd
-                    | TokenKind::OrOr
-                    | TokenKind::Eq
-                    | TokenKind::Comma
-                    | TokenKind::Colon
-                    | TokenKind::Arrow
-            )
-        ) || self.next_starts_infix()
-    }
-
-    fn next_starts_infix(&self) -> bool {
-        matches!(
-            (self.peek(), self.input.get(self.index + 1).copied()),
-            (Some('&'), Some('&')) | (Some('|'), Some('|')) | (Some('='), Some('='))
-                | (Some('!'), Some('=')) | (Some('<'), Some('=')) | (Some('>'), Some('='))
-        ) || matches!(self.peek(), Some('+' | '-' | '*' | '/' | '<' | '>'))
-    }
-
-    pub(super) fn push(tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {
-        tokens.push(Token { kind, span });
-    }
 }

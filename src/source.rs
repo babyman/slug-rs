@@ -12,8 +12,11 @@ use crate::{Capture, Chunk, DeferMode, MatchPattern, Op, Program, SourceSpan, Va
 mod ast;
 #[path = "source/lexer.rs"]
 mod lexer;
+#[path = "source/parser.rs"]
+mod parser;
 use ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, Token, TokenKind};
 use lexer::Lexer;
+use parser::Parser;
 
 #[derive(Clone, Debug)]
 pub struct SourceError {
@@ -364,19 +367,7 @@ impl Lexer {
 
 const MAX_PARSE_NESTING: usize = 512;
 
-struct Parser {
-    tokens: Vec<Token>,
-    index: usize,
-    nesting: usize,
-}
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
-        Self {
-            tokens,
-            index: 0,
-            nesting: 0,
-        }
-    }
     fn peek(&self) -> &Token {
         &self.tokens[self.index]
     }
