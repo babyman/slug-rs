@@ -40,5 +40,4 @@ impl Lexer {
         }
         Some(value)
     }
-
 }

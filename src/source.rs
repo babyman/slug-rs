@@ -368,21 +368,6 @@ impl Lexer {
 const MAX_PARSE_NESTING: usize = 512;
 
 impl Parser {
-    fn parse(&mut self) -> Result<Vec<Expr>, SourceError> {
-        let mut expressions = Vec::new();
-        self.separators();
-        while !self.matches(&TokenKind::End) {
-            expressions.push(self.statement()?);
-            if !matches!(self.kind(), TokenKind::End | TokenKind::Sep) {
-                return Err(SourceError::at(
-                    "expected statement separator",
-                    self.peek().span.clone(),
-                ));
-            }
-            self.separators();
-        }
-        Ok(expressions)
-    }
     fn statement(&mut self) -> Result<Expr, SourceError> {
         if matches!(self.kind(), TokenKind::Return) {
             let span = self.next().span;

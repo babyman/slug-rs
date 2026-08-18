@@ -1,4 +1,4 @@
-use super::{ast::{Token, TokenKind}, SourceError};
+use super::{ast::{Expr, Token, TokenKind}, SourceError};
 use crate::SourceSpan;
 
 /// Stateful source parser. Grammar methods remain with the front-end during
@@ -11,20 +11,67 @@ pub(super) struct Parser {
 
 impl Parser {
     pub(super) fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, index: 0, nesting: 0 }
+        Self {
+            tokens,
+            index: 0,
+            nesting: 0,
+        }
     }
 
-    pub(super) fn peek(&self) -> &Token { &self.tokens[self.index] }
-    pub(super) fn kind(&self) -> &TokenKind { &self.peek().kind }
-    pub(super) fn next(&mut self) -> Token { let token = self.peek().clone(); self.index += 1; token }
-    pub(super) fn matches(&self, kind: &TokenKind) -> bool { std::mem::discriminant(self.kind()) == std::mem::discriminant(kind) }
-    pub(super) fn consume(&mut self, kind: &TokenKind, message: &str) -> Result<Token, SourceError> {
-        if self.matches(kind) { Ok(self.next()) } else { Err(SourceError::at(message, self.peek().span.clone())) }
+    pub(super) fn peek(&self) -> &Token {
+        &self.tokens[self.index]
     }
-    pub(super) fn separators(&mut self) { while self.matches(&TokenKind::Sep) { self.next(); } }
+    pub(super) fn kind(&self) -> &TokenKind {
+        &self.peek().kind
+    }
+    pub(super) fn next(&mut self) -> Token {
+        let token = self.peek().clone();
+        self.index += 1;
+        token
+    }
+    pub(super) fn matches(&self, kind: &TokenKind) -> bool {
+        std::mem::discriminant(self.kind()) == std::mem::discriminant(kind)
+    }
+    pub(super) fn consume(
+        &mut self,
+        kind: &TokenKind,
+        message: &str,
+    ) -> Result<Token, SourceError> {
+        if self.matches(kind) {
+            Ok(self.next())
+        } else {
+            Err(SourceError::at(message, self.peek().span.clone()))
+        }
+    }
+    pub(super) fn separators(&mut self) {
+        while self.matches(&TokenKind::Sep) {
+            self.next();
+        }
+    }
     pub(super) fn enter_nesting(&mut self, span: SourceSpan) -> Result<(), SourceError> {
-        if self.nesting == super::MAX_PARSE_NESTING { return Err(SourceError::at("source nesting limit exceeded", span)); }
-        self.nesting += 1; Ok(())
+        if self.nesting == super::MAX_PARSE_NESTING {
+            return Err(SourceError::at("source nesting limit exceeded", span));
+        }
+        self.nesting += 1;
+        Ok(())
     }
-    pub(super) fn leave_nesting(&mut self) { self.nesting -= 1; }
+    pub(super) fn leave_nesting(&mut self) {
+        self.nesting -= 1;
+    }
+
+    pub(super) fn parse(&mut self) -> Result<Vec<Expr>, SourceError> {
+        let mut expressions = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::End) {
+            expressions.push(self.statement()?);
+            if !matches!(self.kind(), TokenKind::End | TokenKind::Sep) {
+                return Err(SourceError::at(
+                    "expected statement separator",
+                    self.peek().span.clone(),
+                ));
+            }
+            self.separators();
+        }
+        Ok(expressions)
+    }
 }
