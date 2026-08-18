@@ -368,42 +368,6 @@ impl Lexer {
 const MAX_PARSE_NESTING: usize = 512;
 
 impl Parser {
-    fn peek(&self) -> &Token {
-        &self.tokens[self.index]
-    }
-    fn kind(&self) -> &TokenKind {
-        &self.peek().kind
-    }
-    fn next(&mut self) -> Token {
-        let token = self.peek().clone();
-        self.index += 1;
-        token
-    }
-    fn matches(&self, kind: &TokenKind) -> bool {
-        std::mem::discriminant(self.kind()) == std::mem::discriminant(kind)
-    }
-    fn consume(&mut self, kind: &TokenKind, message: &str) -> Result<Token, SourceError> {
-        if self.matches(kind) {
-            Ok(self.next())
-        } else {
-            Err(SourceError::at(message, self.peek().span.clone()))
-        }
-    }
-    fn separators(&mut self) {
-        while self.matches(&TokenKind::Sep) {
-            self.next();
-        }
-    }
-    fn enter_nesting(&mut self, span: SourceSpan) -> Result<(), SourceError> {
-        if self.nesting == MAX_PARSE_NESTING {
-            return Err(SourceError::at("source nesting limit exceeded", span));
-        }
-        self.nesting += 1;
-        Ok(())
-    }
-    fn leave_nesting(&mut self) {
-        self.nesting -= 1;
-    }
     fn parse(&mut self) -> Result<Vec<Expr>, SourceError> {
         let mut expressions = Vec::new();
         self.separators();
