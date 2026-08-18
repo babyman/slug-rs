@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Adopted `{type, msg, data}` as the Slug-visible VM-fault value for future
+  `defer onerror` handlers.
+
 - Added `defer onsuccess` cleanup for normal scope completion.
 
 - Extended plain `defer` cleanup to checked VM runtime faults.

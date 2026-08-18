@@ -373,6 +373,11 @@ program, or an ordinary VM fault propagates. `defer onsuccess`, `defer
 `defer onsuccess` runs only on normal scope completion. It is skipped while a
 throw or checked runtime fault is unwinding.
 
+`defer onerror(err)` receives the original thrown value for `throw value`. For
+a checked VM fault it receives a string-keyed map with `type`, `msg`, and
+`data` fields. `type` identifies the fault class, `msg` is its diagnostic
+message, and `data` is `nil` until a fault defines structured extra data.
+
 ```slug
 val divide = fn(a, b) {
   defer { println("finished") }
