@@ -9,6 +9,12 @@ Read the applicable document in `docs/language/`. If no document owns the rule,
 write or extend a Markdown specification before relying on implementation code
 as the sole definition. State the valid programs, result, and invalid cases.
 
+If the documents leave a Slug-visible outcome open, establish the selected rule
+in its owning normative document before implementation. Create a decision
+record when the choice meets `docs/decisions/README.md`; the record explains
+the rationale, but does not replace the normative requirement. Do not create a
+record merely to repeat behavior the existing documentation already decides.
+
 ## 2. Identify the implementation surface
 
 - `src/source.rs` owns lexing, parsing, and source-to-bytecode compilation.
