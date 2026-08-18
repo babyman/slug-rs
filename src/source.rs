@@ -10,7 +10,10 @@ use crate::{Capture, Chunk, DeferMode, MatchPattern, Op, Program, SourceSpan, Va
 
 #[path = "source/ast.rs"]
 mod ast;
+#[path = "source/lexer.rs"]
+mod lexer;
 use ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, Token, TokenKind};
+use lexer::Lexer;
 
 #[derive(Clone, Debug)]
 pub struct SourceError {
@@ -64,13 +67,6 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     Compiler::new(path, Parser::new(tokens).parse()?).compile()
 }
 
-struct Lexer {
-    path: String,
-    input: Vec<char>,
-    index: usize,
-    line: u32,
-    column: u32,
-}
 impl Lexer {
     fn new(path: &str, input: &str) -> Self {
         Self {
