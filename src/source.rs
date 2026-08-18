@@ -6,7 +6,7 @@ use std::{
     fmt,
 };
 
-use crate::{Capture, Chunk, MatchPattern, Op, Program, SourceSpan, Value};
+use crate::{Capture, Chunk, DeferMode, MatchPattern, Op, Program, SourceSpan, Value};
 
 #[derive(Clone, Debug)]
 pub struct SourceError {
@@ -86,7 +86,8 @@ enum ExprKind {
     },
     Defer {
         value: Box<Expr>,
-        on_success: bool,
+        mode: DeferMode,
+        error_name: Option<String>,
     },
     Recur(Vec<Expr>),
     Match {
@@ -185,6 +186,7 @@ enum TokenKind {
     Throw,
     Defer,
     Onsuccess,
+    Onerror,
     Recur,
     Match,
     True,
@@ -526,6 +528,7 @@ impl Lexer {
                         "throw" => TokenKind::Throw,
                         "defer" => TokenKind::Defer,
                         "onsuccess" => TokenKind::Onsuccess,
+                        "onerror" => TokenKind::Onerror,
                         "recur" => TokenKind::Recur,
                         "match" => TokenKind::Match,
                         "true" => TokenKind::True,
@@ -637,18 +640,28 @@ impl Parser {
         }
         if matches!(self.kind(), TokenKind::Defer) {
             let span = self.next().span;
-            let on_success = if self.matches(&TokenKind::Onsuccess) {
+            let (mode, error_name) = if self.matches(&TokenKind::Onsuccess) {
                 self.next();
-                true
+                (DeferMode::Success, None)
+            } else if self.matches(&TokenKind::Onerror) {
+                self.next();
+                self.consume(&TokenKind::LParen, "expected ( after onerror")?;
+                let token = self.next();
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected error binding name", token.span));
+                };
+                self.consume(&TokenKind::RParen, "expected ) after error binding")?;
+                (DeferMode::Error, Some(name))
             } else {
-                false
+                (DeferMode::Always, None)
             };
             let value = self.expression()?;
             return Ok(Expr {
                 span,
                 kind: ExprKind::Defer {
                     value: Box::new(value),
-                    on_success,
+                    mode,
+                    error_name,
                 },
             });
         }
@@ -1383,21 +1396,20 @@ impl Compiler {
                 self.expression(state, value)?;
                 state.emit(Op::Throw, &expression.span);
             }
-            ExprKind::Defer { value, on_success } => {
+            ExprKind::Defer {
+                value,
+                mode,
+                error_name,
+            } => {
                 let deferred = Expr {
                     kind: ExprKind::Function {
-                        parameters: Vec::new(),
+                        parameters: error_name.iter().cloned().collect(),
                         body: value.clone(),
                     },
                     span: expression.span.clone(),
                 };
                 self.expression(state, &deferred)?;
-                state.emit(
-                    Op::Defer {
-                        on_success: *on_success,
-                    },
-                    &expression.span,
-                );
+                state.emit(Op::Defer { mode: *mode }, &expression.span);
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::Recur(_) => {

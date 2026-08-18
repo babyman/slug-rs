@@ -29,6 +29,7 @@ normative.
 | `configuration.md` | The `cfg` contract, configuration sources, namespaces, precedence, and conversions. |
 | `Automatic Semicolon Insertion (ASI) Rules.md` | Automatic statement termination rules. |
 | `Errors - Mini Spec.md` | Error categories and diagnostic behavior. |
+| `Deferred Work.md` | Deferred-action execution and recovery behavior. |
 | `Map Syntax and Behavior - Mini Spec.md` | Map literals, keys, and operations. |
 | `Match and Destructuring - Mini Spec.md` | Match expressions and destructuring patterns. |
 | `Strings - Mini Spec.md` | String literals and string operations. |
@@ -36,8 +37,8 @@ normative.
 | `Variadic Functions and Spread Syntax - Mini Spec.md` | Variadic parameters and spread arguments. |
 
 The package also includes focused supplemental notes for automatic semicolon
-insertion, errors, maps, matching and destructuring, strings, value pinning,
-and variadic functions with spread syntax. They expand individual topics. If a
+insertion, errors, deferred work, maps, matching and destructuring, strings,
+value pinning, and variadic functions with spread syntax. They expand individual topics. If a
 supplemental note conflicts with the Language Specification or Runtime
 Requirements, the latter documents take precedence.
 

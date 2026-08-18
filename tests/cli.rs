@@ -604,6 +604,60 @@ fn runs_onsuccess_actions_only_after_normal_completion() {
 }
 
 #[test]
+fn recovers_errors_with_defer_onerror_and_resumes_the_caller() {
+    let path = fixture_path("defer-onerror");
+    fs::write(
+        &path,
+        "val fail = fn(pass) {\n\
+           defer println(\"always\")\n\
+           defer onerror(err) { println(\"caught\", err)\n 10 }\n\
+           defer onsuccess println(\"success\")\n\
+           if (pass) { \"ok\" } else { throw \"bad\" }\n\
+         }\n\
+         println(fail(false))\n",
+    )
+    .expect("write recovering deferred source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run recovering deferred source");
+    fs::remove_file(path).expect("remove recovering deferred source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "caught bad\nalways\n10\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn exposes_checked_faults_to_defer_onerror_as_structured_values() {
+    let path = fixture_path("defer-onerror-fault");
+    fs::write(
+        &path,
+        "val fail = fn() {\n\
+           defer onerror(err) { println(err.type, err.msg, err.data)\n 42 }\n\
+           1 / 0\n\
+         }\n\
+         println(\"after\", fail())\n",
+    )
+    .expect("write fault-recovering deferred source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run fault-recovering deferred source");
+    fs::remove_file(path).expect("remove fault-recovering deferred source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "divide_by_zero division by zero nil\nafter 42\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn bare_map_keys_and_dot_access_use_strings() {
     let path = fixture_path("string-map-keys");
     fs::write(

@@ -117,10 +117,18 @@ pub enum Op {
     EnterScope,
     LeaveScope,
     Defer {
-        on_success: bool,
+        mode: DeferMode,
     },
     Recur(usize),
     Return,
+}
+
+/// The condition under which a deferred action runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeferMode {
+    Always,
+    Success,
+    Error,
 }
 
 /// Independently callable code and its constant pool.

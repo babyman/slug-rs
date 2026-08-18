@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `defer onerror(err)` cleanup, structured VM-fault bindings, and
+  recovery that returns the handler result from the handling function.
+
 - Adopted `{type, msg, data}` as the Slug-visible VM-fault value for future
   `defer onerror` handlers.
 

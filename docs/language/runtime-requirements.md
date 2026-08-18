@@ -325,6 +325,10 @@ action throws while another error is active, the new error replaces the active
 one and records the prior error as its cause. An error produced by `await`
 follows ordinary error unwinding and cannot bypass cleanup.
 
+Recovery completes the handler's enclosing function with the handler's result;
+its caller then continues normally. Deferred actions still pending in that
+function run as successful cleanup, while the caller's scopes remain active.
+
 ## `recur`
 
 `recur` is Slug's only stack-safe looping mechanism. The language has no

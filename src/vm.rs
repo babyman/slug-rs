@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap, fmt, rc::Rc};
 
 use crate::{
-    Capture, MatchPattern, Program, SourceSpan, Value,
+    Capture, DeferMode, MatchPattern, Program, SourceSpan, Value,
     bytecode::Op,
     value::{BindingCell, Closure, binding_cell},
 };
@@ -28,7 +28,8 @@ pub struct RuntimeError {
     pub message: String,
     pub span: Option<SourceSpan>,
     pub frames: Vec<CallFrame>,
-    pub thrown: Option<Value>,
+    pub thrown: Option<Box<Value>>,
+    pub cause: Option<Box<RuntimeError>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,18 +63,20 @@ struct Frame {
     locals: Vec<BindingCell>,
     scopes: Vec<Vec<Deferred>>,
     cleanup_action: bool,
+    cleanup_recovers: bool,
 }
 
 #[derive(Clone)]
 struct Deferred {
     action: Value,
-    on_success: bool,
+    mode: DeferMode,
 }
 
 enum Cleanup {
     Actions {
         actions: Vec<Deferred>,
         success: bool,
+        frame_depth: usize,
     },
     Return(Value),
     Error(RuntimeError),
@@ -161,6 +164,7 @@ impl Vm {
                 .collect(),
             scopes: vec![Vec::new()],
             cleanup_action: false,
+            cleanup_recovers: false,
         });
         self.execute(program)
     }
@@ -412,15 +416,21 @@ impl Vm {
                             span.clone(),
                         )
                     })?;
+                    if self.frames.last().is_some_and(|frame| frame.cleanup_action)
+                        && actions.is_empty()
+                    {
+                        continue;
+                    }
                     self.cleanup.push(Cleanup::Actions {
                         actions,
                         success: true,
+                        frame_depth: self.frames.len() - 1,
                     });
                     if let Some(value) = self.drive_cleanup(program)? {
                         return Ok(value);
                     }
                 }
-                Op::Defer { on_success } => {
+                Op::Defer { mode } => {
                     let action = self.pop(span.clone())?;
                     if !matches!(action, Value::Closure(_) | Value::Native { .. }) {
                         return Err(self.error(
@@ -443,7 +453,7 @@ impl Vm {
                             None,
                         ));
                     };
-                    scope.push(Deferred { action, on_success });
+                    scope.push(Deferred { action, mode });
                 }
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
@@ -452,6 +462,12 @@ impl Vm {
                     if is_cleanup {
                         let frame = self.frames.pop().expect("cleanup frame exists");
                         self.stack.truncate(frame.stack_base);
+                        if frame.cleanup_recovers {
+                            if let Some(value) = self.recover_from_error(program, value)? {
+                                return Ok(value);
+                            }
+                            continue;
+                        }
                         if let Some(value) = self.drive_cleanup(program)? {
                             return Ok(value);
                         }
@@ -464,6 +480,7 @@ impl Vm {
                             .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
                                 actions,
                                 success: true,
+                                frame_depth: self.frames.len() - 1,
                             }));
                         if let Some(value) = self.drive_cleanup(program)? {
                             return Ok(value);
@@ -589,6 +606,7 @@ impl Vm {
                     locals,
                     scopes: vec![Vec::new()],
                     cleanup_action: false,
+                    cleanup_recovers: false,
                 });
             }
             Value::Native { name, function } => {
@@ -662,27 +680,81 @@ impl Vm {
         Ok(&mut self.frames.last_mut().expect("frame was checked").scopes)
     }
 
-    fn begin_error(&mut self, error: RuntimeError) {
+    fn begin_error(&mut self, mut error: RuntimeError) {
+        if let Some(Cleanup::Error(previous)) = self.cleanup.first() {
+            error.cause = Some(Box::new(previous.clone()));
+        }
         self.cleanup.clear();
         self.cleanup.push(Cleanup::Error(error));
-        for frame in &mut self.frames {
+        for (frame_depth, frame) in self.frames.iter_mut().enumerate() {
             let scopes = std::mem::take(&mut frame.scopes);
             self.cleanup
                 .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
                     actions,
                     success: false,
+                    frame_depth,
                 }));
         }
+    }
+
+    fn active_error(&self) -> Option<RuntimeError> {
+        self.cleanup.iter().find_map(|cleanup| match cleanup {
+            Cleanup::Error(error) => Some(error.clone()),
+            _ => None,
+        })
+    }
+
+    fn error_value(error: RuntimeError) -> Value {
+        if let Some(value) = error.thrown {
+            return *value;
+        }
+        Value::Map(Rc::new(vec![
+            (
+                Value::string("type"),
+                Value::string(fault_type(&error.kind)),
+            ),
+            (Value::string("msg"), Value::string(error.message)),
+            (Value::string("data"), Value::Nil),
+        ]))
+    }
+
+    fn recover_from_error(&mut self, program: &Program, value: Value) -> VmResult<Option<Value>> {
+        let frame_depth = self.frames.len().checked_sub(1).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "error cleanup has no enclosing frame".into(),
+                None,
+            )
+        })?;
+        self.cleanup.retain(|cleanup| {
+            matches!(cleanup, Cleanup::Actions { frame_depth: depth, .. } if *depth == frame_depth)
+        });
+        for cleanup in &mut self.cleanup {
+            if let Cleanup::Actions { success, .. } = cleanup {
+                *success = true;
+            }
+        }
+        self.cleanup.insert(0, Cleanup::Return(value));
+        self.drive_cleanup(program)
     }
 
     fn drive_cleanup(&mut self, program: &Program) -> VmResult<Option<Value>> {
         loop {
             match self.cleanup.last_mut() {
-                Some(Cleanup::Actions { actions, success }) => match actions.pop() {
+                Some(Cleanup::Actions {
+                    actions, success, ..
+                }) => match actions.pop() {
                     Some(Deferred {
-                        on_success: true, ..
+                        mode: DeferMode::Success,
+                        ..
                     }) if !*success => {}
-                    Some(Deferred { action, .. }) => return self.call_cleanup(program, action),
+                    Some(Deferred {
+                        mode: DeferMode::Error,
+                        ..
+                    }) if *success => {}
+                    Some(Deferred { action, mode }) => {
+                        return self.call_cleanup(program, action, mode == DeferMode::Error);
+                    }
                     None => {
                         self.cleanup.pop();
                     }
@@ -720,7 +792,12 @@ impl Vm {
         }
     }
 
-    fn call_cleanup(&mut self, program: &Program, action: Value) -> VmResult<Option<Value>> {
+    fn call_cleanup(
+        &mut self,
+        program: &Program,
+        action: Value,
+        recovers_error: bool,
+    ) -> VmResult<Option<Value>> {
         match action {
             Value::Closure(closure) => {
                 let chunk = program.chunk(closure.chunk).ok_or_else(|| {
@@ -730,10 +807,11 @@ impl Vm {
                         None,
                     )
                 })?;
-                if chunk.arity != 0 || chunk.locals < chunk.arity {
+                let expected_arity = usize::from(recovers_error);
+                if chunk.arity != expected_arity || chunk.locals < chunk.arity {
                     return Err(self.error(
                         RuntimeErrorKind::InvalidBytecode,
-                        "cleanup action must be a zero-argument function".into(),
+                        "cleanup action has an invalid arity".into(),
                         None,
                     ));
                 }
@@ -743,23 +821,45 @@ impl Vm {
                     call_span: None,
                     ip: 0,
                     stack_base: self.stack.len(),
-                    locals: (0..chunk.locals)
-                        .map(|_| binding_cell(Value::Nil))
-                        .collect(),
+                    locals: if recovers_error {
+                        let error = self
+                            .active_error()
+                            .expect("error cleanup has an active error");
+                        let mut locals = vec![binding_cell(Self::error_value(error))];
+                        locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+                        locals
+                    } else {
+                        (0..chunk.locals)
+                            .map(|_| binding_cell(Value::Nil))
+                            .collect()
+                    },
                     scopes: vec![Vec::new()],
                     cleanup_action: true,
+                    cleanup_recovers: recovers_error,
                 });
                 Ok(None)
             }
             Value::Native { name, function } => {
-                function(&[]).map_err(|message| {
+                let arguments = if recovers_error {
+                    let error = self
+                        .active_error()
+                        .expect("error cleanup has an active error");
+                    vec![Self::error_value(error)]
+                } else {
+                    Vec::new()
+                };
+                let value = function(&arguments).map_err(|message| {
                     self.error(
                         RuntimeErrorKind::Native,
                         format!("native `{name}`: {message}"),
                         None,
                     )
                 })?;
-                self.drive_cleanup(program)
+                if recovers_error {
+                    self.recover_from_error(program, value)
+                } else {
+                    self.drive_cleanup(program)
+                }
             }
             _ => unreachable!("defer validates callability"),
         }
@@ -889,11 +989,13 @@ impl Vm {
                 .frames
                 .iter()
                 .rev()
+                .filter(|frame| !frame.cleanup_action)
                 .map(|frame| CallFrame {
                     function: frame.function.clone(),
                     span: frame.call_span.clone(),
                 })
                 .collect(),
+            cause: None,
         }
     }
 
@@ -903,8 +1005,22 @@ impl Vm {
             format!("uncaught throw: {value}"),
             span,
         );
-        error.thrown = Some(value);
+        error.thrown = Some(Box::new(value));
         error
+    }
+}
+
+fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
+    match kind {
+        RuntimeErrorKind::InvalidBytecode => "invalid_bytecode",
+        RuntimeErrorKind::Type => "type",
+        RuntimeErrorKind::Name => "name",
+        RuntimeErrorKind::Arity => "arity",
+        RuntimeErrorKind::DivideByZero => "divide_by_zero",
+        RuntimeErrorKind::InvalidCall => "invalid_call",
+        RuntimeErrorKind::Native => "native",
+        RuntimeErrorKind::Match => "match",
+        RuntimeErrorKind::Thrown => "thrown",
     }
 }
 

@@ -48,11 +48,35 @@ fn preserves_the_value_and_location_of_a_thrown_error() {
 
     assert_eq!(error.kind, RuntimeErrorKind::Thrown);
     assert_eq!(
-        error.thrown,
-        Some(Value::List(std::rc::Rc::new(vec![Value::Int(42)])))
+        error.thrown.as_deref(),
+        Some(&Value::List(std::rc::Rc::new(vec![Value::Int(42)])))
     );
     assert_eq!(error.span, Some(SourceSpan::new("throw.slug", 3, 1)));
     assert_eq!(error.message, "uncaught throw: [42]");
+}
+
+#[test]
+fn deferred_handler_rethrows_replace_the_error_and_preserve_its_cause() {
+    let program = compile(
+        "defer-rethrow.slug",
+        "val fail = fn() {\n\
+           defer onerror(err) { throw \"replacement\" }\n\
+           throw \"original\"\n\
+         }\n\
+         fail()\n",
+    )
+    .expect("compile deferred rethrow source");
+
+    let error = Vm::new()
+        .run_named(&program, "main")
+        .expect_err("replacement error must remain checked");
+
+    assert_eq!(error.thrown.as_deref(), Some(&Value::string("replacement")));
+    let cause = error
+        .cause
+        .expect("replacement error retains the active error");
+    assert_eq!(cause.thrown.as_deref(), Some(&Value::string("original")));
+    assert!(error.frames.iter().all(|frame| frame.function != "<fn>"));
 }
 
 #[test]

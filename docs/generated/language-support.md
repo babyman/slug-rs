@@ -20,7 +20,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Language-level `throw` with checked payloads | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Plain `defer` cleanup on returns and errors | implemented | `tests/cli.rs` |
 | `defer onsuccess` cleanup | implemented | `tests/cli.rs` |
-| `defer onerror` cleanup and recovery | specified only | `language/language-specification.md` |
+| `defer onerror` cleanup and recovery | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Tail-position `recur(...)` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | List, map, and dot indexing | implemented | `tests/cli.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |

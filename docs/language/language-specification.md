@@ -334,8 +334,7 @@ operation and is valid only in tail position.
 
 An uncaught `throw` terminates the current program with a runtime error that
 retains the thrown Slug value, the `throw` source location, and available Slug
-call frames. The current core subset implements this uncaught-throw boundary;
-scope cleanup and `defer onerror` recovery remain progressive milestones.
+call frames.
 
 ## Recursion and repetition
 
@@ -359,24 +358,24 @@ error propagation and binds the error to `name`.
 
 A thrown value may be any Slug value. Slug has no `try` or `catch` construct;
 `defer onerror` is the recovery mechanism. If an error handler returns normally,
-it handles the active error. Re-propagation requires an explicit `throw`. A
+it handles the active error: its result becomes its enclosing function's result
+and its caller continues. Re-propagation requires an explicit `throw`. A
 throw from a deferred action replaces the active error and retains it as the
 cause. Runtime faults, including invalid calls and unknown names, use the same
 error-unwinding path. Errors include available source location and Slug call
 frames, while deferred helper frames are omitted.
 
-The current core subset implements plain `defer`: an action runs in last-in,
-first-out order when its scope exits normally, an uncaught `throw` leaves the
-program, or an ordinary VM fault propagates. `defer onsuccess`, `defer
-`onerror`, and recovery remain progressive milestones.
+The current core subset implements `defer`, `defer onsuccess`, and `defer
+onerror`: actions run in last-in, first-out order when their scope exits.
 
 `defer onsuccess` runs only on normal scope completion. It is skipped while a
 throw or checked runtime fault is unwinding.
 
 `defer onerror(err)` receives the original thrown value for `throw value`. For
 a checked VM fault it receives a string-keyed map with `type`, `msg`, and
-`data` fields. `type` identifies the fault class, `msg` is its diagnostic
-message, and `data` is `nil` until a fault defines structured extra data.
+`data` fields. `type` is one of `invalid_bytecode`, `type`, `name`, `arity`,
+`divide_by_zero`, `invalid_call`, `native`, or `match`; `msg` is its diagnostic
+message; and `data` is `nil` until a fault defines structured extra data.
 
 ```slug
 val divide = fn(a, b) {
