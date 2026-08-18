@@ -36,6 +36,26 @@ fn turns_destructuring_match_failure_into_a_source_located_runtime_error() {
 }
 
 #[test]
+fn preserves_the_value_and_location_of_a_thrown_error() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::List(std::rc::Rc::new(vec![Value::Int(42)])));
+    main.emit_at(Op::Constant(value), SourceSpan::new("throw.slug", 3, 7))
+        .emit_at(Op::Throw, SourceSpan::new("throw.slug", 3, 1));
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("throw must be a checked runtime error");
+
+    assert_eq!(error.kind, RuntimeErrorKind::Thrown);
+    assert_eq!(
+        error.thrown,
+        Some(Value::List(std::rc::Rc::new(vec![Value::Int(42)])))
+    );
+    assert_eq!(error.span, Some(SourceSpan::new("throw.slug", 3, 1)));
+    assert_eq!(error.message, "uncaught throw: [42]");
+}
+
+#[test]
 fn reuses_a_frame_for_tail_recursion() {
     let mut countdown = Chunk::new("countdown", 1);
     let zero = countdown.constant(Value::Int(0));

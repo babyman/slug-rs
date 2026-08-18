@@ -15,7 +15,7 @@ fn help_describes_the_current_public_capability() {
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
-        "bindings, functions, blocks, conditionals, match, return, recur, collections, arithmetic and logic, calls, and println"
+        "bindings, functions, blocks, conditionals, match, return, throw, recur, collections, arithmetic and logic, calls, and println"
     ));
     assert!(output.stderr.is_empty());
 }
@@ -476,6 +476,27 @@ fn rejects_top_level_return_with_a_location() {
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(stderr.starts_with("slug: semantic error: return is only valid inside a function at "));
     assert!(stderr.ends_with(":2:1\n"));
+}
+
+#[test]
+fn reports_uncaught_throws_with_their_source_location_and_call_frames() {
+    let path = fixture_path("throw");
+    fs::write(
+        &path,
+        "val fail = fn() {\n\
+           throw [\"bad\", 7]\n\
+         }\n\
+         fail()\n",
+    )
+    .expect("write throwing source");
+    let output = slug().arg(&path).output().expect("run throwing source");
+    fs::remove_file(path).expect("remove throwing source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.starts_with("slug: runtime error: uncaught throw: [\"bad\", 7] at "));
+    assert!(stderr.ends_with(":2:1\n  in <fn #0>\n  in main\n"));
 }
 
 #[test]

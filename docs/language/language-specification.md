@@ -332,6 +332,11 @@ val headOrZero = fn(xs) {
 language-level error propagation. `recur(...)` is a function-level tail-call
 operation and is valid only in tail position.
 
+An uncaught `throw` terminates the current program with a runtime error that
+retains the thrown Slug value, the `throw` source location, and available Slug
+call frames. The current core subset implements this uncaught-throw boundary;
+scope cleanup and `defer onerror` recovery remain progressive milestones.
+
 ## Recursion and repetition
 
 Recursion is Slug's only source-language looping construct. Slug has no

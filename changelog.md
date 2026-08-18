@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added checked language-level `throw` with the thrown Slug value, source
+  location, and call frames retained by uncaught runtime errors.
+
 - Clarified the policy requiring undocumented Slug-visible decisions to be
   recorded in their owning normative document before implementation.
 

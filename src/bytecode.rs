@@ -113,6 +113,7 @@ pub enum Op {
         bindings: usize,
     },
     MatchFailure,
+    Throw,
     Recur(usize),
     Return,
 }

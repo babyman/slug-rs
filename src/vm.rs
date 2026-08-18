@@ -18,6 +18,7 @@ pub enum RuntimeErrorKind {
     InvalidCall,
     Native,
     Match,
+    Thrown,
 }
 
 /// A Slug-level runtime error, never a host panic.
@@ -27,6 +28,7 @@ pub struct RuntimeError {
     pub message: String,
     pub span: Option<SourceSpan>,
     pub frames: Vec<CallFrame>,
+    pub thrown: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -360,6 +362,10 @@ impl Vm {
                         span,
                     ));
                 }
+                Op::Throw => {
+                    let value = self.pop(span.clone())?;
+                    return Err(self.thrown(value, span));
+                }
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
@@ -671,6 +677,7 @@ impl Vm {
             kind,
             message,
             span: span.clone(),
+            thrown: None,
             frames: self
                 .frames
                 .iter()
@@ -681,6 +688,16 @@ impl Vm {
                 })
                 .collect(),
         }
+    }
+
+    fn thrown(&self, value: Value, span: Option<SourceSpan>) -> RuntimeError {
+        let mut error = self.error(
+            RuntimeErrorKind::Thrown,
+            format!("uncaught throw: {value}"),
+            span,
+        );
+        error.thrown = Some(value);
+        error
     }
 }
 

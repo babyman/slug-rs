@@ -81,6 +81,9 @@ enum ExprKind {
     Return {
         value: Box<Expr>,
     },
+    Throw {
+        value: Box<Expr>,
+    },
     Recur(Vec<Expr>),
     Match {
         subject: Box<Expr>,
@@ -175,6 +178,7 @@ enum TokenKind {
     If,
     Else,
     Return,
+    Throw,
     Recur,
     Match,
     True,
@@ -513,6 +517,7 @@ impl Lexer {
                         "if" => TokenKind::If,
                         "else" => TokenKind::Else,
                         "return" => TokenKind::Return,
+                        "throw" => TokenKind::Throw,
                         "recur" => TokenKind::Recur,
                         "match" => TokenKind::Match,
                         "true" => TokenKind::True,
@@ -608,6 +613,16 @@ impl Parser {
             return Ok(Expr {
                 span,
                 kind: ExprKind::Return {
+                    value: Box::new(value),
+                },
+            });
+        }
+        if matches!(self.kind(), TokenKind::Throw) {
+            let span = self.next().span;
+            let value = self.expression()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Throw {
                     value: Box::new(value),
                 },
             });
@@ -1338,6 +1353,10 @@ impl Compiler {
                 }
                 self.tail_expression(state, value)?;
                 state.emit(Op::Return, &expression.span);
+            }
+            ExprKind::Throw { value } => {
+                self.expression(state, value)?;
+                state.emit(Op::Throw, &expression.span);
             }
             ExprKind::Recur(_) => {
                 if !state.allows_return() {
