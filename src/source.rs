@@ -68,32 +68,6 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
 }
 
 impl Lexer {
-    fn new(path: &str, input: &str) -> Self {
-        Self {
-            path: path.into(),
-            input: input.chars().collect(),
-            index: 0,
-            line: 1,
-            column: 1,
-        }
-    }
-    fn span(&self) -> SourceSpan {
-        SourceSpan::new(self.path.clone(), self.line, self.column)
-    }
-    fn peek(&self) -> Option<char> {
-        self.input.get(self.index).copied()
-    }
-    fn next(&mut self) -> Option<char> {
-        let value = self.peek()?;
-        self.index += 1;
-        if value == '\n' {
-            self.line += 1;
-            self.column = 1;
-        } else {
-            self.column += 1;
-        }
-        Some(value)
-    }
     fn newline_continues(&self, tokens: &[Token]) -> bool {
         matches!(
             tokens.last().map(|token| &token.kind),
