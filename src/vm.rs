@@ -176,6 +176,22 @@ impl Vm {
     #[allow(clippy::too_many_lines)]
     fn execute(&mut self, program: &Program) -> VmResult<Value> {
         loop {
+            match self.execute_raw(program) {
+                Ok(value) => return Ok(value),
+                Err(error) if self.frames.is_empty() => return Err(error),
+                Err(error) => {
+                    self.begin_error(error);
+                    if let Some(value) = self.drive_cleanup(program)? {
+                        return Ok(value);
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn execute_raw(&mut self, program: &Program) -> VmResult<Value> {
+        loop {
             let (op, span) = self.next_instruction(program)?;
             match op {
                 Op::Constant(index) => {
@@ -376,10 +392,7 @@ impl Vm {
                 }
                 Op::Throw => {
                     let value = self.pop(span.clone())?;
-                    self.begin_error(self.thrown(value, span));
-                    if let Some(value) = self.drive_cleanup(program)? {
-                        return Ok(value);
-                    }
+                    return Err(self.thrown(value, span));
                 }
                 Op::EnterScope => self.current_scopes(span)?.push(Vec::new()),
                 Op::LeaveScope => {
@@ -635,6 +648,7 @@ impl Vm {
     }
 
     fn begin_error(&mut self, error: RuntimeError) {
+        self.cleanup.clear();
         self.cleanup.push(Cleanup::Error(error));
         for frame in &mut self.frames {
             let scopes = std::mem::take(&mut frame.scopes);

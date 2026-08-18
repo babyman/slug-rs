@@ -558,6 +558,36 @@ fn runs_deferred_actions_before_an_uncaught_throw() {
 }
 
 #[test]
+fn runs_deferred_actions_before_a_runtime_fault() {
+    let path = fixture_path("defer-runtime-fault");
+    fs::write(
+        &path,
+        "val fail = fn() {\n\
+           defer println(\"cleanup\")\n\
+           1 / 0\n\
+         }\n\
+         fail()\n",
+    )
+    .expect("write faulting deferred source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run faulting deferred source");
+    fs::remove_file(path).expect("remove faulting deferred source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "cleanup\n"
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .contains("division by zero")
+    );
+}
+
+#[test]
 fn bare_map_keys_and_dot_access_use_strings() {
     let path = fixture_path("string-map-keys");
     fs::write(

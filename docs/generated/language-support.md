@@ -18,7 +18,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Function match bodies | implemented | `tests/cli.rs` |
 | Explicit function return | implemented | `tests/cli.rs` |
 | Language-level `throw` with checked payloads | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Plain `defer` cleanup on return and throw | implemented | `tests/cli.rs` |
+| Plain `defer` cleanup on returns and errors | implemented | `tests/cli.rs` |
 | Conditional `defer` cleanup and recovery | specified only | `language/language-specification.md` |
 | Tail-position `recur(...)` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | List, map, and dot indexing | implemented | `tests/cli.rs` |

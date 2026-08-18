@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Extended plain `defer` cleanup to checked VM runtime faults.
+
 - Added LIFO plain `defer` cleanup for normal returns and uncaught throws.
 
 - Added checked language-level `throw` with the thrown Slug value, source

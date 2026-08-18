@@ -366,9 +366,9 @@ error-unwinding path. Errors include available source location and Slug call
 frames, while deferred helper frames are omitted.
 
 The current core subset implements plain `defer`: an action runs in last-in,
-first-out order when its scope exits normally or an uncaught `throw` leaves the
-program. `defer onsuccess`, `defer onerror`, recovery, and cleanup for
-ordinary VM faults remain progressive milestones.
+first-out order when its scope exits normally, an uncaught `throw` leaves the
+program, or an ordinary VM fault propagates. `defer onsuccess`, `defer
+onerror`, and recovery remain progressive milestones.
 
 ```slug
 val divide = fn(a, b) {
