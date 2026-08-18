@@ -39,6 +39,13 @@ Run the narrowest test that proves a change while iterating. Before handing off
 a Rust change, run `make check`. For documentation-only changes, run
 `git diff --check` and validate every command or file reference you changed.
 
+## Tooling
+
+When the IntelliJ IDEA MCP server is enabled, use it for repository navigation,
+symbol-aware search, diagnostics, refactoring, and running IDE configurations.
+Fall back to command-line tools when the server is unavailable or does not
+support the required operation.
+
 ## Change rules
 
 - Keep source-language semantics in `docs/language/`, not only in implementation

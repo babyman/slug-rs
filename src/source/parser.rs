@@ -1,4 +1,7 @@
-use super::{ast::{Expr, ExprKind, Token, TokenKind}, SourceError};
+use super::{
+    SourceError,
+    ast::{Expr, ExprKind, Token, TokenKind},
+};
 use crate::{DeferMode, SourceSpan};
 
 /// Stateful source parser. Grammar methods remain with the front-end during
@@ -79,50 +82,95 @@ impl Parser {
         if matches!(self.kind(), TokenKind::Return) {
             let span = self.next().span;
             let value = self.expression()?;
-            return Ok(Expr { span, kind: ExprKind::Return { value: Box::new(value) } });
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Return {
+                    value: Box::new(value),
+                },
+            });
         }
         if matches!(self.kind(), TokenKind::Throw) {
             let span = self.next().span;
             let value = self.expression()?;
-            return Ok(Expr { span, kind: ExprKind::Throw { value: Box::new(value) } });
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Throw {
+                    value: Box::new(value),
+                },
+            });
         }
         if matches!(self.kind(), TokenKind::Defer) {
             let span = self.next().span;
             let (mode, error_name) = if self.matches(&TokenKind::Onsuccess) {
-                self.next(); (DeferMode::Success, None)
+                self.next();
+                (DeferMode::Success, None)
             } else if self.matches(&TokenKind::Onerror) {
-                self.next(); self.consume(&TokenKind::LParen, "expected ( after onerror")?;
+                self.next();
+                self.consume(&TokenKind::LParen, "expected ( after onerror")?;
                 let token = self.next();
-                let TokenKind::Name(name) = token.kind else { return Err(SourceError::at("expected error binding name", token.span)); };
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected error binding name", token.span));
+                };
                 self.consume(&TokenKind::RParen, "expected ) after error binding")?;
                 (DeferMode::Error, Some(name))
-            } else { (DeferMode::Always, None) };
+            } else {
+                (DeferMode::Always, None)
+            };
             let value = self.expression()?;
-            return Ok(Expr { span, kind: ExprKind::Defer { value: Box::new(value), mode, error_name } });
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Defer {
+                    value: Box::new(value),
+                    mode,
+                    error_name,
+                },
+            });
         }
         if matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
             let mutable = matches!(self.next().kind, TokenKind::Var);
-            if self.matches(&TokenKind::Eq) { return Err(SourceError::at("expected binding name", self.peek().span.clone())); }
+            if self.matches(&TokenKind::Eq) {
+                return Err(SourceError::at(
+                    "expected binding name",
+                    self.peek().span.clone(),
+                ));
+            }
             let pattern = self.pattern()?;
             self.consume(&TokenKind::Eq, "expected =")?;
             let value = self.expression()?;
-            return Ok(Expr { span: value.span.clone(), kind: ExprKind::Declare { mutable, pattern, value: Box::new(value) } });
+            return Ok(Expr {
+                span: value.span.clone(),
+                kind: ExprKind::Declare {
+                    mutable,
+                    pattern,
+                    value: Box::new(value),
+                },
+            });
         }
         self.expression()
     }
 
     pub(super) fn expression(&mut self) -> Result<Expr, SourceError> {
-        if let (TokenKind::Name(name), Some(Token { kind: TokenKind::Eq, .. })) =
-            (self.kind().clone(), self.tokens.get(self.index + 1))
+        if let (
+            TokenKind::Name(name),
+            Some(Token {
+                kind: TokenKind::Eq,
+                ..
+            }),
+        ) = (self.kind().clone(), self.tokens.get(self.index + 1))
         {
             let span = self.next().span;
             self.next();
             self.enter_nesting(span.clone())?;
             let value = self.expression()?;
             self.leave_nesting();
-            return Ok(Expr { span, kind: ExprKind::Assign { name, value: Box::new(value) } });
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Assign {
+                    name,
+                    value: Box::new(value),
+                },
+            });
         }
         self.binary(0)
     }
-
 }
