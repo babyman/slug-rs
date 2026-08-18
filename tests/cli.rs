@@ -278,6 +278,42 @@ fn matches_string_keyed_maps_with_nested_patterns_and_extra_entries() {
 }
 
 #[test]
+fn function_match_bodies_follow_parameter_subject_rules() {
+    let path = fixture_path("function-match");
+    fs::write(
+        &path,
+        "val classify = fn(value) match {\n\
+           0 => \"zero\"\n\
+           n if n > 0 => \"positive\"\n\
+           _ => \"negative\"\n\
+         }\n\
+         val pair = fn(left, right) match {\n\
+           [1, 2] => \"one-two\"\n\
+           _ => \"other\"\n\
+         }\n\
+         val empty = fn() match { [] => \"empty\" }\n\
+         val sum = fn(xs, total) match {\n\
+           [[], total] => total\n\
+           [[head, ...tail], total] => recur(tail, total + head)\n\
+         }\n\
+         println(classify(3), classify(0), classify(0 - 1), pair(1, 2), pair(2, 1), empty(), sum([1, 2, 3], 0))\n",
+    )
+    .expect("write function match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run function match source");
+    fs::remove_file(path).expect("remove function match source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "positive zero negative one-two other empty 6\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn rejects_recur_outside_a_function_or_tail_position() {
     let top_level = fixture_path("top-level-recur");
     fs::write(&top_level, "recur()\n").expect("write invalid recur source");

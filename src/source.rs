@@ -936,7 +936,31 @@ impl Parser {
             }
         }
         self.consume(&TokenKind::RParen, "expected )")?;
-        let body = self.block()?;
+        let body = if self.matches(&TokenKind::Match) {
+            let match_span = self.next().span;
+            let subject = if parameters.len() == 1 {
+                Expr {
+                    kind: ExprKind::Name(parameters[0].clone()),
+                    span: match_span.clone(),
+                }
+            } else {
+                Expr {
+                    kind: ExprKind::List(
+                        parameters
+                            .iter()
+                            .map(|parameter| Expr {
+                                kind: ExprKind::Name(parameter.clone()),
+                                span: match_span.clone(),
+                            })
+                            .collect(),
+                    ),
+                    span: match_span.clone(),
+                }
+            };
+            self.match_cases(subject, match_span)?
+        } else {
+            self.block()?
+        };
         Ok(Expr {
             kind: ExprKind::Function {
                 parameters,
@@ -970,6 +994,9 @@ impl Parser {
     }
     fn match_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         let subject = self.expression()?;
+        self.match_cases(subject, span)
+    }
+    fn match_cases(&mut self, subject: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
         let delimiter = self.consume(&TokenKind::LBrace, "expected { after match subject")?;
         self.enter_nesting(delimiter.span)?;
         let mut cases = Vec::new();

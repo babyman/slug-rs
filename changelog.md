@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added function match bodies with their parameter-derived subjects.
 - Added non-exact string-key map patterns for `match`.
 - Added `if` guards for match cases.
 - Added literal and list-pattern `match` expressions with case-local bindings.
