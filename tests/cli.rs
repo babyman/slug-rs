@@ -588,6 +588,22 @@ fn runs_deferred_actions_before_a_runtime_fault() {
 }
 
 #[test]
+fn runs_onsuccess_actions_only_after_normal_completion() {
+    let path = fixture_path("defer-onsuccess");
+    fs::write(
+        &path,
+        "val complete = fn() { defer println(\"always\")\n defer onsuccess println(\"success\")\n 1 }\nprintln(complete())\n",
+    ).expect("write onsuccess source");
+    let output = slug().arg(&path).output().expect("run onsuccess source");
+    fs::remove_file(path).expect("remove onsuccess source");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "success\nalways\n1\n"
+    );
+}
+
+#[test]
 fn bare_map_keys_and_dot_access_use_strings() {
     let path = fixture_path("string-map-keys");
     fs::write(

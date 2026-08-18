@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `defer onsuccess` cleanup for normal scope completion.
+
 - Extended plain `defer` cleanup to checked VM runtime faults.
 
 - Added LIFO plain `defer` cleanup for normal returns and uncaught throws.

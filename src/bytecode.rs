@@ -116,7 +116,9 @@ pub enum Op {
     Throw,
     EnterScope,
     LeaveScope,
-    Defer,
+    Defer {
+        on_success: bool,
+    },
     Recur(usize),
     Return,
 }

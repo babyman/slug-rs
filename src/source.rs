@@ -86,6 +86,7 @@ enum ExprKind {
     },
     Defer {
         value: Box<Expr>,
+        on_success: bool,
     },
     Recur(Vec<Expr>),
     Match {
@@ -183,6 +184,7 @@ enum TokenKind {
     Return,
     Throw,
     Defer,
+    Onsuccess,
     Recur,
     Match,
     True,
@@ -523,6 +525,7 @@ impl Lexer {
                         "return" => TokenKind::Return,
                         "throw" => TokenKind::Throw,
                         "defer" => TokenKind::Defer,
+                        "onsuccess" => TokenKind::Onsuccess,
                         "recur" => TokenKind::Recur,
                         "match" => TokenKind::Match,
                         "true" => TokenKind::True,
@@ -634,11 +637,18 @@ impl Parser {
         }
         if matches!(self.kind(), TokenKind::Defer) {
             let span = self.next().span;
+            let on_success = if self.matches(&TokenKind::Onsuccess) {
+                self.next();
+                true
+            } else {
+                false
+            };
             let value = self.expression()?;
             return Ok(Expr {
                 span,
                 kind: ExprKind::Defer {
                     value: Box::new(value),
+                    on_success,
                 },
             });
         }
@@ -1373,7 +1383,7 @@ impl Compiler {
                 self.expression(state, value)?;
                 state.emit(Op::Throw, &expression.span);
             }
-            ExprKind::Defer { value } => {
+            ExprKind::Defer { value, on_success } => {
                 let deferred = Expr {
                     kind: ExprKind::Function {
                         parameters: Vec::new(),
@@ -1382,7 +1392,12 @@ impl Compiler {
                     span: expression.span.clone(),
                 };
                 self.expression(state, &deferred)?;
-                state.emit(Op::Defer, &expression.span);
+                state.emit(
+                    Op::Defer {
+                        on_success: *on_success,
+                    },
+                    &expression.span,
+                );
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::Recur(_) => {

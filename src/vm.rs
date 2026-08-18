@@ -60,12 +60,21 @@ struct Frame {
     ip: usize,
     stack_base: usize,
     locals: Vec<BindingCell>,
-    scopes: Vec<Vec<Value>>,
+    scopes: Vec<Vec<Deferred>>,
     cleanup_action: bool,
 }
 
+#[derive(Clone)]
+struct Deferred {
+    action: Value,
+    on_success: bool,
+}
+
 enum Cleanup {
-    Actions(Vec<Value>),
+    Actions {
+        actions: Vec<Deferred>,
+        success: bool,
+    },
     Return(Value),
     Error(RuntimeError),
 }
@@ -403,12 +412,15 @@ impl Vm {
                             span.clone(),
                         )
                     })?;
-                    self.cleanup.push(Cleanup::Actions(actions));
+                    self.cleanup.push(Cleanup::Actions {
+                        actions,
+                        success: true,
+                    });
                     if let Some(value) = self.drive_cleanup(program)? {
                         return Ok(value);
                     }
                 }
-                Op::Defer => {
+                Op::Defer { on_success } => {
                     let action = self.pop(span.clone())?;
                     if !matches!(action, Value::Closure(_) | Value::Native { .. }) {
                         return Err(self.error(
@@ -431,7 +443,7 @@ impl Vm {
                             None,
                         ));
                     };
-                    scope.push(action);
+                    scope.push(Deferred { action, on_success });
                 }
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
@@ -449,7 +461,10 @@ impl Vm {
                         );
                         self.cleanup.push(Cleanup::Return(value));
                         self.cleanup
-                            .extend(scopes.into_iter().map(Cleanup::Actions));
+                            .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
+                                actions,
+                                success: true,
+                            }));
                         if let Some(value) = self.drive_cleanup(program)? {
                             return Ok(value);
                         }
@@ -636,7 +651,7 @@ impl Vm {
         Ok(())
     }
 
-    fn current_scopes(&mut self, span: Option<SourceSpan>) -> VmResult<&mut Vec<Vec<Value>>> {
+    fn current_scopes(&mut self, span: Option<SourceSpan>) -> VmResult<&mut Vec<Vec<Deferred>>> {
         if self.frames.is_empty() {
             return Err(self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -653,15 +668,21 @@ impl Vm {
         for frame in &mut self.frames {
             let scopes = std::mem::take(&mut frame.scopes);
             self.cleanup
-                .extend(scopes.into_iter().map(Cleanup::Actions));
+                .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
+                    actions,
+                    success: false,
+                }));
         }
     }
 
     fn drive_cleanup(&mut self, program: &Program) -> VmResult<Option<Value>> {
         loop {
             match self.cleanup.last_mut() {
-                Some(Cleanup::Actions(actions)) => match actions.pop() {
-                    Some(action) => return self.call_cleanup(program, action),
+                Some(Cleanup::Actions { actions, success }) => match actions.pop() {
+                    Some(Deferred {
+                        on_success: true, ..
+                    }) if !*success => {}
+                    Some(Deferred { action, .. }) => return self.call_cleanup(program, action),
                     None => {
                         self.cleanup.pop();
                     }

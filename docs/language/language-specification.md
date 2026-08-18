@@ -368,7 +368,10 @@ frames, while deferred helper frames are omitted.
 The current core subset implements plain `defer`: an action runs in last-in,
 first-out order when its scope exits normally, an uncaught `throw` leaves the
 program, or an ordinary VM fault propagates. `defer onsuccess`, `defer
-onerror`, and recovery remain progressive milestones.
+`onerror`, and recovery remain progressive milestones.
+
+`defer onsuccess` runs only on normal scope completion. It is skipped while a
+throw or checked runtime fault is unwinding.
 
 ```slug
 val divide = fn(a, b) {
