@@ -340,6 +340,30 @@ fn destructures_list_and_map_bindings_with_declared_mutability() {
 }
 
 #[test]
+fn captures_remaining_map_entries_in_match_and_destructuring() {
+    let path = fixture_path("map-rest-patterns");
+    fs::write(
+        &path,
+        "val {name, ...rest} = {name: \"Slug\", status: \"ok\", active: true}\n\
+         val describe = fn(user) match {\n\
+           {name, ...remaining} => name + \":\" + remaining.status\n\
+           _ => \"missing\"\n\
+         }\n\
+         println(name, rest.status, rest.active, describe({name: \"Eve\", status: \"ready\", age: 3}))\n",
+    )
+    .expect("write map rest source");
+    let output = slug().arg(&path).output().expect("run map rest source");
+    fs::remove_file(path).expect("remove map rest source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "Slug ok true Eve:ready\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn reports_source_location_for_non_matching_destructuring() {
     let path = fixture_path("destructuring-failure");
     fs::write(&path, "val [head] = []\n").expect("write invalid destructuring source");

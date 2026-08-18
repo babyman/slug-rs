@@ -782,7 +782,10 @@ fn matches_pattern(pattern: &MatchPattern, value: &Value, bindings: &mut Vec<Val
             }
             true
         }
-        MatchPattern::Map(patterns) => {
+        MatchPattern::Map {
+            entries: patterns,
+            rest,
+        } => {
             let Value::Map(entries) = value else {
                 return false;
             };
@@ -797,6 +800,18 @@ fn matches_pattern(pattern: &MatchPattern, value: &Value, bindings: &mut Vec<Val
                     bindings.truncate(binding_start);
                     return false;
                 }
+            }
+            if *rest {
+                let rest_entries = entries
+                    .iter()
+                    .filter(|(key, _)| {
+                        !patterns
+                            .iter()
+                            .any(|(pattern_key, _)| key == &Value::string(pattern_key.clone()))
+                    })
+                    .cloned()
+                    .collect();
+                bindings.push(Value::Map(Rc::new(rest_entries)));
             }
             true
         }

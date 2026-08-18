@@ -132,7 +132,10 @@ enum Pattern {
         items: Vec<Pattern>,
         rest: Option<String>,
     },
-    Map(Vec<(String, Pattern)>),
+    Map {
+        entries: Vec<(String, Pattern)>,
+        rest: Option<String>,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 enum Binary {
@@ -1096,8 +1099,24 @@ impl Parser {
     fn map_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
         self.enter_nesting(span.clone())?;
         let mut entries = Vec::new();
+        let mut rest = None;
         if !self.matches(&TokenKind::RBrace) {
             loop {
+                if self.matches(&TokenKind::Ellipsis) {
+                    self.next();
+                    let token = self.next();
+                    let TokenKind::Name(name) = token.kind else {
+                        return Err(SourceError::at("expected map spread binding", token.span));
+                    };
+                    rest = Some(name);
+                    if !self.matches(&TokenKind::RBrace) {
+                        return Err(SourceError::at(
+                            "map spread pattern must be final",
+                            self.peek().span.clone(),
+                        ));
+                    }
+                    break;
+                }
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
                     return Err(SourceError::at("expected map pattern key", token.span));
@@ -1120,7 +1139,7 @@ impl Parser {
         }
         self.consume(&TokenKind::RBrace, "expected }")?;
         self.leave_nesting();
-        Ok(Pattern::Map(entries))
+        Ok(Pattern::Map { entries, rest })
     }
     fn if_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.consume(&TokenKind::LParen, "expected (")?;
@@ -1645,12 +1664,13 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
             items: items.iter().map(lower_pattern).collect(),
             rest: rest.is_some(),
         },
-        Pattern::Map(entries) => MatchPattern::Map(
-            entries
+        Pattern::Map { entries, rest } => MatchPattern::Map {
+            entries: entries
                 .iter()
                 .map(|(key, pattern)| (key.clone(), lower_pattern(pattern)))
                 .collect(),
-        ),
+            rest: rest.is_some(),
+        },
     }
 }
 
@@ -1666,9 +1686,12 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                     names.push(name.clone());
                 }
             }
-            Pattern::Map(entries) => {
+            Pattern::Map { entries, rest } => {
                 for (_, pattern) in entries {
                     collect(pattern, names);
+                }
+                if let Some(name) = rest {
+                    names.push(name.clone());
                 }
             }
             Pattern::Literal(_) | Pattern::Wildcard => {}

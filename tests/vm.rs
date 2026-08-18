@@ -143,10 +143,10 @@ fn matches_map_patterns_and_exposes_string_key_bindings() {
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
         .emit(Op::TryMatch {
-            pattern: slug_vm::MatchPattern::Map(vec![(
-                "name".into(),
-                slug_vm::MatchPattern::Binding,
-            )]),
+            pattern: slug_vm::MatchPattern::Map {
+                entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+                rest: false,
+            },
             bindings: 1,
         })
         .emit(Op::JumpIfFalse(9))
@@ -164,6 +164,45 @@ fn matches_map_patterns_and_exposes_string_key_bindings() {
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
         Value::string("Slug")
+    );
+}
+
+#[test]
+fn captures_unmatched_map_entries_in_a_rest_binding() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+        (Value::string("name"), Value::string("Slug")),
+        (Value::string("active"), Value::Bool(true)),
+    ])));
+    main.emit(Op::Constant(value))
+        .emit(Op::Duplicate)
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Map {
+                entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+                rest: true,
+            },
+            bindings: 2,
+        })
+        .emit(Op::JumpIfFalse(10))
+        .emit(Op::Pop)
+        .emit(Op::DefineGlobal("rest".into()))
+        .emit(Op::DefineGlobal("name".into()))
+        .emit(Op::Pop)
+        .emit(Op::GetGlobal("rest".into()))
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Map(std::rc::Rc::new(vec![(
+            Value::string("active"),
+            Value::Bool(true),
+        )]))
     );
 }
 

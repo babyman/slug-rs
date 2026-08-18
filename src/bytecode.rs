@@ -45,7 +45,10 @@ pub enum MatchPattern {
         items: Vec<MatchPattern>,
         rest: bool,
     },
-    Map(Vec<(String, MatchPattern)>),
+    Map {
+        entries: Vec<(String, MatchPattern)>,
+        rest: bool,
+    },
 }
 
 /// One VM instruction. Opcode numbers are intentionally not stable.

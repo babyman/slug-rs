@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added named `...rest` captures for non-exact map patterns.
 - Added list and map destructuring for `val` and `var` declarations.
 - Added function match bodies with their parameter-derived subjects.
 - Added non-exact string-key map patterns for `match`.
