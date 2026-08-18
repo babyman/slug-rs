@@ -23,6 +23,19 @@ fn executes_integer_arithmetic() {
 }
 
 #[test]
+fn turns_destructuring_match_failure_into_a_source_located_runtime_error() {
+    let mut main = Chunk::new("main", 0);
+    main.emit_at(Op::MatchFailure, SourceSpan::new("destructure.slug", 4, 7));
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("match failure must be checked");
+
+    assert_eq!(error.kind, RuntimeErrorKind::Match);
+    assert_eq!(error.message, "destructuring pattern did not match");
+    assert_eq!(error.span, Some(SourceSpan::new("destructure.slug", 4, 7)));
+}
+
+#[test]
 fn reuses_a_frame_for_tail_recursion() {
     let mut countdown = Chunk::new("countdown", 1);
     let zero = countdown.constant(Value::Int(0));

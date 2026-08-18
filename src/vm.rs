@@ -17,6 +17,7 @@ pub enum RuntimeErrorKind {
     DivideByZero,
     InvalidCall,
     Native,
+    Match,
 }
 
 /// A Slug-level runtime error, never a host panic.
@@ -351,6 +352,13 @@ impl Vm {
                         self.stack.extend((0..bindings).map(|_| Value::Nil));
                     }
                     self.stack.push(Value::Bool(matched));
+                }
+                Op::MatchFailure => {
+                    return Err(self.error(
+                        RuntimeErrorKind::Match,
+                        "destructuring pattern did not match".into(),
+                        span,
+                    ));
                 }
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {

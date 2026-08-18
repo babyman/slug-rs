@@ -13,7 +13,8 @@ compiled-module contract is documented separately as `.cslug`.
 - Chunks, constants, lexical captures, locals, globals, calls, branches, and
   arithmetic/comparison operations.
 - Checked errors with Slug source spans and call frames instead of host panics.
-- Source execution for a core subset: lexical `val`/`var` bindings, assignment,
+- Source execution for a core subset: lexical `val`/`var` bindings, including
+  list and map destructuring, assignment,
   literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
   basic literal/list/map `match` and function match bodies, `return`,
   tail-position `recur(...)`,

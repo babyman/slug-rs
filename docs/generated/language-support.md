@@ -5,6 +5,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Feature | Status | Evidence |
 |---|---|---|
 | Lexical bindings and assignment | implemented | `tests/cli.rs` |
+| List and map destructuring declarations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Literals: integers, strings, booleans, nil, lists, and maps | implemented | `tests/cli.rs` |
 | Arithmetic and comparisons | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Short-circuit logical `&&` and ` |  | `|implemented|`tests/cli.rs` |

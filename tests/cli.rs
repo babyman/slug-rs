@@ -314,6 +314,49 @@ fn function_match_bodies_follow_parameter_subject_rules() {
 }
 
 #[test]
+fn destructures_list_and_map_bindings_with_declared_mutability() {
+    let path = fixture_path("destructuring");
+    fs::write(
+        &path,
+        "var [first, ...tail] = [1, 2, 3]\n\
+         first = 10\n\
+         tail = [7]\n\
+         val {name, age: years} = {name: \"Slug\", age: 3, extra: true}\n\
+         println(first, tail[0], name, years)\n",
+    )
+    .expect("write destructuring source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run destructuring source");
+    fs::remove_file(path).expect("remove destructuring source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "10 7 Slug 3\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn reports_source_location_for_non_matching_destructuring() {
+    let path = fixture_path("destructuring-failure");
+    fs::write(&path, "val [head] = []\n").expect("write invalid destructuring source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid destructuring source");
+    fs::remove_file(path).expect("remove invalid destructuring source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.starts_with("slug: runtime error: destructuring pattern did not match at "));
+    assert!(stderr.ends_with(":1:14\n  in main\n"));
+}
+
+#[test]
 fn rejects_recur_outside_a_function_or_tail_position() {
     let top_level = fixture_path("top-level-recur");
     fs::write(&top_level, "recur()\n").expect("write invalid recur source");

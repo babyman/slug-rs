@@ -108,6 +108,7 @@ pub enum Op {
         pattern: MatchPattern,
         bindings: usize,
     },
+    MatchFailure,
     Recur(usize),
     Return,
 }

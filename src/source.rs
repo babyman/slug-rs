@@ -71,7 +71,7 @@ enum ExprKind {
     Name(String),
     Declare {
         mutable: bool,
-        name: String,
+        pattern: Pattern,
         value: Box<Expr>,
     },
     Assign {
@@ -597,17 +597,20 @@ impl Parser {
         }
         if matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
             let mutable = matches!(self.next().kind, TokenKind::Var);
-            let token = self.next();
-            let TokenKind::Name(name) = token.kind else {
-                return Err(SourceError::at("expected binding name", token.span));
-            };
+            if self.matches(&TokenKind::Eq) {
+                return Err(SourceError::at(
+                    "expected binding name",
+                    self.peek().span.clone(),
+                ));
+            }
+            let pattern = self.pattern()?;
             self.consume(&TokenKind::Eq, "expected =")?;
             let value = self.expression()?;
             return Ok(Expr {
                 span: value.span.clone(),
                 kind: ExprKind::Declare {
                     mutable,
-                    name,
+                    pattern,
                     value: Box::new(value),
                 },
             });
@@ -1169,8 +1172,13 @@ impl Compiler {
     }
     fn compile(mut self) -> Result<Program, SourceError> {
         for expression in &self.expressions {
-            if let ExprKind::Declare { mutable, name, .. } = &expression.kind {
-                self.globals.insert(name.clone(), *mutable);
+            if let ExprKind::Declare {
+                mutable, pattern, ..
+            } = &expression.kind
+            {
+                for name in pattern_bindings(pattern, &expression.span)? {
+                    self.globals.insert(name, *mutable);
+                }
             }
         }
         let expressions = self.expressions.clone();
@@ -1216,17 +1224,11 @@ impl Compiler {
             },
             ExprKind::Declare {
                 mutable,
-                name,
+                pattern,
                 value,
             } => {
                 self.expression(state, value)?;
-                if state.is_root() {
-                    self.globals.insert(name.clone(), *mutable);
-                    state.emit(Op::DefineGlobal(name.clone()), &expression.span);
-                } else {
-                    let slot = state.declare(name.clone(), *mutable);
-                    state.emit(Op::SetLocal(slot), &expression.span);
-                }
+                Self::bind_pattern(state, pattern, *mutable, &expression.span)?;
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::Assign { name, value } => {
@@ -1506,6 +1508,53 @@ impl Compiler {
         for end in ends {
             state.patch(end);
         }
+        Ok(())
+    }
+    fn bind_pattern(
+        state: &mut State,
+        pattern: &Pattern,
+        mutable: bool,
+        span: &SourceSpan,
+    ) -> Result<(), SourceError> {
+        let names = pattern_bindings(pattern, span)?;
+        state.emit(
+            Op::TryMatch {
+                pattern: lower_pattern(pattern),
+                bindings: names.len(),
+            },
+            span,
+        );
+        let failed = state.jump_if_false(span);
+        state.emit(Op::Pop, span);
+        let bindings = names
+            .into_iter()
+            .map(|name| {
+                let binding = if state.is_root() {
+                    Binding::Global { mutable }
+                } else {
+                    Binding::Local {
+                        slot: state.declare(name.clone(), mutable),
+                        mutable,
+                    }
+                };
+                (name, binding)
+            })
+            .collect::<Vec<_>>();
+        for (name, binding) in bindings.iter().rev() {
+            match binding {
+                Binding::Global { .. } => state.emit(Op::DefineGlobal(name.clone()), span),
+                Binding::Local { slot, .. } => state.emit(Op::SetLocal(*slot), span),
+                Binding::Capture { .. } => unreachable!("new bindings cannot be captures"),
+            }
+        }
+        let end = state.jump(span);
+        state.patch(failed);
+        state.emit(Op::Pop, span);
+        for _ in &bindings {
+            state.emit(Op::Pop, span);
+        }
+        state.emit(Op::MatchFailure, span);
+        state.patch(end);
         Ok(())
     }
     fn tail_expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
