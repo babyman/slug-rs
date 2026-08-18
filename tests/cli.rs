@@ -219,6 +219,39 @@ fn matches_literals_and_lists_with_case_local_bindings() {
 }
 
 #[test]
+fn match_guards_use_case_bindings_and_continue_after_false() {
+    let path = fixture_path("match-guards");
+    fs::write(
+        &path,
+        "val classify = fn(value) {\n\
+           match value {\n\
+             n if n > 0 => \"positive\"\n\
+             0 => \"zero\"\n\
+             _ => \"negative\"\n\
+           }\n\
+         }\n\
+         val firstLong = fn(value) {\n\
+           match value {\n\
+             [head, ...tail] if tail[0] > 10 => head\n\
+             [head, ...tail] => tail[0]\n\
+             _ => nil\n\
+           }\n\
+         }\n\
+         println(classify(3), classify(0), classify(0 - 4), firstLong([1, 5]))\n",
+    )
+    .expect("write match guard source");
+    let output = slug().arg(&path).output().expect("run match guard source");
+    fs::remove_file(path).expect("remove match guard source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "positive zero negative 5\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn rejects_recur_outside_a_function_or_tail_position() {
     let top_level = fixture_path("top-level-recur");
     fs::write(&top_level, "recur()\n").expect("write invalid recur source");

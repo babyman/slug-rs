@@ -10,6 +10,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Short-circuit logical `&&` and ` |  | `|implemented|`tests/cli.rs` |
 | Functions, blocks, conditionals, and captures | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Literal and list pattern matching | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Match guards | implemented | `tests/cli.rs` |
 | Explicit function return | implemented | `tests/cli.rs` |
 | Tail-position `recur(...)` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | List, map, and dot indexing | implemented | `tests/cli.rs` |

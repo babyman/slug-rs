@@ -119,6 +119,7 @@ enum ExprKind {
 #[derive(Clone, Debug)]
 struct MatchCase {
     pattern: Pattern,
+    guard: Option<Expr>,
     value: Expr,
     span: SourceSpan,
 }
@@ -977,12 +978,19 @@ impl Parser {
                 return Err(SourceError::at("expected }", self.peek().span.clone()));
             }
             let pattern = self.pattern()?;
+            let guard = if self.matches(&TokenKind::If) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
             let case_span = self
                 .consume(&TokenKind::Arrow, "expected => after match pattern")?
                 .span;
             let value = self.statement()?;
             cases.push(MatchCase {
                 pattern,
+                guard,
                 value,
                 span: case_span,
             });
@@ -1407,6 +1415,15 @@ impl Compiler {
             for slot in slots.iter().rev() {
                 state.emit(Op::SetLocal(*slot), &case.span);
             }
+            let guard_next = if let Some(guard) = &case.guard {
+                self.expression(state, guard)?;
+                Some(state.jump_if_false(&case.span))
+            } else {
+                None
+            };
+            if guard_next.is_some() {
+                state.emit(Op::Pop, &case.span);
+            }
             if tail {
                 self.tail_expression(state, &case.value)?;
             } else {
@@ -1418,6 +1435,12 @@ impl Compiler {
             state.emit(Op::Pop, &case.span);
             for _ in slots {
                 state.emit(Op::Pop, &case.span);
+            }
+            if let Some(guard_next) = guard_next {
+                let skip_guard_cleanup = state.jump(&case.span);
+                state.patch(guard_next);
+                state.emit(Op::Pop, &case.span);
+                state.patch(skip_guard_cleanup);
             }
         }
         state.emit(Op::Pop, &subject.span);
