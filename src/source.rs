@@ -8,6 +8,10 @@ use std::{
 
 use crate::{Capture, Chunk, DeferMode, MatchPattern, Op, Program, SourceSpan, Value};
 
+#[path = "source/ast.rs"]
+mod ast;
+use ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, Token, TokenKind};
+
 #[derive(Clone, Debug)]
 pub struct SourceError {
     pub kind: SourceErrorKind,
@@ -60,6 +64,7 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     Compiler::new(path, Parser::new(tokens).parse()?).compile()
 }
 
+/*
 #[derive(Clone, Debug)]
 struct Expr {
     kind: ExprKind,
@@ -222,7 +227,7 @@ enum TokenKind {
     Sep,
     End,
 }
-
+*/
 struct Lexer {
     path: String,
     input: Vec<char>,
