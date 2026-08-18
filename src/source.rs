@@ -135,6 +135,7 @@ enum Pattern {
     Map {
         entries: Vec<(String, Pattern)>,
         rest: Option<String>,
+        exact: bool,
     },
 }
 #[derive(Clone, Copy, Debug)]
@@ -197,6 +198,8 @@ enum TokenKind {
     RParen,
     LBrace,
     RBrace,
+    LExactMap,
+    RExactMap,
     LBracket,
     RBracket,
     Comma,
@@ -351,11 +354,16 @@ impl Lexer {
                 }
                 '|' => {
                     self.next();
-                    if self.peek() != Some('|') {
+                    let kind = if self.peek() == Some('|') {
+                        self.next();
+                        TokenKind::OrOr
+                    } else if self.peek() == Some('}') {
+                        self.next();
+                        TokenKind::RExactMap
+                    } else {
                         return Err(SourceError::at("expected | after |", span));
-                    }
-                    self.next();
-                    Self::push(&mut result, TokenKind::OrOr, span);
+                    };
+                    Self::push(&mut result, kind, span);
                 }
                 '(' => {
                     self.next();
@@ -369,7 +377,13 @@ impl Lexer {
                 }
                 '{' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::LBrace, span);
+                    let kind = if self.peek() == Some('|') {
+                        self.next();
+                        TokenKind::LExactMap
+                    } else {
+                        TokenKind::LBrace
+                    };
+                    Self::push(&mut result, kind, span);
                 }
                 '}' => {
                     self.next();
@@ -1058,6 +1072,7 @@ impl Parser {
             TokenKind::Name(name) => Ok(Pattern::Binding(name)),
             TokenKind::LBracket => self.list_pattern(&token.span),
             TokenKind::LBrace => self.map_pattern(&token.span),
+            TokenKind::LExactMap => self.exact_map_pattern(&token.span),
             _ => Err(SourceError::at("expected match pattern", token.span)),
         }
     }
@@ -1097,19 +1112,40 @@ impl Parser {
         Ok(Pattern::List { items, rest })
     }
     fn map_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
+        self.map_pattern_with_mode(span, false)
+    }
+    fn exact_map_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
+        self.map_pattern_with_mode(span, true)
+    }
+    fn map_pattern_with_mode(
+        &mut self,
+        span: &SourceSpan,
+        exact: bool,
+    ) -> Result<Pattern, SourceError> {
         self.enter_nesting(span.clone())?;
         let mut entries = Vec::new();
         let mut rest = None;
-        if !self.matches(&TokenKind::RBrace) {
+        let closing = if exact {
+            TokenKind::RExactMap
+        } else {
+            TokenKind::RBrace
+        };
+        if !self.matches(&closing) {
             loop {
                 if self.matches(&TokenKind::Ellipsis) {
+                    if exact {
+                        return Err(SourceError::at(
+                            "exact map patterns cannot capture a rest map",
+                            self.peek().span.clone(),
+                        ));
+                    }
                     self.next();
                     let token = self.next();
                     let TokenKind::Name(name) = token.kind else {
                         return Err(SourceError::at("expected map spread binding", token.span));
                     };
                     rest = Some(name);
-                    if !self.matches(&TokenKind::RBrace) {
+                    if !self.matches(&closing) {
                         return Err(SourceError::at(
                             "map spread pattern must be final",
                             self.peek().span.clone(),
@@ -1132,14 +1168,18 @@ impl Parser {
                     break;
                 }
                 self.next();
-                if self.matches(&TokenKind::RBrace) {
+                if self.matches(&closing) {
                     break;
                 }
             }
         }
-        self.consume(&TokenKind::RBrace, "expected }")?;
+        self.consume(&closing, if exact { "expected |}" } else { "expected }" })?;
         self.leave_nesting();
-        Ok(Pattern::Map { entries, rest })
+        Ok(Pattern::Map {
+            entries,
+            rest,
+            exact,
+        })
     }
     fn if_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.consume(&TokenKind::LParen, "expected (")?;
@@ -1664,12 +1704,17 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
             items: items.iter().map(lower_pattern).collect(),
             rest: rest.is_some(),
         },
-        Pattern::Map { entries, rest } => MatchPattern::Map {
+        Pattern::Map {
+            entries,
+            rest,
+            exact,
+        } => MatchPattern::Map {
             entries: entries
                 .iter()
                 .map(|(key, pattern)| (key.clone(), lower_pattern(pattern)))
                 .collect(),
             rest: rest.is_some(),
+            exact: *exact,
         },
     }
 }
@@ -1686,7 +1731,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                     names.push(name.clone());
                 }
             }
-            Pattern::Map { entries, rest } => {
+            Pattern::Map { entries, rest, .. } => {
                 for (_, pattern) in entries {
                     collect(pattern, names);
                 }

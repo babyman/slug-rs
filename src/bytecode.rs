@@ -48,6 +48,7 @@ pub enum MatchPattern {
     Map {
         entries: Vec<(String, MatchPattern)>,
         rest: bool,
+        exact: bool,
     },
 }
 

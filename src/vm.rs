@@ -785,10 +785,14 @@ fn matches_pattern(pattern: &MatchPattern, value: &Value, bindings: &mut Vec<Val
         MatchPattern::Map {
             entries: patterns,
             rest,
+            exact,
         } => {
             let Value::Map(entries) = value else {
                 return false;
             };
+            if *exact && entries.len() != patterns.len() {
+                return false;
+            }
             let binding_start = bindings.len();
             for (key, pattern) in patterns {
                 let key = Value::string(key.clone());

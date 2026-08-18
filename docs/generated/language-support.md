@@ -13,6 +13,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Literal and list pattern matching | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Non-exact string-key map patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Named map rest captures | implemented | `tests/cli.rs` |
+| Exact map patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Match guards | implemented | `tests/cli.rs` |
 | Function match bodies | implemented | `tests/cli.rs` |
 | Explicit function return | implemented | `tests/cli.rs` |

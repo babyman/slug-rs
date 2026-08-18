@@ -364,6 +364,34 @@ fn captures_remaining_map_entries_in_match_and_destructuring() {
 }
 
 #[test]
+fn exact_map_patterns_reject_extra_entries() {
+    let path = fixture_path("exact-map-patterns");
+    fs::write(
+        &path,
+        "val describe = fn(user) match {\n\
+           {|name: \"Slug\", active: true|} => \"exact\"\n\
+           {name} => name\n\
+           _ => \"other\"\n\
+         }\n\
+         val {|name|} = {name: \"Slug\"}\n\
+         println(describe({name: \"Slug\", active: true}), describe({name: \"Slug\", active: true, extra: 1}), name)\n",
+    )
+    .expect("write exact map pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run exact map pattern source");
+    fs::remove_file(path).expect("remove exact map pattern source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "exact Slug Slug\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn reports_source_location_for_non_matching_destructuring() {
     let path = fixture_path("destructuring-failure");
     fs::write(&path, "val [head] = []\n").expect("write invalid destructuring source");

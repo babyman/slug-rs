@@ -146,6 +146,7 @@ fn matches_map_patterns_and_exposes_string_key_bindings() {
             pattern: slug_vm::MatchPattern::Map {
                 entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
                 rest: false,
+                exact: false,
             },
             bindings: 1,
         })
@@ -180,6 +181,7 @@ fn captures_unmatched_map_entries_in_a_rest_binding() {
             pattern: slug_vm::MatchPattern::Map {
                 entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
                 rest: true,
+                exact: false,
             },
             bindings: 2,
         })
@@ -203,6 +205,30 @@ fn captures_unmatched_map_entries_in_a_rest_binding() {
             Value::string("active"),
             Value::Bool(true),
         )]))
+    );
+}
+
+#[test]
+fn exact_map_patterns_reject_extra_entries() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+        (Value::string("name"), Value::string("Slug")),
+        (Value::string("active"), Value::Bool(true)),
+    ])));
+    main.emit(Op::Constant(value))
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Map {
+                entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+                rest: false,
+                exact: true,
+            },
+            bindings: 1,
+        })
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Bool(false)
     );
 }
 
