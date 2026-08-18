@@ -15,7 +15,7 @@ fn help_describes_the_current_public_capability() {
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
-        "bindings, functions, blocks, conditionals, match, return, throw, recur, collections, arithmetic and logic, calls, and println"
+        "bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, and println"
     ));
     assert!(output.stderr.is_empty());
 }
@@ -497,6 +497,64 @@ fn reports_uncaught_throws_with_their_source_location_and_call_frames() {
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(stderr.starts_with("slug: runtime error: uncaught throw: [\"bad\", 7] at "));
     assert!(stderr.ends_with(":2:1\n  in <fn #0>\n  in main\n"));
+}
+
+#[test]
+fn runs_deferred_actions_in_lifo_order_on_normal_return() {
+    let path = fixture_path("defer");
+    fs::write(
+        &path,
+        "val finish = fn(shouldThrow) {\n\
+           defer println(\"outer\")\n\
+           {\n\
+             defer println(\"inner\")\n\
+             if (shouldThrow) { throw \"stop\" }\n\
+             42\n\
+           }\n\
+         }\n\
+         println(finish(false))\n",
+    )
+    .expect("write deferred source");
+    let output = slug().arg(&path).output().expect("run deferred source");
+    fs::remove_file(path).expect("remove deferred source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "inner\nouter\n42\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn runs_deferred_actions_before_an_uncaught_throw() {
+    let path = fixture_path("defer-throw");
+    fs::write(
+        &path,
+        "val fail = fn() {\n\
+           defer println(\"first\")\n\
+           defer println(\"second\")\n\
+           throw \"stop\"\n\
+         }\n\
+         fail()\n",
+    )
+    .expect("write throwing deferred source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run throwing deferred source");
+    fs::remove_file(path).expect("remove throwing deferred source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "second\nfirst\n"
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .contains("uncaught throw: stop")
+    );
 }
 
 #[test]

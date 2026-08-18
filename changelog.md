@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added LIFO plain `defer` cleanup for normal returns and uncaught throws.
+
 - Added checked language-level `throw` with the thrown Slug value, source
   location, and call frames retained by uncaught runtime errors.
 

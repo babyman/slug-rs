@@ -114,6 +114,9 @@ pub enum Op {
     },
     MatchFailure,
     Throw,
+    EnterScope,
+    LeaveScope,
+    Defer,
     Recur(usize),
     Return,
 }

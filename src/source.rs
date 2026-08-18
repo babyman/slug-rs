@@ -84,6 +84,9 @@ enum ExprKind {
     Throw {
         value: Box<Expr>,
     },
+    Defer {
+        value: Box<Expr>,
+    },
     Recur(Vec<Expr>),
     Match {
         subject: Box<Expr>,
@@ -179,6 +182,7 @@ enum TokenKind {
     Else,
     Return,
     Throw,
+    Defer,
     Recur,
     Match,
     True,
@@ -518,6 +522,7 @@ impl Lexer {
                         "else" => TokenKind::Else,
                         "return" => TokenKind::Return,
                         "throw" => TokenKind::Throw,
+                        "defer" => TokenKind::Defer,
                         "recur" => TokenKind::Recur,
                         "match" => TokenKind::Match,
                         "true" => TokenKind::True,
@@ -623,6 +628,16 @@ impl Parser {
             return Ok(Expr {
                 span,
                 kind: ExprKind::Throw {
+                    value: Box::new(value),
+                },
+            });
+        }
+        if matches!(self.kind(), TokenKind::Defer) {
+            let span = self.next().span;
+            let value = self.expression()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Defer {
                     value: Box::new(value),
                 },
             });
@@ -1358,6 +1373,18 @@ impl Compiler {
                 self.expression(state, value)?;
                 state.emit(Op::Throw, &expression.span);
             }
+            ExprKind::Defer { value } => {
+                let deferred = Expr {
+                    kind: ExprKind::Function {
+                        parameters: Vec::new(),
+                        body: value.clone(),
+                    },
+                    span: expression.span.clone(),
+                };
+                self.expression(state, &deferred)?;
+                state.emit(Op::Defer, &expression.span);
+                state.emit(Op::Nil, &expression.span);
+            }
             ExprKind::Recur(_) => {
                 if !state.allows_return() {
                     return Err(SourceError::semantic(
@@ -1478,6 +1505,7 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
+                state.emit(Op::EnterScope, &expression.span);
                 for (index, value) in values.iter().enumerate() {
                     self.expression(state, value)?;
                     if index + 1 < values.len() {
@@ -1487,6 +1515,7 @@ impl Compiler {
                 if values.is_empty() {
                     state.emit(Op::Nil, &expression.span);
                 }
+                state.emit(Op::LeaveScope, &expression.span);
                 state.leave_scope();
             }
             ExprKind::If {
@@ -1661,6 +1690,7 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
+                state.emit(Op::EnterScope, &expression.span);
                 for (index, value) in values.iter().enumerate() {
                     if index + 1 == values.len() {
                         self.tail_expression(state, value)?;
@@ -1672,6 +1702,7 @@ impl Compiler {
                 if values.is_empty() {
                     state.emit(Op::Nil, &expression.span);
                 }
+                state.emit(Op::LeaveScope, &expression.span);
                 state.leave_scope();
             }
             ExprKind::If {

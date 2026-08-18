@@ -60,6 +60,14 @@ struct Frame {
     ip: usize,
     stack_base: usize,
     locals: Vec<BindingCell>,
+    scopes: Vec<Vec<Value>>,
+    cleanup_action: bool,
+}
+
+enum Cleanup {
+    Actions(Vec<Value>),
+    Return(Value),
+    Error(RuntimeError),
 }
 
 /// A small, checked stack VM for compiler-produced Slug bytecode.
@@ -68,6 +76,7 @@ pub struct Vm {
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
+    cleanup: Vec<Cleanup>,
 }
 
 impl Vm {
@@ -128,6 +137,7 @@ impl Vm {
         }
         self.stack.clear();
         self.frames.clear();
+        self.cleanup.clear();
         self.frames.push(Frame {
             closure: Rc::new(Closure {
                 chunk: entry,
@@ -140,6 +150,8 @@ impl Vm {
             locals: (0..chunk.locals)
                 .map(|_| binding_cell(Value::Nil))
                 .collect(),
+            scopes: vec![Vec::new()],
+            cleanup_action: false,
         });
         self.execute(program)
     }
@@ -364,20 +376,71 @@ impl Vm {
                 }
                 Op::Throw => {
                     let value = self.pop(span.clone())?;
-                    return Err(self.thrown(value, span));
+                    self.begin_error(self.thrown(value, span));
+                    if let Some(value) = self.drive_cleanup(program)? {
+                        return Ok(value);
+                    }
+                }
+                Op::EnterScope => self.current_scopes(span)?.push(Vec::new()),
+                Op::LeaveScope => {
+                    let actions = self.current_scopes(span.clone())?.pop().ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "no active scope".into(),
+                            span.clone(),
+                        )
+                    })?;
+                    self.cleanup.push(Cleanup::Actions(actions));
+                    if let Some(value) = self.drive_cleanup(program)? {
+                        return Ok(value);
+                    }
+                }
+                Op::Defer => {
+                    let action = self.pop(span.clone())?;
+                    if !matches!(action, Value::Closure(_) | Value::Native { .. }) {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            "defer expects a callable action".into(),
+                            span,
+                        ));
+                    }
+                    let Some(frame) = self.frames.last_mut() else {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "no active call frame".into(),
+                            span,
+                        ));
+                    };
+                    let Some(scope) = frame.scopes.last_mut() else {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "no active scope".into(),
+                            None,
+                        ));
+                    };
+                    scope.push(action);
                 }
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
-                    let frame = self
-                        .frames
-                        .pop()
-                        .expect("VM always has a frame while executing");
-                    self.stack.truncate(frame.stack_base);
-                    if self.frames.is_empty() {
-                        return Ok(value);
+                    let is_cleanup = self.frames.last().is_some_and(|frame| frame.cleanup_action);
+                    if is_cleanup {
+                        let frame = self.frames.pop().expect("cleanup frame exists");
+                        self.stack.truncate(frame.stack_base);
+                        if let Some(value) = self.drive_cleanup(program)? {
+                            return Ok(value);
+                        }
+                    } else {
+                        let scopes = std::mem::take(
+                            &mut self.frames.last_mut().expect("frame exists").scopes,
+                        );
+                        self.cleanup.push(Cleanup::Return(value));
+                        self.cleanup
+                            .extend(scopes.into_iter().map(Cleanup::Actions));
+                        if let Some(value) = self.drive_cleanup(program)? {
+                            return Ok(value);
+                        }
                     }
-                    self.stack.push(value);
                 }
             }
         }
@@ -496,6 +559,8 @@ impl Vm {
                     ip: 0,
                     stack_base: base,
                     locals,
+                    scopes: vec![Vec::new()],
+                    cleanup_action: false,
                 });
             }
             Value::Native { name, function } => {
@@ -556,6 +621,113 @@ impl Vm {
         frame.locals = locals;
         frame.ip = 0;
         Ok(())
+    }
+
+    fn current_scopes(&mut self, span: Option<SourceSpan>) -> VmResult<&mut Vec<Vec<Value>>> {
+        if self.frames.is_empty() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active call frame".into(),
+                span,
+            ));
+        }
+        Ok(&mut self.frames.last_mut().expect("frame was checked").scopes)
+    }
+
+    fn begin_error(&mut self, error: RuntimeError) {
+        self.cleanup.push(Cleanup::Error(error));
+        for frame in &mut self.frames {
+            let scopes = std::mem::take(&mut frame.scopes);
+            self.cleanup
+                .extend(scopes.into_iter().map(Cleanup::Actions));
+        }
+    }
+
+    fn drive_cleanup(&mut self, program: &Program) -> VmResult<Option<Value>> {
+        loop {
+            match self.cleanup.last_mut() {
+                Some(Cleanup::Actions(actions)) => match actions.pop() {
+                    Some(action) => return self.call_cleanup(program, action),
+                    None => {
+                        self.cleanup.pop();
+                    }
+                },
+                Some(Cleanup::Return(_)) => {
+                    let Cleanup::Return(value) = self.cleanup.pop().expect("cleanup exists") else {
+                        unreachable!();
+                    };
+                    let frame = self.frames.pop().ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "return cleanup has no frame".into(),
+                            None,
+                        )
+                    })?;
+                    self.stack.truncate(frame.stack_base);
+                    if frame.cleanup_action {
+                        continue;
+                    }
+                    if self.frames.is_empty() {
+                        return Ok(Some(value));
+                    }
+                    self.stack.push(value);
+                }
+                Some(Cleanup::Error(_)) => {
+                    let Cleanup::Error(error) = self.cleanup.pop().expect("cleanup exists") else {
+                        unreachable!();
+                    };
+                    self.frames.clear();
+                    self.stack.clear();
+                    return Err(error);
+                }
+                None => return Ok(None),
+            }
+        }
+    }
+
+    fn call_cleanup(&mut self, program: &Program, action: Value) -> VmResult<Option<Value>> {
+        match action {
+            Value::Closure(closure) => {
+                let chunk = program.chunk(closure.chunk).ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "cleanup closure references missing chunk".into(),
+                        None,
+                    )
+                })?;
+                if chunk.arity != 0 || chunk.locals < chunk.arity {
+                    return Err(self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "cleanup action must be a zero-argument function".into(),
+                        None,
+                    ));
+                }
+                self.frames.push(Frame {
+                    closure,
+                    function: chunk.name.clone(),
+                    call_span: None,
+                    ip: 0,
+                    stack_base: self.stack.len(),
+                    locals: (0..chunk.locals)
+                        .map(|_| binding_cell(Value::Nil))
+                        .collect(),
+                    scopes: vec![Vec::new()],
+                    cleanup_action: true,
+                });
+                Ok(None)
+            }
+            Value::Native { name, function } => {
+                function(&[]).map_err(|message| {
+                    self.error(
+                        RuntimeErrorKind::Native,
+                        format!("native `{name}`: {message}"),
+                        None,
+                    )
+                })?;
+                self.drive_cleanup(program)
+            }
+            _ => unreachable!("defer validates callability"),
+        }
     }
 
     fn binary(
