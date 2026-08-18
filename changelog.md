@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed deferred cleanup to preserve caller scopes, run older cleanup after a
+  replacement error, and drain a deferred action's own cleanup before return.
+- Fixed successful non-tail `match` stack cleanup and nested-scope cleanup
+  before `recur(...)` starts its next iteration.
+
 - Added `defer onerror(err)` cleanup, structured VM-fault bindings, and
   recovery that returns the handler result from the handling function.
 

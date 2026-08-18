@@ -79,6 +79,9 @@ enum Cleanup {
         frame_depth: usize,
     },
     Return(Value),
+    Recover(Value),
+    Resume,
+    Recur(Vec<Value>),
     Error(RuntimeError),
 }
 
@@ -416,10 +419,8 @@ impl Vm {
                             span.clone(),
                         )
                     })?;
-                    if self.frames.last().is_some_and(|frame| frame.cleanup_action)
-                        && actions.is_empty()
-                    {
-                        continue;
+                    if self.frames.last().is_some_and(|frame| frame.cleanup_action) {
+                        self.cleanup.push(Cleanup::Resume);
                     }
                     self.cleanup.push(Cleanup::Actions {
                         actions,
@@ -458,16 +459,20 @@ impl Vm {
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
-                    let is_cleanup = self.frames.last().is_some_and(|frame| frame.cleanup_action);
-                    if is_cleanup {
-                        let frame = self.frames.pop().expect("cleanup frame exists");
-                        self.stack.truncate(frame.stack_base);
+                    if self.frames.last().is_some_and(|frame| frame.cleanup_action) {
+                        let frame = self.frames.last_mut().expect("cleanup frame exists");
+                        let scopes = std::mem::take(&mut frame.scopes);
                         if frame.cleanup_recovers {
-                            if let Some(value) = self.recover_from_error(program, value)? {
-                                return Ok(value);
-                            }
-                            continue;
+                            self.cleanup.push(Cleanup::Recover(value));
+                        } else {
+                            self.cleanup.push(Cleanup::Return(value));
                         }
+                        self.cleanup
+                            .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
+                                actions,
+                                success: true,
+                                frame_depth: self.frames.len() - 1,
+                            }));
                         if let Some(value) = self.drive_cleanup(program)? {
                             return Ok(value);
                         }
@@ -660,13 +665,34 @@ impl Vm {
             ));
         }
         let arguments = self.pop_values(count, span.clone())?;
+        let nested_scopes = self
+            .frames
+            .last_mut()
+            .expect("active frame was checked")
+            .scopes
+            .split_off(1);
+        if !nested_scopes.is_empty() {
+            self.cleanup.push(Cleanup::Recur(arguments));
+            self.cleanup
+                .extend(nested_scopes.into_iter().map(|actions| Cleanup::Actions {
+                    actions,
+                    success: true,
+                    frame_depth: self.frames.len() - 1,
+                }));
+            self.drive_cleanup(program)?;
+            return Ok(());
+        }
+        self.finish_recur(arguments, local_count, stack_base);
+        Ok(())
+    }
+
+    fn finish_recur(&mut self, arguments: Vec<Value>, local_count: usize, stack_base: usize) {
         self.stack.truncate(stack_base);
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
         locals.resize_with(local_count, || binding_cell(Value::Nil));
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
         frame.ip = 0;
-        Ok(())
     }
 
     fn current_scopes(&mut self, span: Option<SourceSpan>) -> VmResult<&mut Vec<Vec<Deferred>>> {
@@ -684,17 +710,21 @@ impl Vm {
         if let Some(Cleanup::Error(previous)) = self.cleanup.first() {
             error.cause = Some(Box::new(previous.clone()));
         }
-        self.cleanup.clear();
-        self.cleanup.push(Cleanup::Error(error));
+        let mut cleanup = vec![Cleanup::Error(error)];
+        cleanup.extend(
+            self.cleanup
+                .drain(..)
+                .filter(|item| matches!(item, Cleanup::Actions { .. })),
+        );
         for (frame_depth, frame) in self.frames.iter_mut().enumerate() {
             let scopes = std::mem::take(&mut frame.scopes);
-            self.cleanup
-                .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
-                    actions,
-                    success: false,
-                    frame_depth,
-                }));
+            cleanup.extend(scopes.into_iter().map(|actions| Cleanup::Actions {
+                actions,
+                success: false,
+                frame_depth,
+            }));
         }
+        self.cleanup = cleanup;
     }
 
     fn active_error(&self) -> Option<RuntimeError> {
@@ -726,14 +756,27 @@ impl Vm {
                 None,
             )
         })?;
-        self.cleanup.retain(|cleanup| {
-            matches!(cleanup, Cleanup::Actions { frame_depth: depth, .. } if *depth == frame_depth)
-        });
-        for cleanup in &mut self.cleanup {
-            if let Cleanup::Actions { success, .. } = cleanup {
-                *success = true;
+        let mut recovered = Vec::new();
+        for cleanup in self.cleanup.drain(..) {
+            match cleanup {
+                Cleanup::Actions {
+                    frame_depth: depth,
+                    actions,
+                    ..
+                } if depth < frame_depth => self.frames[depth].scopes.push(actions),
+                Cleanup::Actions {
+                    frame_depth: depth,
+                    actions,
+                    ..
+                } if depth == frame_depth => recovered.push(Cleanup::Actions {
+                    actions,
+                    success: true,
+                    frame_depth: depth,
+                }),
+                _ => {}
             }
         }
+        self.cleanup = recovered;
         self.cleanup.insert(0, Cleanup::Return(value));
         self.drive_cleanup(program)
     }
@@ -778,6 +821,44 @@ impl Vm {
                         return Ok(Some(value));
                     }
                     self.stack.push(value);
+                }
+                Some(Cleanup::Recover(_)) => {
+                    let Cleanup::Recover(value) = self.cleanup.pop().expect("cleanup exists")
+                    else {
+                        unreachable!();
+                    };
+                    let frame = self.frames.pop().ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "recovery cleanup has no frame".into(),
+                            None,
+                        )
+                    })?;
+                    self.stack.truncate(frame.stack_base);
+                    return self.recover_from_error(program, value);
+                }
+                Some(Cleanup::Resume) => {
+                    self.cleanup.pop();
+                    return Ok(None);
+                }
+                Some(Cleanup::Recur(_)) => {
+                    let Cleanup::Recur(arguments) = self.cleanup.pop().expect("cleanup exists")
+                    else {
+                        unreachable!();
+                    };
+                    let (local_count, stack_base) = self
+                        .frames
+                        .last()
+                        .map(|frame| (frame.locals.len(), frame.stack_base))
+                        .ok_or_else(|| {
+                            self.error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                "recur cleanup has no frame".into(),
+                                None,
+                            )
+                        })?;
+                    self.finish_recur(arguments, local_count, stack_base);
+                    return Ok(None);
                 }
                 Some(Cleanup::Error(_)) => {
                     let Cleanup::Error(error) = self.cleanup.pop().expect("cleanup exists") else {

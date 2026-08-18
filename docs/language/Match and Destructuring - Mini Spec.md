@@ -27,7 +27,7 @@ value /> match { [head, ...] => head; _ => nil }
 
 ## Patterns
 
-The implemented pattern forms are:
+The target language pattern forms are:
 
 - literals, including `nil`, numbers, strings, and booleans;
 - `_` for a wildcard;
@@ -55,6 +55,13 @@ match user {
 A list or map spread is final. An unnamed `...` discards the remainder and a
 named form binds it. Comma-separated alternatives in one case are permitted
 only when none of the alternatives introduces a binding.
+
+The current Rust subset implements literals, `_`, identifier bindings, list
+patterns with an optional named final spread, and string-keyed map patterns
+with an optional named final spread. It also implements exact map patterns.
+Pinning, `@` patterns, anonymous spreads, alternatives, computed map keys,
+and struct patterns remain specified but unsupported; see the generated
+language support matrix for the implemented subset.
 
 `var` and `val` accept these patterns on their left side. A non-matching
 destructuring declaration follows the language error path. See

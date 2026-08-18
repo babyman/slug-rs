@@ -658,6 +658,141 @@ fn exposes_checked_faults_to_defer_onerror_as_structured_values() {
 }
 
 #[test]
+fn recovery_preserves_the_callers_active_scopes() {
+    let path = fixture_path("defer-onerror-caller-scope");
+    fs::write(
+        &path,
+        "val callee = fn() { defer onerror(err) { 1 }\n throw \"bad\" }\n\
+         val caller = fn() {\n\
+           { callee() }\n\
+           7\n\
+         }\n\
+         println(caller())\n",
+    )
+    .expect("write caller-scope recovery source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run caller-scope recovery source");
+    fs::remove_file(path).expect("remove caller-scope recovery source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "7\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rethrowing_deferred_handlers_run_older_pending_cleanup() {
+    let path = fixture_path("defer-onerror-rethrow-cleanup");
+    fs::write(
+        &path,
+        "val fail = fn() {\n\
+           defer println(\"first\")\n\
+           defer println(\"second\")\n\
+           defer onerror(err) { println(\"handler\")\n throw \"replacement\" }\n\
+           throw \"original\"\n\
+         }\n\
+         fail()\n",
+    )
+    .expect("write rethrowing deferred source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run rethrowing deferred source");
+    fs::remove_file(path).expect("remove rethrowing deferred source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "handler\nsecond\nfirst\n"
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .contains("uncaught throw: replacement")
+    );
+}
+
+#[test]
+fn recur_exits_nested_scopes_before_starting_the_next_iteration() {
+    let path = fixture_path("recur-nested-defer");
+    fs::write(
+        &path,
+        "val count = fn(n) {\n\
+           {\n\
+             defer println(n)\n\
+             if (n == 0) { 0 } else { recur(n - 1) }\n\
+           }\n\
+         }\n\
+         println(count(2))\n",
+    )
+    .expect("write recur cleanup source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run recur cleanup source");
+    fs::remove_file(path).expect("remove recur cleanup source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "2\n1\n0\n0\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn deferred_actions_run_their_own_pending_cleanup_before_returning() {
+    let path = fixture_path("deferred-action-cleanup");
+    fs::write(
+        &path,
+        "val complete = fn() {\n\
+           defer {\n\
+             defer println(\"inner\")\n\
+             println(\"outer\")\n\
+             return nil\n\
+           }\n\
+           1\n\
+         }\n\
+         println(complete())\n",
+    )
+    .expect("write nested deferred cleanup source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nested deferred cleanup source");
+    fs::remove_file(path).expect("remove nested deferred cleanup source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "outer\ninner\n1\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn non_tail_match_discards_its_subject_before_producing_a_result() {
+    let path = fixture_path("non-tail-match");
+    fs::write(&path, "println(match 1 { 1 => \"yes\" })\n").expect("write non-tail match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run non-tail match source");
+    fs::remove_file(path).expect("remove non-tail match source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "yes\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn bare_map_keys_and_dot_access_use_strings() {
     let path = fixture_path("string-map-keys");
     fs::write(
