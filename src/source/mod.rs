@@ -8,11 +8,8 @@ use std::{
 
 use crate::{Capture, Chunk, MatchPattern, Op, Program, SourceSpan, Value};
 
-#[path = "source/ast.rs"]
 mod ast;
-#[path = "source/lexer.rs"]
 mod lexer;
-#[path = "source/parser.rs"]
 mod parser;
 use ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, Token, TokenKind};
 use lexer::Lexer;
