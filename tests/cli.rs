@@ -252,6 +252,32 @@ fn match_guards_use_case_bindings_and_continue_after_false() {
 }
 
 #[test]
+fn matches_string_keyed_maps_with_nested_patterns_and_extra_entries() {
+    let path = fixture_path("map-patterns");
+    fs::write(
+        &path,
+        "val describe = fn(user) {\n\
+           match user {\n\
+             {name: \"Slug\"} => \"known\"\n\
+             {name, age: years} if years > 17 => name\n\
+             _ => \"other\"\n\
+           }\n\
+         }\n\
+         println(describe({name: \"Slug\", extra: true}), describe({name: \"Eve\", age: 20}), describe({name: \"Kid\", age: 5}), describe([]))\n",
+    )
+    .expect("write map pattern source");
+    let output = slug().arg(&path).output().expect("run map pattern source");
+    fs::remove_file(path).expect("remove map pattern source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "known Eve other other\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn rejects_recur_outside_a_function_or_tail_position() {
     let top_level = fixture_path("top-level-recur");
     fs::write(&top_level, "recur()\n").expect("write invalid recur source");

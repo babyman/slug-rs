@@ -121,6 +121,40 @@ fn matches_list_patterns_and_exposes_bindings() {
 }
 
 #[test]
+fn matches_map_patterns_and_exposes_string_key_bindings() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+        (Value::string("name"), Value::string("Slug")),
+        (Value::string("extra"), Value::Bool(true)),
+    ])));
+    main.emit(Op::Constant(value))
+        .emit(Op::Duplicate)
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Map(vec![(
+                "name".into(),
+                slug_vm::MatchPattern::Binding,
+            )]),
+            bindings: 1,
+        })
+        .emit(Op::JumpIfFalse(9))
+        .emit(Op::Pop)
+        .emit(Op::DefineGlobal("name".into()))
+        .emit(Op::Pop)
+        .emit(Op::GetGlobal("name".into()))
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::string("Slug")
+    );
+}
+
+#[test]
 fn preserves_integer_precision_and_rejects_oversized_calls() {
     let mut main = Chunk::new("main", 0);
     let lower = main.constant(Value::Int(9_007_199_254_740_992));

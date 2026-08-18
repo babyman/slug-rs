@@ -774,6 +774,24 @@ fn matches_pattern(pattern: &MatchPattern, value: &Value, bindings: &mut Vec<Val
             }
             true
         }
+        MatchPattern::Map(patterns) => {
+            let Value::Map(entries) = value else {
+                return false;
+            };
+            let binding_start = bindings.len();
+            for (key, pattern) in patterns {
+                let key = Value::string(key.clone());
+                let Some((_, value)) = entries.iter().rev().find(|(entry, _)| entry == &key) else {
+                    bindings.truncate(binding_start);
+                    return false;
+                };
+                if !matches_pattern(pattern, value, bindings) {
+                    bindings.truncate(binding_start);
+                    return false;
+                }
+            }
+            true
+        }
     }
 }
 
