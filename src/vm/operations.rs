@@ -87,6 +87,26 @@ pub(super) fn matches_pattern(
             bindings.push(value.clone());
             true
         }
+        MatchPattern::At(pattern) => {
+            let binding_start = bindings.len();
+            bindings.push(value.clone());
+            if matches_pattern(pattern, value, bindings) {
+                true
+            } else {
+                bindings.truncate(binding_start);
+                false
+            }
+        }
+        MatchPattern::Alternatives(patterns) => {
+            let binding_start = bindings.len();
+            for pattern in patterns {
+                if matches_pattern(pattern, value, bindings) {
+                    return true;
+                }
+                bindings.truncate(binding_start);
+            }
+            false
+        }
         MatchPattern::List { items, rest } => {
             let Value::List(values) = value else {
                 return false;

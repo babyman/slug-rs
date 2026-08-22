@@ -56,12 +56,13 @@ A list or map spread is final. An unnamed `...` discards the remainder and a
 named form binds it. Comma-separated alternatives in one case are permitted
 only when none of the alternatives introduces a binding.
 
-The current Rust subset implements literals, `_`, identifier bindings, list
-patterns with an optional named or anonymous final spread, and string-keyed map
-patterns with an optional named or anonymous final spread. It also implements
-exact map patterns. Pinning, `@` patterns, alternatives, computed map keys,
-and struct patterns remain specified but unsupported; see the generated
-language support matrix for the implemented subset.
+The current Rust subset implements literals, `_`, identifier bindings,
+`name @ pattern` bindings, list patterns with an optional named or anonymous
+final spread, and string-keyed map patterns with an optional named or anonymous
+final spread. It also implements exact map patterns and non-binding,
+comma-separated case alternatives. Pinning, computed map keys, and struct
+patterns remain specified but unsupported; see the generated language support
+matrix for the implemented subset.
 
 `var` and `val` accept these patterns on their left side. A non-matching
 destructuring declaration follows the language error path. See

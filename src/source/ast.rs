@@ -66,7 +66,7 @@ pub(super) enum ExprKind {
 }
 #[derive(Clone, Debug)]
 pub(super) struct MatchCase {
-    pub(super) pattern: Pattern,
+    pub(super) patterns: Vec<Pattern>,
     pub(super) guard: Option<Expr>,
     pub(super) value: Expr,
     pub(super) span: SourceSpan,
@@ -81,6 +81,10 @@ pub(super) enum Pattern {
     Literal(Value),
     Wildcard,
     Binding(String),
+    At {
+        name: String,
+        pattern: Box<Pattern>,
+    },
     List {
         items: Vec<Pattern>,
         rest: Option<RestPattern>,
@@ -160,6 +164,7 @@ pub(super) enum TokenKind {
     RBracket,
     Comma,
     Colon,
+    At,
     Dot,
     Ellipsis,
     Arrow,

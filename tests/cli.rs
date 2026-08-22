@@ -219,6 +219,167 @@ fn matches_literals_and_lists_with_case_local_bindings() {
 }
 
 #[test]
+fn binds_whole_values_with_nested_at_patterns() {
+    let path = fixture_path("at-patterns");
+    fs::write(
+        &path,
+        "val describe = fn(value) match {\n\
+           whole @ [head, ...tail] => whole[0] + head + tail[0]\n\
+           _ => nil\n\
+         }\n\
+         val whole @ [first, ...rest] = [4, 5]\n\
+         println(describe([1, 2]), whole[0], first, rest[0])\n",
+    )
+    .expect("write at pattern source");
+    let output = slug().arg(&path).output().expect("run at pattern source");
+    fs::remove_file(path).expect("remove at pattern source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "4 4 4 5\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn failed_nested_at_patterns_continue_to_later_cases() {
+    let path = fixture_path("failed-at-pattern");
+    fs::write(
+        &path,
+        "val inspect = fn(value) match {\n\
+           whole @ [1, 3] => whole[0]\n\
+           [left, right] => left + right\n\
+           _ => nil\n\
+         }\n\
+         println(inspect([1, 2]))\n",
+    )
+    .expect("write failing at pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run failing at pattern source");
+    fs::remove_file(path).expect("remove failing at pattern source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "3\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn matches_non_binding_case_alternatives_with_guards() {
+    let path = fixture_path("match-alternatives");
+    fs::write(
+        &path,
+        "val classify = fn(value) match {\n\
+           0, 1 if value == 1 => \"one\"\n\
+           0, 1 => \"small\"\n\
+           [0], [1] => \"list\"\n\
+           _ => \"other\"\n\
+         }\n\
+         println(classify(1), classify(0), classify([1]), classify(3))\n",
+    )
+    .expect("write match alternative source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run match alternative source");
+    fs::remove_file(path).expect("remove match alternative source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "one small list other\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_bindings_in_match_alternatives() {
+    for (label, source) in [
+        ("direct", "match 1 { value, 0 => value }\n"),
+        ("nested", "match [1] { [value], [] => value }\n"),
+        ("at", "match 1 { whole @ 1, 0 => whole }\n"),
+    ] {
+        let path = fixture_path(&format!("binding-match-alternative-{label}"));
+        fs::write(&path, source).expect("write binding match alternative source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run binding match alternative source");
+        fs::remove_file(path).expect("remove binding match alternative source");
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with("slug: semantic error: match alternatives cannot introduce bindings")
+        );
+    }
+}
+
+#[test]
+fn rejects_trailing_match_alternatives() {
+    let path = fixture_path("trailing-match-alternative");
+    fs::write(&path, "match 1 { 0, => \"no\" }\n")
+        .expect("write trailing match alternative source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run trailing match alternative source");
+    fs::remove_file(path).expect("remove trailing match alternative source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: parse error: expected match pattern")
+    );
+}
+
+#[test]
+fn rejects_duplicate_and_malformed_at_patterns() {
+    let duplicate = fixture_path("duplicate-at-pattern");
+    fs::write(&duplicate, "match [1] { value @ [value] => value }\n")
+        .expect("write duplicate at pattern source");
+    let output = slug()
+        .arg(&duplicate)
+        .output()
+        .expect("run duplicate at pattern source");
+    fs::remove_file(duplicate).expect("remove duplicate at pattern source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: duplicate match binding `value`")
+    );
+
+    let malformed = fixture_path("malformed-at-pattern");
+    fs::write(&malformed, "match 1 { value @ => value }\n")
+        .expect("write malformed at pattern source");
+    let output = slug()
+        .arg(&malformed)
+        .output()
+        .expect("run malformed at pattern source");
+    fs::remove_file(malformed).expect("remove malformed at pattern source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: parse error: expected match pattern")
+    );
+}
+
+#[test]
 fn match_guards_use_case_bindings_and_continue_after_false() {
     let path = fixture_path("match-guards");
     fs::write(
@@ -1059,6 +1220,23 @@ fn rejects_deeply_nested_source_without_aborting() {
         .output()
         .expect("run deeply nested source");
     fs::remove_file(path).expect("remove deeply nested source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .contains("slug: parse error: source nesting limit exceeded")
+    );
+
+    let path = fixture_path("at-pattern-nesting-depth");
+    let source = format!("match 1 {{ {}_ => 1 }}\n", "value @ ".repeat(600));
+    fs::write(&path, source).expect("write deeply nested at pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run deeply nested at pattern source");
+    fs::remove_file(path).expect("remove deeply nested at pattern source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());

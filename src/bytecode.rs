@@ -49,6 +49,8 @@ pub enum MatchPattern {
     Literal(Value),
     Wildcard,
     Binding,
+    At(Box<MatchPattern>),
+    Alternatives(Vec<MatchPattern>),
     List {
         items: Vec<MatchPattern>,
         rest: MatchRest,

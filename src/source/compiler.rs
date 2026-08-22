@@ -331,11 +331,11 @@ impl Compiler {
         self.expression(state, subject)?;
         let mut ends = Vec::new();
         for case in cases {
-            let names = pattern_bindings(&case.pattern, &case.span)?;
+            let (pattern, names) = lower_case_patterns(&case.patterns, &case.span)?;
             state.emit(Op::Duplicate, &case.span);
             state.emit(
                 Op::TryMatch {
-                    pattern: lower_pattern(&case.pattern),
+                    pattern,
                     bindings: names.len(),
                 },
                 &case.span,
@@ -519,6 +519,7 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
         Pattern::Literal(value) => MatchPattern::Literal(value.clone()),
         Pattern::Wildcard => MatchPattern::Wildcard,
         Pattern::Binding(_) => MatchPattern::Binding,
+        Pattern::At { pattern, .. } => MatchPattern::At(Box::new(lower_pattern(pattern))),
         Pattern::List { items, rest } => MatchPattern::List {
             items: items.iter().map(lower_pattern).collect(),
             rest: lower_rest_pattern(rest.as_ref()),
@@ -538,10 +539,36 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
     }
 }
 
+fn lower_case_patterns(
+    patterns: &[Pattern],
+    span: &SourceSpan,
+) -> Result<(MatchPattern, Vec<String>), SourceError> {
+    if let [pattern] = patterns {
+        return Ok((lower_pattern(pattern), pattern_bindings(pattern, span)?));
+    }
+
+    for pattern in patterns {
+        if !pattern_bindings(pattern, span)?.is_empty() {
+            return Err(SourceError::semantic(
+                "match alternatives cannot introduce bindings",
+                span.clone(),
+            ));
+        }
+    }
+    Ok((
+        MatchPattern::Alternatives(patterns.iter().map(lower_pattern).collect()),
+        Vec::new(),
+    ))
+}
+
 fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>, SourceError> {
     fn collect(pattern: &Pattern, names: &mut Vec<String>) {
         match pattern {
             Pattern::Binding(name) => names.push(name.clone()),
+            Pattern::At { name, pattern } => {
+                names.push(name.clone());
+                collect(pattern, names);
+            }
             Pattern::List { items, rest } => {
                 for item in items {
                     collect(item, names);

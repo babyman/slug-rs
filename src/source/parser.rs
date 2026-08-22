@@ -540,7 +540,11 @@ impl Parser {
             if self.matches(&TokenKind::End) {
                 return Err(SourceError::at("expected }", self.peek().span.clone()));
             }
-            let pattern = self.pattern()?;
+            let mut patterns = vec![self.pattern()?];
+            while self.matches(&TokenKind::Comma) {
+                self.next();
+                patterns.push(self.pattern()?);
+            }
             let guard = if self.matches(&TokenKind::If) {
                 self.next();
                 Some(self.expression()?)
@@ -552,7 +556,7 @@ impl Parser {
                 .span;
             let value = self.statement()?;
             cases.push(MatchCase {
-                pattern,
+                patterns,
                 guard,
                 value,
                 span: case_span,
@@ -584,6 +588,16 @@ impl Parser {
             TokenKind::False => Ok(Pattern::Literal(Value::Bool(false))),
             TokenKind::Nil => Ok(Pattern::Literal(Value::Nil)),
             TokenKind::Name(name) if name == "_" => Ok(Pattern::Wildcard),
+            TokenKind::Name(name) if self.matches(&TokenKind::At) => {
+                self.next();
+                self.enter_nesting(token.span.clone())?;
+                let pattern = self.pattern();
+                self.leave_nesting();
+                Ok(Pattern::At {
+                    name,
+                    pattern: Box::new(pattern?),
+                })
+            }
             TokenKind::Name(name) => Ok(Pattern::Binding(name)),
             TokenKind::LBracket => self.list_pattern(&token.span),
             TokenKind::LBrace => self.map_pattern(&token.span),

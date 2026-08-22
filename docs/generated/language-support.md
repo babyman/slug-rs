@@ -11,6 +11,8 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Short-circuit logical `&&` and ` |  | `|implemented|`tests/cli.rs` |
 | Functions, blocks, conditionals, and captures | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Literal and list pattern matching | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| `name @ pattern` whole-value bindings | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Non-binding match-case alternatives | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Non-exact string-key map patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Named map rest captures | implemented | `tests/cli.rs` |
 | Anonymous list and map rest patterns | implemented | `tests/cli.rs` |

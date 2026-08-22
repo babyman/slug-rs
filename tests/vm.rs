@@ -180,6 +180,90 @@ fn matches_list_patterns_and_exposes_bindings() {
 }
 
 #[test]
+fn at_patterns_bind_whole_values_before_nested_bindings() {
+    let whole = Value::List(std::rc::Rc::new(vec![
+        Value::Int(1),
+        Value::Int(2),
+        Value::Int(3),
+    ]));
+    let mut main = Chunk::new("main", 0);
+    let values = main.constant(whole.clone());
+    main.emit(Op::Constant(values))
+        .emit(Op::Duplicate)
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::At(Box::new(slug_vm::MatchPattern::List {
+                items: vec![slug_vm::MatchPattern::Binding],
+                rest: MatchRest::Binding,
+            })),
+            bindings: 3,
+        })
+        .emit(Op::JumpIfFalse(14))
+        .emit(Op::Pop)
+        .emit(Op::DefineGlobal("tail".into()))
+        .emit(Op::DefineGlobal("head".into()))
+        .emit(Op::DefineGlobal("whole".into()))
+        .emit(Op::Pop)
+        .emit(Op::GetGlobal("whole".into()))
+        .emit(Op::GetGlobal("head".into()))
+        .emit(Op::GetGlobal("tail".into()))
+        .emit(Op::List(3))
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::List(std::rc::Rc::new(vec![
+            whole,
+            Value::Int(1),
+            Value::List(std::rc::Rc::new(vec![Value::Int(2), Value::Int(3)])),
+        ]))
+    );
+}
+
+#[test]
+fn match_alternatives_rollback_before_retrying() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::List(std::rc::Rc::new(vec![Value::Int(1)])));
+    main.emit(Op::Constant(value))
+        .emit(Op::Duplicate)
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Alternatives(vec![
+                slug_vm::MatchPattern::At(Box::new(slug_vm::MatchPattern::List {
+                    items: vec![slug_vm::MatchPattern::Literal(Value::Int(2))],
+                    rest: MatchRest::None,
+                })),
+                slug_vm::MatchPattern::List {
+                    items: vec![slug_vm::MatchPattern::Binding],
+                    rest: MatchRest::None,
+                },
+            ]),
+            bindings: 1,
+        })
+        .emit(Op::JumpIfFalse(10))
+        .emit(Op::Pop)
+        .emit(Op::DefineGlobal("value".into()))
+        .emit(Op::Pop)
+        .emit(Op::GetGlobal("value".into()))
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Int(1)
+    );
+}
+
+#[test]
 fn matches_map_patterns_and_exposes_string_key_bindings() {
     let mut main = Chunk::new("main", 0);
     let value = main.constant(Value::Map(std::rc::Rc::new(vec![

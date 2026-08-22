@@ -65,6 +65,7 @@ impl Lexer {
                     | TokenKind::Star
                     | TokenKind::Slash
                     | TokenKind::Colon
+                    | TokenKind::At
                     | TokenKind::Dot
             )
         ) || self.next_starts_infix()
@@ -76,7 +77,7 @@ impl Lexer {
         }
         matches!(
             self.input.get(index),
-            Some('+' | '-' | '*' | '/' | '<' | '>' | '=' | '!' | '&' | '|' | '.')
+            Some('+' | '-' | '*' | '/' | '<' | '>' | '=' | '!' | '&' | '|' | '@' | '.')
         )
     }
     fn push(tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {
@@ -208,6 +209,10 @@ impl Lexer {
                 ':' => {
                     self.next();
                     Self::push(&mut result, TokenKind::Colon, span);
+                }
+                '@' => {
+                    self.next();
+                    Self::push(&mut result, TokenKind::At, span);
                 }
                 '.' => {
                     self.next();

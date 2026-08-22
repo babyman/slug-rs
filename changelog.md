@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added comma-separated, non-binding alternatives within a `match` case.
+- Added `name @ pattern` matching and destructuring to bind a whole value
+  alongside its nested pattern bindings.
 - Added anonymous final `...` patterns that discard remaining list items or
   map entries.
 - Fixed deferred cleanup to preserve caller scopes, run older cleanup after a

@@ -175,6 +175,7 @@ match_pattern = "_"
               | identifier
               ;
 
+(* The identifier binds the whole value before bindings from the nested pattern. *)
 binding_pattern = identifier , "@" , match_pattern ;
 (* An omitted spread identifier discards the remainder. *)
 spread_pattern = "..." , [ identifier ] ;
