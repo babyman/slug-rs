@@ -328,10 +328,18 @@ impl Vm {
                     }
                 }
                 Op::Call(count) => self.call(program, count, span)?,
-                Op::TryMatch { pattern, bindings } => {
+                Op::TryMatch {
+                    pattern,
+                    bindings,
+                    operands,
+                } => {
+                    let operands = self.pop_values(operands, span.clone())?;
                     let value = self.pop(span.clone())?;
                     let mut values = Vec::new();
-                    let matched = matches_pattern(&pattern, &value, &mut values);
+                    let matched = matches_pattern(&pattern, &value, &operands, &mut values)
+                        .map_err(|message| {
+                            self.error(RuntimeErrorKind::InvalidBytecode, message, span.clone())
+                        })?;
                     if matched && values.len() != bindings {
                         return Err(self.error(
                             RuntimeErrorKind::InvalidBytecode,

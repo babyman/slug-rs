@@ -78,55 +78,60 @@ pub(super) fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKi
 pub(super) fn matches_pattern(
     pattern: &MatchPattern,
     value: &Value,
+    operands: &[Value],
     bindings: &mut Vec<Value>,
-) -> bool {
+) -> Result<bool, String> {
     match pattern {
-        MatchPattern::Literal(expected) => value == expected,
-        MatchPattern::Wildcard => true,
+        MatchPattern::Literal(expected) => Ok(value == expected),
+        MatchPattern::Wildcard => Ok(true),
         MatchPattern::Binding => {
             bindings.push(value.clone());
-            true
+            Ok(true)
         }
+        MatchPattern::Pinned(index) => operands
+            .get(*index)
+            .map(|expected| value == expected)
+            .ok_or_else(|| format!("match pattern operand {index} does not exist")),
         MatchPattern::At(pattern) => {
             let binding_start = bindings.len();
             bindings.push(value.clone());
-            if matches_pattern(pattern, value, bindings) {
-                true
+            if matches_pattern(pattern, value, operands, bindings)? {
+                Ok(true)
             } else {
                 bindings.truncate(binding_start);
-                false
+                Ok(false)
             }
         }
         MatchPattern::Alternatives(patterns) => {
             let binding_start = bindings.len();
             for pattern in patterns {
-                if matches_pattern(pattern, value, bindings) {
-                    return true;
+                if matches_pattern(pattern, value, operands, bindings)? {
+                    return Ok(true);
                 }
                 bindings.truncate(binding_start);
             }
-            false
+            Ok(false)
         }
         MatchPattern::List { items, rest } => {
             let Value::List(values) = value else {
-                return false;
+                return Ok(false);
             };
             if values.len() < items.len()
                 || (*rest == MatchRest::None && values.len() != items.len())
             {
-                return false;
+                return Ok(false);
             }
             let binding_start = bindings.len();
             for (item, value) in items.iter().zip(values.iter()) {
-                if !matches_pattern(item, value, bindings) {
+                if !matches_pattern(item, value, operands, bindings)? {
                     bindings.truncate(binding_start);
-                    return false;
+                    return Ok(false);
                 }
             }
             if *rest == MatchRest::Binding {
                 bindings.push(Value::List(Rc::new(values[items.len()..].to_vec())));
             }
-            true
+            Ok(true)
         }
         MatchPattern::Map {
             entries: patterns,
@@ -134,21 +139,21 @@ pub(super) fn matches_pattern(
             exact,
         } => {
             let Value::Map(entries) = value else {
-                return false;
+                return Ok(false);
             };
             if *exact && entries.len() != patterns.len() {
-                return false;
+                return Ok(false);
             }
             let binding_start = bindings.len();
             for (key, pattern) in patterns {
                 let key = Value::string(key.clone());
                 let Some((_, value)) = entries.iter().rev().find(|(entry, _)| entry == &key) else {
                     bindings.truncate(binding_start);
-                    return false;
+                    return Ok(false);
                 };
-                if !matches_pattern(pattern, value, bindings) {
+                if !matches_pattern(pattern, value, operands, bindings)? {
                     bindings.truncate(binding_start);
-                    return false;
+                    return Ok(false);
                 }
             }
             if *rest == MatchRest::Binding {
@@ -163,7 +168,7 @@ pub(super) fn matches_pattern(
                     .collect();
                 bindings.push(Value::Map(Rc::new(rest_entries)));
             }
-            true
+            Ok(true)
         }
     }
 }

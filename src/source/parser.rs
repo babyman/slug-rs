@@ -599,6 +599,13 @@ impl Parser {
                 })
             }
             TokenKind::Name(name) => Ok(Pattern::Binding(name)),
+            TokenKind::Caret => {
+                let token = self.next();
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected pinned binding name", token.span));
+                };
+                Ok(Pattern::Pinned(name))
+            }
             TokenKind::LBracket => self.list_pattern(&token.span),
             TokenKind::LBrace => self.map_pattern(&token.span),
             TokenKind::LExactMap => self.exact_map_pattern(&token.span),

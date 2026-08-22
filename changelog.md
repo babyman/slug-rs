@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added pinned `^name` patterns backed by indexed runtime pattern operands.
 - Added comma-separated, non-binding alternatives within a `match` case.
 - Added `name @ pattern` matching and destructuring to bind a whole value
   alongside its nested pattern bindings.

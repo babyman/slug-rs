@@ -81,6 +81,7 @@ pub(super) enum Pattern {
     Literal(Value),
     Wildcard,
     Binding(String),
+    Pinned(String),
     At {
         name: String,
         pattern: Box<Pattern>,
@@ -165,6 +166,7 @@ pub(super) enum TokenKind {
     Comma,
     Colon,
     At,
+    Caret,
     Dot,
     Ellipsis,
     Arrow,

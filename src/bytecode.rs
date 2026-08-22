@@ -49,6 +49,7 @@ pub enum MatchPattern {
     Literal(Value),
     Wildcard,
     Binding,
+    Pinned(usize),
     At(Box<MatchPattern>),
     Alternatives(Vec<MatchPattern>),
     List {
@@ -121,6 +122,7 @@ pub enum Op {
     TryMatch {
         pattern: MatchPattern,
         bindings: usize,
+        operands: usize,
     },
     MatchFailure,
     Throw,

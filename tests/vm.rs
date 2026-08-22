@@ -153,6 +153,7 @@ fn matches_list_patterns_and_exposes_bindings() {
                 rest: MatchRest::Binding,
             },
             bindings: 2,
+            operands: 0,
         })
         .emit(Op::JumpIfFalse(12))
         .emit(Op::Pop)
@@ -196,6 +197,7 @@ fn at_patterns_bind_whole_values_before_nested_bindings() {
                 rest: MatchRest::Binding,
             })),
             bindings: 3,
+            operands: 0,
         })
         .emit(Op::JumpIfFalse(14))
         .emit(Op::Pop)
@@ -244,6 +246,7 @@ fn match_alternatives_rollback_before_retrying() {
                 },
             ]),
             bindings: 1,
+            operands: 0,
         })
         .emit(Op::JumpIfFalse(10))
         .emit(Op::Pop)
@@ -264,6 +267,45 @@ fn match_alternatives_rollback_before_retrying() {
 }
 
 #[test]
+fn pinned_patterns_compare_dynamic_operands() {
+    let mut main = Chunk::new("main", 0);
+    let subject = main.constant(Value::Int(3));
+    let expected = main.constant(Value::Int(3));
+    main.emit(Op::Constant(subject))
+        .emit(Op::Duplicate)
+        .emit(Op::Constant(expected))
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Pinned(0),
+            bindings: 0,
+            operands: 1,
+        })
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn rejects_missing_dynamic_pattern_operands() {
+    let mut main = Chunk::new("main", 0);
+    let subject = main.constant(Value::Int(3));
+    main.emit(Op::Constant(subject))
+        .emit(Op::Duplicate)
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Pinned(0),
+            bindings: 0,
+            operands: 0,
+        })
+        .emit(Op::Return);
+
+    let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert_eq!(error.message, "match pattern operand 0 does not exist");
+}
+
+#[test]
 fn matches_map_patterns_and_exposes_string_key_bindings() {
     let mut main = Chunk::new("main", 0);
     let value = main.constant(Value::Map(std::rc::Rc::new(vec![
@@ -279,6 +321,7 @@ fn matches_map_patterns_and_exposes_string_key_bindings() {
                 exact: false,
             },
             bindings: 1,
+            operands: 0,
         })
         .emit(Op::JumpIfFalse(9))
         .emit(Op::Pop)
@@ -314,6 +357,7 @@ fn captures_unmatched_map_entries_in_a_rest_binding() {
                 exact: false,
             },
             bindings: 2,
+            operands: 0,
         })
         .emit(Op::JumpIfFalse(10))
         .emit(Op::Pop)
@@ -353,6 +397,7 @@ fn exact_map_patterns_reject_extra_entries() {
                 exact: true,
             },
             bindings: 1,
+            operands: 0,
         })
         .emit(Op::Return);
 

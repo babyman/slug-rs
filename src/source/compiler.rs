@@ -81,7 +81,7 @@ impl Compiler {
                 value,
             } => {
                 self.expression(state, value)?;
-                Self::bind_pattern(state, pattern, *mutable, &expression.span)?;
+                self.bind_pattern(state, pattern, *mutable, &expression.span)?;
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::Assign { name, value } => {
@@ -331,12 +331,16 @@ impl Compiler {
         self.expression(state, subject)?;
         let mut ends = Vec::new();
         for case in cases {
-            let (pattern, names) = lower_case_patterns(&case.patterns, &case.span)?;
+            let (pattern, names, operands) = lower_case_patterns(&case.patterns, &case.span)?;
             state.emit(Op::Duplicate, &case.span);
+            for operand in &operands {
+                self.emit_pattern_operand(state, operand, &case.span)?;
+            }
             state.emit(
                 Op::TryMatch {
                     pattern,
                     bindings: names.len(),
+                    operands: operands.len(),
                 },
                 &case.span,
             );
@@ -386,17 +390,47 @@ impl Compiler {
         }
         Ok(())
     }
+    fn emit_pattern_operand(
+        &self,
+        state: &mut State,
+        name: &str,
+        span: &SourceSpan,
+    ) -> Result<(), SourceError> {
+        let binding = state
+            .lookup(name)
+            .or_else(|| {
+                self.globals
+                    .get(name)
+                    .map(|mutable| Binding::Global { mutable: *mutable })
+            })
+            .ok_or_else(|| {
+                SourceError::semantic(format!("unknown pinned binding `{name}`"), span.clone())
+            })?;
+        match binding {
+            Binding::Global { .. } => state.emit(Op::GetGlobal(name.into()), span),
+            Binding::Local { slot, .. } => state.emit(Op::GetLocal(slot), span),
+            Binding::Capture { slot, .. } => state.emit(Op::GetCapture(slot), span),
+        }
+        Ok(())
+    }
     fn bind_pattern(
+        &self,
         state: &mut State,
         pattern: &Pattern,
         mutable: bool,
         span: &SourceSpan,
     ) -> Result<(), SourceError> {
         let names = pattern_bindings(pattern, span)?;
+        let mut operands = Vec::new();
+        let pattern = lower_pattern(pattern, &mut operands);
+        for operand in &operands {
+            self.emit_pattern_operand(state, operand, span)?;
+        }
         state.emit(
             Op::TryMatch {
-                pattern: lower_pattern(pattern),
+                pattern,
                 bindings: names.len(),
+                operands: operands.len(),
             },
             span,
         );
@@ -514,14 +548,22 @@ impl Compiler {
     }
 }
 
-fn lower_pattern(pattern: &Pattern) -> MatchPattern {
+fn lower_pattern(pattern: &Pattern, operands: &mut Vec<String>) -> MatchPattern {
     match pattern {
         Pattern::Literal(value) => MatchPattern::Literal(value.clone()),
         Pattern::Wildcard => MatchPattern::Wildcard,
         Pattern::Binding(_) => MatchPattern::Binding,
-        Pattern::At { pattern, .. } => MatchPattern::At(Box::new(lower_pattern(pattern))),
+        Pattern::Pinned(name) => {
+            let index = operands.len();
+            operands.push(name.clone());
+            MatchPattern::Pinned(index)
+        }
+        Pattern::At { pattern, .. } => MatchPattern::At(Box::new(lower_pattern(pattern, operands))),
         Pattern::List { items, rest } => MatchPattern::List {
-            items: items.iter().map(lower_pattern).collect(),
+            items: items
+                .iter()
+                .map(|pattern| lower_pattern(pattern, operands))
+                .collect(),
             rest: lower_rest_pattern(rest.as_ref()),
         },
         Pattern::Map {
@@ -531,7 +573,7 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
         } => MatchPattern::Map {
             entries: entries
                 .iter()
-                .map(|(key, pattern)| (key.clone(), lower_pattern(pattern)))
+                .map(|(key, pattern)| (key.clone(), lower_pattern(pattern, operands)))
                 .collect(),
             rest: lower_rest_pattern(rest.as_ref()),
             exact: *exact,
@@ -542,9 +584,14 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
 fn lower_case_patterns(
     patterns: &[Pattern],
     span: &SourceSpan,
-) -> Result<(MatchPattern, Vec<String>), SourceError> {
+) -> Result<(MatchPattern, Vec<String>, Vec<String>), SourceError> {
+    let mut operands = Vec::new();
     if let [pattern] = patterns {
-        return Ok((lower_pattern(pattern), pattern_bindings(pattern, span)?));
+        return Ok((
+            lower_pattern(pattern, &mut operands),
+            pattern_bindings(pattern, span)?,
+            operands,
+        ));
     }
 
     for pattern in patterns {
@@ -556,8 +603,14 @@ fn lower_case_patterns(
         }
     }
     Ok((
-        MatchPattern::Alternatives(patterns.iter().map(lower_pattern).collect()),
+        MatchPattern::Alternatives(
+            patterns
+                .iter()
+                .map(|pattern| lower_pattern(pattern, &mut operands))
+                .collect(),
+        ),
         Vec::new(),
+        operands,
     ))
 }
 
@@ -585,7 +638,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                     names.push(name.clone());
                 }
             }
-            Pattern::Literal(_) | Pattern::Wildcard => {}
+            Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}
         }
     }
 

@@ -57,10 +57,10 @@ named form binds it. Comma-separated alternatives in one case are permitted
 only when none of the alternatives introduces a binding.
 
 The current Rust subset implements literals, `_`, identifier bindings,
-`name @ pattern` bindings, list patterns with an optional named or anonymous
-final spread, and string-keyed map patterns with an optional named or anonymous
-final spread. It also implements exact map patterns and non-binding,
-comma-separated case alternatives. Pinning, computed map keys, and struct
+pinned identifiers, `name @ pattern` bindings, list patterns with an optional
+named or anonymous final spread, and string-keyed map patterns with an optional
+named or anonymous final spread. It also implements exact map patterns and
+non-binding, comma-separated case alternatives. Computed map keys and struct
 patterns remain specified but unsupported; see the generated language support
 matrix for the implemented subset.
 

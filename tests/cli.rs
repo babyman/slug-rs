@@ -298,6 +298,106 @@ fn matches_non_binding_case_alternatives_with_guards() {
 }
 
 #[test]
+fn pinned_patterns_observe_global_local_and_captured_bindings() {
+    let path = fixture_path("pinned-bindings");
+    fs::write(
+        &path,
+        "var expected = 1\n\
+         val global_match = fn(value) match { ^expected => true; _ => false }\n\
+         val make_matcher = fn(expected) { fn(value) match { ^expected => true; _ => false } }\n\
+         val captured_match = make_matcher(2)\n\
+         val local_match = fn(expected, value) { match value { ^expected => true; _ => false } }\n\
+         println(global_match(1), captured_match(2), local_match(3, 3))\n\
+         expected = 2\n\
+         println(global_match(1), global_match(2))\n",
+    )
+    .expect("write pinned binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run pinned binding source");
+    fs::remove_file(path).expect("remove pinned binding source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "true true true\nfalse true\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn pinned_patterns_work_in_collections_destructuring_and_alternatives() {
+    let path = fixture_path("nested-pinned-patterns");
+    fs::write(
+        &path,
+        "val expected = 2\n\
+         val [^expected, tail] = [2, 3]\n\
+         val {status: ^expected, value} = {status: 2, value: \"ok\"}\n\
+         val fallback = match [1, 3] {\n\
+           [head, ^expected] => head\n\
+           [left, right] => left + right\n\
+         }\n\
+         val alternative = match 2 { ^expected, 0 => true; _ => false }\n\
+         println(tail, value, fallback, alternative)\n",
+    )
+    .expect("write nested pinned pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nested pinned pattern source");
+    fs::remove_file(path).expect("remove nested pinned pattern source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "3 ok 4 true\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_unknown_and_malformed_pinned_patterns() {
+    let unknown = fixture_path("unknown-pinned-pattern");
+    fs::write(&unknown, "match 1 { ^missing => true }\n")
+        .expect("write unknown pinned pattern source");
+    let output = slug()
+        .arg(&unknown)
+        .output()
+        .expect("run unknown pinned pattern source");
+    fs::remove_file(unknown).expect("remove unknown pinned pattern source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: unknown pinned binding `missing`")
+    );
+
+    let malformed = fixture_path("malformed-pinned-pattern");
+    fs::write(&malformed, "match 1 { ^ => true }\n")
+        .expect("write malformed pinned pattern source");
+    let output = slug()
+        .arg(&malformed)
+        .output()
+        .expect("run malformed pinned pattern source");
+    fs::remove_file(malformed).expect("remove malformed pinned pattern source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: parse error: expected pinned binding name")
+    );
+}
+
+#[test]
 fn rejects_bindings_in_match_alternatives() {
     for (label, source) in [
         ("direct", "match 1 { value, 0 => value }\n"),
