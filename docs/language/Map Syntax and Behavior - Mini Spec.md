@@ -20,6 +20,10 @@ evaluated in source order.
 A key must be hashable. Numbers, strings, bytes, and booleans are hashable.
 `nil`, lists, maps, functions, and structs are not valid map keys.
 
+Map patterns use the same bare and bracketed key forms. A bracketed
+map-pattern key is evaluated once before its pattern is tested; an unhashable
+result follows the runtime type-error path.
+
 ## Access
 
 ```slug

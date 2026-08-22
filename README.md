@@ -16,7 +16,7 @@ compiled-module contract is documented separately as `.cslug`.
 - Source execution for a core subset: lexical `val`/`var` bindings, including
   list and map destructuring, assignment,
   literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
-  literal/list/map `match` with non-binding case alternatives,
+  literal/list/map `match` with computed map keys and non-binding case alternatives,
   pinned `^name` comparisons, `name @ pattern` bindings, and named or
   anonymous final rests, function match bodies, `return`,
   `throw`, `defer` including `onsuccess` and `onerror` recovery, tail-position `recur(...)`,

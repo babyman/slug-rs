@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{Capture, Chunk, MatchPattern, MatchRest, Op, Program, SourceSpan};
+use crate::{Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, Program, SourceSpan};
 
 use super::{
     SourceError,
-    ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, RestPattern},
+    ast::{Binary, Expr, ExprKind, MapPatternKey, MatchCase, Pattern, Prefix, RestPattern},
     state::{Binding, State},
 };
 
@@ -391,11 +391,15 @@ impl Compiler {
         Ok(())
     }
     fn emit_pattern_operand(
-        &self,
+        &mut self,
         state: &mut State,
-        name: &str,
+        operand: &PatternOperand,
         span: &SourceSpan,
     ) -> Result<(), SourceError> {
+        let name = match operand {
+            PatternOperand::Pinned(name) => name,
+            PatternOperand::Computed(expression) => return self.expression(state, expression),
+        };
         let binding = state
             .lookup(name)
             .or_else(|| {
@@ -414,7 +418,7 @@ impl Compiler {
         Ok(())
     }
     fn bind_pattern(
-        &self,
+        &mut self,
         state: &mut State,
         pattern: &Pattern,
         mutable: bool,
@@ -548,14 +552,20 @@ impl Compiler {
     }
 }
 
-fn lower_pattern(pattern: &Pattern, operands: &mut Vec<String>) -> MatchPattern {
+#[derive(Clone, Debug)]
+enum PatternOperand {
+    Pinned(String),
+    Computed(Expr),
+}
+
+fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> MatchPattern {
     match pattern {
         Pattern::Literal(value) => MatchPattern::Literal(value.clone()),
         Pattern::Wildcard => MatchPattern::Wildcard,
         Pattern::Binding(_) => MatchPattern::Binding,
         Pattern::Pinned(name) => {
             let index = operands.len();
-            operands.push(name.clone());
+            operands.push(PatternOperand::Pinned(name.clone()));
             MatchPattern::Pinned(index)
         }
         Pattern::At { pattern, .. } => MatchPattern::At(Box::new(lower_pattern(pattern, operands))),
@@ -573,7 +583,17 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<String>) -> MatchPattern 
         } => MatchPattern::Map {
             entries: entries
                 .iter()
-                .map(|(key, pattern)| (key.clone(), lower_pattern(pattern, operands)))
+                .map(|(key, pattern)| {
+                    let key = match key {
+                        MapPatternKey::String(key) => MatchMapKey::String(key.clone()),
+                        MapPatternKey::Computed(expression) => {
+                            let index = operands.len();
+                            operands.push(PatternOperand::Computed(expression.clone()));
+                            MatchMapKey::Operand(index)
+                        }
+                    };
+                    (key, lower_pattern(pattern, operands))
+                })
                 .collect(),
             rest: lower_rest_pattern(rest.as_ref()),
             exact: *exact,
@@ -584,7 +604,7 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<String>) -> MatchPattern 
 fn lower_case_patterns(
     patterns: &[Pattern],
     span: &SourceSpan,
-) -> Result<(MatchPattern, Vec<String>, Vec<String>), SourceError> {
+) -> Result<(MatchPattern, Vec<String>, Vec<PatternOperand>), SourceError> {
     let mut operands = Vec::new();
     if let [pattern] = patterns {
         return Ok((

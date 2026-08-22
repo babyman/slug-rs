@@ -15,6 +15,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Pinned `^name` patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Non-binding match-case alternatives | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Non-exact string-key map patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Computed map-pattern keys | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Named map rest captures | implemented | `tests/cli.rs` |
 | Anonymous list and map rest patterns | implemented | `tests/cli.rs` |
 | Exact map patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |

@@ -42,11 +42,18 @@ do not allow a spread entry; and
 
 A map entry without `:` uses the key name and binds it to a same-named
 identifier. For example, `{name}` requires the `"name"` key and binds its value
-to `name`. A map-pattern key may be bracketed to evaluate a key expression.
+to `name`. A bracketed map-pattern key evaluates its expression once before
+its containing pattern is tested. For a case with alternatives, all computed
+key expressions are evaluated in pattern traversal order before any alternative
+is tested. Each expression uses the enclosing lexical scope, before any
+bindings from that pattern exist, and its result must be a valid map key.
+Unlike a bare identifier key, a bracketed key must be followed by `:` and an
+explicit value pattern.
 
 ```slug
 match user {
   {name, age: years, ...rest} => name
+  {[field]: value} => value
   {|name: "Slug"|} => "exact"
   _ => "other"
 }
@@ -60,7 +67,7 @@ The current Rust subset implements literals, `_`, identifier bindings,
 pinned identifiers, `name @ pattern` bindings, list patterns with an optional
 named or anonymous final spread, and string-keyed map patterns with an optional
 named or anonymous final spread. It also implements exact map patterns and
-non-binding, comma-separated case alternatives. Computed map keys and struct
+computed map keys, plus non-binding, comma-separated case alternatives. Struct
 patterns remain specified but unsupported; see the generated language support
 matrix for the implemented subset.
 

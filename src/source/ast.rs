@@ -77,6 +77,11 @@ pub(super) enum RestPattern {
     Binding(String),
 }
 #[derive(Clone, Debug)]
+pub(super) enum MapPatternKey {
+    String(String),
+    Computed(Expr),
+}
+#[derive(Clone, Debug)]
 pub(super) enum Pattern {
     Literal(Value),
     Wildcard,
@@ -91,7 +96,7 @@ pub(super) enum Pattern {
         rest: Option<RestPattern>,
     },
     Map {
-        entries: Vec<(String, Pattern)>,
+        entries: Vec<(MapPatternKey, Pattern)>,
         rest: Option<RestPattern>,
         exact: bool,
     },

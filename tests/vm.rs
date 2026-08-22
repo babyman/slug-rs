@@ -1,5 +1,6 @@
 use slug_vm::{
-    Capture, Chunk, MatchRest, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm, compile,
+    Capture, Chunk, MatchMapKey, MatchRest, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm,
+    compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {
@@ -288,6 +289,58 @@ fn pinned_patterns_compare_dynamic_operands() {
 }
 
 #[test]
+fn computed_map_pattern_keys_use_dynamic_operands() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+        (Value::Int(7), Value::string("seven")),
+        (Value::string("extra"), Value::Bool(true)),
+    ])));
+    let key = main.constant(Value::Int(7));
+    main.emit(Op::Constant(value))
+        .emit(Op::Duplicate)
+        .emit(Op::Constant(key))
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Map {
+                entries: vec![(MatchMapKey::Operand(0), slug_vm::MatchPattern::Binding)],
+                rest: MatchRest::None,
+                exact: false,
+            },
+            bindings: 1,
+            operands: 1,
+        })
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn rejects_unhashable_computed_map_pattern_keys() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::Map(std::rc::Rc::new(Vec::new())));
+    let key = main.constant(Value::List(std::rc::Rc::new(Vec::new())));
+    main.emit(Op::Constant(value))
+        .emit(Op::Duplicate)
+        .emit(Op::Constant(key))
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Map {
+                entries: vec![(MatchMapKey::Operand(0), slug_vm::MatchPattern::Wildcard)],
+                rest: MatchRest::None,
+                exact: false,
+            },
+            bindings: 0,
+            operands: 1,
+        })
+        .emit(Op::Return);
+
+    let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(error.message, "list cannot be used as a map key");
+}
+
+#[test]
 fn rejects_missing_dynamic_pattern_operands() {
     let mut main = Chunk::new("main", 0);
     let subject = main.constant(Value::Int(3));
@@ -316,7 +369,10 @@ fn matches_map_patterns_and_exposes_string_key_bindings() {
         .emit(Op::Duplicate)
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::Map {
-                entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+                entries: vec![(
+                    MatchMapKey::String("name".into()),
+                    slug_vm::MatchPattern::Binding,
+                )],
                 rest: MatchRest::None,
                 exact: false,
             },
@@ -352,7 +408,10 @@ fn captures_unmatched_map_entries_in_a_rest_binding() {
         .emit(Op::Duplicate)
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::Map {
-                entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+                entries: vec![(
+                    MatchMapKey::String("name".into()),
+                    slug_vm::MatchPattern::Binding,
+                )],
                 rest: MatchRest::Binding,
                 exact: false,
             },
@@ -392,7 +451,10 @@ fn exact_map_patterns_reject_extra_entries() {
     main.emit(Op::Constant(value))
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::Map {
-                entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+                entries: vec![(
+                    MatchMapKey::String("name".into()),
+                    slug_vm::MatchPattern::Binding,
+                )],
                 rest: MatchRest::None,
                 exact: true,
             },

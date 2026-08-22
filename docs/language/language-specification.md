@@ -315,7 +315,9 @@ Patterns include literals, `_` as a wildcard, identifier bindings, pinned
 identifiers (`^name`), binding patterns (`name @ pattern`), list patterns, map
 patterns, and struct patterns. List and map patterns may have a final spread
 pattern such as `...rest`. Exact map patterns use `{|` and `|}` and do not
-permit a spread entry.
+permit a spread entry. A bracketed map-pattern key evaluates its expression
+once before its pattern is tested, in the enclosing lexical scope before the
+pattern's bindings exist. The resulting value must be a valid map key.
 
 ```slug
 val headOrZero = fn(xs) {

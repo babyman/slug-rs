@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{MatchPattern, MatchRest, Value};
+use crate::{MatchMapKey, MatchPattern, MatchRest, Value};
 
 use super::RuntimeErrorKind;
 
@@ -80,7 +80,7 @@ pub(super) fn matches_pattern(
     value: &Value,
     operands: &[Value],
     bindings: &mut Vec<Value>,
-) -> Result<bool, String> {
+) -> Result<bool, (RuntimeErrorKind, String)> {
     match pattern {
         MatchPattern::Literal(expected) => Ok(value == expected),
         MatchPattern::Wildcard => Ok(true),
@@ -91,7 +91,12 @@ pub(super) fn matches_pattern(
         MatchPattern::Pinned(index) => operands
             .get(*index)
             .map(|expected| value == expected)
-            .ok_or_else(|| format!("match pattern operand {index} does not exist")),
+            .ok_or_else(|| {
+                (
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!("match pattern operand {index} does not exist"),
+                )
+            }),
         MatchPattern::At(pattern) => {
             let binding_start = bindings.len();
             bindings.push(value.clone());
@@ -138,6 +143,7 @@ pub(super) fn matches_pattern(
             rest,
             exact,
         } => {
+            let keys = resolve_map_pattern_keys(patterns, operands)?;
             let Value::Map(entries) = value else {
                 return Ok(false);
             };
@@ -145,9 +151,8 @@ pub(super) fn matches_pattern(
                 return Ok(false);
             }
             let binding_start = bindings.len();
-            for (key, pattern) in patterns {
-                let key = Value::string(key.clone());
-                let Some((_, value)) = entries.iter().rev().find(|(entry, _)| entry == &key) else {
+            for ((_, pattern), key) in patterns.iter().zip(&keys) {
+                let Some((_, value)) = entries.iter().rev().find(|(entry, _)| entry == key) else {
                     bindings.truncate(binding_start);
                     return Ok(false);
                 };
@@ -159,11 +164,7 @@ pub(super) fn matches_pattern(
             if *rest == MatchRest::Binding {
                 let rest_entries = entries
                     .iter()
-                    .filter(|(key, _)| {
-                        !patterns
-                            .iter()
-                            .any(|(pattern_key, _)| key == &Value::string(pattern_key.clone()))
-                    })
+                    .filter(|(key, _)| !keys.iter().any(|pattern_key| key == pattern_key))
                     .cloned()
                     .collect();
                 bindings.push(Value::Map(Rc::new(rest_entries)));
@@ -171,6 +172,33 @@ pub(super) fn matches_pattern(
             Ok(true)
         }
     }
+}
+
+fn resolve_map_pattern_keys(
+    patterns: &[(MatchMapKey, MatchPattern)],
+    operands: &[Value],
+) -> Result<Vec<Value>, (RuntimeErrorKind, String)> {
+    patterns
+        .iter()
+        .map(|(key, _)| {
+            let key = match key {
+                MatchMapKey::String(key) => Value::string(key.clone()),
+                MatchMapKey::Operand(index) => operands.get(*index).cloned().ok_or_else(|| {
+                    (
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!("match pattern operand {index} does not exist"),
+                    )
+                })?,
+            };
+            if !is_map_key(&key) {
+                return Err((
+                    RuntimeErrorKind::Type,
+                    format!("{} cannot be used as a map key", key.type_name()),
+                ));
+            }
+            Ok(key)
+        })
+        .collect()
 }
 
 pub(super) fn is_map_key(value: &Value) -> bool {

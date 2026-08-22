@@ -1,6 +1,9 @@
 use super::{
     SourceError,
-    ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, RestPattern, Token, TokenKind},
+    ast::{
+        Binary, Expr, ExprKind, MapPatternKey, MatchCase, Pattern, Prefix, RestPattern, Token,
+        TokenKind,
+    },
 };
 use crate::{DeferMode, SourceSpan, Value};
 
@@ -690,17 +693,31 @@ impl Parser {
                     }
                     break;
                 }
-                let token = self.next();
-                let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at("expected map pattern key", token.span));
+                let key = if self.matches(&TokenKind::LBracket) {
+                    self.next();
+                    let key = self.expression()?;
+                    self.consume(&TokenKind::RBracket, "expected ]")?;
+                    MapPatternKey::Computed(key)
+                } else {
+                    let token = self.next();
+                    let TokenKind::Name(name) = token.kind else {
+                        return Err(SourceError::at("expected map pattern key", token.span));
+                    };
+                    MapPatternKey::String(name)
                 };
                 let pattern = if self.matches(&TokenKind::Colon) {
                     self.next();
                     self.pattern()?
                 } else {
+                    let MapPatternKey::String(name) = &key else {
+                        return Err(SourceError::at(
+                            "expected : after computed map pattern key",
+                            self.peek().span.clone(),
+                        ));
+                    };
                     Pattern::Binding(name.clone())
                 };
-                entries.push((name, pattern));
+                entries.push((key, pattern));
                 if !self.matches(&TokenKind::Comma) {
                     break;
                 }

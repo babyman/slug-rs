@@ -143,7 +143,7 @@ map_literal = "{" , [ map_entries ] , "}" ;
 map_entries = map_entry , { "," , map_entry } , [ "," ] ;
 map_entry = map_key , ":" , expression ;
 (* Bare identifiers denote string keys unless bracketed. *)
-map_key = expression | "[" , expression , "]" ;
+map_key = identifier | "[" , expression , "]" ;
 
 struct_schema = "struct" , "{" , [ struct_schema_fields ] , "}" ;
 struct_schema_fields = struct_schema_field , { "," , struct_schema_field } , [ "," ] ;
@@ -190,9 +190,11 @@ map_pattern = "{" , [ map_pattern_body ] , "}"
 
 (* Exact map patterns ("{| ... |}") disallow spread entries. *)
 map_pattern_body = "*" | map_pattern_entry , { "," , map_pattern_entry } , [ "," ] ;
-map_pattern_entry = spread_pattern | map_pattern_key , [ ":" , match_pattern ] ;
-(* Bare identifier pattern keys denote string keys unless bracketed. *)
-map_pattern_key = expression | "[" , expression , "]" ;
+map_pattern_entry = spread_pattern
+                  | identifier , [ ":" , match_pattern ]
+                  | "[" , expression , "]" , ":" , match_pattern
+                  ;
+(* Bare identifier pattern keys denote strings; computed keys require a value pattern. *)
 
 struct_pattern = identifier , "{" , [ struct_pattern_fields ] , "}" ;
 struct_pattern_fields = struct_pattern_field , { "," , struct_pattern_field } , [ "," ] ;

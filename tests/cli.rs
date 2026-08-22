@@ -539,6 +539,92 @@ fn matches_string_keyed_maps_with_nested_patterns_and_extra_entries() {
 }
 
 #[test]
+fn computed_map_pattern_keys_support_expressions_and_lexical_bindings() {
+    let path = fixture_path("computed-map-patterns");
+    fs::write(
+        &path,
+        "val globalKey = \"status\"\n\
+         val read = fn(prefix) {\n\
+           val suffix = \"tus\"\n\
+           fn(value) match {\n\
+             {[prefix + suffix]: result, ...rest} => result + rest.extra\n\
+             _ => \"missing\"\n\
+           }\n\
+         }\n\
+         val destructure = fn(key, value) { val {[key]: found} = value; found }\n\
+         val exact = match ({[1]: \"one\"}) { {|[1]: result|} => result; _ => \"missing\" }\n\
+         val alternative = match ({status: \"ready\"}) {\n\
+           {[globalKey]: \"ok\"}, {[globalKey]: \"ready\"} => \"alternative\"\n\
+           _ => \"missing\"\n\
+         }\n\
+         var evaluations = 0\n\
+         val key = fn() { evaluations = evaluations + 1; \"status\" }\n\
+         val evaluated = match ({status: \"ready\"}) { {[key()]: \"ready\"} => \"once\" }\n\
+         println(destructure(globalKey, {status: \"Slug\"}), read(\"sta\")({status: \"ok\", extra: \"!\"}), exact, alternative, evaluated, evaluations)\n",
+    )
+    .expect("write computed map pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run computed map pattern source");
+    fs::remove_file(path).expect("remove computed map pattern source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "Slug ok! one alternative once 1\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_unhashable_computed_map_pattern_keys_from_source() {
+    let path = fixture_path("invalid-computed-map-pattern-key");
+    fs::write(&path, "match ({status: \"ok\"}) { {[[]]: _} => true }\n")
+        .expect("write invalid computed map pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid computed map pattern source");
+    fs::remove_file(path).expect("remove invalid computed map pattern source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: runtime error: list cannot be used as a map key")
+    );
+}
+
+#[test]
+fn requires_a_value_pattern_after_a_computed_map_key() {
+    let path = fixture_path("computed-map-pattern-shorthand");
+    fs::write(
+        &path,
+        "match ({status: \"ok\"}) { {[\"status\"]} => true }\n",
+    )
+    .expect("write computed map pattern shorthand");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run computed map pattern shorthand");
+    fs::remove_file(path).expect("remove computed map pattern shorthand");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: parse error: expected : after computed map pattern key")
+    );
+}
+
+#[test]
 fn function_match_bodies_follow_parameter_subject_rules() {
     let path = fixture_path("function-match");
     fs::write(

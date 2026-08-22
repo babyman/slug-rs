@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added bracketed computed map-pattern keys, evaluated once through indexed
+  runtime pattern operands.
 - Added pinned `^name` patterns backed by indexed runtime pattern operands.
 - Added comma-separated, non-binding alternatives within a `match` case.
 - Added `name @ pattern` matching and destructuring to bind a whole value

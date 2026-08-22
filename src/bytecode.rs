@@ -43,6 +43,12 @@ pub enum MatchRest {
     Binding,
 }
 
+#[derive(Clone, Debug)]
+pub enum MatchMapKey {
+    String(String),
+    Operand(usize),
+}
+
 /// The subset of source patterns lowered by the current compiler.
 #[derive(Clone, Debug)]
 pub enum MatchPattern {
@@ -57,7 +63,7 @@ pub enum MatchPattern {
         rest: MatchRest,
     },
     Map {
-        entries: Vec<(String, MatchPattern)>,
+        entries: Vec<(MatchMapKey, MatchPattern)>,
         rest: MatchRest,
         exact: bool,
     },
