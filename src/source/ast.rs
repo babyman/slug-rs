@@ -72,17 +72,22 @@ pub(super) struct MatchCase {
     pub(super) span: SourceSpan,
 }
 #[derive(Clone, Debug)]
+pub(super) enum RestPattern {
+    Discard,
+    Binding(String),
+}
+#[derive(Clone, Debug)]
 pub(super) enum Pattern {
     Literal(Value),
     Wildcard,
     Binding(String),
     List {
         items: Vec<Pattern>,
-        rest: Option<String>,
+        rest: Option<RestPattern>,
     },
     Map {
         entries: Vec<(String, Pattern)>,
-        rest: Option<String>,
+        rest: Option<RestPattern>,
         exact: bool,
     },
 }

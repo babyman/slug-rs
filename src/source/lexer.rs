@@ -1,5 +1,4 @@
-/// Stateful source scanner. Tokenization methods remain in the parent module
-/// during this first extraction step so lexer behavior stays unchanged.
+/// Stateful scanner for the source front end.
 use crate::SourceSpan;
 
 use super::{

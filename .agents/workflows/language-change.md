@@ -17,9 +17,9 @@ record merely to repeat behavior the existing documentation already decides.
 
 ## 2. Identify the implementation surface
 
-- `src/source.rs` owns lexing, parsing, and source-to-bytecode compilation.
+- `src/source/` owns lexing, parsing, and source-to-bytecode compilation.
 - `src/bytecode.rs` owns VM-internal instruction representation.
-- `src/vm.rs` owns execution and runtime error construction.
+- `src/vm/` owns execution, cleanup, value operations, and runtime errors.
 - `src/value.rs` owns language values and value operations.
 - `src/main.rs` owns the public command-line boundary and error presentation.
 

@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{Capture, Chunk, MatchPattern, Op, Program, SourceSpan};
+use crate::{Capture, Chunk, MatchPattern, MatchRest, Op, Program, SourceSpan};
 
 use super::{
     SourceError,
-    ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix},
+    ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, RestPattern},
     state::{Binding, State},
 };
 
@@ -521,7 +521,7 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
         Pattern::Binding(_) => MatchPattern::Binding,
         Pattern::List { items, rest } => MatchPattern::List {
             items: items.iter().map(lower_pattern).collect(),
-            rest: rest.is_some(),
+            rest: lower_rest_pattern(rest.as_ref()),
         },
         Pattern::Map {
             entries,
@@ -532,7 +532,7 @@ fn lower_pattern(pattern: &Pattern) -> MatchPattern {
                 .iter()
                 .map(|(key, pattern)| (key.clone(), lower_pattern(pattern)))
                 .collect(),
-            rest: rest.is_some(),
+            rest: lower_rest_pattern(rest.as_ref()),
             exact: *exact,
         },
     }
@@ -546,7 +546,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                 for item in items {
                     collect(item, names);
                 }
-                if let Some(name) = rest {
+                if let Some(RestPattern::Binding(name)) = rest {
                     names.push(name.clone());
                 }
             }
@@ -554,7 +554,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                 for (_, pattern) in entries {
                     collect(pattern, names);
                 }
-                if let Some(name) = rest {
+                if let Some(RestPattern::Binding(name)) = rest {
                     names.push(name.clone());
                 }
             }
@@ -572,4 +572,12 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
         ));
     }
     Ok(names)
+}
+
+fn lower_rest_pattern(rest: Option<&RestPattern>) -> MatchRest {
+    match rest {
+        None => MatchRest::None,
+        Some(RestPattern::Discard) => MatchRest::Discard,
+        Some(RestPattern::Binding(_)) => MatchRest::Binding,
+    }
 }

@@ -36,6 +36,14 @@ pub enum Capture {
 }
 
 /// The subset of source patterns lowered by the current compiler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MatchRest {
+    None,
+    Discard,
+    Binding,
+}
+
+/// The subset of source patterns lowered by the current compiler.
 #[derive(Clone, Debug)]
 pub enum MatchPattern {
     Literal(Value),
@@ -43,11 +51,11 @@ pub enum MatchPattern {
     Binding,
     List {
         items: Vec<MatchPattern>,
-        rest: bool,
+        rest: MatchRest,
     },
     Map {
         entries: Vec<(String, MatchPattern)>,
-        rest: bool,
+        rest: MatchRest,
         exact: bool,
     },
 }

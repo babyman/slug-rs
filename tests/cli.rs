@@ -364,6 +364,77 @@ fn captures_remaining_map_entries_in_match_and_destructuring() {
 }
 
 #[test]
+fn discards_anonymous_list_and_map_pattern_remainders() {
+    let path = fixture_path("anonymous-rest-patterns");
+    fs::write(
+        &path,
+        "val [first, ...] = [1, 2, 3]\n\
+         val list_head = fn(values) match {\n\
+           [head, ...] => head\n\
+           _ => nil\n\
+         }\n\
+         val map_name = fn(value) match {\n\
+           {name, ...} => name\n\
+           _ => nil\n\
+         }\n\
+         println(first, list_head([4, 5]), map_name({name: \"Slug\", extra: true}))\n",
+    )
+    .expect("write anonymous rest pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run anonymous rest pattern source");
+    fs::remove_file(path).expect("remove anonymous rest pattern source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1 4 Slug\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_non_final_anonymous_list_rest_patterns() {
+    let path = fixture_path("non-final-anonymous-list-rest");
+    fs::write(&path, "val [head, ..., tail] = [1, 2, 3]\n")
+        .expect("write non-final anonymous list rest source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run non-final anonymous list rest source");
+    fs::remove_file(path).expect("remove non-final anonymous list rest source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: parse error: list spread pattern must be final")
+    );
+}
+
+#[test]
+fn rejects_anonymous_rest_in_exact_map_patterns() {
+    let path = fixture_path("anonymous-exact-map-rest");
+    fs::write(&path, "val {|name, ...|} = {name: \"Slug\"}\n")
+        .expect("write exact map anonymous rest source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run exact map anonymous rest source");
+    fs::remove_file(path).expect("remove exact map anonymous rest source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: parse error: exact map patterns cannot contain a spread pattern")
+    );
+}
+
+#[test]
 fn exact_map_patterns_reject_extra_entries() {
     let path = fixture_path("exact-map-patterns");
     fs::write(

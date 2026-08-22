@@ -176,6 +176,7 @@ match_pattern = "_"
               ;
 
 binding_pattern = identifier , "@" , match_pattern ;
+(* An omitted spread identifier discards the remainder. *)
 spread_pattern = "..." , [ identifier ] ;
 pinned_identifier = "^" , identifier ;
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added anonymous final `...` patterns that discard remaining list items or
+  map entries.
 - Fixed deferred cleanup to preserve caller scopes, run older cleanup after a
   replacement error, and drain a deferred action's own cleanup before return.
 - Fixed successful non-tail `match` stack cleanup and nested-scope cleanup

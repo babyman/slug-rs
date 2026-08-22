@@ -1,4 +1,6 @@
-use slug_vm::{Capture, Chunk, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm, compile};
+use slug_vm::{
+    Capture, Chunk, MatchRest, Op, Program, RuntimeErrorKind, SourceSpan, Value, Vm, compile,
+};
 
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
@@ -148,7 +150,7 @@ fn matches_list_patterns_and_exposes_bindings() {
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::List {
                 items: vec![slug_vm::MatchPattern::Binding],
-                rest: true,
+                rest: MatchRest::Binding,
             },
             bindings: 2,
         })
@@ -189,7 +191,7 @@ fn matches_map_patterns_and_exposes_string_key_bindings() {
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::Map {
                 entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
-                rest: false,
+                rest: MatchRest::None,
                 exact: false,
             },
             bindings: 1,
@@ -224,7 +226,7 @@ fn captures_unmatched_map_entries_in_a_rest_binding() {
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::Map {
                 entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
-                rest: true,
+                rest: MatchRest::Binding,
                 exact: false,
             },
             bindings: 2,
@@ -263,7 +265,7 @@ fn exact_map_patterns_reject_extra_entries() {
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::Map {
                 entries: vec![("name".into(), slug_vm::MatchPattern::Binding)],
-                rest: false,
+                rest: MatchRest::None,
                 exact: true,
             },
             bindings: 1,

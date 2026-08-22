@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{MatchPattern, Value};
+use crate::{MatchPattern, MatchRest, Value};
 
 use super::RuntimeErrorKind;
 
@@ -91,7 +91,9 @@ pub(super) fn matches_pattern(
             let Value::List(values) = value else {
                 return false;
             };
-            if values.len() < items.len() || (!rest && values.len() != items.len()) {
+            if values.len() < items.len()
+                || (*rest == MatchRest::None && values.len() != items.len())
+            {
                 return false;
             }
             let binding_start = bindings.len();
@@ -101,7 +103,7 @@ pub(super) fn matches_pattern(
                     return false;
                 }
             }
-            if *rest {
+            if *rest == MatchRest::Binding {
                 bindings.push(Value::List(Rc::new(values[items.len()..].to_vec())));
             }
             true
@@ -129,7 +131,7 @@ pub(super) fn matches_pattern(
                     return false;
                 }
             }
-            if *rest {
+            if *rest == MatchRest::Binding {
                 let rest_entries = entries
                     .iter()
                     .filter(|(key, _)| {

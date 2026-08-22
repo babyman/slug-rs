@@ -1,11 +1,10 @@
 use super::{
     SourceError,
-    ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, Token, TokenKind},
+    ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix, RestPattern, Token, TokenKind},
 };
 use crate::{DeferMode, SourceSpan, Value};
 
-/// Stateful source parser. Grammar methods remain with the front-end during
-/// the staged extraction so parsing behavior is unchanged.
+/// Stateful parser for the source front end.
 pub(super) struct Parser {
     tokens: Vec<Token>,
     index: usize,
@@ -592,6 +591,17 @@ impl Parser {
             _ => Err(SourceError::at("expected match pattern", token.span)),
         }
     }
+    fn rest_pattern(&mut self) -> RestPattern {
+        self.next();
+        if matches!(self.kind(), TokenKind::Name(_)) {
+            let TokenKind::Name(name) = self.next().kind else {
+                unreachable!("name token was checked");
+            };
+            RestPattern::Binding(name)
+        } else {
+            RestPattern::Discard
+        }
+    }
     fn list_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
         self.enter_nesting(span.clone())?;
         let mut items = Vec::new();
@@ -599,12 +609,7 @@ impl Parser {
         if !self.matches(&TokenKind::RBracket) {
             loop {
                 if self.matches(&TokenKind::Ellipsis) {
-                    self.next();
-                    let token = self.next();
-                    let TokenKind::Name(name) = token.kind else {
-                        return Err(SourceError::at("expected list spread binding", token.span));
-                    };
-                    rest = Some(name);
+                    rest = Some(self.rest_pattern());
                     if !self.matches(&TokenKind::RBracket) {
                         return Err(SourceError::at(
                             "list spread pattern must be final",
@@ -651,16 +656,11 @@ impl Parser {
                 if self.matches(&TokenKind::Ellipsis) {
                     if exact {
                         return Err(SourceError::at(
-                            "exact map patterns cannot capture a rest map",
+                            "exact map patterns cannot contain a spread pattern",
                             self.peek().span.clone(),
                         ));
                     }
-                    self.next();
-                    let token = self.next();
-                    let TokenKind::Name(name) = token.kind else {
-                        return Err(SourceError::at("expected map spread binding", token.span));
-                    };
-                    rest = Some(name);
+                    rest = Some(self.rest_pattern());
                     if !self.matches(&closing) {
                         return Err(SourceError::at(
                             "map spread pattern must be final",

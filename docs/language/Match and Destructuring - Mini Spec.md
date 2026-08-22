@@ -57,9 +57,9 @@ named form binds it. Comma-separated alternatives in one case are permitted
 only when none of the alternatives introduces a binding.
 
 The current Rust subset implements literals, `_`, identifier bindings, list
-patterns with an optional named final spread, and string-keyed map patterns
-with an optional named final spread. It also implements exact map patterns.
-Pinning, `@` patterns, anonymous spreads, alternatives, computed map keys,
+patterns with an optional named or anonymous final spread, and string-keyed map
+patterns with an optional named or anonymous final spread. It also implements
+exact map patterns. Pinning, `@` patterns, alternatives, computed map keys,
 and struct patterns remain specified but unsupported; see the generated
 language support matrix for the implemented subset.
 
