@@ -1,11 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::{Capture, Chunk, Op, Program, SourceSpan};
+use crate::{Capture, Chunk, MatchPattern, Op, Program, SourceSpan};
 
 use super::{
     SourceError,
     ast::{Binary, Expr, ExprKind, MatchCase, Pattern, Prefix},
-    lower_pattern, pattern_bindings,
     state::{Binding, State},
 };
 
@@ -58,7 +57,7 @@ impl Compiler {
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
             ExprKind::Value(value) => {
-                let constant = state.chunk.constant(value.clone());
+                let constant = state.constant(value.clone());
                 state.emit(Op::Constant(constant), &expression.span);
             }
             ExprKind::Name(name) => match state.lookup(name).or_else(|| {
@@ -510,7 +509,67 @@ impl Compiler {
         let mut state = State::function(parameters, visible);
         self.tail_expression(&mut state, body)?;
         state.emit(Op::Return, &body.span);
-        let captures = state.captures.clone();
+        let captures = state.captures();
         Ok((state.finish("<fn>", parameters.len()), captures))
     }
+}
+
+fn lower_pattern(pattern: &Pattern) -> MatchPattern {
+    match pattern {
+        Pattern::Literal(value) => MatchPattern::Literal(value.clone()),
+        Pattern::Wildcard => MatchPattern::Wildcard,
+        Pattern::Binding(_) => MatchPattern::Binding,
+        Pattern::List { items, rest } => MatchPattern::List {
+            items: items.iter().map(lower_pattern).collect(),
+            rest: rest.is_some(),
+        },
+        Pattern::Map {
+            entries,
+            rest,
+            exact,
+        } => MatchPattern::Map {
+            entries: entries
+                .iter()
+                .map(|(key, pattern)| (key.clone(), lower_pattern(pattern)))
+                .collect(),
+            rest: rest.is_some(),
+            exact: *exact,
+        },
+    }
+}
+
+fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>, SourceError> {
+    fn collect(pattern: &Pattern, names: &mut Vec<String>) {
+        match pattern {
+            Pattern::Binding(name) => names.push(name.clone()),
+            Pattern::List { items, rest } => {
+                for item in items {
+                    collect(item, names);
+                }
+                if let Some(name) = rest {
+                    names.push(name.clone());
+                }
+            }
+            Pattern::Map { entries, rest, .. } => {
+                for (_, pattern) in entries {
+                    collect(pattern, names);
+                }
+                if let Some(name) = rest {
+                    names.push(name.clone());
+                }
+            }
+            Pattern::Literal(_) | Pattern::Wildcard => {}
+        }
+    }
+
+    let mut names = Vec::new();
+    collect(pattern, &mut names);
+    let mut seen = HashSet::new();
+    if let Some(name) = names.iter().find(|name| !seen.insert(name.as_str())) {
+        return Err(SourceError::semantic(
+            format!("duplicate match binding `{name}`"),
+            span.clone(),
+        ));
+    }
+    Ok(names)
 }

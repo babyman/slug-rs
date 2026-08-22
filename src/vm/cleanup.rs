@@ -1,8 +1,6 @@
-use std::rc::Rc;
-
 use crate::{DeferMode, Program, SourceSpan, Value, value::binding_cell};
 
-use super::{Frame, RuntimeError, RuntimeErrorKind, Vm, VmResult, error::fault_type};
+use super::{Frame, RuntimeError, RuntimeErrorKind, Vm, VmResult};
 
 #[derive(Clone)]
 pub(super) struct Deferred {
@@ -24,6 +22,35 @@ pub(super) enum Cleanup {
 }
 
 impl Vm {
+    pub(super) fn begin_return(
+        &mut self,
+        program: &Program,
+        value: Value,
+    ) -> VmResult<Option<Value>> {
+        let frame_depth = self.frames.len().checked_sub(1).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "return cleanup has no frame".into(),
+                None,
+            )
+        })?;
+        let frame = self.frames.last_mut().expect("frame was checked");
+        let scopes = std::mem::take(&mut frame.scopes);
+        self.cleanup
+            .push(if frame.cleanup_action && frame.cleanup_recovers {
+                Cleanup::Recover(value)
+            } else {
+                Cleanup::Return(value)
+            });
+        self.cleanup
+            .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
+                actions,
+                success: true,
+                frame_depth,
+            }));
+        self.drive_cleanup(program)
+    }
+
     pub(super) fn recur(
         &mut self,
         program: &Program,
@@ -132,20 +159,6 @@ impl Vm {
             Cleanup::Error(error) => Some(error.clone()),
             _ => None,
         })
-    }
-
-    pub(super) fn error_value(error: RuntimeError) -> Value {
-        if let Some(value) = error.thrown {
-            return *value;
-        }
-        Value::Map(Rc::new(vec![
-            (
-                Value::string("type"),
-                Value::string(fault_type(&error.kind)),
-            ),
-            (Value::string("msg"), Value::string(error.message)),
-            (Value::string("data"), Value::Nil),
-        ]))
     }
 
     pub(super) fn recover_from_error(

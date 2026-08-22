@@ -1,6 +1,8 @@
-use std::fmt;
+use std::{fmt, rc::Rc};
 
 use crate::{SourceSpan, Value};
+
+use super::Vm;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeErrorKind {
@@ -47,7 +49,59 @@ impl fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
-pub(super) fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
+impl Vm {
+    #[allow(clippy::needless_pass_by_value)]
+    pub(super) fn error(
+        &self,
+        kind: RuntimeErrorKind,
+        message: String,
+        span: Option<SourceSpan>,
+    ) -> RuntimeError {
+        RuntimeError {
+            kind,
+            message,
+            span: span.clone(),
+            thrown: None,
+            frames: self
+                .frames
+                .iter()
+                .rev()
+                .filter(|frame| !frame.cleanup_action)
+                .map(|frame| CallFrame {
+                    function: frame.function.clone(),
+                    span: frame.call_span.clone(),
+                })
+                .collect(),
+            cause: None,
+        }
+    }
+
+    pub(super) fn thrown(&self, value: Value, span: Option<SourceSpan>) -> RuntimeError {
+        let mut error = self.error(
+            RuntimeErrorKind::Thrown,
+            format!("uncaught throw: {value}"),
+            span,
+        );
+        error.thrown = Some(Box::new(value));
+        error
+    }
+
+    pub(super) fn error_value(error: RuntimeError) -> Value {
+        if let Some(value) = error.thrown {
+            return *value;
+        }
+        Value::Map(Rc::new(vec![
+            (
+                Value::string("type"),
+                Value::string(fault_type(&error.kind)),
+            ),
+            (Value::string("msg"), Value::string(error.message)),
+            (Value::string("data"), Value::Nil),
+        ]))
+    }
+}
+
+fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
     match kind {
         RuntimeErrorKind::InvalidBytecode => "invalid_bytecode",
         RuntimeErrorKind::Type => "type",

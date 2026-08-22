@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Capture, Chunk, Op, SourceSpan};
+use crate::{Capture, Chunk, Op, SourceSpan, Value};
 
 #[derive(Clone, Debug)]
 pub(super) enum Binding {
@@ -9,12 +9,12 @@ pub(super) enum Binding {
     Capture { slot: usize, mutable: bool },
 }
 pub(super) struct State {
-    pub(super) chunk: Chunk,
-    pub(super) scopes: Vec<HashMap<String, Binding>>,
-    pub(super) outer: HashMap<String, Binding>,
-    pub(super) captures: Vec<Capture>,
-    pub(super) root: bool,
-    pub(super) next_local: usize,
+    chunk: Chunk,
+    scopes: Vec<HashMap<String, Binding>>,
+    outer: HashMap<String, Binding>,
+    captures: Vec<Capture>,
+    root: bool,
+    next_local: usize,
 }
 impl State {
     pub(super) fn root() -> Self {
@@ -87,6 +87,9 @@ impl State {
     pub(super) fn emit(&mut self, op: Op, span: &SourceSpan) {
         self.chunk.emit_at(op, span.clone());
     }
+    pub(super) fn constant(&mut self, value: Value) -> usize {
+        self.chunk.constant(value)
+    }
     pub(super) fn jump_if_false(&mut self, span: &SourceSpan) -> usize {
         let index = self.chunk.code.len();
         self.emit(Op::JumpIfFalse(usize::MAX), span);
@@ -141,5 +144,8 @@ impl State {
             result.extend(scope.clone());
         }
         result
+    }
+    pub(super) fn captures(&self) -> Vec<Capture> {
+        self.captures.clone()
     }
 }

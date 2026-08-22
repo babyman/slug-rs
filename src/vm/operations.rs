@@ -175,7 +175,7 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
         value => Err(format!("cannot index {}", value.type_name())),
     }
 }
-pub(super) fn integer_or_float(
+fn integer_or_float(
     left: Value,
     right: Value,
     integer_operation: fn(i64, i64) -> Option<i64>,

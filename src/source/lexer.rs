@@ -8,11 +8,11 @@ use super::{
 };
 
 pub(super) struct Lexer {
-    pub(super) path: String,
-    pub(super) input: Vec<char>,
-    pub(super) index: usize,
-    pub(super) line: u32,
-    pub(super) column: u32,
+    path: String,
+    input: Vec<char>,
+    index: usize,
+    line: u32,
+    column: u32,
 }
 
 impl Lexer {
@@ -26,15 +26,15 @@ impl Lexer {
         }
     }
 
-    pub(super) fn span(&self) -> SourceSpan {
+    fn span(&self) -> SourceSpan {
         SourceSpan::new(self.path.clone(), self.line, self.column)
     }
 
-    pub(super) fn peek(&self) -> Option<char> {
+    fn peek(&self) -> Option<char> {
         self.input.get(self.index).copied()
     }
 
-    pub(super) fn next(&mut self) -> Option<char> {
+    fn next(&mut self) -> Option<char> {
         let value = self.peek()?;
         self.index += 1;
         if value == '\n' {

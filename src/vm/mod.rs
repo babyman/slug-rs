@@ -406,37 +406,8 @@ impl Vm {
                 Op::Recur(count) => self.recur(program, count, span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
-                    if self.frames.last().is_some_and(|frame| frame.cleanup_action) {
-                        let frame = self.frames.last_mut().expect("cleanup frame exists");
-                        let scopes = std::mem::take(&mut frame.scopes);
-                        if frame.cleanup_recovers {
-                            self.cleanup.push(Cleanup::Recover(value));
-                        } else {
-                            self.cleanup.push(Cleanup::Return(value));
-                        }
-                        self.cleanup
-                            .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
-                                actions,
-                                success: true,
-                                frame_depth: self.frames.len() - 1,
-                            }));
-                        if let Some(value) = self.drive_cleanup(program)? {
-                            return Ok(value);
-                        }
-                    } else {
-                        let scopes = std::mem::take(
-                            &mut self.frames.last_mut().expect("frame exists").scopes,
-                        );
-                        self.cleanup.push(Cleanup::Return(value));
-                        self.cleanup
-                            .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
-                                actions,
-                                success: true,
-                                frame_depth: self.frames.len() - 1,
-                            }));
-                        if let Some(value) = self.drive_cleanup(program)? {
-                            return Ok(value);
-                        }
+                    if let Some(value) = self.begin_return(program, value)? {
+                        return Ok(value);
                     }
                 }
             }
@@ -691,40 +662,5 @@ impl Vm {
         }
         self.frames.last_mut().expect("active frame was checked").ip = target;
         Ok(())
-    }
-    #[allow(clippy::needless_pass_by_value)]
-    fn error(
-        &self,
-        kind: RuntimeErrorKind,
-        message: String,
-        span: Option<SourceSpan>,
-    ) -> RuntimeError {
-        RuntimeError {
-            kind,
-            message,
-            span: span.clone(),
-            thrown: None,
-            frames: self
-                .frames
-                .iter()
-                .rev()
-                .filter(|frame| !frame.cleanup_action)
-                .map(|frame| CallFrame {
-                    function: frame.function.clone(),
-                    span: frame.call_span.clone(),
-                })
-                .collect(),
-            cause: None,
-        }
-    }
-
-    fn thrown(&self, value: Value, span: Option<SourceSpan>) -> RuntimeError {
-        let mut error = self.error(
-            RuntimeErrorKind::Thrown,
-            format!("uncaught throw: {value}"),
-            span,
-        );
-        error.thrown = Some(Box::new(value));
-        error
     }
 }
