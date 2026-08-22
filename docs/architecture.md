@@ -7,11 +7,11 @@ implements a small source subset through a checked bytecode virtual machine.
 
 | Area | Owner | Responsibility |
 |---|---|---|
-| Source front end | `src/source.rs` | Lexing, parsing, and source-to-bytecode compilation. |
+| Source front end | `src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
 | Private bytecode | `src/bytecode.rs` | Internal instruction and program representation. |
 | Compiled artifacts | `docs/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
 | Runtime values | `src/value.rs` | Dynamic language values and operations. |
-| Execution | `src/vm.rs` | Frames, evaluation, and checked runtime failures. |
+| Execution | `src/vm/` | VM dispatch, checked errors, cleanup unwinding, and value operations. |
 | CLI | `src/main.rs` | Process boundary and public error presentation. |
 
 ## Invariants
