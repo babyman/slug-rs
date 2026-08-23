@@ -246,6 +246,13 @@ impl Vm {
                     })?;
                     self.stack.push(value);
                 }
+                Op::NotImplemented => {
+                    return Err(self.error(
+                        RuntimeErrorKind::NotImplemented,
+                        "not implemented".into(),
+                        span,
+                    ));
+                }
                 Op::DefineGlobal(name) => {
                     let value = self.pop(span.clone())?;
                     self.globals.insert(name, value);

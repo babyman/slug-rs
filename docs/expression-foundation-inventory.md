@@ -32,7 +32,8 @@ and the order in which remaining work can proceed without introducing compatibil
 | Generic call inference and explicit type applications                      | Implemented                 | Annotated call checking and CLI tests                                          | Keep dynamic operations unchecked when their type is not provable.           |
 | Tags on declarations and parameters                                       | Partially implemented       | Source AST/parser/compiler and CLI tests                                      | Add retained module metadata and `slug.meta` introspection.                  |
 | Documentation blocks on top-level declarations                            | Partially implemented       | Strict source lexer/parser attachment and CLI tests                            | Add module documentation and `slug.meta` introspection.                      |
-| Foreign declarations and `???`                                            | Not implemented             | Lexer/parser lack the relevant source forms                                   | Add with module metadata and host integration kept separate.                  |
+| Foreign declarations                                                       | Deferred                    | No source or host-registry implementation                                      | Add with the public-library and conformance host boundary.                    |
+| `???` checked runtime placeholder                                          | Implemented                 | Source lexer/parser/compiler, VM error, and CLI tests                          | Keep the failure checked and source-located.                                  |
 
 ## Implementation surface by feature family
 
@@ -51,8 +52,8 @@ and the order in which remaining work can proceed without introducing compatibil
    concatenation and pipeline semantics.
 2. Add struct patterns before attaching field annotations.
 3. Parse and retain annotations, then add the required static checks.
-4. Retain tag metadata and add `slug.meta`, then add documentation statements, foreign declarations, and `???` once
-   their module and host boundaries can be designed together.
+4. Retain tag metadata and add `slug.meta` with modules. Add `foreign` with the
+   public-library and conformance host boundary; its ABI remains deferred.
 
 Every slice must update the grammar when syntax changes, add CLI coverage for accepted source and diagnostics, add VM
 coverage for private execution boundaries, update `docs/language-support.tsv`, regenerate the support matrix, and run

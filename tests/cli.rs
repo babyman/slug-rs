@@ -74,6 +74,20 @@ fn evaluates_source_modulo_with_checked_zero_division() {
 }
 
 #[test]
+fn reports_not_implemented_placeholders_as_checked_runtime_errors() {
+    let path = fixture_path("not-implemented");
+    fs::write(&path, "???\n").expect("write placeholder source");
+    let output = slug().arg(&path).output().expect("run placeholder source");
+    fs::remove_file(path).expect("remove placeholder source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: runtime error: not implemented")
+    );
+}
+
+#[test]
 fn repeats_strings_with_non_negative_integer_counts() {
     let path = fixture_path("string-repetition");
     fs::write(&path, "println(\"-\" * 2, \"x\" * 0)\n").expect("write string repetition source");

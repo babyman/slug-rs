@@ -91,6 +91,7 @@ impl Parser {
         Ok(expressions)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn statement(&mut self) -> Result<Expr, SourceError> {
         let documentation = match self.documentation_prefix()? {
             DocumentationPrefix::Declaration(content) => Some(content),
@@ -114,6 +115,13 @@ impl Parser {
                 "documentation blocks and tags must prefix a val or var declaration",
                 self.peek().span.clone(),
             ));
+        }
+        if self.matches(&TokenKind::NotImplemented) {
+            let span = self.next().span;
+            return Ok(Expr {
+                kind: ExprKind::NotImplemented,
+                span,
+            });
         }
         if matches!(self.kind(), TokenKind::Return) {
             let span = self.next().span;

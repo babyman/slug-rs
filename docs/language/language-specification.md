@@ -499,6 +499,11 @@ layering, key names, and value conversions are runtime requirements rather than
 language syntax. See [Configuration](configuration.md) for the portable
 configuration contract.
 
+## Not implemented placeholder
+
+`???` evaluates by raising a checked runtime error with the message `not implemented`.
+It is a temporary source placeholder and does not produce a value.
+
 ## Tags, documentation, and foreign declarations
 
 A tag has the form `@name` or `@name(arguments)` and prefixes a `val`, `var`,

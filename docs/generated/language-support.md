@@ -53,7 +53,8 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Complete static checking | specified only | `language/language-specification.md` |
 | Tags on `val`/`var` declarations and function parameters | partial | `tests/cli.rs` |
 | Documentation blocks on top-level `val`/`var` declarations | partial | `tests/cli.rs` |
-| Foreign declarations, `???`, and module metadata introspection | specified only | `language/language-specification.md` |
+| `???` checked runtime placeholder | implemented | `tests/cli.rs` |
+| Foreign declarations and module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |
 | Modules, standard library, and concurrency | specified only | `language/runtime-requirements.md` |

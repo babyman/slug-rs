@@ -395,6 +395,16 @@ impl Lexer {
                     self.next();
                     Self::push(&mut result, TokenKind::At, span);
                 }
+                '?' => {
+                    self.next();
+                    if self.peek() == Some('?') && self.input.get(self.index + 1) == Some(&'?') {
+                        self.next();
+                        self.next();
+                        Self::push(&mut result, TokenKind::NotImplemented, span);
+                    } else {
+                        return Err(SourceError::at("expected ???", span));
+                    }
+                }
                 '^' => {
                     self.next();
                     Self::push(&mut result, TokenKind::Caret, span);

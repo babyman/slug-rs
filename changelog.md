@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added the `???` placeholder, which raises a checked `not implemented` runtime error.
 - Reordered the language foundation roadmap so all `slug.*` public-library
   implementation follows the language, module, runtime-service, and VM work.
 - Added declaration and parameter tag syntax with source-order tag-argument

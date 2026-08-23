@@ -122,6 +122,7 @@ pub enum Op {
     GetCapture(usize),
     SetCapture(usize),
     GetGlobal(String),
+    NotImplemented,
     DefineGlobal(String),
     SetGlobal(String),
     MakeClosure {

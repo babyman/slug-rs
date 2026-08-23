@@ -80,11 +80,11 @@ note.
 - [x] Implement struct patterns.
 - [x] Implement parameter, return, declaration, and struct-field type annotation
   syntax and its required static checks.
-- [ ] Implement tags, documentation statements, foreign declarations, and the
-  `???` form in dependency order.
+- [x] Implement tags, documentation statements, and the `???` form in
+  dependency order.
   - [x] Parse declaration/parameter tags and evaluate their arguments.
   - [x] Parse and attach strict documentation blocks to top-level declarations.
-  - [ ] Implement foreign declarations and the `???` form.
+  - [x] Implement the `???` form as a checked runtime placeholder.
 - [x] Run `make check` after each independently supported feature slice.
 
 ## 3. Add modules
@@ -145,6 +145,8 @@ are stable:
 
 - [ ] Implement `slug.meta` introspection over retained module, declaration,
   tag, and documentation metadata.
+- [ ] Implement minimal `foreign` declarations and a declared-foreign host
+  registry, keeping FFI and ABI adaptation outside the language runtime.
 - [ ] Implement `slug.test` assertions and fixture support.
 - [ ] Implement the required `slug.std` core and collection operations.
 - [ ] Implement the `slug.channel` API over the completed channel and task

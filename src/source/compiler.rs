@@ -96,6 +96,7 @@ impl Compiler {
                 );
                 state.emit(Op::Nil, &expression.span);
             }
+            ExprKind::NotImplemented => state.emit(Op::NotImplemented, &expression.span),
             ExprKind::Name(name) => match state.lookup(name).or_else(|| {
                 self.globals
                     .get(name)

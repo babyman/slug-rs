@@ -10,6 +10,7 @@ pub(super) enum ExprKind {
     Value(Value),
     Interpolate(Vec<StringPart>),
     Documentation(String),
+    NotImplemented,
     Name(String),
     Declare {
         mutable: bool,
@@ -218,6 +219,7 @@ pub(super) enum TokenKind {
     Bytes(Vec<u8>),
     Interpolated(Vec<StringPart>),
     Documentation(String),
+    NotImplemented,
     Name(String),
     Val,
     Var,

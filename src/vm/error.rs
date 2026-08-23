@@ -13,6 +13,7 @@ pub enum RuntimeErrorKind {
     DivideByZero,
     InvalidCall,
     Native,
+    NotImplemented,
     Match,
     Thrown,
 }
@@ -110,6 +111,7 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::DivideByZero => "divide_by_zero",
         RuntimeErrorKind::InvalidCall => "invalid_call",
         RuntimeErrorKind::Native => "native",
+        RuntimeErrorKind::NotImplemented => "not_implemented",
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
     }
