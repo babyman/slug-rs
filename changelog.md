@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Predeclared statically known module bindings, allowing cyclic imports while
+  reporting checked errors for reads before a binding initializes.
 - Implemented top-level `{*}` map selection declarations, including importing
   every string-keyed module export into the current module scope.
 - Added dedicated source-level `import(name, ...)` execution with checked

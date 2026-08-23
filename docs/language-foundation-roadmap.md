@@ -104,7 +104,7 @@ and the host boundary in
 - [x] Implement top-level `export` declarations and module export maps.
   - [x] Parse top-level `export` declarations and retain exported names.
   - [x] Construct module export maps from initialized bindings.
-- [ ] Predeclare statically knowable top-level bindings and support cyclic module
+- [x] Predeclare statically knowable top-level bindings and support cyclic module
   initialization with checked use-before-initialization failures.
 - [ ] Implement live imported bindings, shadowing behavior, import conflicts,
   and callable combination rules.

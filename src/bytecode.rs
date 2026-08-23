@@ -249,6 +249,7 @@ impl Chunk {
 pub struct Program {
     chunks: Vec<Chunk>,
     names: HashMap<String, usize>,
+    bindings: Vec<String>,
     exports: Vec<String>,
 }
 
@@ -284,6 +285,16 @@ impl Program {
     #[must_use]
     pub fn exports(&self) -> &[String] {
         &self.exports
+    }
+
+    /// Statically knowable top-level bindings in a source module.
+    #[must_use]
+    pub fn bindings(&self) -> &[String] {
+        &self.bindings
+    }
+
+    pub(crate) fn set_bindings(&mut self, bindings: Vec<String>) {
+        self.bindings = bindings;
     }
 
     pub(crate) fn set_exports(&mut self, exports: Vec<String>) {

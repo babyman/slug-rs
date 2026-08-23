@@ -57,6 +57,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | `???` checked runtime placeholder | implemented | `tests/cli.rs` |
 | Top-level `export` declaration metadata | partial | `tests/vm.rs` |
 | Source-level module imports and exported-value maps | partial | `tests/module_loader.rs` |
+| Predeclared module bindings and cyclic initialization | implemented | `tests/module_loader.rs` |
 | Foreign declarations and module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |

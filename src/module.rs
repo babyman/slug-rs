@@ -33,6 +33,7 @@ pub struct ModuleInstance {
     pub path: PathBuf,
     pub program: Program,
     pub exports: Value,
+    pub(crate) live_exports: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -165,22 +166,32 @@ impl ModuleLoader {
             return Ok(instance.clone());
         }
         let program = self.compile(importer, name)?;
-        let mut vm = Vm::with_module_loader(self.clone());
-        vm.run_named(&program, "main")
-            .map_err(|error| ModuleLoadError::Source {
-                path: source.path.clone(),
-                message: error.to_string(),
-            })?;
-        let exports = vm.exported_values(&program);
+        let mut vm = Vm::with_module_bindings(self.clone(), program.bindings());
         let instance = ModuleInstance {
-            path: source.path,
-            program,
-            exports,
+            path: source.path.clone(),
+            program: program.clone(),
+            exports: Value::Map(Rc::new(Vec::new())),
+            live_exports: vm.live_exported_values(&program),
         };
         self.state
             .instances
             .borrow_mut()
-            .insert(instance.path.clone(), instance.clone());
+            .insert(source.path.clone(), instance.clone());
+        if let Err(error) = vm.run_named(&program, "main") {
+            self.state.instances.borrow_mut().remove(&source.path);
+            return Err(ModuleLoadError::Source {
+                path: source.path.clone(),
+                message: error.to_string(),
+            });
+        }
+        let instance = ModuleInstance {
+            exports: vm.exported_values(&program),
+            ..instance
+        };
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(source.path, instance.clone());
         Ok(instance)
     }
 

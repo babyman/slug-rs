@@ -31,6 +31,7 @@ impl Compiler {
     }
     pub(super) fn compile(mut self) -> Result<Program, SourceError> {
         let mut exports = Vec::new();
+        let mut bindings = Vec::new();
         for expression in &self.expressions {
             if let ExprKind::Declare {
                 mutable,
@@ -44,10 +45,13 @@ impl Compiler {
                     exports.extend(names.iter().cloned());
                 }
                 for name in names {
+                    bindings.push(name.clone());
                     self.globals.insert(name, *mutable);
                 }
             }
         }
+        bindings.sort();
+        bindings.dedup();
         let expressions = self.expressions.clone();
         let mut state = State::root();
         for (index, expression) in expressions.iter().enumerate() {
@@ -65,6 +69,7 @@ impl Compiler {
         for chunk in self.chunks {
             program.add_chunk(chunk);
         }
+        program.set_bindings(bindings);
         program.set_exports(exports);
         Ok(program)
     }

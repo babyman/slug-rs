@@ -125,3 +125,56 @@ fn source_imports_check_module_name_values_and_loader_failures() {
     assert_eq!(error.message, "module `missing` was not found");
     fs::remove_dir_all(root).expect("remove module test directory");
 }
+
+#[test]
+fn cyclic_imports_resolve_predeclared_function_bindings() {
+    let root = root("cyclic-functions");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("a.slug"),
+        "val b = import(\"b\")\nexport val a = fn() { b.b() }\n",
+    )
+    .expect("write first cyclic module");
+    fs::write(
+        root.join("b.slug"),
+        "val a = import(\"a\")\nexport val b = fn() { 7 }\n",
+    )
+    .expect("write second cyclic module");
+    let loader = ModuleLoader::new(&root, None);
+    let instance = loader
+        .initialize(None, "a")
+        .expect("initialize cyclic imports");
+
+    assert_eq!(loader.initialized_module_count(), 2);
+    assert_eq!(instance.exports.to_string(), "{\"a\": <fn>}");
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
+    let root = root("cyclic-uninitialized");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("a.slug"),
+        "val b = import(\"b\")\nexport val from_a = b.from_b\n",
+    )
+    .expect("write first cyclic module");
+    fs::write(
+        root.join("b.slug"),
+        "val a = import(\"a\")\nexport val from_b = a.from_a\n",
+    )
+    .expect("write second cyclic module");
+    let loader = ModuleLoader::new(&root, None);
+
+    let error = loader
+        .initialize(None, "a")
+        .expect_err("use before initialization must fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("binding `from_a` is not initialized")
+    );
+    assert_eq!(loader.initialized_module_count(), 0);
+    fs::remove_dir_all(root).expect("remove module test directory");
+}

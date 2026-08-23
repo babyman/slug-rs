@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::HashMap, path::Path, rc::Rc};
 use crate::{
     CallArgumentKind, Capture, ModuleLoader, Program, SourceSpan, Value,
     bytecode::Op,
-    value::{BindingCell, Closure, binding_cell},
+    value::{BindingCell, Closure, binding_cell, module_binding},
 };
 
 mod cleanup;
@@ -61,6 +61,15 @@ impl Vm {
         }
     }
 
+    pub(crate) fn with_module_bindings(module_loader: ModuleLoader, names: &[String]) -> Self {
+        let mut vm = Self::with_module_loader(module_loader);
+        for name in names {
+            vm.globals
+                .insert(name.clone(), module_binding(name.as_str()));
+        }
+        vm
+    }
+
     #[must_use]
     pub fn global(&self, name: &str) -> Option<&Value> {
         self.globals.get(name)
@@ -68,6 +77,21 @@ impl Vm {
 
     #[must_use]
     pub fn exported_values(&self, program: &Program) -> Value {
+        Value::Map(Rc::new(
+            program
+                .exports()
+                .iter()
+                .filter_map(|name| {
+                    self.globals
+                        .get(name)
+                        .and_then(|value| value.resolve().ok())
+                        .map(|value| (Value::string(name.as_str()), value))
+                })
+                .collect(),
+        ))
+    }
+
+    pub(crate) fn live_exported_values(&self, program: &Program) -> Value {
         Value::Map(Rc::new(
             program
                 .exports()
@@ -262,13 +286,20 @@ impl Vm {
                     *capture.borrow_mut() = value;
                 }
                 Op::GetGlobal(name) => {
-                    let value = self.globals.get(&name).cloned().ok_or_else(|| {
-                        self.error(
-                            RuntimeErrorKind::Name,
-                            format!("unknown name `{name}`"),
-                            span.clone(),
-                        )
-                    })?;
+                    let value = self
+                        .globals
+                        .get(&name)
+                        .ok_or_else(|| {
+                            self.error(
+                                RuntimeErrorKind::Name,
+                                format!("unknown name `{name}`"),
+                                span.clone(),
+                            )
+                        })?
+                        .resolve()
+                        .map_err(|message| {
+                            self.error(RuntimeErrorKind::Name, message, span.clone())
+                        })?;
                     self.stack.push(value);
                 }
                 Op::NotImplemented => {
@@ -279,11 +310,17 @@ impl Vm {
                     ));
                 }
                 Op::DefineGlobal(name) => {
-                    let value = self.pop(span.clone())?;
-                    self.globals.insert(name, value);
+                    let value = self.pop_unresolved(span.clone())?;
+                    if !self
+                        .globals
+                        .get(&name)
+                        .is_some_and(|binding| binding.replace_binding(value.clone()))
+                    {
+                        self.globals.insert(name, value);
+                    }
                 }
                 Op::DefineMapGlobals => {
-                    let value = self.pop(span.clone())?;
+                    let value = self.pop_unresolved(span.clone())?;
                     let Value::Map(entries) = value else {
                         return Err(self.error(
                             RuntimeErrorKind::Type,
@@ -299,7 +336,14 @@ impl Vm {
                                 span.clone(),
                             ));
                         };
-                        self.globals.insert(name.to_string(), value.clone());
+                        let name = name.to_string();
+                        if !self
+                            .globals
+                            .get(&name)
+                            .is_some_and(|binding| binding.replace_binding(value.clone()))
+                        {
+                            self.globals.insert(name, value.clone());
+                        }
                     }
                 }
                 Op::SetGlobal(name) => {
@@ -311,7 +355,13 @@ impl Vm {
                         ));
                     }
                     let value = self.pop(None)?;
-                    self.globals.insert(name, value);
+                    if !self
+                        .globals
+                        .get(&name)
+                        .is_some_and(|binding| binding.replace_binding(value.clone()))
+                    {
+                        self.globals.insert(name, value);
+                    }
                 }
                 Op::MakeClosure { chunk, captures } => {
                     program.chunk(chunk).ok_or_else(|| {
@@ -670,7 +720,9 @@ impl Vm {
                 span.clone(),
             )
         })?;
-        let callee = self.stack[base].clone();
+        let callee = self.stack[base]
+            .resolve()
+            .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
         match callee {
             Value::Closure(closure) => {
                 let chunk = program.chunk(closure.chunk).ok_or_else(|| {
@@ -702,9 +754,12 @@ impl Vm {
                 }
                 let mut locals = self.stack[base + 1..]
                     .iter()
-                    .cloned()
-                    .map(binding_cell)
-                    .collect::<Vec<_>>();
+                    .map(|value| {
+                        value.resolve().map(binding_cell).map_err(|message| {
+                            self.error(RuntimeErrorKind::Name, message, span.clone())
+                        })
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
                 locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
                 self.frames.push(Frame {
                     closure,
@@ -720,7 +775,14 @@ impl Vm {
                 });
             }
             Value::Native { name, function } => {
-                let arguments = self.stack[base + 1..].to_vec();
+                let arguments = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value.resolve().map_err(|message| {
+                            self.error(RuntimeErrorKind::Name, message, span.clone())
+                        })
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
                 let result = function(&arguments).map_err(|message| {
                     self.error(
                         RuntimeErrorKind::Native,
@@ -782,7 +844,7 @@ impl Vm {
             let instance = loader.initialize(importer, &name).map_err(|error| {
                 self.error(RuntimeErrorKind::Module, error.to_string(), span.clone())
             })?;
-            let Value::Map(module_exports) = instance.exports else {
+            let Value::Map(module_exports) = instance.live_exports else {
                 return Err(self.error(
                     RuntimeErrorKind::InvalidBytecode,
                     "module exports are not a map".into(),
@@ -840,7 +902,9 @@ impl Vm {
                 span.clone(),
             )
         })?;
-        let callee = self.stack[base].clone();
+        let callee = self.stack[base]
+            .resolve()
+            .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
         let values = self.stack.split_off(base + 1);
         self.stack.truncate(base);
         let (positional, named) = self.expand_call_arguments(values, kinds, span.clone())?;
@@ -904,6 +968,9 @@ impl Vm {
         let mut positional = Vec::new();
         let mut named = Vec::new();
         for (value, kind) in values.into_iter().zip(kinds) {
+            let value = value
+                .resolve()
+                .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
             match kind {
                 CallArgumentKind::Positional => positional.push(value),
                 CallArgumentKind::Spread => {
@@ -1055,9 +1122,22 @@ impl Vm {
                 span,
             ));
         }
-        Ok(self.stack.split_off(self.stack.len() - count))
+        self.stack
+            .split_off(self.stack.len() - count)
+            .into_iter()
+            .map(|value| {
+                value
+                    .resolve()
+                    .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))
+            })
+            .collect()
     }
     fn pop(&mut self, span: Option<SourceSpan>) -> VmResult<Value> {
+        self.pop_unresolved(span.clone())?
+            .resolve()
+            .map_err(|message| self.error(RuntimeErrorKind::Name, message, span))
+    }
+    fn pop_unresolved(&mut self, span: Option<SourceSpan>) -> VmResult<Value> {
         self.stack.pop().ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,

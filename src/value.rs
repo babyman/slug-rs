@@ -10,6 +10,14 @@ pub(crate) fn binding_cell(value: Value) -> BindingCell {
     Rc::new(RefCell::new(value))
 }
 
+pub(crate) fn module_binding(name: impl Into<Rc<str>>) -> Value {
+    let name = name.into();
+    Value::Binding {
+        name,
+        cell: binding_cell(Value::Uninitialized),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Closure {
     pub(crate) chunk: usize,
@@ -39,6 +47,8 @@ pub struct StructValue {
 /// can share them without requiring a copying garbage collector.
 #[derive(Clone)]
 pub enum Value {
+    /// Internal marker for a predeclared module binding that has not run yet.
+    Uninitialized,
     Nil,
     Bool(bool),
     Int(i64),
@@ -53,6 +63,11 @@ pub enum Value {
     Native {
         name: Rc<str>,
         function: NativeFunction,
+    },
+    /// A live module binding exposed through an import map.
+    Binding {
+        name: Rc<str>,
+        cell: BindingCell,
     },
 }
 
@@ -70,6 +85,7 @@ impl Value {
     #[must_use]
     pub(crate) fn type_name(&self) -> &'static str {
         match self {
+            Self::Uninitialized | Self::Binding { .. } => "binding",
             Self::Nil => "nil",
             Self::Bool(_) => "bool",
             Self::Int(_) | Self::Float(_) => "num",
@@ -82,12 +98,34 @@ impl Value {
             Self::Closure(_) | Self::Native { .. } => "fn",
         }
     }
+
+    pub(crate) fn resolve(&self) -> Result<Value, String> {
+        let Self::Binding { name, cell } = self else {
+            return Ok(self.clone());
+        };
+        let value = cell.borrow().clone();
+        if matches!(value, Self::Uninitialized) {
+            Err(format!("binding `{name}` is not initialized"))
+        } else {
+            Ok(value)
+        }
+    }
+
+    pub(crate) fn replace_binding(&self, value: Value) -> bool {
+        let Self::Binding { cell, .. } = self else {
+            return false;
+        };
+        *cell.borrow_mut() = value;
+        true
+    }
 }
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Nil, Self::Nil) => true,
+            (Self::Binding { cell, .. }, value) => cell.borrow().eq(value),
+            (value, Self::Binding { cell, .. }) => value.eq(&cell.borrow()),
+            (Self::Uninitialized, Self::Uninitialized) | (Self::Nil, Self::Nil) => true,
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Int(a), Self::Int(b)) => a == b,
             (Self::Float(a), Self::Float(b)) => a == b,
@@ -114,6 +152,7 @@ impl PartialEq for Value {
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Uninitialized => write!(f, "<uninitialized>"),
             Self::Nil => write!(f, "nil"),
             Self::Bool(value) => write!(f, "{value}"),
             Self::Int(value) => write!(f, "{value}"),
@@ -141,6 +180,7 @@ impl fmt::Debug for Value {
             }
             Self::Closure(_) => write!(f, "<fn>"),
             Self::Native { name, .. } => write!(f, "<native {name}>"),
+            Self::Binding { name, .. } => write!(f, "<binding {name}>"),
         }
     }
 }
