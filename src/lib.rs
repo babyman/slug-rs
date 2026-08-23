@@ -8,6 +8,7 @@
 
 mod bytecode;
 mod configuration;
+mod conformance;
 mod fixture;
 mod module;
 mod source;
@@ -20,6 +21,7 @@ pub use bytecode::{
     SourceSpan,
 };
 pub use configuration::{Configuration, ConfigurationValue};
+pub use conformance::FixtureRunner;
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};

@@ -126,9 +126,9 @@ and the host boundary in
   checked conversions.
 - [x] Add portable fixture metadata for outcome, streams, roots, timeout, and
   optional exact diagnostics.
-- [ ] Build a runner that rejects unclassified fixtures and treats every host
+- [x] Build a runner that rejects unclassified fixtures and treats every host
   panic as a conformance failure.
-- [ ] Prove the runner with library-independent fixtures, including exit status,
+- [x] Prove the runner with library-independent fixtures, including exit status,
   standard output, standard error, diagnostic category, and source location.
 - [ ] Run `make check`.
 

@@ -41,3 +41,9 @@ combination rather than guessing an expectation.
 Fixtures may place imported source and configuration files below their declared
 roots. The runner supplies no ambient project, library, environment, or command
 line state unless a later metadata schema explicitly adds it.
+
+Run a fixture directory with:
+
+```sh
+slug-fixtures path/to/fixtures --slug path/to/slug
+```

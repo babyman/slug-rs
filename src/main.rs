@@ -61,7 +61,15 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let source_root = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
+    let source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map_or_else(
+        || {
+            Path::new(path)
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .into()
+        },
+        PathBuf::from,
+    );
     let entry_module = Path::new(path)
         .file_stem()
         .and_then(|name| name.to_str())
@@ -69,13 +77,14 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
     program.set_module_name(entry_module);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let configuration = Configuration::load(
-        source_root,
+        &source_root,
         slug_home.as_deref(),
         env::vars(),
         program_arguments,
         entry_module,
     );
-    let loader = ModuleLoader::with_configuration(source_root, None, configuration);
+    let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT").map(PathBuf::from);
+    let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
     let mut vm = Vm::with_module_loader(loader.clone());
     vm.define_native("println", |values| {
         println!(

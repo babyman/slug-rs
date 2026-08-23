@@ -16,6 +16,9 @@
   keys and fallback-shaped environment and command-line conversion.
 - Added versioned portable conformance-fixture metadata for expected outcomes,
   streams, roots, timeouts, and exact diagnostics.
+- Added the `slug-fixtures` conformance runner, which isolates fixture hosts and
+  rejects missing metadata, timeouts, crashes, stream mismatches, and diagnostic
+  mismatches.
 - Retained top-level declaration documentation and evaluated tag arguments in
   module instances for future metadata introspection.
 - Added source-callable overload sets for distinct imported signatures and
