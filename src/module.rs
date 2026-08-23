@@ -165,11 +165,11 @@ impl ModuleLoader {
         if let Some(instance) = self.state.instances.borrow().get(&source.path) {
             return Ok(instance.clone());
         }
-        let program = self.compile(importer, name)?;
+        let program = Rc::new(self.compile(importer, name)?);
         let mut vm = Vm::with_module_bindings(self.clone(), program.bindings());
         let instance = ModuleInstance {
             path: source.path.clone(),
-            program: program.clone(),
+            program: (*program).clone(),
             exports: Value::Map(Rc::new(Vec::new())),
             live_exports: vm.live_exported_values(&program),
         };
@@ -177,7 +177,7 @@ impl ModuleLoader {
             .instances
             .borrow_mut()
             .insert(source.path.clone(), instance.clone());
-        if let Err(error) = vm.run_named(&program, "main") {
+        if let Err(error) = vm.run_module(&program) {
             self.state.instances.borrow_mut().remove(&source.path);
             return Err(ModuleLoadError::Source {
                 path: source.path.clone(),

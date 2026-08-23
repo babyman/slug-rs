@@ -41,6 +41,7 @@ struct Frame {
 #[derive(Default)]
 pub struct Vm {
     module_loader: Option<ModuleLoader>,
+    module_program: Option<Rc<Program>>,
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
@@ -68,6 +69,11 @@ impl Vm {
                 .insert(name.clone(), module_binding(name.as_str()));
         }
         vm
+    }
+
+    pub(crate) fn run_module(&mut self, program: &Rc<Program>) -> VmResult<Value> {
+        self.module_program = Some(program.clone());
+        self.run_named(program, "main")
     }
 
     #[must_use]
@@ -158,6 +164,8 @@ impl Vm {
             closure: Rc::new(Closure {
                 chunk: entry,
                 captures: Vec::new(),
+                program: None,
+                globals: None,
             }),
             function: chunk.name.clone(),
             call_span: None,
@@ -220,6 +228,8 @@ impl Vm {
                             Value::Closure(Rc::new(Closure {
                                 chunk: *function,
                                 captures: Vec::new(),
+                                program: self.module_program.clone(),
+                                globals: self.module_program.as_ref().map(|_| self.globals.clone()),
                             }))
                         }
                         None => {
@@ -389,8 +399,12 @@ impl Vm {
                                 }),
                         })
                         .collect::<VmResult<Vec<_>>>()?;
-                    self.stack
-                        .push(Value::Closure(Rc::new(Closure { chunk, captures })));
+                    self.stack.push(Value::Closure(Rc::new(Closure {
+                        chunk,
+                        captures,
+                        program: self.module_program.clone(),
+                        globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                    })));
                 }
                 Op::Add => self.binary(span, add)?,
                 Op::Subtract => self.binary(span, subtract)?,
@@ -699,6 +713,7 @@ impl Vm {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn call(
         &mut self,
         program: &Program,
@@ -725,6 +740,31 @@ impl Vm {
             .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
         match callee {
             Value::Closure(closure) => {
+                if let Some(module_program) = &closure.program
+                    && self
+                        .module_program
+                        .as_ref()
+                        .is_none_or(|current| !Rc::ptr_eq(current, module_program))
+                {
+                    let arguments = self.stack[base + 1..]
+                        .iter()
+                        .map(|value| {
+                            value.resolve().map_err(|message| {
+                                self.error(RuntimeErrorKind::Name, message, span.clone())
+                            })
+                        })
+                        .collect::<VmResult<Vec<_>>>()?;
+                    let result = self.call_module_closure(
+                        module_program,
+                        closure.clone(),
+                        arguments,
+                        provided,
+                        span.clone(),
+                    )?;
+                    self.stack.truncate(base);
+                    self.stack.push(result);
+                    return Ok(());
+                }
                 let chunk = program.chunk(closure.chunk).ok_or_else(|| {
                     self.error(
                         RuntimeErrorKind::InvalidBytecode,
@@ -802,6 +842,64 @@ impl Vm {
             }
         }
         Ok(())
+    }
+
+    fn call_module_closure(
+        &self,
+        program: &Rc<Program>,
+        closure: Rc<Closure>,
+        arguments: Vec<Value>,
+        provided: Option<Vec<bool>>,
+        span: Option<SourceSpan>,
+    ) -> VmResult<Value> {
+        let chunk = program.chunk(closure.chunk).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "closure references missing chunk".into(),
+                span.clone(),
+            )
+        })?;
+        if chunk.arity != arguments.len() {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!(
+                    "`{}` expects {} arguments, got {}",
+                    chunk.name,
+                    chunk.arity,
+                    arguments.len()
+                ),
+                span,
+            ));
+        }
+        let mut vm = Self {
+            module_loader: self.module_loader.clone(),
+            module_program: Some(program.clone()),
+            globals: closure.globals.clone().ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "module closure has no global environment".into(),
+                    span.clone(),
+                )
+            })?,
+            stack: Vec::new(),
+            frames: Vec::new(),
+            cleanup: Vec::new(),
+        };
+        let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
+        locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+        vm.frames.push(Frame {
+            closure,
+            function: chunk.name.clone(),
+            call_span: span,
+            ip: 0,
+            stack_base: 0,
+            locals,
+            provided: provided.unwrap_or_else(|| vec![true; chunk.arity]),
+            scopes: vec![Vec::new()],
+            cleanup_action: false,
+            cleanup_recovers: false,
+        });
+        vm.execute(program)
     }
 
     fn import(&mut self, kinds: Vec<CallArgumentKind>, span: Option<SourceSpan>) -> VmResult<()> {
@@ -1007,7 +1105,8 @@ impl Vm {
                 span,
             ));
         };
-        let chunk = program.chunk(closure.chunk).ok_or_else(|| {
+        let closure_program = closure.program.as_deref().unwrap_or(program);
+        let chunk = closure_program.chunk(closure.chunk).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
                 "closure references missing chunk".into(),

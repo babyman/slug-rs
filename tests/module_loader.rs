@@ -140,13 +140,47 @@ fn cyclic_imports_resolve_predeclared_function_bindings() {
         "val a = import(\"a\")\nexport val b = fn() { 7 }\n",
     )
     .expect("write second cyclic module");
+    let main_path = root.join("main.slug");
+    let program = compile(
+        &main_path.to_string_lossy(),
+        "val a = import(\"a\")\nexport val output = a.a()\n",
+    )
+    .expect("compile cycle importer");
     let loader = ModuleLoader::new(&root, None);
-    let instance = loader
-        .initialize(None, "a")
-        .expect("initialize cyclic imports");
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("execute cyclic imports");
 
     assert_eq!(loader.initialized_module_count(), 2);
-    assert_eq!(instance.exports.to_string(), "{\"a\": <fn>}");
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"output\": 7}");
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn imported_functions_run_in_their_defining_module_and_observe_live_exports() {
+    let root = root("live-function-imports");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("counter.slug"),
+        "export var count = 1\n\
+         export val next = fn() { count = count + 1; count }\n",
+    )
+    .expect("write counter module");
+    let main_path = root.join("main.slug");
+    let program = compile(
+        &main_path.to_string_lossy(),
+        "val counter = import(\"counter\")\n\
+         export val total = counter.next() + counter.next() + counter.count\n",
+    )
+    .expect("compile importer");
+    let loader = ModuleLoader::new(&root, None);
+    let mut vm = Vm::with_module_loader(loader);
+
+    vm.run_named(&program, "main")
+        .expect("run imported functions");
+
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"total\": 8}");
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 

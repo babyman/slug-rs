@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Made imported functions run in their defining module and preserve live
+  exported binding values across calls.
 - Predeclared statically known module bindings, allowing cyclic imports while
   reporting checked errors for reads before a binding initializes.
 - Implemented top-level `{*}` map selection declarations, including importing

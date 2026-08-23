@@ -106,8 +106,9 @@ and the host boundary in
   - [x] Construct module export maps from initialized bindings.
 - [x] Predeclare statically knowable top-level bindings and support cyclic module
   initialization with checked use-before-initialization failures.
-- [ ] Implement live imported bindings, shadowing behavior, import conflicts,
-  and callable combination rules.
+- [x] Implement live imported bindings.
+- [ ] Implement shadowing behavior, import conflicts, and callable combination
+  rules.
 - [ ] Retain declaration, tag, and documentation metadata in the module model
   for later introspection.
 - [ ] Invoke the first eligible local `main` function after successful

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, fmt::Write as _, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fmt, fmt::Write as _, rc::Rc};
 
 /// Host functions installed deliberately through the VM API.
 pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
@@ -22,6 +22,8 @@ pub(crate) fn module_binding(name: impl Into<Rc<str>>) -> Value {
 pub struct Closure {
     pub(crate) chunk: usize,
     pub(crate) captures: Vec<BindingCell>,
+    pub(crate) program: Option<Rc<crate::Program>>,
+    pub(crate) globals: Option<HashMap<String, Value>>,
 }
 
 #[derive(Clone, Debug)]
