@@ -62,7 +62,6 @@ A registered function descriptor contains:
 
 - a module-qualified binding name;
 - its positional arity and, when present, the declared Slug signature;
-- an execution class of `inline` or `blocking`;
 - a function pointer and opaque module-owned state;
 - the module identity that owns the function and its resources.
 
@@ -72,18 +71,23 @@ is completed by the VM before the native callback begins. A callback therefore
 observes an ordered, already-bound argument list; it does not implement Slug's
 call-binding rules.
 
-An `inline` callback runs on a VM execution thread and MUST return promptly. It
-is suitable for conversion, arithmetic, and operations that cannot wait on I/O,
-locks held by unrelated code, or external processes. A `blocking` callback has
-the same synchronous call semantics, but the runtime MAY execute it on a
-bounded blocking worker service so it does not stall a cooperative executor.
-Calling a blocking function still occupies its Slug task until the function
-returns. `spawn` makes that call concurrent with its caller; it does not turn
-the call into an asynchronous ABI operation.
+Every native callback is synchronous. It runs as part of the calling Slug task
+and occupies that task's execution capacity until it returns. Registration does
+not classify a function as inline, blocking, asynchronous, or otherwise advise
+the scheduler.
 
-The worker count and queue policy are host resource limits. They are separate
-from `nursery limit N`, whose language-level admission and ownership semantics
-remain defined by the runtime requirements.
+A caller that wants a blocking native operation to proceed concurrently uses
+ordinary `spawn`; an event-driven native integration returns a channel and
+publishes through its producer capability. How the runtime maps runnable Slug
+tasks to host workers remains entirely inside the concurrency implementation.
+The native interface creates no second worker queue or resource budget beside
+the nursery and scheduler model.
+
+An admitted task remains admitted while it is inside a blocking native call,
+following the ordinary nursery rule that its permit is released when the task
+terminates. The concurrency implementation must therefore tolerate execution
+workers blocking in native code while preserving the progress guarantees it
+chooses to provide; the ABI does not compensate with hidden offloading.
 
 ## Call contract
 
@@ -107,8 +111,13 @@ MUST NOT be stored, used after return, or used from another thread. The callback
 MUST return one of these statuses:
 
 - `ok`, after setting one result (including explicit `nil`);
-- `error`, after setting one structured error;
-- `contract_violation`, for a malformed host callback result.
+- `error`, after setting one structured error.
+
+Returning `ok` without one result, returning `error` without one error, setting
+both outcomes, using an invalid handle, or returning an unknown status is a
+host contract violation diagnosed by the runtime. `contract_violation` is not a
+status that a callback selects for itself. The runtime must contain and report
+detectable violations without exposing a host panic as a Slug diagnostic.
 
 The runtime converts a reported error into the ordinary checked Slug error path
 with the source call span and Slug call frames attached. A native error contains
@@ -121,7 +130,7 @@ Version 1 does not permit a callback to suspend, resume later, recursively call
 Slug, or enter the VM from another thread. Those operations require a separate
 future decision rather than an accidental extension of the call context.
 
-## Values and retention
+## Values and transfer
 
 The native interface exposes values through opaque borrowed references and API
 operations. It never exposes Rust enums, reference counts, collection storage,
@@ -132,23 +141,27 @@ bytes, lists, maps, structs, functions, channels, and native resources through
 kind-specific operations. A conversion either succeeds or reports a checked
 type/range error; numeric narrowing is never implicit. UTF-8 strings and byte
 slices borrowed from a value have the same lifetime as the call unless copied.
+A callback may return a value it constructs during that call; the runtime takes
+ownership of the successful result before invalidating the call context.
 
-A function that needs a Slug value after the call must request a **persistent
-root**. A root is an opaque, reference-counted runtime token, not a pointer. Root
-creation, cloning, reading, and release are runtime-call-thread-only in version
-1. A root may be read during a later callback authorized by the same runtime; it
-cannot be inspected directly between callbacks. Roots keep values alive but do
-not make non-transferable values safe to use from foreign threads. Modules must
-release roots explicitly; the runtime also releases all remaining roots when
-their module instance is destroyed.
+Version 1 has no persistent arbitrary Slug-value root. Without native-to-Slug
+callbacks, channels and resources do not yet provide a concrete consumer that
+justifies freezing a rooting API or constraining a future garbage collector.
+Native resources may retain host-owned data and producer capabilities, but not
+borrowed Slug values. A future root design requires its own use case and
+lifetime decision.
 
-Cross-thread producers do not use roots. They construct an **owned send value**
-using the thread-safe producer API. The initial transferable set is `nil`,
-boolean, integer, float, UTF-8 string, bytes, and recursively composed lists and
-maps of transferable values. Construction owns or copies all memory. Functions,
-closures, task handles, channel receivers, persistent roots, and arbitrary
-native resources are not transferable. A later ABI version may add an
-explicitly shareable resource capability without changing ordinary roots.
+Cross-thread producers construct an **owned send value** using the thread-safe
+producer API. The version 1 transferable set is deliberately limited to `nil`,
+boolean, integer, float, UTF-8 string, and bytes. String and byte construction
+copies or takes explicit ownership of all memory. Functions, closures, lists,
+maps, structs, task handles, channel receivers, and native resources are not
+transferable.
+
+Native integrations can encode a compound event as bytes or return a typed
+resource with synchronous accessor functions. A later ABI version may add
+compound values or an explicitly shareable resource capability after concrete
+consumers establish construction, failure-cleanup, and backpressure needs.
 
 This separation permits the current Rust VM to replace its `Rc`-based value
 representation before concurrency without making that representation an ABI
@@ -174,14 +187,18 @@ observable, it MUST NOT call Slug or block indefinitely, and failures cannot be
 raised into an arbitrary Slug task. A destructor may only release host state or
 request cancellation through a thread-safe host primitive.
 
-The runtime retains a module instance while any of its functions, resources,
-roots, or producer capabilities remain live. Version 1 does not unload a native
-module during a runtime instance; process or runtime teardown releases it only
-after those dependants have settled.
+The runtime retains a module instance while any of its functions or resources
+remain live. A producer capability is runtime-owned and does not refer back to
+module state. Version 1 does not unload native library code during a runtime
+instance or while native work may still execute it.
 
-Resource payloads are call-thread-only unless their registered type explicitly
-declares a thread-safe host implementation. That declaration does not make the
-corresponding Slug handle an owned send value.
+Resource payloads are accessible only through a native call context. Multiple
+Slug tasks may call functions using the same resource concurrently, so the
+native implementation must synchronize its host state or reject concurrent use
+with a checked error. Version 1 has no resource `thread_safe` registration flag,
+and resource thread safety is not Slug-visible scheduling policy. A resource
+handle never becomes an owned send value merely because its host implementation
+uses thread-safe storage.
 
 ## Channel producer capability
 
@@ -220,7 +237,7 @@ Interface operations fall into two explicit classes:
 
 | Class | Permitted operations |
 |---|---|
-| Runtime-call-thread-only | call context, borrowed values, roots, resource access, return, and error construction |
+| Runtime-call-thread-only | call context, borrowed values, resource access, return, and error construction |
 | Thread-safe | owned send-value construction, producer clone/release, `try_send`, `close`, and closed-state query |
 
 ```mermaid
@@ -228,7 +245,7 @@ flowchart LR
     subgraph CallThread[Runtime call thread]
         Callback[Native callback]
         Context[Call context]
-        Values[Borrowed values and roots]
+        Values[Borrowed values]
         Resources[Typed resources]
 
         Callback --> Context
@@ -249,7 +266,7 @@ flowchart LR
     Queue --> Receiver[Slug channel receiver]
     Receiver --> Runtime[Runtime makes waiting work runnable]
 
-    Restriction[No call context, borrowed value, root, task, or scheduler access]
+    Restriction[No call context, borrowed value, task, or scheduler access]
     Event -. constrained by .-> Restriction
 ```
 
@@ -258,6 +275,48 @@ runtime must diagnose violations that it can detect without exposing a host
 panic to Slug. No native operation may hold an internal VM lock while invoking
 module code. Version 1 has no callback from the runtime into module code except
 the original function callback, explicit close, and teardown destructor.
+
+## Shutdown and capability revocation
+
+Runtime shutdown does not depend on every native producer voluntarily releasing
+its capability. The runtime follows this order:
+
+1. stop accepting new Slug calls into native modules;
+2. atomically revoke every producer capability and close its receiver, so all
+   current and future `try_send` operations return `closed`;
+3. request idempotent close or cancellation of live native resources;
+4. allow in-flight callbacks and cooperative native operations to quiesce;
+5. destroy quiesced resources and module-instance state; and
+6. release the remaining VM values and scheduler state.
+
+Revocation detaches a producer from the channel and leaves a small,
+runtime-independent tombstone valid until the final native reference is
+released. The tombstone can report its closed state, answer `try_send` with
+`closed`, be cloned, and be released; it cannot reach the destroyed VM.
+Outstanding producer references therefore do not keep runtime shutdown open
+and cannot publish after shutdown begins. Cloning retains the same tombstone
+identity; it does not recreate a channel, queue, or other VM-facing state.
+
+A host may impose a teardown deadline. The runtime MUST NOT wait indefinitely
+for a native thread that ignores closure or cancellation. If native work does
+not quiesce, the runtime reports a host contract violation and retains the
+minimum state needed for memory safety rather than unloading code or freeing
+state still in use. Version 1 native library code remains loaded for the host
+process lifetime.
+
+```mermaid
+flowchart LR
+    Running[Running]
+    Revoke[Reject calls and revoke producers]
+    Close[Close receivers and request resource cancellation]
+    Quiesce[Quiesce callbacks and native work]
+    Destroy[Destroy safe resource and module state]
+    Done[Release VM and scheduler state]
+
+    Running --> Revoke --> Close --> Quiesce --> Destroy --> Done
+    Revoke -. outstanding references .-> Tombstone[Closed producer tombstones]
+    Tombstone -->|final native release| Freed[Tombstone freed]
+```
 
 ## Versioning and memory ownership
 
@@ -278,9 +337,9 @@ neither side calls its allocator on memory owned by the other. The version 1 C
 header must make these rules concrete before dynamic loading is enabled.
 
 The static Rust facade is version 0 and is not a compatibility promise. It must
-nevertheless enforce the same lifetimes, execution classes, error outcomes,
-resource identities, and thread classes so concurrency tests validate the
-future binary boundary rather than a more permissive private API.
+nevertheless enforce the same lifetimes, error outcomes, resource identities,
+thread classes, and shutdown rules so concurrency tests validate the future
+binary boundary rather than a more permissive private API.
 
 ## FFI and raw C libraries
 
@@ -306,9 +365,11 @@ Version 1 does not expose:
 - VM stacks, bytecode, runtime `Value` layout, or garbage collector hooks;
 - tasks, nurseries, scheduler queues, suspension, wakeups, futures, or promises;
 - native-to-Slug callbacks or arbitrary cross-thread VM entry;
+- persistent arbitrary Slug-value roots;
+- scheduler hints or native-function execution classes;
 - raw pointer values or unchecked casts;
 - automatic binding of arbitrary C signatures;
-- module unloading during a runtime instance; or
+- native library unloading during the host process lifetime; or
 - a stable Rust source or Rust binary ABI.
 
 ## Implementation gates
@@ -317,14 +378,14 @@ Implementation proceeds in this order:
 
 1. replace the current `fn(&[Value]) -> Result<Value, String>` boundary with a
    static Rust facade enforcing this call contract;
-2. prove checked argument, result, error, root, resource, and contract-violation
+2. prove checked argument, result, error, resource, and contract-violation
    behavior with VM tests;
 3. implement channels and native producer capabilities, including bounded
    cross-thread sends and close races;
 4. implement structured concurrency without adding scheduler access to the
    native interface;
-5. stress cancellation, cleanup, resource lifetime, blocking-worker limits,
-   and runtime teardown;
+5. stress cancellation, cleanup, resource lifetime, producer revocation, and
+   runtime teardown;
 6. publish the exact version 1 C declarations and ABI conformance suite; and
 7. only then add dynamic loading, followed separately by any raw C bridge.
 

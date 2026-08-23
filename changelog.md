@@ -3,9 +3,10 @@
 ## Unreleased
 
 - Defined the opaque native extension interface that precedes concurrency,
-  including synchronous inline/blocking calls, structured errors, rooted
-  values, typed resources, thread-safe channel producers, and the gate for a
-  future versioned C ABI and external FFI loader.
+  including synchronous calls without scheduler hints, structured errors,
+  typed resources, revocable thread-safe channel producers, explicit shutdown,
+  admission-based nursery limits, and the gate for a future versioned C ABI and
+  external FFI loader.
 - Added a minimal metadata-backed syntax conformance suite derived from the
   legacy Go Slug sources, covering supported syntax without legacy assertions.
 - Simplified the specified program entrypoint rule: only a local, top-level

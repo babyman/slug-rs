@@ -136,10 +136,8 @@ and the host boundary in
 
 - [ ] Replace the current Rust `NativeFunction` value exposure with the opaque,
   call-scoped version 0 facade from [`native-abi.md`](native-abi.md).
-- [ ] Add checked argument, result, structured-error, persistent-root, and
-  native-resource operations.
-- [ ] Distinguish inline and blocking registrations and inject a bounded
-  blocking worker service without exposing scheduler operations.
+- [ ] Add checked argument, result, structured-error, and native-resource
+  operations without persistent roots or scheduler hints.
 - [ ] Prove wrong-type, wrong-resource, callback-contract, panic-containment,
   and teardown behavior in focused VM tests.
 - [ ] Keep the Rust facade explicitly unstable until concurrency validates it;
@@ -185,7 +183,7 @@ are stable:
 After channels and concurrency have exercised the native boundary:
 
 - [ ] Stress resource cleanup, close races, cross-thread sends, cancellation,
-  blocking-worker limits, and runtime teardown.
+  producer revocation, and runtime teardown.
 - [ ] Publish the version 1 C declarations, version negotiation, loader
   validation, and ABI conformance tests together.
 - [ ] Add dynamic Slug-aware module loading only after version 1 is fixed.

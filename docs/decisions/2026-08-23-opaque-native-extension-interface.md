@@ -22,14 +22,23 @@ defined in [`../native-abi.md`](../native-abi.md).
 
 Native callbacks are synchronous and receive a call-scoped opaque context.
 They return one value or one structured error and cannot suspend, re-enter Slug,
-or access tasks, nurseries, or the scheduler. Function registration declares an
-`inline` or `blocking` execution class so the runtime can isolate blocking host
-work without creating a second call convention.
+or access tasks, nurseries, or the scheduler. Function registration carries no
+execution class or scheduling hint. A blocking callback occupies its calling
+Slug task until it returns; callers use `spawn`, while event-driven native code
+publishes through channels.
 
-Borrowed Slug values and persistent roots remain VM-thread-only. Native
-resources use module- and type-checked opaque handles. Foreign threads may
-publish only owned transferable values through a thread-safe channel producer
-capability; they never receive general VM values or scheduler wake operations.
+Borrowed Slug values remain call-scoped. Native resources use module- and
+type-checked opaque handles, with host synchronization owned by the native
+implementation rather than a Slug-visible thread-safety flag. Foreign threads
+may publish only owned scalar, string, or byte values through a thread-safe
+channel producer capability; they never receive general VM values or scheduler
+wake operations. Version 1 defers persistent roots and compound transferable
+values until concrete consumers justify their lifetime and construction APIs.
+
+Runtime shutdown revokes producer capabilities before destroying VM state.
+Outstanding producers become closed tombstones that cannot keep the runtime
+alive or reach freed runtime state. Uncooperative native work never causes code
+to be unloaded or state still in use to be freed.
 
 The initial Rust facade is version 0 and is intentionally unstable, but it must
 enforce the planned lifetime and threading restrictions. A C-compatible native
@@ -43,10 +52,16 @@ remain later, separate layers.
   close races, and teardown before a public binary layout is frozen.
 - VM values, private bytecode, reference counting, task representation, and
   scheduler policy remain replaceable implementation details.
-- Blocking and event-driven libraries share one synchronous function model;
+- Native registration does not create a second worker queue or resource budget
+  beside Slug's nursery and scheduler model.
+- Blocking libraries use synchronous calls inside ordinary spawned tasks;
   event-driven integrations return channels and retain producer capabilities.
 - Native authors must copy or build transferable event payloads rather than
   sending borrowed VM values across threads.
+- Native resource implementations must synchronize shared host state or reject
+  concurrent use with a checked error.
+- Native event payloads initially require scalar, string, or byte encodings;
+  convenient compound payload construction is deferred.
 - Native-to-Slug callbacks, module unloading, and automatic raw C binding are
   deliberately unavailable in version 1.
 - Publishing version 1 requires a C header, version negotiation, loader

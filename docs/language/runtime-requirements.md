@@ -393,6 +393,13 @@ nursery. Descendant tasks remain owned by the nursery for lifetime and failure
 propagation but do not consume the opener's limiter. A permit is released only
 after the admitted task terminates.
 
+The limit bounds admitted child tasks, not host threads or scheduler workers.
+An admitted task remains admitted while it runs Slug code, waits to be scheduled,
+or blocks inside a synchronous native call. Host worker availability determines
+physical progress but does not change nursery ownership, admission, or permit
+release. Implementations must state their worker and progress policy separately
+instead of interpreting `limit N` as a promise of `N` operating-system threads.
+
 ### Spawn capture
 
 When `spawn` executes, it snapshots only the immediate lexical binding cells:
