@@ -154,6 +154,10 @@ impl Lexer {
                     | TokenKind::GreaterEq
                     | TokenKind::AndAnd
                     | TokenKind::OrOr
+                    | TokenKind::Ampersand
+                    | TokenKind::Pipe
+                    | TokenKind::ShiftLeft
+                    | TokenKind::ShiftRight
                     | TokenKind::Plus
                     | TokenKind::Minus
                     | TokenKind::Star
@@ -249,11 +253,13 @@ impl Lexer {
                 }
                 '&' => {
                     self.next();
-                    if self.peek() != Some('&') {
-                        return Err(SourceError::at("expected & after &", span));
-                    }
-                    self.next();
-                    Self::push(&mut result, TokenKind::AndAnd, span);
+                    let kind = if self.peek() == Some('&') {
+                        self.next();
+                        TokenKind::AndAnd
+                    } else {
+                        TokenKind::Ampersand
+                    };
+                    Self::push(&mut result, kind, span);
                 }
                 '|' => {
                     self.next();
@@ -264,7 +270,7 @@ impl Lexer {
                         self.next();
                         TokenKind::RExactMap
                     } else {
-                        return Err(SourceError::at("expected | after |", span));
+                        TokenKind::Pipe
                     };
                     Self::push(&mut result, kind, span);
                 }
@@ -318,6 +324,10 @@ impl Lexer {
                     self.next();
                     Self::push(&mut result, TokenKind::Caret, span);
                 }
+                '~' => {
+                    self.next();
+                    Self::push(&mut result, TokenKind::Tilde, span);
+                }
                 '.' => {
                     self.next();
                     let kind = if self.peek() == Some('.') {
@@ -360,6 +370,9 @@ impl Lexer {
                     let kind = if self.peek() == Some('=') {
                         self.next();
                         TokenKind::LessEq
+                    } else if self.peek() == Some('<') {
+                        self.next();
+                        TokenKind::ShiftLeft
                     } else {
                         TokenKind::Less
                     };
@@ -370,6 +383,9 @@ impl Lexer {
                     let kind = if self.peek() == Some('=') {
                         self.next();
                         TokenKind::GreaterEq
+                    } else if self.peek() == Some('>') {
+                        self.next();
+                        TokenKind::ShiftRight
                     } else {
                         TokenKind::Greater
                     };

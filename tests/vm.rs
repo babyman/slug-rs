@@ -26,6 +26,35 @@ fn executes_integer_arithmetic() {
 }
 
 #[test]
+fn executes_checked_bitwise_and_shift_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let left = main.constant(Value::Int(6));
+    let right = main.constant(Value::Int(3));
+    main.emit(Op::Constant(left))
+        .emit(Op::Constant(right))
+        .emit(Op::BitAnd)
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Int(2)
+    );
+
+    let mut invalid = Chunk::new("invalid", 0);
+    let one = invalid.constant(Value::Int(1));
+    let count = invalid.constant(Value::Int(64));
+    invalid
+        .emit(Op::Constant(one))
+        .emit(Op::Constant(count))
+        .emit(Op::ShiftLeft)
+        .emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(invalid), 0)
+        .expect_err("out-of-range shifts must remain checked");
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(error.message, "shift count is out of range");
+}
+
+#[test]
 fn turns_destructuring_match_failure_into_a_source_located_runtime_error() {
     let mut main = Chunk::new("main", 0);
     main.emit_at(Op::MatchFailure, SourceSpan::new("destructure.slug", 4, 7));

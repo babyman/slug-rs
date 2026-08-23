@@ -75,6 +75,48 @@ pub(super) fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKi
     }
 }
 
+pub(super) fn bitwise(
+    left: Value,
+    right: Value,
+    operation: fn(i64, i64) -> i64,
+) -> Result<Value, (RuntimeErrorKind, String)> {
+    let (Value::Int(left), Value::Int(right)) = (left, right) else {
+        return Err((
+            RuntimeErrorKind::Type,
+            "bitwise operators require integers".into(),
+        ));
+    };
+    Ok(Value::Int(operation(left, right)))
+}
+
+pub(super) fn shift(
+    left: Value,
+    right: Value,
+    operation: fn(i64, u32) -> Option<i64>,
+) -> Result<Value, (RuntimeErrorKind, String)> {
+    let (Value::Int(left), Value::Int(right)) = (left, right) else {
+        return Err((
+            RuntimeErrorKind::Type,
+            "shift operators require integers".into(),
+        ));
+    };
+    let count = u32::try_from(right)
+        .ok()
+        .filter(|count| *count < i64::BITS)
+        .ok_or((RuntimeErrorKind::Type, "shift count is out of range".into()))?;
+    operation(left, count).map(Value::Int).ok_or((
+        RuntimeErrorKind::Type,
+        "shift result is out of range".into(),
+    ))
+}
+
+pub(super) fn bit_not(value: &Value) -> Result<Value, String> {
+    let Value::Int(value) = value else {
+        return Err("bitwise operators require integers".into());
+    };
+    Ok(Value::Int(!value))
+}
+
 pub(super) fn matches_pattern(
     pattern: &MatchPattern,
     value: &Value,

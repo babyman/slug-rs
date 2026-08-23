@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added checked integer bitwise, shift, and prefix `~` operators.
 - Added `$identifier` string interpolation; embedded expressions and property
   access remain deliberately unsupported.
 - Added schema-preserving struct copies with checked replacement fields.

@@ -13,8 +13,8 @@ mod operations;
 use cleanup::{Cleanup, Deferred};
 pub use error::{CallFrame, RuntimeError, RuntimeErrorKind};
 use operations::{
-    add, construct_struct, copy_struct, divide, index_value, is_map_key, matches_pattern, modulo,
-    multiply, negate, numbers, slice_value, subtract,
+    add, bit_not, bitwise, construct_struct, copy_struct, divide, index_value, is_map_key,
+    matches_pattern, modulo, multiply, negate, numbers, shift, slice_value, subtract,
 };
 
 pub type VmResult<T> = Result<T, RuntimeError>;
@@ -294,6 +294,19 @@ impl Vm {
                 Op::Multiply => self.binary(span, multiply)?,
                 Op::Divide => self.binary(span, divide)?,
                 Op::Modulo => self.binary(span, modulo)?,
+                Op::BitAnd => {
+                    self.binary(span, |left, right| bitwise(left, right, |a, b| a & b))?;
+                }
+                Op::BitOr => self.binary(span, |left, right| bitwise(left, right, |a, b| a | b))?,
+                Op::BitXor => {
+                    self.binary(span, |left, right| bitwise(left, right, |a, b| a ^ b))?;
+                }
+                Op::ShiftLeft => {
+                    self.binary(span, |left, right| shift(left, right, i64::checked_shl))?;
+                }
+                Op::ShiftRight => {
+                    self.binary(span, |left, right| shift(left, right, i64::checked_shr))?;
+                }
                 Op::List(count) => {
                     let values = self.pop_values(count, span.clone())?;
                     self.stack.push(Value::List(Rc::new(values)));
@@ -395,6 +408,13 @@ impl Vm {
                 Op::Not => {
                     let value = self.pop(span)?;
                     self.stack.push(Value::Bool(!value.is_truthy()));
+                }
+                Op::BitNot => {
+                    let value = self.pop(span.clone())?;
+                    self.stack
+                        .push(bit_not(&value).map_err(|message| {
+                            self.error(RuntimeErrorKind::Type, message, span)
+                        })?);
                 }
                 Op::Equal => {
                     let (left, right) = self.pop_pair(span.clone())?;

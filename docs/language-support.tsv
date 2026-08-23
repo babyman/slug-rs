@@ -11,7 +11,8 @@ Boolean and nil literals|implemented|`tests/cli.rs`
 Lists and maps|implemented|`tests/cli.rs` and `tests/vm.rs`
 Arithmetic `+`, `-`, `*`, `/`, and `%`|implemented|`tests/cli.rs` and `tests/vm.rs`
 Equality and comparisons|implemented|`tests/cli.rs` and `tests/vm.rs`
-Bitwise, shift, list-concatenation, and pipeline operators|specified only|`language/language-specification.md`
+Integer bitwise, shift, and prefix `~` operators|implemented|`tests/cli.rs` and `tests/vm.rs`
+List-concatenation and pipeline operators|specified only|`language/language-specification.md`
 Short-circuit logical-and and logical-or|implemented|`tests/cli.rs`
 Functions, blocks, conditionals, and captures|implemented|`tests/cli.rs` and `tests/vm.rs`
 Literal and list pattern matching|implemented|`tests/cli.rs` and `tests/vm.rs`

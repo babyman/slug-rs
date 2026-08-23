@@ -143,6 +143,11 @@ Operator precedence, from lowest to highest, is:
 | pipeline `/>` | left |
 | calls, indexing, dot access, struct initialization and copy | left |
 
+Bitwise operators (`&`, `|`, `^`, and `~`) and shifts (`<<`, `>>`) accept
+integers only. A shift count must be an integer from `0` through `63`; invalid
+operand or shift-count combinations are checked runtime type errors. Right
+shifts are arithmetic: they preserve the sign of a negative integer.
+
 `if` is an expression. Its condition is parenthesized, and both branches are
 blocks or nested `if` expressions:
 

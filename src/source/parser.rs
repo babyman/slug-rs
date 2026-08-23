@@ -190,11 +190,16 @@ impl Parser {
                 TokenKind::LessEq => (Binary::LessEqual, 4),
                 TokenKind::Greater => (Binary::Greater, 4),
                 TokenKind::GreaterEq => (Binary::GreaterEqual, 4),
-                TokenKind::Plus => (Binary::Add, 5),
-                TokenKind::Minus => (Binary::Subtract, 5),
-                TokenKind::Star => (Binary::Multiply, 6),
-                TokenKind::Slash => (Binary::Divide, 6),
-                TokenKind::Percent => (Binary::Modulo, 6),
+                TokenKind::Pipe => (Binary::BitOr, 5),
+                TokenKind::Caret => (Binary::BitXor, 6),
+                TokenKind::Ampersand => (Binary::BitAnd, 7),
+                TokenKind::ShiftLeft => (Binary::ShiftLeft, 8),
+                TokenKind::ShiftRight => (Binary::ShiftRight, 8),
+                TokenKind::Plus => (Binary::Add, 9),
+                TokenKind::Minus => (Binary::Subtract, 9),
+                TokenKind::Star => (Binary::Multiply, 10),
+                TokenKind::Slash => (Binary::Divide, 10),
+                TokenKind::Percent => (Binary::Modulo, 10),
                 _ => break,
             };
             if precedence < minimum {
@@ -215,12 +220,16 @@ impl Parser {
     }
     fn prefix(&mut self) -> Result<Expr, SourceError> {
         let mut operators = Vec::new();
-        while self.matches(&TokenKind::Minus) || self.matches(&TokenKind::Bang) {
+        while self.matches(&TokenKind::Minus)
+            || self.matches(&TokenKind::Bang)
+            || self.matches(&TokenKind::Tilde)
+        {
             let token = self.next();
-            let operator = if matches!(token.kind, TokenKind::Minus) {
-                Prefix::Negate
-            } else {
-                Prefix::Not
+            let operator = match token.kind {
+                TokenKind::Minus => Prefix::Negate,
+                TokenKind::Bang => Prefix::Not,
+                TokenKind::Tilde => Prefix::BitNot,
+                _ => unreachable!("prefix token was checked"),
             };
             operators.push((operator, token.span));
         }

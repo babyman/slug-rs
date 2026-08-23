@@ -74,6 +74,39 @@ fn evaluates_source_modulo_with_checked_zero_division() {
 }
 
 #[test]
+fn evaluates_checked_bitwise_and_shift_operators() {
+    let path = fixture_path("bitwise-and-shifts");
+    fs::write(&path, "println(6 & 3, 4 | 1, 6 ^ 3, ~0, 1 << 4, -8 >> 2)\n")
+        .expect("write bitwise source");
+    let output = slug().arg(&path).output().expect("run bitwise source");
+    fs::remove_file(&path).expect("remove bitwise source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "2 5 5 -1 16 -2\n"
+    );
+
+    for source in ["1 << -1\n", "1 << 64\n", "1.5 & 1\n", "~true\n"] {
+        fs::write(&path, source).expect("write invalid bitwise source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid bitwise source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .starts_with("slug: runtime error:")
+        );
+    }
+    fs::remove_file(path).expect("remove invalid bitwise source");
+}
+
+#[test]
 fn parses_decimal_hexadecimal_and_byte_literals() {
     let path = fixture_path("numeric-and-byte-literals");
     fs::write(

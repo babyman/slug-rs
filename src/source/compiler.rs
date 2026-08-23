@@ -260,6 +260,26 @@ impl Compiler {
                         self.expression(state, right)?;
                         state.emit(Op::Modulo, &expression.span);
                     }
+                    Binary::BitAnd => {
+                        self.expression(state, right)?;
+                        state.emit(Op::BitAnd, &expression.span);
+                    }
+                    Binary::BitOr => {
+                        self.expression(state, right)?;
+                        state.emit(Op::BitOr, &expression.span);
+                    }
+                    Binary::BitXor => {
+                        self.expression(state, right)?;
+                        state.emit(Op::BitXor, &expression.span);
+                    }
+                    Binary::ShiftLeft => {
+                        self.expression(state, right)?;
+                        state.emit(Op::ShiftLeft, &expression.span);
+                    }
+                    Binary::ShiftRight => {
+                        self.expression(state, right)?;
+                        state.emit(Op::ShiftRight, &expression.span);
+                    }
                     Binary::Equal => {
                         self.expression(state, right)?;
                         state.emit(Op::Equal, &expression.span);
@@ -281,6 +301,7 @@ impl Compiler {
                         match operator {
                             Prefix::Negate => Op::Negate,
                             Prefix::Not => Op::Not,
+                            Prefix::BitNot => Op::BitNot,
                         },
                         span,
                     );

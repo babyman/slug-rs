@@ -148,6 +148,11 @@ pub(super) enum Pattern {
 pub(super) enum Binary {
     Or,
     And,
+    BitOr,
+    BitXor,
+    BitAnd,
+    ShiftLeft,
+    ShiftRight,
     Add,
     Subtract,
     Multiply,
@@ -164,6 +169,7 @@ pub(super) enum Binary {
 pub(super) enum Prefix {
     Negate,
     Not,
+    BitNot,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Token {
@@ -209,6 +215,11 @@ pub(super) enum TokenKind {
     GreaterEq,
     AndAnd,
     OrOr,
+    Ampersand,
+    Pipe,
+    ShiftLeft,
+    ShiftRight,
+    Tilde,
     LParen,
     RParen,
     LBrace,
