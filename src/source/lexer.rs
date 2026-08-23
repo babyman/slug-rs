@@ -137,6 +137,7 @@ impl Lexer {
                     | TokenKind::Minus
                     | TokenKind::Star
                     | TokenKind::Slash
+                    | TokenKind::Percent
                     | TokenKind::Colon
                     | TokenKind::At
                     | TokenKind::Caret
@@ -194,6 +195,10 @@ impl Lexer {
                 '*' => {
                     self.next();
                     Self::push(&mut result, TokenKind::Star, span);
+                }
+                '%' => {
+                    self.next();
+                    Self::push(&mut result, TokenKind::Percent, span);
                 }
                 '/' => {
                     self.next();

@@ -14,8 +14,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Interpolated strings | specified only | `language/Strings - Mini Spec.md` |
 | Boolean and nil literals | implemented | `tests/cli.rs` |
 | Lists and maps | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Arithmetic `+`, `-`, `*`, and `/` | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Modulo `%` | specified only | `language/language-specification.md` |
+| Arithmetic `+`, `-`, `*`, `/`, and `%` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Equality and comparisons | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Bitwise, shift, list-concatenation, and pipeline operators | specified only | `language/language-specification.md` |
 | Short-circuit logical-and and logical-or | implemented | `tests/cli.rs` |

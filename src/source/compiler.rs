@@ -234,6 +234,10 @@ impl Compiler {
                         self.expression(state, right)?;
                         state.emit(Op::Divide, &expression.span);
                     }
+                    Binary::Modulo => {
+                        self.expression(state, right)?;
+                        state.emit(Op::Modulo, &expression.span);
+                    }
                     Binary::Equal => {
                         self.expression(state, right)?;
                         state.emit(Op::Equal, &expression.span);

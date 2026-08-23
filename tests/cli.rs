@@ -50,6 +50,30 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn evaluates_source_modulo_with_checked_zero_division() {
+    let path = fixture_path("modulo");
+    fs::write(&path, "println(17 % 5, 5.5 % 2)\n").expect("write modulo source");
+    let output = slug().arg(&path).output().expect("run modulo source");
+    fs::remove_file(&path).expect("remove modulo source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2 1.5\n");
+
+    fs::write(&path, "1 % 0\n").expect("write zero modulo source");
+    let output = slug().arg(&path).output().expect("run zero modulo source");
+    fs::remove_file(path).expect("remove zero modulo source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: division by zero")
+    );
+}
+
+#[test]
 fn parses_decimal_hexadecimal_and_byte_literals() {
     let path = fixture_path("numeric-and-byte-literals");
     fs::write(
