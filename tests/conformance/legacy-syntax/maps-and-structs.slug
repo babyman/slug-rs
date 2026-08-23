@@ -1,0 +1,15 @@
+// Derived from the legacy maps.slug and structs.slug samples.
+val key = "name"
+val user = {name: "Slug", age: 42, [key]: "Slug"}
+
+val User = struct {
+    name,
+    age:num,
+    active = true,
+}
+val first = User {name: user.name, age: user.age}
+val second = first copy {active: false}
+
+println(second.name)
+println(second.active)
+

@@ -1,0 +1,7 @@
+// Derived from the legacy tests/comments/single-line.slug sample.
+// A line comment may follow a declaration.
+var count = 1 // and this comment ends at the newline
+
+/* Block comments may appear between statements. */
+count = count + 1
+

@@ -1,0 +1,11 @@
+// Derived from the legacy functions.slug sample.
+val increment = fn(value, amount = 1) { value + amount }
+val collect = fn(first, ...rest) { first +: rest }
+
+val result = 10
+    /> increment()
+    /> increment(amount = 2)
+
+println(result)
+println(collect(1, ...[2, 3])[2])
+

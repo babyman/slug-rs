@@ -15,6 +15,17 @@ pub(super) struct Lexer {
 }
 
 impl Lexer {
+    fn has_valid_separators(text: &str, is_digit: impl Fn(char) -> bool) -> bool {
+        let characters: Vec<_> = text.chars().collect();
+        characters.iter().enumerate().all(|(index, character)| {
+            *character != '_'
+                || (index > 0 && is_digit(characters[index - 1]))
+                    && characters
+                        .get(index + 1)
+                        .is_some_and(|next| is_digit(*next))
+        })
+    }
+
     fn current_line_is_blank(&self) -> bool {
         self.input[..self.index]
             .iter()
@@ -484,6 +495,9 @@ impl Lexer {
                     {
                         text.push(self.next().expect("peeked character exists"));
                     }
+                    if !Self::has_valid_separators(&text, |value| value.is_ascii_digit()) {
+                        return Err(SourceError::at("invalid number separator", span));
+                    }
                     if text == "0" && self.peek() == Some('x') {
                         self.next();
                         if self.peek() == Some('"') {
@@ -526,6 +540,9 @@ impl Lexer {
 
                         if self.peek() == Some('_') {
                             self.next();
+                            if !self.peek().is_some_and(|value| value.is_ascii_hexdigit()) {
+                                return Err(SourceError::at("expected hexadecimal digit", span));
+                            }
                         }
                         let mut digits = String::new();
                         while self
@@ -533,13 +550,18 @@ impl Lexer {
                             .is_some_and(|value| value.is_ascii_hexdigit() || value == '_')
                         {
                             let value = self.next().expect("peeked character exists");
-                            if value != '_' {
-                                digits.push(value);
-                            }
+                            digits.push(value);
                         }
                         if digits.is_empty() {
                             return Err(SourceError::at("expected hexadecimal digit", span));
                         }
+                        if !Self::has_valid_separators(&digits, |value| value.is_ascii_hexdigit()) {
+                            return Err(SourceError::at(
+                                "invalid hexadecimal number separator",
+                                span,
+                            ));
+                        }
+                        digits.retain(|value| value != '_');
                         let value = i64::from_str_radix(&digits, 16).map_err(|_| {
                             SourceError::at("invalid hexadecimal number", span.clone())
                         })?;
@@ -561,6 +583,10 @@ impl Lexer {
                             .is_some_and(|value| value.is_ascii_digit() || value == '_')
                         {
                             text.push(self.next().expect("peeked character exists"));
+                        }
+                        let fraction = text.rsplit_once('.').map_or("", |(_, fraction)| fraction);
+                        if !Self::has_valid_separators(fraction, |value| value.is_ascii_digit()) {
+                            return Err(SourceError::at("invalid number separator", span));
                         }
                     }
                     if matches!(self.peek(), Some('e' | 'E')) {

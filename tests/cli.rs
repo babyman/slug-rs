@@ -749,6 +749,16 @@ fn rejects_malformed_hexadecimal_and_byte_literals_with_locations() {
             "0x\"gg\"\n",
             "invalid hexadecimal digit in byte literal",
         ),
+        (
+            "double-decimal-separator",
+            "1__000\n",
+            "invalid number separator",
+        ),
+        (
+            "trailing-hexadecimal-separator",
+            "0xff_\n",
+            "invalid hexadecimal number separator",
+        ),
         ("missing-exponent", "1e\n", "expected exponent digit"),
     ] {
         let path = fixture_path(kind);

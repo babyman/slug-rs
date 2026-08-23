@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a minimal metadata-backed syntax conformance suite derived from the
+  legacy Go Slug sources, covering supported syntax without legacy assertions.
 - Simplified the specified program entrypoint rule: only a local, top-level
   zero-argument `main` in the program module is invoked after initialization.
 - Implemented automatic invocation of the program module's local,

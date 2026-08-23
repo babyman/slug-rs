@@ -1,0 +1,5 @@
+schema = 1
+outcome = "success"
+stdout = "4\nSlug\n42\ntrue\n11\n"
+stderr = ""
+

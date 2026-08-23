@@ -1,0 +1,14 @@
+// Derived from the legacy vals, vars, and destructuring samples.
+val constant = 10
+var mutable = constant
+mutable = mutable + 1
+
+val [first, _, ...rest] = [1, 2, 3, 4]
+val {name, age: years, ...extra} = {name: "Slug", age: 42, active: true}
+
+println(first + rest[0])
+println(name)
+println(years)
+println(extra.active)
+println(mutable)
+

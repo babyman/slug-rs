@@ -1,0 +1,22 @@
+// Derived from the legacy auto-semicolon-insertion, number, bytes, and string samples.
+val query =
+    "select *"
+    + " from records"
+
+val values = [
+    1_000,
+    0x10,
+    0.25,
+]
+
+val bytes = 0x"4142"
+val raw = 'raw text'
+val multiline = """
+Slug
+VM
+"""
+
+val total = values[0] + values[1]
+println(query)
+println(total)
+

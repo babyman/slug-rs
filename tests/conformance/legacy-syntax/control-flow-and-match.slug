@@ -1,0 +1,15 @@
+// Derived from the legacy flow-control and match samples.
+val classify = fn(value) {
+    if (value > 0) {
+        match value {
+            1 => "one"
+            number if number > 1 => "many"
+        }
+    } else {
+        "non-positive"
+    }
+}
+
+println(classify(2))
+println(classify(0))
+

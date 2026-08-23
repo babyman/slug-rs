@@ -24,7 +24,7 @@ dedicated conformance case, the repository's tests are the executable evidence
 for currently supported behavior:
 
 - grammar: [`slug.ebnf`](slug.ebnf);
-- accepted and error behavior: `../../tests/vm-conformance`;
+- accepted syntax and error behavior: `../../tests/conformance/legacy-syntax`;
 - language-wide behavior: `make test`.
 
 If an implementation, a test, and this specification disagree, treat that as a

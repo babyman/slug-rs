@@ -47,3 +47,11 @@ Run a fixture directory with:
 ```sh
 slug-fixtures path/to/fixtures --slug path/to/slug
 ```
+
+## Repository suite
+
+`tests/conformance/legacy-syntax/` is the minimal syntax-focused suite derived
+from the legacy Go Slug test corpus. Its sources intentionally omit the legacy
+test-library imports and assertion calls: each fixture isolates a language form
+that the Rust implementation currently supports. `tests/legacy_syntax_conformance.rs`
+runs the directory through `slug-fixtures` as part of `make test`.

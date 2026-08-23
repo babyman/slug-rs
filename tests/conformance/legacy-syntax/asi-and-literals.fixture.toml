@@ -1,0 +1,5 @@
+schema = 1
+outcome = "success"
+stdout = "select * from records\n1016\n"
+stderr = ""
+

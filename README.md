@@ -39,6 +39,8 @@ compiled-module contract is documented separately as `.cslug`.
   milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no
   encoder or loader is implemented yet.
+- A metadata-backed, syntax-focused conformance suite derived from the legacy
+  Slug corpus runs with the integration tests.
 
 ## Bytecode design
 
