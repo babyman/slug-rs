@@ -45,10 +45,10 @@ pub(super) enum ExprKind {
     },
     Call {
         callee: Box<Expr>,
-        arguments: Vec<Expr>,
+        arguments: Vec<CallArgument>,
     },
     Function {
-        parameters: Vec<String>,
+        parameters: Vec<Parameter>,
         body: Box<Expr>,
     },
     Block(Vec<Expr>),
@@ -57,7 +57,7 @@ pub(super) enum ExprKind {
         then_branch: Box<Expr>,
         else_branch: Option<Box<Expr>>,
     },
-    List(Vec<Expr>),
+    List(Vec<ListElement>),
     Map(Vec<(Expr, Expr)>),
     StructSchema(Vec<StructSchemaField>),
     StructInit {
@@ -68,6 +68,23 @@ pub(super) enum ExprKind {
         collection: Box<Expr>,
         index: Box<Expr>,
     },
+}
+#[derive(Clone, Debug)]
+pub(super) struct Parameter {
+    pub(super) name: String,
+    pub(super) default: Option<Expr>,
+    pub(super) variadic: bool,
+}
+#[derive(Clone, Debug)]
+pub(super) enum CallArgument {
+    Positional(Expr),
+    Named { name: String, value: Expr },
+    Spread(Expr),
+}
+#[derive(Clone, Debug)]
+pub(super) enum ListElement {
+    Value(Expr),
+    Spread(Expr),
 }
 #[derive(Clone, Debug)]
 pub(super) struct StructSchemaField {

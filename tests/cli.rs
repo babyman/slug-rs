@@ -1579,6 +1579,47 @@ fn reports_source_parse_errors_without_a_host_crash() {
 }
 
 #[test]
+fn rejects_malformed_call_and_variadic_parameter_lists_with_locations() {
+    let cases = [
+        (
+            "positional-after-named",
+            "println(label = \"Slug\", 1)\n",
+            "slug: parse error: positional argument cannot appear after a named argument",
+        ),
+        (
+            "spread-after-named",
+            "println(label = \"Slug\", ...[1])\n",
+            "slug: parse error: spread argument cannot appear after a named argument",
+        ),
+        (
+            "variadic-not-final",
+            "val collect = fn(...rest, value) { value }\n",
+            "slug: parse error: variadic parameter must be final",
+        ),
+        (
+            "variadic-default",
+            "val collect = fn(...rest = []) { rest }\n",
+            "slug: parse error: variadic parameters cannot have defaults",
+        ),
+    ];
+
+    for (kind, source, expected) in cases {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write invalid call source");
+        let output = slug().arg(&path).output().expect("run invalid call source");
+        fs::remove_file(path).expect("remove invalid call source");
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with(expected)
+        );
+    }
+}
+
+#[test]
 fn reports_runtime_faults_without_a_host_crash() {
     let path = fixture_path("runtime");
     fs::write(&path, "println(1 / 0)\n").expect("write faulting Slug source");

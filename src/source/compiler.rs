@@ -6,7 +6,10 @@ use crate::{
 
 use super::{
     SourceError,
-    ast::{Binary, Expr, ExprKind, MapPatternKey, MatchCase, Pattern, Prefix, RestPattern},
+    ast::{
+        Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
+        Pattern, Prefix, RestPattern,
+    },
     state::{Binding, State},
 };
 
@@ -146,7 +149,15 @@ impl Compiler {
             } => {
                 let deferred = Expr {
                     kind: ExprKind::Function {
-                        parameters: error_name.iter().cloned().collect(),
+                        parameters: error_name
+                            .iter()
+                            .cloned()
+                            .map(|name| Parameter {
+                                name,
+                                default: None,
+                                variadic: false,
+                            })
+                            .collect(),
                         body: value.clone(),
                     },
                     span: expression.span.clone(),
@@ -251,12 +262,39 @@ impl Compiler {
             ExprKind::Call { callee, arguments } => {
                 self.expression(state, callee)?;
                 for argument in arguments {
+                    let argument = match argument {
+                        CallArgument::Positional(argument) => argument,
+                        CallArgument::Named { name, value } => {
+                            let _ = (name, value);
+                            return Err(SourceError::semantic(
+                                "named and spread call arguments are not implemented yet",
+                                expression.span.clone(),
+                            ));
+                        }
+                        CallArgument::Spread(argument) => {
+                            let _ = argument;
+                            return Err(SourceError::semantic(
+                                "named and spread call arguments are not implemented yet",
+                                expression.span.clone(),
+                            ));
+                        }
+                    };
                     self.expression(state, argument)?;
                 }
                 state.emit(Op::Call(arguments.len()), &expression.span);
             }
             ExprKind::List(values) => {
                 for value in values {
+                    let value = match value {
+                        ListElement::Value(value) => value,
+                        ListElement::Spread(value) => {
+                            let _ = value;
+                            return Err(SourceError::semantic(
+                                "list literal spreads are not implemented yet",
+                                expression.span.clone(),
+                            ));
+                        }
+                    };
                     self.expression(state, value)?;
                 }
                 state.emit(Op::List(values.len()), &expression.span);
@@ -344,7 +382,8 @@ impl Compiler {
                 state.patch(end);
             }
             ExprKind::Function { parameters, body } => {
-                let (mut chunk, captures) = self.function(parameters, body, state.visible())?;
+                let parameters = plain_parameters(parameters, &expression.span)?;
+                let (mut chunk, captures) = self.function(&parameters, body, state.visible())?;
                 let index = self.chunks.len();
                 chunk.name = format!("<fn #{index}>");
                 self.chunks.push(chunk);
@@ -588,6 +627,30 @@ impl Compiler {
         let captures = state.captures();
         Ok((state.finish("<fn>", parameters.len()), captures))
     }
+}
+
+fn plain_parameters(
+    parameters: &[Parameter],
+    span: &SourceSpan,
+) -> Result<Vec<String>, SourceError> {
+    let mut names = HashSet::new();
+    let mut plain = Vec::with_capacity(parameters.len());
+    for parameter in parameters {
+        if !names.insert(&parameter.name) {
+            return Err(SourceError::semantic(
+                format!("duplicate parameter '{}'", parameter.name),
+                span.clone(),
+            ));
+        }
+        if parameter.default.is_some() || parameter.variadic {
+            return Err(SourceError::semantic(
+                "default and variadic parameters are not implemented yet",
+                span.clone(),
+            ));
+        }
+        plain.push(parameter.name.clone());
+    }
+    Ok(plain)
 }
 
 #[derive(Clone, Debug)]

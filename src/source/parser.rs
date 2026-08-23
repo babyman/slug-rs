@@ -1,8 +1,8 @@
 use super::{
     SourceError,
     ast::{
-        Binary, Expr, ExprKind, MapPatternKey, MatchCase, Pattern, Prefix, RestPattern,
-        StructSchemaField, Token, TokenKind,
+        Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
+        Pattern, Prefix, RestPattern, StructSchemaField, Token, TokenKind,
     },
 };
 use crate::{DeferMode, SourceSpan, Value};
@@ -228,19 +228,7 @@ impl Parser {
             if self.matches(&TokenKind::LParen) {
                 let delimiter = self.next();
                 self.enter_nesting(delimiter.span)?;
-                let mut arguments = Vec::new();
-                if !self.matches(&TokenKind::RParen) {
-                    loop {
-                        arguments.push(self.expression()?);
-                        if !self.matches(&TokenKind::Comma) {
-                            break;
-                        }
-                        self.next();
-                        if self.matches(&TokenKind::RParen) {
-                            break;
-                        }
-                    }
-                }
+                let arguments = self.call_arguments()?;
                 self.consume(&TokenKind::RParen, "expected )")?;
                 self.leave_nesting();
                 let span = value.span.clone();
@@ -300,6 +288,50 @@ impl Parser {
                 },
             })
         }
+    }
+    fn call_arguments(&mut self) -> Result<Vec<CallArgument>, SourceError> {
+        let mut arguments = Vec::new();
+        let mut has_named = false;
+        while !self.matches(&TokenKind::RParen) {
+            if self.matches(&TokenKind::Ellipsis) {
+                let spread = self.next();
+                if has_named {
+                    return Err(SourceError::at(
+                        "spread argument cannot appear after a named argument",
+                        spread.span,
+                    ));
+                }
+                arguments.push(CallArgument::Spread(self.expression()?));
+            } else if let (
+                TokenKind::Name(name),
+                Some(Token {
+                    kind: TokenKind::Eq,
+                    ..
+                }),
+            ) = (self.kind().clone(), self.tokens.get(self.index + 1))
+            {
+                self.next();
+                self.next();
+                has_named = true;
+                arguments.push(CallArgument::Named {
+                    name,
+                    value: self.expression()?,
+                });
+            } else {
+                if has_named {
+                    return Err(SourceError::at(
+                        "positional argument cannot appear after a named argument",
+                        self.peek().span.clone(),
+                    ));
+                }
+                arguments.push(CallArgument::Positional(self.expression()?));
+            }
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+            self.next();
+        }
+        Ok(arguments)
     }
     fn primary(&mut self) -> Result<Expr, SourceError> {
         let token = self.next();
@@ -421,7 +453,12 @@ impl Parser {
         let mut values = Vec::new();
         if !self.matches(&TokenKind::RBracket) {
             loop {
-                values.push(self.expression()?);
+                if self.matches(&TokenKind::Ellipsis) {
+                    self.next();
+                    values.push(ListElement::Spread(self.expression()?));
+                } else {
+                    values.push(ListElement::Value(self.expression()?));
+                }
                 if !self.matches(&TokenKind::Comma) {
                     break;
                 }
@@ -550,19 +587,61 @@ impl Parser {
     fn function(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.consume(&TokenKind::LParen, "expected (")?;
         let mut parameters = Vec::new();
+        let mut has_variadic = false;
         if !self.matches(&TokenKind::RParen) {
             loop {
+                let variadic = if self.matches(&TokenKind::Ellipsis) {
+                    let token = self.next();
+                    if has_variadic {
+                        return Err(SourceError::at(
+                            "function can have only one variadic parameter",
+                            token.span,
+                        ));
+                    }
+                    true
+                } else {
+                    false
+                };
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
                     return Err(SourceError::at("expected parameter name", token.span));
                 };
-                parameters.push(name);
+                if name == "_" {
+                    return Err(SourceError::at(
+                        "discard parameters are not supported yet",
+                        token.span,
+                    ));
+                }
+                let default = if self.matches(&TokenKind::Eq) {
+                    self.next();
+                    Some(self.expression()?)
+                } else {
+                    None
+                };
+                if variadic && default.is_some() {
+                    return Err(SourceError::at(
+                        "variadic parameters cannot have defaults",
+                        token.span,
+                    ));
+                }
+                parameters.push(Parameter {
+                    name,
+                    default,
+                    variadic,
+                });
+                has_variadic |= variadic;
                 if !self.matches(&TokenKind::Comma) {
                     break;
                 }
                 self.next();
                 if self.matches(&TokenKind::RParen) {
                     break;
+                }
+                if has_variadic {
+                    return Err(SourceError::at(
+                        "variadic parameter must be final",
+                        self.peek().span.clone(),
+                    ));
                 }
             }
         }
@@ -571,7 +650,7 @@ impl Parser {
             let match_span = self.next().span;
             let subject = if parameters.len() == 1 {
                 Expr {
-                    kind: ExprKind::Name(parameters[0].clone()),
+                    kind: ExprKind::Name(parameters[0].name.clone()),
                     span: match_span.clone(),
                 }
             } else {
@@ -579,9 +658,11 @@ impl Parser {
                     kind: ExprKind::List(
                         parameters
                             .iter()
-                            .map(|parameter| Expr {
-                                kind: ExprKind::Name(parameter.clone()),
-                                span: match_span.clone(),
+                            .map(|parameter| {
+                                ListElement::Value(Expr {
+                                    kind: ExprKind::Name(parameter.name.clone()),
+                                    span: match_span.clone(),
+                                })
                             })
                             .collect(),
                     ),
