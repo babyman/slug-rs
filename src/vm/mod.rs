@@ -83,6 +83,38 @@ impl Vm {
         self.run_named(program, "main")
     }
 
+    /// Executes top-level code and then the program module's zero-argument `main`.
+    ///
+    /// Loaded modules use [`Self::run_module`], which intentionally does not
+    /// invoke their `main` binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Slug runtime error when top-level execution or the entrypoint
+    /// call fails.
+    pub fn run_program(&mut self, program: &Program) -> VmResult<Value> {
+        let top_level = self.run_named(program, "main")?;
+        if !program.has_entrypoint() {
+            return Ok(top_level);
+        }
+        let entrypoint = self
+            .globals
+            .get("main")
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "program entrypoint `main` does not exist".into(),
+                    None,
+                )
+            })?
+            .resolve()
+            .map_err(|message| self.error(RuntimeErrorKind::Name, message, None))?;
+        self.stack.clear();
+        self.stack.push(entrypoint);
+        self.call(program, 0, None, None)?;
+        self.execute(program)
+    }
+
     #[must_use]
     pub fn module_metadata(&self) -> &[ModuleDeclaration] {
         &self.module_metadata

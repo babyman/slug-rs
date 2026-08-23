@@ -112,7 +112,7 @@ and the host boundary in
 - [x] Implement callable import conflict and combination rules.
 - [x] Retain declaration, tag, and documentation metadata in the module model
   for later introspection.
-- [ ] Invoke the main program module's local zero-argument `main` function
+- [x] Invoke the main program module's local zero-argument `main` function
   after successful top-level evaluation.
 - [ ] Add module fixtures for relative resolution, library fallback, caching,
   cycles, live exports, and failure locations.

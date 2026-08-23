@@ -25,7 +25,8 @@ compiled-module contract is documented separately as `.cslug`.
   lists/maps/indexing, list slices, directional list append/prepend, pipeline calls and matches, positional/named/defaulted/variadic calls, positional call and list-literal spreads,
   declaration and parameter tags with evaluated arguments, declaration-attached
   documentation blocks with retained module metadata (but without metadata
-  introspection), comments, and
+  introspection), comments, automatic invocation of a local zero-argument
+  `main`, and
   `println`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative resolution, cached isolated module initialization, and

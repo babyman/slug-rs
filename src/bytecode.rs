@@ -274,6 +274,7 @@ pub struct Program {
     bindings: Vec<String>,
     declarations: Vec<ModuleDeclaration>,
     exports: Vec<String>,
+    has_entrypoint: bool,
 }
 
 impl Program {
@@ -321,6 +322,12 @@ impl Program {
         &self.declarations
     }
 
+    /// Whether this program declares a local top-level zero-argument `main`.
+    #[must_use]
+    pub fn has_entrypoint(&self) -> bool {
+        self.has_entrypoint
+    }
+
     pub(crate) fn set_bindings(&mut self, bindings: Vec<String>) {
         self.bindings = bindings;
     }
@@ -331,5 +338,9 @@ impl Program {
 
     pub(crate) fn set_exports(&mut self, exports: Vec<String>) {
         self.exports = exports;
+    }
+
+    pub(crate) fn set_has_entrypoint(&mut self, has_entrypoint: bool) {
+        self.has_entrypoint = has_entrypoint;
     }
 }

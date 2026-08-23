@@ -34,6 +34,7 @@ impl Compiler {
     pub(super) fn compile(mut self) -> Result<Program, SourceError> {
         let mut exports = Vec::new();
         let mut bindings = Vec::new();
+        let has_entrypoint = self.expressions.iter().any(is_zero_argument_main);
         for expression in &self.expressions {
             if let ExprKind::Declare {
                 mutable,
@@ -93,6 +94,7 @@ impl Compiler {
         program.set_bindings(bindings);
         program.set_declarations(self.declarations);
         program.set_exports(exports);
+        program.set_has_entrypoint(has_entrypoint);
         Ok(program)
     }
     #[allow(clippy::too_many_lines)]
@@ -1104,4 +1106,17 @@ fn lower_rest_pattern(rest: Option<&RestPattern>) -> MatchRest {
         Some(RestPattern::Discard) => MatchRest::Discard,
         Some(RestPattern::Binding(_)) => MatchRest::Binding,
     }
+}
+
+fn is_zero_argument_main(expression: &Expr) -> bool {
+    let ExprKind::Declare { pattern, value, .. } = &expression.kind else {
+        return false;
+    };
+    let Pattern::Binding(name) = pattern else {
+        return false;
+    };
+    let ExprKind::Function { parameters, .. } = &value.kind else {
+        return false;
+    };
+    name == "main" && parameters.is_empty()
 }

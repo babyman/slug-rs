@@ -50,6 +50,73 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
+    let path = fixture_path("program-entrypoint");
+    fs::write(
+        &path,
+        "println(\"top level\")\nval main = fn() { println(\"entrypoint\") }\n",
+    )
+    .expect("write entrypoint source");
+
+    let output = slug().arg(&path).output().expect("run entrypoint source");
+    fs::remove_file(path).expect("remove entrypoint source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "top level\nentrypoint\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn skips_defaulted_and_imported_main_functions() {
+    let root = std::env::temp_dir().join(format!("slug-cli-main-selection-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create entrypoint fixture directory");
+    fs::write(
+        root.join("library.slug"),
+        "export val main = fn() { println(\"imported\") }\n",
+    )
+    .expect("write imported main module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val library = import(\"library\")\n\
+         val main = fn(value = \"defaulted\") { println(value) }\n\
+         println(\"top level\")\n",
+    )
+    .expect("write non-entrypoint source");
+
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run non-entrypoint source");
+    fs::remove_dir_all(root).expect("remove entrypoint fixture directory");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "top level\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn does_not_invoke_main_when_top_level_evaluation_fails() {
+    let path = fixture_path("entrypoint-top-level-failure");
+    fs::write(&path, "val main = fn() { println(\"entrypoint\") }\n???\n")
+        .expect("write failing entrypoint source");
+
+    let output = slug().arg(&path).output().expect("run failing source");
+    fs::remove_file(path).expect("remove failing entrypoint source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: not implemented at ")
+    );
+}
+
+#[test]
 fn imports_exported_values_through_the_public_cli() {
     let root =
         std::env::temp_dir().join(format!("slug-cli-imported-values-{}", std::process::id()));

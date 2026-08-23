@@ -65,7 +65,7 @@ fn run(path: &str, type_check: bool) -> ExitCode {
         );
         Ok(Value::Nil)
     });
-    match vm.run_named(&program, "main") {
+    match vm.run_program(&program) {
         Ok(_) => {
             for warning in loader.take_warnings() {
                 eprintln!("slug: warning: {warning}");
