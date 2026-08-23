@@ -66,7 +66,7 @@ note.
 
 ## 2. Finish the non-module expression foundation
 
-- [ ] Inventory the remaining grammar against the source AST, parser, compiler,
+- [x] Inventory the remaining grammar against the source AST, parser, compiler,
   VM, and tests; split the coarse support-matrix rows where partial support is
   currently hidden.
 - [ ] Implement the remaining specified numeric, byte, and string literal forms,

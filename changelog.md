@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a detailed inventory of the expression foundation and split the language
+  support matrix so partial literal, operator, collection, struct, annotation,
+  and metadata support is explicit.
 - Made tail-position `recur(...)` share ordinary positional, named, default,
   variadic, and spread argument binding, including function match bodies.
 - Added call-time default parameters evaluated in the callee's defining

@@ -26,6 +26,7 @@ a specified feature is implemented.
 |---|---|
 | [architecture.md](architecture.md) | Compiler, bytecode, VM, and diagnostic ownership. |
 | [language-foundation-roadmap.md](language-foundation-roadmap.md) | Dependency-ordered implementation tasks for source compatibility. |
+| [expression-foundation-inventory.md](expression-foundation-inventory.md) | Current expression-support boundary and dependency-ordered implementation slices. |
 | [vm-optimization.md](vm-optimization.md) | Staged private VM and bytecode optimization plan. |
 | [development.md](development.md) | Local workflow, validation ladder, and change process. |
 | [testing.md](testing.md) | Test-layer selection and regression policy. |
