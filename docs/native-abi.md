@@ -8,11 +8,12 @@ architecture contract, not a source-language specification. Slug programs
 continue to observe the rules in `language/`; this interface defines how trusted
 host code supplies those rules without depending on VM internals.
 
-The interface is a design contract only. No public binary ABI version, C header,
-dynamic loader, or external native module is implemented or accepted yet. The
-initial Rust API may change while channels and concurrency exercise the design.
-A public ABI becomes a compatibility promise only when version 1 is published
-with its C-compatible declarations and conformance tests.
+The call-scoped static Rust facade implements version 0 of this design contract.
+No public binary ABI version, C header, dynamic loader, or external native
+module is implemented or accepted yet. The Rust API may change while channels
+and concurrency exercise the design. A public ABI becomes a compatibility
+promise only when version 1 is published with its C-compatible declarations and
+conformance tests.
 
 The terms in this document are intentionally distinct:
 
@@ -376,10 +377,10 @@ Version 1 does not expose:
 
 Implementation proceeds in this order:
 
-1. replace the current `fn(&[Value]) -> Result<Value, String>` boundary with a
-   static Rust facade enforcing this call contract;
-2. prove checked argument, result, error, resource, and contract-violation
-   behavior with VM tests;
+1. **Complete:** replace the former `fn(&[Value]) -> Result<Value, String>`
+   boundary with a static Rust facade enforcing this call contract;
+2. **Complete:** prove checked argument, result, error, resource, and
+   contract-violation behavior with VM tests;
 3. implement channels and native producer capabilities, including bounded
    cross-thread sends and close races;
 4. implement structured concurrency without adding scheduler access to the

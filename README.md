@@ -39,6 +39,9 @@ compiled-module contract is documented separately as `.cslug`.
   milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no
   encoder or loader is implemented yet.
+- Statically registered native functions use an opaque, call-scoped version 0
+  Rust facade with structured errors and typed resources. It remains unstable;
+  no public C ABI or dynamic native loader exists yet.
 - A metadata-backed, syntax-focused conformance suite derived from the legacy
   Slug corpus runs with the integration tests.
 

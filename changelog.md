@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replaced direct Rust `Value` exposure in native callbacks with the opaque,
+  call-scoped version 0 facade, including checked conversions and result
+  contracts, structured error code/message/data, panic containment,
+  module-and-type-checked resources, idempotent close, and runtime teardown.
 - Defined the opaque native extension interface that precedes concurrency,
   including synchronous calls without scheduler hints, structured errors,
   typed resources, revocable thread-safe channel producers, explicit shutdown,

@@ -11,6 +11,7 @@ mod configuration;
 mod conformance;
 mod fixture;
 mod module;
+mod native;
 mod source;
 mod value;
 mod vm;
@@ -24,6 +25,10 @@ pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
+pub use native::{
+    NativeArity, NativeCall, NativeDescriptorError, NativeError, NativeFunction, NativeModule,
+    NativeOwnedValue, NativeResourceType, NativeStatus, NativeValueKind, NativeValueRef,
+};
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
-pub use value::{Builtin, Closure, NativeFunction, StructField, StructSchema, StructValue, Value};
-pub use vm::{CallFrame, RuntimeError, RuntimeErrorKind, Vm, VmResult};
+pub use value::{Builtin, Closure, StructField, StructSchema, StructValue, Value};
+pub use vm::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmResult};

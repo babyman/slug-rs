@@ -13,6 +13,7 @@ pub enum RuntimeErrorKind {
     DivideByZero,
     InvalidCall,
     Native,
+    NativeContract,
     Module,
     NotImplemented,
     Match,
@@ -27,7 +28,14 @@ pub struct RuntimeError {
     pub span: Option<SourceSpan>,
     pub frames: Vec<CallFrame>,
     pub thrown: Option<Box<Value>>,
+    pub native: Option<Box<NativeErrorDetails>>,
     pub cause: Option<Box<RuntimeError>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NativeErrorDetails {
+    pub code: String,
+    pub data: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +72,7 @@ impl Vm {
             message,
             span: span.clone(),
             thrown: None,
+            native: None,
             frames: self
                 .frames
                 .iter()
@@ -92,13 +101,20 @@ impl Vm {
         if let Some(value) = error.thrown {
             return *value;
         }
+        let error_type = error
+            .native
+            .as_ref()
+            .map_or_else(|| fault_type(&error.kind), |native| native.code.as_str());
         Value::Map(Rc::new(vec![
-            (
-                Value::string("type"),
-                Value::string(fault_type(&error.kind)),
-            ),
+            (Value::string("type"), Value::string(error_type)),
             (Value::string("msg"), Value::string(error.message)),
-            (Value::string("data"), Value::Nil),
+            (
+                Value::string("data"),
+                error
+                    .native
+                    .and_then(|native| native.data)
+                    .unwrap_or(Value::Nil),
+            ),
         ]))
     }
 }
@@ -112,6 +128,7 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::DivideByZero => "divide_by_zero",
         RuntimeErrorKind::InvalidCall => "invalid_call",
         RuntimeErrorKind::Native => "native",
+        RuntimeErrorKind::NativeContract => "native_contract",
         RuntimeErrorKind::Module => "module",
         RuntimeErrorKind::NotImplemented => "not_implemented",
         RuntimeErrorKind::Match => "match",

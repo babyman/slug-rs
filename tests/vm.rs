@@ -1,12 +1,121 @@
+use std::{cell::Cell, rc::Rc};
+
 use slug_vm::{
-    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, Op, Program, RuntimeErrorKind,
-    SchemaField, SourceSpan, Value, Vm, compile,
+    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, NativeArity, NativeCall, NativeError,
+    NativeModule, NativeOwnedValue, NativeResourceType, NativeStatus, Op, Program,
+    RuntimeErrorKind, SchemaField, SourceSpan, Value, Vm, compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
     program.add_chunk(main);
     program
+}
+
+mod native_resource_fixture {
+    use std::{cell::RefCell, rc::Rc};
+
+    use super::*;
+
+    struct Payload {
+        closed: Rc<Cell<usize>>,
+        destroyed: Rc<Cell<usize>>,
+    }
+
+    struct State {
+        first: Rc<RefCell<Option<NativeResourceType<Payload>>>>,
+        second: Rc<RefCell<Option<NativeResourceType<Payload>>>>,
+        closed: Rc<Cell<usize>>,
+        destroyed: Rc<Cell<usize>>,
+    }
+
+    pub fn module(closed: Rc<Cell<usize>>, destroyed: Rc<Cell<usize>>) -> NativeModule {
+        let first = Rc::new(RefCell::new(None));
+        let second = Rc::new(RefCell::new(None));
+        let module = NativeModule::new(
+            "test.shared_resources",
+            State {
+                first: first.clone(),
+                second: second.clone(),
+                closed,
+                destroyed,
+            },
+        )
+        .unwrap();
+        *first.borrow_mut() = Some(module.resource_type("first", close, destroy).unwrap());
+        *second.borrow_mut() = Some(module.resource_type("second", close, destroy).unwrap());
+        module
+    }
+
+    pub fn install(vm: &mut Vm, module: &NativeModule) {
+        for (name, arity, callback) in [
+            (
+                "make_resource",
+                NativeArity::Exact(0),
+                make_resource as for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
+            ),
+            ("wrong_resource", NativeArity::Exact(1), wrong_resource),
+            ("close_resource", NativeArity::Exact(1), close_resource),
+        ] {
+            vm.define_native(module.function(name, arity, callback).unwrap())
+                .unwrap();
+        }
+    }
+
+    fn close(payload: &mut Payload) {
+        payload.closed.set(payload.closed.get() + 1);
+    }
+
+    fn destroy(payload: Payload) {
+        let Payload { destroyed, .. } = payload;
+        destroyed.set(destroyed.get() + 1);
+    }
+
+    fn make_resource(call: &mut NativeCall<'_>) -> NativeStatus {
+        let state = call.state::<State>().unwrap();
+        let resource_type = state.first.borrow().as_ref().unwrap().clone();
+        let payload = Payload {
+            closed: state.closed.clone(),
+            destroyed: state.destroyed.clone(),
+        };
+        match call.resource(&resource_type, payload) {
+            Ok(value) => call.return_value(value),
+            Err(error) => call.raise(error),
+        }
+    }
+
+    fn wrong_resource(call: &mut NativeCall<'_>) -> NativeStatus {
+        let resource_type = call
+            .state::<State>()
+            .unwrap()
+            .second
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .clone();
+        match call.with_resource(0, &resource_type, |_| ()) {
+            Ok(()) => call.return_value(NativeOwnedValue::nil()),
+            Err(error) => call.raise(error),
+        }
+    }
+
+    fn close_resource(call: &mut NativeCall<'_>) -> NativeStatus {
+        let resource_type = call
+            .state::<State>()
+            .unwrap()
+            .first
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .clone();
+        if let Err(error) = call.close_resource(0, &resource_type) {
+            return call.raise(error);
+        }
+        if let Err(error) = call.close_resource(0, &resource_type) {
+            return call.raise(error);
+        }
+        call.return_value(NativeOwnedValue::nil())
+    }
 }
 
 #[test]
@@ -53,11 +162,16 @@ fn repeats_strings_through_private_multiply_bytecode() {
 
 #[test]
 fn pipes_values_through_private_call_bytecode() {
-    fn add(args: &[Value]) -> Result<Value, String> {
-        match args {
-            [Value::Int(left), Value::Int(right)] => Ok(Value::Int(left + right)),
-            _ => Err("expected two integers".into()),
-        }
+    fn add(call: &mut NativeCall<'_>) -> NativeStatus {
+        let left = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => value,
+            Err(error) => return call.raise(error),
+        };
+        let right = match call.argument(1).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => value,
+            Err(error) => return call.raise(error),
+        };
+        call.return_value(NativeOwnedValue::integer(left + right))
     }
 
     let mut main = Chunk::new("main", 0);
@@ -69,7 +183,9 @@ fn pipes_values_through_private_call_bytecode() {
         .emit(Op::PipelineCall(vec![CallArgumentKind::Positional]))
         .emit(Op::Return);
     let mut vm = Vm::new();
-    vm.define_native("add", add);
+    let module = NativeModule::new("test.math", ()).unwrap();
+    vm.define_native(module.function("add", NativeArity::Exact(2), add).unwrap())
+        .unwrap();
 
     assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Int(5));
 }
@@ -869,11 +985,12 @@ fn closures_share_mutable_captures() {
 
 #[test]
 fn keeps_globals_across_runs_and_calls_explicit_native_functions() {
-    fn double(args: &[Value]) -> Result<Value, String> {
-        match args {
-            [Value::Int(value)] => Ok(Value::Int(value * 2)),
-            _ => Err("expected one integer".into()),
-        }
+    fn double(call: &mut NativeCall<'_>) -> NativeStatus {
+        let value = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => value,
+            Err(error) => return call.raise(error),
+        };
+        call.return_value(NativeOwnedValue::integer(value * 2))
     }
 
     let mut main = Chunk::new("main", 0);
@@ -886,10 +1003,189 @@ fn keeps_globals_across_runs_and_calls_explicit_native_functions() {
         .emit(Op::Return);
     let program = program_with_main(main);
     let mut vm = Vm::new();
-    vm.define_native("double", double);
+    let module = NativeModule::new("test.math", ()).unwrap();
+    vm.define_native(
+        module
+            .function("double", NativeArity::Exact(1), double)
+            .unwrap(),
+    )
+    .unwrap();
 
     assert_eq!(vm.run(&program, 0).unwrap(), Value::Int(42));
     assert_eq!(vm.global("answer"), Some(&Value::Int(42)));
+}
+
+#[test]
+fn reports_checked_native_conversion_and_structured_errors() {
+    fn require_integer(call: &mut NativeCall<'_>) -> NativeStatus {
+        let value = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => value,
+            Err(error) => return call.raise(error),
+        };
+        call.return_value(NativeOwnedValue::integer(value))
+    }
+
+    fn fail(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.raise(
+            NativeError::new("test.failure", "deliberate failure")
+                .with_data(NativeOwnedValue::integer(42)),
+        )
+    }
+
+    let module = NativeModule::new("test.errors", ()).unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(
+        module
+            .function("require_integer", NativeArity::Exact(1), require_integer)
+            .unwrap(),
+    )
+    .unwrap();
+    vm.define_native(
+        module
+            .function("fail", NativeArity::Exact(0), fail)
+            .unwrap(),
+    )
+    .unwrap();
+
+    let mut wrong_type = Chunk::new("wrong_type", 0);
+    let text = wrong_type.constant(Value::string("not an integer"));
+    wrong_type
+        .emit(Op::GetGlobal("require_integer".into()))
+        .emit(Op::Constant(text))
+        .emit(Op::Call(1))
+        .emit(Op::Return);
+    let error = vm
+        .run(&program_with_main(wrong_type), 0)
+        .expect_err("native conversion should fail");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.type")
+    );
+
+    let mut structured = Chunk::new("structured", 0);
+    structured
+        .emit(Op::GetGlobal("fail".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Return);
+    let error = vm
+        .run(&program_with_main(structured), 0)
+        .expect_err("native error should fail");
+    let native = error.native.as_deref().expect("structured native error");
+    assert_eq!(native.code, "test.failure");
+    assert_eq!(native.data, Some(Value::Int(42)));
+}
+
+#[test]
+fn contains_native_panics_and_callback_contract_violations() {
+    fn panics(_: &mut NativeCall<'_>) -> NativeStatus {
+        panic!("must not cross the native boundary")
+    }
+
+    fn omits_result(_: &mut NativeCall<'_>) -> NativeStatus {
+        NativeStatus::Ok
+    }
+
+    fn sets_two_results(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.set_result(NativeOwnedValue::nil());
+        call.set_result(NativeOwnedValue::integer(1));
+        NativeStatus::Ok
+    }
+
+    fn calls(name: &str) -> Program {
+        let mut main = Chunk::new("main", 0);
+        main.emit(Op::GetGlobal(name.into()))
+            .emit(Op::Call(0))
+            .emit(Op::Return);
+        program_with_main(main)
+    }
+
+    let module = NativeModule::new("test.contract", ()).unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(
+        module
+            .function("panics", NativeArity::Exact(0), panics)
+            .unwrap(),
+    )
+    .unwrap();
+    vm.define_native(
+        module
+            .function("omits_result", NativeArity::Exact(0), omits_result)
+            .unwrap(),
+    )
+    .unwrap();
+    vm.define_native(
+        module
+            .function("sets_two_results", NativeArity::Exact(0), sets_two_results)
+            .unwrap(),
+    )
+    .unwrap();
+
+    let error = vm
+        .run(&calls("panics"), 0)
+        .expect_err("panic should become a checked error");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(error.message.contains("panicked"));
+
+    let error = vm
+        .run(&calls("omits_result"), 0)
+        .expect_err("missing result should become a checked error");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(error.message.contains("without a result"));
+
+    let error = vm
+        .run(&calls("sets_two_results"), 0)
+        .expect_err("multiple outcomes should become a checked error");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(error.message.contains("more than one outcome"));
+}
+
+#[test]
+fn validates_native_resource_types_and_closes_resources_on_teardown() {
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed.clone(), destroyed.clone());
+    let mut vm = Vm::new();
+    native_resource_fixture::install(&mut vm, &module);
+
+    let mut wrong = Chunk::new("wrong", 0);
+    wrong
+        .emit(Op::GetGlobal("wrong_resource".into()))
+        .emit(Op::GetGlobal("make_resource".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Call(1))
+        .emit(Op::Return);
+    let error = vm
+        .run(&program_with_main(wrong), 0)
+        .expect_err("resource type mismatch should fail");
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.resource_type")
+    );
+    assert_eq!(closed.get(), 0);
+
+    let mut explicit_close = Chunk::new("explicit_close", 0);
+    explicit_close
+        .emit(Op::GetGlobal("close_resource".into()))
+        .emit(Op::GetGlobal("make_resource".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Call(1))
+        .emit(Op::Return);
+    assert_eq!(
+        vm.run(&program_with_main(explicit_close), 0).unwrap(),
+        Value::Nil
+    );
+    assert_eq!(closed.get(), 1);
+
+    let mut make = Chunk::new("make", 0);
+    make.emit(Op::GetGlobal("make_resource".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Return);
+    let resource = vm.run(&program_with_main(make), 0).unwrap();
+    drop(vm);
+    assert_eq!(closed.get(), 2);
+    drop(resource);
+    assert_eq!(destroyed.get(), 3);
 }
 
 #[test]

@@ -5,8 +5,24 @@ use std::{
 };
 
 use slug_vm::{
-    Configuration, ModuleLoader, SourceErrorKind, Value, Vm, compile, compile_type_checked,
+    Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule, NativeOwnedValue,
+    NativeStatus, SourceErrorKind, Vm, compile, compile_type_checked,
 };
+
+fn native_println(call: &mut NativeCall<'_>) -> NativeStatus {
+    println!(
+        "{}",
+        (0..call.argument_count())
+            .map(|index| {
+                call.argument(index)
+                    .expect("index comes from the argument count")
+                    .to_display_string()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    call.return_value(NativeOwnedValue::nil())
+}
 
 fn main() -> ExitCode {
     let mut args = env::args();
@@ -86,17 +102,16 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
     let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT").map(PathBuf::from);
     let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
     let mut vm = Vm::with_module_loader(loader.clone());
-    vm.define_native("println", |values| {
-        println!(
-            "{}",
-            values
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        Ok(Value::Nil)
-    });
+    let host = NativeModule::new("slug.host", ()).expect("static native module is valid");
+    let println = host
+        .function(
+            "println",
+            NativeArity::Variadic { minimum: 0 },
+            native_println,
+        )
+        .expect("static native function is valid");
+    vm.define_native(println)
+        .expect("static native binding is unique");
     match vm.run_program(&program) {
         Ok(_) => {
             for warning in loader.take_warnings() {

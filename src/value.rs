@@ -1,7 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, fmt, fmt::Write as _, rc::Rc};
 
-/// Host functions installed deliberately through the VM API.
-pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
+use crate::native::{NativeFunction, NativeResource};
 
 /// VM-owned builtins that require host-service context at call time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,10 +69,8 @@ pub enum Value {
     StructSchema(Rc<StructSchema>),
     Struct(Rc<StructValue>),
     Closure(Rc<Closure>),
-    Native {
-        name: Rc<str>,
-        function: NativeFunction,
-    },
+    Native(NativeFunction),
+    NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
     /// Private callable group assembled by a multi-module import.
     Overloads(Rc<Vec<Value>>),
@@ -108,7 +105,8 @@ impl Value {
             Self::Map(_) => "map",
             Self::StructSchema(_) => "struct schema",
             Self::Struct(_) => "struct",
-            Self::Closure(_) | Self::Native { .. } | Self::Builtin(_) | Self::Overloads(_) => "fn",
+            Self::Closure(_) | Self::Native(_) | Self::Builtin(_) | Self::Overloads(_) => "fn",
+            Self::NativeResource(_) => "native resource",
         }
     }
 
@@ -158,9 +156,8 @@ impl PartialEq for Value {
                 Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
             }
             (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
-            (Self::Native { function: a, .. }, Self::Native { function: b, .. }) => {
-                std::ptr::fn_addr_eq(*a, *b)
-            }
+            (Self::Native(a), Self::Native(b)) => a.same_function(b),
+            (Self::NativeResource(a), Self::NativeResource(b)) => Rc::ptr_eq(a, b),
             (Self::Builtin(a), Self::Builtin(b)) => a == b,
             _ => false,
         }
@@ -197,7 +194,8 @@ impl fmt::Debug for Value {
                     .finish()
             }
             Self::Closure(_) => write!(f, "<fn>"),
-            Self::Native { name, .. } => write!(f, "<native {name}>"),
+            Self::Native(function) => write!(f, "<native {}>", function.name()),
+            Self::NativeResource(_) => write!(f, "<native resource>"),
             Self::Builtin(builtin) => write!(f, "<builtin {builtin:?}>"),
             Self::Overloads(_) => write!(f, "<overloads>"),
             Self::Binding { name, .. } => write!(f, "<binding {name}>"),

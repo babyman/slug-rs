@@ -356,7 +356,7 @@ impl Vm {
                 });
                 Ok(None)
             }
-            Value::Native { name, function } => {
+            Value::Native(function) => {
                 let arguments = if recovers_error {
                     let error = self
                         .active_error()
@@ -365,13 +365,7 @@ impl Vm {
                 } else {
                     Vec::new()
                 };
-                let value = function(&arguments).map_err(|message| {
-                    self.error(
-                        RuntimeErrorKind::Native,
-                        format!("native `{name}`: {message}"),
-                        None,
-                    )
-                })?;
+                let value = self.invoke_native(&function, &arguments, None)?;
                 if recovers_error {
                     self.recover_from_error(program, value)
                 } else {

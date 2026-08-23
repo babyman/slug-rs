@@ -6,7 +6,10 @@ use std::{
     rc::Rc,
 };
 
-use crate::{Configuration, ModuleDeclaration, Program, Value, Vm, compile};
+use crate::{
+    Configuration, ModuleDeclaration, Program, Value, Vm, compile,
+    native::{NativeResourceRegistry, native_resource_registry},
+};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
@@ -22,6 +25,7 @@ struct ModuleLoaderState {
     compiled: RefCell<HashMap<PathBuf, Program>>,
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
     native_globals: RefCell<HashMap<String, Value>>,
+    native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
 }
 
@@ -93,6 +97,7 @@ impl ModuleLoader {
                 compiled: RefCell::new(HashMap::new()),
                 instances: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
+                native_resources: native_resource_registry(),
                 warnings: RefCell::new(Vec::new()),
             }),
         }
@@ -243,6 +248,10 @@ impl ModuleLoader {
 
     pub(crate) fn native_globals(&self) -> HashMap<String, Value> {
         self.state.native_globals.borrow().clone()
+    }
+
+    pub(crate) fn native_resources(&self) -> NativeResourceRegistry {
+        self.state.native_resources.clone()
     }
 }
 

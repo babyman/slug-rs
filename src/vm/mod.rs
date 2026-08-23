@@ -6,8 +6,10 @@ use std::{
 };
 
 use crate::{
-    CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, Program, SourceSpan, Value,
+    CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
+    NativeFunction, Program, SourceSpan, Value,
     bytecode::Op,
+    native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{BindingCell, Builtin, Closure, binding_cell, module_binding},
 };
 
@@ -16,7 +18,7 @@ mod error;
 mod operations;
 
 use cleanup::{Cleanup, Deferred};
-pub use error::{CallFrame, RuntimeError, RuntimeErrorKind};
+pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
 use operations::{
     add, bit_not, bitwise, construct_struct, copy_struct, divide, index_value, is_map_key,
     list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
@@ -43,7 +45,6 @@ struct Frame {
 }
 
 /// A small, checked stack VM for compiler-produced Slug bytecode.
-#[derive(Default)]
 pub struct Vm {
     module_loader: Option<ModuleLoader>,
     module_program: Option<Rc<Program>>,
@@ -53,6 +54,25 @@ pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
+    native_resources: NativeResourceRegistry,
+    owns_native_resources: bool,
+}
+
+impl Default for Vm {
+    fn default() -> Self {
+        Self {
+            module_loader: None,
+            module_program: None,
+            globals: HashMap::new(),
+            imported_globals: HashSet::new(),
+            module_metadata: Vec::new(),
+            stack: Vec::new(),
+            frames: Vec::new(),
+            cleanup: Vec::new(),
+            native_resources: native_resource_registry(),
+            owns_native_resources: true,
+        }
+    }
 }
 
 impl Vm {
@@ -63,16 +83,16 @@ impl Vm {
 
     #[must_use]
     pub fn with_module_loader(module_loader: ModuleLoader) -> Self {
-        let mut vm = Self {
-            module_loader: Some(module_loader),
-            ..Self::default()
-        };
+        let mut vm = Self::default();
+        vm.native_resources = module_loader.native_resources();
+        vm.module_loader = Some(module_loader);
         vm.install_configuration_builtins();
         vm
     }
 
     pub(crate) fn with_module_bindings(module_loader: &ModuleLoader, names: &[String]) -> Self {
         let mut vm = Self::with_module_loader(module_loader.clone());
+        vm.owns_native_resources = false;
         vm.globals.extend(module_loader.native_globals());
         for name in names {
             vm.globals
@@ -159,16 +179,24 @@ impl Vm {
         ))
     }
 
-    pub fn define_native(&mut self, name: impl Into<String>, function: crate::NativeFunction) {
-        let name = name.into();
-        let value = Value::Native {
-            name: Rc::from(name.clone()),
-            function,
-        };
+    /// Installs one validated native descriptor in the VM's global bindings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when that binding is already defined.
+    pub fn define_native(&mut self, function: NativeFunction) -> Result<(), NativeDescriptorError> {
+        let name = function.name().to_string();
+        if self.globals.contains_key(&name) {
+            return Err(NativeDescriptorError::new(format!(
+                "native binding `{name}` is already defined"
+            )));
+        }
+        let value = Value::Native(function);
         if let Some(module_loader) = &self.module_loader {
             module_loader.define_native(name.clone(), value.clone());
         }
         self.globals.insert(name, value);
+        Ok(())
     }
 
     fn install_configuration_builtins(&mut self) {
@@ -714,7 +742,7 @@ impl Vm {
                     let action = self.pop(span.clone())?;
                     if !matches!(
                         action,
-                        Value::Closure(_) | Value::Native { .. } | Value::Builtin(_)
+                        Value::Closure(_) | Value::Native(_) | Value::Builtin(_)
                     ) {
                         return Err(self.error(
                             RuntimeErrorKind::Type,
@@ -905,7 +933,7 @@ impl Vm {
                     cleanup_recovers: false,
                 });
             }
-            Value::Native { name, function } => {
+            Value::Native(function) => {
                 let arguments = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
@@ -914,13 +942,7 @@ impl Vm {
                         })
                     })
                     .collect::<VmResult<Vec<_>>>()?;
-                let result = function(&arguments).map_err(|message| {
-                    self.error(
-                        RuntimeErrorKind::Native,
-                        format!("native `{name}`: {message}"),
-                        span,
-                    )
-                })?;
+                let result = self.invoke_native(&function, &arguments, span)?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -1012,6 +1034,8 @@ impl Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
+            native_resources: self.native_resources.clone(),
+            owns_native_resources: false,
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
         locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
@@ -1346,6 +1370,33 @@ impl Vm {
         }
     }
 
+    pub(super) fn invoke_native(
+        &mut self,
+        function: &NativeFunction,
+        arguments: &[Value],
+        span: Option<SourceSpan>,
+    ) -> VmResult<Value> {
+        match function.invoke(arguments) {
+            NativeInvocation::Result(value, resources) => {
+                self.native_resources.borrow_mut().extend(resources);
+                Ok(value)
+            }
+            NativeInvocation::Error(error) => {
+                let (code, message, data) = error.into_parts();
+                let mut error = self.error(
+                    RuntimeErrorKind::Native,
+                    format!("native `{}`: {message}", function.name()),
+                    span,
+                );
+                error.native = Some(Box::new(NativeErrorDetails { code, data }));
+                Err(error)
+            }
+            NativeInvocation::ContractViolation(message) => {
+                Err(self.error(RuntimeErrorKind::NativeContract, message, span))
+            }
+        }
+    }
+
     fn bind_call_arguments(
         &self,
         program: &Program,
@@ -1606,5 +1657,18 @@ impl Vm {
         }
         self.frames.last_mut().expect("active frame was checked").ip = target;
         Ok(())
+    }
+}
+
+impl Drop for Vm {
+    fn drop(&mut self) {
+        if !self.owns_native_resources {
+            return;
+        }
+        for resource in self.native_resources.borrow().iter() {
+            if let Some(resource) = resource.upgrade() {
+                let _ = resource.close();
+            }
+        }
     }
 }

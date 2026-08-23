@@ -134,15 +134,15 @@ and the host boundary in
 
 ## 5. Establish the native extension boundary
 
-- [ ] Replace the current Rust `NativeFunction` value exposure with the opaque,
+- [x] Replace the current Rust `NativeFunction` value exposure with the opaque,
   call-scoped version 0 facade from [`native-abi.md`](native-abi.md).
-- [ ] Add checked argument, result, structured-error, and native-resource
+- [x] Add checked argument, result, structured-error, and native-resource
   operations without persistent roots or scheduler hints.
-- [ ] Prove wrong-type, wrong-resource, callback-contract, panic-containment,
+- [x] Prove wrong-type, wrong-resource, callback-contract, panic-containment,
   and teardown behavior in focused VM tests.
-- [ ] Keep the Rust facade explicitly unstable until concurrency validates it;
+- [x] Keep the Rust facade explicitly unstable until concurrency validates it;
   do not add dynamic loading or publish a C ABI yet.
-- [ ] Run `make check`.
+- [x] Run `make check`.
 
 ## 6. Add structured concurrency
 
