@@ -107,6 +107,7 @@ impl Compiler {
                 mutable,
                 pattern,
                 value,
+                ..
             } => {
                 self.expression(state, value)?;
                 self.bind_pattern(state, pattern, *mutable, &expression.span)?;
@@ -172,15 +173,18 @@ impl Compiler {
             } => {
                 let deferred = Expr {
                     kind: ExprKind::Function {
+                        type_parameters: Vec::new(),
                         parameters: error_name
                             .iter()
                             .cloned()
                             .map(|name| Parameter {
                                 name,
+                                annotation: None,
                                 default: None,
                                 variadic: false,
                             })
                             .collect(),
+                        return_annotation: None,
                         body: value.clone(),
                     },
                     span: expression.span.clone(),
@@ -498,7 +502,9 @@ impl Compiler {
                 }
                 state.patch(end);
             }
-            ExprKind::Function { parameters, body } => {
+            ExprKind::Function {
+                parameters, body, ..
+            } => {
                 let names = plain_parameters(parameters, &expression.span)?;
                 let (mut chunk, captures) =
                     self.function(&names, parameters, body, state.visible())?;

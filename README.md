@@ -19,12 +19,12 @@ compiled-module contract is documented separately as `.cslug`.
   byte, boolean, nil, string, list, and map literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
   literal/list/map/struct `match` with computed map keys and non-binding case alternatives,
   pinned `^name` comparisons, `name @ pattern` bindings, and named or
-  anonymous final rests, untyped struct schemas, construction and field access,
+  anonymous final rests, struct schemas with optional field annotations, construction and field access,
   function match bodies, `return`,
   `throw`, `defer` including `onsuccess` and `onerror` recovery, tail-position `recur(...)`,
   lists/maps/indexing, list slices, directional list append/prepend, pipeline calls and matches, positional/named/defaulted/variadic calls, positional call and list-literal spreads,
   comments, and `println`.
-- The module loader, standard library, pattern matcher, type annotations,
+- The module loader, standard library, full type inference,
   structured concurrency, and the remaining language forms are progressive
   milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no

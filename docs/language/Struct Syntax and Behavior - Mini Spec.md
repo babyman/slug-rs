@@ -20,8 +20,9 @@ is evaluated. They use the schema expression's lexical environment. Constructed
 values reuse the resulting default values; construction does not reevaluate
 default expressions.
 
-The current Rust subset accepts untyped fields with optional defaults. Field
-type annotations remain unsupported.
+The current Rust subset accepts fields with optional annotations and defaults.
+Under `-type-check`, a statically known default must conform to its field
+annotation; annotations do not coerce runtime values.
 
 ## Construction
 

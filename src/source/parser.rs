@@ -3,6 +3,7 @@ use super::{
     ast::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
         Pattern, Prefix, RestPattern, StringPart, StructSchemaField, Token, TokenKind,
+        TypeAnnotation,
     },
 };
 use crate::{DeferMode, SourceSpan, Value};
@@ -135,6 +136,12 @@ impl Parser {
                 ));
             }
             let pattern = self.pattern()?;
+            let annotation = if self.matches(&TokenKind::Colon) {
+                self.next();
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
             self.consume(&TokenKind::Eq, "expected =")?;
             let value = self.expression()?;
             return Ok(Expr {
@@ -142,6 +149,7 @@ impl Parser {
                 kind: ExprKind::Declare {
                     mutable,
                     pattern,
+                    annotation,
                     value: Box::new(value),
                 },
             });
@@ -463,19 +471,23 @@ impl Parser {
             let TokenKind::Name(name) = token.kind else {
                 return Err(SourceError::at("expected struct field name", token.span));
             };
-            if self.matches(&TokenKind::Colon) {
-                return Err(SourceError::at(
-                    "struct field type annotations are not supported",
-                    self.peek().span.clone(),
-                ));
-            }
+            let annotation = if self.matches(&TokenKind::Colon) {
+                self.next();
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
             let default = if self.matches(&TokenKind::Eq) {
                 self.next();
                 Some(self.expression()?)
             } else {
                 None
             };
-            fields.push(StructSchemaField { name, default });
+            fields.push(StructSchemaField {
+                name,
+                annotation,
+                default,
+            });
             self.struct_field_separator()?;
         }
         self.next();
@@ -678,7 +690,24 @@ impl Parser {
         let span = self.consume(&TokenKind::LBrace, "expected {")?.span;
         self.block_after_open(span)
     }
+    #[allow(clippy::too_many_lines)]
     fn function(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let mut type_parameters = Vec::new();
+        if self.matches(&TokenKind::Less) {
+            self.next();
+            loop {
+                let token = self.next();
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected type parameter", token.span));
+                };
+                type_parameters.push(name);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+            }
+            self.consume(&TokenKind::Greater, "expected > after type parameters")?;
+        }
         self.consume(&TokenKind::LParen, "expected (")?;
         let mut parameters = Vec::new();
         let mut has_variadic = false;
@@ -706,6 +735,12 @@ impl Parser {
                         token.span,
                     ));
                 }
+                let annotation = if self.matches(&TokenKind::Colon) {
+                    self.next();
+                    Some(self.type_annotation()?)
+                } else {
+                    None
+                };
                 let default = if self.matches(&TokenKind::Eq) {
                     self.next();
                     Some(self.expression()?)
@@ -720,6 +755,7 @@ impl Parser {
                 }
                 parameters.push(Parameter {
                     name,
+                    annotation,
                     default,
                     variadic,
                 });
@@ -740,6 +776,12 @@ impl Parser {
             }
         }
         self.consume(&TokenKind::RParen, "expected )")?;
+        let return_annotation = if self.matches(&TokenKind::Colon) {
+            self.next();
+            Some(self.type_annotation()?)
+        } else {
+            None
+        };
         let body = if self.matches(&TokenKind::Match) {
             let match_span = self.next().span;
             let subject = if parameters.len() == 1 {
@@ -769,7 +811,9 @@ impl Parser {
         };
         Ok(Expr {
             kind: ExprKind::Function {
+                type_parameters,
                 parameters,
+                return_annotation,
                 body: Box::new(body),
             },
             span,
@@ -1049,6 +1093,60 @@ impl Parser {
         self.consume(&TokenKind::RBrace, "expected }")?;
         self.leave_nesting();
         Ok(Pattern::Struct { schema, fields })
+    }
+    fn type_annotation(&mut self) -> Result<TypeAnnotation, SourceError> {
+        let mut members = vec![self.type_term()?];
+        while self.matches(&TokenKind::Pipe) {
+            self.next();
+            members.push(self.type_term()?);
+        }
+        Ok(if members.len() == 1 {
+            members.pop().expect("type annotation has one member")
+        } else {
+            TypeAnnotation::Union(members)
+        })
+    }
+    fn type_term(&mut self) -> Result<TypeAnnotation, SourceError> {
+        let token = self.next();
+        let mut annotation = match token.kind {
+            TokenKind::Name(name) => TypeAnnotation::Name(name),
+            TokenKind::Fn => TypeAnnotation::Name("fn".into()),
+            TokenKind::LBracket => {
+                let mut elements = Vec::new();
+                if !self.matches(&TokenKind::RBracket) {
+                    loop {
+                        elements.push(self.type_annotation()?);
+                        if !self.matches(&TokenKind::Comma) {
+                            break;
+                        }
+                        self.next();
+                    }
+                }
+                self.consume(&TokenKind::RBracket, "expected ] in tuple type")?;
+                return Ok(TypeAnnotation::Tuple(elements));
+            }
+            TokenKind::Nil => TypeAnnotation::Name("nil".into()),
+            _ => return Err(SourceError::at("expected type annotation", token.span)),
+        };
+        if self.matches(&TokenKind::Less) {
+            self.next();
+            let mut arguments = Vec::new();
+            if !self.matches(&TokenKind::Greater) {
+                loop {
+                    arguments.push(self.type_annotation()?);
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.next();
+                }
+            }
+            self.consume(&TokenKind::Greater, "expected > in type annotation")?;
+            let TypeAnnotation::Name(name) = annotation else {
+                unreachable!("only named types have arguments")
+            };
+            annotation = TypeAnnotation::Apply { name, arguments };
+        }
+        Ok(annotation)
     }
     fn if_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.consume(&TokenKind::LParen, "expected (")?;

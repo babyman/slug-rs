@@ -15,6 +15,6 @@ pub use bytecode::{
     CallArgumentKind, Capture, Chunk, Constant, DeferMode, Instruction, MatchMapKey, MatchPattern,
     MatchRest, Op, ParameterSignature, Program, SchemaField, SourceSpan,
 };
-pub use source::{SourceError, SourceErrorKind, compile};
+pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
 pub use value::{Closure, NativeFunction, StructField, StructSchema, StructValue, Value};
 pub use vm::{CallFrame, RuntimeError, RuntimeErrorKind, Vm, VmResult};

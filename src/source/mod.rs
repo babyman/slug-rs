@@ -10,6 +10,7 @@ mod compiler;
 mod lexer;
 mod parser;
 mod state;
+mod typecheck;
 use compiler::Compiler;
 use lexer::Lexer;
 use parser::Parser;
@@ -64,4 +65,17 @@ impl std::error::Error for SourceError {}
 pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     Compiler::new(path, Parser::new(tokens).parse()?).compile()
+}
+
+/// Compiles source with the optional static annotation checker enabled.
+///
+/// # Errors
+///
+/// Returns a source error with a source location for invalid annotations or
+/// directly provable type mismatches.
+pub fn compile_type_checked(path: &str, source: &str) -> Result<Program, SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    typecheck::check(&expressions)?;
+    Compiler::new(path, expressions).compile()
 }

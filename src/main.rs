@@ -1,6 +1,6 @@
 use std::{env, fs, process::ExitCode};
 
-use slug_vm::{SourceErrorKind, Value, Vm, compile};
+use slug_vm::{SourceErrorKind, Value, Vm, compile, compile_type_checked};
 
 fn main() -> ExitCode {
     let mut args = env::args();
@@ -16,11 +16,19 @@ fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
-        Some(path) => run(path),
+        Some("-type-check") => {
+            if let Some(path) = args.next() {
+                run(&path, true)
+            } else {
+                eprintln!("Usage: {executable} -type-check program.slug");
+                ExitCode::from(1)
+            }
+        }
+        Some(path) => run(path, false),
     }
 }
 
-fn run(path: &str) -> ExitCode {
+fn run(path: &str, type_check: bool) -> ExitCode {
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) => {
@@ -28,7 +36,11 @@ fn run(path: &str) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let program = match compile(path, &source) {
+    let program = match if type_check {
+        compile_type_checked(path, &source)
+    } else {
+        compile(path, &source)
+    } {
         Ok(program) => program,
         Err(error) => {
             let category = match error.kind {

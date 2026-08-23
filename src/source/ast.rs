@@ -13,6 +13,7 @@ pub(super) enum ExprKind {
     Declare {
         mutable: bool,
         pattern: Pattern,
+        annotation: Option<TypeAnnotation>,
         value: Box<Expr>,
     },
     Assign {
@@ -49,7 +50,9 @@ pub(super) enum ExprKind {
         arguments: Vec<CallArgument>,
     },
     Function {
+        type_parameters: Vec<String>,
         parameters: Vec<Parameter>,
+        return_annotation: Option<TypeAnnotation>,
         body: Box<Expr>,
     },
     Block(Vec<Expr>),
@@ -88,6 +91,7 @@ pub(super) enum StringPart {
 #[derive(Clone, Debug)]
 pub(super) struct Parameter {
     pub(super) name: String,
+    pub(super) annotation: Option<TypeAnnotation>,
     pub(super) default: Option<Expr>,
     pub(super) variadic: bool,
 }
@@ -105,7 +109,18 @@ pub(super) enum ListElement {
 #[derive(Clone, Debug)]
 pub(super) struct StructSchemaField {
     pub(super) name: String,
+    pub(super) annotation: Option<TypeAnnotation>,
     pub(super) default: Option<Expr>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum TypeAnnotation {
+    Name(String),
+    Apply {
+        name: String,
+        arguments: Vec<TypeAnnotation>,
+    },
+    Tuple(Vec<TypeAnnotation>),
+    Union(Vec<TypeAnnotation>),
 }
 #[derive(Clone, Debug)]
 pub(super) struct MatchCase {

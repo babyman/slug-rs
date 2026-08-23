@@ -104,6 +104,71 @@ fn repeats_strings_with_non_negative_integer_counts() {
 }
 
 #[test]
+fn accepts_annotations_and_checks_provable_mismatches_on_request() {
+    let path = fixture_path("type-annotations");
+    fs::write(
+        &path,
+        "val label:str|nil = \"ready\"\nval User = struct { name:str = \"Slug\" }\nval double = fn<T>(value:num):num { value * 2 }\nprintln(label, double(2), User {}.name)\n",
+    )
+    .expect("write annotated source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run annotated source");
+    fs::remove_file(&path).expect("remove annotated source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "ready 4 Slug\n");
+
+    fs::write(&path, "val label:str = 1\n").expect("write mismatched declaration");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run mismatched declaration");
+    fs::remove_file(&path).expect("remove mismatched declaration");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected str, got num")
+    );
+
+    fs::write(&path, "val label = fn():str { 1 }\n").expect("write mismatched return");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run mismatched return");
+    fs::remove_file(&path).expect("remove mismatched return");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected str, got num")
+    );
+
+    fs::write(&path, "val User = struct { name:str = 1 }\n")
+        .expect("write mismatched struct default");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run mismatched struct default");
+    fs::remove_file(path).expect("remove mismatched struct default");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected str, got num")
+    );
+}
+
+#[test]
 fn pipes_values_into_calls_and_subjectless_matches() {
     let path = fixture_path("pipeline");
     fs::write(
@@ -860,11 +925,6 @@ fn reports_checked_struct_schema_construction_and_access_errors() {
             "duplicate-schema-field",
             "struct {name, name}\n",
             "slug: semantic error: duplicate struct field 'name'",
-        ),
-        (
-            "typed-struct-field",
-            "struct {name: str}\n",
-            "slug: parse error: struct field type annotations are not supported",
         ),
     ];
 

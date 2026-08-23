@@ -514,6 +514,12 @@ checking is optional and is enabled by the CLI `-type-check` flag. When it is
 enabled, type diagnostics prevent execution. Without it, type tags remain
 metadata and unsupported operations fail through normal runtime errors.
 
+The current Rust subset parses and retains declaration, parameter, return, and
+struct-field annotations. Its optional checker rejects directly provable
+annotation mismatches in declarations, parameter defaults, function returns,
+and struct defaults; richer expression inference and generic call
+instantiation remain future work.
+
 The checker recognizes the built-in value categories `nil`, `bool`, `num`,
 `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus
 unions and generic parameters. Its diagnostic precision is an implementation
