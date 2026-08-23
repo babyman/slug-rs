@@ -246,6 +246,7 @@ impl Chunk {
 pub struct Program {
     chunks: Vec<Chunk>,
     names: HashMap<String, usize>,
+    exports: Vec<String>,
 }
 
 impl Program {
@@ -274,5 +275,15 @@ impl Program {
     #[must_use]
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
+    }
+
+    /// Names declared for export by a compiled source module.
+    #[must_use]
+    pub fn exports(&self) -> &[String] {
+        &self.exports
+    }
+
+    pub(crate) fn set_exports(&mut self, exports: Vec<String>) {
+        self.exports = exports;
     }
 }

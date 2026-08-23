@@ -30,12 +30,20 @@ impl Compiler {
         }
     }
     pub(super) fn compile(mut self) -> Result<Program, SourceError> {
+        let mut exports = Vec::new();
         for expression in &self.expressions {
             if let ExprKind::Declare {
-                mutable, pattern, ..
+                mutable,
+                exported,
+                pattern,
+                ..
             } = &expression.kind
             {
-                for name in pattern_bindings(pattern, &expression.span)? {
+                let names = pattern_bindings(pattern, &expression.span)?;
+                if *exported {
+                    exports.extend(names.iter().cloned());
+                }
+                for name in names {
                     self.globals.insert(name, *mutable);
                 }
             }
@@ -57,6 +65,7 @@ impl Compiler {
         for chunk in self.chunks {
             program.add_chunk(chunk);
         }
+        program.set_exports(exports);
         Ok(program)
     }
     #[allow(clippy::too_many_lines)]

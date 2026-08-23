@@ -247,8 +247,10 @@ impl Parser {
     fn tag(&mut self) -> Result<Tag, SourceError> {
         self.next();
         let token = self.next();
-        let TokenKind::Name(name) = token.kind else {
-            return Err(SourceError::at("expected tag name", token.span));
+        let name = match token.kind {
+            TokenKind::Name(name) => name,
+            TokenKind::Export => "export".into(),
+            _ => return Err(SourceError::at("expected tag name", token.span)),
         };
         let mut arguments = Vec::new();
         if self.matches(&TokenKind::LParen) {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added top-level `export` declaration parsing and retained exported-name
+  metadata for the module loader.
 - Added the `???` placeholder, which raises a checked `not implemented` runtime error.
 - Reordered the language foundation roadmap so all `slug.*` public-library
   implementation follows the language, module, runtime-service, and VM work.

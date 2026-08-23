@@ -10,6 +10,16 @@ fn program_with_main(main: Chunk) -> Program {
 }
 
 #[test]
+fn retains_top_level_export_names_as_module_metadata() {
+    let program = compile(
+        "exports.slug",
+        "export val answer = 42\nexport var {left, right} = {left: 1, right: 2}\nval hidden = 0\n",
+    )
+    .expect("compile exported module");
+    assert_eq!(program.exports(), ["answer", "left", "right"]);
+}
+
+#[test]
 fn executes_integer_arithmetic() {
     let mut main = Chunk::new("main", 0);
     let seven = main.constant(Value::Int(7));

@@ -99,6 +99,8 @@ and the host boundary in
 - [ ] Implement `import(name)` resolution, module caching, and checked module
   diagnostics.
 - [ ] Implement top-level `export` declarations and module export maps.
+  - [x] Parse top-level `export` declarations and retain exported names.
+  - [ ] Construct module export maps from initialized bindings.
 - [ ] Predeclare statically knowable top-level bindings and support cyclic module
   initialization with checked use-before-initialization failures.
 - [ ] Implement live imported bindings, shadowing behavior, import conflicts,
