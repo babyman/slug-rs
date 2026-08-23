@@ -61,6 +61,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Live imported module bindings | implemented | `tests/module_loader.rs` |
 | Imported-name shadowing and non-callable conflict warnings | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
 | Callable import conflict warnings and overload sets | implemented | `tests/module_loader.rs` |
+| Retained top-level declaration, tag, and documentation metadata | implemented | `tests/module_loader.rs` |
 | Foreign declarations and module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |

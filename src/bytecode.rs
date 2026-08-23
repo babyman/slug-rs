@@ -63,6 +63,23 @@ pub struct ParameterSignature {
     pub variadic: bool,
 }
 
+/// Retained evaluated tag metadata for a top-level source declaration.
+#[derive(Clone, Debug)]
+pub struct ModuleTag {
+    pub name: String,
+    pub arguments: Vec<Value>,
+}
+
+/// Retained source metadata for a top-level declaration.
+#[derive(Clone, Debug)]
+pub struct ModuleDeclaration {
+    pub bindings: Vec<String>,
+    pub mutable: bool,
+    pub exported: bool,
+    pub documentation: Option<String>,
+    pub tags: Vec<ModuleTag>,
+}
+
 /// The subset of source patterns lowered by the current compiler.
 #[derive(Clone, Debug)]
 pub enum MatchPattern {
@@ -126,6 +143,11 @@ pub enum Op {
     DefineGlobal(String),
     /// Defines globals from the string keys of the map on top of the stack.
     DefineMapGlobals,
+    RecordModuleTag {
+        declaration: usize,
+        tag: usize,
+        arguments: usize,
+    },
     SetGlobal(String),
     MakeClosure {
         chunk: usize,
@@ -250,6 +272,7 @@ pub struct Program {
     chunks: Vec<Chunk>,
     names: HashMap<String, usize>,
     bindings: Vec<String>,
+    declarations: Vec<ModuleDeclaration>,
     exports: Vec<String>,
 }
 
@@ -293,8 +316,17 @@ impl Program {
         &self.bindings
     }
 
+    #[must_use]
+    pub fn declarations(&self) -> &[ModuleDeclaration] {
+        &self.declarations
+    }
+
     pub(crate) fn set_bindings(&mut self, bindings: Vec<String>) {
         self.bindings = bindings;
+    }
+
+    pub(crate) fn set_declarations(&mut self, declarations: Vec<ModuleDeclaration>) {
+        self.declarations = declarations;
     }
 
     pub(crate) fn set_exports(&mut self, exports: Vec<String>) {

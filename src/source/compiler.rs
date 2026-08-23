@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, ParameterSignature,
-    Program, SchemaField, SourceSpan,
+    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, ModuleDeclaration,
+    ModuleTag, Op, ParameterSignature, Program, SchemaField, SourceSpan,
 };
 
 use super::{
@@ -19,6 +19,7 @@ pub(super) struct Compiler {
     expressions: Vec<Expr>,
     chunks: Vec<Chunk>,
     globals: HashMap<String, bool>,
+    declarations: Vec<ModuleDeclaration>,
 }
 impl Compiler {
     pub(super) fn new(path: &str, expressions: Vec<Expr>) -> Self {
@@ -27,6 +28,7 @@ impl Compiler {
             expressions,
             chunks: Vec::new(),
             globals: HashMap::new(),
+            declarations: Vec::new(),
         }
     }
     pub(super) fn compile(mut self) -> Result<Program, SourceError> {
@@ -41,6 +43,25 @@ impl Compiler {
             } = &expression.kind
             {
                 let names = pattern_bindings(pattern, &expression.span)?;
+                self.declarations.push(ModuleDeclaration {
+                    bindings: names.clone(),
+                    mutable: *mutable,
+                    exported: *exported,
+                    documentation: match &expression.kind {
+                        ExprKind::Declare { documentation, .. } => documentation.clone(),
+                        _ => unreachable!("declaration pattern was matched"),
+                    },
+                    tags: match &expression.kind {
+                        ExprKind::Declare { tags, .. } => tags
+                            .iter()
+                            .map(|tag| ModuleTag {
+                                name: tag.name.clone(),
+                                arguments: Vec::new(),
+                            })
+                            .collect(),
+                        _ => unreachable!("declaration pattern was matched"),
+                    },
+                });
                 if *exported {
                     exports.extend(names.iter().cloned());
                 }
@@ -70,6 +91,7 @@ impl Compiler {
             program.add_chunk(chunk);
         }
         program.set_bindings(bindings);
+        program.set_declarations(self.declarations);
         program.set_exports(exports);
         Ok(program)
     }
@@ -145,7 +167,18 @@ impl Compiler {
                         )
                     );
                 }
-                self.tags(state, tags)?;
+                let declaration = if state.is_module_scope() {
+                    Some(
+                        self.expressions
+                            .iter()
+                            .filter(|candidate| matches!(candidate.kind, ExprKind::Declare { .. }))
+                            .position(|candidate| candidate.span == expression.span)
+                            .expect("compiled declaration was recorded"),
+                    )
+                } else {
+                    None
+                };
+                self.tags(state, tags, declaration, &expression.span)?;
                 self.expression(state, value)?;
                 self.bind_pattern(state, pattern, *mutable, &expression.span)?;
                 state.emit(Op::Nil, &expression.span);
@@ -555,7 +588,7 @@ impl Compiler {
                 parameters, body, ..
             } => {
                 for parameter in parameters {
-                    self.tags(state, &parameter.tags)?;
+                    self.tags(state, &parameter.tags, None, &expression.span)?;
                 }
                 let names = plain_parameters(parameters, &expression.span)?;
                 let (mut chunk, captures) =
@@ -582,15 +615,34 @@ impl Compiler {
         }
         Ok(())
     }
-    fn tags(&mut self, state: &mut State, tags: &[Tag]) -> Result<(), SourceError> {
-        for tag in tags {
+    fn tags(
+        &mut self,
+        state: &mut State,
+        tags: &[Tag],
+        declaration: Option<usize>,
+        span: &SourceSpan,
+    ) -> Result<(), SourceError> {
+        for (tag_index, tag) in tags.iter().enumerate() {
             debug_assert!(
                 !tag.name.is_empty(),
                 "the parser only constructs named tags"
             );
             for argument in &tag.arguments {
                 self.expression(state, argument)?;
-                state.emit(Op::Pop, &argument.span);
+            }
+            if let Some(declaration) = declaration {
+                state.emit(
+                    Op::RecordModuleTag {
+                        declaration,
+                        tag: tag_index,
+                        arguments: tag.arguments.len(),
+                    },
+                    span,
+                );
+            } else {
+                for argument in &tag.arguments {
+                    state.emit(Op::Pop, &argument.span);
+                }
             }
         }
         Ok(())

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    CallArgumentKind, Capture, ModuleLoader, Program, SourceSpan, Value,
+    CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, Program, SourceSpan, Value,
     bytecode::Op,
     value::{BindingCell, Closure, binding_cell, module_binding},
 };
@@ -49,6 +49,7 @@ pub struct Vm {
     module_program: Option<Rc<Program>>,
     globals: HashMap<String, Value>,
     imported_globals: HashSet<String>,
+    module_metadata: Vec<ModuleDeclaration>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
@@ -80,6 +81,11 @@ impl Vm {
     pub(crate) fn run_module(&mut self, program: &Rc<Program>) -> VmResult<Value> {
         self.module_program = Some(program.clone());
         self.run_named(program, "main")
+    }
+
+    #[must_use]
+    pub fn module_metadata(&self) -> &[ModuleDeclaration] {
+        &self.module_metadata
     }
 
     #[must_use]
@@ -166,6 +172,7 @@ impl Vm {
         self.stack.clear();
         self.frames.clear();
         self.cleanup.clear();
+        self.module_metadata = program.declarations().to_vec();
         self.frames.push(Frame {
             closure: Rc::new(Closure {
                 chunk: entry,
@@ -372,6 +379,25 @@ impl Vm {
                             ));
                         }
                     }
+                }
+                Op::RecordModuleTag {
+                    declaration,
+                    tag,
+                    arguments,
+                } => {
+                    let arguments = self.pop_values(arguments, span.clone())?;
+                    if self
+                        .module_metadata
+                        .get(declaration)
+                        .is_none_or(|declaration| declaration.tags.get(tag).is_none())
+                    {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "module tag metadata does not exist".into(),
+                            span,
+                        ));
+                    }
+                    self.module_metadata[declaration].tags[tag].arguments = arguments;
                 }
                 Op::SetGlobal(name) => {
                     if !self.globals.contains_key(&name) {
@@ -921,6 +947,7 @@ impl Vm {
                 )
             })?,
             imported_globals: HashSet::new(),
+            module_metadata: Vec::new(),
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),

@@ -110,7 +110,7 @@ and the host boundary in
 - [x] Implement imported-name shadowing and non-callable import conflict
   warnings.
 - [x] Implement callable import conflict and combination rules.
-- [ ] Retain declaration, tag, and documentation metadata in the module model
+- [x] Retain declaration, tag, and documentation metadata in the module model
   for later introspection.
 - [ ] Invoke the first eligible local `main` function after successful
   top-level evaluation.

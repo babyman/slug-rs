@@ -300,6 +300,39 @@ fn duplicate_callable_signatures_keep_the_first_import_with_a_warning() {
 }
 
 #[test]
+fn retains_top_level_declaration_documentation_and_evaluated_tags() {
+    let root = root("module-metadata");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("metadata.slug"),
+        "/**\n * A public value.\n */\n@label(\"stable\", 2)\nexport val value = 1\n",
+    )
+    .expect("write metadata module");
+    let loader = ModuleLoader::new(&root, None);
+
+    let instance = loader
+        .initialize(None, "metadata")
+        .expect("initialize metadata module");
+
+    assert_eq!(instance.metadata.len(), 1);
+    let declaration = &instance.metadata[0];
+    assert_eq!(declaration.bindings, ["value"]);
+    assert!(declaration.exported);
+    assert!(!declaration.mutable);
+    assert_eq!(
+        declaration.documentation.as_deref(),
+        Some("\n * A public value.\n ")
+    );
+    assert_eq!(declaration.tags.len(), 1);
+    assert_eq!(declaration.tags[0].name, "label");
+    assert_eq!(
+        declaration.tags[0].arguments,
+        [Value::string("stable"), Value::Int(2)]
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
     let root = root("cyclic-uninitialized");
     fs::create_dir_all(&root).expect("create module directory");

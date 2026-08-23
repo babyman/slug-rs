@@ -24,7 +24,8 @@ compiled-module contract is documented separately as `.cslug`.
   `throw`, `defer` including `onsuccess` and `onerror` recovery, tail-position `recur(...)`,
   lists/maps/indexing, list slices, directional list append/prepend, pipeline calls and matches, positional/named/defaulted/variadic calls, positional call and list-literal spreads,
   declaration and parameter tags with evaluated arguments, declaration-attached
-  documentation blocks (both without metadata introspection), comments, and
+  documentation blocks with retained module metadata (but without metadata
+  introspection), comments, and
   `println`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative resolution, cached isolated module initialization, and

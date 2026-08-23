@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Retained top-level declaration documentation and evaluated tag arguments in
+  module instances for future metadata introspection.
 - Added source-callable overload sets for distinct imported signatures and
   warnings when a later module duplicates an imported callable signature.
 - Added module warnings for local bindings that shadow `{*}` imports and for

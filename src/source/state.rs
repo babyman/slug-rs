@@ -84,6 +84,9 @@ impl State {
         self.chunk.locals = self.next_local;
         self.chunk
     }
+    pub(super) fn is_module_scope(&self) -> bool {
+        self.root && self.scopes.len() == 1
+    }
     pub(super) fn emit(&mut self, op: Op, span: &SourceSpan) {
         self.chunk.emit_at(op, span.clone());
     }

@@ -14,7 +14,8 @@ mod vm;
 
 pub use bytecode::{
     CallArgumentKind, Capture, Chunk, Constant, DeferMode, Instruction, MatchMapKey, MatchPattern,
-    MatchRest, Op, ParameterSignature, Program, SchemaField, SourceSpan,
+    MatchRest, ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField,
+    SourceSpan,
 };
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};

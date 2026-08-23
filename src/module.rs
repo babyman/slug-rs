@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{Program, Value, Vm, compile};
+use crate::{ModuleDeclaration, Program, Value, Vm, compile};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
@@ -34,6 +34,7 @@ pub struct ModuleInstance {
     pub path: PathBuf,
     pub program: Program,
     pub exports: Value,
+    pub metadata: Vec<ModuleDeclaration>,
     pub(crate) live_exports: Value,
 }
 
@@ -173,6 +174,7 @@ impl ModuleLoader {
             path: source.path.clone(),
             program: (*program).clone(),
             exports: Value::Map(Rc::new(Vec::new())),
+            metadata: vm.module_metadata().to_vec(),
             live_exports: vm.live_exported_values(&program),
         };
         self.state
@@ -188,6 +190,7 @@ impl ModuleLoader {
         }
         let instance = ModuleInstance {
             exports: vm.exported_values(&program),
+            metadata: vm.module_metadata().to_vec(),
             ..instance
         };
         self.state

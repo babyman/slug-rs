@@ -295,7 +295,7 @@ impl Parser {
     }
 }
 
-const MAX_PARSE_NESTING: usize = 512;
+const MAX_PARSE_NESTING: usize = 256;
 
 impl Parser {
     fn binary(&mut self, minimum: u8) -> Result<Expr, SourceError> {

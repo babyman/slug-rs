@@ -537,8 +537,8 @@ not implemented yet.
 
 The subset also parses strict documentation blocks on top-level `val` and
 `var` declarations, as well as a first module doc block followed by a blank
-line. It retains them only while compiling the source; metadata introspection
-is not implemented yet.
+line. It retains top-level declaration documentation and evaluated tag metadata
+in the module model; metadata introspection is not implemented yet.
 
 ```slug
 @deprecated
