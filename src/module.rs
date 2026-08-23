@@ -20,6 +20,7 @@ struct ModuleLoaderState {
     library_root: Option<PathBuf>,
     compiled: RefCell<HashMap<PathBuf, Program>>,
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
+    native_globals: RefCell<HashMap<String, Value>>,
     warnings: RefCell<Vec<String>>,
 }
 
@@ -79,6 +80,7 @@ impl ModuleLoader {
                 library_root,
                 compiled: RefCell::new(HashMap::new()),
                 instances: RefCell::new(HashMap::new()),
+                native_globals: RefCell::new(HashMap::new()),
                 warnings: RefCell::new(Vec::new()),
             }),
         }
@@ -169,7 +171,7 @@ impl ModuleLoader {
             return Ok(instance.clone());
         }
         let program = Rc::new(self.compile(importer, name)?);
-        let mut vm = Vm::with_module_bindings(self.clone(), program.bindings());
+        let mut vm = Vm::with_module_bindings(self, program.bindings());
         let instance = ModuleInstance {
             path: source.path.clone(),
             program: (*program).clone(),
@@ -213,6 +215,14 @@ impl ModuleLoader {
 
     pub(crate) fn warn(&self, message: impl Into<String>) {
         self.state.warnings.borrow_mut().push(message.into());
+    }
+
+    pub(crate) fn define_native(&self, name: String, value: Value) {
+        self.state.native_globals.borrow_mut().insert(name, value);
+    }
+
+    pub(crate) fn native_globals(&self) -> HashMap<String, Value> {
+        self.state.native_globals.borrow().clone()
     }
 }
 

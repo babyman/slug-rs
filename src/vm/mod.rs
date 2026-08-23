@@ -69,8 +69,9 @@ impl Vm {
         }
     }
 
-    pub(crate) fn with_module_bindings(module_loader: ModuleLoader, names: &[String]) -> Self {
-        let mut vm = Self::with_module_loader(module_loader);
+    pub(crate) fn with_module_bindings(module_loader: &ModuleLoader, names: &[String]) -> Self {
+        let mut vm = Self::with_module_loader(module_loader.clone());
+        vm.globals = module_loader.native_globals();
         for name in names {
             vm.globals
                 .insert(name.clone(), module_binding(name.as_str()));
@@ -158,13 +159,14 @@ impl Vm {
 
     pub fn define_native(&mut self, name: impl Into<String>, function: crate::NativeFunction) {
         let name = name.into();
-        self.globals.insert(
-            name.clone(),
-            Value::Native {
-                name: Rc::from(name),
-                function,
-            },
-        );
+        let value = Value::Native {
+            name: Rc::from(name.clone()),
+            function,
+        };
+        if let Some(module_loader) = &self.module_loader {
+            module_loader.define_native(name.clone(), value.clone());
+        }
+        self.globals.insert(name, value);
     }
 
     /// Executes a zero-argument entry chunk.

@@ -146,6 +146,38 @@ fn imports_exported_values_through_the_public_cli() {
 }
 
 #[test]
+fn makes_native_println_available_during_imported_module_initialization() {
+    let root =
+        std::env::temp_dir().join(format!("slug-cli-imported-native-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create import fixture directory");
+    fs::write(
+        root.join("library.slug"),
+        "println(\"from module\")\nexport val answer = 42\n",
+    )
+    .expect("write imported module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val library = import(\"library\")\nprintln(library.answer)\n",
+    )
+    .expect("write importing source");
+
+    let output = slug().arg(&path).output().expect("run importing source");
+    fs::remove_dir_all(root).expect("remove import fixture directory");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "from module\n42\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn selects_all_imported_module_exports_into_the_top_level_scope() {
     let root =
         std::env::temp_dir().join(format!("slug-cli-import-all-values-{}", std::process::id()));
