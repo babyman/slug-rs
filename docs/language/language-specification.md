@@ -426,8 +426,8 @@ val divide = fn(a, b) {
 
 ## Modules, imports, and exports
 
-`import(name)` loads a named module and returns a string-keyed map of its
-exported bindings.
+`import(name, ...)` loads one or more named modules and returns a string-keyed
+map of their exported bindings. Modules are loaded in argument order.
 Module names use dot-separated paths such as `slug.std` and `slug.channel`.
 An implementation resolves a module relative to the importing source before
 searching its configured library root. A missing or malformed module is a
@@ -437,6 +437,12 @@ language error.
 val math = import("mod.simple")
 val answer = math["forty"]
 val next = math.inc(answer)
+
+var {*} = import(
+  "slug.std",
+  "slug.test",
+  "imports.defaults"
+)
 ```
 
 Only a top-level declaration prefixed with the `export` keyword is exported.
@@ -459,9 +465,11 @@ non-function export observes its current binding in the defining module.
 Modules are cached before top-level execution, so cyclic imports are allowed.
 Statically knowable top-level bindings are declared before execution; using one
 before it has initialized is a runtime error. A local declaration may shadow an
-imported name, with a warning. When two imports provide a non-function name,
-the first binding is retained with a warning. Callable imports combine only
-when their signatures are distinct.
+imported name, with a warning. When multiple imported modules provide the same
+non-function name, the first loaded binding is retained with a warning. Callable
+imports with the same name and signature likewise retain the first loaded
+callable and issue a warning; callables with distinct signatures combine into
+the imported overload set.
 
 The standard library consists of modules loaded through this same mechanism.
 Its public API is defined by the library reference, not by this specification.
