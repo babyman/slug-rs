@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplified the specified program entrypoint rule: only a local, top-level
+  zero-argument `main` in the program module is invoked after initialization.
 - Retained top-level declaration documentation and evaluated tag arguments in
   module instances for future metadata introspection.
 - Added source-callable overload sets for distinct imported signatures and

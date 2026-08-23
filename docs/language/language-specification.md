@@ -481,21 +481,18 @@ Its public API is defined by the library reference, not by this specification.
 
 ### Program entrypoint
 
-After a program module's top-level statements succeed, the runtime invokes the
-first locally declared, top-level function named `main` that is eligible for a
-call with no supplied arguments. A function is eligible when it has no
-parameters or every declared parameter has a default. A required or variadic
-parameter without a default makes that function ineligible.
+After a program module's top-level statements succeed, the runtime invokes a
+local top-level function named `main` only when it declares exactly zero
+parameters. A `main` binding imported from another module is not an entrypoint.
+Functions with required, defaulted, or variadic parameters are not entrypoints.
 
-Selection follows source declaration order, including the order of callable
-overloads. Imported functions named `main` do not participate. If no local
-`main` is eligible, evaluation ends after the top-level statements. If several
-are eligible, only the first is invoked, using ordinary default-argument
-binding.
+If the program module does not define a zero-argument local `main`, evaluation
+ends after the top-level statements. A top-level failure prevents entrypoint
+invocation. The selected `main` is called with no arguments.
 
 ```slug
-val main = fn(mode = "serve") {
-  println(mode)
+val main = fn() {
+  println("serve")
 }
 ```
 
@@ -569,7 +566,8 @@ line. Documentation and tags are observable through `slug.meta` introspection.
 ## Static checking
 
 Slug always performs semantic validation, including `recur` tail-position
-validation, struct-schema checks, and program-entrypoint discovery. Inferred
+validation, struct-schema checks, and zero-argument program-entrypoint
+validation. Inferred
 type checking is optional and is enabled by the CLI `-type-check` flag. When it
 is enabled, type diagnostics prevent execution. Without it, type tags remain
 metadata and unsupported operations fail through normal runtime errors.
