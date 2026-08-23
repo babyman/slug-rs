@@ -505,8 +505,10 @@ A tag has the form `@name` or `@name(arguments)` and prefixes a `val`, `var`,
 `foreign`, or exported declaration. Tags may also prefix function parameters.
 Tag arguments are expressions evaluated in the declaration's module
 environment. Tags attach metadata and do not, by themselves, change evaluation
-semantics. `export` is a reserved keyword rather than a tag name, so `@export`
-is invalid.
+semantics. `export` is a declaration modifier, not metadata. `@export` is its
+retired export marker, but remains an ordinary valid tag name with no export
+semantics. Write `export val` or `export foreign` to make a declaration
+exported.
 
 The current Rust subset accepts tags on `val` and `var` declarations and on
 function parameters. It evaluates their arguments in the current lexical

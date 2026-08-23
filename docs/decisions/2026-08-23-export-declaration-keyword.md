@@ -18,8 +18,9 @@ export val increment = fn(n) { n + 1 }
 export foreign trim = fn(value)
 ```
 
-Tags may precede an exported declaration, but `@export` is not valid tag
-syntax. `export` is invalid on a declaration in a nested scope.
+Tags may precede an exported declaration. `@export` remains valid ordinary tag
+syntax, but has no export semantics. `export` is invalid on a declaration in a
+nested scope.
 
 ## Consequences
 

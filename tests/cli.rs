@@ -240,18 +240,25 @@ fn accepts_tags_and_evaluates_their_arguments_before_declarations() {
     );
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "1 3\n");
 
-    let cases = [
-        (
-            "export-tag",
-            "@export val value = 1\n",
-            "slug: parse error: @export is not a valid tag",
-        ),
-        (
-            "tagged-expression",
-            "@audit println(1)\n",
-            "slug: parse error: tags must prefix a val or var declaration",
-        ),
-    ];
+    fs::write(&path, "@export val value = 1\nprintln(value)\n")
+        .expect("write legacy export-tag source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run legacy export-tag source");
+    fs::remove_file(&path).expect("remove legacy export-tag source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+
+    let cases = [(
+        "tagged-expression",
+        "@audit println(1)\n",
+        "slug: parse error: tags must prefix a val or var declaration",
+    )];
     for (kind, source, expected) in cases {
         let path = fixture_path(kind);
         fs::write(&path, source).expect("write invalid tagged source");

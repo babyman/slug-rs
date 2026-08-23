@@ -5,7 +5,8 @@
 - Added declaration and parameter tag syntax with source-order tag-argument
   evaluation. Retained module metadata and `slug.meta` introspection remain
   future work.
-- Replaced the special `@export` tag with the `export` declaration keyword and
+- Replaced the export semantics formerly associated with `@export` with the
+  `export` declaration keyword; `@export` remains an ordinary tag. Also
   replaced `@main` with source-ordered discovery of a local `main` function
   eligible for a zero-argument call in the target language specification.
 - Added declaration, parameter, return, and struct-field annotation syntax,

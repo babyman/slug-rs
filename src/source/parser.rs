@@ -175,9 +175,6 @@ impl Parser {
         let TokenKind::Name(name) = token.kind else {
             return Err(SourceError::at("expected tag name", token.span));
         };
-        if name == "export" {
-            return Err(SourceError::at("@export is not a valid tag", token.span));
-        }
         let mut arguments = Vec::new();
         if self.matches(&TokenKind::LParen) {
             self.next();
