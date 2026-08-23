@@ -224,6 +224,30 @@ fn binds_final_variadic_parameters() {
 }
 
 #[test]
+fn evaluates_omitted_parameter_defaults_in_the_callee() {
+    let path = fixture_path("default-parameters");
+    fs::write(
+        &path,
+        "val suffix = \"!\"\nval greet = fn(name = \"Slug\", ending = suffix) { name + ending }\nprintln(greet(), greet(name = \"Ada\"), greet(\"Rust\", \"?\"))\n",
+    )
+    .expect("write default parameter source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run default parameter source");
+    fs::remove_file(path).expect("remove default parameter source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug! Ada! Rust?\n"
+    );
+}
+
+#[test]
 fn rejects_non_list_source_spreads() {
     for (kind, source, expected) in [
         (

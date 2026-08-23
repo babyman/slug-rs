@@ -141,6 +141,10 @@ pub enum Op {
     Less,
     Jump(usize),
     JumpIfFalse(usize),
+    JumpIfProvided {
+        slot: usize,
+        target: usize,
+    },
     Call(usize),
     CallSpread(Vec<CallArgumentKind>),
     TryMatch {

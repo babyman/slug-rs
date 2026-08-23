@@ -331,6 +331,7 @@ impl Vm {
                             .map(|_| binding_cell(Value::Nil))
                             .collect()
                     },
+                    provided: vec![true; chunk.arity],
                     scopes: vec![Vec::new()],
                     cleanup_action: true,
                     cleanup_recovers: recovers_error,

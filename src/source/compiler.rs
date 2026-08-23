@@ -387,7 +387,8 @@ impl Compiler {
             }
             ExprKind::Function { parameters, body } => {
                 let names = plain_parameters(parameters, &expression.span)?;
-                let (mut chunk, captures) = self.function(&names, body, state.visible())?;
+                let (mut chunk, captures) =
+                    self.function(&names, parameters, body, state.visible())?;
                 chunk.parameters = parameters
                     .iter()
                     .map(|parameter| ParameterSignature {
@@ -630,10 +631,19 @@ impl Compiler {
     fn function(
         &mut self,
         parameters: &[String],
+        parameter_metadata: &[Parameter],
         body: &Expr,
         visible: HashMap<String, Binding>,
     ) -> Result<(Chunk, Vec<Capture>), SourceError> {
         let mut state = State::function(parameters, visible);
+        for (slot, parameter) in parameter_metadata.iter().enumerate() {
+            if let Some(default) = &parameter.default {
+                let end = state.jump_if_provided(slot, &default.span);
+                self.expression(&mut state, default)?;
+                state.emit(Op::SetLocal(slot), &default.span);
+                state.patch(end);
+            }
+        }
         self.tail_expression(&mut state, body)?;
         state.emit(Op::Return, &body.span);
         let captures = state.captures();
@@ -651,12 +661,6 @@ fn plain_parameters(
         if !names.insert(&parameter.name) {
             return Err(SourceError::semantic(
                 format!("duplicate parameter '{}'", parameter.name),
-                span.clone(),
-            ));
-        }
-        if parameter.default.is_some() {
-            return Err(SourceError::semantic(
-                "default parameters are not implemented yet",
                 span.clone(),
             ));
         }

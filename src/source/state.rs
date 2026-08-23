@@ -95,6 +95,17 @@ impl State {
         self.emit(Op::JumpIfFalse(usize::MAX), span);
         index
     }
+    pub(super) fn jump_if_provided(&mut self, slot: usize, span: &SourceSpan) -> usize {
+        let index = self.chunk.code.len();
+        self.emit(
+            Op::JumpIfProvided {
+                slot,
+                target: usize::MAX,
+            },
+            span,
+        );
+        index
+    }
     pub(super) fn jump(&mut self, span: &SourceSpan) -> usize {
         let index = self.chunk.code.len();
         self.emit(Op::Jump(usize::MAX), span);
@@ -103,7 +114,9 @@ impl State {
     pub(super) fn patch(&mut self, instruction: usize) {
         let target = self.chunk.code.len();
         match &mut self.chunk.code[instruction].op {
-            Op::Jump(value) | Op::JumpIfFalse(value) => *value = target,
+            Op::Jump(value) | Op::JumpIfFalse(value) | Op::JumpIfProvided { target: value, .. } => {
+                *value = target;
+            }
             _ => unreachable!("only jump instructions are patched"),
         }
     }

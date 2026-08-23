@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added call-time default parameters evaluated in the callee's defining
+  environment.
 - Added final variadic parameters, including checked named rest values.
 - Added named ordinary-function arguments with checked unknown and duplicate
   parameter diagnostics.

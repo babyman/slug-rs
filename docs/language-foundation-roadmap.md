@@ -37,7 +37,7 @@ note.
 - [ ] Evaluate arguments and spreads exactly once in source order.
 - [ ] Centralize parameter binding for ordinary calls and `recur(...)` so both
   enforce the same positional, named, default, and variadic rules.
-- [ ] Evaluate omitted default expressions at call time in the function's
+- [x] Evaluate omitted default expressions at call time in the function's
   defining module environment.
 - [x] Expand list-valued call spreads and list-literal spreads while preserving
   left-to-right evaluation order.

@@ -27,6 +27,7 @@ struct Frame {
     ip: usize,
     stack_base: usize,
     locals: Vec<BindingCell>,
+    provided: Vec<bool>,
     scopes: Vec<Vec<Deferred>>,
     cleanup_action: bool,
     cleanup_recovers: bool,
@@ -112,6 +113,7 @@ impl Vm {
             locals: (0..chunk.locals)
                 .map(|_| binding_cell(Value::Nil))
                 .collect(),
+            provided: vec![false; chunk.arity],
             scopes: vec![Vec::new()],
             cleanup_action: false,
             cleanup_recovers: false,
@@ -365,7 +367,18 @@ impl Vm {
                         self.jump(target, span)?;
                     }
                 }
-                Op::Call(count) => self.call(program, count, span)?,
+                Op::JumpIfProvided { slot, target } => {
+                    if self
+                        .frames
+                        .last()
+                        .and_then(|frame| frame.provided.get(slot))
+                        .copied()
+                        == Some(true)
+                    {
+                        self.jump(target, span)?;
+                    }
+                }
+                Op::Call(count) => self.call(program, count, None, span)?,
                 Op::CallSpread(kinds) => self.call_spread(program, kinds, span)?,
                 Op::TryMatch {
                     pattern,
@@ -514,7 +527,13 @@ impl Vm {
         })
     }
 
-    fn call(&mut self, program: &Program, count: usize, span: Option<SourceSpan>) -> VmResult<()> {
+    fn call(
+        &mut self,
+        program: &Program,
+        count: usize,
+        provided: Option<Vec<bool>>,
+        span: Option<SourceSpan>,
+    ) -> VmResult<()> {
         let required = count.checked_add(1).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -572,6 +591,7 @@ impl Vm {
                     ip: 0,
                     stack_base: base,
                     locals,
+                    provided: provided.unwrap_or_else(|| vec![true; chunk.arity]),
                     scopes: vec![Vec::new()],
                     cleanup_action: false,
                     cleanup_recovers: false,
@@ -662,12 +682,12 @@ impl Vm {
                 CallArgumentKind::Named(name) => named.push((name, value)),
             }
         }
-        let arguments =
+        let (arguments, provided) =
             self.bind_call_arguments(program, &callee, positional, named, span.clone())?;
         self.stack.push(callee);
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
-        self.call(program, count, span)
+        self.call(program, count, Some(provided), span)
     }
 
     fn bind_call_arguments(
@@ -677,10 +697,10 @@ impl Vm {
         mut positional: Vec<Value>,
         named: Vec<(String, Value)>,
         span: Option<SourceSpan>,
-    ) -> VmResult<Vec<Value>> {
+    ) -> VmResult<(Vec<Value>, Vec<bool>)> {
         let Value::Closure(closure) = callee else {
             if named.is_empty() {
-                return Ok(positional);
+                return Ok((positional.clone(), vec![true; positional.len()]));
             }
             return Err(self.error(
                 RuntimeErrorKind::Arity,
@@ -696,7 +716,7 @@ impl Vm {
             )
         })?;
         if chunk.parameters.is_empty() {
-            return Ok(positional);
+            return Ok((positional.clone(), vec![true; positional.len()]));
         }
         let variadic = chunk
             .parameters
@@ -744,22 +764,26 @@ impl Vm {
         if variadic.is_some() && bound[fixed].is_none() {
             bound[fixed] = Some(Value::List(Rc::new(rest)));
         }
-        bound
+        let provided = bound.iter().map(Option::is_some).collect::<Vec<_>>();
+        let values = bound
             .into_iter()
             .enumerate()
             .map(|(slot, value)| {
-                value.ok_or_else(|| {
-                    self.error(
-                        RuntimeErrorKind::Arity,
-                        format!(
-                            "missing required parameter `{}`",
-                            chunk.parameters[slot].name
-                        ),
-                        span.clone(),
-                    )
-                })
+                value
+                    .or_else(|| chunk.parameters[slot].has_default.then_some(Value::Nil))
+                    .ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::Arity,
+                            format!(
+                                "missing required parameter `{}`",
+                                chunk.parameters[slot].name
+                            ),
+                            span.clone(),
+                        )
+                    })
             })
-            .collect()
+            .collect::<VmResult<Vec<_>>>()?;
+        Ok((values, provided))
     }
 
     fn binary(
