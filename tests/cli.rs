@@ -118,9 +118,9 @@ fn expands_list_and_call_spreads_in_source_order() {
         &path,
         "var order = \"\"\n\
          val mark = fn(value) { order = order + value; value }\n\
-         val values = [mark(\"a\"), ...[mark(\"b\"), mark(\"c\")], mark(\"d\")]\n\
+         val values = [mark(\"a\"), ...[mark(\"b\")], ...[mark(\"c\")], mark(\"d\")]\n\
          val collect = fn(first, second, third, fourth) { first + second + third + fourth }\n\
-         println(values, collect(...[mark(\"e\"), mark(\"f\")], mark(\"g\"), mark(\"h\")), order)\n",
+         println(values, collect(...[mark(\"e\")], ...[mark(\"f\")], mark(\"g\"), mark(\"h\")), order)\n",
     )
     .expect("write spread source");
     let output = slug().arg(&path).output().expect("run spread source");

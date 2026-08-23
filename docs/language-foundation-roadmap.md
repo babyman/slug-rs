@@ -49,7 +49,7 @@ note.
 
 - [x] Cover ordinary, named, defaulted, variadic, and mixed spread calls through
   public source tests.
-- [ ] Cover multiple spreads and side-effecting argument expressions to prove
+- [x] Cover multiple spreads and side-effecting argument expressions to prove
   evaluation order and single evaluation.
 - [x] Cover non-list spreads, unknown and duplicate names, missing required
   arguments, excessive positional arguments, duplicate parameter names, and an
