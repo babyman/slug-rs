@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added named ordinary-function arguments with checked unknown and duplicate
+  parameter diagnostics.
 - Added positional call spreads and list-literal spreads with left-to-right,
   single-evaluation behavior and checked non-list failures.
 - Added a dependency-ordered language foundation roadmap covering complete call

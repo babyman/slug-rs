@@ -138,6 +138,52 @@ fn expands_list_and_call_spreads_in_source_order() {
 }
 
 #[test]
+fn binds_named_source_arguments_and_reports_binding_errors() {
+    let path = fixture_path("named-arguments");
+    fs::write(
+        &path,
+        "val format = fn(first, second, third) { first + second + third }\n\
+         println(format(first = \"a\", second = \"b\", third = \"c\"), format(\"a\", third = \"c\", second = \"b\"))\n",
+    )
+    .expect("write named argument source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run named argument source");
+    fs::remove_file(path).expect("remove named argument source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "abc abc\n");
+
+    for (kind, source, expected) in [
+        (
+            "unknown-named-argument",
+            "val f = fn(value) { value }\nf(other = 1)\n",
+            "slug: runtime error: unknown parameter `other`",
+        ),
+        (
+            "duplicate-named-argument",
+            "val f = fn(value) { value }\nf(value = 1, value = 2)\n",
+            "slug: runtime error: parameter `value` was assigned more than once",
+        ),
+    ] {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write invalid named argument source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid named argument source");
+        fs::remove_file(path).expect("remove invalid named argument source");
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.starts_with(expected), "{stderr}");
+    }
+}
+
+#[test]
 fn rejects_non_list_source_spreads() {
     for (kind, source, expected) in [
         (

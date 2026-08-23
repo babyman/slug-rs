@@ -160,10 +160,11 @@ pub enum Op {
 }
 
 /// The source ordering and expansion mode for a dynamic call argument.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum CallArgumentKind {
     Positional,
     Spread,
+    Named(String),
 }
 
 /// The condition under which a deferred action runs.

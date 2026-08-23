@@ -644,10 +644,11 @@ impl Vm {
         let callee = self.stack[base].clone();
         let values = self.stack.split_off(base + 1);
         self.stack.truncate(base);
-        self.stack.push(callee);
+        let mut positional = Vec::new();
+        let mut named = Vec::new();
         for (value, kind) in values.into_iter().zip(kinds) {
             match kind {
-                CallArgumentKind::Positional => self.stack.push(value),
+                CallArgumentKind::Positional => positional.push(value),
                 CallArgumentKind::Spread => {
                     let Value::List(values) = value else {
                         return Err(self.error(
@@ -656,12 +657,93 @@ impl Vm {
                             span,
                         ));
                     };
-                    self.stack.extend(values.iter().cloned());
+                    positional.extend(values.iter().cloned());
                 }
+                CallArgumentKind::Named(name) => named.push((name, value)),
             }
         }
+        let arguments =
+            self.bind_call_arguments(program, &callee, positional, named, span.clone())?;
+        self.stack.push(callee);
+        self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
         self.call(program, count, span)
+    }
+
+    fn bind_call_arguments(
+        &self,
+        program: &Program,
+        callee: &Value,
+        positional: Vec<Value>,
+        named: Vec<(String, Value)>,
+        span: Option<SourceSpan>,
+    ) -> VmResult<Vec<Value>> {
+        let Value::Closure(closure) = callee else {
+            if named.is_empty() {
+                return Ok(positional);
+            }
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                "native functions do not accept named arguments".into(),
+                span,
+            ));
+        };
+        let chunk = program.chunk(closure.chunk).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "closure references missing chunk".into(),
+                span.clone(),
+            )
+        })?;
+        if chunk.parameters.is_empty() {
+            return Ok(positional);
+        }
+        if positional.len() > chunk.parameters.len() {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!("`{}` received too many positional arguments", chunk.name),
+                span,
+            ));
+        }
+        let mut bound = positional.into_iter().map(Some).collect::<Vec<_>>();
+        bound.resize_with(chunk.parameters.len(), || None);
+        for (name, value) in named {
+            let slot = chunk
+                .parameters
+                .iter()
+                .position(|parameter| parameter.name == name)
+                .ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::Name,
+                        format!("unknown parameter `{name}`"),
+                        span.clone(),
+                    )
+                })?;
+            if bound[slot].is_some() {
+                return Err(self.error(
+                    RuntimeErrorKind::Arity,
+                    format!("parameter `{name}` was assigned more than once"),
+                    span,
+                ));
+            }
+            bound[slot] = Some(value);
+        }
+        bound
+            .into_iter()
+            .enumerate()
+            .map(|(slot, value)| {
+                value.ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::Arity,
+                        format!(
+                            "missing required parameter `{}`",
+                            chunk.parameters[slot].name
+                        ),
+                        span.clone(),
+                    )
+                })
+            })
+            .collect()
     }
 
     fn binary(

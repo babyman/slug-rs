@@ -270,11 +270,8 @@ impl Compiler {
                             argument
                         }
                         CallArgument::Named { name, value } => {
-                            let _ = (name, value);
-                            return Err(SourceError::semantic(
-                                "named and spread call arguments are not implemented yet",
-                                expression.span.clone(),
-                            ));
+                            kinds.push(CallArgumentKind::Named(name.clone()));
+                            value
                         }
                         CallArgument::Spread(argument) => {
                             kinds.push(CallArgumentKind::Spread);
