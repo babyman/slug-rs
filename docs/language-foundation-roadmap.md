@@ -99,6 +99,7 @@ and the host boundary in
 - [ ] Implement `import(name)` resolution, module caching, and checked module
   diagnostics.
   - [x] Cache compiled modules by resolved source path.
+  - [x] Define isolated cached module-instance execution for imported values.
   - [ ] Resolve and execute source-level `import(name, ...)` calls.
 - [ ] Implement top-level `export` declarations and module export maps.
   - [x] Parse top-level `export` declarations and retain exported names.
