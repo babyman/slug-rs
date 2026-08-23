@@ -148,9 +148,10 @@ integers only. A shift count must be an integer from `0` through `63`; invalid
 operand or shift-count combinations are checked runtime type errors. Right
 shifts are arithmetic: they preserve the sign of a negative integer.
 
-The directional list operators produce new lists. `list :+ value` appends one
-value, while `value +: list` prepends one value. The directional list operand
-must be a list; otherwise evaluation produces a checked runtime type error.
+`+` concatenates two lists into a new list. The directional list operators also
+produce new lists: `list :+ value` appends one value, while `value +: list`
+prepends one value. The directional list operand must be a list; otherwise
+evaluation produces a checked runtime type error.
 
 `if` is an expression. Its condition is parenthesized, and both branches are
 blocks or nested `if` expressions:

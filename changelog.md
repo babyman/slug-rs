@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Added directional list append (`:+`) and prepend (`+:`) with immutable
-  results and checked list-operand failures.
+- Added immutable list concatenation (`+`), append (`:+`), and prepend (`+:`)
+  with checked list-operand failures.
 - Added checked integer bitwise, shift, and prefix `~` operators.
 - Added `$identifier` string interpolation; embedded expressions and property
   access remain deliberately unsupported.
