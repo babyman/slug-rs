@@ -106,10 +106,18 @@ impl Compiler {
             ExprKind::Declare {
                 mutable,
                 pattern,
+                documentation,
                 tags,
                 value,
                 ..
             } => {
+                if let Some(documentation) = documentation {
+                    debug_assert!(
+                        documentation.lines().all(
+                            |line| line.trim().is_empty() || line.trim_start().starts_with('*')
+                        )
+                    );
+                }
                 self.tags(state, tags)?;
                 self.expression(state, value)?;
                 self.bind_pattern(state, pattern, *mutable, &expression.span)?;

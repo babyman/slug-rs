@@ -11,8 +11,8 @@ statement_sep = ";" | NEWLINE ;
 (* Tags can prefix var/val/foreign declarations, including exported declarations.
    Tags also appear in parameter lists. *)
 statement = tag_prefixed_decl
+          | documented_decl
           | export_decl
-          | doc_comment_stmt
           | foreign_decl
           | return_stmt
           | throw_stmt
@@ -23,6 +23,8 @@ statement = tag_prefixed_decl
 
 tag_prefixed_decl = tag_prefix , ( export_decl | var_expr | val_expr | foreign_decl ) ;
 tag_prefix = tag , { { statement_sep } , tag } , { statement_sep } ;
+documented_decl = DOC_COMMENT , { statement_sep } ,
+                   ( tag_prefixed_decl | export_decl | var_expr | val_expr | foreign_decl ) ;
 
 (* export declarations are valid only at module top level. *)
 export_decl = "export" , ( var_expr | val_expr | foreign_decl ) ;
@@ -30,7 +32,6 @@ export_decl = "export" , ( var_expr | val_expr | foreign_decl ) ;
 return_stmt = "return" , expression ;
 throw_stmt = "throw" , expression ;
 not_implemented_stmt = "???" ;
-doc_comment_stmt = DOC_COMMENT ;
 
 (* Defer may wrap a block, match, or expression. onerror(...) optionally binds an error name. *)
 defer_stmt = "defer" , [ "onsuccess" | ( "onerror" , "(" , identifier , ")" ) ] ,

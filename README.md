@@ -23,8 +23,9 @@ compiled-module contract is documented separately as `.cslug`.
   function match bodies, `return`,
   `throw`, `defer` including `onsuccess` and `onerror` recovery, tail-position `recur(...)`,
   lists/maps/indexing, list slices, directional list append/prepend, pipeline calls and matches, positional/named/defaulted/variadic calls, positional call and list-literal spreads,
-  declaration and parameter tags with evaluated arguments (without metadata
-  introspection), comments, and `println`.
+  declaration and parameter tags with evaluated arguments, declaration-attached
+  documentation blocks (both without metadata introspection), comments, and
+  `println`.
 - The module loader, standard library, full type inference,
   structured concurrency, and the remaining language forms are progressive
   milestones beyond this subset.

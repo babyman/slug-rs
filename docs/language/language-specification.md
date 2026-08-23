@@ -517,6 +517,11 @@ evaluated; declaration tags run before the declared value. Module metadata,
 `slug.meta` introspection, tagged exports, and tagged foreign declarations are
 not implemented yet.
 
+The subset also accepts strict documentation blocks on top-level `val` and
+`var` declarations, including across intervening comments and tags. It retains
+the block only while compiling the source; module documentation and metadata
+introspection are not implemented yet.
+
 ```slug
 @deprecated
 export val increment = fn(n) { n + 1 }

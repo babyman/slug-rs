@@ -5,6 +5,9 @@
 - Added declaration and parameter tag syntax with source-order tag-argument
   evaluation. Retained module metadata and `slug.meta` introspection remain
   future work.
+- Added strict `/** ... */` documentation blocks attached to top-level
+  declarations. Module documentation and metadata introspection remain future
+  work.
 - Replaced the export semantics formerly associated with `@export` with the
   `export` declaration keyword; `@export` remains an ordinary tag. Also
   replaced `@main` with source-ordered discovery of a local `main` function

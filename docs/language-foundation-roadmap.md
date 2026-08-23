@@ -76,10 +76,14 @@ note.
 - [x] Implement list slicing and finish collection access behavior.
 - [x] Implement struct copy.
 - [x] Implement struct patterns.
-- [ ] Implement parameter, return, declaration, and struct-field type annotation
+- [x] Implement parameter, return, declaration, and struct-field type annotation
   syntax and its required static checks.
 - [ ] Implement tags, documentation statements, foreign declarations, and the
   `???` form in dependency order.
+  - [x] Parse declaration/parameter tags and evaluate their arguments.
+  - [x] Parse and attach strict documentation blocks to top-level declarations.
+  - [ ] Retain module metadata and implement `slug.meta` introspection.
+  - [ ] Implement foreign declarations and the `???` form.
 - [x] Run `make check` after each independently supported feature slice.
 
 ## 3. Add modules and the initial standard library

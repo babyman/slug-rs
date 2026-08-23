@@ -257,7 +257,7 @@ fn accepts_tags_and_evaluates_their_arguments_before_declarations() {
     let cases = [(
         "tagged-expression",
         "@audit println(1)\n",
-        "slug: parse error: tags must prefix a val or var declaration",
+        "slug: parse error: documentation blocks and tags must prefix a val or var declaration",
     )];
     for (kind, source, expected) in cases {
         let path = fixture_path(kind);
@@ -267,6 +267,58 @@ fn accepts_tags_and_evaluates_their_arguments_before_declarations() {
             .output()
             .expect("run invalid tagged source");
         fs::remove_file(path).expect("remove invalid tagged source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with(expected)
+        );
+    }
+}
+
+#[test]
+fn attaches_strict_documentation_blocks_to_top_level_declarations() {
+    let path = fixture_path("documentation-blocks");
+    fs::write(
+        &path,
+        "/**\n * Adds one to a value.\n */\n// A comment may intervene.\n@deprecated\nval increment = fn(value) { value + 1 }\nprintln(increment(2))\n",
+    )
+    .expect("write documented source");
+    let output = slug().arg(&path).output().expect("run documented source");
+    fs::remove_file(&path).expect("remove documented source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3\n");
+
+    let cases = [
+        (
+            "malformed-documentation-block",
+            "/**\n not a documentation line\n */\nval value = 1\n",
+            "slug: parse error: every non-empty documentation line must begin with *",
+        ),
+        (
+            "misplaced-documentation-block",
+            "/**\n * Documentation\n */\nprintln(1)\n",
+            "slug: parse error: documentation blocks and tags must prefix a val or var declaration",
+        ),
+        (
+            "nested-documentation-block",
+            "val value = fn() {\n /**\n  * Documentation\n  */\n val inner = 1\n inner\n}\n",
+            "slug: parse error: documentation blocks are only valid at top level",
+        ),
+    ];
+    for (kind, source, expected) in cases {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write invalid documented source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid documented source");
+        fs::remove_file(path).expect("remove invalid documented source");
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
         assert!(
@@ -2344,9 +2396,11 @@ fn supports_all_documented_comment_forms_and_dot_string_lookup() {
     let path = fixture_path("comments-and-dot-access");
     fs::write(
         &path,
-        "val user = {[\"name\"]: 1}\n\
+        "/**\n\
+         * Documentation comment\n\
+         */\n\
+         val user = {[\"name\"]: 1}\n\
          // line comment\n\
-         /** documentation comment */\n\
          println(user.name) /* block comment */\n",
     )
     .expect("write comment source");

@@ -31,7 +31,8 @@ and the order in which remaining work can proceed without introducing compatibil
 | Declaration, parameter, return, and struct-field annotations              | Implemented                 | Retained source annotations and optional checker entry point, plus CLI tests  | Extend richer expression inference.                                          |
 | Generic call inference and explicit type applications                      | Implemented                 | Annotated call checking and CLI tests                                          | Keep dynamic operations unchecked when their type is not provable.           |
 | Tags on declarations and parameters                                       | Partially implemented       | Source AST/parser/compiler and CLI tests                                      | Add retained module metadata and `slug.meta` introspection.                  |
-| Documentation statements, foreign declarations, and `???`                 | Not implemented             | Lexer/parser lack the relevant source forms                                   | Add with module metadata and host integration kept separate.                  |
+| Documentation blocks on top-level declarations                            | Partially implemented       | Strict source lexer/parser attachment and CLI tests                            | Add module documentation and `slug.meta` introspection.                      |
+| Foreign declarations and `???`                                            | Not implemented             | Lexer/parser lack the relevant source forms                                   | Add with module metadata and host integration kept separate.                  |
 
 ## Implementation surface by feature family
 

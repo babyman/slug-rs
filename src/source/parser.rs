@@ -80,14 +80,17 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Expr, SourceError> {
+        let documentation = self.documentation_prefix()?;
         let mut tags = Vec::new();
         while self.matches(&TokenKind::At) {
             tags.push(self.tag()?);
             self.separators();
         }
-        if !tags.is_empty() && !matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
+        if (documentation.is_some() || !tags.is_empty())
+            && !matches!(self.kind(), TokenKind::Val | TokenKind::Var)
+        {
             return Err(SourceError::at(
-                "tags must prefix a val or var declaration",
+                "documentation blocks and tags must prefix a val or var declaration",
                 self.peek().span.clone(),
             ));
         }
@@ -160,6 +163,7 @@ impl Parser {
                 kind: ExprKind::Declare {
                     mutable,
                     pattern,
+                    documentation,
                     tags,
                     annotation,
                     value: Box::new(value),
@@ -167,6 +171,23 @@ impl Parser {
             });
         }
         self.expression()
+    }
+
+    fn documentation_prefix(&mut self) -> Result<Option<String>, SourceError> {
+        if let TokenKind::Documentation(content) = self.kind() {
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "documentation blocks are only valid at top level",
+                    self.peek().span.clone(),
+                ));
+            }
+            let content = content.clone();
+            self.next();
+            self.separators();
+            Ok(Some(content))
+        } else {
+            Ok(None)
+        }
     }
 
     fn tag(&mut self) -> Result<Tag, SourceError> {

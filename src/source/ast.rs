@@ -13,6 +13,7 @@ pub(super) enum ExprKind {
     Declare {
         mutable: bool,
         pattern: Pattern,
+        documentation: Option<String>,
         tags: Vec<Tag>,
         annotation: Option<TypeAnnotation>,
         value: Box<Expr>,
@@ -215,6 +216,7 @@ pub(super) enum TokenKind {
     Float(f64),
     Bytes(Vec<u8>),
     Interpolated(Vec<StringPart>),
+    Documentation(String),
     Name(String),
     Val,
     Var,

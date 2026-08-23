@@ -15,6 +15,30 @@ pub(super) struct Lexer {
 }
 
 impl Lexer {
+    fn documentation(&mut self, span: SourceSpan) -> Result<String, SourceError> {
+        let mut content = String::new();
+        loop {
+            let value = self
+                .next()
+                .ok_or_else(|| SourceError::at("unterminated documentation block", span.clone()))?;
+            if value == '*' && self.peek() == Some('/') {
+                self.next();
+                break;
+            }
+            content.push(value);
+        }
+        if content
+            .lines()
+            .any(|line| !line.trim().is_empty() && !line.trim_start().starts_with('*'))
+        {
+            return Err(SourceError::at(
+                "every non-empty documentation line must begin with *",
+                span,
+            ));
+        }
+        Ok(content)
+    }
+
     fn string(
         &mut self,
         delimiter: char,
@@ -244,16 +268,29 @@ impl Lexer {
                         }
                         Some('*') => {
                             self.next();
-                            let mut closed = false;
-                            while let Some(value) = self.next() {
-                                if value == '*' && self.peek() == Some('/') {
-                                    self.next();
-                                    closed = true;
-                                    break;
+                            if self.peek() == Some('*') {
+                                self.next();
+                                let documentation = self.documentation(span.clone())?;
+                                Self::push(
+                                    &mut result,
+                                    TokenKind::Documentation(documentation),
+                                    span,
+                                );
+                            } else {
+                                let mut closed = false;
+                                while let Some(value) = self.next() {
+                                    if value == '*' && self.peek() == Some('/') {
+                                        self.next();
+                                        closed = true;
+                                        break;
+                                    }
                                 }
-                            }
-                            if !closed {
-                                return Err(SourceError::at("unterminated block comment", span));
+                                if !closed {
+                                    return Err(SourceError::at(
+                                        "unterminated block comment",
+                                        span,
+                                    ));
+                                }
                             }
                         }
                         Some('>') => {
