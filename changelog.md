@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a dependency-ordered language foundation roadmap covering complete call
+  semantics, remaining expressions, modules, conformance, concurrency, and the
+  gate for measured VM optimization.
 - Documented the measured VM optimization plan, compact metadata direction,
   capture-aware local storage, and the decision gate for any future register
   VM.
