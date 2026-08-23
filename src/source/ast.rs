@@ -14,6 +14,7 @@ pub(super) enum ExprKind {
     Name(String),
     Declare {
         mutable: bool,
+        exported: bool,
         pattern: Pattern,
         documentation: Option<String>,
         tags: Vec<Tag>,
@@ -221,6 +222,7 @@ pub(super) enum TokenKind {
     Documentation(String),
     NotImplemented,
     Name(String),
+    Export,
     Val,
     Var,
     Fn,

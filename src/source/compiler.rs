@@ -114,12 +114,16 @@ impl Compiler {
             },
             ExprKind::Declare {
                 mutable,
+                exported,
                 pattern,
                 documentation,
                 tags,
                 value,
                 ..
             } => {
+                if *exported {
+                    debug_assert!(state.is_root());
+                }
                 if let Some(documentation) = documentation {
                     debug_assert!(
                         documentation.lines().all(

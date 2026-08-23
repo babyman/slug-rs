@@ -108,6 +108,18 @@ impl Parser {
             tags.push(self.tag()?);
             self.separators();
         }
+        let exported = if self.matches(&TokenKind::Export) {
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "export declarations are only valid at top level",
+                    self.peek().span.clone(),
+                ));
+            }
+            self.next();
+            true
+        } else {
+            false
+        };
         if (documentation.is_some() || !tags.is_empty())
             && !matches!(self.kind(), TokenKind::Val | TokenKind::Var)
         {
@@ -191,6 +203,7 @@ impl Parser {
                 span: value.span.clone(),
                 kind: ExprKind::Declare {
                     mutable,
+                    exported,
                     pattern,
                     documentation,
                     tags,

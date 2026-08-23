@@ -51,6 +51,10 @@ impl ModuleLoader {
     }
 
     /// Loads a dotted module name without exposing file-system operations to Slug code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid name, an unavailable module, or a host read failure.
     pub fn load(
         &self,
         importer: Option<&Path>,
