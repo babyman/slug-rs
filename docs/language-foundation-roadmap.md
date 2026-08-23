@@ -47,14 +47,14 @@ note.
 
 ### Required coverage
 
-- [ ] Cover ordinary, named, defaulted, variadic, and mixed spread calls through
+- [x] Cover ordinary, named, defaulted, variadic, and mixed spread calls through
   public source tests.
 - [ ] Cover multiple spreads and side-effecting argument expressions to prove
   evaluation order and single evaluation.
-- [ ] Cover non-list spreads, unknown and duplicate names, missing required
+- [x] Cover non-list spreads, unknown and duplicate names, missing required
   arguments, excessive positional arguments, duplicate parameter names, and an
   invalid named value for a variadic parameter.
-- [ ] Cover closures in default expressions and the defining-module environment
+- [x] Cover closures in default expressions and the defining-module environment
   rule.
 - [ ] Cover `recur(...)` and function match bodies with defaulted and variadic
   parameters.
