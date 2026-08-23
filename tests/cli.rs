@@ -169,6 +169,16 @@ fn binds_named_source_arguments_and_reports_binding_errors() {
             "val f = fn(value) { value }\nf(value = 1, value = 2)\n",
             "slug: runtime error: parameter `value` was assigned more than once",
         ),
+        (
+            "missing-required-argument",
+            "val f = fn(value) { value }\nf()\n",
+            "slug: runtime error: missing required parameter `value`",
+        ),
+        (
+            "excess-positional-arguments",
+            "val f = fn(value) { value }\nf(1, 2)\n",
+            "slug: runtime error: `<fn #0>` received too many positional arguments",
+        ),
     ] {
         let path = fixture_path(kind);
         fs::write(&path, source).expect("write invalid named argument source");
