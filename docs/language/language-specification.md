@@ -446,7 +446,7 @@ destructured with an ordinary binding pattern:
 
 ```slug
 export val increment = fn(n) { n + 1 }
-export foreign trim = fn(@str value)
+export foreign trim = fn(value:str)
 ```
 
 ```slug
@@ -512,7 +512,7 @@ is invalid.
 @deprecated
 export val increment = fn(n) { n + 1 }
 
-export foreign trim = fn(@str value)
+export foreign trim = fn(value:str)
 ```
 
 The `export` modifier makes a top-level binding visible to `import`. Callable
