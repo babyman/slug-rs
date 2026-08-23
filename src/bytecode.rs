@@ -116,6 +116,7 @@ pub enum Op {
         captures: Vec<Capture>,
     },
     List(usize),
+    ListSpread(Vec<bool>),
     Map(usize),
     StructSchema(Vec<SchemaField>),
     Struct(Vec<String>),
@@ -133,6 +134,7 @@ pub enum Op {
     Jump(usize),
     JumpIfFalse(usize),
     Call(usize),
+    CallSpread(Vec<CallArgumentKind>),
     TryMatch {
         pattern: MatchPattern,
         bindings: usize,
@@ -147,6 +149,13 @@ pub enum Op {
     },
     Recur(usize),
     Return,
+}
+
+/// The source ordering and expansion mode for a dynamic call argument.
+#[derive(Clone, Copy, Debug)]
+pub enum CallArgumentKind {
+    Positional,
+    Spread,
 }
 
 /// The condition under which a deferred action runs.

@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, Program, SchemaField, SourceSpan,
+    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, Program,
+    SchemaField, SourceSpan,
 };
 
 use super::{
@@ -261,9 +262,13 @@ impl Compiler {
             }
             ExprKind::Call { callee, arguments } => {
                 self.expression(state, callee)?;
+                let mut kinds = Vec::with_capacity(arguments.len());
                 for argument in arguments {
                     let argument = match argument {
-                        CallArgument::Positional(argument) => argument,
+                        CallArgument::Positional(argument) => {
+                            kinds.push(CallArgumentKind::Positional);
+                            argument
+                        }
                         CallArgument::Named { name, value } => {
                             let _ = (name, value);
                             return Err(SourceError::semantic(
@@ -272,32 +277,41 @@ impl Compiler {
                             ));
                         }
                         CallArgument::Spread(argument) => {
-                            let _ = argument;
-                            return Err(SourceError::semantic(
-                                "named and spread call arguments are not implemented yet",
-                                expression.span.clone(),
-                            ));
+                            kinds.push(CallArgumentKind::Spread);
+                            argument
                         }
                     };
                     self.expression(state, argument)?;
                 }
-                state.emit(Op::Call(arguments.len()), &expression.span);
+                if kinds
+                    .iter()
+                    .all(|kind| matches!(kind, CallArgumentKind::Positional))
+                {
+                    state.emit(Op::Call(arguments.len()), &expression.span);
+                } else {
+                    state.emit(Op::CallSpread(kinds), &expression.span);
+                }
             }
             ExprKind::List(values) => {
+                let mut spreads = Vec::with_capacity(values.len());
                 for value in values {
                     let value = match value {
-                        ListElement::Value(value) => value,
+                        ListElement::Value(value) => {
+                            spreads.push(false);
+                            value
+                        }
                         ListElement::Spread(value) => {
-                            let _ = value;
-                            return Err(SourceError::semantic(
-                                "list literal spreads are not implemented yet",
-                                expression.span.clone(),
-                            ));
+                            spreads.push(true);
+                            value
                         }
                     };
                     self.expression(state, value)?;
                 }
-                state.emit(Op::List(values.len()), &expression.span);
+                if spreads.iter().any(|spread| *spread) {
+                    state.emit(Op::ListSpread(spreads), &expression.span);
+                } else {
+                    state.emit(Op::List(values.len()), &expression.span);
+                }
             }
             ExprKind::Map(entries) => {
                 for (key, value) in entries {

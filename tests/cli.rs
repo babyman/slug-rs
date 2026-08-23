@@ -112,6 +112,63 @@ fn executes_core_functions_blocks_conditionals_and_collections() {
 }
 
 #[test]
+fn expands_list_and_call_spreads_in_source_order() {
+    let path = fixture_path("spreads");
+    fs::write(
+        &path,
+        "var order = \"\"\n\
+         val mark = fn(value) { order = order + value; value }\n\
+         val values = [mark(\"a\"), ...[mark(\"b\"), mark(\"c\")], mark(\"d\")]\n\
+         val collect = fn(first, second, third, fourth) { first + second + third + fourth }\n\
+         println(values, collect(...[mark(\"e\"), mark(\"f\")], mark(\"g\"), mark(\"h\")), order)\n",
+    )
+    .expect("write spread source");
+    let output = slug().arg(&path).output().expect("run spread source");
+    fs::remove_file(path).expect("remove spread source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[\"a\", \"b\", \"c\", \"d\"] efgh abcdefgh\n"
+    );
+}
+
+#[test]
+fn rejects_non_list_source_spreads() {
+    for (kind, source, expected) in [
+        (
+            "non-list-call-spread",
+            "println(...1)\n",
+            "slug: runtime error: call spread expects a list",
+        ),
+        (
+            "non-list-literal-spread",
+            "[...1]\n",
+            "slug: runtime error: list spread expects a list",
+        ),
+    ] {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write invalid spread source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid spread source");
+        fs::remove_file(path).expect("remove invalid spread source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with(expected)
+        );
+    }
+}
+
+#[test]
 fn constructs_and_compares_struct_values_with_stored_defaults() {
     let path = fixture_path("struct-foundation");
     fs::write(

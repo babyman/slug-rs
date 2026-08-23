@@ -21,13 +21,13 @@ note.
 
 ### Representation and parsing
 
-- [ ] Replace name-only function parameters in the source AST with parameter
+- [x] Replace name-only function parameters in the source AST with parameter
   metadata for names, defaults, and a final variadic parameter.
-- [ ] Represent positional, named, and spread call arguments distinctly in the
+- [x] Represent positional, named, and spread call arguments distinctly in the
   source AST.
-- [ ] Parse default parameters, final `...rest` parameters, named arguments,
+- [x] Parse default parameters, final `...rest` parameters, named arguments,
   call spreads, and list-literal spreads.
-- [ ] Reject malformed parameter lists and positional arguments appearing after
+- [x] Reject malformed parameter lists and positional arguments appearing after
   a named argument with source-located diagnostics.
 
 ### Compilation and execution
@@ -39,7 +39,7 @@ note.
   enforce the same positional, named, default, and variadic rules.
 - [ ] Evaluate omitted default expressions at call time in the function's
   defining module environment.
-- [ ] Expand list-valued call spreads and list-literal spreads while preserving
+- [x] Expand list-valued call spreads and list-literal spreads while preserving
   left-to-right evaluation order.
 - [ ] Preserve function-match-body subjects after default and variadic binding.
 - [ ] Preserve checked unwinding, source spans, and Slug call frames for call

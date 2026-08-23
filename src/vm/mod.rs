@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap, rc::Rc};
 
 use crate::{
-    Capture, Program, SourceSpan, Value,
+    CallArgumentKind, Capture, Program, SourceSpan, Value,
     bytecode::Op,
     value::{BindingCell, Closure, binding_cell},
 };
@@ -282,6 +282,7 @@ impl Vm {
                     let values = self.pop_values(count, span.clone())?;
                     self.stack.push(Value::List(Rc::new(values)));
                 }
+                Op::ListSpread(spreads) => self.list_spread(spreads, span)?,
                 Op::Map(count) => {
                     let values = self.pop_values(count.saturating_mul(2), span.clone())?;
                     let mut entries = Vec::with_capacity(count);
@@ -365,6 +366,7 @@ impl Vm {
                     }
                 }
                 Op::Call(count) => self.call(program, count, span)?,
+                Op::CallSpread(kinds) => self.call_spread(program, kinds, span)?,
                 Op::TryMatch {
                     pattern,
                     bindings,
@@ -596,6 +598,70 @@ impl Vm {
             }
         }
         Ok(())
+    }
+
+    fn list_spread(&mut self, spreads: Vec<bool>, span: Option<SourceSpan>) -> VmResult<()> {
+        let values = self.pop_values(spreads.len(), span.clone())?;
+        let mut result = Vec::new();
+        for (value, spread) in values.into_iter().zip(spreads) {
+            if spread {
+                let Value::List(values) = value else {
+                    return Err(self.error(
+                        RuntimeErrorKind::Type,
+                        "list spread expects a list".into(),
+                        span,
+                    ));
+                };
+                result.extend(values.iter().cloned());
+            } else {
+                result.push(value);
+            }
+        }
+        self.stack.push(Value::List(Rc::new(result)));
+        Ok(())
+    }
+
+    fn call_spread(
+        &mut self,
+        program: &Program,
+        kinds: Vec<CallArgumentKind>,
+        span: Option<SourceSpan>,
+    ) -> VmResult<()> {
+        let required = kinds.len().checked_add(1).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "call argument count is too large".into(),
+                span.clone(),
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "call has too few stack values".into(),
+                span.clone(),
+            )
+        })?;
+        let callee = self.stack[base].clone();
+        let values = self.stack.split_off(base + 1);
+        self.stack.truncate(base);
+        self.stack.push(callee);
+        for (value, kind) in values.into_iter().zip(kinds) {
+            match kind {
+                CallArgumentKind::Positional => self.stack.push(value),
+                CallArgumentKind::Spread => {
+                    let Value::List(values) = value else {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            "call spread expects a list".into(),
+                            span,
+                        ));
+                    };
+                    self.stack.extend(values.iter().cloned());
+                }
+            }
+        }
+        let count = self.stack.len() - base - 1;
+        self.call(program, count, span)
     }
 
     fn binary(

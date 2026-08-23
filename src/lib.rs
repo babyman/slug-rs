@@ -12,8 +12,8 @@ mod value;
 mod vm;
 
 pub use bytecode::{
-    Capture, Chunk, Constant, DeferMode, Instruction, MatchMapKey, MatchPattern, MatchRest, Op,
-    Program, SchemaField, SourceSpan,
+    CallArgumentKind, Capture, Chunk, Constant, DeferMode, Instruction, MatchMapKey, MatchPattern,
+    MatchRest, Op, Program, SchemaField, SourceSpan,
 };
 pub use source::{SourceError, SourceErrorKind, compile};
 pub use value::{Closure, NativeFunction, StructField, StructSchema, StructValue, Value};

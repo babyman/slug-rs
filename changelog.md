@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added positional call spreads and list-literal spreads with left-to-right,
+  single-evaluation behavior and checked non-list failures.
 - Added a dependency-ordered language foundation roadmap covering complete call
   semantics, remaining expressions, modules, conformance, concurrency, and the
   gate for measured VM optimization.

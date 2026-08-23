@@ -25,6 +25,7 @@ Tail-position `recur(...)`|implemented|`tests/cli.rs` and `tests/vm.rs`
 List, map, and dot indexing|implemented|`tests/cli.rs`
 Untyped struct schemas, construction, defaults, and field access|implemented|`tests/cli.rs` and `tests/vm.rs`
 Native function calls and `println`|implemented|`tests/cli.rs` and `tests/vm.rs`
+Positional call spreads and list-literal spreads|implemented|`tests/cli.rs`
 Checked source and runtime diagnostics with locations|implemented|`tests/cli.rs` and `tests/vm.rs`
 Full language specification|specified only|`language/language-specification.md`
 Modules, standard library, and concurrency|specified only|`language/runtime-requirements.md`
