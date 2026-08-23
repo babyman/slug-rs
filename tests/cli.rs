@@ -184,6 +184,46 @@ fn binds_named_source_arguments_and_reports_binding_errors() {
 }
 
 #[test]
+fn binds_final_variadic_parameters() {
+    let path = fixture_path("variadic-parameters");
+    fs::write(
+        &path,
+        "val collect = fn(first, ...rest) { [first, rest] }\n\
+         println(collect(1, 2, 3), collect(1), collect(first = 1, rest = [2, 3]))\n",
+    )
+    .expect("write variadic source");
+    let output = slug().arg(&path).output().expect("run variadic source");
+    fs::remove_file(path).expect("remove variadic source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[1, [2, 3]] [1, []] [1, [2, 3]]\n"
+    );
+
+    let path = fixture_path("non-list-named-variadic");
+    fs::write(
+        &path,
+        "val collect = fn(...rest) { rest }\ncollect(rest = 1)\n",
+    )
+    .expect("write invalid variadic source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid variadic source");
+    fs::remove_file(path).expect("remove invalid variadic source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: variadic parameter `rest` expects a list")
+    );
+}
+
+#[test]
 fn rejects_non_list_source_spreads() {
     for (kind, source, expected) in [
         (

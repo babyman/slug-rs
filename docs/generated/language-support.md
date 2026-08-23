@@ -32,6 +32,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Positional call spreads and list-literal spreads | implemented | `tests/cli.rs` |
 | Named ordinary-function arguments | implemented | `tests/cli.rs` |
+| Final variadic parameters | implemented | `tests/cli.rs` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |
 | Modules, standard library, and concurrency | specified only | `language/runtime-requirements.md` |

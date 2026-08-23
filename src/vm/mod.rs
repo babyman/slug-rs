@@ -674,7 +674,7 @@ impl Vm {
         &self,
         program: &Program,
         callee: &Value,
-        positional: Vec<Value>,
+        mut positional: Vec<Value>,
         named: Vec<(String, Value)>,
         span: Option<SourceSpan>,
     ) -> VmResult<Vec<Value>> {
@@ -698,13 +698,19 @@ impl Vm {
         if chunk.parameters.is_empty() {
             return Ok(positional);
         }
-        if positional.len() > chunk.parameters.len() {
+        let variadic = chunk
+            .parameters
+            .last()
+            .filter(|parameter| parameter.variadic);
+        let fixed = chunk.parameters.len() - usize::from(variadic.is_some());
+        if positional.len() > chunk.parameters.len() && variadic.is_none() {
             return Err(self.error(
                 RuntimeErrorKind::Arity,
                 format!("`{}` received too many positional arguments", chunk.name),
                 span,
             ));
         }
+        let rest = positional.split_off(fixed.min(positional.len()));
         let mut bound = positional.into_iter().map(Some).collect::<Vec<_>>();
         bound.resize_with(chunk.parameters.len(), || None);
         for (name, value) in named {
@@ -726,7 +732,17 @@ impl Vm {
                     span,
                 ));
             }
+            if chunk.parameters[slot].variadic && !matches!(value, Value::List(_)) {
+                return Err(self.error(
+                    RuntimeErrorKind::Type,
+                    format!("variadic parameter `{name}` expects a list"),
+                    span,
+                ));
+            }
             bound[slot] = Some(value);
+        }
+        if variadic.is_some() && bound[fixed].is_none() {
+            bound[fixed] = Some(Value::List(Rc::new(rest)));
         }
         bound
             .into_iter()

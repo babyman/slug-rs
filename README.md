@@ -22,7 +22,7 @@ compiled-module contract is documented separately as `.cslug`.
   anonymous final rests, untyped struct schemas, construction and field access,
   function match bodies, `return`,
   `throw`, `defer` including `onsuccess` and `onerror` recovery, tail-position `recur(...)`,
-  lists/maps/indexing, positional and named calls, positional call and list-literal spreads,
+  lists/maps/indexing, positional/named/variadic calls, positional call and list-literal spreads,
   comments, and `println`.
 - The module loader, standard library, pattern matcher, type annotations,
   structured concurrency, and the remaining language forms are progressive

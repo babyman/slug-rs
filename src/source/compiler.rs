@@ -280,14 +280,7 @@ impl Compiler {
                     };
                     self.expression(state, argument)?;
                 }
-                if kinds
-                    .iter()
-                    .all(|kind| matches!(kind, CallArgumentKind::Positional))
-                {
-                    state.emit(Op::Call(arguments.len()), &expression.span);
-                } else {
-                    state.emit(Op::CallSpread(kinds), &expression.span);
-                }
+                state.emit(Op::CallSpread(kinds), &expression.span);
             }
             ExprKind::List(values) => {
                 let mut spreads = Vec::with_capacity(values.len());
@@ -661,9 +654,9 @@ fn plain_parameters(
                 span.clone(),
             ));
         }
-        if parameter.default.is_some() || parameter.variadic {
+        if parameter.default.is_some() {
             return Err(SourceError::semantic(
-                "default and variadic parameters are not implemented yet",
+                "default parameters are not implemented yet",
                 span.clone(),
             ));
         }

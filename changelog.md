@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added final variadic parameters, including checked named rest values.
 - Added named ordinary-function arguments with checked unknown and duplicate
   parameter diagnostics.
 - Added positional call spreads and list-literal spreads with left-to-right,
