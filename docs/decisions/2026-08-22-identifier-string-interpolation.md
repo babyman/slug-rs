@@ -20,4 +20,4 @@ private bytecode operation. Raw strings retain `$identifier` literally.
 
 ## Migration
 
-Replace `{{ expression }}` with a named intermediate value and `$name`.
+Use a named intermediate value and `$name` for interpolation.

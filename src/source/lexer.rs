@@ -70,7 +70,7 @@ impl Lexer {
                     Some('t') => text.push('\t'),
                     Some('"') => text.push('"'),
                     Some('\\') => text.push('\\'),
-                    Some('{') => text.push('{'),
+                    Some('$') => text.push('$'),
                     Some(first @ '0'..='7') => {
                         let mut digits = String::from(first);
                         for _ in 0..2 {

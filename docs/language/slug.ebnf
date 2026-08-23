@@ -237,7 +237,7 @@ raw_string = "'" , { raw_char } , "'" ;
 triple_string = '"""' , { string_char } , '"""' ;
 triple_raw_string = "'''" , { raw_char } , "'''" ;
 
-(* Escapes: \n \r \t \\ \" \{ and octal (0-7 up to 3 digits). Raw strings have no escapes. *)
+(* Escapes: \n \r \t \\ \" \$ and octal (0-7 up to 3 digits). Raw strings have no escapes. *)
 string_char = ANY_CHAR_EXCEPT_QUOTE_OR_BACKSLASH | escape_seq ;
 raw_char = ANY_CHAR_EXCEPT_SINGLE_QUOTE ;
 

@@ -16,7 +16,7 @@ second
 
 Single-quoted strings are raw: escapes and `$identifier` interpolation are not
 interpreted. Double-quoted strings support `$identifier` interpolation and these escapes:
-`\n`, `\r`, `\t`, `\\`, `\"`, `\{`, and one to three octal digits. An unknown
+`\n`, `\r`, `\t`, `\\`, `\"`, `\$`, and one to three octal digits. An unknown
 escape remains a backslash followed by its character. An interpolation is `$`
 followed by an identifier and resolves that identifier in the current lexical
 environment. Property access and arbitrary expressions are deliberately not

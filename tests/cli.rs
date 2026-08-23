@@ -177,7 +177,7 @@ fn parses_raw_triple_quoted_and_extended_escaped_strings() {
     let path = fixture_path("string-forms");
     fs::write(
         &path,
-        "val name = \"Slug\"\nprintln('C:\\Program Files\\Slug', \"escaped \\{ and \\q\", \"\"\"\nfirst\n  second\n\"\"\", '''\nliteral {{name}}\n''')\n",
+        "val name = \"Slug\"\nprintln('C:\\Program Files\\Slug', \"escaped \\$ and \\{\", \"\"\"\nfirst\n  second\n\"\"\", '''\nliteral $name\n''')\n",
     )
     .expect("write string forms");
     let output = slug().arg(&path).output().expect("run string forms");
@@ -190,8 +190,27 @@ fn parses_raw_triple_quoted_and_extended_escaped_strings() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "C:\\Program Files\\Slug escaped { and \\q first\n  second literal {{name}}\n"
+        "C:\\Program Files\\Slug escaped $ and \\{ first\n  second literal $name\n"
     );
+}
+
+#[test]
+fn elides_newlines_adjacent_to_triple_string_delimiters() {
+    let path = fixture_path("triple-string-final-newline");
+    fs::write(&path, "println(\"\"\"\nfirst\nsecond\n\"\"\")\n")
+        .expect("write triple string source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run triple string source");
+    fs::remove_file(path).expect("remove triple string source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "first\nsecond\n");
 }
 
 #[test]
