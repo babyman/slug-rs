@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added schema-identity struct patterns with partial named-field matching.
 - Added pipeline calls and subjectless pipeline `match` expressions with `/>`.
 - Added checked `string * non-negative-integer` repetition.
 - Added immutable list concatenation (`+`), append (`:+`), and prepend (`+:`)

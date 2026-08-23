@@ -1,9 +1,8 @@
 # Structs
 
 This supplement defines schema values, basic struct construction, field access,
-and equality. Struct copy expressions, field type annotations, and struct
-patterns are specified by the target grammar but remain separate implementation
-stages.
+equality, copying, and patterns. Field type annotations remain a separate
+implementation stage.
 
 ## Schemas and defaults
 
@@ -59,3 +58,12 @@ schema identity as `value`. It evaluates `value` first and replacement
 expressions left to right. Each named field is replaced; fields not named in
 the copy retain their original values. Copying a non-struct, naming an unknown
 field, or naming a field more than once is a checked runtime type error.
+
+## Patterns
+
+`Schema {field, other: pattern}` matches a value only when it has the exact
+schema identity denoted by `Schema`. It is partial: named fields must exist and
+match their nested patterns, while omitted fields are ignored. A shorthand
+field such as `name` binds that field to `name`. Duplicate pattern field names
+are invalid source. A schema expression that does not evaluate to a schema is a
+checked runtime type error.

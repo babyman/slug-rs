@@ -632,7 +632,7 @@ impl Compiler {
         span: &SourceSpan,
     ) -> Result<(), SourceError> {
         let name = match operand {
-            PatternOperand::Pinned(name) => name,
+            PatternOperand::Pinned(name) | PatternOperand::StructSchema(name) => name,
             PatternOperand::Computed(expression) => return self.expression(state, expression),
         };
         let binding = state
@@ -829,6 +829,7 @@ fn plain_parameters(
 enum PatternOperand {
     Pinned(String),
     Computed(Expr),
+    StructSchema(String),
 }
 
 fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> MatchPattern {
@@ -871,6 +872,17 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
             rest: lower_rest_pattern(rest.as_ref()),
             exact: *exact,
         },
+        Pattern::Struct { schema, fields } => {
+            let schema_index = operands.len();
+            operands.push(PatternOperand::StructSchema(schema.clone()));
+            MatchPattern::Struct {
+                schema: schema_index,
+                fields: fields
+                    .iter()
+                    .map(|(name, pattern)| (name.clone(), lower_pattern(pattern, operands)))
+                    .collect(),
+            }
+        }
     }
 }
 
@@ -929,6 +941,11 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                 }
                 if let Some(RestPattern::Binding(name)) = rest {
                     names.push(name.clone());
+                }
+            }
+            Pattern::Struct { fields, .. } => {
+                for (_, pattern) in fields {
+                    collect(pattern, names);
                 }
             }
             Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}

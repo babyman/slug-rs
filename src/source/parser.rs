@@ -875,6 +875,9 @@ impl Parser {
                     pattern: Box::new(pattern?),
                 })
             }
+            TokenKind::Name(name) if self.matches(&TokenKind::LBrace) => {
+                self.struct_pattern(name, &token.span)
+            }
             TokenKind::Name(name) => Ok(Pattern::Binding(name)),
             TokenKind::Caret => {
                 let token = self.next();
@@ -1008,6 +1011,44 @@ impl Parser {
             rest,
             exact,
         })
+    }
+    fn struct_pattern(
+        &mut self,
+        schema: String,
+        span: &SourceSpan,
+    ) -> Result<Pattern, SourceError> {
+        self.next();
+        self.enter_nesting(span.clone())?;
+        let mut fields = Vec::new();
+        while !self.matches(&TokenKind::RBrace) {
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected struct pattern field", token.span));
+            };
+            if fields.iter().any(|(existing, _)| existing == &name) {
+                return Err(SourceError::at(
+                    format!("duplicate struct pattern field `{name}`"),
+                    token.span,
+                ));
+            }
+            let pattern = if self.matches(&TokenKind::Colon) {
+                self.next();
+                self.pattern()?
+            } else {
+                Pattern::Binding(name.clone())
+            };
+            fields.push((name, pattern));
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+            self.next();
+            if self.matches(&TokenKind::RBrace) {
+                break;
+            }
+        }
+        self.consume(&TokenKind::RBrace, "expected }")?;
+        self.leave_nesting();
+        Ok(Pattern::Struct { schema, fields })
     }
     fn if_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.consume(&TokenKind::LParen, "expected (")?;

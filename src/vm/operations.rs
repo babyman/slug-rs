@@ -265,7 +265,54 @@ pub(super) fn matches_pattern(
             }
             Ok(true)
         }
+        MatchPattern::Struct { schema, fields } => {
+            match_struct_pattern(*schema, fields, value, operands, bindings)
+        }
     }
+}
+
+fn match_struct_pattern(
+    schema: usize,
+    fields: &[(String, MatchPattern)],
+    value: &Value,
+    operands: &[Value],
+    bindings: &mut Vec<Value>,
+) -> Result<bool, (RuntimeErrorKind, String)> {
+    let expected = operands.get(schema).ok_or_else(|| {
+        (
+            RuntimeErrorKind::InvalidBytecode,
+            format!("match pattern operand {schema} does not exist"),
+        )
+    })?;
+    let Value::StructSchema(expected) = expected else {
+        return Err((
+            RuntimeErrorKind::Type,
+            "struct pattern schema must be a struct schema".into(),
+        ));
+    };
+    let Value::Struct(value) = value else {
+        return Ok(false);
+    };
+    if !Rc::ptr_eq(&value.schema, expected) {
+        return Ok(false);
+    }
+    let binding_start = bindings.len();
+    for (name, pattern) in fields {
+        let Some(index) = value
+            .schema
+            .fields
+            .iter()
+            .position(|field| field.name.as_ref() == name)
+        else {
+            bindings.truncate(binding_start);
+            return Ok(false);
+        };
+        if !matches_pattern(pattern, &value.values[index], operands, bindings)? {
+            bindings.truncate(binding_start);
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn resolve_map_pattern_keys(

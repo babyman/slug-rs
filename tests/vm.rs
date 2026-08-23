@@ -65,6 +65,35 @@ fn pipes_values_through_private_call_bytecode() {
 }
 
 #[test]
+fn matches_structs_through_private_pattern_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let name = main.constant(Value::string("Slug"));
+    main.emit(Op::StructSchema(vec![SchemaField {
+        name: "name".into(),
+        has_default: false,
+    }]))
+    .emit(Op::DefineGlobal("User".into()))
+    .emit(Op::GetGlobal("User".into()))
+    .emit(Op::Constant(name))
+    .emit(Op::Struct(vec!["name".into()]))
+    .emit(Op::GetGlobal("User".into()))
+    .emit(Op::TryMatch {
+        pattern: slug_vm::MatchPattern::Struct {
+            schema: 0,
+            fields: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+        },
+        bindings: 1,
+        operands: 1,
+    })
+    .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn executes_checked_bitwise_and_shift_bytecode() {
     let mut main = Chunk::new("main", 0);
     let left = main.constant(Value::Int(6));

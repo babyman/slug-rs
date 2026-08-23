@@ -135,6 +135,64 @@ fn pipes_values_into_calls_and_subjectless_matches() {
 }
 
 #[test]
+fn matches_and_destructures_structs_by_schema_identity() {
+    let path = fixture_path("struct-patterns");
+    fs::write(
+        &path,
+        "val User = struct { name, active = true }\nval OtherUser = struct { name, active = true }\nval user = User { name: \"Slug\" }\nval describe = fn(value) match {\n  User {name, active: true} => name\n  _ => \"other\"\n}\nval missing = fn(value) match {\n  User {missing} => \"matched\"\n  _ => \"other\"\n}\nval User {name: extracted} = user\nprintln(describe(user), describe(OtherUser { name: \"Slug\" }), missing(user), extracted)\n",
+    )
+    .expect("write struct pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run struct pattern source");
+    fs::remove_file(&path).expect("remove struct pattern source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug other other Slug\n"
+    );
+
+    fs::write(
+        &path,
+        "val User = struct { name }\nmatch User { name: \"Slug\" } { User {name, name} => name }\n",
+    )
+    .expect("write duplicate struct pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run duplicate struct pattern source");
+    fs::remove_file(&path).expect("remove duplicate struct pattern source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: parse error: duplicate struct pattern field `name`")
+    );
+
+    fs::write(
+        &path,
+        "val NotSchema = 1\nmatch nil { NotSchema {} => true }\n",
+    )
+    .expect("write invalid struct pattern schema source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid struct pattern schema source");
+    fs::remove_file(path).expect("remove invalid struct pattern schema source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: struct pattern schema must be a struct schema")
+    );
+}
+
+#[test]
 fn evaluates_checked_bitwise_and_shift_operators() {
     let path = fixture_path("bitwise-and-shifts");
     fs::write(&path, "println(6 & 3, 4 | 1, 6 ^ 3, ~0, 1 << 4, -8 >> 2)\n")

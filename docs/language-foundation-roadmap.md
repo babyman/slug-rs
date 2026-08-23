@@ -71,15 +71,16 @@ note.
   currently hidden.
 - [x] Implement the remaining specified numeric, byte, and string literal forms,
   including interpolation.
-- [ ] Implement the remaining arithmetic, bitwise, shift, list-concatenation,
+- [x] Implement the remaining arithmetic, bitwise, shift, list-concatenation,
   and pipeline operators with checked type failures.
-- [ ] Implement list slicing and finish collection access behavior.
-- [ ] Implement struct copy and struct patterns.
+- [x] Implement list slicing and finish collection access behavior.
+- [x] Implement struct copy.
+- [x] Implement struct patterns.
 - [ ] Implement parameter, return, declaration, and struct-field type annotation
   syntax and its required static checks.
 - [ ] Implement tags, documentation statements, foreign declarations, and the
   `???` form in dependency order.
-- [ ] Run `make check` after each independently supported feature slice.
+- [x] Run `make check` after each independently supported feature slice.
 
 ## 3. Add modules and the initial standard library
 

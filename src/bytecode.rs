@@ -81,6 +81,10 @@ pub enum MatchPattern {
         rest: MatchRest,
         exact: bool,
     },
+    Struct {
+        schema: usize,
+        fields: Vec<(String, MatchPattern)>,
+    },
 }
 
 /// One VM instruction. Opcode numbers are intentionally not stable.

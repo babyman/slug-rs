@@ -143,6 +143,10 @@ pub(super) enum Pattern {
         rest: Option<RestPattern>,
         exact: bool,
     },
+    Struct {
+        schema: String,
+        fields: Vec<(String, Pattern)>,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Binary {

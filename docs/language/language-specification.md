@@ -348,6 +348,13 @@ permit a spread entry. A bracketed map-pattern key evaluates its expression
 once before its pattern is tested, in the enclosing lexical scope before the
 pattern's bindings exist. The resulting value must be a valid map key.
 
+A struct pattern has the form `Schema {field, other: pattern}`. It matches only
+a struct value created by that exact schema identity. Fields are partial: each
+named field must exist and match its nested pattern, while unnamed fields are
+ignored. A non-struct subject or a value from a different schema does not
+match. The schema expression must evaluate to a schema; otherwise matching
+produces a checked runtime type error.
+
 ```slug
 val headOrZero = fn(xs) {
   match xs {

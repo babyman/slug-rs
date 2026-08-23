@@ -42,7 +42,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | List slicing | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Untyped struct schemas, construction, defaults, and field access | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Struct copies | implemented | `tests/cli.rs` |
-| Struct patterns | specified only | `language/language-specification.md` |
+| Struct patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Positional call spreads and list-literal spreads | implemented | `tests/cli.rs` |
 | Named ordinary-function arguments | implemented | `tests/cli.rs` |

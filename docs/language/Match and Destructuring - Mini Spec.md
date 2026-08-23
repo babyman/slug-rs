@@ -67,8 +67,9 @@ The current Rust subset implements literals, `_`, identifier bindings,
 pinned identifiers, `name @ pattern` bindings, list patterns with an optional
 named or anonymous final spread, and string-keyed map patterns with an optional
 named or anonymous final spread. It also implements exact map patterns and
-computed map keys, plus non-binding, comma-separated case alternatives. Struct
-patterns remain specified but unsupported; see the generated language support
+computed map keys, struct patterns, and non-binding, comma-separated case
+alternatives. Struct patterns match schema identity, support partial named
+fields, and reject duplicate field names; see the generated language support
 matrix for the implemented subset.
 
 `var` and `val` accept these patterns on their left side. A non-matching
