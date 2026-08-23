@@ -94,7 +94,7 @@ Follow the module rules in
 and the host boundary in
 [Runtime Requirements](language/runtime-requirements.md#required-host-services).
 
-- [ ] Define a source loader and explicit module-root and library-root host
+- [x] Define a source loader and explicit module-root and library-root host
   services without exposing host capabilities as ordinary Slug bindings.
 - [ ] Implement `import(name)` resolution, module caching, and checked module
   diagnostics.

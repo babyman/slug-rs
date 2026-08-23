@@ -7,6 +7,7 @@
 //! `docs/compiled-artifacts.md`.
 
 mod bytecode;
+mod module;
 mod source;
 mod value;
 mod vm;
@@ -15,6 +16,7 @@ pub use bytecode::{
     CallArgumentKind, Capture, Chunk, Constant, DeferMode, Instruction, MatchMapKey, MatchPattern,
     MatchRest, Op, ParameterSignature, Program, SchemaField, SourceSpan,
 };
+pub use module::{ModuleLoadError, ModuleLoader, ModuleSource};
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
 pub use value::{Closure, NativeFunction, StructField, StructSchema, StructValue, Value};
 pub use vm::{CallFrame, RuntimeError, RuntimeErrorKind, Vm, VmResult};
