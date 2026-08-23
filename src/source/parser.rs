@@ -242,16 +242,8 @@ impl Parser {
             } else if self.matches(&TokenKind::LBracket) {
                 let span = self.next().span;
                 self.enter_nesting(span.clone())?;
-                let index = self.expression()?;
-                self.consume(&TokenKind::RBracket, "expected ]")?;
+                value = self.index_or_slice(value, span)?;
                 self.leave_nesting();
-                value = Expr {
-                    span,
-                    kind: ExprKind::Index {
-                        collection: Box::new(value),
-                        index: Box::new(index),
-                    },
-                };
             } else if self.matches(&TokenKind::Dot) {
                 let span = self.next().span;
                 let name = self.next();
@@ -288,6 +280,53 @@ impl Parser {
                 },
             })
         }
+    }
+
+    fn index_or_slice(&mut self, collection: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+        let start = if self.matches(&TokenKind::Colon) {
+            None
+        } else {
+            Some(Box::new(self.expression()?))
+        };
+        if self.matches(&TokenKind::Colon) {
+            self.next();
+            let end = if self.matches(&TokenKind::Colon) || self.matches(&TokenKind::RBracket) {
+                None
+            } else {
+                Some(Box::new(self.expression()?))
+            };
+            let step = if self.matches(&TokenKind::Colon) {
+                self.next();
+                if self.matches(&TokenKind::RBracket) {
+                    None
+                } else {
+                    Some(Box::new(self.expression()?))
+                }
+            } else {
+                None
+            };
+            self.consume(&TokenKind::RBracket, "expected ]")?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Slice {
+                    collection: Box::new(collection),
+                    start,
+                    end,
+                    step,
+                },
+            });
+        }
+        let Some(index) = start else {
+            unreachable!("a bracket expression is either a slice or has an index")
+        };
+        self.consume(&TokenKind::RBracket, "expected ]")?;
+        Ok(Expr {
+            span,
+            kind: ExprKind::Index {
+                collection: Box::new(collection),
+                index,
+            },
+        })
     }
     fn call_arguments(&mut self) -> Result<Vec<CallArgument>, SourceError> {
         let mut arguments = Vec::new();

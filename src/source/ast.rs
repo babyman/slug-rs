@@ -68,6 +68,12 @@ pub(super) enum ExprKind {
         collection: Box<Expr>,
         index: Box<Expr>,
     },
+    Slice {
+        collection: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
+    },
 }
 #[derive(Clone, Debug)]
 pub(super) struct Parameter {

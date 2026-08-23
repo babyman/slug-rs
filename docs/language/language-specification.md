@@ -260,16 +260,20 @@ differenceFromMean([5, 8], 3) // 2
 
 ## Collections, access, and structs
 
-Lists and maps support indexing. List indices may be negative. Slice syntax is
-`start:end` with an optional step. The start expression is required whenever a
-slice is used: `:end` is invalid, so use `0:end` to slice from the beginning.
+Lists and maps support indexing. List indices may be negative. List slice syntax
+is `[start:end]`, with an optional `:step`. The start, end, and step expressions
+are each optional: an omitted start is `0`, an omitted end is the list length,
+and an omitted step is `1`. Negative slice bounds count from the end of the
+list. Bounds outside the list are clamped to its limits, and a step must be a
+positive integer. Slicing produces a new list; maps and structs cannot be
+sliced.
 
 ```slug
 val xs = [10, 20, 30, 40]
 xs[1]
 xs[-1]
 xs[1:3]
-xs[0:1]
+xs[:1]
 ```
 
 Dot access is shorthand for string-key map access where supported:

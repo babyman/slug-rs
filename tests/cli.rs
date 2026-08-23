@@ -112,6 +112,29 @@ fn executes_core_functions_blocks_conditionals_and_collections() {
 }
 
 #[test]
+fn slices_lists_with_an_omitted_start() {
+    let path = fixture_path("list-slices");
+    fs::write(
+        &path,
+        "val values = [10, 20, 30, 40, 50]\n\
+         println(values[:2], values[0:2], values[1:4:2], values[-3:])\n",
+    )
+    .expect("write slice source");
+    let output = slug().arg(&path).output().expect("run slice source");
+    fs::remove_file(path).expect("remove slice source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[10, 20] [10, 20] [20, 40] [30, 40, 50]\n"
+    );
+}
+
+#[test]
 fn expands_list_and_call_spreads_in_source_order() {
     let path = fixture_path("spreads");
     fs::write(

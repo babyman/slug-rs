@@ -36,7 +36,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | `defer onerror` cleanup and recovery | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Tail-position `recur(...)` with ordinary call binding | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | List, map, and dot indexing | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| List slicing | specified only | `language/language-specification.md` |
+| List slicing | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Untyped struct schemas, construction, defaults, and field access | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Struct copies and patterns | specified only | `language/language-specification.md` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |

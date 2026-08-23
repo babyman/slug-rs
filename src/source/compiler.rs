@@ -351,6 +351,31 @@ impl Compiler {
                 self.expression(state, index)?;
                 state.emit(Op::GetIndex, &expression.span);
             }
+            ExprKind::Slice {
+                collection,
+                start,
+                end,
+                step,
+            } => {
+                self.expression(state, collection)?;
+                if let Some(start) = start {
+                    self.expression(state, start)?;
+                }
+                if let Some(end) = end {
+                    self.expression(state, end)?;
+                }
+                if let Some(step) = step {
+                    self.expression(state, step)?;
+                }
+                state.emit(
+                    Op::GetSlice {
+                        has_start: start.is_some(),
+                        has_end: end.is_some(),
+                        has_step: step.is_some(),
+                    },
+                    &expression.span,
+                );
+            }
             ExprKind::Block(values) => {
                 state.enter_scope();
                 state.emit(Op::EnterScope, &expression.span);

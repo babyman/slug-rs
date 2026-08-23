@@ -14,7 +14,7 @@ use cleanup::{Cleanup, Deferred};
 pub use error::{CallFrame, RuntimeError, RuntimeErrorKind};
 use operations::{
     add, construct_struct, divide, index_value, is_map_key, matches_pattern, modulo, multiply,
-    negate, numbers, subtract,
+    negate, numbers, slice_value, subtract,
 };
 
 pub type VmResult<T> = Result<T, RuntimeError>;
@@ -346,6 +346,25 @@ impl Vm {
                         .push(index_value(collection, &index).map_err(|message| {
                             self.error(RuntimeErrorKind::Type, message, span)
                         })?);
+                }
+                Op::GetSlice {
+                    has_start,
+                    has_end,
+                    has_step,
+                } => {
+                    let count =
+                        usize::from(has_start) + usize::from(has_end) + usize::from(has_step);
+                    let mut values = self.pop_values(count + 1, span.clone())?.into_iter();
+                    let collection = values
+                        .next()
+                        .expect("slice operation includes a collection");
+                    let start = has_start.then(|| values.next().expect("slice start is present"));
+                    let end = has_end.then(|| values.next().expect("slice end is present"));
+                    let step = has_step.then(|| values.next().expect("slice step is present"));
+                    self.stack.push(
+                        slice_value(collection, start.as_ref(), end.as_ref(), step.as_ref())
+                            .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?,
+                    );
                 }
                 Op::Negate => {
                     let value = self.pop(span.clone())?;

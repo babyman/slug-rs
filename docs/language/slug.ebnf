@@ -135,9 +135,9 @@ expression_list = expression_item , { "," , expression_item } , [ "," ] ;
 expression_item = [ "..." ] , expression ;
 
 index_args = expression
-           | expression , ":" , [ expression ] , [ ":" , [ expression ] ]
+           | [ expression ] , ":" , [ expression ] , [ ":" , [ expression ] ]
            ;
-(* A slice always has a start expression: `:end` is invalid; use `0:end`. *)
+(* In a slice, an omitted start defaults to zero. *)
 
 map_literal = "{" , [ map_entries ] , "}" ;
 map_entries = map_entry , { "," , map_entry } , [ "," ] ;

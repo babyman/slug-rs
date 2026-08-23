@@ -129,6 +129,11 @@ pub enum Op {
     StructSchema(Vec<SchemaField>),
     Struct(Vec<String>),
     GetIndex,
+    GetSlice {
+        has_start: bool,
+        has_end: bool,
+        has_step: bool,
+    },
     Add,
     Subtract,
     Multiply,

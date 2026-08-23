@@ -244,6 +244,50 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
     }
 }
 
+pub(super) fn slice_value(
+    collection: Value,
+    start: Option<&Value>,
+    end: Option<&Value>,
+    step: Option<&Value>,
+) -> Result<Value, String> {
+    let Value::List(values) = collection else {
+        return Err(format!("cannot slice {}", collection.type_name()));
+    };
+    let length = i64::try_from(values.len()).map_err(|_| "list is too large".to_owned())?;
+    let start = slice_bound(start, 0, length, "start")?;
+    let end = slice_bound(end, length, length, "end")?;
+    let step = match step {
+        None => 1,
+        Some(Value::Int(step)) if *step > 0 => *step,
+        Some(Value::Int(_)) => return Err("list slice step must be positive".into()),
+        Some(_) => return Err("list slice step must be an integer".into()),
+    };
+    let mut result = Vec::new();
+    let mut index = start;
+    while index < end {
+        result.push(values[usize::try_from(index).expect("slice bounds are non-negative")].clone());
+        index = index
+            .checked_add(step)
+            .ok_or_else(|| "list slice step is too large".to_owned())?;
+    }
+    Ok(Value::List(Rc::new(result)))
+}
+
+fn slice_bound(
+    value: Option<&Value>,
+    default: i64,
+    length: i64,
+    name: &str,
+) -> Result<i64, String> {
+    let value = match value {
+        None => default,
+        Some(Value::Int(value)) if *value < 0 => length.saturating_add(*value),
+        Some(Value::Int(value)) => *value,
+        Some(_) => return Err(format!("list slice {name} must be an integer")),
+    };
+    Ok(value.clamp(0, length))
+}
+
 pub(super) fn construct_struct(
     schema: Value,
     names: &[String],

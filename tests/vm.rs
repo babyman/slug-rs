@@ -532,6 +532,31 @@ fn constructs_and_indexes_collections() {
 }
 
 #[test]
+fn slices_lists_with_omitted_bounds_in_private_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    let two = main.constant(Value::Int(2));
+    let three = main.constant(Value::Int(3));
+    let end = main.constant(Value::Int(2));
+    main.emit(Op::Constant(one))
+        .emit(Op::Constant(two))
+        .emit(Op::Constant(three))
+        .emit(Op::List(3))
+        .emit(Op::Constant(end))
+        .emit(Op::GetSlice {
+            has_start: false,
+            has_end: true,
+            has_step: false,
+        })
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::List(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+    );
+}
+
+#[test]
 fn constructs_structs_with_stored_defaults_and_field_access() {
     let mut main = Chunk::new("main", 0);
     let name = main.constant(Value::string("Slug"));

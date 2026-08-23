@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added checked list slicing with optional start, end, and step expressions;
+  `list[:end]` now starts at zero without requiring a redundant `0`.
 - Added a detailed inventory of the expression foundation and split the language
   support matrix so partial literal, operator, collection, struct, annotation,
   and metadata support is explicit.
