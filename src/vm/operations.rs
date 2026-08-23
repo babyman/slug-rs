@@ -117,6 +117,25 @@ pub(super) fn bit_not(value: &Value) -> Result<Value, String> {
     Ok(Value::Int(!value))
 }
 
+pub(super) fn list_append(list: Value, value: Value) -> Result<Value, String> {
+    let Value::List(list) = list else {
+        return Err("left operand of :+ must be a list".into());
+    };
+    let mut values = (*list).clone();
+    values.push(value);
+    Ok(Value::List(Rc::new(values)))
+}
+
+pub(super) fn list_prepend(value: Value, list: Value) -> Result<Value, String> {
+    let Value::List(list) = list else {
+        return Err("right operand of +: must be a list".into());
+    };
+    let mut values = Vec::with_capacity(list.len() + 1);
+    values.push(value);
+    values.extend(list.iter().cloned());
+    Ok(Value::List(Rc::new(values)))
+}
+
 pub(super) fn matches_pattern(
     pattern: &MatchPattern,
     value: &Value,

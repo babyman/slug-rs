@@ -280,6 +280,14 @@ impl Compiler {
                         self.expression(state, right)?;
                         state.emit(Op::ShiftRight, &expression.span);
                     }
+                    Binary::Append => {
+                        self.expression(state, right)?;
+                        state.emit(Op::ListAppend, &expression.span);
+                    }
+                    Binary::Prepend => {
+                        self.expression(state, right)?;
+                        state.emit(Op::ListPrepend, &expression.span);
+                    }
                     Binary::Equal => {
                         self.expression(state, right)?;
                         state.emit(Op::Equal, &expression.span);

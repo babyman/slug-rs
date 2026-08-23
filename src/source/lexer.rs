@@ -159,11 +159,13 @@ impl Lexer {
                     | TokenKind::ShiftLeft
                     | TokenKind::ShiftRight
                     | TokenKind::Plus
+                    | TokenKind::PlusColon
                     | TokenKind::Minus
                     | TokenKind::Star
                     | TokenKind::Slash
                     | TokenKind::Percent
                     | TokenKind::Colon
+                    | TokenKind::ColonPlus
                     | TokenKind::At
                     | TokenKind::Caret
                     | TokenKind::Dot
@@ -177,7 +179,22 @@ impl Lexer {
         }
         matches!(
             self.input.get(index),
-            Some('+' | '-' | '*' | '/' | '<' | '>' | '=' | '!' | '&' | '|' | '@' | '^' | '.',)
+            Some(
+                '+' | '-'
+                    | '*'
+                    | '/'
+                    | '%'
+                    | ':'
+                    | '<'
+                    | '>'
+                    | '='
+                    | '!'
+                    | '&'
+                    | '|'
+                    | '@'
+                    | '^'
+                    | '.',
+            )
         )
     }
     fn push(tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {
@@ -211,7 +228,13 @@ impl Lexer {
                 }
                 '+' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Plus, span);
+                    let kind = if self.peek() == Some(':') {
+                        self.next();
+                        TokenKind::PlusColon
+                    } else {
+                        TokenKind::Plus
+                    };
+                    Self::push(&mut result, kind, span);
                 }
                 '-' => {
                     self.next();
@@ -314,7 +337,13 @@ impl Lexer {
                 }
                 ':' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Colon, span);
+                    let kind = if self.peek() == Some('+') {
+                        self.next();
+                        TokenKind::ColonPlus
+                    } else {
+                        TokenKind::Colon
+                    };
+                    Self::push(&mut result, kind, span);
                 }
                 '@' => {
                     self.next();

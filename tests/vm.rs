@@ -55,6 +55,35 @@ fn executes_checked_bitwise_and_shift_bytecode() {
 }
 
 #[test]
+fn appends_values_through_private_list_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    let two = main.constant(Value::Int(2));
+    main.emit(Op::Constant(one))
+        .emit(Op::List(1))
+        .emit(Op::Constant(two))
+        .emit(Op::ListAppend)
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::List(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+    );
+
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    let two = main.constant(Value::Int(2));
+    main.emit(Op::Constant(one))
+        .emit(Op::Constant(two))
+        .emit(Op::List(1))
+        .emit(Op::ListPrepend)
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::List(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+    );
+}
+
+#[test]
 fn turns_destructuring_match_failure_into_a_source_located_runtime_error() {
     let mut main = Chunk::new("main", 0);
     main.emit_at(Op::MatchFailure, SourceSpan::new("destructure.slug", 4, 7));

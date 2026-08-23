@@ -14,7 +14,8 @@ use cleanup::{Cleanup, Deferred};
 pub use error::{CallFrame, RuntimeError, RuntimeErrorKind};
 use operations::{
     add, bit_not, bitwise, construct_struct, copy_struct, divide, index_value, is_map_key,
-    matches_pattern, modulo, multiply, negate, numbers, shift, slice_value, subtract,
+    list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
+    slice_value, subtract,
 };
 
 pub type VmResult<T> = Result<T, RuntimeError>;
@@ -307,6 +308,12 @@ impl Vm {
                 Op::ShiftRight => {
                     self.binary(span, |left, right| shift(left, right, i64::checked_shr))?;
                 }
+                Op::ListAppend => self.binary(span, |list, value| {
+                    list_append(list, value).map_err(|message| (RuntimeErrorKind::Type, message))
+                })?,
+                Op::ListPrepend => self.binary(span, |value, list| {
+                    list_prepend(value, list).map_err(|message| (RuntimeErrorKind::Type, message))
+                })?,
                 Op::List(count) => {
                     let values = self.pop_values(count, span.clone())?;
                     self.stack.push(Value::List(Rc::new(values)));

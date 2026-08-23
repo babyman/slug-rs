@@ -146,6 +146,8 @@ pub enum Op {
     BitXor,
     ShiftLeft,
     ShiftRight,
+    ListAppend,
+    ListPrepend,
     Negate,
     Not,
     BitNot,

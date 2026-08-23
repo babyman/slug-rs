@@ -107,6 +107,43 @@ fn evaluates_checked_bitwise_and_shift_operators() {
 }
 
 #[test]
+fn appends_and_prepends_list_values_with_checked_operands() {
+    let path = fixture_path("list-concatenation");
+    fs::write(
+        &path,
+        "val original = [1, 2]\nval appended = original :+ 3\nprintln(original, appended, 0 +: original)\n",
+    )
+        .expect("write list concatenation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run list concatenation source");
+    fs::remove_file(&path).expect("remove list concatenation source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[1, 2] [1, 2, 3] [0, 1, 2]\n"
+    );
+
+    fs::write(&path, "1 :+ 2\n").expect("write invalid list concatenation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid list concatenation source");
+    fs::remove_file(path).expect("remove invalid list concatenation source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: left operand of :+ must be a list")
+    );
+}
+
+#[test]
 fn parses_decimal_hexadecimal_and_byte_literals() {
     let path = fixture_path("numeric-and-byte-literals");
     fs::write(

@@ -200,6 +200,8 @@ impl Parser {
                 TokenKind::Star => (Binary::Multiply, 10),
                 TokenKind::Slash => (Binary::Divide, 10),
                 TokenKind::Percent => (Binary::Modulo, 10),
+                TokenKind::ColonPlus => (Binary::Append, 11),
+                TokenKind::PlusColon => (Binary::Prepend, 11),
                 _ => break,
             };
             if precedence < minimum {
