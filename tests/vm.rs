@@ -1,6 +1,6 @@
 use slug_vm::{
-    Capture, Chunk, MatchMapKey, MatchRest, Op, Program, RuntimeErrorKind, SchemaField, SourceSpan,
-    Value, Vm, compile,
+    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, Op, Program, RuntimeErrorKind,
+    SchemaField, SourceSpan, Value, Vm, compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {
@@ -494,6 +494,22 @@ fn preserves_integer_precision_and_rejects_oversized_calls() {
         .expect_err("oversized call must be rejected");
     assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
     assert_eq!(error.message, "call argument count is too large");
+}
+
+#[test]
+fn rejects_non_list_spread_arguments_in_private_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let value = main.constant(Value::Int(1));
+    main.emit(Op::Nil)
+        .emit(Op::Constant(value))
+        .emit(Op::CallSpread(vec![CallArgumentKind::Spread]))
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("non-list call spread must be checked");
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(error.message, "call spread expects a list");
 }
 
 #[test]
