@@ -26,6 +26,22 @@ fn executes_integer_arithmetic() {
 }
 
 #[test]
+fn repeats_strings_through_private_multiply_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let dash = main.constant(Value::string("-"));
+    let two = main.constant(Value::Int(2));
+    main.emit(Op::Constant(dash))
+        .emit(Op::Constant(two))
+        .emit(Op::Multiply)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::string("--")
+    );
+}
+
+#[test]
 fn executes_checked_bitwise_and_shift_bytecode() {
     let mut main = Chunk::new("main", 0);
     let left = main.constant(Value::Int(6));

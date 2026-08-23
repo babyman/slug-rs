@@ -153,6 +153,10 @@ produce new lists: `list :+ value` appends one value, while `value +: list`
 prepends one value. The directional list operand must be a list; otherwise
 evaluation produces a checked runtime type error.
 
+`string * count` repeats a string `count` times. The count must be a
+non-negative integer. Negative, non-integer, or counts whose result cannot be
+represented or reserved produce checked runtime type errors.
+
 `if` is an expression. Its condition is parenthesized, and both branches are
 blocks or nested `if` expressions:
 

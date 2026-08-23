@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added checked `string * non-negative-integer` repetition.
 - Added immutable list concatenation (`+`), append (`:+`), and prepend (`+:`)
   with checked list-operand failures.
 - Added checked integer bitwise, shift, and prefix `~` operators.

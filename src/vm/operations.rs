@@ -40,6 +40,34 @@ pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeError
     integer_or_float(left, right, i64::checked_sub, |a, b| a - b)
 }
 pub(super) fn multiply(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    if let (Value::Str(value), Value::Int(count)) = (&left, &right) {
+        let count = usize::try_from(*count).map_err(|_| {
+            (
+                RuntimeErrorKind::Type,
+                "string repetition count must be non-negative".into(),
+            )
+        })?;
+        if value.is_empty() {
+            return Ok(Value::string(""));
+        }
+        let capacity = value.len().checked_mul(count).ok_or_else(|| {
+            (
+                RuntimeErrorKind::Type,
+                "string repetition is too large".into(),
+            )
+        })?;
+        let mut repeated = String::new();
+        repeated.try_reserve_exact(capacity).map_err(|_| {
+            (
+                RuntimeErrorKind::Type,
+                "string repetition is too large".into(),
+            )
+        })?;
+        for _ in 0..count {
+            repeated.push_str(value);
+        }
+        return Ok(Value::string(repeated));
+    }
     integer_or_float(left, right, i64::checked_mul, |a, b| a * b)
 }
 pub(super) fn divide(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {

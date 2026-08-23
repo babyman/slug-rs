@@ -74,6 +74,36 @@ fn evaluates_source_modulo_with_checked_zero_division() {
 }
 
 #[test]
+fn repeats_strings_with_non_negative_integer_counts() {
+    let path = fixture_path("string-repetition");
+    fs::write(&path, "println(\"-\" * 2, \"x\" * 0)\n").expect("write string repetition source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run string repetition source");
+    fs::remove_file(&path).expect("remove string repetition source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "-- \n");
+
+    fs::write(&path, "\"x\" * -1\n").expect("write invalid string repetition source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid string repetition source");
+    fs::remove_file(path).expect("remove invalid string repetition source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: string repetition count must be non-negative")
+    );
+}
+
+#[test]
 fn evaluates_checked_bitwise_and_shift_operators() {
     let path = fixture_path("bitwise-and-shifts");
     fs::write(&path, "println(6 & 3, 4 | 1, 6 ^ 3, ~0, 1 << 4, -8 >> 2)\n")
