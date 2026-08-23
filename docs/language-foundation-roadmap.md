@@ -122,7 +122,7 @@ and the host boundary in
 
 - [x] Implement the immutable configuration store and precedence rules from
   [`language/configuration.md`](language/configuration.md).
-- [ ] Implement `cfg`, `argv`, and `argm` with module-relative namespaces and
+- [x] Implement `cfg`, `argv`, and `argm` with module-relative namespaces and
   checked conversions.
 - [ ] Add portable fixture metadata for outcome, streams, roots, timeout, and
   optional exact diagnostics.

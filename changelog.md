@@ -11,7 +11,9 @@
 - Added module fixture coverage for library fallback and imported-module failure
   locations, alongside resolution, caching, cycles, and live exports.
 - Added immutable configuration collection with TOML, environment, and program
-  option precedence; `cfg`, `argv`, and `argm` remain future work.
+  option precedence.
+- Added `cfg`, `argv`, and `argm` builtins with module-relative configuration
+  keys and fallback-shaped environment and command-line conversion.
 - Retained top-level declaration documentation and evaluated tag arguments in
   module instances for future metadata introspection.
 - Added source-callable overload sets for distinct imported signatures and

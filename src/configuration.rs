@@ -17,6 +17,8 @@ pub enum ConfigurationValue {
 #[derive(Clone, Debug, Default)]
 pub struct Configuration {
     values: HashMap<String, ConfigurationValue>,
+    arguments: Vec<String>,
+    entry_module: String,
 }
 
 impl Configuration {
@@ -43,16 +45,106 @@ impl Configuration {
                 values.insert(key.replace("__", "."), ConfigurationValue::Text(value));
             }
         }
-        for (key, value) in parse_options(arguments, entry_module) {
+        for (key, value) in parse_arguments(arguments, entry_module).options {
             values.insert(key, value);
         }
-        Self { values }
+        Self {
+            values,
+            arguments: arguments.to_vec(),
+            entry_module: entry_module.into(),
+        }
     }
 
     /// Returns the selected value for one fully-qualified configuration key.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&ConfigurationValue> {
         self.values.get(key)
+    }
+
+    /// Resolves a configured value using the supplied Slug fallback's shape.
+    #[must_use]
+    pub fn resolve(&self, key: &str, fallback: &Value) -> Value {
+        self.values
+            .get(key)
+            .map_or_else(|| fallback.clone(), |value| resolve_value(value, fallback))
+    }
+
+    /// Returns the unmodified program arguments after the entry program name.
+    #[must_use]
+    pub fn arguments(&self) -> &[String] {
+        &self.arguments
+    }
+
+    /// Returns parsed program options and positional arguments as Slug values.
+    #[must_use]
+    pub fn argument_map(&self) -> Value {
+        let parsed = parse_arguments(&self.arguments, &self.entry_module);
+        let options = parsed
+            .options
+            .into_iter()
+            .map(|(key, value)| (Value::string(key), stored_value(value)))
+            .collect::<Vec<_>>();
+        Value::Map(
+            vec![
+                (Value::string("options"), Value::Map(options.into())),
+                (
+                    Value::string("positional"),
+                    Value::List(
+                        parsed
+                            .positional
+                            .into_iter()
+                            .map(Value::string)
+                            .collect::<Vec<_>>()
+                            .into(),
+                    ),
+                ),
+            ]
+            .into(),
+        )
+    }
+}
+
+fn resolve_value(value: &ConfigurationValue, fallback: &Value) -> Value {
+    match value {
+        ConfigurationValue::Value(value) => value.clone(),
+        ConfigurationValue::Text(value) => convert_text(value, fallback),
+        ConfigurationValue::TextList(values) => Value::List(
+            values
+                .iter()
+                .map(|value| Value::string(value.as_str()))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+    }
+}
+
+fn stored_value(value: ConfigurationValue) -> Value {
+    match value {
+        ConfigurationValue::Value(value) => value,
+        ConfigurationValue::Text(value) => Value::string(value),
+        ConfigurationValue::TextList(values) => Value::List(
+            values
+                .into_iter()
+                .map(Value::string)
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+    }
+}
+
+fn convert_text(value: &str, fallback: &Value) -> Value {
+    match fallback {
+        Value::Int(_) => value
+            .parse::<i64>()
+            .map_or_else(|_| Value::string(value), Value::Int),
+        Value::Float(_) => value
+            .parse::<f64>()
+            .map_or_else(|_| Value::string(value), Value::Float),
+        Value::Bool(_) => value
+            .parse::<bool>()
+            .map_or_else(|_| Value::string(value), Value::Bool),
+        Value::List(_) => Value::List(vec![Value::string(value)].into()),
+        _ => Value::string(value),
     }
 }
 
@@ -105,14 +197,22 @@ fn toml_value(value: &toml::Value) -> Option<Value> {
     }
 }
 
-fn parse_options(arguments: &[String], entry_module: &str) -> HashMap<String, ConfigurationValue> {
+struct ParsedArguments {
+    options: HashMap<String, ConfigurationValue>,
+    positional: Vec<String>,
+}
+
+fn parse_arguments(arguments: &[String], entry_module: &str) -> ParsedArguments {
     let mut options = HashMap::<String, Vec<String>>::new();
+    let mut positional = Vec::new();
     let mut index = 0;
     while let Some(argument) = arguments.get(index) {
         if argument == "--" {
+            positional.extend(arguments[index + 1..].iter().cloned());
             break;
         }
         let Some((name, inline)) = option_name(argument) else {
+            positional.push(argument.clone());
             index += 1;
             continue;
         };
@@ -135,7 +235,7 @@ fn parse_options(arguments: &[String], entry_module: &str) -> HashMap<String, Co
         options.entry(key).or_default().push(value);
         index += 1;
     }
-    options
+    let options = options
         .into_iter()
         .map(|(key, values)| {
             let value = match values.as_slice() {
@@ -144,7 +244,11 @@ fn parse_options(arguments: &[String], entry_module: &str) -> HashMap<String, Co
             };
             (key, value)
         })
-        .collect()
+        .collect();
+    ParsedArguments {
+        options,
+        positional,
+    }
 }
 
 fn option_name(argument: &str) -> Option<(&str, Option<&str>)> {

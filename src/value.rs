@@ -3,6 +3,14 @@ use std::{cell::RefCell, collections::HashMap, fmt, fmt::Write as _, rc::Rc};
 /// Host functions installed deliberately through the VM API.
 pub type NativeFunction = fn(&[Value]) -> Result<Value, String>;
 
+/// VM-owned builtins that require host-service context at call time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Builtin {
+    Cfg,
+    Argv,
+    Argm,
+}
+
 /// Shared storage for a lexical binding captured by one or more closures.
 pub(crate) type BindingCell = Rc<RefCell<Value>>;
 
@@ -66,6 +74,7 @@ pub enum Value {
         name: Rc<str>,
         function: NativeFunction,
     },
+    Builtin(Builtin),
     /// Private callable group assembled by a multi-module import.
     Overloads(Rc<Vec<Value>>),
     /// A live module binding exposed through an import map.
@@ -99,7 +108,7 @@ impl Value {
             Self::Map(_) => "map",
             Self::StructSchema(_) => "struct schema",
             Self::Struct(_) => "struct",
-            Self::Closure(_) | Self::Native { .. } | Self::Overloads(_) => "fn",
+            Self::Closure(_) | Self::Native { .. } | Self::Builtin(_) | Self::Overloads(_) => "fn",
         }
     }
 
@@ -152,6 +161,7 @@ impl PartialEq for Value {
             (Self::Native { function: a, .. }, Self::Native { function: b, .. }) => {
                 std::ptr::fn_addr_eq(*a, *b)
             }
+            (Self::Builtin(a), Self::Builtin(b)) => a == b,
             _ => false,
         }
     }
@@ -188,6 +198,7 @@ impl fmt::Debug for Value {
             }
             Self::Closure(_) => write!(f, "<fn>"),
             Self::Native { name, .. } => write!(f, "<native {name}>"),
+            Self::Builtin(builtin) => write!(f, "<builtin {builtin:?}>"),
             Self::Overloads(_) => write!(f, "<overloads>"),
             Self::Binding { name, .. } => write!(f, "<binding {name}>"),
         }

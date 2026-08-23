@@ -156,12 +156,14 @@ impl ModuleLoader {
         if let Some(program) = self.state.compiled.borrow().get(&source.path) {
             return Ok(program.clone());
         }
-        let program = compile(&source.path.to_string_lossy(), &source.text).map_err(|error| {
-            ModuleLoadError::Source {
-                path: source.path.clone(),
-                message: error.to_string(),
-            }
-        })?;
+        let mut program =
+            compile(&source.path.to_string_lossy(), &source.text).map_err(|error| {
+                ModuleLoadError::Source {
+                    path: source.path.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+        program.set_module_name(name);
         self.state
             .compiled
             .borrow_mut()

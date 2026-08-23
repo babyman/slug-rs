@@ -275,6 +275,7 @@ pub struct Program {
     declarations: Vec<ModuleDeclaration>,
     exports: Vec<String>,
     has_entrypoint: bool,
+    module_name: String,
 }
 
 impl Program {
@@ -328,6 +329,12 @@ impl Program {
         self.has_entrypoint
     }
 
+    /// Fully-qualified module name used for module-relative host services.
+    #[must_use]
+    pub fn module_name(&self) -> &str {
+        &self.module_name
+    }
+
     pub(crate) fn set_bindings(&mut self, bindings: Vec<String>) {
         self.bindings = bindings;
     }
@@ -342,5 +349,10 @@ impl Program {
 
     pub(crate) fn set_has_entrypoint(&mut self, has_entrypoint: bool) {
         self.has_entrypoint = has_entrypoint;
+    }
+
+    /// Sets the module name used by module-relative host services.
+    pub fn set_module_name(&mut self, module_name: impl Into<String>) {
+        self.module_name = module_name.into();
     }
 }

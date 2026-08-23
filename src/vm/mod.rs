@@ -8,7 +8,7 @@ use std::{
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, Program, SourceSpan, Value,
     bytecode::Op,
-    value::{BindingCell, Closure, binding_cell, module_binding},
+    value::{BindingCell, Builtin, Closure, binding_cell, module_binding},
 };
 
 mod cleanup;
@@ -63,15 +63,17 @@ impl Vm {
 
     #[must_use]
     pub fn with_module_loader(module_loader: ModuleLoader) -> Self {
-        Self {
+        let mut vm = Self {
             module_loader: Some(module_loader),
             ..Self::default()
-        }
+        };
+        vm.install_configuration_builtins();
+        vm
     }
 
     pub(crate) fn with_module_bindings(module_loader: &ModuleLoader, names: &[String]) -> Self {
         let mut vm = Self::with_module_loader(module_loader.clone());
-        vm.globals = module_loader.native_globals();
+        vm.globals.extend(module_loader.native_globals());
         for name in names {
             vm.globals
                 .insert(name.clone(), module_binding(name.as_str()));
@@ -167,6 +169,15 @@ impl Vm {
             module_loader.define_native(name.clone(), value.clone());
         }
         self.globals.insert(name, value);
+    }
+
+    fn install_configuration_builtins(&mut self) {
+        self.globals
+            .insert("cfg".into(), Value::Builtin(Builtin::Cfg));
+        self.globals
+            .insert("argv".into(), Value::Builtin(Builtin::Argv));
+        self.globals
+            .insert("argm".into(), Value::Builtin(Builtin::Argm));
     }
 
     /// Executes a zero-argument entry chunk.
@@ -701,7 +712,10 @@ impl Vm {
                 }
                 Op::Defer { mode } => {
                     let action = self.pop(span.clone())?;
-                    if !matches!(action, Value::Closure(_) | Value::Native { .. }) {
+                    if !matches!(
+                        action,
+                        Value::Closure(_) | Value::Native { .. } | Value::Builtin(_)
+                    ) {
                         return Err(self.error(
                             RuntimeErrorKind::Type,
                             "defer expects a callable action".into(),
@@ -907,6 +921,19 @@ impl Vm {
                         span,
                     )
                 })?;
+                self.stack.truncate(base);
+                self.stack.push(result);
+            }
+            Value::Builtin(builtin) => {
+                let arguments = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value.resolve().map_err(|message| {
+                            self.error(RuntimeErrorKind::Name, message, span.clone())
+                        })
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                let result = self.call_builtin(builtin, program, &arguments, span.clone())?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -1246,6 +1273,77 @@ impl Vm {
             }
         }
         Ok((positional, named))
+    }
+
+    fn call_builtin(
+        &self,
+        builtin: Builtin,
+        program: &Program,
+        arguments: &[Value],
+        span: Option<SourceSpan>,
+    ) -> VmResult<Value> {
+        let configuration = self
+            .module_loader
+            .as_ref()
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::Module,
+                    "configuration service is not configured".into(),
+                    span.clone(),
+                )
+            })?
+            .configuration();
+        match builtin {
+            Builtin::Cfg => {
+                if arguments.len() != 2 {
+                    return Err(self.error(
+                        RuntimeErrorKind::Arity,
+                        format!("`cfg` expects 2 arguments, got {}", arguments.len()),
+                        span,
+                    ));
+                }
+                let Value::Str(key) = &arguments[0] else {
+                    return Err(self.error(
+                        RuntimeErrorKind::Type,
+                        format!("cfg key expects str, got {}", arguments[0].type_name()),
+                        span,
+                    ));
+                };
+                let key = if key.contains('.') || program.module_name().is_empty() {
+                    key.to_string()
+                } else {
+                    format!("{}.{}", program.module_name(), key)
+                };
+                Ok(configuration.resolve(&key, &arguments[1]))
+            }
+            Builtin::Argv => {
+                if !arguments.is_empty() {
+                    return Err(self.error(
+                        RuntimeErrorKind::Arity,
+                        format!("`argv` expects no arguments, got {}", arguments.len()),
+                        span,
+                    ));
+                }
+                Ok(Value::List(
+                    configuration
+                        .arguments()
+                        .iter()
+                        .map(|argument| Value::string(argument.as_str()))
+                        .collect::<Vec<_>>()
+                        .into(),
+                ))
+            }
+            Builtin::Argm => {
+                if !arguments.is_empty() {
+                    return Err(self.error(
+                        RuntimeErrorKind::Arity,
+                        format!("`argm` expects no arguments, got {}", arguments.len()),
+                        span,
+                    ));
+                }
+                Ok(configuration.argument_map())
+            }
+        }
     }
 
     fn bind_call_arguments(

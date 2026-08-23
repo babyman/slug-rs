@@ -64,6 +64,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Retained top-level declaration, tag, and documentation metadata | implemented | `tests/module_loader.rs` |
 | Automatic local zero-argument `main` entrypoint invocation | implemented | `tests/cli.rs` |
 | Immutable configuration store and source precedence | implemented | `tests/configuration.rs` |
+| `cfg`, `argv`, and `argm` builtins | implemented | `tests/configuration.rs` |
 | Foreign declarations and module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |

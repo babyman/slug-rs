@@ -378,6 +378,22 @@ impl Vm {
                     self.drive_cleanup(program)
                 }
             }
+            Value::Builtin(builtin) => {
+                let arguments = if recovers_error {
+                    let error = self
+                        .active_error()
+                        .expect("error cleanup has an active error");
+                    vec![Self::error_value(error)]
+                } else {
+                    Vec::new()
+                };
+                let value = self.call_builtin(builtin, program, &arguments, None)?;
+                if recovers_error {
+                    self.recover_from_error(program, value)
+                } else {
+                    self.drive_cleanup(program)
+                }
+            }
             _ => unreachable!("defer validates callability"),
         }
     }
