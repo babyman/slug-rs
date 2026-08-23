@@ -194,6 +194,26 @@ fn binds_named_source_arguments_and_reports_binding_errors() {
 }
 
 #[test]
+fn rejects_duplicate_function_parameter_names() {
+    let path = fixture_path("duplicate-parameter");
+    fs::write(&path, "val duplicate = fn(value, value) { value }\n")
+        .expect("write duplicate parameter source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run duplicate parameter source");
+    fs::remove_file(path).expect("remove duplicate parameter source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: duplicate parameter 'value'")
+    );
+}
+
+#[test]
 fn binds_final_variadic_parameters() {
     let path = fixture_path("variadic-parameters");
     fs::write(
