@@ -278,6 +278,33 @@ fn evaluates_omitted_parameter_defaults_in_the_callee() {
 }
 
 #[test]
+fn default_expressions_capture_the_function_defining_environment() {
+    let path = fixture_path("default-closure-environment");
+    fs::write(
+        &path,
+        "val make = fn(prefix) { fn(suffix = prefix) { suffix } }\n\
+         val fromMaker = make(\"captured\")\n\
+         val caller = fn(prefix) { fromMaker() }\n\
+         println(caller(\"caller\"), fromMaker(suffix = \"explicit\"))\n",
+    )
+    .expect("write default closure source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run default closure source");
+    fs::remove_file(path).expect("remove default closure source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "captured explicit\n"
+    );
+}
+
+#[test]
 fn function_match_bodies_observe_bound_defaults_and_variadics() {
     let path = fixture_path("function-match-call-binding");
     fs::write(
