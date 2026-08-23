@@ -439,9 +439,15 @@ val answer = math["forty"]
 val next = math.inc(answer)
 ```
 
-Only a top-level declaration tagged with `@export` is exported. Exported
-bindings may be selected from the module map or destructured with an ordinary
-binding pattern:
+Only a top-level declaration prefixed with the `export` keyword is exported.
+The keyword may modify a `val`, `var`, or `foreign` declaration and is invalid
+in a nested scope. Exported bindings may be selected from the module map or
+destructured with an ordinary binding pattern:
+
+```slug
+export val increment = fn(n) { n + 1 }
+export foreign trim = fn(@str value)
+```
 
 ```slug
 val { map, filter } = import("slug.std")
@@ -460,6 +466,26 @@ when their signatures are distinct.
 The standard library consists of modules loaded through this same mechanism.
 Its public API is defined by the library reference, not by this specification.
 
+### Program entrypoint
+
+After a program module's top-level statements succeed, the runtime invokes the
+first locally declared, top-level function named `main` that is eligible for a
+call with no supplied arguments. A function is eligible when it has no
+parameters or every declared parameter has a default. A required or variadic
+parameter without a default makes that function ineligible.
+
+Selection follows source declaration order, including the order of callable
+overloads. Imported functions named `main` do not participate. If no local
+`main` is eligible, evaluation ends after the top-level statements. If several
+are eligible, only the first is invoked, using ordinary default-argument
+binding.
+
+```slug
+val main = fn(mode = "serve") {
+  println(mode)
+}
+```
+
 ## Configuration
 
 `cfg(key, default)` is a builtin that reads the immutable, process-wide
@@ -476,22 +502,24 @@ configuration contract.
 ## Tags, documentation, and foreign declarations
 
 A tag has the form `@name` or `@name(arguments)` and prefixes a `val`, `var`,
-or `foreign` declaration. Tags may also prefix function parameters. Tag
-arguments are expressions evaluated in the declaration's module environment.
-Tags attach metadata and do not, by themselves, change evaluation semantics.
+`foreign`, or exported declaration. Tags may also prefix function parameters.
+Tag arguments are expressions evaluated in the declaration's module
+environment. Tags attach metadata and do not, by themselves, change evaluation
+semantics. `export` is a reserved keyword rather than a tag name, so `@export`
+is invalid.
 
 ```slug
-@export
-val increment = fn(n) { n + 1 }
+@deprecated
+export val increment = fn(n) { n + 1 }
 
-@export
-foreign trim = fn(@str value)
+export foreign trim = fn(@str value)
 ```
 
-`@export` makes a top-level binding visible to `import`. Callable declarations
-with the same name form overloads when their signatures are distinct. This
-includes a local function and a `foreign` declaration. A duplicate callable
-signature is an error; a non-callable `val` remains immutable.
+The `export` modifier makes a top-level binding visible to `import`. Callable
+declarations with the same name form overloads when their signatures are
+distinct. This includes a local function and a `foreign` declaration. A
+duplicate callable signature is an error; a non-callable `val` remains
+immutable.
 
 A `foreign` declaration names a host-supplied callable in the current module.
 It is resolved before module code executes. If no implementation is registered
@@ -501,17 +529,17 @@ for ordinary call binding and introspection.
 
 A doc block uses `/** ... */`. Every non-empty content line must begin with
 `*`, otherwise parsing fails. At top level, a doc block attaches to the next
-`val`, `var`, or `foreign` declaration, allowing intervening tags and comments.
-The first meaningful doc block in a module is the module documentation when it
-is followed by a blank line. Documentation and tags are observable through
-`slug.meta` introspection.
+`val`, `var`, or `foreign` declaration, whether or not it is exported, allowing
+intervening tags, the `export` modifier, and comments. The first meaningful doc
+block in a module is the module documentation when it is followed by a blank
+line. Documentation and tags are observable through `slug.meta` introspection.
 
 ## Static checking
 
 Slug always performs semantic validation, including `recur` tail-position
-validation, struct-schema checks, and `@main` validation. Inferred type
-checking is optional and is enabled by the CLI `-type-check` flag. When it is
-enabled, type diagnostics prevent execution. Without it, type tags remain
+validation, struct-schema checks, and program-entrypoint discovery. Inferred
+type checking is optional and is enabled by the CLI `-type-check` flag. When it
+is enabled, type diagnostics prevent execution. Without it, type tags remain
 metadata and unsupported operations fail through normal runtime errors.
 
 The current Rust subset parses and retains declaration, parameter, return, and

@@ -93,13 +93,13 @@ and the host boundary in
   services without exposing host capabilities as ordinary Slug bindings.
 - [ ] Implement `import(name)` resolution, module caching, and checked module
   diagnostics.
-- [ ] Implement top-level `@export` discovery and module export maps.
+- [ ] Implement top-level `export` declarations and module export maps.
 - [ ] Predeclare statically knowable top-level bindings and support cyclic module
   initialization with checked use-before-initialization failures.
 - [ ] Implement live imported bindings, shadowing behavior, import conflicts,
   and callable combination rules.
-- [ ] Invoke the unique local `@main` entrypoint after successful top-level
-  evaluation.
+- [ ] Invoke the first eligible local `main` function after successful
+  top-level evaluation.
 - [ ] Add the minimum `slug.test` and `slug.std` surface needed to execute the
   first non-concurrent conformance fixtures.
 - [ ] Add module fixtures for relative resolution, library fallback, caching,

@@ -8,8 +8,10 @@ program = { statement_sep } , { statement , { statement_sep } } , EOF ;
 (* NEWLINE acts as a separator when ASI rules say it terminates the statement. *)
 statement_sep = ";" | NEWLINE ;
 
-(* Tags can prefix var/val/foreign declarations. Tags also appear in parameter lists. *)
+(* Tags can prefix var/val/foreign declarations, including exported declarations.
+   Tags also appear in parameter lists. *)
 statement = tag_prefixed_decl
+          | export_decl
           | doc_comment_stmt
           | foreign_decl
           | return_stmt
@@ -19,8 +21,11 @@ statement = tag_prefixed_decl
           | expression_stmt
           ;
 
-tag_prefixed_decl = tag_prefix , ( var_expr | val_expr | foreign_decl ) ;
+tag_prefixed_decl = tag_prefix , ( export_decl | var_expr | val_expr | foreign_decl ) ;
 tag_prefix = tag , { { statement_sep } , tag } , { statement_sep } ;
+
+(* export declarations are valid only at module top level. *)
+export_decl = "export" , ( var_expr | val_expr | foreign_decl ) ;
 
 return_stmt = "return" , expression ;
 throw_stmt = "throw" , expression ;
@@ -214,6 +219,7 @@ type_term = type_constructor , [ "<" , type_annotation , { "," , type_annotation
 type_constructor = identifier | "fn" | "[" , [ type_annotation , { "," , type_annotation } ] , "]" ;
 
 (* Lexical forms (simplified): *)
+(* Reserved keywords, including export, cannot be identifiers or tag names. *)
 identifier = ident_start , { ident_start | digit } ;
 ident_start = "_" | UNICODE_LETTER | UNICODE_MARK ;
 digit = UNICODE_DIGIT ;

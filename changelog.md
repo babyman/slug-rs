@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Replaced the special `@export` tag with the `export` declaration keyword and
+  replaced `@main` with source-ordered discovery of a local `main` function
+  eligible for a zero-argument call in the target language specification.
 - Added declaration, parameter, return, and struct-field annotation syntax,
   plus opt-in static validation through `-type-check`, generic call inference,
   and explicit type applications.

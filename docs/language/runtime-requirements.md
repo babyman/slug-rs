@@ -242,14 +242,21 @@ For a program module, the runtime MUST perform these phases in order:
 3. create the module environment and predeclare statically knowable top-level
    bindings for cyclic imports;
 4. evaluate top-level statements in source order;
-5. if top-level evaluation succeeds, invoke the module's unique `@main`
-   function with no arguments.
+5. if top-level evaluation succeeds, find the first locally declared,
+   top-level function named `main` whose parameters are fully satisfied without
+   supplied arguments, and invoke it with no arguments.
 
-Modules without `@main` finish after top-level evaluation. A module with more
-than one locally declared `@main` function is a semantic error. An imported
-`@main` does not become an entrypoint. Evaluation completes with either a Slug
-value or a language runtime error, and a top-level failure MUST prevent
-entrypoint invocation.
+A `main` function is eligible when it declares no parameters or every declared
+parameter has a default. Selection follows source declaration order, including
+the source order of callable overloads. A required or variadic parameter without
+a default makes that function ineligible. Imported functions named `main` are
+not entrypoints. A module without an eligible local `main` finishes after
+top-level evaluation.
+
+The selected function's defaults are evaluated by ordinary call binding. The
+runtime does not reject multiple eligible `main` functions; only the first is
+invoked. Evaluation completes with either a Slug value or a language runtime
+error, and a top-level failure MUST prevent entrypoint invocation.
 
 Both whole-program evaluation and direct function evaluation establish an
 implicit root task owner. The runtime must settle that owner before returning a
