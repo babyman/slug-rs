@@ -10,6 +10,8 @@ summary.
 Complete the milestones in dependency order. A milestone is complete only when
 its accepted source forms, checked failures, implementation tests, language
 records, support matrix, README capability statement, and changelog entry agree.
+Public `slug.*` library modules are deliberately deferred until the language,
+module system, runtime services, and VM behavior they expose are complete.
 
 ## 1. Complete function-call semantics
 
@@ -82,11 +84,10 @@ note.
   `???` form in dependency order.
   - [x] Parse declaration/parameter tags and evaluate their arguments.
   - [x] Parse and attach strict documentation blocks to top-level declarations.
-  - [ ] Retain module metadata and implement `slug.meta` introspection.
   - [ ] Implement foreign declarations and the `???` form.
 - [x] Run `make check` after each independently supported feature slice.
 
-## 3. Add modules and the initial standard library
+## 3. Add modules
 
 Follow the module rules in
 [Modules, imports, and exports](language/language-specification.md#modules-imports-and-exports)
@@ -102,15 +103,15 @@ and the host boundary in
   initialization with checked use-before-initialization failures.
 - [ ] Implement live imported bindings, shadowing behavior, import conflicts,
   and callable combination rules.
+- [ ] Retain declaration, tag, and documentation metadata in the module model
+  for later introspection.
 - [ ] Invoke the first eligible local `main` function after successful
   top-level evaluation.
-- [ ] Add the minimum `slug.test` and `slug.std` surface needed to execute the
-  first non-concurrent conformance fixtures.
 - [ ] Add module fixtures for relative resolution, library fallback, caching,
   cycles, live exports, and failure locations.
 - [ ] Run `make check`.
 
-## 4. Add configuration and the non-concurrent conformance runner
+## 4. Add configuration and the conformance harness
 
 - [ ] Implement the immutable configuration store and precedence rules from
   [`language/configuration.md`](language/configuration.md).
@@ -120,9 +121,8 @@ and the host boundary in
   optional exact diagnostics.
 - [ ] Build a runner that rejects unclassified fixtures and treats every host
   panic as a conformance failure.
-- [ ] Run all non-concurrent supported and error-parity fixtures.
-- [ ] Verify exit status, standard output, standard error, diagnostic category,
-  and source location where fixture metadata makes them exact.
+- [ ] Prove the runner with library-independent fixtures, including exit status,
+  standard output, standard error, diagnostic category, and source location.
 - [ ] Run `make check`.
 
 ## 5. Add structured concurrency
@@ -130,14 +130,33 @@ and the host boundary in
 - [ ] Implement the implicit root task owner and explicit nurseries.
 - [ ] Implement task handles, spawn capture, ownership, limits, cancellation,
   settlement, and repeated await behavior.
-- [ ] Implement channels and the `slug.channel` public surface.
+- [ ] Implement channel values and their checked runtime operations.
 - [ ] Implement `select` cases for receive, send, timer, await, and default.
 - [ ] Integrate task failure with `throw`, deferred cleanup, and checked runtime
   diagnostics.
-- [ ] Implement the timer host service and the required `slug.time` surface.
-- [ ] Run the remaining concurrency fixtures and `make check`.
+- [ ] Implement the timer host service used by timer-oriented language forms.
+- [ ] Add focused runtime and VM coverage for concurrency behavior.
+- [ ] Run `make check`.
 
-## 6. Optimize only from measurements
+## 6. Add the public library and run full conformance
+
+Implement the public library only after its language and runtime foundations
+are stable:
+
+- [ ] Implement `slug.meta` introspection over retained module, declaration,
+  tag, and documentation metadata.
+- [ ] Implement `slug.test` assertions and fixture support.
+- [ ] Implement the required `slug.std` core and collection operations.
+- [ ] Implement the `slug.channel` API over the completed channel and task
+  runtime.
+- [ ] Implement the `slug.time` API over the completed timer host service.
+- [ ] Run all non-concurrent supported and error-parity fixtures.
+- [ ] Run the remaining concurrency fixtures.
+- [ ] Verify exit status, standard output, standard error, diagnostic category,
+  and source location where fixture metadata makes them exact.
+- [ ] Run `make check`.
+
+## 7. Optimize only from measurements
 
 After the source foundation and representative workloads exist, follow the
 separate [VM Optimization Plan](vm-optimization.md).
