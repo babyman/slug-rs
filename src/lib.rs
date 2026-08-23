@@ -8,6 +8,7 @@
 
 mod bytecode;
 mod configuration;
+mod fixture;
 mod module;
 mod source;
 mod value;
@@ -19,6 +20,7 @@ pub use bytecode::{
     SourceSpan,
 };
 pub use configuration::{Configuration, ConfigurationValue};
+pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
 pub use value::{Builtin, Closure, NativeFunction, StructField, StructSchema, StructValue, Value};

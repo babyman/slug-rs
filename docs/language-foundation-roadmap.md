@@ -124,7 +124,7 @@ and the host boundary in
   [`language/configuration.md`](language/configuration.md).
 - [x] Implement `cfg`, `argv`, and `argm` with module-relative namespaces and
   checked conversions.
-- [ ] Add portable fixture metadata for outcome, streams, roots, timeout, and
+- [x] Add portable fixture metadata for outcome, streams, roots, timeout, and
   optional exact diagnostics.
 - [ ] Build a runner that rejects unclassified fixtures and treats every host
   panic as a conformance failure.
