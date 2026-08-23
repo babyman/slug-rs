@@ -8,6 +8,8 @@
   zero-argument `main` after successful initialization.
 - Made host-native bindings, including `println`, available while imported
   modules initialize.
+- Added module fixture coverage for library fallback and imported-module failure
+  locations, alongside resolution, caching, cycles, and live exports.
 - Retained top-level declaration documentation and evaluated tag arguments in
   module instances for future metadata introspection.
 - Added source-callable overload sets for distinct imported signatures and

@@ -114,7 +114,7 @@ and the host boundary in
   for later introspection.
 - [x] Invoke the main program module's local zero-argument `main` function
   after successful top-level evaluation.
-- [ ] Add module fixtures for relative resolution, library fallback, caching,
+- [x] Add module fixtures for relative resolution, library fallback, caching,
   cycles, live exports, and failure locations.
 - [ ] Run `make check`.
 

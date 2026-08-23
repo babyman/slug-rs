@@ -62,6 +62,33 @@ fn resolves_importer_relative_source_and_library_roots() {
 }
 
 #[test]
+fn source_imports_use_the_configured_library_fallback() {
+    let root = root("library-fallback");
+    let source = root.join("source");
+    let library = root.join("library");
+    fs::create_dir_all(&source).expect("create source directory");
+    fs::create_dir_all(library.join("slug")).expect("create library module directory");
+    fs::write(library.join("slug/std.slug"), "export val answer = 42\n")
+        .expect("write library module");
+    let main_path = source.join("main.slug");
+    let program = compile(
+        &main_path.to_string_lossy(),
+        "val std = import(\"slug.std\")\nexport val answer = std.answer\n",
+    )
+    .expect("compile library importer");
+    let loader = ModuleLoader::new(&source, Some(library));
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("import library fallback module");
+
+    assert_eq!(loader.cached_module_count(), 1);
+    assert_eq!(loader.initialized_module_count(), 1);
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"answer\": 42}");
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn source_imports_return_cached_export_maps_in_module_order() {
     let root = root("source-import");
     fs::create_dir_all(root.join("local")).expect("create module directory");
@@ -123,6 +150,28 @@ fn source_imports_check_module_name_values_and_loader_failures() {
         .expect_err("missing imports must fail");
     assert_eq!(error.kind, RuntimeErrorKind::Module);
     assert_eq!(error.message, "module `missing` was not found");
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn imported_module_failures_retain_the_imported_source_location() {
+    let root = root("failure-location");
+    fs::create_dir_all(&root).expect("create module directory");
+    let broken = root.join("broken.slug");
+    fs::write(&broken, "???\n").expect("write broken module");
+    let main_path = root.join("main.slug");
+    let program =
+        compile(&main_path.to_string_lossy(), "import(\"broken\")\n").expect("compile importer");
+    let loader = ModuleLoader::new(&root, None);
+
+    let error = Vm::with_module_loader(loader)
+        .run_named(&program, "main")
+        .expect_err("broken module must fail");
+
+    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    let expected_location = format!("{}:1:1", broken.display());
+    assert!(error.message.contains(&expected_location), "{error}");
+    assert!(error.message.contains("not implemented"), "{error}");
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 
