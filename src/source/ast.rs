@@ -9,6 +9,7 @@ pub(super) struct Expr {
 pub(super) enum ExprKind {
     Value(Value),
     Interpolate(Vec<StringPart>),
+    Documentation(String),
     Name(String),
     Declare {
         mutable: bool,
@@ -274,5 +275,6 @@ pub(super) enum TokenKind {
     Ellipsis,
     Arrow,
     Sep,
+    BlankSep,
     End,
 }

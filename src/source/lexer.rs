@@ -15,6 +15,14 @@ pub(super) struct Lexer {
 }
 
 impl Lexer {
+    fn current_line_is_blank(&self) -> bool {
+        self.input[..self.index]
+            .iter()
+            .rev()
+            .take_while(|value| **value != '\n')
+            .all(|value| matches!(value, ' ' | '\t' | '\r'))
+    }
+
     fn documentation(&mut self, span: SourceSpan) -> Result<String, SourceError> {
         let mut content = String::new();
         loop {
@@ -201,7 +209,10 @@ impl Lexer {
         while matches!(self.input.get(index), Some(' ' | '\t' | '\r')) {
             index += 1;
         }
-        matches!(
+        !matches!(
+            (self.input.get(index), self.input.get(index + 1)),
+            (Some('/'), Some('/' | '*'))
+        ) && matches!(
             self.input.get(index),
             Some('+' | '-' | '*' | '/' | '%' | ':' | '<' | '>' | '=' | '!' | '&' | '|' | '^' | '.',)
         )
@@ -224,9 +235,18 @@ impl Lexer {
                     Self::push(&mut result, TokenKind::Sep, span);
                 }
                 '\n' => {
+                    let blank = self.current_line_is_blank();
                     self.next();
                     if delimiters == 0 && !self.newline_continues(&result) {
-                        Self::push(&mut result, TokenKind::Sep, span);
+                        Self::push(
+                            &mut result,
+                            if blank {
+                                TokenKind::BlankSep
+                            } else {
+                                TokenKind::Sep
+                            },
+                            span,
+                        );
                     }
                 }
                 '#' => {

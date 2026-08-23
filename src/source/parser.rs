@@ -16,6 +16,12 @@ pub(super) struct Parser {
     match_subject_nesting: Option<usize>,
 }
 
+enum DocumentationPrefix {
+    Declaration(String),
+    Module { content: String, span: SourceSpan },
+    None,
+}
+
 impl Parser {
     pub(super) fn new(tokens: Vec<Token>) -> Self {
         Self {
@@ -48,9 +54,12 @@ impl Parser {
         }
     }
     fn separators(&mut self) {
-        while self.matches(&TokenKind::Sep) {
+        while self.is_separator() {
             self.next();
         }
+    }
+    fn is_separator(&self) -> bool {
+        matches!(self.kind(), TokenKind::Sep | TokenKind::BlankSep)
     }
     fn enter_nesting(&mut self, span: SourceSpan) -> Result<(), SourceError> {
         if self.nesting == MAX_PARSE_NESTING {
@@ -68,7 +77,10 @@ impl Parser {
         self.separators();
         while !self.matches(&TokenKind::End) {
             expressions.push(self.statement()?);
-            if !matches!(self.kind(), TokenKind::End | TokenKind::Sep) {
+            if !matches!(
+                self.kind(),
+                TokenKind::End | TokenKind::Sep | TokenKind::BlankSep | TokenKind::Documentation(_)
+            ) {
                 return Err(SourceError::at(
                     "expected statement separator",
                     self.peek().span.clone(),
@@ -80,7 +92,16 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Expr, SourceError> {
-        let documentation = self.documentation_prefix()?;
+        let documentation = match self.documentation_prefix()? {
+            DocumentationPrefix::Declaration(content) => Some(content),
+            DocumentationPrefix::Module { content, span } => {
+                return Ok(Expr {
+                    kind: ExprKind::Documentation(content),
+                    span,
+                });
+            }
+            DocumentationPrefix::None => None,
+        };
         let mut tags = Vec::new();
         while self.matches(&TokenKind::At) {
             tags.push(self.tag()?);
@@ -173,7 +194,7 @@ impl Parser {
         self.expression()
     }
 
-    fn documentation_prefix(&mut self) -> Result<Option<String>, SourceError> {
+    fn documentation_prefix(&mut self) -> Result<DocumentationPrefix, SourceError> {
         if let TokenKind::Documentation(content) = self.kind() {
             if self.nesting != 0 {
                 return Err(SourceError::at(
@@ -182,11 +203,23 @@ impl Parser {
                 ));
             }
             let content = content.clone();
-            self.next();
-            self.separators();
-            Ok(Some(content))
+            let span = self.next().span;
+            let separator_start = self.index;
+            let mut has_blank_separator = false;
+            let mut separators = 0;
+            while self.is_separator() {
+                has_blank_separator |= self.matches(&TokenKind::BlankSep);
+                self.next();
+                separators += 1;
+            }
+            if has_blank_separator || separators >= 2 {
+                self.index = separator_start;
+                Ok(DocumentationPrefix::Module { content, span })
+            } else {
+                Ok(DocumentationPrefix::Declaration(content))
+            }
         } else {
-            Ok(None)
+            Ok(DocumentationPrefix::None)
         }
     }
 
@@ -638,7 +671,7 @@ impl Parser {
         if self.matches(&TokenKind::Comma) {
             self.next();
             self.separators();
-        } else if self.matches(&TokenKind::Sep) {
+        } else if self.is_separator() {
             self.separators();
             if !self.matches(&TokenKind::RBrace) {
                 return Err(SourceError::at(
@@ -771,7 +804,7 @@ impl Parser {
                 return Err(SourceError::at("expected }", self.peek().span.clone()));
             }
             values.push(self.statement()?);
-            if !matches!(self.kind(), TokenKind::RBrace | TokenKind::Sep) {
+            if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
                 return Err(SourceError::at(
                     "expected statement separator",
                     self.peek().span.clone(),
@@ -981,7 +1014,7 @@ impl Parser {
                 value,
                 span: case_span,
             });
-            if !matches!(self.kind(), TokenKind::RBrace | TokenKind::Sep) {
+            if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
                 return Err(SourceError::at(
                     "expected match case separator",
                     self.peek().span.clone(),

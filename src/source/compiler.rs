@@ -88,6 +88,14 @@ impl Compiler {
                 }
                 state.emit(Op::Interpolate(text), &expression.span);
             }
+            ExprKind::Documentation(content) => {
+                debug_assert!(
+                    content
+                        .lines()
+                        .all(|line| line.trim().is_empty() || line.trim_start().starts_with('*'))
+                );
+                state.emit(Op::Nil, &expression.span);
+            }
             ExprKind::Name(name) => match state.lookup(name).or_else(|| {
                 self.globals
                     .get(name)

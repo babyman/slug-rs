@@ -294,6 +294,23 @@ fn attaches_strict_documentation_blocks_to_top_level_declarations() {
     );
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "3\n");
 
+    fs::write(
+        &path,
+        "/**\n * Module documentation.\n */\n\n/**\n * Fibonacci documentation.\n */\nvar fib = fn(n) match {\n x if x < 2 => x\n x => fib(x - 2) + fib(x - 1)\n}\nprintln(fib(6))\n",
+    )
+    .expect("write module-documented source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run module-documented source");
+    fs::remove_file(&path).expect("remove module-documented source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "8\n");
+
     let cases = [
         (
             "malformed-documentation-block",
