@@ -98,6 +98,8 @@ and the host boundary in
   services without exposing host capabilities as ordinary Slug bindings.
 - [ ] Implement `import(name)` resolution, module caching, and checked module
   diagnostics.
+  - [x] Cache compiled modules by resolved source path.
+  - [ ] Resolve and execute source-level `import(name, ...)` calls.
 - [ ] Implement top-level `export` declarations and module export maps.
   - [x] Parse top-level `export` declarations and retain exported names.
   - [ ] Construct module export maps from initialized bindings.

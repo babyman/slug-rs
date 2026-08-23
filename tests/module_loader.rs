@@ -35,5 +35,14 @@ fn resolves_importer_relative_source_and_library_roots() {
         loader.load(None, "../escape"),
         Err(ModuleLoadError::InvalidName(_))
     ));
+    let program = loader
+        .compile(None, "local.math")
+        .expect("compile source module");
+    assert_eq!(program.chunk_count(), 1);
+    assert_eq!(loader.cached_module_count(), 1);
+    loader
+        .compile(None, "local.math")
+        .expect("reuse cached module");
+    assert_eq!(loader.cached_module_count(), 1);
     fs::remove_dir_all(root).expect("remove module test directory");
 }

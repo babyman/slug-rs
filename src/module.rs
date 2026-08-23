@@ -1,13 +1,18 @@
 use std::{
+    cell::RefCell,
+    collections::HashMap,
     fmt, fs,
     path::{Path, PathBuf},
 };
+
+use crate::{Program, compile};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
 pub struct ModuleLoader {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
+    compiled: RefCell<HashMap<PathBuf, Program>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +32,10 @@ pub enum ModuleLoadError {
         path: PathBuf,
         message: String,
     },
+    Source {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl fmt::Display for ModuleLoadError {
@@ -35,6 +44,9 @@ impl fmt::Display for ModuleLoadError {
             Self::InvalidName(name) => write!(f, "invalid module name `{name}`"),
             Self::NotFound { name, .. } => write!(f, "module `{name}` was not found"),
             Self::Read { path, message } => write!(f, "cannot read {}: {message}", path.display()),
+            Self::Source { path, message } => {
+                write!(f, "cannot compile {}: {message}", path.display())
+            }
         }
     }
 }
@@ -47,6 +59,7 @@ impl ModuleLoader {
         Self {
             source_root: source_root.into(),
             library_root,
+            compiled: RefCell::new(HashMap::new()),
         }
     }
 
@@ -90,6 +103,33 @@ impl ModuleLoader {
             name: name.into(),
             searched: candidates,
         })
+    }
+
+    /// Loads and compiles a module, returning a cached program for repeat requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for loader failures or invalid module source.
+    pub fn compile(&self, importer: Option<&Path>, name: &str) -> Result<Program, ModuleLoadError> {
+        let source = self.load(importer, name)?;
+        if let Some(program) = self.compiled.borrow().get(&source.path) {
+            return Ok(program.clone());
+        }
+        let program = compile(&source.path.to_string_lossy(), &source.text).map_err(|error| {
+            ModuleLoadError::Source {
+                path: source.path.clone(),
+                message: error.to_string(),
+            }
+        })?;
+        self.compiled
+            .borrow_mut()
+            .insert(source.path, program.clone());
+        Ok(program)
+    }
+
+    #[must_use]
+    pub fn cached_module_count(&self) -> usize {
+        self.compiled.borrow().len()
     }
 }
 
