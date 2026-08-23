@@ -104,6 +104,7 @@ fn repeats_strings_with_non_negative_integer_counts() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     let path = fixture_path("type-annotations");
     fs::write(
@@ -153,6 +154,24 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
         .output()
         .expect("run inconsistent generic call");
     fs::remove_file(&path).expect("remove inconsistent generic call");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+
+    fs::write(
+        &path,
+        "val first = fn<T>(left:T, right:T):T { left }\nfirst(1, \"wrong\") /> println\n",
+    )
+    .expect("write piped inconsistent generic call");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run piped inconsistent generic call");
+    fs::remove_file(&path).expect("remove piped inconsistent generic call");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8(output.stderr)

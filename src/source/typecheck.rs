@@ -53,6 +53,7 @@ pub(super) fn check(expressions: &[Expr]) -> Result<(), SourceError> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn check_expression(
     expression: &Expr,
     bindings: &mut HashMap<String, TypeAnnotation>,
@@ -148,6 +149,11 @@ fn check_expression(
                 .transpose()?;
             Ok(left.or(right.flatten()))
         }
+        ExprKind::Binary { left, right, .. } => {
+            check_expression(left, bindings, functions)?;
+            check_expression(right, bindings, functions)
+        }
+        ExprKind::Prefix { value, .. } => check_expression(value, bindings, functions),
         ExprKind::Name(name) => Ok(bindings.get(name).cloned()),
         ExprKind::Return { value } | ExprKind::Throw { value } => {
             check_expression(value, bindings, functions)
