@@ -10,7 +10,8 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Floating-point, hexadecimal, and byte literals | implemented | `tests/cli.rs` |
 | Double-quoted strings with basic escapes | implemented | `tests/cli.rs` |
 | Raw and triple-quoted strings with basic escapes | implemented | `tests/cli.rs` |
-| Octal escapes and interpolated strings | specified only | `language/Strings - Mini Spec.md` |
+| One-to-three-digit octal escapes | implemented | `tests/cli.rs` |
+| Interpolated strings | specified only | `language/Strings - Mini Spec.md` |
 | Boolean and nil literals | implemented | `tests/cli.rs` |
 | Lists and maps | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Arithmetic `+`, `-`, `*`, and `/` | implemented | `tests/cli.rs` and `tests/vm.rs` |

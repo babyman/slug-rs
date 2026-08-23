@@ -53,6 +53,20 @@ impl Lexer {
                     Some('"') => text.push('"'),
                     Some('\\') => text.push('\\'),
                     Some('{') => text.push('{'),
+                    Some(first @ '0'..='7') => {
+                        let mut digits = String::from(first);
+                        for _ in 0..2 {
+                            if let Some(value @ '0'..='7') = self.peek() {
+                                digits.push(value);
+                                self.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        let value = u32::from_str_radix(&digits, 8)
+                            .expect("one to three octal digits always parse");
+                        text.push(char::from_u32(value).expect("three octal digits fit in char"));
+                    }
                     Some(value) => {
                         text.push('\\');
                         text.push(value);

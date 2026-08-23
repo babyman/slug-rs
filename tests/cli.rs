@@ -171,6 +171,21 @@ fn parses_raw_triple_quoted_and_extended_escaped_strings() {
 }
 
 #[test]
+fn parses_one_to_three_digit_octal_string_escapes() {
+    let path = fixture_path("octal-string-escapes");
+    fs::write(&path, "println(\"\\101\\40\\141\")\n").expect("write octal escapes");
+    let output = slug().arg(&path).output().expect("run octal escapes");
+    fs::remove_file(path).expect("remove octal escapes");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "A a\n");
+}
+
+#[test]
 fn executes_core_functions_blocks_conditionals_and_collections() {
     let path = fixture_path("core-language");
     fs::write(
