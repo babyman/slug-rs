@@ -36,6 +36,8 @@ The target language pattern forms are:
 - `name @ pattern` to bind a value as well as require a nested pattern;
 - list patterns, with a final spread pattern such as `[head, ...tail]`;
 - map patterns, with a final spread entry such as `{name, ...rest}`;
+- a top-level declaration map selector, `{*}`, which binds every string-keyed
+  map entry into the module scope;
 - exact map patterns, delimited by `{|` and `|}`, which reject extra keys and
 do not allow a spread entry; and
 - struct patterns such as `User {name}`.
@@ -62,6 +64,13 @@ match user {
 A list or map spread is final. An unnamed `...` discards the remainder and a
 named form binds it. Comma-separated alternatives in one case are permitted
 only when none of the alternatives introduces a binding.
+
+`{*}` is a declaration-only form and is valid only at module top level. Its
+right-hand side must be a map whose keys are strings. Each entry defines a
+top-level binding with its key as the name and its value as the binding value.
+It is intended for selecting a module's exported values, for example
+`val {*} = import("slug.std")`; it is not a rest pattern and cannot be mixed
+with ordinary map-pattern entries.
 
 The current Rust subset implements literals, `_`, identifier bindings,
 pinned identifiers, `name @ pattern` bindings, list patterns with an optional

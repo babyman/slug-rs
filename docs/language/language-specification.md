@@ -113,6 +113,10 @@ Bindings are lexical. A name resolves to its nearest enclosing binding. An
 assignment changes an existing `var` binding and is invalid for a `val` binding
 or an unknown name.
 
+At module top level, `{*}` may be used as a declaration pattern. It requires a
+map with string keys and creates one top-level binding per entry. This is the
+module-import selection form: `val {*} = import("slug.std")`.
+
 ```slug
 var count = 0
 count = count + 1

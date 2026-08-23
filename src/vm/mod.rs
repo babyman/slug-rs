@@ -282,6 +282,26 @@ impl Vm {
                     let value = self.pop(span.clone())?;
                     self.globals.insert(name, value);
                 }
+                Op::DefineMapGlobals => {
+                    let value = self.pop(span.clone())?;
+                    let Value::Map(entries) = value else {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            format!("{{*}} binding expects a map, got {}", value.type_name()),
+                            span,
+                        ));
+                    };
+                    for (key, value) in entries.iter() {
+                        let Value::Str(name) = key else {
+                            return Err(self.error(
+                                RuntimeErrorKind::Type,
+                                "{*} binding requires string map keys".into(),
+                                span.clone(),
+                            ));
+                        };
+                        self.globals.insert(name.to_string(), value.clone());
+                    }
+                }
                 Op::SetGlobal(name) => {
                     if !self.globals.contains_key(&name) {
                         return Err(self.error(

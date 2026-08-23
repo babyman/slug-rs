@@ -124,6 +124,8 @@ pub enum Op {
     GetGlobal(String),
     NotImplemented,
     DefineGlobal(String),
+    /// Defines globals from the string keys of the map on top of the stack.
+    DefineMapGlobals,
     SetGlobal(String),
     MakeClosure {
         chunk: usize,

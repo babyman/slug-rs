@@ -725,6 +725,16 @@ impl Compiler {
         mutable: bool,
         span: &SourceSpan,
     ) -> Result<(), SourceError> {
+        if matches!(pattern, Pattern::MapAll) {
+            if !state.is_root() {
+                return Err(SourceError::semantic(
+                    "{*} declarations are only valid at top level",
+                    span.clone(),
+                ));
+            }
+            state.emit(Op::DefineMapGlobals, span);
+            return Ok(());
+        }
         let names = pattern_bindings(pattern, span)?;
         let mut operands = Vec::new();
         let pattern = lower_pattern(pattern, &mut operands);
@@ -938,6 +948,7 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
             rest: lower_rest_pattern(rest.as_ref()),
             exact: *exact,
         },
+        Pattern::MapAll => unreachable!("{{*}} declarations do not lower to match bytecode"),
         Pattern::Struct { schema, fields } => {
             let schema_index = operands.len();
             operands.push(PatternOperand::StructSchema(schema.clone()));
@@ -1014,7 +1025,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                     collect(pattern, names);
                 }
             }
-            Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}
+            Pattern::MapAll | Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}
         }
     }
 

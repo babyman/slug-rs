@@ -194,7 +194,8 @@ map_pattern = "{" , [ map_pattern_body ] , "}"
             | "{|" , [ map_pattern_body ] , "|}"
             ;
 
-(* Exact map patterns ("{| ... |}") disallow spread entries. *)
+(* `{*}` is a top-level declaration-only selector; exact map patterns
+   ("{| ... |}") disallow both it and spread entries. *)
 map_pattern_body = "*" | map_pattern_entry , { "," , map_pattern_entry } , [ "," ] ;
 map_pattern_entry = spread_pattern
                   | identifier , [ ":" , match_pattern ]

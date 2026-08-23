@@ -6,6 +6,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 |---|---|---|
 | Lexical bindings and assignment | implemented | `tests/cli.rs` |
 | List and map destructuring declarations | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Top-level `{*}` map selection declarations | implemented | `tests/cli.rs` |
 | Decimal integer literals with `_` separators | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Floating-point, hexadecimal, and byte literals | implemented | `tests/cli.rs` |
 | Double-quoted strings with basic escapes | implemented | `tests/cli.rs` |

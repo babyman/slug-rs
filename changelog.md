@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Implemented top-level `{*}` map selection declarations, including importing
+  every string-keyed module export into the current module scope.
 - Added dedicated source-level `import(name, ...)` execution with checked
   string module names, shared cached resolution and initialization, nested
   importer-relative loading, and first-module-wins exported-map results.

@@ -173,6 +173,8 @@ pub(super) enum Pattern {
         rest: Option<RestPattern>,
         exact: bool,
     },
+    /// Binds every string key of a map into a top-level declaration scope.
+    MapAll,
     Struct {
         schema: String,
         fields: Vec<(String, Pattern)>,

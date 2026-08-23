@@ -1159,6 +1159,18 @@ impl Parser {
             TokenKind::RBrace
         };
         if !self.matches(&closing) {
+            if self.matches(&TokenKind::Star) {
+                if exact {
+                    return Err(SourceError::at(
+                        "exact map patterns cannot select all entries",
+                        self.peek().span.clone(),
+                    ));
+                }
+                self.next();
+                self.consume(&closing, "expected } after *")?;
+                self.leave_nesting();
+                return Ok(Pattern::MapAll);
+            }
             loop {
                 if self.matches(&TokenKind::Ellipsis) {
                     if exact {
