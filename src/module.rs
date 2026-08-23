@@ -13,6 +13,7 @@ pub struct ModuleLoader {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
     compiled: RefCell<HashMap<PathBuf, Program>>,
+    instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,6 +68,7 @@ impl ModuleLoader {
             source_root: source_root.into(),
             library_root,
             compiled: RefCell::new(HashMap::new()),
+            instances: RefCell::new(HashMap::new()),
         }
     }
 
@@ -150,6 +152,9 @@ impl ModuleLoader {
         name: &str,
     ) -> Result<ModuleInstance, ModuleLoadError> {
         let source = self.load(importer, name)?;
+        if let Some(instance) = self.instances.borrow().get(&source.path) {
+            return Ok(instance.clone());
+        }
         let program = self.compile(importer, name)?;
         let mut vm = Vm::new();
         vm.run_named(&program, "main")
@@ -158,11 +163,20 @@ impl ModuleLoader {
                 message: error.to_string(),
             })?;
         let exports = vm.exported_values(&program);
-        Ok(ModuleInstance {
+        let instance = ModuleInstance {
             path: source.path,
             program,
             exports,
-        })
+        };
+        self.instances
+            .borrow_mut()
+            .insert(instance.path.clone(), instance.clone());
+        Ok(instance)
+    }
+
+    #[must_use]
+    pub fn initialized_module_count(&self) -> usize {
+        self.instances.borrow().len()
     }
 }
 

@@ -25,6 +25,11 @@ fn resolves_importer_relative_source_and_library_roots() {
             .text,
         "export val value = 1\n"
     );
+    assert_eq!(loader.initialized_module_count(), 0);
+    loader
+        .initialize(None, "local.math")
+        .expect("reuse initialized module");
+    assert_eq!(loader.initialized_module_count(), 1);
     assert_eq!(
         loader
             .load(None, "slug.std")
