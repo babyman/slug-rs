@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented the measured VM optimization plan, compact metadata direction,
+  capture-aware local storage, and the decision gate for any future register
+  VM.
 - Added identity-bearing untyped struct schemas, stored field defaults, checked
   construction, structural instance equality, and field access.
 - Added bracketed computed map-pattern keys, evaluated once through indexed

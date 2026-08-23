@@ -26,3 +26,16 @@ implements a small source subset through a checked bytecode virtual machine.
   information is available.
 - Language semantics belong in `docs/language/`, not only in implementation
   code.
+
+## VM and bytecode direction
+
+The current operand-stack VM remains the implementation baseline while known
+instruction cloning, metadata, and local-storage costs are removed and
+measured. Private bytecode favors a small, regular core with medium-grained
+semantic operations for calls, closures, collections, matching, cleanup,
+throwing, and recurrence. Variable-size descriptors belong in indexed metadata
+pools rather than executable instructions.
+
+The staged work and the evidence required before reconsidering a register VM
+are defined in [VM Optimization Plan](vm-optimization.md). The durable choice is
+recorded in [Adopt a measured private-bytecode optimization direction](decisions/2026-08-22-vm-bytecode-optimization-direction.md).
