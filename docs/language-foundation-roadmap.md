@@ -41,7 +41,7 @@ note.
   defining module environment.
 - [x] Expand list-valued call spreads and list-literal spreads while preserving
   left-to-right evaluation order.
-- [ ] Preserve function-match-body subjects after default and variadic binding.
+- [x] Preserve function-match-body subjects after default and variadic binding.
 - [ ] Preserve checked unwinding, source spans, and Slug call frames for call
   binding failures.
 

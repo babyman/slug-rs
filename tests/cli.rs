@@ -248,6 +248,35 @@ fn evaluates_omitted_parameter_defaults_in_the_callee() {
 }
 
 #[test]
+fn function_match_bodies_observe_bound_defaults_and_variadics() {
+    let path = fixture_path("function-match-call-binding");
+    fs::write(
+        &path,
+        "val classify = fn(first = 1, ...rest) match {\n\
+           [1, []] => \"default\"\n\
+           [1, [2, 3]] => \"spread\"\n\
+           _ => \"other\"\n\
+         }\n\
+         println(classify(), classify(1, 2, 3), classify(9))\n",
+    )
+    .expect("write function match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run function match source");
+    fs::remove_file(path).expect("remove function match source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "default spread other\n"
+    );
+}
+
+#[test]
 fn rejects_non_list_source_spreads() {
     for (kind, source, expected) in [
         (
