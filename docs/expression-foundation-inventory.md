@@ -16,7 +16,7 @@ and the order in which remaining work can proceed without introducing compatibil
 | Double-quoted strings with `\\n`, `\\r`, `\\t`, `\\"`, and `\\\\` escapes | Implemented                 | `TokenKind::Str`, CLI tests                                                   | Preserve source locations for malformed escapes.                             |
 | Raw and triple-quoted strings, `\\{`, and unknown escapes                  | Implemented                 | Lexer string scanner and CLI tests                                             | Preserve delimiter/newline behavior.                                         |
 | One-to-three-digit octal escapes                                             | Implemented                 | Lexer string scanner and CLI tests                                             | Preserve source locations for unterminated strings.                          |
-| Interpolation                                                               | Not implemented             | No expression-bearing string representation                                   | Add string segments and left-to-right interpolation evaluation.              |
+| `$identifier` interpolation                                                  | Implemented                 | String parts lower through normal name resolution and a private VM operation  | Keep property access and arbitrary expressions unsupported.                  |
 | Lists, maps, computed map keys, and list spreads                          | Implemented                 | AST/compiler collection forms, VM collection ops, CLI/VM tests                | Keep map-key and non-list-spread failures checked.                           |
 | Arithmetic `+`, `-`, `*`, `/`, and `%`                                    | Implemented                 | Binary AST/compiler and VM arithmetic ops, plus CLI tests                     | Preserve integer precision and checked overflow/division failures.           |
 | Equality, comparisons, logical-and, and logical-or                         | Implemented                 | Binary AST and VM branch/comparison ops                                       | Keep short-circuit evaluation.                                               |
@@ -42,14 +42,11 @@ and the order in which remaining work can proceed without introducing compatibil
 
 ## Dependency order
 
-1. Complete literal forms and interpolation, because later annotations and metadata need reliable lexical/source-span
-   handling.
-2. Add the remaining operators one family at a time, starting with numeric bitwise and shifts, then collection
+1. Add the remaining operators one family at a time, starting with numeric bitwise and shifts, then collection
    concatenation and pipeline semantics.
-3. Add slice syntax and execution on the existing collection boundary.
-4. Add struct copying and patterns before attaching field annotations.
-5. Parse and retain annotations, then add the required static checks.
-6. Add tags, documentation statements, foreign declarations, and `???` once their metadata and host boundaries can be
+2. Add struct patterns before attaching field annotations.
+3. Parse and retain annotations, then add the required static checks.
+4. Add tags, documentation statements, foreign declarations, and `???` once their metadata and host boundaries can be
    designed alongside modules.
 
 Every slice must update the grammar when syntax changes, add CLI coverage for accepted source and diagnostics, add VM

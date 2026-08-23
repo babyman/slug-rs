@@ -216,7 +216,7 @@ named_arg = identifier , "=" , expression ;
 Named arguments use `=`, not `:`.
 
 ```slug
-val greet = fn(name, title = "Mx") { "Hello {{title}} {{name}}" }
+val greet = fn(name, title = "Mx") { "Hello $title $name" }
 
 greet("Slug")
 greet(name = "Slug", title = "Dr")

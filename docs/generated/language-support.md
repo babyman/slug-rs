@@ -11,7 +11,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Double-quoted strings with basic escapes | implemented | `tests/cli.rs` |
 | Raw and triple-quoted strings with basic escapes | implemented | `tests/cli.rs` |
 | One-to-three-digit octal escapes | implemented | `tests/cli.rs` |
-| Interpolated strings | specified only | `language/Strings - Mini Spec.md` |
+| `$identifier` interpolated strings | implemented | `tests/cli.rs` |
 | Boolean and nil literals | implemented | `tests/cli.rs` |
 | Lists and maps | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Arithmetic `+`, `-`, `*`, `/`, and `%` | implemented | `tests/cli.rs` and `tests/vm.rs` |

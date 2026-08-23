@@ -3,7 +3,7 @@ use crate::SourceSpan;
 
 use super::{
     SourceError,
-    ast::{Token, TokenKind},
+    ast::{StringPart, Token, TokenKind},
 };
 
 pub(super) struct Lexer {
@@ -20,7 +20,7 @@ impl Lexer {
         delimiter: char,
         raw: bool,
         span: SourceSpan,
-    ) -> Result<String, SourceError> {
+    ) -> Result<Vec<StringPart>, SourceError> {
         self.next();
         let triple =
             self.peek() == Some(delimiter) && self.input.get(self.index + 1) == Some(&delimiter);
@@ -28,6 +28,7 @@ impl Lexer {
             self.next();
             self.next();
         }
+        let mut parts = Vec::new();
         let mut text = String::new();
         loop {
             if self.peek() == Some(delimiter)
@@ -45,7 +46,24 @@ impl Lexer {
             let value = self
                 .next()
                 .ok_or_else(|| SourceError::at("unterminated string", span.clone()))?;
-            if !raw && value == '\\' {
+            if !raw
+                && value == '$'
+                && self
+                    .peek()
+                    .is_some_and(|value| value == '_' || value.is_alphabetic())
+            {
+                if !text.is_empty() {
+                    parts.push(StringPart::Text(std::mem::take(&mut text)));
+                }
+                let mut name = String::new();
+                while self
+                    .peek()
+                    .is_some_and(|value| value == '_' || value.is_alphanumeric())
+                {
+                    name.push(self.next().expect("peeked character exists"));
+                }
+                parts.push(StringPart::Name(name));
+            } else if !raw && value == '\\' {
                 match self.next() {
                     Some('n') => text.push('\n'),
                     Some('r') => text.push('\r'),
@@ -85,7 +103,10 @@ impl Lexer {
                 text.pop();
             }
         }
-        Ok(text)
+        if !text.is_empty() || parts.is_empty() {
+            parts.push(StringPart::Text(text));
+        }
+        Ok(parts)
     }
 
     pub(super) fn new(path: &str, input: &str) -> Self {
@@ -469,12 +490,12 @@ impl Lexer {
                 }
                 '"' => Self::push(
                     &mut result,
-                    TokenKind::Str(self.string('"', false, span.clone())?),
+                    TokenKind::Interpolated(self.string('"', false, span.clone())?),
                     span,
                 ),
                 '\'' => Self::push(
                     &mut result,
-                    TokenKind::Str(self.string('\'', true, span.clone())?),
+                    TokenKind::Interpolated(self.string('\'', true, span.clone())?),
                     span,
                 ),
                 value if value == '_' || value.is_alphabetic() => {

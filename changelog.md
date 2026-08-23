@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `$identifier` string interpolation; embedded expressions and property
+  access remain deliberately unsupported.
 - Added schema-preserving struct copies with checked replacement fields.
 - Added source-level `%` with checked zero-division behavior.
 - Added one-to-three-digit octal escapes in double-quoted strings.

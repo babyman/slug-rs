@@ -9,7 +9,7 @@ use super::{
     SourceError,
     ast::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern,
+        Pattern, Prefix, RestPattern, StringPart,
     },
     state::{Binding, State},
 };
@@ -65,6 +65,28 @@ impl Compiler {
             ExprKind::Value(value) => {
                 let constant = state.constant(value.clone());
                 state.emit(Op::Constant(constant), &expression.span);
+            }
+            ExprKind::Interpolate(parts) => {
+                let mut text = vec![String::new()];
+                for part in parts {
+                    match part {
+                        StringPart::Text(value) => text
+                            .last_mut()
+                            .expect("interpolation has text")
+                            .push_str(value),
+                        StringPart::Name(name) => {
+                            self.expression(
+                                state,
+                                &Expr {
+                                    kind: ExprKind::Name(name.clone()),
+                                    span: expression.span.clone(),
+                                },
+                            )?;
+                            text.push(String::new());
+                        }
+                    }
+                }
+                state.emit(Op::Interpolate(text), &expression.span);
             }
             ExprKind::Name(name) => match state.lookup(name).or_else(|| {
                 self.globals

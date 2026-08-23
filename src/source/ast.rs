@@ -8,6 +8,7 @@ pub(super) struct Expr {
 #[derive(Clone, Debug)]
 pub(super) enum ExprKind {
     Value(Value),
+    Interpolate(Vec<StringPart>),
     Name(String),
     Declare {
         mutable: bool,
@@ -78,6 +79,11 @@ pub(super) enum ExprKind {
         end: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
     },
+}
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum StringPart {
+    Text(String),
+    Name(String),
 }
 #[derive(Clone, Debug)]
 pub(super) struct Parameter {
@@ -169,7 +175,7 @@ pub(super) enum TokenKind {
     Int(i64),
     Float(f64),
     Bytes(Vec<u8>),
-    Str(String),
+    Interpolated(Vec<StringPart>),
     Name(String),
     Val,
     Var,

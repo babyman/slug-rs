@@ -69,7 +69,7 @@ note.
 - [x] Inventory the remaining grammar against the source AST, parser, compiler,
   VM, and tests; split the coarse support-matrix rows where partial support is
   currently hidden.
-- [ ] Implement the remaining specified numeric, byte, and string literal forms,
+- [x] Implement the remaining specified numeric, byte, and string literal forms,
   including interpolation.
 - [ ] Implement the remaining arithmetic, bitwise, shift, list-concatenation,
   and pipeline operators with checked type failures.

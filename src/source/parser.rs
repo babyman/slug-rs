@@ -2,7 +2,7 @@ use super::{
     SourceError,
     ast::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern, StructSchemaField, Token, TokenKind,
+        Pattern, Prefix, RestPattern, StringPart, StructSchemaField, Token, TokenKind,
     },
 };
 use crate::{DeferMode, SourceSpan, Value};
@@ -384,7 +384,13 @@ impl Parser {
             TokenKind::Int(value) => ExprKind::Value(Value::Int(value)),
             TokenKind::Float(value) => ExprKind::Value(Value::Float(value)),
             TokenKind::Bytes(value) => ExprKind::Value(Value::Bytes(value.into())),
-            TokenKind::Str(value) => ExprKind::Value(Value::string(value)),
+            TokenKind::Interpolated(parts) => {
+                if let [StringPart::Text(value)] = parts.as_slice() {
+                    ExprKind::Value(Value::string(value.clone()))
+                } else {
+                    ExprKind::Interpolate(parts)
+                }
+            }
             TokenKind::True => ExprKind::Value(Value::Bool(true)),
             TokenKind::False => ExprKind::Value(Value::Bool(false)),
             TokenKind::Nil => ExprKind::Value(Value::Nil),
@@ -813,7 +819,15 @@ impl Parser {
             TokenKind::Int(value) => Ok(Pattern::Literal(Value::Int(value))),
             TokenKind::Float(value) => Ok(Pattern::Literal(Value::Float(value))),
             TokenKind::Bytes(value) => Ok(Pattern::Literal(Value::Bytes(value.into()))),
-            TokenKind::Str(value) => Ok(Pattern::Literal(Value::string(value))),
+            TokenKind::Interpolated(parts) => {
+                let [StringPart::Text(value)] = parts.as_slice() else {
+                    return Err(SourceError::at(
+                        "interpolated strings are not match patterns",
+                        token.span,
+                    ));
+                };
+                Ok(Pattern::Literal(Value::string(value.clone())))
+            }
             TokenKind::True => Ok(Pattern::Literal(Value::Bool(true))),
             TokenKind::False => Ok(Pattern::Literal(Value::Bool(false))),
             TokenKind::Nil => Ok(Pattern::Literal(Value::Nil)),

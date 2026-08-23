@@ -182,6 +182,17 @@ impl Vm {
                     };
                     self.stack.push(value);
                 }
+                Op::Interpolate(parts) => {
+                    let values = self.pop_values(parts.len().saturating_sub(1), span.clone())?;
+                    let mut output = String::new();
+                    for (index, text) in parts.into_iter().enumerate() {
+                        output.push_str(&text);
+                        if let Some(value) = values.get(index) {
+                            output.push_str(&value.to_string());
+                        }
+                    }
+                    self.stack.push(Value::string(output));
+                }
                 Op::Nil => self.stack.push(Value::Nil),
                 Op::True => self.stack.push(Value::Bool(true)),
                 Op::False => self.stack.push(Value::Bool(false)),

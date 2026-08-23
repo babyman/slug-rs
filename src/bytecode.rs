@@ -107,6 +107,7 @@ impl Instruction {
 #[derive(Clone, Debug)]
 pub enum Op {
     Constant(usize),
+    Interpolate(Vec<String>),
     Nil,
     True,
     False,

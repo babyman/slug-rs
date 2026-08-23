@@ -210,6 +210,43 @@ fn parses_one_to_three_digit_octal_string_escapes() {
 }
 
 #[test]
+fn interpolates_identifier_values_in_non_raw_strings() {
+    let path = fixture_path("identifier-interpolation");
+    fs::write(
+        &path,
+        "val name = \"Slug\"\nval total = 42\nprintln(\"Hello $name\", \"Total: $total\", '$name')\n",
+    )
+    .expect("write interpolation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run interpolation source");
+    fs::remove_file(&path).expect("remove interpolation source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Hello Slug Total: 42 $name\n"
+    );
+
+    fs::write(&path, "\"$missing\"\n").expect("write unknown interpolation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run unknown interpolation source");
+    fs::remove_file(path).expect("remove unknown interpolation source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+}
+
+#[test]
 fn executes_core_functions_blocks_conditionals_and_collections() {
     let path = fixture_path("core-language");
     fs::write(
