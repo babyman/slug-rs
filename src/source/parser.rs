@@ -287,6 +287,25 @@ impl Parser {
                         arguments,
                     },
                 };
+            } else if self.starts_type_application_call() {
+                self.next();
+                let mut arguments = Vec::new();
+                loop {
+                    arguments.push(self.type_annotation()?);
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.next();
+                }
+                self.consume(&TokenKind::Greater, "expected > in type application")?;
+                let span = value.span.clone();
+                value = Expr {
+                    span,
+                    kind: ExprKind::TypeApply {
+                        callee: Box::new(value),
+                        arguments,
+                    },
+                };
             } else if self.matches(&TokenKind::LBracket) {
                 let span = self.next().span;
                 self.enter_nesting(span.clone())?;
@@ -321,6 +340,31 @@ impl Parser {
             }
         }
         Ok(value)
+    }
+
+    fn starts_type_application_call(&self) -> bool {
+        if !self.matches(&TokenKind::Less) {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (offset, token) in self.tokens[self.index..].iter().enumerate() {
+            match token.kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(
+                            self.tokens
+                                .get(self.index + offset + 1)
+                                .map(|next| &next.kind),
+                            Some(TokenKind::LParen)
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn index_or_slice(&mut self, collection: Expr, span: SourceSpan) -> Result<Expr, SourceError> {

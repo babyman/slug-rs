@@ -517,8 +517,9 @@ metadata and unsupported operations fail through normal runtime errors.
 The current Rust subset parses and retains declaration, parameter, return, and
 struct-field annotations. Its optional checker rejects directly provable
 annotation mismatches in declarations, parameter defaults, function returns,
-and struct defaults; richer expression inference and generic call
-instantiation remain future work.
+struct defaults, and calls to statically known annotated functions. It infers
+generic arguments from annotated call positions and supports explicit type
+applications. Richer expression inference remains future work.
 
 The checker recognizes the built-in value categories `nil`, `bool`, `num`,
 `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus

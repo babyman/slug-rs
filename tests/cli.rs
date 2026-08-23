@@ -124,6 +124,42 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     );
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "ready 4 Slug\n");
 
+    fs::write(
+        &path,
+        "val first = fn<T>(left:T, right:T):T { left }\nprintln(first<str>(\"left\", \"right\"))\n",
+    )
+    .expect("write generic call source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run generic call source");
+    fs::remove_file(&path).expect("remove generic call source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "left\n");
+
+    fs::write(
+        &path,
+        "val first = fn<T>(left:T, right:T):T { left }\nfirst(1, \"wrong\")\n",
+    )
+    .expect("write inconsistent generic call");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run inconsistent generic call");
+    fs::remove_file(&path).expect("remove inconsistent generic call");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+
     fs::write(&path, "val label:str = 1\n").expect("write mismatched declaration");
     let output = slug()
         .arg("-type-check")

@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Added declaration, parameter, return, and struct-field annotation syntax,
-  plus opt-in basic static validation through `-type-check`.
+  plus opt-in static validation through `-type-check`, generic call inference,
+  and explicit type applications.
 - Added schema-identity struct patterns with partial named-field matching.
 - Added pipeline calls and subjectless pipeline `match` expressions with `/>`.
 - Added checked `string * non-negative-integer` repetition.

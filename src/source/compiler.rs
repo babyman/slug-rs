@@ -364,6 +364,7 @@ impl Compiler {
                 }
                 state.emit(Op::CallSpread(kinds), &expression.span);
             }
+            ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
             ExprKind::List(values) => {
                 let mut spreads = Vec::with_capacity(values.len());
                 for value in values {

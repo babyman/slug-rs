@@ -4,13 +4,51 @@ use crate::Value;
 
 use super::{
     SourceError,
-    ast::{Expr, ExprKind, ListElement, TypeAnnotation},
+    ast::{CallArgument, Expr, ExprKind, ListElement, Pattern, TypeAnnotation},
 };
+
+#[derive(Clone)]
+struct FunctionType {
+    type_parameters: Vec<String>,
+    parameters: Vec<(String, Option<TypeAnnotation>, bool)>,
+    result: Option<TypeAnnotation>,
+}
 
 pub(super) fn check(expressions: &[Expr]) -> Result<(), SourceError> {
     let mut bindings = HashMap::new();
+    let mut functions = HashMap::new();
     for expression in expressions {
-        check_expression(expression, &mut bindings)?;
+        if let ExprKind::Declare {
+            pattern: Pattern::Binding(name),
+            value,
+            ..
+        } = &expression.kind
+            && let ExprKind::Function {
+                type_parameters,
+                parameters,
+                return_annotation,
+                ..
+            } = &value.kind
+        {
+            functions.insert(
+                name.clone(),
+                FunctionType {
+                    type_parameters: type_parameters.clone(),
+                    parameters: parameters
+                        .iter()
+                        .map(|parameter| {
+                            (
+                                parameter.name.clone(),
+                                parameter.annotation.clone(),
+                                parameter.variadic,
+                            )
+                        })
+                        .collect(),
+                    result: return_annotation.clone(),
+                },
+            );
+        }
+        check_expression(expression, &mut bindings, &functions)?;
     }
     Ok(())
 }
@@ -18,6 +56,7 @@ pub(super) fn check(expressions: &[Expr]) -> Result<(), SourceError> {
 fn check_expression(
     expression: &Expr,
     bindings: &mut HashMap<String, TypeAnnotation>,
+    functions: &HashMap<String, FunctionType>,
 ) -> Result<Option<TypeAnnotation>, SourceError> {
     match &expression.kind {
         ExprKind::Declare {
@@ -26,11 +65,11 @@ fn check_expression(
             value,
             ..
         } => {
-            let actual = check_expression(value, bindings)?;
+            let actual = check_expression(value, bindings, functions)?;
             if let (Some(expected), Some(actual)) = (annotation, actual.as_ref()) {
                 require(expected, actual, &expression.span)?;
             }
-            if let (super::ast::Pattern::Binding(name), Some(annotation)) = (pattern, annotation) {
+            if let (Pattern::Binding(name), Some(annotation)) = (pattern, annotation) {
                 bindings.insert(name.clone(), annotation.clone());
             }
             Ok(actual)
@@ -41,33 +80,32 @@ fn check_expression(
             return_annotation,
             body,
         } => {
-            let mut function_bindings = bindings.clone();
+            let mut scoped = bindings.clone();
             for parameter in parameters {
                 if let Some(annotation) = &parameter.annotation {
-                    function_bindings.insert(parameter.name.clone(), annotation.clone());
+                    scoped.insert(parameter.name.clone(), annotation.clone());
                 }
-                if let Some(default) = &parameter.default {
-                    let actual = check_expression(default, &mut function_bindings)?;
-                    if let (Some(expected), Some(actual)) = (&parameter.annotation, actual.as_ref())
-                    {
-                        require(expected, actual, &default.span)?;
-                    }
+                if let (Some(expected), Some(default)) = (&parameter.annotation, &parameter.default)
+                    && let Some(actual) = check_expression(default, &mut scoped, functions)?
+                {
+                    require(expected, &actual, &default.span)?;
                 }
             }
-            for parameter in type_parameters {
-                function_bindings
-                    .insert(parameter.clone(), TypeAnnotation::Name(parameter.clone()));
-            }
-            let actual = check_expression(body, &mut function_bindings)?;
+            let actual = check_expression(body, &mut scoped, functions)?;
             if let (Some(expected), Some(actual)) = (return_annotation, actual.as_ref()) {
                 require(expected, actual, &body.span)?;
             }
+            let _ = type_parameters;
             Ok(Some(TypeAnnotation::Name("fn".into())))
         }
+        ExprKind::Call { callee, arguments } => {
+            check_call(callee, arguments, expression, bindings, functions)
+        }
+        ExprKind::TypeApply { callee, .. } => check_expression(callee, bindings, functions),
         ExprKind::StructSchema(fields) => {
             for field in fields {
                 if let (Some(annotation), Some(default)) = (&field.annotation, &field.default)
-                    && let Some(actual) = check_expression(default, bindings)?
+                    && let Some(actual) = check_expression(default, bindings, functions)?
                 {
                     require(annotation, &actual, &default.span)?;
                 }
@@ -78,15 +116,15 @@ fn check_expression(
         ExprKind::List(values) => {
             for value in values {
                 if let ListElement::Value(value) = value {
-                    check_expression(value, bindings)?;
+                    check_expression(value, bindings, functions)?;
                 }
             }
             Ok(Some(TypeAnnotation::Name("list".into())))
         }
         ExprKind::Map(entries) => {
             for (key, value) in entries {
-                check_expression(key, bindings)?;
-                check_expression(value, bindings)?;
+                check_expression(key, bindings, functions)?;
+                check_expression(value, bindings, functions)?;
             }
             Ok(Some(TypeAnnotation::Name("map".into())))
         }
@@ -94,7 +132,7 @@ fn check_expression(
             let mut scoped = bindings.clone();
             let mut result = Some(TypeAnnotation::Name("nil".into()));
             for value in values {
-                result = check_expression(value, &mut scoped)?;
+                result = check_expression(value, &mut scoped, functions)?;
             }
             Ok(result)
         }
@@ -103,16 +141,140 @@ fn check_expression(
             else_branch,
             ..
         } => {
-            let left = check_expression(then_branch, bindings)?;
+            let left = check_expression(then_branch, bindings, functions)?;
             let right = else_branch
                 .as_ref()
-                .map(|branch| check_expression(branch, bindings))
+                .map(|branch| check_expression(branch, bindings, functions))
                 .transpose()?;
             Ok(left.or(right.flatten()))
         }
         ExprKind::Name(name) => Ok(bindings.get(name).cloned()),
-        ExprKind::Return { value } | ExprKind::Throw { value } => check_expression(value, bindings),
+        ExprKind::Return { value } | ExprKind::Throw { value } => {
+            check_expression(value, bindings, functions)
+        }
         _ => Ok(None),
+    }
+}
+
+fn check_call(
+    callee: &Expr,
+    arguments: &[CallArgument],
+    expression: &Expr,
+    bindings: &mut HashMap<String, TypeAnnotation>,
+    functions: &HashMap<String, FunctionType>,
+) -> Result<Option<TypeAnnotation>, SourceError> {
+    let (name, explicit) = match &callee.kind {
+        ExprKind::Name(name) => (name, None),
+        ExprKind::TypeApply { callee, arguments } => {
+            let ExprKind::Name(name) = &callee.kind else {
+                return Ok(None);
+            };
+            (name, Some(arguments))
+        }
+        _ => return Ok(None),
+    };
+    let Some(function) = functions.get(name) else {
+        return Ok(None);
+    };
+    let mut substitutions = HashMap::new();
+    if let Some(explicit) = explicit {
+        if explicit.len() != function.type_parameters.len() {
+            return Err(SourceError::semantic(
+                "wrong number of type arguments",
+                expression.span.clone(),
+            ));
+        }
+        for (parameter, value) in function.type_parameters.iter().zip(explicit) {
+            substitutions.insert(parameter.clone(), value.clone());
+        }
+    }
+    let mut positional = 0usize;
+    for argument in arguments {
+        let (parameter, value) = match argument {
+            CallArgument::Positional(value) => {
+                let parameter = function.parameters.get(positional);
+                positional += 1;
+                (parameter, value)
+            }
+            CallArgument::Named { name, value } => (
+                function
+                    .parameters
+                    .iter()
+                    .find(|(parameter, _, _)| parameter == name),
+                value,
+            ),
+            CallArgument::Spread(value) => {
+                check_expression(value, bindings, functions)?;
+                continue;
+            }
+        };
+        let Some((_, Some(expected), _)) = parameter else {
+            continue;
+        };
+        let Some(actual) = check_expression(value, bindings, functions)? else {
+            continue;
+        };
+        infer(
+            expected,
+            &actual,
+            &function.type_parameters,
+            &mut substitutions,
+            &value.span,
+        )?;
+    }
+    Ok(function
+        .result
+        .as_ref()
+        .map(|result| substitute(result, &substitutions)))
+}
+
+fn infer(
+    expected: &TypeAnnotation,
+    actual: &TypeAnnotation,
+    parameters: &[String],
+    substitutions: &mut HashMap<String, TypeAnnotation>,
+    span: &crate::SourceSpan,
+) -> Result<(), SourceError> {
+    if let TypeAnnotation::Name(name) = expected
+        && parameters.contains(name)
+    {
+        if let Some(previous) = substitutions.get(name) {
+            return require(previous, actual, span);
+        }
+        substitutions.insert(name.clone(), actual.clone());
+        return Ok(());
+    }
+    require(&substitute(expected, substitutions), actual, span)
+}
+
+fn substitute(
+    annotation: &TypeAnnotation,
+    substitutions: &HashMap<String, TypeAnnotation>,
+) -> TypeAnnotation {
+    match annotation {
+        TypeAnnotation::Name(name) => substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| annotation.clone()),
+        TypeAnnotation::Apply { name, arguments } => TypeAnnotation::Apply {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute(argument, substitutions))
+                .collect(),
+        },
+        TypeAnnotation::Tuple(values) => TypeAnnotation::Tuple(
+            values
+                .iter()
+                .map(|value| substitute(value, substitutions))
+                .collect(),
+        ),
+        TypeAnnotation::Union(values) => TypeAnnotation::Union(
+            values
+                .iter()
+                .map(|value| substitute(value, substitutions))
+                .collect(),
+        ),
     }
 }
 

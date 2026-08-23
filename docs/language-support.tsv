@@ -44,7 +44,8 @@ Named ordinary-function arguments|implemented|`tests/cli.rs`
 Final variadic parameters|implemented|`tests/cli.rs`
 Call-time default parameters|implemented|`tests/cli.rs`
 Type annotation syntax and basic `-type-check` validation|implemented|`tests/cli.rs`
-Generic call inference and complete static checking|specified only|`language/language-specification.md`
+Generic call inference and explicit type applications|implemented|`tests/cli.rs`
+Complete static checking|specified only|`language/language-specification.md`
 Tags, documentation statements, foreign declarations, and `???`|specified only|`language/language-specification.md`
 Checked source and runtime diagnostics with locations|implemented|`tests/cli.rs` and `tests/vm.rs`
 Full language specification|specified only|`language/language-specification.md`

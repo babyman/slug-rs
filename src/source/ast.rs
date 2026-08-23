@@ -49,6 +49,10 @@ pub(super) enum ExprKind {
         callee: Box<Expr>,
         arguments: Vec<CallArgument>,
     },
+    TypeApply {
+        callee: Box<Expr>,
+        arguments: Vec<TypeAnnotation>,
+    },
     Function {
         type_parameters: Vec<String>,
         parameters: Vec<Parameter>,
