@@ -32,7 +32,7 @@ note.
 
 ### Compilation and execution
 
-- [ ] Add private bytecode metadata sufficient to describe callable signatures
+- [x] Add private bytecode metadata sufficient to describe callable signatures
   without making that representation a portable compatibility promise.
 - [ ] Evaluate arguments and spreads exactly once in source order.
 - [ ] Centralize parameter binding for ordinary calls and `recur(...)` so both

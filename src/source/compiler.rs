@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, Program,
-    SchemaField, SourceSpan,
+    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, ParameterSignature,
+    Program, SchemaField, SourceSpan,
 };
 
 use super::{
@@ -396,8 +396,16 @@ impl Compiler {
                 state.patch(end);
             }
             ExprKind::Function { parameters, body } => {
-                let parameters = plain_parameters(parameters, &expression.span)?;
-                let (mut chunk, captures) = self.function(&parameters, body, state.visible())?;
+                let names = plain_parameters(parameters, &expression.span)?;
+                let (mut chunk, captures) = self.function(&names, body, state.visible())?;
+                chunk.parameters = parameters
+                    .iter()
+                    .map(|parameter| ParameterSignature {
+                        name: parameter.name.clone(),
+                        has_default: parameter.default.is_some(),
+                        variadic: parameter.variadic,
+                    })
+                    .collect();
                 let index = self.chunks.len();
                 chunk.name = format!("<fn #{index}>");
                 self.chunks.push(chunk);

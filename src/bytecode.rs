@@ -55,6 +55,14 @@ pub struct SchemaField {
     pub has_default: bool,
 }
 
+/// Private callable metadata used by source-call binding.
+#[derive(Clone, Debug)]
+pub struct ParameterSignature {
+    pub name: String,
+    pub has_default: bool,
+    pub variadic: bool,
+}
+
 /// The subset of source patterns lowered by the current compiler.
 #[derive(Clone, Debug)]
 pub enum MatchPattern {
@@ -171,6 +179,7 @@ pub enum DeferMode {
 pub struct Chunk {
     pub name: String,
     pub arity: usize,
+    pub parameters: Vec<ParameterSignature>,
     /// Number of frame-local slots, including parameters.
     pub locals: usize,
     pub constants: Vec<Constant>,
@@ -183,6 +192,7 @@ impl Chunk {
         Self {
             name: name.into(),
             arity,
+            parameters: Vec::new(),
             locals: arity,
             constants: Vec::new(),
             code: Vec::new(),
