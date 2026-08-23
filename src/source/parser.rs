@@ -377,6 +377,8 @@ impl Parser {
         let span = token.span.clone();
         let kind = match token.kind {
             TokenKind::Int(value) => ExprKind::Value(Value::Int(value)),
+            TokenKind::Float(value) => ExprKind::Value(Value::Float(value)),
+            TokenKind::Bytes(value) => ExprKind::Value(Value::Bytes(value.into())),
             TokenKind::Str(value) => ExprKind::Value(Value::string(value)),
             TokenKind::True => ExprKind::Value(Value::Bool(true)),
             TokenKind::False => ExprKind::Value(Value::Bool(false)),
@@ -790,6 +792,8 @@ impl Parser {
         let token = self.next();
         match token.kind {
             TokenKind::Int(value) => Ok(Pattern::Literal(Value::Int(value))),
+            TokenKind::Float(value) => Ok(Pattern::Literal(Value::Float(value))),
+            TokenKind::Bytes(value) => Ok(Pattern::Literal(Value::Bytes(value.into()))),
             TokenKind::Str(value) => Ok(Pattern::Literal(Value::string(value))),
             TokenKind::True => Ok(Pattern::Literal(Value::Bool(true))),
             TokenKind::False => Ok(Pattern::Literal(Value::Bool(false))),

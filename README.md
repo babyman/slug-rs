@@ -15,8 +15,8 @@ compiled-module contract is documented separately as `.cslug`.
   arithmetic/comparison operations.
 - Checked errors with Slug source spans and call frames instead of host panics.
 - Source execution for a core subset: lexical `val`/`var` bindings, including
-  list and map destructuring, assignment,
-  literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
+  list and map destructuring, assignment, integer, floating-point, hexadecimal,
+  byte, boolean, nil, string, list, and map literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
   literal/list/map `match` with computed map keys and non-binding case alternatives,
   pinned `^name` comparisons, `name @ pattern` bindings, and named or
   anonymous final rests, untyped struct schemas, construction and field access,

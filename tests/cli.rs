@@ -50,6 +50,68 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn parses_decimal_hexadecimal_and_byte_literals() {
+    let path = fixture_path("numeric-and-byte-literals");
+    fs::write(
+        &path,
+        "println(1_000, 1.5, 2e3, 1.25e-2, 0x10, 0x_ff, 0x\"414243\")\n",
+    )
+    .expect("write numeric and byte literals");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run numeric and byte literals");
+    fs::remove_file(path).expect("remove numeric and byte literals");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1000 1.5 2000 0.0125 16 255 0x\"414243\"\n"
+    );
+}
+
+#[test]
+fn rejects_malformed_hexadecimal_and_byte_literals_with_locations() {
+    for (kind, source, message) in [
+        ("empty-hex", "0x\n", "expected hexadecimal digit"),
+        (
+            "odd-byte-literal",
+            "0x\"f\"\n",
+            "byte literal must contain one or more complete hexadecimal byte pairs",
+        ),
+        (
+            "empty-byte-literal",
+            "0x\"\"\n",
+            "byte literal must contain one or more complete hexadecimal byte pairs",
+        ),
+        (
+            "invalid-byte-literal",
+            "0x\"gg\"\n",
+            "invalid hexadecimal digit in byte literal",
+        ),
+        ("missing-exponent", "1e\n", "expected exponent digit"),
+    ] {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write malformed literal source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run malformed literal source");
+        fs::remove_file(path).expect("remove malformed literal source");
+
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(stderr.starts_with("slug: parse error:"), "{stderr}");
+        assert!(stderr.contains(message), "{stderr}");
+        assert!(stderr.ends_with(":1:1\n"), "{stderr}");
+    }
+}
+
+#[test]
 fn executes_source_through_the_public_cli() {
     let path = fixture_path("success");
     fs::write(&path, "val total = 6 * 7\nprintln(total)\n").expect("write Slug source");
@@ -84,6 +146,28 @@ fn executes_bindings_assignments_comments_and_strings() {
         "Slug VM\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn parses_raw_triple_quoted_and_extended_escaped_strings() {
+    let path = fixture_path("string-forms");
+    fs::write(
+        &path,
+        "val name = \"Slug\"\nprintln('C:\\Program Files\\Slug', \"escaped \\{ and \\q\", \"\"\"\nfirst\n  second\n\"\"\", '''\nliteral {{name}}\n''')\n",
+    )
+    .expect("write string forms");
+    let output = slug().arg(&path).output().expect("run string forms");
+    fs::remove_file(path).expect("remove string forms");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "C:\\Program Files\\Slug escaped { and \\q first\n  second literal {{name}}\n"
+    );
 }
 
 #[test]

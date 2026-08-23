@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added raw and triple-quoted strings, including the specified basic escape
+  behavior and checked unterminated-string diagnostics.
+- Added decimal floating-point, exponent, hexadecimal, and byte source
+  literals with checked malformed-literal diagnostics.
 - Added checked list slicing with optional start, end, and step expressions;
   `list[:end]` now starts at zero without requiring a redundant `0`.
 - Added a detailed inventory of the expression foundation and split the language

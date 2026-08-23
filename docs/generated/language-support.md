@@ -7,9 +7,10 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Lexical bindings and assignment | implemented | `tests/cli.rs` |
 | List and map destructuring declarations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Decimal integer literals with `_` separators | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Floating-point, hexadecimal, and byte literals | specified only | `language/language-specification.md` |
+| Floating-point, hexadecimal, and byte literals | implemented | `tests/cli.rs` |
 | Double-quoted strings with basic escapes | implemented | `tests/cli.rs` |
-| Raw, triple-quoted, and interpolated strings | specified only | `language/Strings - Mini Spec.md` |
+| Raw and triple-quoted strings with basic escapes | implemented | `tests/cli.rs` |
+| Octal escapes and interpolated strings | specified only | `language/Strings - Mini Spec.md` |
 | Boolean and nil literals | implemented | `tests/cli.rs` |
 | Lists and maps | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Arithmetic `+`, `-`, `*`, and `/` | implemented | `tests/cli.rs` and `tests/vm.rs` |

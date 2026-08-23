@@ -162,6 +162,8 @@ pub(super) struct Token {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum TokenKind {
     Int(i64),
+    Float(f64),
+    Bytes(Vec<u8>),
     Str(String),
     Name(String),
     Val,

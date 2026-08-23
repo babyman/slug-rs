@@ -15,6 +15,65 @@ pub(super) struct Lexer {
 }
 
 impl Lexer {
+    fn string(
+        &mut self,
+        delimiter: char,
+        raw: bool,
+        span: SourceSpan,
+    ) -> Result<String, SourceError> {
+        self.next();
+        let triple =
+            self.peek() == Some(delimiter) && self.input.get(self.index + 1) == Some(&delimiter);
+        if triple {
+            self.next();
+            self.next();
+        }
+        let mut text = String::new();
+        loop {
+            if self.peek() == Some(delimiter)
+                && (!triple
+                    || (self.input.get(self.index + 1) == Some(&delimiter)
+                        && self.input.get(self.index + 2) == Some(&delimiter)))
+            {
+                self.next();
+                if triple {
+                    self.next();
+                    self.next();
+                }
+                break;
+            }
+            let value = self
+                .next()
+                .ok_or_else(|| SourceError::at("unterminated string", span.clone()))?;
+            if !raw && value == '\\' {
+                match self.next() {
+                    Some('n') => text.push('\n'),
+                    Some('r') => text.push('\r'),
+                    Some('t') => text.push('\t'),
+                    Some('"') => text.push('"'),
+                    Some('\\') => text.push('\\'),
+                    Some('{') => text.push('{'),
+                    Some(value) => {
+                        text.push('\\');
+                        text.push(value);
+                    }
+                    None => return Err(SourceError::at("unterminated string", span)),
+                }
+            } else {
+                text.push(value);
+            }
+        }
+        if triple {
+            if text.starts_with('\n') {
+                text.remove(0);
+            }
+            if text.ends_with('\n') {
+                text.pop();
+            }
+        }
+        Ok(text)
+    }
+
     pub(super) fn new(path: &str, input: &str) -> Self {
         Self {
             path: path.into(),
@@ -284,32 +343,121 @@ impl Lexer {
                     {
                         text.push(self.next().expect("peeked character exists"));
                     }
-                    let value = text
-                        .replace('_', "")
-                        .parse()
-                        .map_err(|_| SourceError::at("invalid number", span.clone()))?;
-                    Self::push(&mut result, TokenKind::Int(value), span);
-                }
-                '"' => {
-                    self.next();
-                    let mut text = String::new();
-                    loop {
-                        match self.next() {
-                            Some('"') => break,
-                            Some('\\') => match self.next() {
-                                Some('n') => text.push('\n'),
-                                Some('r') => text.push('\r'),
-                                Some('t') => text.push('\t'),
-                                Some('"') => text.push('"'),
-                                Some('\\') => text.push('\\'),
-                                _ => return Err(SourceError::at("invalid string escape", span)),
-                            },
-                            Some(value) => text.push(value),
-                            None => return Err(SourceError::at("unterminated string", span)),
+                    if text == "0" && self.peek() == Some('x') {
+                        self.next();
+                        if self.peek() == Some('"') {
+                            self.next();
+                            let mut digits = String::new();
+                            loop {
+                                match self.next() {
+                                    Some('"') => break,
+                                    Some(value) if value.is_ascii_hexdigit() => digits.push(value),
+                                    Some(_) => {
+                                        return Err(SourceError::at(
+                                            "invalid hexadecimal digit in byte literal",
+                                            span,
+                                        ));
+                                    }
+                                    None => {
+                                        return Err(SourceError::at(
+                                            "unterminated byte literal",
+                                            span,
+                                        ));
+                                    }
+                                }
+                            }
+                            if digits.is_empty() || !digits.len().is_multiple_of(2) {
+                                return Err(SourceError::at(
+                                    "byte literal must contain one or more complete hexadecimal byte pairs",
+                                    span,
+                                ));
+                            }
+                            let bytes = (0..digits.len())
+                                .step_by(2)
+                                .map(|index| u8::from_str_radix(&digits[index..index + 2], 16))
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|_| {
+                                    SourceError::at("invalid byte literal", span.clone())
+                                })?;
+                            Self::push(&mut result, TokenKind::Bytes(bytes), span);
+                            continue;
+                        }
+
+                        if self.peek() == Some('_') {
+                            self.next();
+                        }
+                        let mut digits = String::new();
+                        while self
+                            .peek()
+                            .is_some_and(|value| value.is_ascii_hexdigit() || value == '_')
+                        {
+                            let value = self.next().expect("peeked character exists");
+                            if value != '_' {
+                                digits.push(value);
+                            }
+                        }
+                        if digits.is_empty() {
+                            return Err(SourceError::at("expected hexadecimal digit", span));
+                        }
+                        let value = i64::from_str_radix(&digits, 16).map_err(|_| {
+                            SourceError::at("invalid hexadecimal number", span.clone())
+                        })?;
+                        Self::push(&mut result, TokenKind::Int(value), span);
+                        continue;
+                    }
+
+                    let mut float = false;
+                    if self.peek() == Some('.')
+                        && self
+                            .input
+                            .get(self.index + 1)
+                            .is_some_and(char::is_ascii_digit)
+                    {
+                        float = true;
+                        text.push(self.next().expect("decimal point exists"));
+                        while self
+                            .peek()
+                            .is_some_and(|value| value.is_ascii_digit() || value == '_')
+                        {
+                            text.push(self.next().expect("peeked character exists"));
                         }
                     }
-                    Self::push(&mut result, TokenKind::Str(text), span);
+                    if matches!(self.peek(), Some('e' | 'E')) {
+                        float = true;
+                        text.push(self.next().expect("exponent marker exists"));
+                        if matches!(self.peek(), Some('+' | '-')) {
+                            text.push(self.next().expect("exponent sign exists"));
+                        }
+                        if !self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                            return Err(SourceError::at("expected exponent digit", span));
+                        }
+                        while self.peek().is_some_and(|value| value.is_ascii_digit()) {
+                            text.push(self.next().expect("peeked character exists"));
+                        }
+                    }
+                    let text = text.replace('_', "");
+                    if float {
+                        let value = text
+                            .parse()
+                            .map_err(|_| SourceError::at("invalid number", span.clone()))?;
+                        Self::push(&mut result, TokenKind::Float(value), span);
+                    } else {
+                        let value = text
+                            .parse()
+                            .map_err(|_| SourceError::at("invalid number", span.clone()))?;
+                        Self::push(&mut result, TokenKind::Int(value), span);
+                    }
                 }
+                '"' => Self::push(
+                    &mut result,
+                    TokenKind::Str(self.string('"', false, span.clone())?),
+                    span,
+                ),
+                '\'' => Self::push(
+                    &mut result,
+                    TokenKind::Str(self.string('\'', true, span.clone())?),
+                    span,
+                ),
                 value if value == '_' || value.is_alphabetic() => {
                     let mut text = String::new();
                     while self
