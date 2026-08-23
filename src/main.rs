@@ -1,6 +1,12 @@
-use std::{env, fs, path::Path, process::ExitCode};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
-use slug_vm::{ModuleLoader, SourceErrorKind, Value, Vm, compile, compile_type_checked};
+use slug_vm::{
+    Configuration, ModuleLoader, SourceErrorKind, Value, Vm, compile, compile_type_checked,
+};
 
 fn main() -> ExitCode {
     let mut args = env::args();
@@ -18,17 +24,21 @@ fn main() -> ExitCode {
         }
         Some("-type-check") => {
             if let Some(path) = args.next() {
-                run(&path, true)
+                let program_arguments = args.collect::<Vec<_>>();
+                run(&path, true, &program_arguments)
             } else {
                 eprintln!("Usage: {executable} -type-check program.slug");
                 ExitCode::from(1)
             }
         }
-        Some(path) => run(path, false),
+        Some(path) => {
+            let program_arguments = args.collect::<Vec<_>>();
+            run(path, false, &program_arguments)
+        }
     }
 }
 
-fn run(path: &str, type_check: bool) -> ExitCode {
+fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) => {
@@ -52,7 +62,19 @@ fn run(path: &str, type_check: bool) -> ExitCode {
         }
     };
     let source_root = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
-    let loader = ModuleLoader::new(source_root, None);
+    let entry_module = Path::new(path)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
+    let configuration = Configuration::load(
+        source_root,
+        slug_home.as_deref(),
+        env::vars(),
+        program_arguments,
+        entry_module,
+    );
+    let loader = ModuleLoader::with_configuration(source_root, None, configuration);
     let mut vm = Vm::with_module_loader(loader.clone());
     vm.define_native("println", |values| {
         println!(

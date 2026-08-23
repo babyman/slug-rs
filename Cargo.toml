@@ -21,3 +21,4 @@ unsafe_code = "forbid"
 pedantic = { level = "warn", priority = -1 }
 
 [dependencies]
+toml = "0.8"

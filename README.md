@@ -31,6 +31,9 @@ compiled-module contract is documented separately as `.cslug`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative resolution, cached isolated module initialization, and
   string-keyed exported-value maps.
+- Immutable configuration collection from library and project TOML, `SLUG__`
+  environment variables, and program options; source access through `cfg` is a
+  subsequent milestone.
 - The standard library, full type inference,
   structured concurrency, and the remaining language forms are progressive
   milestones beyond this subset.

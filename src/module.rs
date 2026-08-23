@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{ModuleDeclaration, Program, Value, Vm, compile};
+use crate::{Configuration, ModuleDeclaration, Program, Value, Vm, compile};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
@@ -18,6 +18,7 @@ pub struct ModuleLoader {
 struct ModuleLoaderState {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
+    configuration: Configuration,
     compiled: RefCell<HashMap<PathBuf, Program>>,
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
     native_globals: RefCell<HashMap<String, Value>>,
@@ -74,16 +75,33 @@ impl std::error::Error for ModuleLoadError {}
 impl ModuleLoader {
     #[must_use]
     pub fn new(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
+        Self::with_configuration(source_root, library_root, Configuration::default())
+    }
+
+    /// Creates a loader that shares one immutable configuration store with its modules.
+    #[must_use]
+    pub fn with_configuration(
+        source_root: impl Into<PathBuf>,
+        library_root: Option<PathBuf>,
+        configuration: Configuration,
+    ) -> Self {
         Self {
             state: Rc::new(ModuleLoaderState {
                 source_root: source_root.into(),
                 library_root,
+                configuration,
                 compiled: RefCell::new(HashMap::new()),
                 instances: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
                 warnings: RefCell::new(Vec::new()),
             }),
         }
+    }
+
+    /// The immutable configuration shared by the program module and loaded modules.
+    #[must_use]
+    pub fn configuration(&self) -> &Configuration {
+        &self.state.configuration
     }
 
     /// Loads a dotted module name without exposing file-system operations to Slug code.

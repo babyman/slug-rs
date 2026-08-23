@@ -58,6 +58,7 @@ Imported-name shadowing and non-callable conflict warnings|implemented|`tests/cl
 Callable import conflict warnings and overload sets|implemented|`tests/module_loader.rs`
 Retained top-level declaration, tag, and documentation metadata|implemented|`tests/module_loader.rs`
 Automatic local zero-argument `main` entrypoint invocation|implemented|`tests/cli.rs`
+Immutable configuration store and source precedence|implemented|`tests/configuration.rs`
 Foreign declarations and module metadata introspection|specified only|`language/language-specification.md`
 Checked source and runtime diagnostics with locations|implemented|`tests/cli.rs` and `tests/vm.rs`
 Full language specification|specified only|`language/language-specification.md`

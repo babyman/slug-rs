@@ -10,6 +10,8 @@
   modules initialize.
 - Added module fixture coverage for library fallback and imported-module failure
   locations, alongside resolution, caching, cycles, and live exports.
+- Added immutable configuration collection with TOML, environment, and program
+  option precedence; `cfg`, `argv`, and `argm` remain future work.
 - Retained top-level declaration documentation and evaluated tag arguments in
   module instances for future metadata introspection.
 - Added source-callable overload sets for distinct imported signatures and

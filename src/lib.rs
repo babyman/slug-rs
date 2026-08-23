@@ -7,6 +7,7 @@
 //! `docs/compiled-artifacts.md`.
 
 mod bytecode;
+mod configuration;
 mod module;
 mod source;
 mod value;
@@ -17,6 +18,7 @@ pub use bytecode::{
     MatchRest, ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField,
     SourceSpan,
 };
+pub use configuration::{Configuration, ConfigurationValue};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
 pub use value::{Closure, NativeFunction, StructField, StructSchema, StructValue, Value};

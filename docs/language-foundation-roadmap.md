@@ -120,7 +120,7 @@ and the host boundary in
 
 ## 4. Add configuration and the conformance harness
 
-- [ ] Implement the immutable configuration store and precedence rules from
+- [x] Implement the immutable configuration store and precedence rules from
   [`language/configuration.md`](language/configuration.md).
 - [ ] Implement `cfg`, `argv`, and `argm` with module-relative namespaces and
   checked conversions.
