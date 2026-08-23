@@ -234,6 +234,72 @@ fn local_bindings_shadow_all_imports_with_a_warning() {
 }
 
 #[test]
+fn imports_distinct_callable_signatures_as_an_overload_set() {
+    let root = root("import-overloads");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(root.join("zero.slug"), "export val select = fn() { 1 }\n")
+        .expect("write zero-argument module");
+    fs::write(
+        root.join("increment.slug"),
+        "export val select = fn(value) { value + 1 }\n",
+    )
+    .expect("write one-argument module");
+    let main_path = root.join("main.slug");
+    let program = compile(
+        &main_path.to_string_lossy(),
+        "val values = import(\"zero\", \"increment\")\n\
+         export val result = values.select() + values.select(4)\n",
+    )
+    .expect("compile overloaded import");
+    let loader = ModuleLoader::new(&root, None);
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("run overloaded imports");
+
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 6}");
+    assert!(loader.take_warnings().is_empty());
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn duplicate_callable_signatures_keep_the_first_import_with_a_warning() {
+    let root = root("duplicate-callable-imports");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("first.slug"),
+        "export val select = fn(value) { value + 1 }\n",
+    )
+    .expect("write first callable module");
+    fs::write(
+        root.join("second.slug"),
+        "export val select = fn(other) { other + 2 }\n",
+    )
+    .expect("write second callable module");
+    let main_path = root.join("main.slug");
+    let program = compile(
+        &main_path.to_string_lossy(),
+        "val values = import(\"first\", \"second\")\n\
+         export val result = values.select(4)\n",
+    )
+    .expect("compile duplicate callable import");
+    let loader = ModuleLoader::new(&root, None);
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("run duplicate callable imports");
+
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 5}");
+    assert_eq!(
+        loader.take_warnings(),
+        [
+            "imported callable `select` with a duplicate signature was ignored because an earlier module provided it"
+        ]
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
     let root = root("cyclic-uninitialized");
     fs::create_dir_all(&root).expect("create module directory");

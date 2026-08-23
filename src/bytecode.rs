@@ -56,7 +56,7 @@ pub struct SchemaField {
 }
 
 /// Private callable metadata used by source-call binding.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParameterSignature {
     pub name: String,
     pub has_default: bool,

@@ -109,7 +109,7 @@ and the host boundary in
 - [x] Implement live imported bindings.
 - [x] Implement imported-name shadowing and non-callable import conflict
   warnings.
-- [ ] Implement callable import conflict and combination rules.
+- [x] Implement callable import conflict and combination rules.
 - [ ] Retain declaration, tag, and documentation metadata in the module model
   for later introspection.
 - [ ] Invoke the first eligible local `main` function after successful

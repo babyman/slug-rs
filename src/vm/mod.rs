@@ -850,6 +850,28 @@ impl Vm {
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
+            Value::Overloads(overloads) => {
+                let positional = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value.resolve().map_err(|message| {
+                            self.error(RuntimeErrorKind::Name, message, span.clone())
+                        })
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                let (callee, arguments, provided) = self.bind_overload_arguments(
+                    program,
+                    &overloads,
+                    &positional,
+                    &[],
+                    span.clone(),
+                )?;
+                self.stack.truncate(base);
+                self.stack.push(callee);
+                self.stack.extend(arguments);
+                let count = self.stack.len() - base - 1;
+                return self.call(program, count, Some(provided), span);
+            }
             value => {
                 return Err(self.error(
                     RuntimeErrorKind::InvalidCall,
@@ -974,14 +996,33 @@ impl Vm {
                 ));
             };
             for (key, value) in module_exports.iter() {
-                if !exports.iter().any(|(existing, _)| existing == key) {
+                let Some(index) = exports.iter().position(|(existing, _)| existing == key) else {
                     exports.push((key.clone(), value.clone()));
-                } else if let Value::Str(name) = key
-                    && !matches!(
-                        value.resolve(),
-                        Ok(Value::Closure(_) | Value::Native { .. })
-                    )
-                {
+                    continue;
+                };
+                let existing = exports[index].1.clone();
+                if let (Some(existing_signatures), Some(incoming_signature)) = (
+                    Self::callable_signatures(&existing),
+                    Self::callable_signature(value),
+                ) {
+                    if existing_signatures
+                        .iter()
+                        .any(|signature| signature == &incoming_signature)
+                    {
+                        if let Value::Str(name) = key {
+                            self.warning(format!(
+                                "imported callable `{name}` with a duplicate signature was ignored because an earlier module provided it"
+                            ));
+                        }
+                    } else {
+                        let mut overloads = match existing {
+                            Value::Overloads(overloads) => overloads.as_ref().clone(),
+                            value => vec![value],
+                        };
+                        overloads.push(value.clone());
+                        exports[index].1 = Value::Overloads(Rc::new(overloads));
+                    }
+                } else if let Value::Str(name) = key {
                     self.warning(format!(
                         "imported binding `{name}` was ignored because an earlier module provided it"
                     ));
@@ -990,6 +1031,27 @@ impl Vm {
         }
         self.stack.push(Value::Map(Rc::new(exports)));
         Ok(())
+    }
+
+    fn callable_signature(value: &Value) -> Option<Vec<(bool, bool)>> {
+        let Value::Closure(closure) = value.resolve().ok()? else {
+            return None;
+        };
+        let program = closure.program.as_deref()?;
+        program.chunk(closure.chunk).map(|chunk| {
+            chunk
+                .parameters
+                .iter()
+                .map(|parameter| (parameter.has_default, parameter.variadic))
+                .collect()
+        })
+    }
+
+    fn callable_signatures(value: &Value) -> Option<Vec<Vec<(bool, bool)>>> {
+        match value {
+            Value::Overloads(overloads) => overloads.iter().map(Self::callable_signature).collect(),
+            value => Self::callable_signature(value).map(|signature| vec![signature]),
+        }
     }
 
     fn list_spread(&mut self, spreads: Vec<bool>, span: Option<SourceSpan>) -> VmResult<()> {
@@ -1039,8 +1101,13 @@ impl Vm {
         let values = self.stack.split_off(base + 1);
         self.stack.truncate(base);
         let (positional, named) = self.expand_call_arguments(values, kinds, span.clone())?;
-        let (arguments, provided) =
-            self.bind_call_arguments(program, &callee, positional, named, span.clone())?;
+        let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
+            self.bind_overload_arguments(program, overloads, &positional, &named, span.clone())?
+        } else {
+            let (arguments, provided) =
+                self.bind_call_arguments(program, &callee, positional, named, span.clone())?;
+            (callee, arguments, provided)
+        };
         self.stack.push(callee);
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
@@ -1147,7 +1214,17 @@ impl Vm {
             )
         })?;
         if chunk.parameters.is_empty() {
-            return Ok((positional.clone(), vec![true; positional.len()]));
+            if chunk.arity != 0 {
+                return Ok((positional.clone(), vec![true; positional.len()]));
+            }
+            if positional.is_empty() && named.is_empty() {
+                return Ok((Vec::new(), Vec::new()));
+            }
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!("`{}` expects no arguments", chunk.name),
+                span,
+            ));
         }
         let variadic = chunk
             .parameters
@@ -1215,6 +1292,39 @@ impl Vm {
             })
             .collect::<VmResult<Vec<_>>>()?;
         Ok((values, provided))
+    }
+
+    fn bind_overload_arguments(
+        &self,
+        program: &Program,
+        overloads: &[Value],
+        positional: &[Value],
+        named: &[NamedArgument],
+        span: Option<SourceSpan>,
+    ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
+        let mut error = None;
+        for callee in overloads {
+            let callee = callee
+                .resolve()
+                .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
+            match self.bind_call_arguments(
+                program,
+                &callee,
+                positional.to_vec(),
+                named.to_vec(),
+                span.clone(),
+            ) {
+                Ok((arguments, provided)) => return Ok((callee, arguments, provided)),
+                Err(next) => error = Some(next),
+            }
+        }
+        Err(error.unwrap_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidCall,
+                "overload set is empty".into(),
+                span,
+            )
+        }))
     }
 
     fn binary(

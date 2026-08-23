@@ -66,6 +66,8 @@ pub enum Value {
         name: Rc<str>,
         function: NativeFunction,
     },
+    /// Private callable group assembled by a multi-module import.
+    Overloads(Rc<Vec<Value>>),
     /// A live module binding exposed through an import map.
     Binding {
         name: Rc<str>,
@@ -97,7 +99,7 @@ impl Value {
             Self::Map(_) => "map",
             Self::StructSchema(_) => "struct schema",
             Self::Struct(_) => "struct",
-            Self::Closure(_) | Self::Native { .. } => "fn",
+            Self::Closure(_) | Self::Native { .. } | Self::Overloads(_) => "fn",
         }
     }
 
@@ -140,7 +142,7 @@ impl PartialEq for Value {
             }
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
-            (Self::List(a), Self::List(b)) => a == b,
+            (Self::List(a), Self::List(b)) | (Self::Overloads(a), Self::Overloads(b)) => a == b,
             (Self::Map(a), Self::Map(b)) => a == b,
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
             (Self::Struct(a), Self::Struct(b)) => {
@@ -186,6 +188,7 @@ impl fmt::Debug for Value {
             }
             Self::Closure(_) => write!(f, "<fn>"),
             Self::Native { name, .. } => write!(f, "<native {name}>"),
+            Self::Overloads(_) => write!(f, "<overloads>"),
             Self::Binding { name, .. } => write!(f, "<binding {name}>"),
         }
     }

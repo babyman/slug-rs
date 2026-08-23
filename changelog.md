@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added source-callable overload sets for distinct imported signatures and
+  warnings when a later module duplicates an imported callable signature.
 - Added module warnings for local bindings that shadow `{*}` imports and for
   duplicate non-callable names across a multi-module import.
 - Made imported functions run in their defining module and preserve live
