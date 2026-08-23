@@ -499,6 +499,7 @@ impl Lexer {
                         "recur" => TokenKind::Recur,
                         "match" => TokenKind::Match,
                         "struct" => TokenKind::Struct,
+                        "copy" => TokenKind::Copy,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "nil" => TokenKind::Nil,

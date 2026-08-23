@@ -546,6 +546,44 @@ fn constructs_and_compares_struct_values_with_stored_defaults() {
 }
 
 #[test]
+fn copies_structs_with_checked_replacement_fields() {
+    let path = fixture_path("struct-copy");
+    fs::write(
+        &path,
+        "val User = struct { name, active = true }\n\
+         val first = User { name: \"Slug\" }\n\
+         val second = first copy { active: false }\n\
+         println(first.name, first.active, second.name, second.active, first == second)\n",
+    )
+    .expect("write struct copy source");
+    let output = slug().arg(&path).output().expect("run struct copy source");
+    fs::remove_file(&path).expect("remove struct copy source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug true Slug false false\n"
+    );
+
+    fs::write(&path, "val value = 1\nvalue copy { field: 2 }\n")
+        .expect("write non-struct copy source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run non-struct copy source");
+    fs::remove_file(path).expect("remove non-struct copy source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: cannot copy non-struct value")
+    );
+}
+
+#[test]
 fn reports_checked_struct_schema_construction_and_access_errors() {
     let cases = [
         (

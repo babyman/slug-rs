@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added schema-preserving struct copies with checked replacement fields.
 - Added source-level `%` with checked zero-division behavior.
 - Added one-to-three-digit octal escapes in double-quoted strings.
 - Added raw and triple-quoted strings, including the specified basic escape

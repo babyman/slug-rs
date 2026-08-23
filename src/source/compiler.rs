@@ -350,6 +350,16 @@ impl Compiler {
                     &expression.span,
                 );
             }
+            ExprKind::StructCopy { value, fields } => {
+                self.expression(state, value)?;
+                for (_, replacement) in fields {
+                    self.expression(state, replacement)?;
+                }
+                state.emit(
+                    Op::StructCopy(fields.iter().map(|(name, _)| name.clone()).collect()),
+                    &expression.span,
+                );
+            }
             ExprKind::Index { collection, index } => {
                 self.expression(state, collection)?;
                 self.expression(state, index)?;

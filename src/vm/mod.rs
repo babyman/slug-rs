@@ -13,8 +13,8 @@ mod operations;
 use cleanup::{Cleanup, Deferred};
 pub use error::{CallFrame, RuntimeError, RuntimeErrorKind};
 use operations::{
-    add, construct_struct, divide, index_value, is_map_key, matches_pattern, modulo, multiply,
-    negate, numbers, slice_value, subtract,
+    add, construct_struct, copy_struct, divide, index_value, is_map_key, matches_pattern, modulo,
+    multiply, negate, numbers, slice_value, subtract,
 };
 
 pub type VmResult<T> = Result<T, RuntimeError>;
@@ -337,6 +337,14 @@ impl Vm {
                     let schema = self.pop(span.clone())?;
                     self.stack.push(
                         construct_struct(schema, &fields, &values)
+                            .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?,
+                    );
+                }
+                Op::StructCopy(fields) => {
+                    let replacements = self.pop_values(fields.len(), span.clone())?;
+                    let value = self.pop(span.clone())?;
+                    self.stack.push(
+                        copy_struct(value, &fields, &replacements)
                             .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?,
                     );
                 }

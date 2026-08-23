@@ -64,6 +64,10 @@ pub(super) enum ExprKind {
         schema: Box<Expr>,
         fields: Vec<(String, Expr)>,
     },
+    StructCopy {
+        value: Box<Expr>,
+        fields: Vec<(String, Expr)>,
+    },
     Index {
         collection: Box<Expr>,
         index: Box<Expr>,
@@ -180,6 +184,7 @@ pub(super) enum TokenKind {
     Recur,
     Match,
     Struct,
+    Copy,
     True,
     False,
     Nil,

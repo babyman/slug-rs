@@ -128,6 +128,7 @@ pub enum Op {
     Map(usize),
     StructSchema(Vec<SchemaField>),
     Struct(Vec<String>),
+    StructCopy(Vec<String>),
     GetIndex,
     GetSlice {
         has_start: bool,

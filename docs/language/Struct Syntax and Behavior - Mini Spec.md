@@ -51,3 +51,11 @@ Each schema compares equal only to itself. Two struct values compare equal when
 they have the same schema identity and their field values compare equal in
 schema order. Values created from distinct schema evaluations are unequal even
 when their field names and values are otherwise identical.
+
+## Copying
+
+`value copy { field: replacement }` creates a new struct value with the same
+schema identity as `value`. It evaluates `value` first and replacement
+expressions left to right. Each named field is replaced; fields not named in
+the copy retain their original values. Copying a non-struct, naming an unknown
+field, or naming a field more than once is a checked runtime type error.

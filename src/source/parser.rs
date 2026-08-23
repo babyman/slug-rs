@@ -265,6 +265,10 @@ impl Parser {
             } else if self.matches(&TokenKind::LBrace) && self.starts_struct_init() {
                 let span = self.next().span;
                 value = self.struct_init(value, span)?;
+            } else if self.matches(&TokenKind::Copy) {
+                let span = self.next().span;
+                self.consume(&TokenKind::LBrace, "expected { after copy")?;
+                value = self.struct_copy(value, span)?;
             } else {
                 break;
             }
@@ -448,6 +452,26 @@ impl Parser {
         })
     }
     fn struct_init(&mut self, schema: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+        let fields = self.struct_fields(&span)?;
+        Ok(Expr {
+            kind: ExprKind::StructInit {
+                schema: Box::new(schema),
+                fields,
+            },
+            span,
+        })
+    }
+    fn struct_copy(&mut self, value: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+        let fields = self.struct_fields(&span)?;
+        Ok(Expr {
+            kind: ExprKind::StructCopy {
+                value: Box::new(value),
+                fields,
+            },
+            span,
+        })
+    }
+    fn struct_fields(&mut self, span: &SourceSpan) -> Result<Vec<(String, Expr)>, SourceError> {
         self.enter_nesting(span.clone())?;
         let mut fields = Vec::new();
         self.separators();
@@ -462,13 +486,7 @@ impl Parser {
         }
         self.next();
         self.leave_nesting();
-        Ok(Expr {
-            kind: ExprKind::StructInit {
-                schema: Box::new(schema),
-                fields,
-            },
-            span,
-        })
+        Ok(fields)
     }
     fn struct_field_separator(&mut self) -> Result<(), SourceError> {
         if self.matches(&TokenKind::Comma) {
