@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added declaration and parameter tag syntax with source-order tag-argument
+  evaluation. Retained module metadata and `slug.meta` introspection remain
+  future work.
 - Replaced the special `@export` tag with the `export` declaration keyword and
   replaced `@main` with source-ordered discovery of a local `main` function
   eligible for a zero-argument call in the target language specification.

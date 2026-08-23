@@ -9,7 +9,7 @@ use super::{
     SourceError,
     ast::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern, StringPart,
+        Pattern, Prefix, RestPattern, StringPart, Tag,
     },
     state::{Binding, State},
 };
@@ -106,9 +106,11 @@ impl Compiler {
             ExprKind::Declare {
                 mutable,
                 pattern,
+                tags,
                 value,
                 ..
             } => {
+                self.tags(state, tags)?;
                 self.expression(state, value)?;
                 self.bind_pattern(state, pattern, *mutable, &expression.span)?;
                 state.emit(Op::Nil, &expression.span);
@@ -179,6 +181,7 @@ impl Compiler {
                             .cloned()
                             .map(|name| Parameter {
                                 name,
+                                tags: Vec::new(),
                                 annotation: None,
                                 default: None,
                                 variadic: false,
@@ -506,6 +509,9 @@ impl Compiler {
             ExprKind::Function {
                 parameters, body, ..
             } => {
+                for parameter in parameters {
+                    self.tags(state, &parameter.tags)?;
+                }
                 let names = plain_parameters(parameters, &expression.span)?;
                 let (mut chunk, captures) =
                     self.function(&names, parameters, body, state.visible())?;
@@ -527,6 +533,19 @@ impl Compiler {
                     },
                     &expression.span,
                 );
+            }
+        }
+        Ok(())
+    }
+    fn tags(&mut self, state: &mut State, tags: &[Tag]) -> Result<(), SourceError> {
+        for tag in tags {
+            debug_assert!(
+                !tag.name.is_empty(),
+                "the parser only constructs named tags"
+            );
+            for argument in &tag.arguments {
+                self.expression(state, argument)?;
+                state.emit(Op::Pop, &argument.span);
             }
         }
         Ok(())

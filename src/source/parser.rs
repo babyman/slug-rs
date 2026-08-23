@@ -2,7 +2,7 @@ use super::{
     SourceError,
     ast::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern, StringPart, StructSchemaField, Token, TokenKind,
+        Pattern, Prefix, RestPattern, StringPart, StructSchemaField, Tag, Token, TokenKind,
         TypeAnnotation,
     },
 };
@@ -80,6 +80,17 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Expr, SourceError> {
+        let mut tags = Vec::new();
+        while self.matches(&TokenKind::At) {
+            tags.push(self.tag()?);
+            self.separators();
+        }
+        if !tags.is_empty() && !matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
+            return Err(SourceError::at(
+                "tags must prefix a val or var declaration",
+                self.peek().span.clone(),
+            ));
+        }
         if matches!(self.kind(), TokenKind::Return) {
             let span = self.next().span;
             let value = self.expression()?;
@@ -149,12 +160,39 @@ impl Parser {
                 kind: ExprKind::Declare {
                     mutable,
                     pattern,
+                    tags,
                     annotation,
                     value: Box::new(value),
                 },
             });
         }
         self.expression()
+    }
+
+    fn tag(&mut self) -> Result<Tag, SourceError> {
+        self.next();
+        let token = self.next();
+        let TokenKind::Name(name) = token.kind else {
+            return Err(SourceError::at("expected tag name", token.span));
+        };
+        if name == "export" {
+            return Err(SourceError::at("@export is not a valid tag", token.span));
+        }
+        let mut arguments = Vec::new();
+        if self.matches(&TokenKind::LParen) {
+            self.next();
+            if !self.matches(&TokenKind::RParen) {
+                loop {
+                    arguments.push(self.expression()?);
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.next();
+                }
+            }
+            self.consume(&TokenKind::RParen, "expected ) after tag arguments")?;
+        }
+        Ok(Tag { name, arguments })
     }
 
     fn expression(&mut self) -> Result<Expr, SourceError> {
@@ -757,6 +795,11 @@ impl Parser {
         let mut has_variadic = false;
         if !self.matches(&TokenKind::RParen) {
             loop {
+                let mut tags = Vec::new();
+                while self.matches(&TokenKind::At) {
+                    tags.push(self.tag()?);
+                    self.separators();
+                }
                 let variadic = if self.matches(&TokenKind::Ellipsis) {
                     let token = self.next();
                     if has_variadic {
@@ -799,6 +842,7 @@ impl Parser {
                 }
                 parameters.push(Parameter {
                     name,
+                    tags,
                     annotation,
                     default,
                     variadic,

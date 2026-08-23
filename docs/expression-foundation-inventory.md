@@ -30,7 +30,8 @@ and the order in which remaining work can proceed without introducing compatibil
 | Struct patterns                                                            | Implemented                 | Schema-aware source patterns and private VM matching, plus CLI/VM tests       | Preserve schema identity and partial-field matching.                         |
 | Declaration, parameter, return, and struct-field annotations              | Implemented                 | Retained source annotations and optional checker entry point, plus CLI tests  | Extend richer expression inference.                                          |
 | Generic call inference and explicit type applications                      | Implemented                 | Annotated call checking and CLI tests                                          | Keep dynamic operations unchecked when their type is not provable.           |
-| Tags, documentation statements, foreign declarations, and `???`           | Not implemented             | Lexer/parser lack the relevant source forms                                   | Add after annotations, with module metadata/host integration kept separate.  |
+| Tags on declarations and parameters                                       | Partially implemented       | Source AST/parser/compiler and CLI tests                                      | Add retained module metadata and `slug.meta` introspection.                  |
+| Documentation statements, foreign declarations, and `???`                 | Not implemented             | Lexer/parser lack the relevant source forms                                   | Add with module metadata and host integration kept separate.                  |
 
 ## Implementation surface by feature family
 
@@ -49,8 +50,8 @@ and the order in which remaining work can proceed without introducing compatibil
    concatenation and pipeline semantics.
 2. Add struct patterns before attaching field annotations.
 3. Parse and retain annotations, then add the required static checks.
-4. Add tags, documentation statements, foreign declarations, and `???` once their metadata and host boundaries can be
-   designed alongside modules.
+4. Retain tag metadata and add `slug.meta`, then add documentation statements, foreign declarations, and `???` once
+   their module and host boundaries can be designed together.
 
 Every slice must update the grammar when syntax changes, add CLI coverage for accepted source and diagnostics, add VM
 coverage for private execution boundaries, update `docs/language-support.tsv`, regenerate the support matrix, and run

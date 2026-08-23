@@ -508,6 +508,13 @@ environment. Tags attach metadata and do not, by themselves, change evaluation
 semantics. `export` is a reserved keyword rather than a tag name, so `@export`
 is invalid.
 
+The current Rust subset accepts tags on `val` and `var` declarations and on
+function parameters. It evaluates their arguments in the current lexical
+environment when the corresponding declaration or function literal is
+evaluated; declaration tags run before the declared value. Module metadata,
+`slug.meta` introspection, tagged exports, and tagged foreign declarations are
+not implemented yet.
+
 ```slug
 @deprecated
 export val increment = fn(n) { n + 1 }

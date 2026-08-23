@@ -179,22 +179,7 @@ impl Lexer {
         }
         matches!(
             self.input.get(index),
-            Some(
-                '+' | '-'
-                    | '*'
-                    | '/'
-                    | '%'
-                    | ':'
-                    | '<'
-                    | '>'
-                    | '='
-                    | '!'
-                    | '&'
-                    | '|'
-                    | '@'
-                    | '^'
-                    | '.',
-            )
+            Some('+' | '-' | '*' | '/' | '%' | ':' | '<' | '>' | '=' | '!' | '&' | '|' | '^' | '.',)
         )
     }
     fn push(tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {

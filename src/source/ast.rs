@@ -13,6 +13,7 @@ pub(super) enum ExprKind {
     Declare {
         mutable: bool,
         pattern: Pattern,
+        tags: Vec<Tag>,
         annotation: Option<TypeAnnotation>,
         value: Box<Expr>,
     },
@@ -95,9 +96,15 @@ pub(super) enum StringPart {
 #[derive(Clone, Debug)]
 pub(super) struct Parameter {
     pub(super) name: String,
+    pub(super) tags: Vec<Tag>,
     pub(super) annotation: Option<TypeAnnotation>,
     pub(super) default: Option<Expr>,
     pub(super) variadic: bool,
+}
+#[derive(Clone, Debug)]
+pub(super) struct Tag {
+    pub(super) name: String,
+    pub(super) arguments: Vec<Expr>,
 }
 #[derive(Clone, Debug)]
 pub(super) enum CallArgument {
