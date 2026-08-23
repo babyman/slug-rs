@@ -50,6 +50,35 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn imports_exported_values_through_the_public_cli() {
+    let root =
+        std::env::temp_dir().join(format!("slug-cli-imported-values-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create import fixture directory");
+    fs::write(
+        root.join("math.slug"),
+        "export val answer = 42\nexport val hidden = \"visible\"\n",
+    )
+    .expect("write imported module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val math = import(\"math\")\nprintln(math.answer, math.hidden)\n",
+    )
+    .expect("write importing source");
+
+    let output = slug().arg(&path).output().expect("run importing source");
+
+    fs::remove_dir_all(root).expect("remove import fixture directory");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42 visible\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn evaluates_source_modulo_with_checked_zero_division() {
     let path = fixture_path("modulo");
     fs::write(&path, "println(17 % 5, 5.5 % 2)\n").expect("write modulo source");

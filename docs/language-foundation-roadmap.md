@@ -96,14 +96,14 @@ and the host boundary in
 
 - [x] Define a source loader and explicit module-root and library-root host
   services without exposing host capabilities as ordinary Slug bindings.
-- [ ] Implement `import(name)` resolution, module caching, and checked module
+- [x] Implement `import(name)` resolution, module caching, and checked module
   diagnostics.
   - [x] Cache compiled modules by resolved source path.
   - [x] Define isolated cached module-instance execution for imported values.
-  - [ ] Resolve and execute source-level `import(name, ...)` calls.
-- [ ] Implement top-level `export` declarations and module export maps.
+  - [x] Resolve and execute source-level `import(name, ...)` calls.
+- [x] Implement top-level `export` declarations and module export maps.
   - [x] Parse top-level `export` declarations and retain exported names.
-  - [ ] Construct module export maps from initialized bindings.
+  - [x] Construct module export maps from initialized bindings.
 - [ ] Predeclare statically knowable top-level bindings and support cyclic module
   initialization with checked use-before-initialization failures.
 - [ ] Implement live imported bindings, shadowing behavior, import conflicts,

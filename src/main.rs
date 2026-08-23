@@ -1,6 +1,6 @@
-use std::{env, fs, process::ExitCode};
+use std::{env, fs, path::Path, process::ExitCode};
 
-use slug_vm::{SourceErrorKind, Value, Vm, compile, compile_type_checked};
+use slug_vm::{ModuleLoader, SourceErrorKind, Value, Vm, compile, compile_type_checked};
 
 fn main() -> ExitCode {
     let mut args = env::args();
@@ -51,7 +51,8 @@ fn run(path: &str, type_check: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let mut vm = Vm::new();
+    let source_root = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
+    let mut vm = Vm::with_module_loader(ModuleLoader::new(source_root, None));
     vm.define_native("println", |values| {
         println!(
             "{}",

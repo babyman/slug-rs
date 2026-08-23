@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added dedicated source-level `import(name, ...)` execution with checked
+  string module names, shared cached resolution and initialization, nested
+  importer-relative loading, and first-module-wins exported-map results.
 - Added top-level `export` declaration parsing and retained exported-name
   metadata for the module loader.
 - Added the `???` placeholder, which raises a checked `not implemented` runtime error.

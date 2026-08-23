@@ -168,6 +168,7 @@ pub enum Op {
     Call(usize),
     CallSpread(Vec<CallArgumentKind>),
     PipelineCall(Vec<CallArgumentKind>),
+    Import(Vec<CallArgumentKind>),
     TryMatch {
         pattern: MatchPattern,
         bindings: usize,

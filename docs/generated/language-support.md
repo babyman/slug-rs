@@ -55,6 +55,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Documentation blocks on top-level `val`/`var` declarations | partial | `tests/cli.rs` |
 | `???` checked runtime placeholder | implemented | `tests/cli.rs` |
 | Top-level `export` declaration metadata | partial | `tests/vm.rs` |
+| Source-level module imports and exported-value maps | partial | `tests/module_loader.rs` |
 | Foreign declarations and module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |

@@ -1,6 +1,6 @@
 use std::fs;
 
-use slug_vm::{ModuleLoadError, ModuleLoader};
+use slug_vm::{ModuleLoadError, ModuleLoader, RuntimeErrorKind, Value, Vm, compile};
 
 fn root(kind: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("slug-module-{kind}-{}", std::process::id()))
@@ -58,5 +58,70 @@ fn resolves_importer_relative_source_and_library_roots() {
         .compile(None, "local.math")
         .expect("reuse cached module");
     assert_eq!(loader.cached_module_count(), 1);
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn source_imports_return_cached_export_maps_in_module_order() {
+    let root = root("source-import");
+    fs::create_dir_all(root.join("local")).expect("create module directory");
+    fs::write(
+        root.join("local/inner.slug"),
+        "export val answer = 42\nexport val shared = \"inner\"\n",
+    )
+    .expect("write inner module");
+    fs::write(
+        root.join("local/outer.slug"),
+        "val inner = import(\"inner\")\nexport val answer = inner.answer\nexport val shared = \"outer\"\n",
+    )
+    .expect("write outer module");
+    fs::write(
+        root.join("fallback.slug"),
+        "export val shared = \"fallback\"\nexport val extra = 7\n",
+    )
+    .expect("write fallback module");
+    let main_path = root.join("main.slug");
+    let source =
+        "export val modules = import(\"local.outer\", \"fallback\")\nimport(\"local.outer\")\n";
+    let program = compile(&main_path.to_string_lossy(), source).expect("compile importer");
+    let loader = ModuleLoader::new(&root, None);
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main").expect("execute imports");
+
+    assert_eq!(loader.cached_module_count(), 3);
+    assert_eq!(loader.initialized_module_count(), 3);
+    assert_eq!(
+        vm.global("modules"),
+        Some(&Value::Map(std::rc::Rc::new(vec![
+            (Value::string("answer"), Value::Int(42)),
+            (Value::string("shared"), Value::string("outer")),
+            (Value::string("extra"), Value::Int(7)),
+        ])))
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn source_imports_check_module_name_values_and_loader_failures() {
+    let root = root("source-import-errors");
+    fs::create_dir_all(&root).expect("create module directory");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+
+    let program = compile(&main_path.to_string_lossy(), "import(42)\n").expect("compile import");
+    let error = Vm::with_module_loader(loader.clone())
+        .run_named(&program, "main")
+        .expect_err("non-string imports must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(error.message, "import expects string module names, got num");
+
+    let program = compile(&main_path.to_string_lossy(), "import(\"missing\")\n")
+        .expect("compile missing import");
+    let error = Vm::with_module_loader(loader)
+        .run_named(&program, "main")
+        .expect_err("missing imports must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert_eq!(error.message, "module `missing` was not found");
     fs::remove_dir_all(root).expect("remove module test directory");
 }

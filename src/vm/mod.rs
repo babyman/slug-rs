@@ -1,7 +1,7 @@
-use std::{cmp::Ordering, collections::HashMap, rc::Rc};
+use std::{cmp::Ordering, collections::HashMap, path::Path, rc::Rc};
 
 use crate::{
-    CallArgumentKind, Capture, Program, SourceSpan, Value,
+    CallArgumentKind, Capture, ModuleLoader, Program, SourceSpan, Value,
     bytecode::Op,
     value::{BindingCell, Closure, binding_cell},
 };
@@ -40,6 +40,7 @@ struct Frame {
 /// A small, checked stack VM for compiler-produced Slug bytecode.
 #[derive(Default)]
 pub struct Vm {
+    module_loader: Option<ModuleLoader>,
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
@@ -50,6 +51,14 @@ impl Vm {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn with_module_loader(module_loader: ModuleLoader) -> Self {
+        Self {
+            module_loader: Some(module_loader),
+            ..Self::default()
+        }
     }
 
     #[must_use]
@@ -472,6 +481,7 @@ impl Vm {
                 Op::Call(count) => self.call(program, count, None, span)?,
                 Op::CallSpread(kinds) => self.call_spread(program, kinds, span)?,
                 Op::PipelineCall(kinds) => self.pipeline_call(program, kinds, span)?,
+                Op::Import(kinds) => self.import(kinds, span)?,
                 Op::TryMatch {
                     pattern,
                     bindings,
@@ -709,6 +719,63 @@ impl Vm {
                 ));
             }
         }
+        Ok(())
+    }
+
+    fn import(&mut self, kinds: Vec<CallArgumentKind>, span: Option<SourceSpan>) -> VmResult<()> {
+        let values = self.pop_values(kinds.len(), span.clone())?;
+        let (names, named_arguments) = self.expand_call_arguments(values, kinds, span.clone())?;
+        if !named_arguments.is_empty() {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                "import does not accept named arguments".into(),
+                span,
+            ));
+        }
+        if names.is_empty() {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                "import expects at least one module name".into(),
+                span,
+            ));
+        }
+        let loader = self.module_loader.clone().ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::Module,
+                "module loader is not configured".into(),
+                span.clone(),
+            )
+        })?;
+        let importer = span.as_ref().map(|span| Path::new(&span.path));
+        let mut exports = Vec::new();
+        for name in names {
+            let Value::Str(name) = name else {
+                return Err(self.error(
+                    RuntimeErrorKind::Type,
+                    format!(
+                        "import expects string module names, got {}",
+                        name.type_name()
+                    ),
+                    span,
+                ));
+            };
+            let instance = loader.initialize(importer, &name).map_err(|error| {
+                self.error(RuntimeErrorKind::Module, error.to_string(), span.clone())
+            })?;
+            let Value::Map(module_exports) = instance.exports else {
+                return Err(self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "module exports are not a map".into(),
+                    span,
+                ));
+            };
+            for (key, value) in module_exports.iter() {
+                if !exports.iter().any(|(existing, _)| existing == key) {
+                    exports.push((key.clone(), value.clone()));
+                }
+            }
+        }
+        self.stack.push(Value::Map(Rc::new(exports)));
         Ok(())
     }
 

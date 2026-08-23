@@ -412,8 +412,9 @@ throw or checked runtime fault is unwinding.
 `defer onerror(err)` receives the original thrown value for `throw value`. For
 a checked VM fault it receives a string-keyed map with `type`, `msg`, and
 `data` fields. `type` is one of `invalid_bytecode`, `type`, `name`, `arity`,
-`divide_by_zero`, `invalid_call`, `native`, or `match`; `msg` is its diagnostic
-message; and `data` is `nil` until a fault defines structured extra data.
+`divide_by_zero`, `invalid_call`, `native`, `module`, or `match`; `msg` is its
+diagnostic message; and `data` is `nil` until a fault defines structured extra
+data.
 
 ```slug
 val divide = fn(a, b) {

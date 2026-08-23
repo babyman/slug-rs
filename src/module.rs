@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     fmt, fs,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use crate::{Program, Value, Vm, compile};
@@ -10,6 +11,11 @@ use crate::{Program, Value, Vm, compile};
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
 pub struct ModuleLoader {
+    state: Rc<ModuleLoaderState>,
+}
+
+#[derive(Debug)]
+struct ModuleLoaderState {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
     compiled: RefCell<HashMap<PathBuf, Program>>,
@@ -65,10 +71,12 @@ impl ModuleLoader {
     #[must_use]
     pub fn new(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
         Self {
-            source_root: source_root.into(),
-            library_root,
-            compiled: RefCell::new(HashMap::new()),
-            instances: RefCell::new(HashMap::new()),
+            state: Rc::new(ModuleLoaderState {
+                source_root: source_root.into(),
+                library_root,
+                compiled: RefCell::new(HashMap::new()),
+                instances: RefCell::new(HashMap::new()),
+            }),
         }
     }
 
@@ -87,8 +95,8 @@ impl ModuleLoader {
         if let Some(importer) = importer.and_then(Path::parent) {
             candidates.push(importer.join(&relative));
         }
-        candidates.push(self.source_root.join(&relative));
-        if let Some(library_root) = &self.library_root {
+        candidates.push(self.state.source_root.join(&relative));
+        if let Some(library_root) = &self.state.library_root {
             candidates.push(library_root.join(&relative));
         }
         for path in &candidates {
@@ -121,7 +129,7 @@ impl ModuleLoader {
     /// Returns an error for loader failures or invalid module source.
     pub fn compile(&self, importer: Option<&Path>, name: &str) -> Result<Program, ModuleLoadError> {
         let source = self.load(importer, name)?;
-        if let Some(program) = self.compiled.borrow().get(&source.path) {
+        if let Some(program) = self.state.compiled.borrow().get(&source.path) {
             return Ok(program.clone());
         }
         let program = compile(&source.path.to_string_lossy(), &source.text).map_err(|error| {
@@ -130,7 +138,8 @@ impl ModuleLoader {
                 message: error.to_string(),
             }
         })?;
-        self.compiled
+        self.state
+            .compiled
             .borrow_mut()
             .insert(source.path, program.clone());
         Ok(program)
@@ -138,7 +147,7 @@ impl ModuleLoader {
 
     #[must_use]
     pub fn cached_module_count(&self) -> usize {
-        self.compiled.borrow().len()
+        self.state.compiled.borrow().len()
     }
 
     /// Compiles and initializes one isolated module instance.
@@ -152,11 +161,11 @@ impl ModuleLoader {
         name: &str,
     ) -> Result<ModuleInstance, ModuleLoadError> {
         let source = self.load(importer, name)?;
-        if let Some(instance) = self.instances.borrow().get(&source.path) {
+        if let Some(instance) = self.state.instances.borrow().get(&source.path) {
             return Ok(instance.clone());
         }
         let program = self.compile(importer, name)?;
-        let mut vm = Vm::new();
+        let mut vm = Vm::with_module_loader(self.clone());
         vm.run_named(&program, "main")
             .map_err(|error| ModuleLoadError::Source {
                 path: source.path.clone(),
@@ -168,7 +177,8 @@ impl ModuleLoader {
             program,
             exports,
         };
-        self.instances
+        self.state
+            .instances
             .borrow_mut()
             .insert(instance.path.clone(), instance.clone());
         Ok(instance)
@@ -176,7 +186,7 @@ impl ModuleLoader {
 
     #[must_use]
     pub fn initialized_module_count(&self) -> usize {
-        self.instances.borrow().len()
+        self.state.instances.borrow().len()
     }
 }
 

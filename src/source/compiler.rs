@@ -376,7 +376,10 @@ impl Compiler {
                 }
             }
             ExprKind::Call { callee, arguments } => {
-                self.expression(state, callee)?;
+                let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");
+                if !import {
+                    self.expression(state, callee)?;
+                }
                 let mut kinds = Vec::with_capacity(arguments.len());
                 for argument in arguments {
                     let argument = match argument {
@@ -395,7 +398,14 @@ impl Compiler {
                     };
                     self.expression(state, argument)?;
                 }
-                state.emit(Op::CallSpread(kinds), &expression.span);
+                state.emit(
+                    if import {
+                        Op::Import(kinds)
+                    } else {
+                        Op::CallSpread(kinds)
+                    },
+                    &expression.span,
+                );
             }
             ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
             ExprKind::List(values) => {
