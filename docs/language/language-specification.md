@@ -294,6 +294,17 @@ val first = User { name: "Slug" }
 val second = first copy { active: false }
 ```
 
+Each evaluation of a struct expression creates a distinct schema identity.
+Fields retain declaration order and names must be unique. Default expressions
+evaluate once, in source order, when the schema expression is evaluated.
+Construction rejects unknown or duplicate fields and missing required fields.
+
+Schema values compare by identity. Struct values compare equal only when they
+have the same schema identity and equal field values in schema order. Dot access
+and string-key bracket access read fields; invalid or unknown field access is a
+runtime type error. The Struct Syntax and Behavior mini spec defines the
+detailed rule and current implementation boundary.
+
 ## Pattern matching
 
 `match` selects the first matching case. A case may have a guard introduced by

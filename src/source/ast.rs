@@ -59,10 +59,20 @@ pub(super) enum ExprKind {
     },
     List(Vec<Expr>),
     Map(Vec<(Expr, Expr)>),
+    StructSchema(Vec<StructSchemaField>),
+    StructInit {
+        schema: Box<Expr>,
+        fields: Vec<(String, Expr)>,
+    },
     Index {
         collection: Box<Expr>,
         index: Box<Expr>,
     },
+}
+#[derive(Clone, Debug)]
+pub(super) struct StructSchemaField {
+    pub(super) name: String,
+    pub(super) default: Option<Expr>,
 }
 #[derive(Clone, Debug)]
 pub(super) struct MatchCase {
@@ -143,6 +153,7 @@ pub(super) enum TokenKind {
     Onerror,
     Recur,
     Match,
+    Struct,
     True,
     False,
     Nil,

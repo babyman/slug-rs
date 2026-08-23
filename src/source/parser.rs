@@ -1,8 +1,8 @@
 use super::{
     SourceError,
     ast::{
-        Binary, Expr, ExprKind, MapPatternKey, MatchCase, Pattern, Prefix, RestPattern, Token,
-        TokenKind,
+        Binary, Expr, ExprKind, MapPatternKey, MatchCase, Pattern, Prefix, RestPattern,
+        StructSchemaField, Token, TokenKind,
     },
 };
 use crate::{DeferMode, SourceSpan, Value};
@@ -12,6 +12,7 @@ pub(super) struct Parser {
     tokens: Vec<Token>,
     index: usize,
     nesting: usize,
+    match_subject_nesting: Option<usize>,
 }
 
 impl Parser {
@@ -20,6 +21,7 @@ impl Parser {
             tokens,
             index: 0,
             nesting: 0,
+            match_subject_nesting: None,
         }
     }
 
@@ -279,6 +281,9 @@ impl Parser {
                         index: Box::new(index),
                     },
                 };
+            } else if self.matches(&TokenKind::LBrace) && self.starts_struct_init() {
+                let span = self.next().span;
+                value = self.struct_init(value, span)?;
             } else {
                 break;
             }
@@ -319,9 +324,97 @@ impl Parser {
             TokenKind::If => return self.if_expression(span),
             TokenKind::Recur => return self.recur(span),
             TokenKind::Match => return self.match_expression(span),
+            TokenKind::Struct => return self.struct_schema(span),
             _ => return Err(SourceError::at("expected expression", span)),
         };
         Ok(Expr { kind, span })
+    }
+    fn starts_struct_init(&self) -> bool {
+        if self.match_subject_nesting != Some(self.nesting) {
+            return true;
+        }
+        matches!(
+            (
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                self.tokens.get(self.index + 2).map(|token| &token.kind),
+            ),
+            (Some(TokenKind::Name(_)), Some(TokenKind::Colon))
+        )
+    }
+    fn struct_schema(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let delimiter = self.consume(&TokenKind::LBrace, "expected { after struct")?;
+        self.enter_nesting(delimiter.span)?;
+        let mut fields = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected struct field name", token.span));
+            };
+            if self.matches(&TokenKind::Colon) {
+                return Err(SourceError::at(
+                    "struct field type annotations are not supported",
+                    self.peek().span.clone(),
+                ));
+            }
+            let default = if self.matches(&TokenKind::Eq) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            fields.push(StructSchemaField { name, default });
+            self.struct_field_separator()?;
+        }
+        self.next();
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::StructSchema(fields),
+            span,
+        })
+    }
+    fn struct_init(&mut self, schema: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut fields = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected struct field name", token.span));
+            };
+            self.consume(&TokenKind::Colon, "expected : after struct field name")?;
+            fields.push((name, self.expression()?));
+            self.struct_field_separator()?;
+        }
+        self.next();
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::StructInit {
+                schema: Box::new(schema),
+                fields,
+            },
+            span,
+        })
+    }
+    fn struct_field_separator(&mut self) -> Result<(), SourceError> {
+        if self.matches(&TokenKind::Comma) {
+            self.next();
+            self.separators();
+        } else if self.matches(&TokenKind::Sep) {
+            self.separators();
+            if !self.matches(&TokenKind::RBrace) {
+                return Err(SourceError::at(
+                    "expected , between struct fields",
+                    self.peek().span.clone(),
+                ));
+            }
+        } else if !self.matches(&TokenKind::RBrace) {
+            return Err(SourceError::at(
+                "expected , between struct fields",
+                self.peek().span.clone(),
+            ));
+        }
+        Ok(())
     }
     fn list(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.enter_nesting(span.clone())?;
@@ -531,7 +624,10 @@ impl Parser {
         })
     }
     fn match_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
-        let subject = self.expression()?;
+        let previous = self.match_subject_nesting.replace(self.nesting);
+        let subject = self.expression();
+        self.match_subject_nesting = previous;
+        let subject = subject?;
         self.match_cases(subject, span)
     }
     fn match_cases(&mut self, subject: Expr, span: SourceSpan) -> Result<Expr, SourceError> {

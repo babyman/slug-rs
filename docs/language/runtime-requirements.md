@@ -271,6 +271,12 @@ map iteration order. Call arguments, list elements, map entries, struct fields,
 pipeline operands, and match guards evaluate left to right before their
 containing operation proceeds.
 
+Each struct-schema evaluation creates a distinct schema identity. Field default
+expressions evaluate once, in declaration order, during that schema evaluation.
+Construction evaluates supplied fields in source order, then validates and
+fills the schema-ordered value. A struct value's equality requires the same
+schema identity and equal field values; schema equality itself is identity.
+
 Only `false` and `nil` are falsey. Every other value is truthy. The runtime
 MUST preserve the language-level distinctions
 between initialization and reassignment so immutable bindings, unknown names,
@@ -290,7 +296,9 @@ The implementation MUST preserve value identity where it is observable:
 
 The Language Specification and `slug.test.assertEqual` define language-level
 equality used by source fixtures. An implementation MUST NOT replace this with
-host-language pointer or reference equality for lists, maps, or structs.
+host-language pointer or reference equality for lists or maps. Struct
+implementations may use host identity to represent schema identity, but must
+also compare the instance field values required by the language rule.
 
 ## Language errors and diagnostic context
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added identity-bearing untyped struct schemas, stored field defaults, checked
+  construction, structural instance equality, and field access.
 - Added bracketed computed map-pattern keys, evaluated once through indexed
   runtime pattern operands.
 - Added pinned `^name` patterns backed by indexed runtime pattern operands.

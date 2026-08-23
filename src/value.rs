@@ -16,6 +16,23 @@ pub struct Closure {
     pub(crate) captures: Vec<BindingCell>,
 }
 
+#[derive(Clone, Debug)]
+pub struct StructField {
+    pub(crate) name: Rc<str>,
+    pub(crate) default: Option<Value>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructSchema {
+    pub(crate) fields: Vec<StructField>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructValue {
+    pub(crate) schema: Rc<StructSchema>,
+    pub(crate) values: Vec<Value>,
+}
+
 /// The dynamic values used by the initial Slug VM core.
 ///
 /// Collections are reference-counted so closures and later concurrency support
@@ -30,6 +47,8 @@ pub enum Value {
     Bytes(Rc<[u8]>),
     List(Rc<Vec<Value>>),
     Map(Rc<Vec<(Value, Value)>>),
+    StructSchema(Rc<StructSchema>),
+    Struct(Rc<StructValue>),
     Closure(Rc<Closure>),
     Native {
         name: Rc<str>,
@@ -58,6 +77,8 @@ impl Value {
             Self::Bytes(_) => "bytes",
             Self::List(_) => "list",
             Self::Map(_) => "map",
+            Self::StructSchema(_) => "struct schema",
+            Self::Struct(_) => "struct",
             Self::Closure(_) | Self::Native { .. } => "fn",
         }
     }
@@ -77,6 +98,10 @@ impl PartialEq for Value {
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::List(a), Self::List(b)) => a == b,
             (Self::Map(a), Self::Map(b)) => a == b,
+            (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
+            (Self::Struct(a), Self::Struct(b)) => {
+                Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
+            }
             (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
             (Self::Native { function: a, .. }, Self::Native { function: b, .. }) => {
                 std::ptr::fn_addr_eq(*a, *b)
@@ -100,6 +125,20 @@ impl fmt::Debug for Value {
                 .debug_map()
                 .entries(entries.iter().map(|(key, value)| (key, value)))
                 .finish(),
+            Self::StructSchema(_) => write!(f, "<struct schema>"),
+            Self::Struct(value) => {
+                write!(f, "struct ")?;
+                f.debug_map()
+                    .entries(
+                        value
+                            .schema
+                            .fields
+                            .iter()
+                            .zip(&value.values)
+                            .map(|(field, value)| (&field.name, value)),
+                    )
+                    .finish()
+            }
             Self::Closure(_) => write!(f, "<fn>"),
             Self::Native { name, .. } => write!(f, "<native {name}>"),
         }

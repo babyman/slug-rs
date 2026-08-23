@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{MatchMapKey, MatchPattern, MatchRest, Value};
+use crate::{MatchMapKey, MatchPattern, MatchRest, StructValue, Value};
 
 use super::RuntimeErrorKind;
 
@@ -227,9 +227,61 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
             .rev()
             .find(|(key, _)| key == index)
             .map_or(Value::Nil, |(_, value)| value.clone())),
+        Value::Struct(value) => {
+            let Value::Str(name) = index else {
+                return Err("struct index must be a string".into());
+            };
+            value
+                .schema
+                .fields
+                .iter()
+                .position(|field| field.name.as_ref() == name.as_ref())
+                .and_then(|index| value.values.get(index))
+                .cloned()
+                .ok_or_else(|| format!("struct has no field '{name}'"))
+        }
         value => Err(format!("cannot index {}", value.type_name())),
     }
 }
+
+pub(super) fn construct_struct(
+    schema: Value,
+    names: &[String],
+    provided: &[Value],
+) -> Result<Value, String> {
+    let Value::StructSchema(schema) = schema else {
+        return Err(format!(
+            "cannot construct struct from {}",
+            schema.type_name()
+        ));
+    };
+    for (index, name) in names.iter().enumerate() {
+        if names[..index].contains(name) {
+            return Err(format!("duplicate struct field '{name}'"));
+        }
+        if !schema
+            .fields
+            .iter()
+            .any(|field| field.name.as_ref() == name)
+        {
+            return Err(format!("struct schema has no field '{name}'"));
+        }
+    }
+    let values = schema
+        .fields
+        .iter()
+        .map(|field| {
+            names
+                .iter()
+                .position(|name| name == field.name.as_ref())
+                .and_then(|index| provided.get(index).cloned())
+                .or_else(|| field.default.clone())
+                .ok_or_else(|| format!("missing required struct field '{}'", field.name))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::Struct(Rc::new(StructValue { schema, values })))
+}
+
 fn integer_or_float(
     left: Value,
     right: Value,

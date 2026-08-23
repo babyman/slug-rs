@@ -112,6 +112,103 @@ fn executes_core_functions_blocks_conditionals_and_collections() {
 }
 
 #[test]
+fn constructs_and_compares_struct_values_with_stored_defaults() {
+    let path = fixture_path("struct-foundation");
+    fs::write(
+        &path,
+        "var evaluations = 0\n\
+         val User = struct {\n\
+           name,\n\
+           sequence = { evaluations = evaluations + 1; evaluations },\n\
+         }\n\
+         val first = User {name: \"Slug\"}\n\
+         val second = User {name: \"Slug\"}\n\
+         val Other = struct {name, sequence = 1}\n\
+         val other = Other {name: \"Slug\"}\n\
+         println(first.name, first[\"sequence\"], evaluations, User == User, first == second, first == other, match first { _ => \"matched\" })\n",
+    )
+    .expect("write struct foundation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run struct foundation source");
+    fs::remove_file(path).expect("remove struct foundation source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "Slug 1 1 true true false matched\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn reports_checked_struct_schema_construction_and_access_errors() {
+    let cases = [
+        (
+            "missing-struct-field",
+            "val User = struct {name}\nUser {}\n",
+            "slug: runtime error: missing required struct field 'name'",
+        ),
+        (
+            "unknown-struct-field",
+            "val User = struct {name}\nUser {other: 1}\n",
+            "slug: runtime error: struct schema has no field 'other'",
+        ),
+        (
+            "duplicate-struct-construction-field",
+            "val User = struct {name}\nUser {name: \"a\", name: \"b\"}\n",
+            "slug: runtime error: duplicate struct field 'name'",
+        ),
+        (
+            "non-schema-construction",
+            "1 {name: \"a\"}\n",
+            "slug: runtime error: cannot construct struct from num",
+        ),
+        (
+            "unknown-struct-access",
+            "val User = struct {name}\nval user = User {name: \"a\"}\nuser.other\n",
+            "slug: runtime error: struct has no field 'other'",
+        ),
+        (
+            "duplicate-schema-field",
+            "struct {name, name}\n",
+            "slug: semantic error: duplicate struct field 'name'",
+        ),
+        (
+            "typed-struct-field",
+            "struct {name: str}\n",
+            "slug: parse error: struct field type annotations are not supported",
+        ),
+    ];
+
+    for (kind, source, expected) in cases {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write invalid struct source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid struct source");
+        fs::remove_file(path).expect("remove invalid struct source");
+        let std::process::Output {
+            status,
+            stdout,
+            stderr,
+        } = output;
+        let status = status.code();
+        let stderr = String::from_utf8(stderr).expect("stderr is UTF-8");
+
+        assert_eq!(status, Some(1));
+        assert!(stdout.is_empty());
+        assert!(stderr.starts_with(expected));
+    }
+}
+
+#[test]
 fn returns_early_from_nested_function_control_flow() {
     let path = fixture_path("explicit-return");
     fs::write(

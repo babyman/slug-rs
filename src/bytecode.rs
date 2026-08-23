@@ -49,6 +49,12 @@ pub enum MatchMapKey {
     Operand(usize),
 }
 
+#[derive(Clone, Debug)]
+pub struct SchemaField {
+    pub name: String,
+    pub has_default: bool,
+}
+
 /// The subset of source patterns lowered by the current compiler.
 #[derive(Clone, Debug)]
 pub enum MatchPattern {
@@ -111,6 +117,8 @@ pub enum Op {
     },
     List(usize),
     Map(usize),
+    StructSchema(Vec<SchemaField>),
+    Struct(Vec<String>),
     GetIndex,
     Add,
     Subtract,

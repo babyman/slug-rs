@@ -13,8 +13,8 @@ mod operations;
 use cleanup::{Cleanup, Deferred};
 pub use error::{CallFrame, RuntimeError, RuntimeErrorKind};
 use operations::{
-    add, divide, index_value, is_map_key, matches_pattern, modulo, multiply, negate, numbers,
-    subtract,
+    add, construct_struct, divide, index_value, is_map_key, matches_pattern, modulo, multiply,
+    negate, numbers, subtract,
 };
 
 pub type VmResult<T> = Result<T, RuntimeError>;
@@ -296,6 +296,43 @@ impl Vm {
                         entries.push((pair[0].clone(), pair[1].clone()));
                     }
                     self.stack.push(Value::Map(Rc::new(entries)));
+                }
+                Op::StructSchema(fields) => {
+                    let default_count = fields.iter().filter(|field| field.has_default).count();
+                    let defaults = self.pop_values(default_count, span.clone())?;
+                    let mut defaults = defaults.into_iter();
+                    let mut names = Vec::with_capacity(fields.len());
+                    let mut schema_fields = Vec::with_capacity(fields.len());
+                    for field in fields {
+                        if names.contains(&field.name) {
+                            return Err(self.error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                format!("duplicate struct schema field '{}'", field.name),
+                                span,
+                            ));
+                        }
+                        names.push(field.name.clone());
+                        schema_fields.push(crate::StructField {
+                            name: field.name.into(),
+                            default: field.has_default.then(|| {
+                                defaults
+                                    .next()
+                                    .expect("default count was derived from field metadata")
+                            }),
+                        });
+                    }
+                    self.stack
+                        .push(Value::StructSchema(Rc::new(crate::StructSchema {
+                            fields: schema_fields,
+                        })));
+                }
+                Op::Struct(fields) => {
+                    let values = self.pop_values(fields.len(), span.clone())?;
+                    let schema = self.pop(span.clone())?;
+                    self.stack.push(
+                        construct_struct(schema, &fields, &values)
+                            .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?,
+                    );
                 }
                 Op::GetIndex => {
                     let (collection, index) = self.pop_pair(span.clone())?;

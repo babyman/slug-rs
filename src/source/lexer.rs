@@ -331,6 +331,7 @@ impl Lexer {
                         "onerror" => TokenKind::Onerror,
                         "recur" => TokenKind::Recur,
                         "match" => TokenKind::Match,
+                        "struct" => TokenKind::Struct,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
                         "nil" => TokenKind::Nil,

@@ -9,7 +9,8 @@ compiled-module contract is documented separately as `.cslug`.
 ## Current milestone
 
 - Dynamic Slug values: `nil`, booleans, numbers, strings, bytes,
-  lists, maps, closures, and explicitly registered native functions.
+  lists, maps, struct schemas and values, closures, and explicitly registered
+  native functions.
 - Chunks, constants, lexical captures, locals, globals, calls, branches, and
   arithmetic/comparison operations.
 - Checked errors with Slug source spans and call frames instead of host panics.
@@ -18,7 +19,8 @@ compiled-module contract is documented separately as `.cslug`.
   literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
   literal/list/map `match` with computed map keys and non-binding case alternatives,
   pinned `^name` comparisons, `name @ pattern` bindings, and named or
-  anonymous final rests, function match bodies, `return`,
+  anonymous final rests, untyped struct schemas, construction and field access,
+  function match bodies, `return`,
   `throw`, `defer` including `onsuccess` and `onerror` recovery, tail-position `recur(...)`,
   lists/maps/indexing, calls, comments, and `println`.
 - The module loader, standard library, pattern matcher, type annotations,

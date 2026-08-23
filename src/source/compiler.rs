@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, Program, SourceSpan};
+use crate::{
+    Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, Op, Program, SchemaField, SourceSpan,
+};
 
 use super::{
     SourceError,
@@ -265,6 +267,42 @@ impl Compiler {
                     self.expression(state, value)?;
                 }
                 state.emit(Op::Map(entries.len()), &expression.span);
+            }
+            ExprKind::StructSchema(fields) => {
+                let mut seen = HashSet::new();
+                for field in fields {
+                    if !seen.insert(field.name.as_str()) {
+                        return Err(SourceError::semantic(
+                            format!("duplicate struct field '{}'", field.name),
+                            expression.span.clone(),
+                        ));
+                    }
+                    if let Some(default) = &field.default {
+                        self.expression(state, default)?;
+                    }
+                }
+                state.emit(
+                    Op::StructSchema(
+                        fields
+                            .iter()
+                            .map(|field| SchemaField {
+                                name: field.name.clone(),
+                                has_default: field.default.is_some(),
+                            })
+                            .collect(),
+                    ),
+                    &expression.span,
+                );
+            }
+            ExprKind::StructInit { schema, fields } => {
+                self.expression(state, schema)?;
+                for (_, value) in fields {
+                    self.expression(state, value)?;
+                }
+                state.emit(
+                    Op::Struct(fields.iter().map(|(name, _)| name.clone()).collect()),
+                    &expression.span,
+                );
             }
             ExprKind::Index { collection, index } => {
                 self.expression(state, collection)?;

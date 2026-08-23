@@ -28,6 +28,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | `defer onerror` cleanup and recovery | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Tail-position `recur(...)` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | List, map, and dot indexing | implemented | `tests/cli.rs` |
+| Untyped struct schemas, construction, defaults, and field access | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |
