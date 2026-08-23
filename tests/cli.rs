@@ -104,6 +104,37 @@ fn repeats_strings_with_non_negative_integer_counts() {
 }
 
 #[test]
+fn pipes_values_into_calls_and_subjectless_matches() {
+    let path = fixture_path("pipeline");
+    fs::write(
+        &path,
+        "val add = fn(first, second) { first + second }\nval double = fn(value) { value * 2 }\nval total = 2 /> add(3) /> double\nval first = [1, 2, 3] /> match {\n  [head, ...] => head\n}\nprintln(total, first)\n",
+    )
+    .expect("write pipeline source");
+    let output = slug().arg(&path).output().expect("run pipeline source");
+    fs::remove_file(&path).expect("remove pipeline source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "10 1\n");
+
+    fs::write(&path, "1 /> match 2 { _ => 3 }\n").expect("write invalid pipeline match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid pipeline match source");
+    fs::remove_file(path).expect("remove invalid pipeline match source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: pipeline match must omit its subject")
+    );
+}
+
+#[test]
 fn evaluates_checked_bitwise_and_shift_operators() {
     let path = fixture_path("bitwise-and-shifts");
     fs::write(&path, "println(6 & 3, 4 | 1, 6 ^ 3, ~0, 1 << 4, -8 >> 2)\n")

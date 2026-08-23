@@ -448,6 +448,7 @@ impl Vm {
                 }
                 Op::Call(count) => self.call(program, count, None, span)?,
                 Op::CallSpread(kinds) => self.call_spread(program, kinds, span)?,
+                Op::PipelineCall(kinds) => self.pipeline_call(program, kinds, span)?,
                 Op::TryMatch {
                     pattern,
                     bindings,
@@ -739,6 +740,49 @@ impl Vm {
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
         self.call(program, count, Some(provided), span)
+    }
+
+    fn pipeline_call(
+        &mut self,
+        program: &Program,
+        kinds: Vec<CallArgumentKind>,
+        span: Option<SourceSpan>,
+    ) -> VmResult<()> {
+        let required = kinds.len().checked_add(2).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline argument count is too large".into(),
+                span.clone(),
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline has too few stack values".into(),
+                span.clone(),
+            )
+        })?;
+        let arguments = self.stack.split_off(base + 2);
+        let callee = self.stack.pop().ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline has too few stack values".into(),
+                span.clone(),
+            )
+        })?;
+        let value = self.stack.pop().ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline has too few stack values".into(),
+                span.clone(),
+            )
+        })?;
+        self.stack.push(callee);
+        self.stack.push(value);
+        self.stack.extend(arguments);
+        let mut kinds = kinds;
+        kinds.insert(0, CallArgumentKind::Positional);
+        self.call_spread(program, kinds, span)
     }
 
     fn expand_call_arguments(

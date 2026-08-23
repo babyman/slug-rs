@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added pipeline calls and subjectless pipeline `match` expressions with `/>`.
 - Added checked `string * non-negative-integer` repetition.
 - Added immutable list concatenation (`+`), append (`:+`), and prepend (`+:`)
   with checked list-operand failures.

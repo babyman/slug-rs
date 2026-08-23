@@ -18,7 +18,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Equality and comparisons | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Integer bitwise, shift, and prefix `~` operators | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Directional list append and prepend (`:+`, `+:`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Pipeline operator | specified only | `language/language-specification.md` |
+| Pipeline operator (`/>`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Short-circuit logical-and and logical-or | implemented | `tests/cli.rs` |
 | Functions, blocks, conditionals, and captures | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Literal and list pattern matching | implemented | `tests/cli.rs` and `tests/vm.rs` |

@@ -202,6 +202,12 @@ impl Compiler {
                 ));
             }
             ExprKind::Match { subject, cases } => {
+                let subject = subject.as_deref().ok_or_else(|| {
+                    SourceError::semantic(
+                        "match requires a subject or pipeline input",
+                        expression.span.clone(),
+                    )
+                })?;
                 self.compile_match(state, subject, cases, false)?;
             }
             ExprKind::Binary {
@@ -211,6 +217,23 @@ impl Compiler {
             } => {
                 self.expression(state, left)?;
                 match operator {
+                    Binary::Pipeline => {
+                        if let ExprKind::Match {
+                            subject: None,
+                            cases,
+                        } = &right.kind
+                        {
+                            self.compile_match(state, left, cases, false)?;
+                        } else if matches!(&right.kind, ExprKind::Match { .. }) {
+                            return Err(SourceError::semantic(
+                                "pipeline match must omit its subject",
+                                right.span.clone(),
+                            ));
+                        } else {
+                            self.expression(state, left)?;
+                            self.compile_pipeline_call(state, right)?;
+                        }
+                    }
                     Binary::And => {
                         let end = state.jump_if_false(&expression.span);
                         state.emit(Op::Pop, &expression.span);
@@ -570,6 +593,38 @@ impl Compiler {
         }
         Ok(())
     }
+    fn compile_pipeline_call(
+        &mut self,
+        state: &mut State,
+        expression: &Expr,
+    ) -> Result<(), SourceError> {
+        if let ExprKind::Call { callee, arguments } = &expression.kind {
+            self.expression(state, callee)?;
+            let mut kinds = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                let argument = match argument {
+                    CallArgument::Positional(argument) => {
+                        kinds.push(CallArgumentKind::Positional);
+                        argument
+                    }
+                    CallArgument::Named { name, value } => {
+                        kinds.push(CallArgumentKind::Named(name.clone()));
+                        value
+                    }
+                    CallArgument::Spread(argument) => {
+                        kinds.push(CallArgumentKind::Spread);
+                        argument
+                    }
+                };
+                self.expression(state, argument)?;
+            }
+            state.emit(Op::PipelineCall(kinds), &expression.span);
+        } else {
+            self.expression(state, expression)?;
+            state.emit(Op::PipelineCall(Vec::new()), &expression.span);
+        }
+        Ok(())
+    }
     fn emit_pattern_operand(
         &mut self,
         state: &mut State,
@@ -717,6 +772,12 @@ impl Compiler {
                 state.patch(end);
             }
             ExprKind::Match { subject, cases } => {
+                let subject = subject.as_deref().ok_or_else(|| {
+                    SourceError::semantic(
+                        "match requires a subject or pipeline input",
+                        expression.span.clone(),
+                    )
+                })?;
                 self.compile_match(state, subject, cases, true)?;
             }
             _ => self.expression(state, expression)?,

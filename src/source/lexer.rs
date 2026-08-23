@@ -271,6 +271,10 @@ impl Lexer {
                                 return Err(SourceError::at("unterminated block comment", span));
                             }
                         }
+                        Some('>') => {
+                            self.next();
+                            Self::push(&mut result, TokenKind::Pipeline, span);
+                        }
                         _ => Self::push(&mut result, TokenKind::Slash, span),
                     }
                 }

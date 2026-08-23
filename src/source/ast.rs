@@ -32,7 +32,7 @@ pub(super) enum ExprKind {
     },
     Recur(Vec<CallArgument>),
     Match {
-        subject: Box<Expr>,
+        subject: Option<Box<Expr>>,
         cases: Vec<MatchCase>,
     },
     Binary {
@@ -153,6 +153,7 @@ pub(super) enum Binary {
     BitAnd,
     ShiftLeft,
     ShiftRight,
+    Pipeline,
     Append,
     Prepend,
     Add,
@@ -208,6 +209,7 @@ pub(super) enum TokenKind {
     Minus,
     Star,
     Slash,
+    Pipeline,
     Percent,
     Eq,
     EqEq,

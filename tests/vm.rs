@@ -42,6 +42,29 @@ fn repeats_strings_through_private_multiply_bytecode() {
 }
 
 #[test]
+fn pipes_values_through_private_call_bytecode() {
+    fn add(args: &[Value]) -> Result<Value, String> {
+        match args {
+            [Value::Int(left), Value::Int(right)] => Ok(Value::Int(left + right)),
+            _ => Err("expected two integers".into()),
+        }
+    }
+
+    let mut main = Chunk::new("main", 0);
+    let two = main.constant(Value::Int(2));
+    let three = main.constant(Value::Int(3));
+    main.emit(Op::Constant(two))
+        .emit(Op::GetGlobal("add".into()))
+        .emit(Op::Constant(three))
+        .emit(Op::PipelineCall(vec![CallArgumentKind::Positional]))
+        .emit(Op::Return);
+    let mut vm = Vm::new();
+    vm.define_native("add", add);
+
+    assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Int(5));
+}
+
+#[test]
 fn executes_checked_bitwise_and_shift_bytecode() {
     let mut main = Chunk::new("main", 0);
     let left = main.constant(Value::Int(6));

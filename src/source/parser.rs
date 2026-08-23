@@ -235,6 +235,34 @@ impl Parser {
             };
             operators.push((operator, token.span));
         }
+        let mut value = self.postfix()?;
+        while self.matches(&TokenKind::Pipeline) {
+            let span = self.next().span;
+            let right = self.postfix()?;
+            value = Expr {
+                span,
+                kind: ExprKind::Binary {
+                    left: Box::new(value),
+                    operator: Binary::Pipeline,
+                    right: Box::new(right),
+                },
+            };
+        }
+        if operators.is_empty() {
+            Ok(value)
+        } else {
+            let span = operators[0].1.clone();
+            Ok(Expr {
+                span,
+                kind: ExprKind::Prefix {
+                    operators,
+                    value: Box::new(value),
+                },
+            })
+        }
+    }
+
+    fn postfix(&mut self) -> Result<Expr, SourceError> {
         let mut value = self.primary()?;
         loop {
             if self.matches(&TokenKind::LParen) {
@@ -284,18 +312,7 @@ impl Parser {
                 break;
             }
         }
-        if operators.is_empty() {
-            Ok(value)
-        } else {
-            let span = operators[0].1.clone();
-            Ok(Expr {
-                span,
-                kind: ExprKind::Prefix {
-                    operators,
-                    value: Box::new(value),
-                },
-            })
-        }
+        Ok(value)
     }
 
     fn index_or_slice(&mut self, collection: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
@@ -746,7 +763,7 @@ impl Parser {
                     span: match_span.clone(),
                 }
             };
-            self.match_cases(subject, match_span)?
+            self.match_cases(Some(Box::new(subject)), match_span)?
         } else {
             self.block()?
         };
@@ -771,12 +788,20 @@ impl Parser {
     }
     fn match_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         let previous = self.match_subject_nesting.replace(self.nesting);
-        let subject = self.expression();
+        let subject = if self.matches(&TokenKind::LBrace) {
+            Ok(None)
+        } else {
+            self.expression().map(|subject| Some(Box::new(subject)))
+        };
         self.match_subject_nesting = previous;
         let subject = subject?;
         self.match_cases(subject, span)
     }
-    fn match_cases(&mut self, subject: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+    fn match_cases(
+        &mut self,
+        subject: Option<Box<Expr>>,
+        span: SourceSpan,
+    ) -> Result<Expr, SourceError> {
         let delimiter = self.consume(&TokenKind::LBrace, "expected { after match subject")?;
         self.enter_nesting(delimiter.span)?;
         let mut cases = Vec::new();
@@ -817,10 +842,7 @@ impl Parser {
         self.next();
         self.leave_nesting();
         Ok(Expr {
-            kind: ExprKind::Match {
-                subject: Box::new(subject),
-                cases,
-            },
+            kind: ExprKind::Match { subject, cases },
             span,
         })
     }
