@@ -1211,21 +1211,57 @@ fn rejects_recur_outside_a_function_or_tail_position() {
             .starts_with("slug: semantic error: recur is only valid in tail position")
     );
 
-    let wrong_arity = fixture_path("wrong-arity-recur");
-    fs::write(&wrong_arity, "val invalid = fn(n) { recur() }\n")
-        .expect("write wrong-arity recur source");
+    let missing_parameter = fixture_path("missing-parameter-recur");
+    fs::write(
+        &missing_parameter,
+        "val invalid = fn(n) { recur() }\ninvalid(1)\n",
+    )
+    .expect("write missing-parameter recur source");
     let output = slug()
-        .arg(&wrong_arity)
+        .arg(&missing_parameter)
         .output()
-        .expect("run wrong-arity recur source");
-    fs::remove_file(wrong_arity).expect("remove wrong-arity recur source");
+        .expect("run missing-parameter recur source");
+    fs::remove_file(missing_parameter).expect("remove missing-parameter recur source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(
         String::from_utf8(output.stderr)
             .expect("stderr is UTF-8")
-            .starts_with("slug: semantic error: recur expects 1 arguments, got 0")
+            .starts_with("slug: runtime error: missing required parameter `n`")
+    );
+}
+
+#[test]
+fn recur_uses_the_ordinary_call_binding_rules() {
+    let path = fixture_path("recur-call-binding");
+    fs::write(
+        &path,
+        "val defaulted = fn(value = 7) { if (value == 7) { value } else { recur() } }\n\
+         val variadic = fn(first = 1, ...rest) {\n\
+           if (first == 0) { rest } else { recur(first = 0, rest = rest) }\n\
+         }\n\
+         val matched = fn(value = 2, ...rest) match {\n\
+           [0, rest] => rest\n\
+           [value, rest] => recur(value - 1, ...rest)\n\
+         }\n\
+         println(defaulted(4), variadic(3, 4, 5), matched(2, 8, 9))\n",
+    )
+    .expect("write recur binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run recur binding source");
+    fs::remove_file(path).expect("remove recur binding source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "7 [4, 5] [8, 9]\n"
     );
 }
 

@@ -126,9 +126,6 @@ impl State {
     pub(super) fn allows_return(&self) -> bool {
         !self.root
     }
-    pub(super) fn arity(&self) -> usize {
-        self.chunk.arity
-    }
     pub(super) fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }

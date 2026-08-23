@@ -17,7 +17,10 @@ pub(super) enum Cleanup {
     Return(Value),
     Recover(Value),
     Resume,
-    Recur(Vec<Value>),
+    Recur {
+        arguments: Vec<Value>,
+        provided: Vec<bool>,
+    },
     Error(RuntimeError),
 }
 
@@ -54,17 +57,25 @@ impl Vm {
     pub(super) fn recur(
         &mut self,
         program: &Program,
-        count: usize,
+        kinds: Vec<crate::CallArgumentKind>,
         span: Option<SourceSpan>,
     ) -> VmResult<()> {
+        let values = self.pop_values(kinds.len(), span.clone())?;
+        let (positional, named) = self.expand_call_arguments(values, kinds, span.clone())?;
+        let closure = self
+            .frames
+            .last()
+            .map(|frame| crate::Value::Closure(frame.closure.clone()))
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "no active call frame".into(),
+                    span.clone(),
+                )
+            })?;
+        let (arguments, provided) =
+            self.bind_call_arguments(program, &closure, positional, named, span.clone())?;
         let arity = self.current_chunk(program)?.arity;
-        if count != arity {
-            return Err(self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                format!("recur expects {arity} arguments, got {count}"),
-                span,
-            ));
-        }
         let (_, local_count, stack_base) = self
             .frames
             .last()
@@ -83,7 +94,6 @@ impl Vm {
                 span,
             ));
         }
-        let arguments = self.pop_values(count, span.clone())?;
         let nested_scopes = self
             .frames
             .last_mut()
@@ -91,7 +101,10 @@ impl Vm {
             .scopes
             .split_off(1);
         if !nested_scopes.is_empty() {
-            self.cleanup.push(Cleanup::Recur(arguments));
+            self.cleanup.push(Cleanup::Recur {
+                arguments,
+                provided,
+            });
             self.cleanup
                 .extend(nested_scopes.into_iter().map(|actions| Cleanup::Actions {
                     actions,
@@ -101,13 +114,14 @@ impl Vm {
             self.drive_cleanup(program)?;
             return Ok(());
         }
-        self.finish_recur(arguments, local_count, stack_base);
+        self.finish_recur(arguments, provided, local_count, stack_base);
         Ok(())
     }
 
     pub(super) fn finish_recur(
         &mut self,
         arguments: Vec<Value>,
+        provided: Vec<bool>,
         local_count: usize,
         stack_base: usize,
     ) {
@@ -116,6 +130,7 @@ impl Vm {
         locals.resize_with(local_count, || binding_cell(Value::Nil));
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
+        frame.provided = provided;
         frame.ip = 0;
     }
 
@@ -258,8 +273,11 @@ impl Vm {
                     self.cleanup.pop();
                     return Ok(None);
                 }
-                Some(Cleanup::Recur(_)) => {
-                    let Cleanup::Recur(arguments) = self.cleanup.pop().expect("cleanup exists")
+                Some(Cleanup::Recur { .. }) => {
+                    let Cleanup::Recur {
+                        arguments,
+                        provided,
+                    } = self.cleanup.pop().expect("cleanup exists")
                     else {
                         unreachable!();
                     };
@@ -274,7 +292,7 @@ impl Vm {
                                 None,
                             )
                         })?;
-                    self.finish_recur(arguments, local_count, stack_base);
+                    self.finish_recur(arguments, provided, local_count, stack_base);
                     return Ok(None);
                 }
                 Some(Cleanup::Error(_)) => {

@@ -684,19 +684,7 @@ impl Parser {
     fn recur(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         let delimiter = self.consume(&TokenKind::LParen, "expected (")?;
         self.enter_nesting(delimiter.span)?;
-        let mut arguments = Vec::new();
-        if !self.matches(&TokenKind::RParen) {
-            loop {
-                arguments.push(self.expression()?);
-                if !self.matches(&TokenKind::Comma) {
-                    break;
-                }
-                self.next();
-                if self.matches(&TokenKind::RParen) {
-                    break;
-                }
-            }
-        }
+        let arguments = self.call_arguments()?;
         self.consume(&TokenKind::RParen, "expected )")?;
         self.leave_nesting();
         Ok(Expr {

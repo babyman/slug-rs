@@ -570,20 +570,25 @@ impl Compiler {
                         expression.span.clone(),
                     ));
                 }
-                if arguments.len() != state.arity() {
-                    return Err(SourceError::semantic(
-                        format!(
-                            "recur expects {} arguments, got {}",
-                            state.arity(),
-                            arguments.len()
-                        ),
-                        expression.span.clone(),
-                    ));
-                }
+                let mut kinds = Vec::with_capacity(arguments.len());
                 for argument in arguments {
+                    let argument = match argument {
+                        CallArgument::Positional(argument) => {
+                            kinds.push(CallArgumentKind::Positional);
+                            argument
+                        }
+                        CallArgument::Named { name, value } => {
+                            kinds.push(CallArgumentKind::Named(name.clone()));
+                            value
+                        }
+                        CallArgument::Spread(argument) => {
+                            kinds.push(CallArgumentKind::Spread);
+                            argument
+                        }
+                    };
                     self.expression(state, argument)?;
                 }
-                state.emit(Op::Recur(arguments.len()), &expression.span);
+                state.emit(Op::Recur(kinds), &expression.span);
             }
             ExprKind::Block(values) => {
                 state.enter_scope();

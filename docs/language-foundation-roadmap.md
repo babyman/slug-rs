@@ -34,15 +34,15 @@ note.
 
 - [x] Add private bytecode metadata sufficient to describe callable signatures
   without making that representation a portable compatibility promise.
-- [ ] Evaluate arguments and spreads exactly once in source order.
-- [ ] Centralize parameter binding for ordinary calls and `recur(...)` so both
+- [x] Evaluate arguments and spreads exactly once in source order.
+- [x] Centralize parameter binding for ordinary calls and `recur(...)` so both
   enforce the same positional, named, default, and variadic rules.
 - [x] Evaluate omitted default expressions at call time in the function's
   defining module environment.
 - [x] Expand list-valued call spreads and list-literal spreads while preserving
   left-to-right evaluation order.
 - [x] Preserve function-match-body subjects after default and variadic binding.
-- [ ] Preserve checked unwinding, source spans, and Slug call frames for call
+- [x] Preserve checked unwinding, source spans, and Slug call frames for call
   binding failures.
 
 ### Required coverage
@@ -56,13 +56,13 @@ note.
   invalid named value for a variadic parameter.
 - [x] Cover closures in default expressions and the defining-module environment
   rule.
-- [ ] Cover `recur(...)` and function match bodies with defaulted and variadic
+- [x] Cover `recur(...)` and function match bodies with defaulted and variadic
   parameters.
-- [ ] Add focused VM tests for any new bytecode validation or runtime boundary.
-- [ ] Synchronize the grammar, specifications, support manifest, generated
+- [x] Add focused VM tests for any new bytecode validation or runtime boundary.
+- [x] Synchronize the grammar, specifications, support manifest, generated
   matrix, README, and changelog; create a decision record only if implementation
   work introduces a new non-trivial language or runtime-architecture decision.
-- [ ] Run `make check`.
+- [x] Run `make check`.
 
 ## 2. Finish the non-module expression foundation
 

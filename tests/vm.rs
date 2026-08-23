@@ -99,7 +99,7 @@ fn reuses_a_frame_for_tail_recursion() {
         .emit(Op::GetLocal(0))
         .emit(Op::Constant(one))
         .emit(Op::Subtract)
-        .emit(Op::Recur(1));
+        .emit(Op::Recur(vec![CallArgumentKind::Positional]));
 
     let mut main = Chunk::new("main", 0);
     let iterations = main.constant(Value::Int(100_000));

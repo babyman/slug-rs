@@ -26,7 +26,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Plain `defer` cleanup on returns and errors | implemented | `tests/cli.rs` |
 | `defer onsuccess` cleanup | implemented | `tests/cli.rs` |
 | `defer onerror` cleanup and recovery | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Tail-position `recur(...)` | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Tail-position `recur(...)` with ordinary call binding | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | List, map, and dot indexing | implemented | `tests/cli.rs` |
 | Untyped struct schemas, construction, defaults, and field access | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |

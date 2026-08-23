@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Made tail-position `recur(...)` share ordinary positional, named, default,
+  variadic, and spread argument binding, including function match bodies.
 - Added call-time default parameters evaluated in the callee's defining
   environment.
 - Added final variadic parameters, including checked named rest values.

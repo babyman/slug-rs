@@ -19,6 +19,9 @@ use operations::{
 
 pub type VmResult<T> = Result<T, RuntimeError>;
 
+type NamedArgument = (String, Value);
+type ExpandedCallArguments = (Vec<Value>, Vec<NamedArgument>);
+
 #[derive(Clone)]
 struct Frame {
     closure: Rc<Closure>,
@@ -461,7 +464,7 @@ impl Vm {
                     };
                     scope.push(Deferred { action, mode });
                 }
-                Op::Recur(count) => self.recur(program, count, span)?,
+                Op::Recur(kinds) => self.recur(program, kinds, span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
                     if let Some(value) = self.begin_return(program, value)? {
@@ -664,6 +667,21 @@ impl Vm {
         let callee = self.stack[base].clone();
         let values = self.stack.split_off(base + 1);
         self.stack.truncate(base);
+        let (positional, named) = self.expand_call_arguments(values, kinds, span.clone())?;
+        let (arguments, provided) =
+            self.bind_call_arguments(program, &callee, positional, named, span.clone())?;
+        self.stack.push(callee);
+        self.stack.extend(arguments);
+        let count = self.stack.len() - base - 1;
+        self.call(program, count, Some(provided), span)
+    }
+
+    fn expand_call_arguments(
+        &self,
+        values: Vec<Value>,
+        kinds: Vec<CallArgumentKind>,
+        span: Option<SourceSpan>,
+    ) -> VmResult<ExpandedCallArguments> {
         let mut positional = Vec::new();
         let mut named = Vec::new();
         for (value, kind) in values.into_iter().zip(kinds) {
@@ -682,12 +700,7 @@ impl Vm {
                 CallArgumentKind::Named(name) => named.push((name, value)),
             }
         }
-        let (arguments, provided) =
-            self.bind_call_arguments(program, &callee, positional, named, span.clone())?;
-        self.stack.push(callee);
-        self.stack.extend(arguments);
-        let count = self.stack.len() - base - 1;
-        self.call(program, count, Some(provided), span)
+        Ok((positional, named))
     }
 
     fn bind_call_arguments(

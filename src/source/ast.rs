@@ -29,7 +29,7 @@ pub(super) enum ExprKind {
         mode: DeferMode,
         error_name: Option<String>,
     },
-    Recur(Vec<Expr>),
+    Recur(Vec<CallArgument>),
     Match {
         subject: Box<Expr>,
         cases: Vec<MatchCase>,

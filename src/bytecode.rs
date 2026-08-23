@@ -159,7 +159,7 @@ pub enum Op {
     Defer {
         mode: DeferMode,
     },
-    Recur(usize),
+    Recur(Vec<CallArgumentKind>),
     Return,
 }
 
