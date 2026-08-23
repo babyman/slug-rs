@@ -29,8 +29,8 @@ compiled-module contract is documented separately as `.cslug`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative resolution, cached isolated module initialization, and
   string-keyed exported-value maps.
-- The standard library, imported-name shadowing and callable conflict rules,
-  full type inference,
+- The standard library, callable import conflict and overload rules, full type
+  inference,
   structured concurrency, and the remaining language forms are progressive
   milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no

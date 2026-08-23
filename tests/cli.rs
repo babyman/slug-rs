@@ -108,6 +108,35 @@ fn selects_all_imported_module_exports_into_the_top_level_scope() {
 }
 
 #[test]
+fn reports_module_import_conflict_warnings() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-import-conflict-warning-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create import fixture directory");
+    fs::write(root.join("first.slug"), "export val value = 1\n")
+        .expect("write first imported module");
+    fs::write(root.join("second.slug"), "export val value = 2\n")
+        .expect("write second imported module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val values = import(\"first\", \"second\")\nprintln(values.value)\n",
+    )
+    .expect("write importing source");
+
+    let output = slug().arg(&path).output().expect("run importing source");
+
+    fs::remove_dir_all(root).expect("remove import fixture directory");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "slug: warning: imported binding `value` was ignored because an earlier module provided it\n"
+    );
+}
+
+#[test]
 fn evaluates_source_modulo_with_checked_zero_division() {
     let path = fixture_path("modulo");
     fs::write(&path, "println(17 % 5, 5.5 % 2)\n").expect("write modulo source");

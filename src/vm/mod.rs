@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, collections::HashMap, path::Path, rc::Rc};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    path::Path,
+    rc::Rc,
+};
 
 use crate::{
     CallArgumentKind, Capture, ModuleLoader, Program, SourceSpan, Value,
@@ -43,6 +48,7 @@ pub struct Vm {
     module_loader: Option<ModuleLoader>,
     module_program: Option<Rc<Program>>,
     globals: HashMap<String, Value>,
+    imported_globals: HashSet<String>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
@@ -321,6 +327,11 @@ impl Vm {
                 }
                 Op::DefineGlobal(name) => {
                     let value = self.pop_unresolved(span.clone())?;
+                    if self.imported_globals.remove(&name) {
+                        self.warning(format!(
+                            "local binding `{name}` shadows an imported binding"
+                        ));
+                    }
                     if !self
                         .globals
                         .get(&name)
@@ -347,12 +358,18 @@ impl Vm {
                             ));
                         };
                         let name = name.to_string();
-                        if !self
-                            .globals
-                            .get(&name)
-                            .is_some_and(|binding| binding.replace_binding(value.clone()))
-                        {
-                            self.globals.insert(name, value.clone());
+                        let Some(existing) = self.globals.get(&name) else {
+                            self.globals.insert(name.clone(), value.clone());
+                            self.imported_globals.insert(name);
+                            continue;
+                        };
+                        if existing.is_uninitialized_binding() {
+                            existing.replace_binding(value.clone());
+                            self.imported_globals.insert(name);
+                        } else {
+                            self.warning(format!(
+                                "imported binding `{name}` is shadowed by a local binding"
+                            ));
                         }
                     }
                 }
@@ -881,6 +898,7 @@ impl Vm {
                     span.clone(),
                 )
             })?,
+            imported_globals: HashSet::new(),
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
@@ -900,6 +918,12 @@ impl Vm {
             cleanup_recovers: false,
         });
         vm.execute(program)
+    }
+
+    fn warning(&self, message: String) {
+        if let Some(loader) = &self.module_loader {
+            loader.warn(message);
+        }
     }
 
     fn import(&mut self, kinds: Vec<CallArgumentKind>, span: Option<SourceSpan>) -> VmResult<()> {
@@ -952,6 +976,15 @@ impl Vm {
             for (key, value) in module_exports.iter() {
                 if !exports.iter().any(|(existing, _)| existing == key) {
                     exports.push((key.clone(), value.clone()));
+                } else if let Value::Str(name) = key
+                    && !matches!(
+                        value.resolve(),
+                        Ok(Value::Closure(_) | Value::Native { .. })
+                    )
+                {
+                    self.warning(format!(
+                        "imported binding `{name}` was ignored because an earlier module provided it"
+                    ));
                 }
             }
         }

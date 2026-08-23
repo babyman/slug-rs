@@ -107,8 +107,9 @@ and the host boundary in
 - [x] Predeclare statically knowable top-level bindings and support cyclic module
   initialization with checked use-before-initialization failures.
 - [x] Implement live imported bindings.
-- [ ] Implement shadowing behavior, import conflicts, and callable combination
-  rules.
+- [x] Implement imported-name shadowing and non-callable import conflict
+  warnings.
+- [ ] Implement callable import conflict and combination rules.
 - [ ] Retain declaration, tag, and documentation metadata in the module model
   for later introspection.
 - [ ] Invoke the first eligible local `main` function after successful

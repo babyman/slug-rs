@@ -52,7 +52,8 @@ fn run(path: &str, type_check: bool) -> ExitCode {
         }
     };
     let source_root = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
-    let mut vm = Vm::with_module_loader(ModuleLoader::new(source_root, None));
+    let loader = ModuleLoader::new(source_root, None);
+    let mut vm = Vm::with_module_loader(loader.clone());
     vm.define_native("println", |values| {
         println!(
             "{}",
@@ -65,7 +66,12 @@ fn run(path: &str, type_check: bool) -> ExitCode {
         Ok(Value::Nil)
     });
     match vm.run_named(&program, "main") {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(_) => {
+            for warning in loader.take_warnings() {
+                eprintln!("slug: warning: {warning}");
+            }
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             eprintln!("slug: {error}");
             ExitCode::from(1)

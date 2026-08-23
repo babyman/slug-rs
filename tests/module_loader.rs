@@ -185,6 +185,55 @@ fn imported_functions_run_in_their_defining_module_and_observe_live_exports() {
 }
 
 #[test]
+fn import_conflicts_keep_the_first_binding_and_report_a_warning() {
+    let root = root("import-conflicts");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(root.join("first.slug"), "export val value = 1\n").expect("write first module");
+    fs::write(root.join("second.slug"), "export val value = 2\n").expect("write second module");
+    let main_path = root.join("main.slug");
+    let program = compile(
+        &main_path.to_string_lossy(),
+        "val imports = import(\"first\", \"second\")\nexport val value = imports.value\n",
+    )
+    .expect("compile importer");
+    let loader = ModuleLoader::new(&root, None);
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main").expect("run imports");
+
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"value\": 1}");
+    assert_eq!(
+        loader.take_warnings(),
+        ["imported binding `value` was ignored because an earlier module provided it"]
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn local_bindings_shadow_all_imports_with_a_warning() {
+    let root = root("import-shadowing");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(root.join("values.slug"), "export val value = 1\n").expect("write imported module");
+    let main_path = root.join("main.slug");
+    let program = compile(
+        &main_path.to_string_lossy(),
+        "val {*} = import(\"values\")\nval value = 2\nexport val result = value\n",
+    )
+    .expect("compile importer");
+    let loader = ModuleLoader::new(&root, None);
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main").expect("run importer");
+
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 2}");
+    assert_eq!(
+        loader.take_warnings(),
+        ["local binding `value` shadows an imported binding"]
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
     let root = root("cyclic-uninitialized");
     fs::create_dir_all(&root).expect("create module directory");

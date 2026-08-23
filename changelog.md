@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added module warnings for local bindings that shadow `{*}` imports and for
+  duplicate non-callable names across a multi-module import.
 - Made imported functions run in their defining module and preserve live
   exported binding values across calls.
 - Predeclared statically known module bindings, allowing cyclic imports while

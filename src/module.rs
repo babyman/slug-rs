@@ -20,6 +20,7 @@ struct ModuleLoaderState {
     library_root: Option<PathBuf>,
     compiled: RefCell<HashMap<PathBuf, Program>>,
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
+    warnings: RefCell<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +78,7 @@ impl ModuleLoader {
                 library_root,
                 compiled: RefCell::new(HashMap::new()),
                 instances: RefCell::new(HashMap::new()),
+                warnings: RefCell::new(Vec::new()),
             }),
         }
     }
@@ -198,6 +200,16 @@ impl ModuleLoader {
     #[must_use]
     pub fn initialized_module_count(&self) -> usize {
         self.state.instances.borrow().len()
+    }
+
+    /// Returns and clears module warnings accumulated during evaluation.
+    #[must_use]
+    pub fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut *self.state.warnings.borrow_mut())
+    }
+
+    pub(crate) fn warn(&self, message: impl Into<String>) {
+        self.state.warnings.borrow_mut().push(message.into());
     }
 }
 

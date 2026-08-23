@@ -120,6 +120,10 @@ impl Value {
         *cell.borrow_mut() = value;
         true
     }
+
+    pub(crate) fn is_uninitialized_binding(&self) -> bool {
+        matches!(self, Self::Binding { cell, .. } if matches!(*cell.borrow(), Self::Uninitialized))
+    }
 }
 
 impl PartialEq for Value {
