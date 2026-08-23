@@ -57,6 +57,22 @@ impl Vm {
         self.globals.get(name)
     }
 
+    #[must_use]
+    pub fn exported_values(&self, program: &Program) -> Value {
+        Value::Map(Rc::new(
+            program
+                .exports()
+                .iter()
+                .filter_map(|name| {
+                    self.globals
+                        .get(name)
+                        .cloned()
+                        .map(|value| (Value::string(name.as_str()), value))
+                })
+                .collect(),
+        ))
+    }
+
     pub fn define_native(&mut self, name: impl Into<String>, function: crate::NativeFunction) {
         let name = name.into();
         self.globals.insert(

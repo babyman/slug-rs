@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{Program, compile};
+use crate::{Program, Value, Vm, compile};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
@@ -19,6 +19,13 @@ pub struct ModuleLoader {
 pub struct ModuleSource {
     pub path: PathBuf,
     pub text: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ModuleInstance {
+    pub path: PathBuf,
+    pub program: Program,
+    pub exports: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +137,32 @@ impl ModuleLoader {
     #[must_use]
     pub fn cached_module_count(&self) -> usize {
         self.compiled.borrow().len()
+    }
+
+    /// Compiles and initializes one isolated module instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader, source, or module-runtime failures.
+    pub fn initialize(
+        &self,
+        importer: Option<&Path>,
+        name: &str,
+    ) -> Result<ModuleInstance, ModuleLoadError> {
+        let source = self.load(importer, name)?;
+        let program = self.compile(importer, name)?;
+        let mut vm = Vm::new();
+        vm.run_named(&program, "main")
+            .map_err(|error| ModuleLoadError::Source {
+                path: source.path.clone(),
+                message: error.to_string(),
+            })?;
+        let exports = vm.exported_values(&program);
+        Ok(ModuleInstance {
+            path: source.path,
+            program,
+            exports,
+        })
     }
 }
 

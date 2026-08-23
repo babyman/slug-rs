@@ -13,7 +13,8 @@ fn resolves_importer_relative_source_and_library_roots() {
     let library = root.join("library");
     fs::create_dir_all(source.join("local")).expect("create source module directory");
     fs::create_dir_all(library.join("slug")).expect("create library module directory");
-    fs::write(source.join("local/math.slug"), "val value = 1\n").expect("write local module");
+    fs::write(source.join("local/math.slug"), "export val value = 1\n")
+        .expect("write local module");
     fs::write(library.join("slug/std.slug"), "val value = 2\n").expect("write library module");
 
     let loader = ModuleLoader::new(&source, Some(library.clone()));
@@ -22,7 +23,7 @@ fn resolves_importer_relative_source_and_library_roots() {
             .load(None, "local.math")
             .expect("load source module")
             .text,
-        "val value = 1\n"
+        "export val value = 1\n"
     );
     assert_eq!(
         loader
@@ -40,6 +41,14 @@ fn resolves_importer_relative_source_and_library_roots() {
         .expect("compile source module");
     assert_eq!(program.chunk_count(), 1);
     assert_eq!(loader.cached_module_count(), 1);
+    assert_eq!(
+        loader
+            .initialize(None, "local.math")
+            .expect("initialize module")
+            .exports
+            .to_string(),
+        "{\"value\": 1}"
+    );
     loader
         .compile(None, "local.math")
         .expect("reuse cached module");
