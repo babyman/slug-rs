@@ -132,12 +132,27 @@ and the host boundary in
   standard output, standard error, diagnostic category, and source location.
 - [ ] Run `make check`.
 
-## 5. Add structured concurrency
+## 5. Establish the native extension boundary
+
+- [ ] Replace the current Rust `NativeFunction` value exposure with the opaque,
+  call-scoped version 0 facade from [`native-abi.md`](native-abi.md).
+- [ ] Add checked argument, result, structured-error, persistent-root, and
+  native-resource operations.
+- [ ] Distinguish inline and blocking registrations and inject a bounded
+  blocking worker service without exposing scheduler operations.
+- [ ] Prove wrong-type, wrong-resource, callback-contract, panic-containment,
+  and teardown behavior in focused VM tests.
+- [ ] Keep the Rust facade explicitly unstable until concurrency validates it;
+  do not add dynamic loading or publish a C ABI yet.
+- [ ] Run `make check`.
+
+## 6. Add structured concurrency
 
 - [ ] Implement the implicit root task owner and explicit nurseries.
 - [ ] Implement task handles, spawn capture, ownership, limits, cancellation,
   settlement, and repeated await behavior.
-- [ ] Implement channel values and their checked runtime operations.
+- [ ] Implement channel values, their checked runtime operations, and the
+  bounded native producer capability defined by the native interface.
 - [ ] Implement `select` cases for receive, send, timer, await, and default.
 - [ ] Integrate task failure with `throw`, deferred cleanup, and checked runtime
   diagnostics.
@@ -145,7 +160,7 @@ and the host boundary in
 - [ ] Add focused runtime and VM coverage for concurrency behavior.
 - [ ] Run `make check`.
 
-## 6. Add the public library and run full conformance
+## 7. Add the public library and run full conformance
 
 Implement the public library only after its language and runtime foundations
 are stable:
@@ -165,7 +180,18 @@ are stable:
   and source location where fixture metadata makes them exact.
 - [ ] Run `make check`.
 
-## 7. Optimize only from measurements
+## 8. Stabilize the native ABI and add external FFI
+
+After channels and concurrency have exercised the native boundary:
+
+- [ ] Stress resource cleanup, close races, cross-thread sends, cancellation,
+  blocking-worker limits, and runtime teardown.
+- [ ] Publish the version 1 C declarations, version negotiation, loader
+  validation, and ABI conformance tests together.
+- [ ] Add dynamic Slug-aware module loading only after version 1 is fixed.
+- [ ] Specify any TOML raw C bridge independently of the native module ABI.
+
+## 9. Optimize only from measurements
 
 After the source foundation and representative workloads exist, follow the
 separate [VM Optimization Plan](vm-optimization.md).

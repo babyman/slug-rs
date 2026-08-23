@@ -33,6 +33,7 @@ a specified feature is implemented.
 | [compatibility.md](compatibility.md) | Promises and intentional non-promises. |
 | [compiled-artifacts.md](compiled-artifacts.md) | Portable `.cslug` compiled-module contract. |
 | [conformance-fixtures.md](conformance-fixtures.md) | Portable fixture-sidecar contract. |
+| [native-abi.md](native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
 | [language/](language/README.md) | Normative language specifications and grammar. |
 | [decisions/](decisions/README.md) | Durable architecture and language decisions. |
 

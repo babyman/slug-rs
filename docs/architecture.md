@@ -10,6 +10,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Source front end | `src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
 | Private bytecode | `src/bytecode.rs` | Internal instruction and program representation. |
 | Compiled artifacts | `docs/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
+| Native extensions | `docs/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
 | Runtime values | `src/value.rs` | Dynamic language values and operations. |
 | Execution | `src/vm/` | VM dispatch, checked errors, cleanup unwinding, and value operations. |
 | CLI | `src/main.rs` | Process boundary and public error presentation. |
@@ -20,6 +21,8 @@ implements a small source subset through a checked bytecode virtual machine.
   boundary, not a serialized format or compatibility promise.
 - `.cslug` is the future portable compiled-module format.  It is a distinct,
   versioned contract and must not serialize private bytecode directly.
+- Native extensions use an opaque call and resource boundary. They must not
+  expose runtime value layouts, tasks, nurseries, or scheduler operations.
 - Invalid source is reported as `SourceError`; runtime failures are reported as
   `RuntimeError`. A Slug program must not expose a host panic as its diagnostic.
 - Source spans and call frames remain attached to runtime failures whenever the

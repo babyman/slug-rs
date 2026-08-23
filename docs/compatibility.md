@@ -10,12 +10,16 @@ implemented source subset without preserving undocumented behavior.
 - The public CLI's documented source subset is tested as a user-visible path.
 - Once published, each `.cslug` artifact version is a portable compiled-module
   compatibility contract as defined in `compiled-artifacts.md`.
+- Once published, each native module ABI major version is a compatibility
+  contract as defined in `native-abi.md` and its released C declarations.
 
 ## Non-promises
 
 - Bytecode instructions, opcode values, chunks, stack layout, and closure
   representation are internal implementation details.
 - No `.cslug` artifact version is implemented or accepted yet.
+- The static Rust native facade is version 0 and no native module ABI version is
+  implemented or accepted yet.
 - A specification section is not proof that the current Rust VM implements it;
   the language support matrix reports that status.
 - Exact diagnostic wording is not stable unless a language document explicitly
