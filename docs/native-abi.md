@@ -234,6 +234,8 @@ returns `sent`, `full`, or `closed`. The native module owns its policy for a
 API permits that, or close with an error event. The ABI does not create an
 unbounded queue and does not block a foreign event-loop thread. Channel close
 remains idempotent; sending after close fails without waking or naming a task.
+For a paired receiver, native mailbox entries and ordinary Slug buffered
+messages share its one configured capacity.
 
 Dropping the Slug receiver or explicitly closing the resource that owns an
 operation eventually makes the producer report `closed`. Native operations
@@ -393,10 +395,10 @@ Implementation proceeds in this order:
    boundary with a static Rust facade enforcing this call contract;
 2. **Complete:** prove checked argument, result, error, resource, and
    contract-violation behavior with VM tests;
-3. implement channels and native producer capabilities, including bounded
-   cross-thread sends and close races;
-4. implement structured concurrency without adding scheduler access to the
-   native interface;
+3. **Complete:** implement channels and native producer capabilities,
+   including bounded cross-thread sends and close races;
+4. **Complete:** implement structured concurrency without adding scheduler
+   access to the native interface;
 5. stress cancellation, cleanup, resource lifetime, producer revocation, and
    runtime teardown;
 6. publish the exact version 1 C declarations and ABI conformance suite; and

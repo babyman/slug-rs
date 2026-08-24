@@ -1,4 +1,8 @@
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use slug_vm::{
     CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, ModuleLoader, NativeArity,
@@ -1614,6 +1618,119 @@ fn closing_a_native_producer_drains_events_then_closes_its_receiver() {
     let mut vm = Vm::new();
     vm.define_native(function).unwrap();
     assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(7));
+}
+
+#[test]
+fn native_and_slug_senders_share_a_channel_buffer_bound() {
+    struct ProducerState(Mutex<Option<slug_vm::NativeChannelProducer>>);
+
+    fn create_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        call.state::<Arc<ProducerState>>()
+            .expect("producer state")
+            .0
+            .lock()
+            .expect("producer state lock")
+            .replace(producer);
+        call.return_value(channel)
+    }
+
+    fn send_native(call: &mut NativeCall<'_>) -> NativeStatus {
+        let producer = call
+            .state::<Arc<ProducerState>>()
+            .expect("producer state")
+            .0
+            .lock()
+            .expect("producer state lock")
+            .clone()
+            .expect("channel producer");
+        let status = producer.try_send(slug_vm::NativeSendValue::integer(2));
+        call.return_value(NativeOwnedValue::boolean(matches!(
+            status,
+            slug_vm::NativeProducerStatus::Sent
+        )))
+    }
+
+    let module = NativeModule::new(
+        "test.producer_capacity",
+        Arc::new(ProducerState(Mutex::new(None))),
+    )
+    .unwrap();
+    let create = module
+        .function("create_channel", NativeArity::Exact(0), create_channel)
+        .unwrap();
+    let send = module
+        .function("send_native", NativeArity::Exact(0), send_native)
+        .unwrap();
+    let program = compile(
+        "native-producer-capacity.slug",
+        "val channel = create_channel()\n\
+         send(channel, 1)\n\
+         if (send_native()) { 99 } else { recv(channel) }\n",
+    )
+    .expect("compile native producer capacity source");
+    let mut vm = Vm::new();
+    vm.define_native(create).unwrap();
+    vm.define_native(send).unwrap();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(1));
+}
+
+#[test]
+fn closing_a_native_producer_rejects_parked_slug_senders() {
+    fn delayed_close(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            producer.close();
+        });
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.producer_sender_close", ()).unwrap();
+    let function = module
+        .function("delayed_close", NativeArity::Exact(0), delayed_close)
+        .unwrap();
+    let program = compile(
+        "native-producer-sender-close.slug",
+        "val channel = delayed_close()\n\
+         send(channel, 1)\n\
+         val sender = spawn { send(channel, 2) }\n\
+         await(sender)\n",
+    )
+    .expect("compile native producer sender-close source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("native close must reject the parked sender");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.message, "send on a closed channel");
+}
+
+#[test]
+fn a_closed_native_producer_rejects_the_next_slug_send() {
+    fn closed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        producer.close();
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.producer_closed_send", ()).unwrap();
+    let function = module
+        .function("closed_channel", NativeArity::Exact(0), closed_channel)
+        .unwrap();
+    let program = compile(
+        "native-producer-closed-send.slug",
+        "val channel = closed_channel()\nsend(channel, 1)\n",
+    )
+    .expect("compile native producer closed-send source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("closed native channel must reject sends");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.message, "send on a closed channel");
 }
 
 #[test]

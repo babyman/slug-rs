@@ -149,7 +149,7 @@ and the host boundary in
 - [x] Implement the implicit root task owner and explicit nurseries.
 - [x] Implement task handles, spawn capture, ownership, limits, cancellation,
   settlement, and repeated await behavior.
-- [ ] Implement channel values, their checked runtime operations, and the
+- [x] Implement channel values, their checked runtime operations, and the
   bounded native producer capability defined by the native interface.
 - [x] Implement `select` cases for receive, send, timer, await, and default.
 - [x] Integrate task failure with `throw`, deferred cleanup, and checked runtime

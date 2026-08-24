@@ -75,32 +75,41 @@ pub struct NativeChannelProducer(Arc<NativeProducerState>);
 
 struct NativeProducerState {
     capacity: usize,
+    occupied: AtomicUsize,
     queue: Mutex<VecDeque<NativeSendValue>>,
     closed: AtomicBool,
 }
 
 impl NativeChannelProducer {
     #[must_use]
-    pub fn bounded(capacity: usize) -> Self {
+    pub(crate) fn bounded(capacity: usize) -> Self {
         Self(Arc::new(NativeProducerState {
             capacity,
+            occupied: AtomicUsize::new(0),
             queue: Mutex::new(VecDeque::new()),
             closed: AtomicBool::new(false),
         }))
     }
     #[must_use]
     pub fn try_send(&self, value: NativeSendValue) -> NativeProducerStatus {
+        if !self.reserve_slot() {
+            return if self.is_closed() {
+                NativeProducerStatus::Closed
+            } else {
+                NativeProducerStatus::Full
+            };
+        }
         if self.is_closed() {
+            self.release_slot();
             return NativeProducerStatus::Closed;
         }
         let Ok(mut queue) = self.0.queue.lock() else {
+            self.release_slot();
             return NativeProducerStatus::Closed;
         };
         if self.is_closed() {
+            self.release_slot();
             return NativeProducerStatus::Closed;
-        }
-        if queue.len() >= self.0.capacity {
-            return NativeProducerStatus::Full;
         }
         queue.push_back(value);
         NativeProducerStatus::Sent
@@ -112,11 +121,37 @@ impl NativeChannelProducer {
     pub fn is_closed(&self) -> bool {
         self.0.closed.load(Ordering::Acquire)
     }
-    pub(crate) fn drain(&self) -> Vec<NativeSendValue> {
-        self.0
-            .queue
-            .lock()
-            .map_or_else(|_| Vec::new(), |mut queue| queue.drain(..).collect())
+    pub(crate) fn drain(&self, limit: usize) -> Vec<NativeSendValue> {
+        self.0.queue.lock().map_or_else(
+            |_| Vec::new(),
+            |mut queue| {
+                let end = limit.min(queue.len());
+                queue.drain(..end).collect()
+            },
+        )
+    }
+
+    pub(crate) fn reserve_slot(&self) -> bool {
+        let mut occupied = self.0.occupied.load(Ordering::Acquire);
+        loop {
+            if occupied >= self.0.capacity {
+                return false;
+            }
+            match self.0.occupied.compare_exchange_weak(
+                occupied,
+                occupied + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => occupied = actual,
+            }
+        }
+    }
+
+    pub(crate) fn release_slot(&self) {
+        let previous = self.0.occupied.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "native channel occupancy underflow");
     }
 }
 
@@ -1103,6 +1138,17 @@ mod tests {
         assert!(producer.is_closed());
         assert_eq!(
             producer.try_send(NativeSendValue::integer(9)),
+            NativeProducerStatus::Closed
+        );
+    }
+
+    #[test]
+    fn dropping_a_paired_receiver_revokes_its_producer() {
+        let (channel, producer) = Channel::native(1);
+        drop(channel);
+        assert!(producer.is_closed());
+        assert_eq!(
+            producer.try_send(NativeSendValue::integer(7)),
             NativeProducerStatus::Closed
         );
     }

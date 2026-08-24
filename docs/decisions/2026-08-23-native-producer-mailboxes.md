@@ -14,17 +14,18 @@ values. It never receives a Slug `Value`, task waiter, VM reference, or
 scheduler handle. The VM thread converts accepted mailbox values and applies
 ordinary FIFO channel delivery.
 
-The eventual paired-channel implementation will account for both the mailbox
-and the VM-resident queue against one channel capacity. A producer must report
-`full` rather than create a second unbounded queue. Runtime teardown revokes
-the producer before releasing the receiver, leaving the producer closed.
+A paired channel accounts for both the mailbox and the VM-resident queue
+against one shared capacity. A producer must report `full` rather than create
+a second unbounded queue. Releasing the last receiver revokes the producer,
+leaving it closed.
 
 ## Consequences
 
 Foreign-thread publication is limited to copyable scalar, string, and byte
 payloads. Channel delivery and waiter resumption remain cooperative runtime
-operations. The mailbox needs an explicit wake mechanism in the next slice so
-a parked root evaluation can observe a newly accepted event without polling.
+operations. A parked runtime polls its registered native mailboxes while it has
+no runnable Slug work; an event-driven host wake is deferred until a native
+host loop exists to own it.
 
 ## Migration
 

@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Started the native channel-producer foundation with restricted owned send
-  values and a bounded, thread-safe producer mailbox.
-- Native callbacks can now create a receiver/producer pair; accepted producer
+- Implemented bounded native channel producers with restricted owned send
+  values, thread-safe mailbox publication, shared capacity accounting with
+  Slug sends, receiver-drop revocation, and checked close wakeups.
+- Native callbacks can create a receiver/producer pair; accepted producer
   mailbox values are converted and delivered only by the VM thread when that
   receiver is read or selected.
 - Implemented `select` for receive, send, millisecond timer, task-await, and
@@ -12,9 +13,9 @@
   losing channel, task, and timer registrations as soon as one case wins.
 - Added regression coverage for selected task failures: they now demonstrably
   follow ordinary `throw` cleanup and `defer onerror` recovery paths.
-- Audited the structured-concurrency roadmap: root and explicit nurseries,
-  task ownership and limits, cancellation, settlement, spawn capture, and
-  repeated awaits are complete; native channel producers remain outstanding.
+- Completed the structured-concurrency roadmap: root and explicit nurseries,
+  task ownership and limits, cancellation, settlement, spawn capture, repeated
+  awaits, channels, native producer capabilities, and `select` are complete.
 - Added focused VM coverage for suspended select-await resumption, losing
   channel-waiter removal, cancellation of timer/channel waiters, and checked
   malformed private select bytecode errors.

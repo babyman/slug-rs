@@ -2065,7 +2065,11 @@ impl Vm {
                     channel.drain_native();
                     let mut state = channel.state.borrow_mut();
                     if let Some(value) = state.messages.pop_front() {
-                        if let Some((sender, pending)) = state.senders.pop_front() {
+                        channel.release_buffer_slot();
+                        if !state.senders.is_empty()
+                            && channel.reserve_buffer_slot()
+                            && let Some((sender, pending)) = state.senders.pop_front()
+                        {
                             state.messages.push_back(pending);
                             drop(state);
                             sender.resume(Ok(Value::Nil));
@@ -2089,6 +2093,7 @@ impl Vm {
                     value,
                     handler,
                 } => {
+                    channel.drain_native();
                     let mut state = channel.state.borrow_mut();
                     if state.closed {
                         return Err(self.error(
@@ -2103,7 +2108,7 @@ impl Vm {
                         self.push_select_result(Value::Nil, handler.clone());
                         return Ok(());
                     }
-                    if state.messages.len() < state.capacity {
+                    if state.messages.len() < state.capacity && channel.reserve_buffer_slot() {
                         state.messages.push_back(value.clone());
                         self.push_select_result(Value::Nil, handler.clone());
                         return Ok(());
@@ -2289,6 +2294,7 @@ impl Vm {
         if matches!(arguments[1], Value::Nil) {
             return Err(self.error(RuntimeErrorKind::Type, "send cannot send nil".into(), span));
         }
+        channel.drain_native();
         let mut state = channel.state.borrow_mut();
         if state.closed {
             return Err(self.error(
@@ -2302,7 +2308,7 @@ impl Vm {
             receiver.resume(Ok(arguments[1].clone()));
             return Ok(Value::Nil);
         }
-        if state.messages.len() < state.capacity {
+        if state.messages.len() < state.capacity && channel.reserve_buffer_slot() {
             state.messages.push_back(arguments[1].clone());
             return Ok(Value::Nil);
         }
@@ -2339,7 +2345,11 @@ impl Vm {
         channel.drain_native();
         let mut state = channel.state.borrow_mut();
         if let Some(value) = state.messages.pop_front() {
-            if let Some((sender, pending)) = state.senders.pop_front() {
+            channel.release_buffer_slot();
+            if !state.senders.is_empty()
+                && channel.reserve_buffer_slot()
+                && let Some((sender, pending)) = state.senders.pop_front()
+            {
                 state.messages.push_back(pending);
                 drop(state);
                 sender.resume(Ok(Value::Nil));

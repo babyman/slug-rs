@@ -23,7 +23,6 @@ pub enum Builtin {
 }
 
 /// A FIFO channel with bounded buffering and parked task wait queues.
-#[derive(Clone)]
 pub struct Channel {
     pub(crate) state: Rc<RefCell<ChannelState>>,
     native_producer: Option<NativeChannelProducer>,
@@ -314,16 +313,30 @@ impl Channel {
         }
     }
 
+    pub(crate) fn reserve_buffer_slot(&self) -> bool {
+        self.native_producer
+            .as_ref()
+            .is_none_or(NativeChannelProducer::reserve_slot)
+    }
+
+    pub(crate) fn release_buffer_slot(&self) {
+        if let Some(producer) = &self.native_producer {
+            producer.release_slot();
+        }
+    }
+
     pub(crate) fn drain_native(&self) -> bool {
         let Some(producer) = &self.native_producer else {
             return false;
         };
-        let values = producer.drain();
+        let values = producer.drain(usize::MAX);
         let changed = !values.is_empty() || producer.is_closed();
         let mut state = self.state.borrow_mut();
         let mut resumed = Vec::new();
+        let mut rejected_senders = Vec::new();
         for value in values {
             if let Some(receiver) = state.receivers.pop_front() {
+                self.release_buffer_slot();
                 resumed.push((receiver, value.into_value()));
             } else {
                 state.messages.push_back(value.into_value());
@@ -337,10 +350,14 @@ impl Channel {
                     .drain(..)
                     .map(|receiver| (receiver, Value::Nil)),
             );
+            rejected_senders.extend(state.senders.drain(..).map(|(sender, _)| sender));
         }
         drop(state);
         for (receiver, value) in resumed {
             receiver.resume(Ok(value));
+        }
+        for sender in rejected_senders {
+            sender.reject_closed_send();
         }
         changed
     }
@@ -349,6 +366,12 @@ impl Channel {
 impl fmt::Debug for Channel {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<chan>")
+    }
+}
+
+impl Drop for Channel {
+    fn drop(&mut self) {
+        self.revoke_native_producer();
     }
 }
 
