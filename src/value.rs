@@ -57,8 +57,16 @@ pub struct Task {
 struct TaskState {
     outcome: Option<Result<Value, crate::RuntimeError>>,
     pending: Option<TaskRun>,
-    permit: Option<Rc<Cell<usize>>>,
+    running: bool,
+    admission: Option<TaskAdmission>,
+    admitted: bool,
     observed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TaskAdmission {
+    pub(crate) limit: usize,
+    pub(crate) count: Rc<Cell<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -72,33 +80,78 @@ impl Task {
     pub(crate) fn pending(
         program: Rc<crate::Program>,
         closure: Rc<Closure>,
-        permit: Option<Rc<Cell<usize>>>,
+        admission: Option<TaskAdmission>,
     ) -> Self {
+        let admitted = admission.as_ref().is_none_or(|admission| {
+            if admission.count.get() < admission.limit {
+                admission.count.set(admission.count.get() + 1);
+                true
+            } else {
+                false
+            }
+        });
         Self {
             state: Rc::new(RefCell::new(TaskState {
                 outcome: None,
                 pending: Some(TaskRun { program, closure }),
-                permit,
+                running: false,
+                admission,
+                admitted,
                 observed: false,
             })),
         }
     }
 
     pub(crate) fn take_pending(&self) -> Option<TaskRun> {
-        self.state.borrow_mut().pending.take()
+        let mut state = self.state.borrow_mut();
+        let pending = state.pending.take();
+        state.running = pending.is_some();
+        pending
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        self.state.borrow().running
+    }
+
+    pub(crate) fn is_pending(&self) -> bool {
+        self.state.borrow().pending.is_some()
+    }
+
+    pub(crate) fn is_pending_and_admitted(&self) -> bool {
+        let state = self.state.borrow();
+        state.pending.is_some() && state.admitted
+    }
+
+    pub(crate) fn try_admit(&self) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.pending.is_none() || state.admitted {
+            return state.admitted;
+        }
+        let Some(admission) = &state.admission else {
+            state.admitted = true;
+            return true;
+        };
+        if admission.count.get() >= admission.limit {
+            return false;
+        }
+        admission.count.set(admission.count.get() + 1);
+        state.admitted = true;
+        true
     }
 
     pub(crate) fn complete(&self, outcome: Result<Value, crate::RuntimeError>) {
         let mut state = self.state.borrow_mut();
+        state.running = false;
         state.outcome = Some(outcome);
-        release_permit(&mut state);
+        release_admission(&mut state);
     }
 
     pub(crate) fn cancel(&self, error: crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
         if state.pending.take().is_some() {
+            state.running = false;
             state.outcome = Some(Err(error));
-            release_permit(&mut state);
+            release_admission(&mut state);
         }
     }
 
@@ -121,9 +174,42 @@ impl Task {
     }
 }
 
-fn release_permit(state: &mut TaskState) {
-    if let Some(permit) = state.permit.take() {
-        permit.set(permit.get().saturating_sub(1));
+fn release_admission(state: &mut TaskState) {
+    if state.admitted {
+        if let Some(admission) = &state.admission {
+            admission.count.set(admission.count.get().saturating_sub(1));
+        }
+        state.admitted = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use crate::Program;
+
+    use super::{Closure, Task, Value};
+
+    #[test]
+    fn task_is_running_between_admission_and_completion() {
+        let closure = Rc::new(Closure {
+            chunk: 0,
+            captures: Vec::new(),
+            program: None,
+            globals: None,
+            capture_sources: Vec::new(),
+        });
+        let task = Task::pending(Rc::new(Program::new()), closure, None);
+
+        assert!(!task.is_running());
+        assert!(task.take_pending().is_some());
+        assert!(task.is_running());
+
+        task.complete(Ok(Value::Nil));
+
+        assert!(!task.is_running());
+        assert!(matches!(task.await_outcome(), Some(Ok(Value::Nil))));
     }
 }
 

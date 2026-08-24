@@ -673,10 +673,11 @@ tasks cooperatively at an await or when their owner settles, and propagates
 unawaited child failures when that evaluation settles. An explicit nursery
 logically cancels later pending siblings after its first unobserved child
 failure; it cannot yet interrupt a task that has started. Blocking scheduling
-is not implemented yet. Its current limiter holds one permit per pending direct
-child and queues further direct spawns when the limit is reached, releasing a
-permit at settlement. A nursery limit must be a positive integer. Permit
-retention while blocked is deferred with task suspension.
+is not implemented yet. Its current limiter admits direct children up to its
+limit and queues further direct spawns, releasing an admission slot at
+settlement. Awaiting a queued task first drives earlier admitted direct
+children, preserving admission order. A nursery limit must be a positive
+integer. Permit retention while blocked is deferred with task suspension.
 
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved

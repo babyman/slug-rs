@@ -12,8 +12,8 @@ use crate::{
     bytecode::Op,
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
-        BindingCell, Builtin, Closure, GlobalEnvironment, binding_cell, global_environment,
-        module_binding,
+        BindingCell, Builtin, Closure, GlobalEnvironment, TaskAdmission, binding_cell,
+        global_environment, module_binding,
     },
 };
 
@@ -1145,7 +1145,7 @@ impl Vm {
                 span,
             ));
         };
-        let permit = if let Some(limit) = self.direct_task_limit {
+        let admission = if let Some(limit) = self.direct_task_limit {
             let count = self.direct_task_count.as_ref().ok_or_else(|| {
                 self.error(
                     RuntimeErrorKind::InvalidBytecode,
@@ -1153,12 +1153,10 @@ impl Vm {
                     span.clone(),
                 )
             })?;
-            if count.get() < limit {
-                count.set(count.get() + 1);
-                Some(count.clone())
-            } else {
-                None
-            }
+            Some(TaskAdmission {
+                limit,
+                count: count.clone(),
+            })
         } else {
             None
         };
@@ -1178,13 +1176,29 @@ impl Vm {
             globals: closure.globals.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
-        let task = Rc::new(Task::pending(Rc::new(program.clone()), closure, permit));
+        let task = Rc::new(Task::pending(Rc::new(program.clone()), closure, admission));
         self.nursery.tasks.borrow_mut().push(task.clone());
         self.stack.push(Value::Task(task));
         Ok(())
     }
 
     fn run_task(&self, task: &Task) {
+        if !task.is_pending() {
+            return;
+        }
+        while !task.try_admit() {
+            let next = self
+                .nursery
+                .tasks
+                .borrow()
+                .iter()
+                .find(|candidate| candidate.is_pending_and_admitted())
+                .cloned();
+            let Some(next) = next else {
+                return;
+            };
+            self.run_task(&next);
+        }
         let Some(run) = task.take_pending() else {
             return;
         };
@@ -1627,6 +1641,13 @@ impl Vm {
                     ));
                 };
                 self.run_task(task);
+                if task.is_running() {
+                    return Err(self.error(
+                        RuntimeErrorKind::InvalidCall,
+                        "task cannot await itself while it is running".into(),
+                        span,
+                    ));
+                }
                 task.await_outcome().ok_or_else(|| {
                     self.error(
                         RuntimeErrorKind::InvalidBytecode,

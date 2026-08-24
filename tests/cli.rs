@@ -205,6 +205,25 @@ fn nursery_limit_queues_direct_tasks_beyond_active_capacity() {
 }
 
 #[test]
+fn awaiting_a_queued_task_preserves_nursery_admission_order() {
+    let path = fixture_path("nursery-admission-order");
+    fs::write(
+        &path,
+        "nursery limit 1 { val first = spawn { println(\"first\"); 1 }; val second = spawn { println(\"second\"); 2 }; await(second) }\n",
+    )
+    .expect("write admission-order source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run admission-order source");
+    fs::remove_file(path).expect("remove admission-order source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "first\nsecond\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn explicit_nursery_cancels_pending_siblings_after_a_child_failure() {
     let path = fixture_path("nursery-fail-fast");
     fs::write(
