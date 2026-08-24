@@ -152,7 +152,7 @@ and the host boundary in
 - [ ] Implement channel values, their checked runtime operations, and the
   bounded native producer capability defined by the native interface.
 - [x] Implement `select` cases for receive, send, timer, await, and default.
-- [ ] Integrate task failure with `throw`, deferred cleanup, and checked runtime
+- [x] Integrate task failure with `throw`, deferred cleanup, and checked runtime
   diagnostics.
 - [x] Implement the timer host service used by timer-oriented language forms.
 - [ ] Add focused runtime and VM coverage for concurrency behavior.

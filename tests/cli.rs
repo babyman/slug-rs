@@ -147,6 +147,58 @@ fn select_handles_ready_blocked_and_timer_cases_without_stale_waiters() {
 }
 
 #[test]
+fn selected_task_failures_unwind_cleanup_and_support_onerror_recovery() {
+    let path = fixture_path("select-task-failure");
+    fs::write(
+        &path,
+        "val fail = fn() {\n\
+           defer { println(\"cleanup\") }\n\
+           val task = spawn { select { after 1 }; throw \"child failure\" }\n\
+           select { await task /> fn(value) { println(\"handler\"); value } }\n\
+         }\n\
+         fail()\n",
+    )
+    .expect("write selected failing task source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run selected failing task source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "cleanup\n");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("uncaught throw: child failure"));
+    assert!(!stderr.contains("panicked"));
+
+    fs::write(
+        &path,
+        "val recover = fn() {\n\
+           defer onerror(err) { println(\"recovered\", err); 42 }\n\
+           val task = spawn { select { after 1 }; throw \"child failure\" }\n\
+           select { await task /> fn(value) { println(\"handler\"); value } }\n\
+         }\n\
+         println(recover())\n",
+    )
+    .expect("write selected recovered task source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run selected recovered task source");
+    fs::remove_file(path).expect("remove select task failure source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "recovered child failure\n42\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn channels_preserve_buffered_fifo_messages_and_resume_blocked_senders() {
     let path = fixture_path("channel-buffer");
     fs::write(
