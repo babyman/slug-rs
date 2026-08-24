@@ -671,7 +671,9 @@ The current implementation's preliminary task subset also exposes
 `await(task)` as a builtin while `slug.channel` is deferred. It runs spawned
 tasks eagerly when they cannot block and propagates unawaited child failures
 when that evaluation settles; explicit-nursery ownership, cancellation, and
-blocking scheduling are not implemented yet.
+blocking scheduling are not implemented yet. Its eager limiter rejects direct
+spawns in `nursery limit 0`; permit retention while blocked is deferred with
+task suspension.
 
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved

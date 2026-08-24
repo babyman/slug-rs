@@ -6,7 +6,8 @@
   explicit `nursery` and `nursery limit N` source forms, as the first
   cooperative structured-concurrency slice; unawaited child failures now
   propagate when their root evaluation settles, and task VMs share live root
-  and module globals with their parent evaluation.
+  and module globals with their parent evaluation. `nursery limit 0` now
+  rejects direct spawns.
 - Fixed version 0 native resource cleanup across failed close callbacks,
   structured error data, shared module-loader runtimes, and long-lived resource
   registries; native callback panics no longer emit a host panic diagnostic.

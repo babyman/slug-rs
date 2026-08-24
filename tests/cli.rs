@@ -128,6 +128,25 @@ fn propagates_unawaited_task_failures_when_a_nursery_settles() {
 }
 
 #[test]
+fn rejects_direct_spawns_when_a_nursery_limit_is_zero() {
+    let path = fixture_path("nursery-zero-limit");
+    fs::write(&path, "nursery limit 0 { spawn { 42 } }\n")
+        .expect("write zero-limit nursery source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run zero-limit nursery source");
+    fs::remove_file(path).expect("remove zero-limit nursery source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("nursery task limit reached")
+    );
+}
+
+#[test]
 fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
     let path = fixture_path("program-entrypoint");
     fs::write(

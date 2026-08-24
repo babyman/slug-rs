@@ -53,6 +53,7 @@ pub struct Vm {
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
     tasks: Vec<Rc<Task>>,
+    direct_task_limit: Option<usize>,
     native_resources: NativeResourceRegistry,
 }
 
@@ -68,6 +69,7 @@ impl Default for Vm {
             frames: Vec::new(),
             cleanup: Vec::new(),
             tasks: Vec::new(),
+            direct_task_limit: None,
             native_resources: native_resource_registry(),
         }
     }
@@ -912,6 +914,7 @@ impl Vm {
                         arguments,
                         provided,
                         span.clone(),
+                        None,
                     )?;
                     self.stack.truncate(base);
                     self.stack.push(result);
@@ -1032,6 +1035,7 @@ impl Vm {
         arguments: Vec<Value>,
         provided: Option<Vec<bool>>,
         span: Option<SourceSpan>,
+        direct_task_limit: Option<usize>,
     ) -> VmResult<Value> {
         let chunk = program.chunk(closure.chunk).ok_or_else(|| {
             self.error(
@@ -1065,6 +1069,7 @@ impl Vm {
             frames: Vec::new(),
             cleanup: Vec::new(),
             tasks: Vec::new(),
+            direct_task_limit,
             native_resources: self.native_resources.clone(),
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
@@ -1094,6 +1099,13 @@ impl Vm {
                 span,
             ));
         };
+        if self.direct_task_limit == Some(0) {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                "nursery task limit reached".into(),
+                span,
+            ));
+        }
         let captures = closure
             .captures
             .iter()
@@ -1110,8 +1122,14 @@ impl Vm {
             globals: closure.globals.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
-        let outcome =
-            self.call_module_closure(&Rc::new(program.clone()), closure, Vec::new(), None, span);
+        let outcome = self.call_module_closure(
+            &Rc::new(program.clone()),
+            closure,
+            Vec::new(),
+            None,
+            span,
+            None,
+        );
         let task = Rc::new(Task::settled(outcome));
         self.tasks.push(task.clone());
         self.stack.push(Value::Task(task));
@@ -1137,7 +1155,7 @@ impl Vm {
     ) -> VmResult<()> {
         let closure = self.pop(span.clone())?;
         let limit = has_limit.then(|| self.pop(span.clone())).transpose()?;
-        if let Some(limit) = limit {
+        let limit = if let Some(limit) = limit {
             let Value::Int(limit) = limit else {
                 return Err(self.error(
                     RuntimeErrorKind::Type,
@@ -1152,7 +1170,16 @@ impl Vm {
                     span,
                 ));
             }
-        }
+            Some(usize::try_from(limit).map_err(|_| {
+                self.error(
+                    RuntimeErrorKind::Type,
+                    "nursery limit is too large".into(),
+                    span.clone(),
+                )
+            })?)
+        } else {
+            None
+        };
         let Value::Closure(closure) = closure else {
             return Err(self.error(
                 RuntimeErrorKind::Type,
@@ -1160,8 +1187,14 @@ impl Vm {
                 span,
             ));
         };
-        let value =
-            self.call_module_closure(&Rc::new(program.clone()), closure, Vec::new(), None, span)?;
+        let value = self.call_module_closure(
+            &Rc::new(program.clone()),
+            closure,
+            Vec::new(),
+            None,
+            span,
+            limit,
+        )?;
         self.stack.push(value);
         Ok(())
     }
