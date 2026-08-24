@@ -10,6 +10,8 @@
   rejects direct spawns. Nested task VMs inherit their dynamic nursery, while
   an explicit nursery creates a distinct owner. Tasks defer execution until an
   await or owner settlement, preserving the specified spawn-capture boundary.
+  Explicit nurseries now logically cancel pending siblings after their first
+  unobserved child failure.
 - Fixed version 0 native resource cleanup across failed close callbacks,
   structured error data, shared module-loader runtimes, and long-lived resource
   registries; native callback panics no longer emit a host panic diagnostic.

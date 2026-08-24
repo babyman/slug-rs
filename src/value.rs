@@ -80,6 +80,13 @@ impl Task {
         self.state.borrow_mut().outcome = Some(outcome);
     }
 
+    pub(crate) fn cancel(&self, error: crate::RuntimeError) {
+        let mut state = self.state.borrow_mut();
+        if state.pending.take().is_some() {
+            state.outcome = Some(Err(error));
+        }
+    }
+
     pub(crate) fn await_outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
         let mut state = self.state.borrow_mut();
         state.observed = true;

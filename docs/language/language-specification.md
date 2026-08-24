@@ -670,10 +670,11 @@ also a `select` case form, not an independently reserved expression keyword.
 The current implementation's preliminary task subset also exposes
 `await(task)` as a builtin while `slug.channel` is deferred. It runs spawned
 tasks cooperatively at an await or when their owner settles, and propagates
-unawaited child failures when that evaluation settles; cancellation and
-blocking scheduling are not implemented yet. Its current limiter rejects
-direct spawns in `nursery limit 0`; permit retention while blocked is deferred
-with task suspension.
+unawaited child failures when that evaluation settles. An explicit nursery
+logically cancels later pending siblings after its first unobserved child
+failure; it cannot yet interrupt a task that has started. Blocking scheduling
+is not implemented yet. Its current limiter rejects direct spawns in `nursery
+limit 0`; permit retention while blocked is deferred with task suspension.
 
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved

@@ -168,6 +168,29 @@ fn rejects_direct_spawns_when_a_nursery_limit_is_zero() {
 }
 
 #[test]
+fn explicit_nursery_cancels_pending_siblings_after_a_child_failure() {
+    let path = fixture_path("nursery-fail-fast");
+    fs::write(
+        &path,
+        "nursery { spawn { throw \"first failure\" }; spawn { println(\"sibling ran\") } }\n",
+    )
+    .expect("write fail-fast nursery source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run fail-fast nursery source");
+    fs::remove_file(path).expect("remove fail-fast nursery source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("uncaught throw: first failure")
+    );
+}
+
+#[test]
 fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
     let path = fixture_path("program-entrypoint");
     fs::write(

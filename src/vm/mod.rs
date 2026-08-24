@@ -42,9 +42,25 @@ struct Frame {
     cleanup_recovers: bool,
 }
 
-#[derive(Default)]
 struct Nursery {
     tasks: RefCell<Vec<Rc<Task>>>,
+    fail_fast: bool,
+}
+
+impl Nursery {
+    fn root() -> Self {
+        Self {
+            tasks: RefCell::new(Vec::new()),
+            fail_fast: false,
+        }
+    }
+
+    fn explicit() -> Self {
+        Self {
+            tasks: RefCell::new(Vec::new()),
+            fail_fast: true,
+        }
+    }
 }
 
 struct ClosureCallOptions {
@@ -79,7 +95,7 @@ impl Default for Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
-            nursery: Rc::new(Nursery::default()),
+            nursery: Rc::new(Nursery::root()),
             direct_task_limit: None,
             native_resources: native_resource_registry(),
         }
@@ -1172,6 +1188,17 @@ impl Vm {
                 let mut index = 0;
                 while let Some(task) = self.nursery.tasks.borrow().get(index).cloned() {
                     self.run_task(&task);
+                    if self.nursery.fail_fast && task.unobserved_error().is_some() {
+                        let cancellation = self.error(
+                            RuntimeErrorKind::Thrown,
+                            "sibling cancelled due to fail-fast".into(),
+                            None,
+                        );
+                        for sibling in &self.nursery.tasks.borrow()[index + 1..] {
+                            sibling.cancel(cancellation.clone());
+                        }
+                        break;
+                    }
                     index += 1;
                 }
                 self.nursery
@@ -1233,7 +1260,7 @@ impl Vm {
             span,
             ClosureCallOptions {
                 direct_task_limit: limit,
-                nursery: Rc::new(Nursery::default()),
+                nursery: Rc::new(Nursery::explicit()),
                 settle_nursery: true,
             },
         )?;
