@@ -297,6 +297,7 @@ fn value_type(value: &Value) -> TypeAnnotation {
             Value::StructSchema(_) | Value::Struct(_) => "struct",
             Value::Closure(_) | Value::Native(_) | Value::Builtin(_) | Value::Overloads(_) => "fn",
             Value::NativeResource(_) => "native resource",
+            Value::Task(_) => "task",
             Value::Uninitialized | Value::Binding { .. } => "binding",
         }
         .into(),

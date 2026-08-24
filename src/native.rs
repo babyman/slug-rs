@@ -151,6 +151,7 @@ pub enum NativeValueKind {
     Struct,
     Function,
     Resource,
+    Task,
 }
 
 #[derive(Clone, Debug)]
@@ -266,6 +267,7 @@ impl<'call> NativeValueRef<'call> {
                 NativeValueKind::Function
             }
             Value::NativeResource(_) => NativeValueKind::Resource,
+            Value::Task(_) => NativeValueKind::Task,
             Value::Uninitialized | Value::Binding { .. } => {
                 unreachable!("native arguments are resolved before invocation")
             }

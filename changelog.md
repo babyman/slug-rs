@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added preliminary eager task handles through `spawn` and `await`, plus
+  explicit `nursery` and `nursery limit N` source forms, as the first
+  cooperative structured-concurrency slice.
 - Fixed version 0 native resource cleanup across failed close callbacks,
   structured error data, shared module-loader runtimes, and long-lived resource
   registries; native callback panics no longer emit a host panic diagnostic.

@@ -193,6 +193,10 @@ pub enum Op {
     CallSpread(Vec<CallArgumentKind>),
     PipelineCall(Vec<CallArgumentKind>),
     Import(Vec<CallArgumentKind>),
+    Spawn,
+    Nursery {
+        has_limit: bool,
+    },
     TryMatch {
         pattern: MatchPattern,
         bindings: usize,

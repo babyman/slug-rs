@@ -8,6 +8,7 @@ pub enum Builtin {
     Cfg,
     Argv,
     Argm,
+    Await,
 }
 
 /// Shared storage for a lexical binding captured by one or more closures.
@@ -31,6 +32,27 @@ pub struct Closure {
     pub(crate) captures: Vec<BindingCell>,
     pub(crate) program: Option<Rc<crate::Program>>,
     pub(crate) globals: Option<HashMap<String, Value>>,
+    pub(crate) capture_sources: Vec<crate::Capture>,
+}
+
+/// A cached task completion. Tasks are runtime-owned and retain their outcome
+/// so repeated awaits can observe the same settlement.
+#[derive(Clone, Debug)]
+pub struct Task {
+    pub(crate) outcome: Rc<RefCell<Option<Result<Value, crate::RuntimeError>>>>,
+}
+
+impl Task {
+    #[must_use]
+    pub(crate) fn settled(outcome: Result<Value, crate::RuntimeError>) -> Self {
+        Self {
+            outcome: Rc::new(RefCell::new(Some(outcome))),
+        }
+    }
+
+    pub(crate) fn outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
+        self.outcome.borrow().clone()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +91,7 @@ pub enum Value {
     StructSchema(Rc<StructSchema>),
     Struct(Rc<StructValue>),
     Closure(Rc<Closure>),
+    Task(Rc<Task>),
     Native(NativeFunction),
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
@@ -106,6 +129,7 @@ impl Value {
             Self::StructSchema(_) => "struct schema",
             Self::Struct(_) => "struct",
             Self::Closure(_) | Self::Native(_) | Self::Builtin(_) | Self::Overloads(_) => "fn",
+            Self::Task(_) => "task",
             Self::NativeResource(_) => "native resource",
         }
     }
@@ -156,6 +180,7 @@ impl PartialEq for Value {
                 Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
             }
             (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
+            (Self::Task(a), Self::Task(b)) => Rc::ptr_eq(a, b),
             (Self::Native(a), Self::Native(b)) => a.same_function(b),
             (Self::NativeResource(a), Self::NativeResource(b)) => Rc::ptr_eq(a, b),
             (Self::Builtin(a), Self::Builtin(b)) => a == b,
@@ -194,6 +219,7 @@ impl fmt::Debug for Value {
                     .finish()
             }
             Self::Closure(_) => write!(f, "<fn>"),
+            Self::Task(_) => write!(f, "<task>"),
             Self::Native(function) => write!(f, "<native {}>", function.qualified_name()),
             Self::NativeResource(_) => write!(f, "<native resource>"),
             Self::Builtin(builtin) => write!(f, "<builtin {builtin:?}>"),

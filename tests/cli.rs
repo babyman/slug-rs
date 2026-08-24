@@ -50,6 +50,22 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn executes_spawned_tasks_and_explicit_nurseries() {
+    let path = fixture_path("tasks-and-nurseries");
+    fs::write(
+        &path,
+        "val task = spawn { 20 + 22 }\nprintln(await(task))\nprintln(nursery limit 1 { 7 })\n",
+    )
+    .expect("write task source");
+    let output = slug().arg(&path).output().expect("run task source");
+    fs::remove_file(path).expect("remove task source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n7\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
     let path = fixture_path("program-entrypoint");
     fs::write(

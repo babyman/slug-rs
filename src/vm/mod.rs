@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
-    NativeFunction, Program, SourceSpan, Value,
+    NativeFunction, Program, SourceSpan, Task, Value,
     bytecode::Op,
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{BindingCell, Builtin, Closure, binding_cell, module_binding},
@@ -76,7 +76,9 @@ impl Default for Vm {
 impl Vm {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        let mut vm = Self::default();
+        vm.install_configuration_builtins();
+        vm
     }
 
     #[must_use]
@@ -210,6 +212,8 @@ impl Vm {
             .insert("argv".into(), Value::Builtin(Builtin::Argv));
         self.globals
             .insert("argm".into(), Value::Builtin(Builtin::Argm));
+        self.globals
+            .insert("await".into(), Value::Builtin(Builtin::Await));
     }
 
     /// Executes a zero-argument entry chunk.
@@ -256,6 +260,7 @@ impl Vm {
                 captures: Vec::new(),
                 program: None,
                 globals: None,
+                capture_sources: Vec::new(),
             }),
             function: chunk.name.clone(),
             call_span: None,
@@ -320,6 +325,7 @@ impl Vm {
                                 captures: Vec::new(),
                                 program: self.module_program.clone(),
                                 globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                                capture_sources: Vec::new(),
                             }))
                         }
                         None => {
@@ -501,6 +507,7 @@ impl Vm {
                             span.clone(),
                         )
                     })?;
+                    let capture_sources = captures.clone();
                     let captures = captures
                         .into_iter()
                         .map(|capture| match capture {
@@ -524,6 +531,7 @@ impl Vm {
                         captures,
                         program: self.module_program.clone(),
                         globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                        capture_sources,
                     })));
                 }
                 Op::Add => self.binary(span, add)?,
@@ -686,6 +694,8 @@ impl Vm {
                 Op::CallSpread(kinds) => self.call_spread(program, kinds, span)?,
                 Op::PipelineCall(kinds) => self.pipeline_call(program, kinds, span)?,
                 Op::Import(kinds) => self.import(kinds, span)?,
+                Op::Spawn => self.spawn_task(program, span)?,
+                Op::Nursery { has_limit } => self.run_nursery(program, has_limit, span)?,
                 Op::TryMatch {
                     pattern,
                     bindings,
@@ -1026,13 +1036,10 @@ impl Vm {
         let mut vm = Self {
             module_loader: self.module_loader.clone(),
             module_program: Some(program.clone()),
-            globals: closure.globals.clone().ok_or_else(|| {
-                self.error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    "module closure has no global environment".into(),
-                    span.clone(),
-                )
-            })?,
+            globals: closure
+                .globals
+                .clone()
+                .unwrap_or_else(|| self.globals.clone()),
             imported_globals: HashSet::new(),
             module_metadata: Vec::new(),
             stack: Vec::new(),
@@ -1055,6 +1062,75 @@ impl Vm {
             cleanup_recovers: false,
         });
         vm.execute(program)
+    }
+
+    fn spawn_task(&mut self, program: &Program, span: Option<SourceSpan>) -> VmResult<()> {
+        let closure = self.pop(span.clone())?;
+        let Value::Closure(closure) = closure else {
+            return Err(self.error(
+                RuntimeErrorKind::Type,
+                "spawn expects a function or block".into(),
+                span,
+            ));
+        };
+        let captures = closure
+            .captures
+            .iter()
+            .zip(&closure.capture_sources)
+            .map(|(cell, source)| match source {
+                Capture::Local(_) => binding_cell(cell.borrow().clone()),
+                Capture::Capture(_) => cell.clone(),
+            })
+            .collect();
+        let closure = Rc::new(Closure {
+            chunk: closure.chunk,
+            captures,
+            program: closure.program.clone(),
+            globals: closure.globals.clone(),
+            capture_sources: closure.capture_sources.clone(),
+        });
+        let outcome =
+            self.call_module_closure(&Rc::new(program.clone()), closure, Vec::new(), None, span);
+        self.stack
+            .push(Value::Task(Rc::new(Task::settled(outcome))));
+        Ok(())
+    }
+
+    fn run_nursery(
+        &mut self,
+        program: &Program,
+        has_limit: bool,
+        span: Option<SourceSpan>,
+    ) -> VmResult<()> {
+        let closure = self.pop(span.clone())?;
+        let limit = has_limit.then(|| self.pop(span.clone())).transpose()?;
+        if let Some(limit) = limit {
+            let Value::Int(limit) = limit else {
+                return Err(self.error(
+                    RuntimeErrorKind::Type,
+                    "nursery limit expects an integer".into(),
+                    span,
+                ));
+            };
+            if limit < 0 {
+                return Err(self.error(
+                    RuntimeErrorKind::Type,
+                    "nursery limit must not be negative".into(),
+                    span,
+                ));
+            }
+        }
+        let Value::Closure(closure) = closure else {
+            return Err(self.error(
+                RuntimeErrorKind::Type,
+                "nursery expects a function or block".into(),
+                span,
+            ));
+        };
+        let value =
+            self.call_module_closure(&Rc::new(program.clone()), closure, Vec::new(), None, span)?;
+        self.stack.push(value);
+        Ok(())
     }
 
     fn warning(&self, message: String) {
@@ -1369,6 +1445,29 @@ impl Vm {
                     ));
                 }
                 Ok(configuration.argument_map())
+            }
+            Builtin::Await => {
+                if arguments.len() != 1 {
+                    return Err(self.error(
+                        RuntimeErrorKind::Arity,
+                        format!("`await` expects 1 argument, got {}", arguments.len()),
+                        span,
+                    ));
+                }
+                let Value::Task(task) = &arguments[0] else {
+                    return Err(self.error(
+                        RuntimeErrorKind::Type,
+                        format!("await expects task, got {}", arguments[0].type_name()),
+                        span,
+                    ));
+                };
+                task.outcome().ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "task has not settled".into(),
+                        span.clone(),
+                    )
+                })?
             }
         }
     }

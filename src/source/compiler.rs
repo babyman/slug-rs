@@ -278,6 +278,44 @@ impl Compiler {
                     expression.span.clone(),
                 ));
             }
+            ExprKind::Spawn(body) => {
+                let function = Expr {
+                    kind: ExprKind::Function {
+                        type_parameters: Vec::new(),
+                        parameters: Vec::new(),
+                        return_annotation: None,
+                        body: body.clone(),
+                    },
+                    span: expression.span.clone(),
+                };
+                self.expression(state, &function)?;
+                state.emit(Op::Spawn, &expression.span);
+            }
+            ExprKind::Nursery { limit, body } => {
+                if let Some(limit) = limit {
+                    self.expression(state, limit)?;
+                }
+                let function = if matches!(body.kind, ExprKind::Function { .. }) {
+                    body.as_ref().clone()
+                } else {
+                    Expr {
+                        kind: ExprKind::Function {
+                            type_parameters: Vec::new(),
+                            parameters: Vec::new(),
+                            return_annotation: None,
+                            body: body.clone(),
+                        },
+                        span: expression.span.clone(),
+                    }
+                };
+                self.expression(state, &function)?;
+                state.emit(
+                    Op::Nursery {
+                        has_limit: limit.is_some(),
+                    },
+                    &expression.span,
+                );
+            }
             ExprKind::Match { subject, cases } => {
                 let subject = subject.as_deref().ok_or_else(|| {
                     SourceError::semantic(

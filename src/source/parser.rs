@@ -599,11 +599,60 @@ impl Parser {
             TokenKind::Fn => return self.function(span),
             TokenKind::If => return self.if_expression(span),
             TokenKind::Recur => return self.recur(span),
+            TokenKind::Nursery => return self.nursery(span),
+            TokenKind::Spawn => return self.spawn(span),
             TokenKind::Match => return self.match_expression(span),
             TokenKind::Struct => return self.struct_schema(span),
             _ => return Err(SourceError::at("expected expression", span)),
         };
         Ok(Expr { kind, span })
+    }
+    fn nursery(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let limit = if self.matches(&TokenKind::Limit) {
+            self.next();
+            // A following block begins the nursery body rather than a struct
+            // initializer applied to the limit expression.
+            let previous_match_subject_nesting = self.match_subject_nesting;
+            self.match_subject_nesting = Some(self.nesting);
+            let limit = self.expression();
+            self.match_subject_nesting = previous_match_subject_nesting;
+            Some(Box::new(limit?))
+        } else {
+            None
+        };
+        let body = match self.kind() {
+            TokenKind::Fn => self.primary()?,
+            TokenKind::LBrace => {
+                let delimiter = self.next();
+                self.map_or_block(delimiter.span)?
+            }
+            _ => {
+                return Err(SourceError::at(
+                    "nursery expects a function or block",
+                    self.peek().span.clone(),
+                ));
+            }
+        };
+        Ok(Expr {
+            kind: ExprKind::Nursery {
+                limit,
+                body: Box::new(body),
+            },
+            span,
+        })
+    }
+    fn spawn(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let body = match self.kind() {
+            TokenKind::LBrace => {
+                let delimiter = self.next();
+                self.map_or_block(delimiter.span)?
+            }
+            _ => self.prefix()?,
+        };
+        Ok(Expr {
+            kind: ExprKind::Spawn(Box::new(body)),
+            span,
+        })
     }
     fn starts_struct_init(&self) -> bool {
         if self.match_subject_nesting != Some(self.nesting) {

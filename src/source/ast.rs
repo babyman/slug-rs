@@ -37,6 +37,11 @@ pub(super) enum ExprKind {
         error_name: Option<String>,
     },
     Recur(Vec<CallArgument>),
+    Nursery {
+        limit: Option<Box<Expr>>,
+        body: Box<Expr>,
+    },
+    Spawn(Box<Expr>),
     Match {
         subject: Option<Box<Expr>>,
         cases: Vec<MatchCase>,
@@ -236,6 +241,9 @@ pub(super) enum TokenKind {
     Onsuccess,
     Onerror,
     Recur,
+    Nursery,
+    Limit,
+    Spawn,
     Match,
     Struct,
     Copy,

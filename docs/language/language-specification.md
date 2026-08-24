@@ -667,6 +667,11 @@ repeated awaits return the same cached completion. The ordinary task-await API
 is a library callable, conventionally imported from `slug.channel`. `await` is
 also a `select` case form, not an independently reserved expression keyword.
 
+The current implementation's preliminary task subset also exposes
+`await(task)` as a builtin while `slug.channel` is deferred. It runs spawned
+tasks eagerly when they cannot block; nursery ownership, cancellation, and
+blocking scheduling are not implemented yet.
+
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved
 child failure and logically cancels siblings. Cancellation settles a task with
