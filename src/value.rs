@@ -61,6 +61,44 @@ impl Waiter {
             Self::Root(root) => root.reject_closed_send(),
         }
     }
+
+    fn is_task(&self, task: &Task) -> bool {
+        matches!(self, Self::Task(waiter) if Rc::ptr_eq(&waiter.state, &task.state))
+    }
+}
+
+pub(crate) enum WaitRegistration {
+    ChannelSend(Rc<Channel>),
+    ChannelReceive(Rc<Channel>),
+    TaskAwait(Rc<Task>),
+}
+
+impl WaitRegistration {
+    fn remove(self, task: &Task) {
+        match self {
+            Self::ChannelSend(channel) => {
+                channel
+                    .state
+                    .borrow_mut()
+                    .senders
+                    .retain(|(waiter, _)| !waiter.is_task(task));
+            }
+            Self::ChannelReceive(channel) => {
+                channel
+                    .state
+                    .borrow_mut()
+                    .receivers
+                    .retain(|waiter| !waiter.is_task(task));
+            }
+            Self::TaskAwait(target) => {
+                target
+                    .state
+                    .borrow_mut()
+                    .waiters
+                    .retain(|waiter| !waiter.is_task(task));
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -169,6 +207,7 @@ struct TaskState {
     observed: bool,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     waiters: Vec<Waiter>,
+    wait_registration: Option<WaitRegistration>,
 }
 
 impl fmt::Debug for Task {
@@ -208,6 +247,7 @@ impl Task {
                 observed: false,
                 ready,
                 waiters: Vec::new(),
+                wait_registration: None,
             })),
         }
     }
@@ -251,20 +291,27 @@ impl Task {
         let mut state = self.state.borrow_mut();
         state.running = false;
         state.outcome = Some(outcome.clone());
+        state.wait_registration = None;
         release_admission(&mut state);
         for waiter in state.waiters.drain(..) {
             waiter.resume(outcome.clone());
         }
     }
 
-    pub(crate) fn suspend(&self, execution: crate::vm::TaskExecution) {
+    pub(crate) fn suspend(
+        &self,
+        execution: crate::vm::TaskExecution,
+        wait_registration: Option<WaitRegistration>,
+    ) {
         let mut state = self.state.borrow_mut();
         state.running = false;
         state.pending = Some(execution);
+        state.wait_registration = wait_registration;
     }
 
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
         let mut state = self.state.borrow_mut();
+        state.wait_registration = None;
         let Some(execution) = &mut state.pending else {
             return;
         };
@@ -276,6 +323,7 @@ impl Task {
 
     pub(crate) fn reject_closed_send(&self) {
         let mut state = self.state.borrow_mut();
+        state.wait_registration = None;
         let Some(execution) = &mut state.pending else {
             return;
         };
@@ -291,12 +339,22 @@ impl Task {
         state.waiters.push(waiter);
     }
 
-    pub(crate) fn cancel(&self, error: crate::RuntimeError) {
+    pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
-        if state.pending.take().is_some() {
-            state.running = false;
-            state.outcome = Some(Err(error));
-            release_admission(&mut state);
+        if state.pending.take().is_none() {
+            return;
+        }
+        let wait_registration = state.wait_registration.take();
+        let waiters = std::mem::take(&mut state.waiters);
+        state.running = false;
+        state.outcome = Some(Err(error.clone()));
+        release_admission(&mut state);
+        drop(state);
+        if let Some(wait_registration) = wait_registration {
+            wait_registration.remove(self);
+        }
+        for waiter in waiters {
+            waiter.resume(Err(error.clone()));
         }
     }
 

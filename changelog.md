@@ -6,7 +6,8 @@
   and idempotent `close`. Spawned tasks now suspend without unwinding their VM
   state, preserve deferred cleanup while blocked, and resume through FIFO
   sender/receiver queues. Root evaluations now suspend and resume through the
-  same scheduler. `select` remains deferred.
+  same scheduler. Cancelling a parked task now removes its pending channel or
+  task-await registration. `select` remains deferred.
 - Added preliminary cooperative task handles through `spawn` and `await`, plus
   explicit `nursery` and `nursery limit N` source forms, as the first
   cooperative structured-concurrency slice; unawaited child failures now

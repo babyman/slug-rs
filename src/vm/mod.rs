@@ -13,7 +13,7 @@ use crate::{
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, Closure, GlobalEnvironment, RootWaiter, TaskAdmission,
-        Waiter, binding_cell, global_environment, module_binding,
+        WaitRegistration, Waiter, binding_cell, global_environment, module_binding,
     },
 };
 
@@ -141,6 +141,10 @@ impl TaskExecution {
             span,
         )));
     }
+
+    pub(crate) fn take_wait_registration(&mut self) -> Option<WaitRegistration> {
+        self.vm.wait_registration.take()
+    }
 }
 
 /// A small, checked stack VM for compiler-produced Slug bytecode.
@@ -160,6 +164,7 @@ pub struct Vm {
     current_waiter: Option<Waiter>,
     suspension: Option<Suspension>,
     resume: Option<VmResult<Value>>,
+    wait_registration: Option<WaitRegistration>,
 }
 
 impl Default for Vm {
@@ -180,6 +185,7 @@ impl Default for Vm {
             current_waiter: None,
             suspension: None,
             resume: None,
+            wait_registration: None,
         }
     }
 }
@@ -1250,6 +1256,7 @@ impl Vm {
             current_waiter: None,
             suspension: None,
             resume: None,
+            wait_registration: None,
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
         locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
@@ -1375,7 +1382,10 @@ impl Vm {
         };
         match run.run() {
             TaskRunOutcome::Settled(result) => next.complete(&result),
-            TaskRunOutcome::Suspended(execution) => next.suspend(*execution),
+            TaskRunOutcome::Suspended(mut execution) => {
+                let wait_registration = execution.take_wait_registration();
+                next.suspend(*execution, wait_registration);
+            }
         }
         true
     }
@@ -1402,23 +1412,26 @@ impl Vm {
                 let mut index = 0;
                 while let Some(task) = self.nursery.tasks.borrow().get(index).cloned() {
                     self.run_task(&task);
+                    if self.nursery.fail_fast {
+                        let tasks = self.nursery.tasks.borrow().clone();
+                        if let Some(error) = tasks.iter().find_map(|task| task.unobserved_error()) {
+                            let cancellation = self.error(
+                                RuntimeErrorKind::Thrown,
+                                "sibling cancelled due to fail-fast".into(),
+                                None,
+                            );
+                            for sibling in &tasks {
+                                sibling.cancel(&cancellation);
+                            }
+                            return Err(error);
+                        }
+                    }
                     if task.is_pending() {
                         return Err(self.error(
                             RuntimeErrorKind::InvalidCall,
                             "task remains blocked with no runnable work".into(),
                             None,
                         ));
-                    }
-                    if self.nursery.fail_fast && task.unobserved_error().is_some() {
-                        let cancellation = self.error(
-                            RuntimeErrorKind::Thrown,
-                            "sibling cancelled due to fail-fast".into(),
-                            None,
-                        );
-                        for sibling in &self.nursery.tasks.borrow()[index + 1..] {
-                            sibling.cancel(cancellation.clone());
-                        }
-                        break;
                     }
                     index += 1;
                 }
@@ -1829,6 +1842,9 @@ impl Vm {
                     return outcome;
                 }
                 let waiter = self.current_waiter(span.clone())?;
+                if matches!(waiter, Waiter::Task(_)) {
+                    self.wait_registration = Some(WaitRegistration::TaskAwait(task.clone()));
+                }
                 task.wait_for(waiter);
                 self.suspension = Some(Suspension::Await);
                 Ok(Value::Nil)
@@ -1931,6 +1947,9 @@ impl Vm {
             "send on a closed channel".into(),
             span.clone(),
         ));
+        if matches!(sender, Waiter::Task(_)) {
+            self.wait_registration = Some(WaitRegistration::ChannelSend(channel.clone()));
+        }
         state.senders.push_back((sender, arguments[1].clone()));
         self.suspension = Some(Suspension::Send(span));
         Ok(Value::Nil)
@@ -1967,6 +1986,9 @@ impl Vm {
             return Ok(Value::Nil);
         }
         let receiver = self.current_waiter(span.clone())?;
+        if matches!(receiver, Waiter::Task(_)) {
+            self.wait_registration = Some(WaitRegistration::ChannelReceive(channel.clone()));
+        }
         state.receivers.push_back(receiver);
         self.suspension = Some(Suspension::Receive);
         Ok(Value::Nil)

@@ -60,7 +60,7 @@ Retained top-level declaration, tag, and documentation metadata|implemented|`tes
 Automatic local zero-argument `main` entrypoint invocation|implemented|`tests/cli.rs`
 Immutable configuration store and source precedence|implemented|`tests/configuration.rs`
 `cfg`, `argv`, and `argm` builtins|implemented|`tests/configuration.rs`
-Cooperative task handles with `spawn`, `await`, failure settlement, pending-sibling cancellation, explicit nurseries, queued direct-task limits, and suspended task resumption|partial|`tests/cli.rs`
+Cooperative task handles with `spawn`, `await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption|partial|`tests/cli.rs`
 Bounded FIFO channels through `channel`, `send`, `recv`, and `close`|partial|`tests/cli.rs`
 Nursery ownership and `select`|specified only|`language/runtime-requirements.md`
 Foreign declarations and module metadata introspection|specified only|`language/language-specification.md`

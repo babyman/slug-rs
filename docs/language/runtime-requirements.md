@@ -447,6 +447,10 @@ the same scheduler and may park until an owned task wakes them. If an owner
 cannot settle a parked task because no runnable task can make progress, it
 reports a checked blocked-task runtime error. `select` remains deferred.
 
+Cancelling a parked task MUST remove its channel-send, channel-receive, and
+task-await registrations before it settles. A later operation MUST NOT observe
+or communicate with a cancelled waiter.
+
 ## Required implementation isolation
 
 The VM may use threads, goroutines, frames, environments, stacks, or slots

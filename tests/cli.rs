@@ -186,6 +186,24 @@ fn reports_a_checked_error_for_a_channel_task_with_no_possible_progress() {
 }
 
 #[test]
+fn fail_fast_cancellation_removes_parked_channel_waiters() {
+    let path = fixture_path("channel-cancelled-waiter");
+    fs::write(
+        &path,
+        "val inbox = channel(0)\nval attempt = fn() {\n  defer onerror(err) { nil }\n  nursery {\n    spawn { recv(inbox) }\n    spawn { throw \"fail\" }\n  }\n}\nattempt()\nval sender = spawn { send(inbox, 42) }\nawait(sender)\n",
+    )
+    .expect("write cancellation source");
+    let output = slug().arg(&path).output().expect("run cancellation source");
+    fs::remove_file(path).expect("remove cancellation source");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("task remains blocked with no runnable work")
+    );
+}
+
+#[test]
 fn spawned_tasks_share_root_globals() {
     let path = fixture_path("spawn-shared-globals");
     fs::write(
