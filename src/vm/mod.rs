@@ -1,4 +1,10 @@
-use std::{cell::RefCell, cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    cmp::Ordering,
+    collections::HashSet,
+    path::Path,
+    rc::Rc,
+};
 
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
@@ -65,6 +71,7 @@ impl Nursery {
 
 struct ClosureCallOptions {
     direct_task_limit: Option<usize>,
+    direct_task_count: Option<Rc<Cell<usize>>>,
     nursery: Rc<Nursery>,
     settle_nursery: bool,
 }
@@ -81,6 +88,7 @@ pub struct Vm {
     cleanup: Vec<Cleanup>,
     nursery: Rc<Nursery>,
     direct_task_limit: Option<usize>,
+    direct_task_count: Option<Rc<Cell<usize>>>,
     native_resources: NativeResourceRegistry,
 }
 
@@ -97,6 +105,7 @@ impl Default for Vm {
             cleanup: Vec::new(),
             nursery: Rc::new(Nursery::root()),
             direct_task_limit: None,
+            direct_task_count: None,
             native_resources: native_resource_registry(),
         }
     }
@@ -943,6 +952,7 @@ impl Vm {
                         span.clone(),
                         ClosureCallOptions {
                             direct_task_limit: None,
+                            direct_task_count: None,
                             nursery: self.nursery.clone(),
                             settle_nursery: false,
                         },
@@ -1101,6 +1111,7 @@ impl Vm {
             cleanup: Vec::new(),
             nursery: options.nursery,
             direct_task_limit: options.direct_task_limit,
+            direct_task_count: options.direct_task_count,
             native_resources: self.native_resources.clone(),
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
@@ -1134,13 +1145,26 @@ impl Vm {
                 span,
             ));
         };
-        if self.direct_task_limit == Some(0) {
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                "nursery task limit reached".into(),
-                span,
-            ));
-        }
+        let permit = if let Some(limit) = self.direct_task_limit {
+            let count = self.direct_task_count.as_ref().ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "limited nursery is missing its task counter".into(),
+                    span.clone(),
+                )
+            })?;
+            if count.get() >= limit {
+                return Err(self.error(
+                    RuntimeErrorKind::Arity,
+                    "nursery task limit reached".into(),
+                    span,
+                ));
+            }
+            count.set(count.get() + 1);
+            Some(count.clone())
+        } else {
+            None
+        };
         let captures = closure
             .captures
             .iter()
@@ -1157,7 +1181,7 @@ impl Vm {
             globals: closure.globals.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
-        let task = Rc::new(Task::pending(Rc::new(program.clone()), closure));
+        let task = Rc::new(Task::pending(Rc::new(program.clone()), closure, permit));
         self.nursery.tasks.borrow_mut().push(task.clone());
         self.stack.push(Value::Task(task));
         Ok(())
@@ -1175,6 +1199,7 @@ impl Vm {
             None,
             ClosureCallOptions {
                 direct_task_limit: None,
+                direct_task_count: None,
                 nursery: self.nursery.clone(),
                 settle_nursery: false,
             },
@@ -1260,6 +1285,7 @@ impl Vm {
             span,
             ClosureCallOptions {
                 direct_task_limit: limit,
+                direct_task_count: limit.map(|_| Rc::new(Cell::new(0))),
                 nursery: Rc::new(Nursery::explicit()),
                 settle_nursery: true,
             },

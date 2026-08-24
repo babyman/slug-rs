@@ -1,4 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, fmt, fmt::Write as _, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    fmt,
+    fmt::Write as _,
+    rc::Rc,
+};
 
 use crate::native::{NativeFunction, NativeResource};
 
@@ -51,6 +57,7 @@ pub struct Task {
 struct TaskState {
     outcome: Option<Result<Value, crate::RuntimeError>>,
     pending: Option<TaskRun>,
+    permit: Option<Rc<Cell<usize>>>,
     observed: bool,
 }
 
@@ -62,11 +69,16 @@ pub(crate) struct TaskRun {
 
 impl Task {
     #[must_use]
-    pub(crate) fn pending(program: Rc<crate::Program>, closure: Rc<Closure>) -> Self {
+    pub(crate) fn pending(
+        program: Rc<crate::Program>,
+        closure: Rc<Closure>,
+        permit: Option<Rc<Cell<usize>>>,
+    ) -> Self {
         Self {
             state: Rc::new(RefCell::new(TaskState {
                 outcome: None,
                 pending: Some(TaskRun { program, closure }),
+                permit,
                 observed: false,
             })),
         }
@@ -77,13 +89,16 @@ impl Task {
     }
 
     pub(crate) fn complete(&self, outcome: Result<Value, crate::RuntimeError>) {
-        self.state.borrow_mut().outcome = Some(outcome);
+        let mut state = self.state.borrow_mut();
+        state.outcome = Some(outcome);
+        release_permit(&mut state);
     }
 
     pub(crate) fn cancel(&self, error: crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
         if state.pending.take().is_some() {
             state.outcome = Some(Err(error));
+            release_permit(&mut state);
         }
     }
 
@@ -103,6 +118,12 @@ impl Task {
                 .as_ref()
                 .and_then(|outcome| outcome.as_ref().err().cloned())
         }
+    }
+}
+
+fn release_permit(state: &mut TaskState) {
+    if let Some(permit) = state.permit.take() {
+        permit.set(permit.get().saturating_sub(1));
     }
 }
 
