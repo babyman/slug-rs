@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Started the native channel-producer foundation with restricted owned send
+  values and a bounded, thread-safe producer mailbox.
 - Implemented `select` for receive, send, millisecond timer, task-await, and
   default cases, including optional handlers. Select suspensions now remove all
   losing channel, task, and timer registrations as soon as one case wins.
