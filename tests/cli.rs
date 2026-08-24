@@ -66,6 +66,25 @@ fn executes_spawned_tasks_and_explicit_nurseries() {
 }
 
 #[test]
+fn spawned_tasks_share_root_globals() {
+    let path = fixture_path("spawn-shared-globals");
+    fs::write(
+        &path,
+        "var answer = 0\nval task = spawn { answer = 42 }\nawait(task)\nprintln(answer)\n",
+    )
+    .expect("write shared-global task source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run shared-global task source");
+    fs::remove_file(path).expect("remove shared-global task source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn propagates_unawaited_task_failures_when_the_root_settles() {
     let path = fixture_path("unawaited-task-failure");
     fs::write(

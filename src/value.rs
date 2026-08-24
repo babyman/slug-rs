@@ -13,6 +13,11 @@ pub enum Builtin {
 
 /// Shared storage for a lexical binding captured by one or more closures.
 pub(crate) type BindingCell = Rc<RefCell<Value>>;
+pub(crate) type GlobalEnvironment = Rc<RefCell<HashMap<String, Value>>>;
+
+pub(crate) fn global_environment() -> GlobalEnvironment {
+    Rc::new(RefCell::new(HashMap::new()))
+}
 
 pub(crate) fn binding_cell(value: Value) -> BindingCell {
     Rc::new(RefCell::new(value))
@@ -31,7 +36,7 @@ pub struct Closure {
     pub(crate) chunk: usize,
     pub(crate) captures: Vec<BindingCell>,
     pub(crate) program: Option<Rc<crate::Program>>,
-    pub(crate) globals: Option<HashMap<String, Value>>,
+    pub(crate) globals: Option<GlobalEnvironment>,
     pub(crate) capture_sources: Vec<crate::Capture>,
 }
 

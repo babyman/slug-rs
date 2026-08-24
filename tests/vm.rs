@@ -1108,7 +1108,7 @@ fn keeps_globals_across_runs_and_calls_explicit_native_functions() {
     .unwrap();
 
     assert_eq!(vm.run(&program, 0).unwrap(), Value::Int(42));
-    assert_eq!(vm.global("answer"), Some(&Value::Int(42)));
+    assert_eq!(vm.global("answer"), Some(Value::Int(42)));
 }
 
 #[test]

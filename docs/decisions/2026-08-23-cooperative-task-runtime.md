@@ -30,6 +30,10 @@ by shared binding cells when tasks receive independent VM state. Future channel
 and timer work extends the cooperative scheduler rather than adding a second
 native worker queue.
 
+The initial task implementation shares one reference-counted, interior-mutable
+global environment between parent and child VMs; lexical binding cells remain
+the separate mechanism for capture semantics.
+
 Native callbacks remain synchronous and execute in their calling task. Native
 producer capabilities wake runtime-owned work only through channels, as defined
 by the native extension interface.

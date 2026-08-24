@@ -1,16 +1,14 @@
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    path::Path,
-    rc::Rc,
-};
+use std::{cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
 
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, Task, Value,
     bytecode::Op,
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
-    value::{BindingCell, Builtin, Closure, binding_cell, module_binding},
+    value::{
+        BindingCell, Builtin, Closure, GlobalEnvironment, binding_cell, global_environment,
+        module_binding,
+    },
 };
 
 mod cleanup;
@@ -48,7 +46,7 @@ struct Frame {
 pub struct Vm {
     module_loader: Option<ModuleLoader>,
     module_program: Option<Rc<Program>>,
-    globals: HashMap<String, Value>,
+    globals: GlobalEnvironment,
     imported_globals: HashSet<String>,
     module_metadata: Vec<ModuleDeclaration>,
     stack: Vec<Value>,
@@ -63,7 +61,7 @@ impl Default for Vm {
         Self {
             module_loader: None,
             module_program: None,
-            globals: HashMap::new(),
+            globals: global_environment(),
             imported_globals: HashSet::new(),
             module_metadata: Vec::new(),
             stack: Vec::new(),
@@ -96,10 +94,13 @@ impl Vm {
     }
 
     pub(crate) fn with_module_bindings(module_loader: &ModuleLoader, names: &[String]) -> Self {
-        let mut vm = Self::with_module_loader(module_loader.clone());
-        vm.globals.extend(module_loader.native_globals());
+        let vm = Self::with_module_loader(module_loader.clone());
+        vm.globals
+            .borrow_mut()
+            .extend(module_loader.native_globals());
         for name in names {
             vm.globals
+                .borrow_mut()
                 .insert(name.clone(), module_binding(name.as_str()));
         }
         vm
@@ -126,6 +127,7 @@ impl Vm {
         }
         let entrypoint = self
             .globals
+            .borrow()
             .get("main")
             .ok_or_else(|| {
                 self.error(
@@ -148,8 +150,8 @@ impl Vm {
     }
 
     #[must_use]
-    pub fn global(&self, name: &str) -> Option<&Value> {
-        self.globals.get(name)
+    pub fn global(&self, name: &str) -> Option<Value> {
+        self.globals.borrow().get(name).cloned()
     }
 
     #[must_use]
@@ -160,6 +162,7 @@ impl Vm {
                 .iter()
                 .filter_map(|name| {
                     self.globals
+                        .borrow()
                         .get(name)
                         .and_then(|value| value.resolve().ok())
                         .map(|value| (Value::string(name.as_str()), value))
@@ -175,6 +178,7 @@ impl Vm {
                 .iter()
                 .filter_map(|name| {
                     self.globals
+                        .borrow()
                         .get(name)
                         .cloned()
                         .map(|value| (Value::string(name.as_str()), value))
@@ -194,7 +198,7 @@ impl Vm {
     /// Returns an error when that binding is already defined.
     pub fn define_native(&mut self, function: NativeFunction) -> Result<(), NativeDescriptorError> {
         let name = function.name().to_string();
-        if self.globals.contains_key(&name) {
+        if self.globals.borrow().contains_key(&name) {
             return Err(NativeDescriptorError::new(format!(
                 "native binding `{name}` is already defined"
             )));
@@ -203,18 +207,22 @@ impl Vm {
         if let Some(module_loader) = &self.module_loader {
             module_loader.define_native(name.clone(), value.clone());
         }
-        self.globals.insert(name, value);
+        self.globals.borrow_mut().insert(name, value);
         Ok(())
     }
 
     fn install_configuration_builtins(&mut self) {
         self.globals
+            .borrow_mut()
             .insert("cfg".into(), Value::Builtin(Builtin::Cfg));
         self.globals
+            .borrow_mut()
             .insert("argv".into(), Value::Builtin(Builtin::Argv));
         self.globals
+            .borrow_mut()
             .insert("argm".into(), Value::Builtin(Builtin::Argm));
         self.globals
+            .borrow_mut()
             .insert("await".into(), Value::Builtin(Builtin::Await));
     }
 
@@ -398,7 +406,9 @@ impl Vm {
                 Op::GetGlobal(name) => {
                     let value = self
                         .globals
+                        .borrow()
                         .get(&name)
+                        .cloned()
                         .ok_or_else(|| {
                             self.error(
                                 RuntimeErrorKind::Name,
@@ -428,10 +438,11 @@ impl Vm {
                     }
                     if !self
                         .globals
+                        .borrow()
                         .get(&name)
                         .is_some_and(|binding| binding.replace_binding(value.clone()))
                     {
-                        self.globals.insert(name, value);
+                        self.globals.borrow_mut().insert(name, value);
                     }
                 }
                 Op::DefineMapGlobals => {
@@ -452,8 +463,11 @@ impl Vm {
                             ));
                         };
                         let name = name.to_string();
-                        let Some(existing) = self.globals.get(&name) else {
-                            self.globals.insert(name.clone(), value.clone());
+                        let existing = self.globals.borrow().get(&name).cloned();
+                        let Some(existing) = existing else {
+                            self.globals
+                                .borrow_mut()
+                                .insert(name.clone(), value.clone());
                             self.imported_globals.insert(name);
                             continue;
                         };
@@ -487,7 +501,7 @@ impl Vm {
                     self.module_metadata[declaration].tags[tag].arguments = arguments;
                 }
                 Op::SetGlobal(name) => {
-                    if !self.globals.contains_key(&name) {
+                    if !self.globals.borrow().contains_key(&name) {
                         return Err(self.error(
                             RuntimeErrorKind::Name,
                             format!("unknown name `{name}`"),
@@ -497,10 +511,11 @@ impl Vm {
                     let value = self.pop(None)?;
                     if !self
                         .globals
+                        .borrow()
                         .get(&name)
                         .is_some_and(|binding| binding.replace_binding(value.clone()))
                     {
-                        self.globals.insert(name, value);
+                        self.globals.borrow_mut().insert(name, value);
                     }
                 }
                 Op::MakeClosure { chunk, captures } => {

@@ -120,7 +120,7 @@ fn source_imports_return_cached_export_maps_in_module_order() {
     assert_eq!(loader.initialized_module_count(), 3);
     assert_eq!(
         vm.global("modules"),
-        Some(&Value::Map(std::rc::Rc::new(vec![
+        Some(Value::Map(std::rc::Rc::new(vec![
             (Value::string("answer"), Value::Int(42)),
             (Value::string("shared"), Value::string("outer")),
             (Value::string("extra"), Value::Int(7)),
