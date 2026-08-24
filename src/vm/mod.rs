@@ -54,6 +54,7 @@ pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
+    tasks: Vec<Rc<Task>>,
     native_resources: NativeResourceRegistry,
 }
 
@@ -68,6 +69,7 @@ impl Default for Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
+            tasks: Vec::new(),
             native_resources: native_resource_registry(),
         }
     }
@@ -253,6 +255,7 @@ impl Vm {
         self.stack.clear();
         self.frames.clear();
         self.cleanup.clear();
+        self.tasks.clear();
         self.module_metadata = program.declarations().to_vec();
         self.frames.push(Frame {
             closure: Rc::new(Closure {
@@ -274,7 +277,8 @@ impl Vm {
             cleanup_action: false,
             cleanup_recovers: false,
         });
-        self.execute(program)
+        let result = self.execute(program);
+        self.settle_tasks(result)
     }
 
     /// Executes a zero-argument chunk selected by name.
@@ -1045,6 +1049,7 @@ impl Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
+            tasks: Vec::new(),
             native_resources: self.native_resources.clone(),
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
@@ -1061,7 +1066,8 @@ impl Vm {
             cleanup_action: false,
             cleanup_recovers: false,
         });
-        vm.execute(program)
+        let result = vm.execute(program);
+        vm.settle_tasks(result)
     }
 
     fn spawn_task(&mut self, program: &Program, span: Option<SourceSpan>) -> VmResult<()> {
@@ -1091,9 +1097,21 @@ impl Vm {
         });
         let outcome =
             self.call_module_closure(&Rc::new(program.clone()), closure, Vec::new(), None, span);
-        self.stack
-            .push(Value::Task(Rc::new(Task::settled(outcome))));
+        let task = Rc::new(Task::settled(outcome));
+        self.tasks.push(task.clone());
+        self.stack.push(Value::Task(task));
         Ok(())
+    }
+
+    fn settle_tasks(&self, result: VmResult<Value>) -> VmResult<Value> {
+        match result {
+            Ok(value) => self
+                .tasks
+                .iter()
+                .find_map(|task| task.unobserved_error())
+                .map_or(Ok(value), Err),
+            Err(error) => Err(error),
+        }
     }
 
     fn run_nursery(
@@ -1461,7 +1479,7 @@ impl Vm {
                         span,
                     ));
                 };
-                task.outcome().ok_or_else(|| {
+                task.await_outcome().ok_or_else(|| {
                     self.error(
                         RuntimeErrorKind::InvalidBytecode,
                         "task has not settled".into(),

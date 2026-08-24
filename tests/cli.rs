@@ -66,6 +66,49 @@ fn executes_spawned_tasks_and_explicit_nurseries() {
 }
 
 #[test]
+fn propagates_unawaited_task_failures_when_the_root_settles() {
+    let path = fixture_path("unawaited-task-failure");
+    fs::write(
+        &path,
+        "spawn { throw \"child failure\" }\nprintln(\"parent\")\n",
+    )
+    .expect("write failing task source");
+    let output = slug().arg(&path).output().expect("run failing task source");
+    fs::remove_file(path).expect("remove failing task source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "parent\n");
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("uncaught throw: child failure")
+    );
+}
+
+#[test]
+fn propagates_unawaited_task_failures_when_a_nursery_settles() {
+    let path = fixture_path("unawaited-nursery-task-failure");
+    fs::write(
+        &path,
+        "println(nursery { spawn { throw \"child failure\" }; \"unreachable\" })\n",
+    )
+    .expect("write failing nursery source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run failing nursery source");
+    fs::remove_file(path).expect("remove failing nursery source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("uncaught throw: child failure")
+    );
+}
+
+#[test]
 fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
     let path = fixture_path("program-entrypoint");
     fs::write(

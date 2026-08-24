@@ -39,19 +39,42 @@ pub struct Closure {
 /// so repeated awaits can observe the same settlement.
 #[derive(Clone, Debug)]
 pub struct Task {
-    pub(crate) outcome: Rc<RefCell<Option<Result<Value, crate::RuntimeError>>>>,
+    state: Rc<RefCell<TaskState>>,
+}
+
+#[derive(Clone, Debug)]
+struct TaskState {
+    outcome: Option<Result<Value, crate::RuntimeError>>,
+    observed: bool,
 }
 
 impl Task {
     #[must_use]
     pub(crate) fn settled(outcome: Result<Value, crate::RuntimeError>) -> Self {
         Self {
-            outcome: Rc::new(RefCell::new(Some(outcome))),
+            state: Rc::new(RefCell::new(TaskState {
+                outcome: Some(outcome),
+                observed: false,
+            })),
         }
     }
 
-    pub(crate) fn outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
-        self.outcome.borrow().clone()
+    pub(crate) fn await_outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
+        let mut state = self.state.borrow_mut();
+        state.observed = true;
+        state.outcome.clone()
+    }
+
+    pub(crate) fn unobserved_error(&self) -> Option<crate::RuntimeError> {
+        let state = self.state.borrow();
+        if state.observed {
+            None
+        } else {
+            state
+                .outcome
+                .as_ref()
+                .and_then(|outcome| outcome.as_ref().err().cloned())
+        }
     }
 }
 
