@@ -4,6 +4,9 @@
 
 - Started the native channel-producer foundation with restricted owned send
   values and a bounded, thread-safe producer mailbox.
+- Native callbacks can now create a receiver/producer pair; accepted producer
+  mailbox values are converted and delivered only by the VM thread when that
+  receiver is read or selected.
 - Implemented `select` for receive, send, millisecond timer, task-await, and
   default cases, including optional handlers. Select suspensions now remove all
   losing channel, task, and timer registrations as soon as one case wins.

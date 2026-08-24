@@ -1560,3 +1560,32 @@ fn malformed_private_select_bytecode_returns_checked_errors() {
         .expect_err("select apply without a select result must fail");
     assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
 }
+
+#[test]
+fn native_channel_pair_delivers_owned_mailbox_values_on_the_vm_thread() {
+    fn channel_with_event(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        assert_eq!(
+            producer.try_send(slug_vm::NativeSendValue::integer(42)),
+            slug_vm::NativeProducerStatus::Sent
+        );
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.producer", ()).unwrap();
+    let function = module
+        .function(
+            "channel_with_event",
+            NativeArity::Exact(0),
+            channel_with_event,
+        )
+        .unwrap();
+    let program = compile(
+        "native-producer.slug",
+        "val channel = channel_with_event()\nrecv(channel)\n",
+    )
+    .expect("compile native producer source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(42));
+}

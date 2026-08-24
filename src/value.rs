@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use crate::native::{NativeFunction, NativeResource};
+use crate::native::{NativeChannelProducer, NativeFunction, NativeResource};
 
 /// VM-owned builtins that require host-service context at call time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,6 +26,7 @@ pub enum Builtin {
 #[derive(Clone)]
 pub struct Channel {
     pub(crate) state: Rc<RefCell<ChannelState>>,
+    native_producer: Option<NativeChannelProducer>,
 }
 
 pub(crate) struct ChannelState {
@@ -282,6 +283,35 @@ impl Channel {
                 receivers: VecDeque::new(),
                 closed: false,
             })),
+            native_producer: None,
+        }
+    }
+
+    pub(crate) fn native(capacity: usize) -> (Self, NativeChannelProducer) {
+        let producer = NativeChannelProducer::bounded(capacity);
+        (
+            Self {
+                state: Rc::new(RefCell::new(ChannelState {
+                    capacity,
+                    messages: VecDeque::new(),
+                    senders: VecDeque::new(),
+                    receivers: VecDeque::new(),
+                    closed: false,
+                })),
+                native_producer: Some(producer.clone()),
+            },
+            producer,
+        )
+    }
+
+    pub(crate) fn drain_native(&self) {
+        let Some(producer) = &self.native_producer else {
+            return;
+        };
+        let values = producer.drain();
+        let mut state = self.state.borrow_mut();
+        for value in values {
+            state.messages.push_back(value.into_value());
         }
     }
 }

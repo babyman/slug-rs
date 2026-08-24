@@ -2035,6 +2035,7 @@ impl Vm {
         for case in &values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
+                    channel.drain_native();
                     let mut state = channel.state.borrow_mut();
                     if let Some(value) = state.messages.pop_front() {
                         if let Some((sender, pending)) = state.senders.pop_front() {
@@ -2308,6 +2309,7 @@ impl Vm {
                 span,
             ));
         };
+        channel.drain_native();
         let mut state = channel.state.borrow_mut();
         if let Some(value) = state.messages.pop_front() {
             if let Some((sender, pending)) = state.senders.pop_front() {

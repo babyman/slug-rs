@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use crate::Value;
+use crate::{Value, value::Channel};
 
 /// An owned value that a foreign thread may publish through a channel producer.
 #[derive(Clone, Debug, PartialEq)]
@@ -49,6 +49,17 @@ impl NativeSendValue {
     #[must_use]
     pub fn bytes(value: impl Into<Vec<u8>>) -> Self {
         Self::Bytes(value.into())
+    }
+
+    pub(crate) fn into_value(self) -> Value {
+        match self {
+            Self::Nil => Value::Nil,
+            Self::Bool(value) => Value::Bool(value),
+            Self::Int(value) => Value::Int(value),
+            Self::Float(value) => Value::Float(value),
+            Self::String(value) => Value::string(value),
+            Self::Bytes(value) => Value::Bytes(value.into()),
+        }
     }
 }
 
@@ -100,6 +111,12 @@ impl NativeChannelProducer {
     #[must_use]
     pub fn is_closed(&self) -> bool {
         self.0.closed.load(Ordering::Acquire)
+    }
+    pub(crate) fn drain(&self) -> Vec<NativeSendValue> {
+        self.0
+            .queue
+            .lock()
+            .map_or_else(|_| Vec::new(), |mut queue| queue.drain(..).collect())
     }
 }
 
@@ -882,6 +899,15 @@ impl NativeCall<'_> {
     pub fn raise(&mut self, error: NativeError) -> NativeStatus {
         self.set_error(error);
         NativeStatus::Error
+    }
+
+    /// Creates a channel receiver paired with a thread-safe native producer.
+    ///
+    /// The producer accepts only [`NativeSendValue`] values and must not be
+    /// used to access call-scoped values after this callback returns.
+    pub fn channel(&mut self, capacity: usize) -> (NativeOwnedValue, NativeChannelProducer) {
+        let (channel, producer) = Channel::native(capacity);
+        (NativeOwnedValue(Value::Channel(Rc::new(channel))), producer)
     }
 
     /// Constructs a typed resource owned by the callback's module.
