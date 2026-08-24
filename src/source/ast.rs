@@ -42,6 +42,7 @@ pub(super) enum ExprKind {
         body: Box<Expr>,
     },
     Spawn(Box<Expr>),
+    Select(Vec<SelectCase>),
     Match {
         subject: Option<Box<Expr>>,
         cases: Vec<MatchCase>,
@@ -96,6 +97,19 @@ pub(super) enum ExprKind {
         end: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
     },
+}
+#[derive(Clone, Debug)]
+pub(super) struct SelectCase {
+    pub(super) kind: SelectCaseKind,
+    pub(super) handler: Option<Expr>,
+    pub(super) span: SourceSpan,
+}
+#[derive(Clone, Debug)]
+pub(super) enum SelectCaseKind {
+    Receive(Expr),
+    Send { channel: Expr, value: Expr },
+    Await(Expr),
+    Default,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum StringPart {
@@ -244,6 +258,10 @@ pub(super) enum TokenKind {
     Nursery,
     Limit,
     Spawn,
+    Select,
+    Recv,
+    Send,
+    Await,
     Match,
     Struct,
     Copy,

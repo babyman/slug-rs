@@ -9,7 +9,7 @@ use super::{
     SourceError,
     ast::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern, StringPart, Tag,
+        Pattern, Prefix, RestPattern, SelectCaseKind, StringPart, Tag,
     },
     state::{Binding, State},
 };
@@ -290,6 +290,35 @@ impl Compiler {
                 };
                 self.expression(state, &function)?;
                 state.emit(Op::Spawn, &expression.span);
+            }
+            ExprKind::Select(cases) => {
+                for case in cases {
+                    match &case.kind {
+                        SelectCaseKind::Receive(value) | SelectCaseKind::Await(value) => {
+                            let _ = &value.span;
+                        }
+                        SelectCaseKind::Send { channel, value } => {
+                            let _ = (&channel.span, &value.span);
+                        }
+                        SelectCaseKind::Default => {}
+                    }
+                }
+                let unsupported = cases.iter().find(|case| {
+                    matches!(case.kind, SelectCaseKind::Default)
+                        || case.handler.is_some()
+                        || !matches!(
+                            case.kind,
+                            SelectCaseKind::Receive(_)
+                                | SelectCaseKind::Send { .. }
+                                | SelectCaseKind::Await(_)
+                        )
+                });
+                let span =
+                    unsupported.map_or_else(|| expression.span.clone(), |case| case.span.clone());
+                return Err(SourceError::semantic(
+                    "select execution is not implemented yet",
+                    span,
+                ));
             }
             ExprKind::Nursery { limit, body } => {
                 if let Some(limit) = limit {

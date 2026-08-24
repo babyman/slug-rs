@@ -2,8 +2,8 @@ use super::{
     SourceError,
     ast::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern, StringPart, StructSchemaField, Tag, Token, TokenKind,
-        TypeAnnotation,
+        Pattern, Prefix, RestPattern, SelectCase, SelectCaseKind, StringPart, StructSchemaField,
+        Tag, Token, TokenKind, TypeAnnotation,
     },
 };
 use crate::{DeferMode, SourceSpan, Value};
@@ -601,11 +601,54 @@ impl Parser {
             TokenKind::Recur => return self.recur(span),
             TokenKind::Nursery => return self.nursery(span),
             TokenKind::Spawn => return self.spawn(span),
+            TokenKind::Select => return self.select(span),
             TokenKind::Match => return self.match_expression(span),
             TokenKind::Struct => return self.struct_schema(span),
             _ => return Err(SourceError::at("expected expression", span)),
         };
         Ok(Expr { kind, span })
+    }
+    fn select(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let delimiter = self.consume(&TokenKind::LBrace, "expected { after select")?;
+        self.enter_nesting(delimiter.span)?;
+        let mut cases = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            let token = self.next();
+            let case_span = token.span.clone();
+            let kind = match token.kind {
+                TokenKind::Recv => SelectCaseKind::Receive(self.expression()?),
+                TokenKind::Send => {
+                    let channel = self.expression()?;
+                    self.consume(&TokenKind::Comma, "expected , after select send channel")?;
+                    SelectCaseKind::Send {
+                        channel,
+                        value: self.expression()?,
+                    }
+                }
+                TokenKind::Await => SelectCaseKind::Await(self.expression()?),
+                TokenKind::Name(name) if name == "_" => SelectCaseKind::Default,
+                _ => return Err(SourceError::at("expected select case", case_span)),
+            };
+            let handler = if self.matches(&TokenKind::Pipeline) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            cases.push(SelectCase {
+                kind,
+                handler,
+                span: token.span,
+            });
+            self.separators();
+        }
+        self.consume(&TokenKind::RBrace, "expected } after select cases")?;
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Select(cases),
+            span,
+        })
     }
     fn nursery(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         let limit = if self.matches(&TokenKind::Limit) {
