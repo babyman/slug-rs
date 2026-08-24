@@ -310,8 +310,26 @@ impl Channel {
         };
         let values = producer.drain();
         let mut state = self.state.borrow_mut();
+        let mut resumed = Vec::new();
         for value in values {
-            state.messages.push_back(value.into_value());
+            if let Some(receiver) = state.receivers.pop_front() {
+                resumed.push((receiver, value.into_value()));
+            } else {
+                state.messages.push_back(value.into_value());
+            }
+        }
+        if producer.is_closed() {
+            state.closed = true;
+            resumed.extend(
+                state
+                    .receivers
+                    .drain(..)
+                    .map(|receiver| (receiver, Value::Nil)),
+            );
+        }
+        drop(state);
+        for (receiver, value) in resumed {
+            receiver.resume(Ok(value));
         }
     }
 }

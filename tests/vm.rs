@@ -1589,3 +1589,29 @@ fn native_channel_pair_delivers_owned_mailbox_values_on_the_vm_thread() {
     vm.define_native(function).unwrap();
     assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(42));
 }
+
+#[test]
+fn closing_a_native_producer_drains_events_then_closes_its_receiver() {
+    fn closed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        assert_eq!(
+            producer.try_send(slug_vm::NativeSendValue::integer(7)),
+            slug_vm::NativeProducerStatus::Sent
+        );
+        producer.close();
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.producer_close", ()).unwrap();
+    let function = module
+        .function("closed_channel", NativeArity::Exact(0), closed_channel)
+        .unwrap();
+    let program = compile(
+        "native-producer-close.slug",
+        "val channel = closed_channel()\nrecv(channel) + if (recv(channel)) { 1 } else { 0 }\n",
+    )
+    .expect("compile native producer close source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(7));
+}
