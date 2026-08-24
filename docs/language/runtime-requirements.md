@@ -442,11 +442,10 @@ closed-send runtime error.
 Parking a task MUST retain its execution state, including frames, operand
 stack, lexical bindings, and pending deferred actions. Resumption MUST deliver
 the pending call result or error through that retained state; it MUST NOT rerun
-the task from its entrypoint or bypass cleanup. The initial runtime parks only
-spawned tasks. A blocking operation performed directly by a root evaluation is
-a checked runtime error. If an owner cannot settle a parked child because no
-runnable task can make progress, it reports a checked blocked-task runtime
-error. `select` and root-task suspension are deferred.
+the task from its entrypoint or bypass cleanup. Root evaluations participate in
+the same scheduler and may park until an owned task wakes them. If an owner
+cannot settle a parked task because no runnable task can make progress, it
+reports a checked blocked-task runtime error. `select` remains deferred.
 
 ## Required implementation isolation
 

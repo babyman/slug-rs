@@ -67,7 +67,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | `cfg`, `argv`, and `argm` builtins | implemented | `tests/configuration.rs` |
 | Cooperative task handles with `spawn`, `await`, failure settlement, pending-sibling cancellation, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `tests/cli.rs` |
 | Bounded FIFO channels through `channel`, `send`, `recv`, and `close` | partial | `tests/cli.rs` |
-| Nursery ownership, root-task suspension, and `select` | specified only | `language/runtime-requirements.md` |
+| Nursery ownership and `select` | specified only | `language/runtime-requirements.md` |
 | Foreign declarations and module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |

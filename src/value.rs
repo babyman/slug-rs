@@ -30,9 +30,77 @@ pub struct Channel {
 pub(crate) struct ChannelState {
     pub(crate) capacity: usize,
     pub(crate) messages: VecDeque<Value>,
-    pub(crate) senders: VecDeque<(Rc<Task>, Value)>,
-    pub(crate) receivers: VecDeque<Rc<Task>>,
+    pub(crate) senders: VecDeque<(Waiter, Value)>,
+    pub(crate) receivers: VecDeque<Waiter>,
     pub(crate) closed: bool,
+}
+
+#[derive(Clone)]
+pub(crate) enum Waiter {
+    Task(Rc<Task>),
+    Root(RootWaiter),
+}
+
+impl Waiter {
+    pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        match self {
+            Self::Task(task) => task.resume(result),
+            Self::Root(root) => root.resume(result),
+        }
+    }
+
+    pub(crate) fn set_closed_send_error(&self, error: crate::RuntimeError) {
+        if let Self::Root(root) = self {
+            root.set_closed_send_error(error);
+        }
+    }
+
+    pub(crate) fn reject_closed_send(&self) {
+        match self {
+            Self::Task(task) => task.reject_closed_send(),
+            Self::Root(root) => root.reject_closed_send(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct RootWaiter {
+    state: Rc<RefCell<RootWaiterState>>,
+}
+
+struct RootWaiterState {
+    resume: Option<Result<Value, crate::RuntimeError>>,
+    closed_send_error: Option<crate::RuntimeError>,
+}
+
+impl RootWaiter {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(RootWaiterState {
+                resume: None,
+                closed_send_error: None,
+            })),
+        }
+    }
+
+    pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        self.state.borrow_mut().resume = Some(result);
+    }
+
+    pub(crate) fn set_closed_send_error(&self, error: crate::RuntimeError) {
+        self.state.borrow_mut().closed_send_error = Some(error);
+    }
+
+    pub(crate) fn reject_closed_send(&self) {
+        let mut state = self.state.borrow_mut();
+        if let Some(error) = state.closed_send_error.clone() {
+            state.resume = Some(Err(error));
+        }
+    }
+
+    pub(crate) fn take_resume(&self) -> Option<Result<Value, crate::RuntimeError>> {
+        self.state.borrow_mut().resume.take()
+    }
 }
 
 impl Channel {
@@ -100,7 +168,7 @@ struct TaskState {
     admitted: bool,
     observed: bool,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
-    waiters: Vec<Rc<Task>>,
+    waiters: Vec<Waiter>,
 }
 
 impl fmt::Debug for Task {
@@ -217,7 +285,7 @@ impl Task {
         ready.borrow_mut().push_back(Rc::new(self.clone()));
     }
 
-    pub(crate) fn wait_for(&self, waiter: Rc<Task>) {
+    pub(crate) fn wait_for(&self, waiter: Waiter) {
         let mut state = self.state.borrow_mut();
         state.observed = true;
         state.waiters.push(waiter);

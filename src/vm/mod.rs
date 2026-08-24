@@ -12,8 +12,8 @@ use crate::{
     bytecode::Op,
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
-        BindingCell, Builtin, Channel, Closure, GlobalEnvironment, TaskAdmission, binding_cell,
-        global_environment, module_binding,
+        BindingCell, Builtin, Channel, Closure, GlobalEnvironment, RootWaiter, TaskAdmission,
+        Waiter, binding_cell, global_environment, module_binding,
     },
 };
 
@@ -123,7 +123,7 @@ impl TaskExecution {
     }
 
     pub(crate) fn set_current_task(&mut self, task: &Rc<Task>) {
-        self.vm.current_task = Some(Rc::downgrade(task));
+        self.vm.current_waiter = Some(Waiter::Task(task.clone()));
     }
 
     pub(crate) fn resume(&mut self, result: VmResult<Value>) {
@@ -157,7 +157,7 @@ pub struct Vm {
     direct_task_limit: Option<usize>,
     direct_task_count: Option<Rc<Cell<usize>>>,
     native_resources: NativeResourceRegistry,
-    current_task: Option<std::rc::Weak<Task>>,
+    current_waiter: Option<Waiter>,
     suspension: Option<Suspension>,
     resume: Option<VmResult<Value>>,
 }
@@ -177,7 +177,7 @@ impl Default for Vm {
             direct_task_limit: None,
             direct_task_count: None,
             native_resources: native_resource_registry(),
-            current_task: None,
+            current_waiter: None,
             suspension: None,
             resume: None,
         }
@@ -252,14 +252,7 @@ impl Vm {
         self.stack.clear();
         self.stack.push(entrypoint);
         self.call(program, 0, None, None)?;
-        match self.execute(program) {
-            ExecutionOutcome::Settled(result) => result,
-            ExecutionOutcome::Suspended => Err(self.error(
-                RuntimeErrorKind::InvalidCall,
-                "blocking operations require a spawned task".into(),
-                None,
-            )),
-        }
+        self.run_root_execution(program)
     }
 
     #[must_use]
@@ -416,14 +409,7 @@ impl Vm {
             cleanup_action: false,
             cleanup_recovers: false,
         });
-        match self.execute(program) {
-            ExecutionOutcome::Settled(result) => self.settle_tasks(result),
-            ExecutionOutcome::Suspended => Err(self.error(
-                RuntimeErrorKind::InvalidCall,
-                "blocking operations require a spawned task".into(),
-                None,
-            )),
-        }
+        self.run_root_execution(program)
     }
 
     /// Executes a zero-argument chunk selected by name.
@@ -478,6 +464,29 @@ impl Vm {
                         Err(error) => return ExecutionOutcome::Settled(Err(error)),
                     }
                 }
+            }
+        }
+    }
+
+    fn run_root_execution(&mut self, program: &Program) -> VmResult<Value> {
+        let root = RootWaiter::new();
+        self.current_waiter = Some(Waiter::Root(root.clone()));
+        loop {
+            match self.execute(program) {
+                ExecutionOutcome::Settled(result) => return self.settle_tasks(result),
+                ExecutionOutcome::Suspended => loop {
+                    if let Some(result) = root.take_resume() {
+                        self.resume = Some(result);
+                        break;
+                    }
+                    if !self.run_next_ready_task() {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidCall,
+                            "task remains blocked with no runnable work".into(),
+                            None,
+                        ));
+                    }
+                },
             }
         }
     }
@@ -1238,7 +1247,7 @@ impl Vm {
             direct_task_limit: options.direct_task_limit,
             direct_task_count: options.direct_task_count,
             native_resources: self.native_resources.clone(),
-            current_task: None,
+            current_waiter: None,
             suspension: None,
             resume: None,
         };
@@ -1351,17 +1360,24 @@ impl Vm {
 
     fn run_task(&self, task: &Task) {
         while task.is_pending() {
-            let Some(next) = self.next_ready_task() else {
+            if !self.run_next_ready_task() {
                 return;
-            };
-            let Some(run) = next.take_pending(&next) else {
-                continue;
-            };
-            match run.run() {
-                TaskRunOutcome::Settled(result) => next.complete(&result),
-                TaskRunOutcome::Suspended(execution) => next.suspend(*execution),
             }
         }
+    }
+
+    fn run_next_ready_task(&self) -> bool {
+        let Some(next) = self.next_ready_task() else {
+            return false;
+        };
+        let Some(run) = next.take_pending(&next) else {
+            return true;
+        };
+        match run.run() {
+            TaskRunOutcome::Settled(result) => next.complete(&result),
+            TaskRunOutcome::Suspended(execution) => next.suspend(*execution),
+        }
+        true
     }
 
     fn next_ready_task(&self) -> Option<Rc<Task>> {
@@ -1812,7 +1828,7 @@ impl Vm {
                 if let Some(outcome) = task.await_outcome() {
                     return outcome;
                 }
-                let waiter = self.current_task(span.clone())?;
+                let waiter = self.current_waiter(span.clone())?;
                 task.wait_for(waiter);
                 self.suspension = Some(Suspension::Await);
                 Ok(Value::Nil)
@@ -1837,17 +1853,14 @@ impl Vm {
             .map(ModuleLoader::configuration)
     }
 
-    fn current_task(&self, span: Option<SourceSpan>) -> VmResult<Rc<Task>> {
-        self.current_task
-            .as_ref()
-            .and_then(std::rc::Weak::upgrade)
-            .ok_or_else(|| {
-                self.error(
-                    RuntimeErrorKind::InvalidCall,
-                    "blocking operations require a spawned task".into(),
-                    span,
-                )
-            })
+    fn current_waiter(&self, span: Option<SourceSpan>) -> VmResult<Waiter> {
+        self.current_waiter.clone().ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidCall,
+                "blocking operations require scheduler-owned execution".into(),
+                span,
+            )
+        })
     }
 
     fn channel(&self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
@@ -1912,7 +1925,12 @@ impl Vm {
             state.messages.push_back(arguments[1].clone());
             return Ok(Value::Nil);
         }
-        let sender = self.current_task(span.clone())?;
+        let sender = self.current_waiter(span.clone())?;
+        sender.set_closed_send_error(self.error(
+            RuntimeErrorKind::InvalidCall,
+            "send on a closed channel".into(),
+            span.clone(),
+        ));
         state.senders.push_back((sender, arguments[1].clone()));
         self.suspension = Some(Suspension::Send(span));
         Ok(Value::Nil)
@@ -1948,7 +1966,7 @@ impl Vm {
         if state.closed {
             return Ok(Value::Nil);
         }
-        let receiver = self.current_task(span.clone())?;
+        let receiver = self.current_waiter(span.clone())?;
         state.receivers.push_back(receiver);
         self.suspension = Some(Suspension::Receive);
         Ok(Value::Nil)

@@ -85,6 +85,28 @@ fn channels_rendezvous_between_cooperatively_scheduled_tasks() {
 }
 
 #[test]
+fn root_evaluation_suspends_for_channel_messages_and_task_completion() {
+    let path = fixture_path("channel-root-suspension");
+    fs::write(
+        &path,
+        "val inbox = channel(0)\nspawn { send(inbox, 42) }\nprintln(recv(inbox))\nval child = spawn { 6 * 7 }\nprintln(await(child))\n",
+    )
+    .expect("write root-suspension source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run root-suspension source");
+    fs::remove_file(path).expect("remove root-suspension source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n42\n");
+}
+
+#[test]
 fn channels_preserve_buffered_fifo_messages_and_resume_blocked_senders() {
     let path = fixture_path("channel-buffer");
     fs::write(
