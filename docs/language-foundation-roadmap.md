@@ -116,7 +116,7 @@ and the host boundary in
   after successful top-level evaluation.
 - [x] Add module fixtures for relative resolution, library fallback, caching,
   cycles, live exports, and failure locations.
-- [ ] Run `make check`.
+- [x] Run `make check`.
 
 ## 4. Add configuration and the conformance harness
 
@@ -130,7 +130,7 @@ and the host boundary in
   panic as a conformance failure.
 - [x] Prove the runner with library-independent fixtures, including exit status,
   standard output, standard error, diagnostic category, and source location.
-- [ ] Run `make check`.
+- [x] Run `make check`.
 
 ## 5. Establish the native extension boundary
 
