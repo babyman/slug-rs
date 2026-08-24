@@ -1153,15 +1153,12 @@ impl Vm {
                     span.clone(),
                 )
             })?;
-            if count.get() >= limit {
-                return Err(self.error(
-                    RuntimeErrorKind::Arity,
-                    "nursery task limit reached".into(),
-                    span,
-                ));
+            if count.get() < limit {
+                count.set(count.get() + 1);
+                Some(count.clone())
+            } else {
+                None
             }
-            count.set(count.get() + 1);
-            Some(count.clone())
         } else {
             None
         };
@@ -1257,6 +1254,13 @@ impl Vm {
                 return Err(self.error(
                     RuntimeErrorKind::Type,
                     "nursery limit must not be negative".into(),
+                    span,
+                ));
+            }
+            if limit == 0 {
+                return Err(self.error(
+                    RuntimeErrorKind::Type,
+                    "nursery limit must be positive".into(),
                     span,
                 ));
             }

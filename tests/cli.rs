@@ -149,10 +149,9 @@ fn propagates_unawaited_task_failures_when_a_nursery_settles() {
 }
 
 #[test]
-fn rejects_direct_spawns_when_a_nursery_limit_is_zero() {
+fn rejects_a_zero_nursery_limit() {
     let path = fixture_path("nursery-zero-limit");
-    fs::write(&path, "nursery limit 0 { spawn { 42 } }\n")
-        .expect("write zero-limit nursery source");
+    fs::write(&path, "nursery limit 0 { 42 }\n").expect("write zero-limit nursery source");
     let output = slug()
         .arg(&path)
         .output()
@@ -163,7 +162,7 @@ fn rejects_direct_spawns_when_a_nursery_limit_is_zero() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .contains("nursery task limit reached")
+            .contains("nursery limit must be positive")
     );
 }
 
@@ -187,22 +186,22 @@ fn nursery_limit_releases_a_permit_after_a_task_settles() {
 }
 
 #[test]
-fn nursery_limit_rejects_a_second_pending_direct_task() {
+fn nursery_limit_queues_direct_tasks_beyond_active_capacity() {
     let path = fixture_path("nursery-pending-limit");
-    fs::write(&path, "nursery limit 1 { spawn { 1 }; spawn { 2 } }\n")
-        .expect("write pending-limit nursery source");
+    fs::write(
+        &path,
+        "println(nursery limit 1 { val first = spawn { 1 }; val second = spawn { 2 }; await(first) + await(second) })\n",
+    )
+    .expect("write queued-task nursery source");
     let output = slug()
         .arg(&path)
         .output()
-        .expect("run pending-limit nursery source");
+        .expect("run queued-task nursery source");
     fs::remove_file(path).expect("remove pending-limit nursery source");
 
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("nursery task limit reached")
-    );
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3\n");
+    assert!(output.stderr.is_empty());
 }
 
 #[test]

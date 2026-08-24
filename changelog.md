@@ -12,7 +12,8 @@
   await or owner settlement, preserving the specified spawn-capture boundary.
   Explicit nurseries now logically cancel pending siblings after their first
   unobserved child failure. Nursery task limits now hold permits for pending
-  direct children and release them when those tasks settle.
+  direct children and release them when those tasks settle; further direct
+  spawns queue instead of failing when capacity is full.
 - Fixed version 0 native resource cleanup across failed close callbacks,
   structured error data, shared module-loader runtimes, and long-lived resource
   registries; native callback panics no longer emit a host panic diagnostic.
