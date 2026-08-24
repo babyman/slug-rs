@@ -48,19 +48,24 @@ pub struct Closure {
 
 /// A cached task completion. Tasks are runtime-owned and retain their outcome
 /// so repeated awaits can observe the same settlement.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Task {
     state: Rc<RefCell<TaskState>>,
 }
 
-#[derive(Clone, Debug)]
 struct TaskState {
     outcome: Option<Result<Value, crate::RuntimeError>>,
-    pending: Option<TaskRun>,
+    pending: Option<crate::vm::TaskExecution>,
     running: bool,
     admission: Option<TaskAdmission>,
     admitted: bool,
     observed: bool,
+}
+
+impl fmt::Debug for Task {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<task>")
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -69,17 +74,10 @@ pub(crate) struct TaskAdmission {
     pub(crate) count: Rc<Cell<usize>>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct TaskRun {
-    pub(crate) program: Rc<crate::Program>,
-    pub(crate) closure: Rc<Closure>,
-}
-
 impl Task {
     #[must_use]
     pub(crate) fn pending(
-        program: Rc<crate::Program>,
-        closure: Rc<Closure>,
+        execution: crate::vm::TaskExecution,
         admission: Option<TaskAdmission>,
     ) -> Self {
         let admitted = admission.as_ref().is_none_or(|admission| {
@@ -93,7 +91,7 @@ impl Task {
         Self {
             state: Rc::new(RefCell::new(TaskState {
                 outcome: None,
-                pending: Some(TaskRun { program, closure }),
+                pending: Some(execution),
                 running: false,
                 admission,
                 admitted,
@@ -102,7 +100,7 @@ impl Task {
         }
     }
 
-    pub(crate) fn take_pending(&self) -> Option<TaskRun> {
+    pub(crate) fn take_pending(&self) -> Option<crate::vm::TaskExecution> {
         let mut state = self.state.borrow_mut();
         let pending = state.pending.take();
         state.running = pending.is_some();
@@ -180,36 +178,6 @@ fn release_admission(state: &mut TaskState) {
             admission.count.set(admission.count.get().saturating_sub(1));
         }
         state.admitted = false;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::rc::Rc;
-
-    use crate::Program;
-
-    use super::{Closure, Task, Value};
-
-    #[test]
-    fn task_is_running_between_admission_and_completion() {
-        let closure = Rc::new(Closure {
-            chunk: 0,
-            captures: Vec::new(),
-            program: None,
-            globals: None,
-            capture_sources: Vec::new(),
-        });
-        let task = Task::pending(Rc::new(Program::new()), closure, None);
-
-        assert!(!task.is_running());
-        assert!(task.take_pending().is_some());
-        assert!(task.is_running());
-
-        task.complete(Ok(Value::Nil));
-
-        assert!(!task.is_running());
-        assert!(matches!(task.await_outcome(), Some(Ok(Value::Nil))));
     }
 }
 

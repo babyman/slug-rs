@@ -76,6 +76,28 @@ struct ClosureCallOptions {
     settle_nursery: bool,
 }
 
+/// The independently owned interpreter state for a spawned task.
+///
+/// It currently runs to settlement, but keeping the VM intact makes future
+/// blocking operations able to return it to the scheduler without rebuilding
+/// frames, locals, or the operand stack.
+pub(crate) struct TaskExecution {
+    vm: Vm,
+    program: Rc<Program>,
+    settle_nursery: bool,
+}
+
+impl TaskExecution {
+    fn run(mut self) -> VmResult<Value> {
+        let result = self.vm.execute(&self.program);
+        if self.settle_nursery {
+            self.vm.settle_tasks(result)
+        } else {
+            result
+        }
+    }
+}
+
 /// A small, checked stack VM for compiler-produced Slug bytecode.
 pub struct Vm {
     module_loader: Option<ModuleLoader>,
@@ -1069,15 +1091,15 @@ impl Vm {
         Ok(())
     }
 
-    fn call_module_closure(
+    fn module_closure_execution(
         &self,
-        program: &Rc<Program>,
+        program: Rc<Program>,
         closure: Rc<Closure>,
         arguments: Vec<Value>,
         provided: Option<Vec<bool>>,
         span: Option<SourceSpan>,
         options: ClosureCallOptions,
-    ) -> VmResult<Value> {
+    ) -> VmResult<TaskExecution> {
         let chunk = program.chunk(closure.chunk).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -1128,12 +1150,24 @@ impl Vm {
             cleanup_action: false,
             cleanup_recovers: false,
         });
-        let result = vm.execute(program);
-        if options.settle_nursery {
-            vm.settle_tasks(result)
-        } else {
-            result
-        }
+        Ok(TaskExecution {
+            vm,
+            program,
+            settle_nursery: options.settle_nursery,
+        })
+    }
+
+    fn call_module_closure(
+        &self,
+        program: &Rc<Program>,
+        closure: Rc<Closure>,
+        arguments: Vec<Value>,
+        provided: Option<Vec<bool>>,
+        span: Option<SourceSpan>,
+        options: ClosureCallOptions,
+    ) -> VmResult<Value> {
+        self.module_closure_execution(program.clone(), closure, arguments, provided, span, options)?
+            .run()
     }
 
     fn spawn_task(&mut self, program: &Program, span: Option<SourceSpan>) -> VmResult<()> {
@@ -1176,7 +1210,20 @@ impl Vm {
             globals: closure.globals.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
-        let task = Rc::new(Task::pending(Rc::new(program.clone()), closure, admission));
+        let execution = self.module_closure_execution(
+            Rc::new(program.clone()),
+            closure,
+            Vec::new(),
+            None,
+            span.clone(),
+            ClosureCallOptions {
+                direct_task_limit: None,
+                direct_task_count: None,
+                nursery: self.nursery.clone(),
+                settle_nursery: false,
+            },
+        )?;
+        let task = Rc::new(Task::pending(execution, admission));
         self.nursery.tasks.borrow_mut().push(task.clone());
         self.stack.push(Value::Task(task));
         Ok(())
@@ -1202,19 +1249,7 @@ impl Vm {
         let Some(run) = task.take_pending() else {
             return;
         };
-        let outcome = self.call_module_closure(
-            &run.program,
-            run.closure,
-            Vec::new(),
-            None,
-            None,
-            ClosureCallOptions {
-                direct_task_limit: None,
-                direct_task_count: None,
-                nursery: self.nursery.clone(),
-                settle_nursery: false,
-            },
-        );
+        let outcome = run.run();
         task.complete(outcome);
     }
 
