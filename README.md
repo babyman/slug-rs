@@ -26,7 +26,7 @@ compiled-module contract is documented separately as `.cslug`.
   declaration and parameter tags with evaluated arguments, declaration-attached
   documentation blocks with retained module metadata (but without metadata
   introspection), comments, automatic invocation of a local zero-argument
-  `main`, preliminary eager `spawn` task handles with `await`, explicit
+  `main`, preliminary cooperative `spawn` task handles with `await`, explicit
   nurseries, and
   `println`.
 - Source-level `import(name, ...)` with checked string module names,

@@ -2,13 +2,14 @@
 
 ## Unreleased
 
-- Added preliminary eager task handles through `spawn` and `await`, plus
+- Added preliminary cooperative task handles through `spawn` and `await`, plus
   explicit `nursery` and `nursery limit N` source forms, as the first
   cooperative structured-concurrency slice; unawaited child failures now
   propagate when their root evaluation settles, and task VMs share live root
   and module globals with their parent evaluation. `nursery limit 0` now
   rejects direct spawns. Nested task VMs inherit their dynamic nursery, while
-  an explicit nursery creates a distinct owner.
+  an explicit nursery creates a distinct owner. Tasks defer execution until an
+  await or owner settlement, preserving the specified spawn-capture boundary.
 - Fixed version 0 native resource cleanup across failed close callbacks,
   structured error data, shared module-loader runtimes, and long-lived resource
   registries; native callback panics no longer emit a host panic diagnostic.

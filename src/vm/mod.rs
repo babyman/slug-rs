@@ -1141,33 +1141,46 @@ impl Vm {
             globals: closure.globals.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
+        let task = Rc::new(Task::pending(Rc::new(program.clone()), closure));
+        self.nursery.tasks.borrow_mut().push(task.clone());
+        self.stack.push(Value::Task(task));
+        Ok(())
+    }
+
+    fn run_task(&self, task: &Task) {
+        let Some(run) = task.take_pending() else {
+            return;
+        };
         let outcome = self.call_module_closure(
-            &Rc::new(program.clone()),
-            closure,
+            &run.program,
+            run.closure,
             Vec::new(),
             None,
-            span,
+            None,
             ClosureCallOptions {
                 direct_task_limit: None,
                 nursery: self.nursery.clone(),
                 settle_nursery: false,
             },
         );
-        let task = Rc::new(Task::settled(outcome));
-        self.nursery.tasks.borrow_mut().push(task.clone());
-        self.stack.push(Value::Task(task));
-        Ok(())
+        task.complete(outcome);
     }
 
     fn settle_tasks(&self, result: VmResult<Value>) -> VmResult<Value> {
         match result {
-            Ok(value) => self
-                .nursery
-                .tasks
-                .borrow()
-                .iter()
-                .find_map(|task| task.unobserved_error())
-                .map_or(Ok(value), Err),
+            Ok(value) => {
+                let mut index = 0;
+                while let Some(task) = self.nursery.tasks.borrow().get(index).cloned() {
+                    self.run_task(&task);
+                    index += 1;
+                }
+                self.nursery
+                    .tasks
+                    .borrow()
+                    .iter()
+                    .find_map(|task| task.unobserved_error())
+                    .map_or(Ok(value), Err)
+            }
             Err(error) => Err(error),
         }
     }
@@ -1474,7 +1487,7 @@ impl Vm {
     }
 
     fn call_builtin(
-        &self,
+        &mut self,
         builtin: Builtin,
         program: &Program,
         arguments: &[Value],
@@ -1556,6 +1569,7 @@ impl Vm {
                         span,
                     ));
                 };
+                self.run_task(task);
                 task.await_outcome().ok_or_else(|| {
                     self.error(
                         RuntimeErrorKind::InvalidBytecode,

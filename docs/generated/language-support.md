@@ -65,7 +65,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Automatic local zero-argument `main` entrypoint invocation | implemented | `tests/cli.rs` |
 | Immutable configuration store and source precedence | implemented | `tests/configuration.rs` |
 | `cfg`, `argv`, and `argm` builtins | implemented | `tests/configuration.rs` |
-| Eager task handles with `spawn`, `await`, root failure settlement, explicit nurseries, and zero-limit admission | partial | `tests/cli.rs` |
+| Cooperative task handles with `spawn`, `await`, root failure settlement, explicit nurseries, and zero-limit admission | partial | `tests/cli.rs` |
 | Nursery ownership, cancellation, blocking task scheduling, channels, and `select` | specified only | `language/runtime-requirements.md` |
 | Foreign declarations and module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |

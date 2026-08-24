@@ -85,6 +85,27 @@ fn spawned_tasks_share_root_globals() {
 }
 
 #[test]
+fn spawned_tasks_snapshot_immediate_captures_but_keep_outer_captures_live() {
+    let path = fixture_path("spawn-capture-boundary");
+    fs::write(
+        &path,
+        "val direct = fn() { var value = 1; val task = spawn { value }; value = 2; await(task) }\n\
+         val outer = fn() { var value = 1; val middle = fn() { val task = spawn { value }; value = 2; await(task) }; middle() }\n\
+         println(direct())\nprintln(outer())\n",
+    )
+    .expect("write capture-boundary task source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run capture-boundary task source");
+    fs::remove_file(path).expect("remove capture-boundary task source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n2\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn propagates_unawaited_task_failures_when_the_root_settles() {
     let path = fixture_path("unawaited-task-failure");
     fs::write(

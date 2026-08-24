@@ -50,18 +50,34 @@ pub struct Task {
 #[derive(Clone, Debug)]
 struct TaskState {
     outcome: Option<Result<Value, crate::RuntimeError>>,
+    pending: Option<TaskRun>,
     observed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TaskRun {
+    pub(crate) program: Rc<crate::Program>,
+    pub(crate) closure: Rc<Closure>,
 }
 
 impl Task {
     #[must_use]
-    pub(crate) fn settled(outcome: Result<Value, crate::RuntimeError>) -> Self {
+    pub(crate) fn pending(program: Rc<crate::Program>, closure: Rc<Closure>) -> Self {
         Self {
             state: Rc::new(RefCell::new(TaskState {
-                outcome: Some(outcome),
+                outcome: None,
+                pending: Some(TaskRun { program, closure }),
                 observed: false,
             })),
         }
+    }
+
+    pub(crate) fn take_pending(&self) -> Option<TaskRun> {
+        self.state.borrow_mut().pending.take()
+    }
+
+    pub(crate) fn complete(&self, outcome: Result<Value, crate::RuntimeError>) {
+        self.state.borrow_mut().outcome = Some(outcome);
     }
 
     pub(crate) fn await_outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
