@@ -107,10 +107,11 @@ pub enum MatchPattern {
 /// One source-order case consumed by the private select instruction.
 #[derive(Clone, Debug)]
 pub enum SelectCase {
-    Receive,
-    Send,
-    Await,
-    Default,
+    Receive { has_handler: bool },
+    Send { has_handler: bool },
+    After { has_handler: bool },
+    Await { has_handler: bool },
+    Default { has_handler: bool },
 }
 
 /// One VM instruction. Opcode numbers are intentionally not stable.
@@ -207,6 +208,8 @@ pub enum Op {
         has_limit: bool,
     },
     Select(Vec<SelectCase>),
+    /// Applies the selected case's optional handler to its result.
+    SelectApply,
     TryMatch {
         pattern: MatchPattern,
         bindings: usize,

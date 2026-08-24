@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Implemented `select` for receive, send, millisecond timer, task-await, and
+  default cases, including optional handlers. Select suspensions now remove all
+  losing channel, task, and timer registrations as soon as one case wins.
 - Added bounded FIFO channel builtins: `channel(capacity)`, `send`, `recv`,
   and idempotent `close`. Spawned tasks now suspend without unwinding their VM
   state, preserve deferred cleanup while blocked, and resume through FIFO

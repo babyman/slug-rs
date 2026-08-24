@@ -444,8 +444,8 @@ stack, lexical bindings, and pending deferred actions. Resumption MUST deliver
 the pending call result or error through that retained state; it MUST NOT rerun
 the task from its entrypoint or bypass cleanup. Root evaluations participate in
 the same scheduler and may park until an owned task wakes them. If an owner
-cannot settle a parked task because no runnable task can make progress, it
-reports a checked blocked-task runtime error. `select` remains deferred.
+cannot settle a parked task because no runnable task or timer can make
+progress, it reports a checked blocked-task runtime error.
 
 Cancelling a parked task MUST remove its channel-send, channel-receive, and
 task-await registrations before it settles. A later operation MUST NOT observe

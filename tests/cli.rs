@@ -107,6 +107,46 @@ fn root_evaluation_suspends_for_channel_messages_and_task_completion() {
 }
 
 #[test]
+fn select_handles_ready_blocked_and_timer_cases_without_stale_waiters() {
+    let path = fixture_path("select-cases");
+    let source = "val inbox = channel(1)\n\
+         send(inbox, 7)\n\
+         println(select {\n\
+           recv inbox /> fn(value) { value }\n\
+           _ /> fn(unused) { 0 }\n\
+         })\n\
+         println(select {\n\
+           send inbox, 8 /> fn(unused) { 1 }\n\
+         })\n\
+         println(recv(inbox))\n\
+         val task = spawn { 9 }\n\
+         println(select { await task /> fn(value) { value } })\n\
+         println(select { after 1 /> fn(unused) { 10 } })\n\
+         val left = channel(0)\n\
+         val right = channel(0)\n\
+         val sender = spawn { send(left, 11); send(right, 12) }\n\
+         println(select {\n\
+           recv left /> fn(value) { value }\n\
+           recv right /> fn(value) { value }\n\
+         })\n\
+         println(recv(right))\n\
+         await(sender)\n";
+    fs::write(&path, source).expect("write select source");
+    let output = slug().arg(&path).output().expect("run select source");
+    fs::remove_file(path).expect("remove select source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "7\n1\n8\n9\n10\n11\n12\n"
+    );
+}
+
+#[test]
 fn channels_preserve_buffered_fifo_messages_and_resume_blocked_senders() {
     let path = fixture_path("channel-buffer");
     fs::write(

@@ -704,6 +704,12 @@ select {
 }
 ```
 
+`after` takes a non-negative integer delay in milliseconds and selects with
+`nil` when that delay has elapsed. A select with no immediately ready
+non-default case parks until one registered case becomes ready. The first case
+made ready resumes the evaluation and removes every other case's waiter; those
+losing cases must not consume a later channel value or task completion.
+
 `recv(channel)` blocks for a value or returns `nil` after a closed channel has
 drained. Sending `nil` or sending on a closed channel is a runtime error.
 Closing a channel is idempotent. The selection policy among simultaneously
@@ -715,7 +721,7 @@ integer. A zero-capacity channel performs FIFO rendezvous between blocked
 senders and receivers; a positive capacity retains that many FIFO messages.
 `send` and `close` return `nil`. A blocked sender that is released because its
 channel closes fails as a normal `send on a closed channel` runtime error, so
-its active deferred cleanup still runs. `select` remains unimplemented.
+its active deferred cleanup still runs.
 
 ## Implementation-independent limits
 

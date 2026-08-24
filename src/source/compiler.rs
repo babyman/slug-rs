@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, ModuleDeclaration,
-    ModuleTag, Op, ParameterSignature, Program, SchemaField, SourceSpan,
+    ModuleTag, Op, ParameterSignature, Program, SchemaField, SelectCase, SourceSpan,
 };
 
 use super::{
@@ -295,30 +295,45 @@ impl Compiler {
                 for case in cases {
                     match &case.kind {
                         SelectCaseKind::Receive(value) | SelectCaseKind::Await(value) => {
-                            let _ = &value.span;
+                            self.expression(state, value)?;
                         }
                         SelectCaseKind::Send { channel, value } => {
-                            let _ = (&channel.span, &value.span);
+                            self.expression(state, channel)?;
+                            self.expression(state, value)?;
                         }
+                        SelectCaseKind::After(value) => self.expression(state, value)?,
                         SelectCaseKind::Default => {}
                     }
+                    if let Some(handler) = &case.handler {
+                        self.expression(state, handler)?;
+                    }
                 }
-                let unsupported = cases.iter().find(|case| {
-                    matches!(case.kind, SelectCaseKind::Default)
-                        || case.handler.is_some()
-                        || !matches!(
-                            case.kind,
-                            SelectCaseKind::Receive(_)
-                                | SelectCaseKind::Send { .. }
-                                | SelectCaseKind::Await(_)
-                        )
-                });
-                let span =
-                    unsupported.map_or_else(|| expression.span.clone(), |case| case.span.clone());
-                return Err(SourceError::semantic(
-                    "select execution is not implemented yet",
-                    span,
-                ));
+                state.emit(
+                    Op::Select(
+                        cases
+                            .iter()
+                            .map(|case| match &case.kind {
+                                SelectCaseKind::Receive(_) => SelectCase::Receive {
+                                    has_handler: case.handler.is_some(),
+                                },
+                                SelectCaseKind::Send { .. } => SelectCase::Send {
+                                    has_handler: case.handler.is_some(),
+                                },
+                                SelectCaseKind::After(_) => SelectCase::After {
+                                    has_handler: case.handler.is_some(),
+                                },
+                                SelectCaseKind::Await(_) => SelectCase::Await {
+                                    has_handler: case.handler.is_some(),
+                                },
+                                SelectCaseKind::Default => SelectCase::Default {
+                                    has_handler: case.handler.is_some(),
+                                },
+                            })
+                            .collect(),
+                    ),
+                    &expression.span,
+                );
+                state.emit(Op::SelectApply, &expression.span);
             }
             ExprKind::Nursery { limit, body } => {
                 if let Some(limit) = limit {

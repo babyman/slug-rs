@@ -151,10 +151,10 @@ and the host boundary in
   settlement, and repeated await behavior.
 - [ ] Implement channel values, their checked runtime operations, and the
   bounded native producer capability defined by the native interface.
-- [ ] Implement `select` cases for receive, send, timer, await, and default.
+- [x] Implement `select` cases for receive, send, timer, await, and default.
 - [ ] Integrate task failure with `throw`, deferred cleanup, and checked runtime
   diagnostics.
-- [ ] Implement the timer host service used by timer-oriented language forms.
+- [x] Implement the timer host service used by timer-oriented language forms.
 - [ ] Add focused runtime and VM coverage for concurrency behavior.
 - [ ] Run `make check`.
 

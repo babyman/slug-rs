@@ -102,12 +102,12 @@ pub(super) enum ExprKind {
 pub(super) struct SelectCase {
     pub(super) kind: SelectCaseKind,
     pub(super) handler: Option<Expr>,
-    pub(super) span: SourceSpan,
 }
 #[derive(Clone, Debug)]
 pub(super) enum SelectCaseKind {
     Receive(Expr),
     Send { channel: Expr, value: Expr },
+    After(Expr),
     Await(Expr),
     Default,
 }

@@ -4,6 +4,7 @@ use std::{
     fmt,
     fmt::Write as _,
     rc::Rc,
+    time::Instant,
 };
 
 use crate::native::{NativeFunction, NativeResource};
@@ -39,6 +40,16 @@ pub(crate) struct ChannelState {
 pub(crate) enum Waiter {
     Task(Rc<Task>),
     Root(RootWaiter),
+    Select {
+        state: Rc<RefCell<SelectWaitState>>,
+        handler: Option<Value>,
+    },
+}
+
+pub(crate) struct SelectWaitState {
+    waiter: Waiter,
+    selected: bool,
+    registrations: Option<WaitSet>,
 }
 
 impl Waiter {
@@ -46,12 +57,30 @@ impl Waiter {
         match self {
             Self::Task(task) => task.resume(result),
             Self::Root(root) => root.resume(result),
+            Self::Select { state, handler } => {
+                let mut state = state.borrow_mut();
+                if state.selected {
+                    return;
+                }
+                state.selected = true;
+                let registrations = state.registrations.take();
+                let waiter = state.waiter.clone();
+                drop(state);
+                if let Some(registrations) = registrations {
+                    registrations.remove_for_waiter(&waiter);
+                }
+                waiter.resume(result.map(|value| {
+                    Value::List(vec![value, handler.clone().unwrap_or(Value::Nil)].into())
+                }));
+            }
         }
     }
 
     pub(crate) fn set_closed_send_error(&self, error: crate::RuntimeError) {
         if let Self::Root(root) = self {
             root.set_closed_send_error(error);
+        } else if let Self::Select { state, .. } = self {
+            state.borrow().waiter.set_closed_send_error(error);
         }
     }
 
@@ -59,51 +88,102 @@ impl Waiter {
         match self {
             Self::Task(task) => task.reject_closed_send(),
             Self::Root(root) => root.reject_closed_send(),
+            Self::Select { state, .. } => state.borrow().waiter.reject_closed_send(),
         }
     }
 
-    fn is_task(&self, task: &Task) -> bool {
-        matches!(self, Self::Task(waiter) if Rc::ptr_eq(&waiter.state, &task.state))
+    fn is_same(&self, other: &Waiter) -> bool {
+        match (self, other) {
+            (Self::Task(left), Self::Task(right)) => Rc::ptr_eq(&left.state, &right.state),
+            (Self::Root(left), Self::Root(right)) => Rc::ptr_eq(&left.state, &right.state),
+            (Self::Select { state, .. }, other) => state.borrow().waiter.is_same(other),
+            (other, Self::Select { state, .. }) => other.is_same(&state.borrow().waiter),
+            _ => false,
+        }
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum WaitRegistration {
     ChannelSend(Rc<Channel>),
     ChannelReceive(Rc<Channel>),
     TaskAwait(Rc<Task>),
+    Timer(Rc<RefCell<TimerService>>),
 }
 
 impl WaitRegistration {
-    fn remove(self, task: &Task) {
+    fn remove(self, waiter: &Waiter) {
         match self {
             Self::ChannelSend(channel) => {
                 channel
                     .state
                     .borrow_mut()
                     .senders
-                    .retain(|(waiter, _)| !waiter.is_task(task));
+                    .retain(|(candidate, _)| !candidate.is_same(waiter));
             }
             Self::ChannelReceive(channel) => {
                 channel
                     .state
                     .borrow_mut()
                     .receivers
-                    .retain(|waiter| !waiter.is_task(task));
+                    .retain(|candidate| !candidate.is_same(waiter));
             }
             Self::TaskAwait(target) => {
                 target
                     .state
                     .borrow_mut()
                     .waiters
-                    .retain(|waiter| !waiter.is_task(task));
+                    .retain(|candidate| !candidate.is_same(waiter));
+            }
+            Self::Timer(timers) => {
+                timers
+                    .borrow_mut()
+                    .waiters
+                    .retain(|(_, candidate)| !candidate.is_same(waiter));
             }
         }
+    }
+}
+
+/// Shared monotonic timer queue for one dynamic nursery.
+pub(crate) struct TimerService {
+    waiters: Vec<(Instant, Waiter)>,
+}
+
+impl TimerService {
+    pub(crate) fn new() -> Self {
+        Self {
+            waiters: Vec::new(),
+        }
+    }
+
+    pub(crate) fn register(&mut self, deadline: Instant, waiter: Waiter) {
+        self.waiters.push((deadline, waiter));
+    }
+
+    pub(crate) fn take_due(&mut self) -> Vec<Waiter> {
+        let now = Instant::now();
+        let mut due = Vec::new();
+        self.waiters.retain(|(deadline, waiter)| {
+            if *deadline <= now {
+                due.push(waiter.clone());
+                false
+            } else {
+                true
+            }
+        });
+        due
+    }
+
+    pub(crate) fn next_deadline(&self) -> Option<Instant> {
+        self.waiters.iter().map(|(deadline, _)| *deadline).min()
     }
 }
 
 /// All queues a suspended execution currently occupies. A regular blocking
 /// operation has one entry; a future select owns several and removes losers
 /// before its winner resumes.
+#[derive(Clone)]
 pub(crate) struct WaitSet {
     registrations: Vec<WaitRegistration>,
 }
@@ -115,16 +195,39 @@ impl WaitSet {
         }
     }
 
-    fn remove(self, task: &Task) {
+    pub(crate) fn many(registrations: Vec<WaitRegistration>) -> Self {
+        Self { registrations }
+    }
+
+    pub(crate) fn select_state(waiter: Waiter) -> Rc<RefCell<SelectWaitState>> {
+        Rc::new(RefCell::new(SelectWaitState {
+            waiter,
+            selected: false,
+            registrations: None,
+        }))
+    }
+
+    pub(crate) fn set_select_registrations(
+        state: &Rc<RefCell<SelectWaitState>>,
+        registrations: WaitSet,
+    ) {
+        state.borrow_mut().registrations = Some(registrations);
+    }
+
+    fn remove(self, waiter: &Waiter) {
         for registration in self.registrations {
-            registration.remove(task);
+            registration.remove(waiter);
         }
     }
 
     fn remove_losers(self, task: &Task) {
         if self.registrations.len() > 1 {
-            self.remove(task);
+            self.remove(&Waiter::Task(Rc::new(task.clone())));
         }
+    }
+
+    pub(crate) fn remove_for_waiter(self, waiter: &Waiter) {
+        self.remove(waiter);
     }
 }
 
@@ -384,7 +487,7 @@ impl Task {
         release_admission(&mut state);
         drop(state);
         if let Some(wait_registration) = wait_registration {
-            wait_registration.remove(self);
+            wait_registration.remove_for_waiter(&Waiter::Task(Rc::new(self.clone())));
         }
         for waiter in waiters {
             waiter.resume(Err(error.clone()));

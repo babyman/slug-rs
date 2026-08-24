@@ -14,6 +14,7 @@ pub(super) struct Parser {
     index: usize,
     nesting: usize,
     match_subject_nesting: Option<usize>,
+    pipeline_enabled: bool,
 }
 
 enum DocumentationPrefix {
@@ -29,6 +30,7 @@ impl Parser {
             index: 0,
             nesting: 0,
             match_subject_nesting: None,
+            pipeline_enabled: true,
         }
     }
 
@@ -293,6 +295,14 @@ impl Parser {
         }
         self.binary(0)
     }
+
+    fn select_header_expression(&mut self) -> Result<Expr, SourceError> {
+        let pipeline_enabled = self.pipeline_enabled;
+        self.pipeline_enabled = false;
+        let expression = self.expression();
+        self.pipeline_enabled = pipeline_enabled;
+        expression
+    }
 }
 
 const MAX_PARSE_NESTING: usize = 256;
@@ -356,7 +366,7 @@ impl Parser {
             operators.push((operator, token.span));
         }
         let mut value = self.postfix()?;
-        while self.matches(&TokenKind::Pipeline) {
+        while self.pipeline_enabled && self.matches(&TokenKind::Pipeline) {
             let span = self.next().span;
             let right = self.postfix()?;
             value = Expr {
@@ -426,8 +436,12 @@ impl Parser {
             } else if self.matches(&TokenKind::Dot) {
                 let span = self.next().span;
                 let name = self.next();
-                let TokenKind::Name(name) = name.kind else {
-                    return Err(SourceError::at("expected property name", name.span));
+                let name = match name.kind {
+                    TokenKind::Name(name) => name,
+                    // `select` is reserved only where it begins a select
+                    // expression; maps and module exports may still use it.
+                    TokenKind::Select => "select".into(),
+                    _ => return Err(SourceError::at("expected property name", name.span)),
                 };
                 let index = Expr {
                     span: span.clone(),
@@ -618,18 +632,21 @@ impl Parser {
             let case_span = token.span.clone();
             let kind = match token.kind {
                 TokenKind::Name(name) if name == "recv" => {
-                    SelectCaseKind::Receive(self.expression()?)
+                    SelectCaseKind::Receive(self.select_header_expression()?)
                 }
                 TokenKind::Name(name) if name == "send" => {
-                    let channel = self.expression()?;
+                    let channel = self.select_header_expression()?;
                     self.consume(&TokenKind::Comma, "expected , after select send channel")?;
                     SelectCaseKind::Send {
                         channel,
-                        value: self.expression()?,
+                        value: self.select_header_expression()?,
                     }
                 }
+                TokenKind::Name(name) if name == "after" => {
+                    SelectCaseKind::After(self.select_header_expression()?)
+                }
                 TokenKind::Name(name) if name == "await" => {
-                    SelectCaseKind::Await(self.expression()?)
+                    SelectCaseKind::Await(self.select_header_expression()?)
                 }
                 TokenKind::Name(name) if name == "_" => SelectCaseKind::Default,
                 _ => return Err(SourceError::at("expected select case", case_span)),
@@ -640,11 +657,7 @@ impl Parser {
             } else {
                 None
             };
-            cases.push(SelectCase {
-                kind,
-                handler,
-                span: token.span,
-            });
+            cases.push(SelectCase { kind, handler });
             self.separators();
         }
         self.consume(&TokenKind::RBrace, "expected } after select cases")?;
@@ -1181,6 +1194,7 @@ impl Parser {
                 self.struct_pattern(name, &token.span)
             }
             TokenKind::Name(name) => Ok(Pattern::Binding(name)),
+            TokenKind::Select => Ok(Pattern::Binding("select".into())),
             TokenKind::Caret => {
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {

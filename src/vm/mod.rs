@@ -4,16 +4,18 @@ use std::{
     collections::{HashSet, VecDeque},
     path::Path,
     rc::Rc,
+    time::{Duration, Instant},
 };
 
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, Task, Value,
-    bytecode::Op,
+    bytecode::{Op, SelectCase},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, Closure, GlobalEnvironment, RootWaiter, TaskAdmission,
-        WaitRegistration, WaitSet, Waiter, binding_cell, global_environment, module_binding,
+        TimerService, WaitRegistration, WaitSet, Waiter, binding_cell, global_environment,
+        module_binding,
     },
 };
 
@@ -52,6 +54,7 @@ struct Nursery {
     tasks: RefCell<Vec<Rc<Task>>>,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     fail_fast: bool,
+    timers: Rc<RefCell<TimerService>>,
 }
 
 impl Nursery {
@@ -60,6 +63,7 @@ impl Nursery {
             tasks: RefCell::new(Vec::new()),
             ready: Rc::new(RefCell::new(VecDeque::new())),
             fail_fast: false,
+            timers: Rc::new(RefCell::new(TimerService::new())),
         }
     }
 
@@ -68,6 +72,7 @@ impl Nursery {
             tasks: RefCell::new(Vec::new()),
             ready: Rc::new(RefCell::new(VecDeque::new())),
             fail_fast: true,
+            timers: Rc::new(RefCell::new(TimerService::new())),
         }
     }
 }
@@ -105,6 +110,30 @@ enum Suspension {
     Await,
     Receive,
     Send(Option<SourceSpan>),
+    Select,
+}
+
+enum RuntimeSelectCase {
+    Receive {
+        channel: Rc<Channel>,
+        handler: Option<Value>,
+    },
+    Send {
+        channel: Rc<Channel>,
+        value: Value,
+        handler: Option<Value>,
+    },
+    After {
+        deadline: Instant,
+        handler: Option<Value>,
+    },
+    Await {
+        task: Rc<Task>,
+        handler: Option<Value>,
+    },
+    Default {
+        handler: Option<Value>,
+    },
 }
 
 impl TaskExecution {
@@ -482,10 +511,13 @@ impl Vm {
                 ExecutionOutcome::Settled(result) => return self.settle_tasks(result),
                 ExecutionOutcome::Suspended => loop {
                     if let Some(result) = root.take_resume() {
+                        if let Some(wait_registration) = self.wait_registration.take() {
+                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                        }
                         self.resume = Some(result);
                         break;
                     }
-                    if !self.run_next_ready_task() {
+                    if !self.make_progress() {
                         return Err(self.error(
                             RuntimeErrorKind::InvalidCall,
                             "task remains blocked with no runnable work".into(),
@@ -893,13 +925,8 @@ impl Vm {
                 Op::Import(kinds) => self.import(kinds, span)?,
                 Op::Spawn => self.spawn_task(program, span)?,
                 Op::Nursery { has_limit } => self.run_nursery(program, has_limit, span)?,
-                Op::Select(_) => {
-                    return Err(self.error(
-                        RuntimeErrorKind::NotImplemented,
-                        "select execution is not implemented yet".into(),
-                        span,
-                    ));
-                }
+                Op::Select(cases) => self.select(&cases, span)?,
+                Op::SelectApply => self.select_apply(program, span)?,
                 Op::TryMatch {
                     pattern,
                     bindings,
@@ -1374,7 +1401,7 @@ impl Vm {
 
     fn run_task(&self, task: &Task) {
         while task.is_pending() {
-            if !self.run_next_ready_task() {
+            if !self.make_progress() {
                 return;
             }
         }
@@ -1395,6 +1422,33 @@ impl Vm {
             }
         }
         true
+    }
+
+    fn make_progress(&self) -> bool {
+        self.run_next_ready_task() || self.wait_for_timer()
+    }
+
+    fn wait_for_timer(&self) -> bool {
+        if self.wake_due_timers() {
+            return true;
+        }
+        let Some(deadline) = self.nursery.timers.borrow().next_deadline() else {
+            return false;
+        };
+        let now = Instant::now();
+        if deadline > now {
+            std::thread::sleep(deadline.duration_since(now));
+        }
+        self.wake_due_timers()
+    }
+
+    fn wake_due_timers(&self) -> bool {
+        let due = self.nursery.timers.borrow_mut().take_due();
+        let woke = !due.is_empty();
+        for waiter in due {
+            waiter.resume(Ok(Value::Nil));
+        }
+        woke
     }
 
     fn next_ready_task(&self) -> Option<Rc<Task>> {
@@ -1877,6 +1931,280 @@ impl Vm {
             .map(ModuleLoader::configuration)
     }
 
+    #[allow(clippy::too_many_lines)]
+    fn select(&mut self, cases: &[SelectCase], span: Option<SourceSpan>) -> VmResult<()> {
+        if cases.is_empty() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "select requires at least one case".into(),
+                span,
+            ));
+        }
+        let mut values = Vec::with_capacity(cases.len());
+        for case in cases.iter().rev() {
+            let has_handler = match case {
+                SelectCase::Receive { has_handler }
+                | SelectCase::Send { has_handler }
+                | SelectCase::After { has_handler }
+                | SelectCase::Await { has_handler }
+                | SelectCase::Default { has_handler } => *has_handler,
+            };
+            let handler = has_handler.then(|| self.pop(span.clone())).transpose()?;
+            let value = match case {
+                SelectCase::Receive { .. } => {
+                    let value = self.pop(span.clone())?;
+                    let Value::Channel(channel) = value else {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            format!("select recv expects chan, got {}", value.type_name()),
+                            span,
+                        ));
+                    };
+                    RuntimeSelectCase::Receive { channel, handler }
+                }
+                SelectCase::Send { .. } => {
+                    let value = self.pop(span.clone())?;
+                    let channel = self.pop(span.clone())?;
+                    let Value::Channel(channel) = channel else {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            format!("select send expects chan, got {}", channel.type_name()),
+                            span,
+                        ));
+                    };
+                    if matches!(value, Value::Nil) {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            "send cannot send nil".into(),
+                            span,
+                        ));
+                    }
+                    RuntimeSelectCase::Send {
+                        channel,
+                        value,
+                        handler,
+                    }
+                }
+                SelectCase::After { .. } => {
+                    let duration = self.pop(span.clone())?;
+                    let Value::Int(milliseconds) = duration else {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            format!("select after expects num, got {}", duration.type_name()),
+                            span,
+                        ));
+                    };
+                    let milliseconds = u64::try_from(milliseconds).map_err(|_| {
+                        self.error(
+                            RuntimeErrorKind::Type,
+                            "select after must not be negative or too large".into(),
+                            span.clone(),
+                        )
+                    })?;
+                    RuntimeSelectCase::After {
+                        deadline: Instant::now()
+                            .checked_add(Duration::from_millis(milliseconds))
+                            .ok_or_else(|| {
+                                self.error(
+                                    RuntimeErrorKind::Type,
+                                    "select after is too large".into(),
+                                    span.clone(),
+                                )
+                            })?,
+                        handler,
+                    }
+                }
+                SelectCase::Await { .. } => {
+                    let value = self.pop(span.clone())?;
+                    let Value::Task(task) = value else {
+                        return Err(self.error(
+                            RuntimeErrorKind::Type,
+                            format!("select await expects task, got {}", value.type_name()),
+                            span,
+                        ));
+                    };
+                    RuntimeSelectCase::Await { task, handler }
+                }
+                SelectCase::Default { .. } => RuntimeSelectCase::Default { handler },
+            };
+            values.push(value);
+        }
+        values.reverse();
+
+        let mut default = None;
+        for case in &values {
+            match case {
+                RuntimeSelectCase::Receive { channel, handler } => {
+                    let mut state = channel.state.borrow_mut();
+                    if let Some(value) = state.messages.pop_front() {
+                        if let Some((sender, pending)) = state.senders.pop_front() {
+                            state.messages.push_back(pending);
+                            drop(state);
+                            sender.resume(Ok(Value::Nil));
+                        }
+                        self.push_select_result(value, handler.clone());
+                        return Ok(());
+                    }
+                    if let Some((sender, value)) = state.senders.pop_front() {
+                        drop(state);
+                        sender.resume(Ok(Value::Nil));
+                        self.push_select_result(value, handler.clone());
+                        return Ok(());
+                    }
+                    if state.closed {
+                        self.push_select_result(Value::Nil, handler.clone());
+                        return Ok(());
+                    }
+                }
+                RuntimeSelectCase::Send {
+                    channel,
+                    value,
+                    handler,
+                } => {
+                    let mut state = channel.state.borrow_mut();
+                    if state.closed {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidCall,
+                            "send on a closed channel".into(),
+                            span,
+                        ));
+                    }
+                    if let Some(receiver) = state.receivers.pop_front() {
+                        drop(state);
+                        receiver.resume(Ok(value.clone()));
+                        self.push_select_result(Value::Nil, handler.clone());
+                        return Ok(());
+                    }
+                    if state.messages.len() < state.capacity {
+                        state.messages.push_back(value.clone());
+                        self.push_select_result(Value::Nil, handler.clone());
+                        return Ok(());
+                    }
+                }
+                RuntimeSelectCase::Await { task, handler } => {
+                    self.run_task(task);
+                    if task.is_running() {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidCall,
+                            "task cannot await itself while it is running".into(),
+                            span,
+                        ));
+                    }
+                    if let Some(outcome) = task.await_outcome() {
+                        self.push_select_result(outcome?, handler.clone());
+                        return Ok(());
+                    }
+                }
+                RuntimeSelectCase::After { deadline, handler } => {
+                    if *deadline <= Instant::now() {
+                        self.push_select_result(Value::Nil, handler.clone());
+                        return Ok(());
+                    }
+                }
+                RuntimeSelectCase::Default { handler } => default = Some(handler.clone()),
+            }
+        }
+        if let Some(handler) = default {
+            self.push_select_result(Value::Nil, handler);
+            return Ok(());
+        }
+
+        let base = self.current_waiter(span.clone())?;
+        let select_state = WaitSet::select_state(base.clone());
+        let mut registrations = Vec::new();
+        for case in values {
+            match case {
+                RuntimeSelectCase::Receive { channel, handler } => {
+                    let waiter = Waiter::Select {
+                        state: select_state.clone(),
+                        handler,
+                    };
+                    channel.state.borrow_mut().receivers.push_back(waiter);
+                    registrations.push(WaitRegistration::ChannelReceive(channel));
+                }
+                RuntimeSelectCase::Send {
+                    channel,
+                    value,
+                    handler,
+                } => {
+                    let waiter = Waiter::Select {
+                        state: select_state.clone(),
+                        handler,
+                    };
+                    waiter.set_closed_send_error(self.error(
+                        RuntimeErrorKind::InvalidCall,
+                        "send on a closed channel".into(),
+                        span.clone(),
+                    ));
+                    channel
+                        .state
+                        .borrow_mut()
+                        .senders
+                        .push_back((waiter, value));
+                    registrations.push(WaitRegistration::ChannelSend(channel));
+                }
+                RuntimeSelectCase::Await { task, handler } => {
+                    task.wait_for(Waiter::Select {
+                        state: select_state.clone(),
+                        handler,
+                    });
+                    registrations.push(WaitRegistration::TaskAwait(task));
+                }
+                RuntimeSelectCase::After { deadline, handler } => {
+                    self.nursery.timers.borrow_mut().register(
+                        deadline,
+                        Waiter::Select {
+                            state: select_state.clone(),
+                            handler,
+                        },
+                    );
+                    registrations.push(WaitRegistration::Timer(self.nursery.timers.clone()));
+                }
+                RuntimeSelectCase::Default { .. } => {}
+            }
+        }
+        let registrations = WaitSet::many(registrations);
+        WaitSet::set_select_registrations(&select_state, registrations.clone());
+        self.wait_registration = Some(registrations);
+        self.stack.push(Value::Nil);
+        self.suspension = Some(Suspension::Select);
+        Ok(())
+    }
+
+    fn push_select_result(&mut self, value: Value, handler: Option<Value>) {
+        self.stack.push(Value::List(
+            vec![value, handler.unwrap_or(Value::Nil)].into(),
+        ));
+    }
+
+    fn select_apply(&mut self, program: &Program, span: Option<SourceSpan>) -> VmResult<()> {
+        let selected = self.pop(span.clone())?;
+        let Value::List(values) = selected else {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "select result is invalid".into(),
+                span,
+            ));
+        };
+        if values.len() != 2 {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "select result has invalid arity".into(),
+                span,
+            ));
+        }
+        let value = values[0].clone();
+        let handler = values[1].clone();
+        if matches!(handler, Value::Nil) {
+            self.stack.push(value);
+        } else {
+            self.stack.push(handler);
+            self.stack.push(value);
+            self.call(program, 1, None, span)?;
+        }
+        Ok(())
+    }
+
     fn current_waiter(&self, span: Option<SourceSpan>) -> VmResult<Waiter> {
         self.current_waiter.clone().ok_or_else(|| {
             self.error(
@@ -1942,6 +2270,7 @@ impl Vm {
             ));
         }
         if let Some(receiver) = state.receivers.pop_front() {
+            drop(state);
             receiver.resume(Ok(arguments[1].clone()));
             return Ok(Value::Nil);
         }
@@ -1983,11 +2312,13 @@ impl Vm {
         if let Some(value) = state.messages.pop_front() {
             if let Some((sender, pending)) = state.senders.pop_front() {
                 state.messages.push_back(pending);
+                drop(state);
                 sender.resume(Ok(Value::Nil));
             }
             return Ok(value);
         }
         if let Some((sender, value)) = state.senders.pop_front() {
+            drop(state);
             sender.resume(Ok(Value::Nil));
             return Ok(value);
         }
@@ -2025,10 +2356,17 @@ impl Vm {
             return Ok(Value::Nil);
         }
         state.closed = true;
-        for receiver in state.receivers.drain(..) {
+        let receivers = state.receivers.drain(..).collect::<Vec<_>>();
+        let senders = state
+            .senders
+            .drain(..)
+            .map(|(sender, _)| sender)
+            .collect::<Vec<_>>();
+        drop(state);
+        for receiver in receivers {
             receiver.resume(Ok(Value::Nil));
         }
-        for (sender, _) in state.senders.drain(..) {
+        for sender in senders {
             sender.reject_closed_send();
         }
         Ok(Value::Nil)

@@ -27,15 +27,15 @@ compiled-module contract is documented separately as `.cslug`.
   documentation blocks with retained module metadata (but without metadata
   introspection), comments, automatic invocation of a local zero-argument
   `main`, preliminary cooperative `spawn` task handles with `await`, explicit
-  nurseries, bounded FIFO channels with `channel`, `send`, `recv`, and `close`, and
-  `println`.
+  nurseries, bounded FIFO channels with `channel`, `send`, `recv`, and `close`,
+  `select` receive/send/timer/task-await/default cases, and `println`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative resolution, cached isolated module initialization, and
   string-keyed exported-value maps.
 - Immutable configuration collection from library and project TOML, `SLUG__`
   environment variables, and program options; source access through `cfg` is a
   subsequent milestone.
-- The standard library, full type inference, `select`, and the remaining language forms are progressive
+- The standard library, full type inference, and the remaining language forms are progressive
   milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no
   encoder or loader is implemented yet.
