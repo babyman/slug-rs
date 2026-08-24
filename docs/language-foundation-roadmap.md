@@ -146,8 +146,8 @@ and the host boundary in
 
 ## 6. Add structured concurrency
 
-- [ ] Implement the implicit root task owner and explicit nurseries.
-- [ ] Implement task handles, spawn capture, ownership, limits, cancellation,
+- [x] Implement the implicit root task owner and explicit nurseries.
+- [x] Implement task handles, spawn capture, ownership, limits, cancellation,
   settlement, and repeated await behavior.
 - [ ] Implement channel values, their checked runtime operations, and the
   bounded native producer capability defined by the native interface.
@@ -156,7 +156,7 @@ and the host boundary in
   diagnostics.
 - [x] Implement the timer host service used by timer-oriented language forms.
 - [ ] Add focused runtime and VM coverage for concurrency behavior.
-- [ ] Run `make check`.
+- [x] Run `make check`.
 
 ## 7. Add the public library and run full conformance
 

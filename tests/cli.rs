@@ -66,6 +66,29 @@ fn executes_spawned_tasks_and_explicit_nurseries() {
 }
 
 #[test]
+fn repeated_awaits_return_one_cached_task_completion() {
+    let path = fixture_path("repeated-await");
+    fs::write(
+        &path,
+        "val task = spawn { println(\"ran\"); 42 }\nprintln(await(task))\nprintln(await(task))\n",
+    )
+    .expect("write repeated await source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run repeated await source");
+    fs::remove_file(path).expect("remove repeated await source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "ran\n42\n42\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn channels_rendezvous_between_cooperatively_scheduled_tasks() {
     let path = fixture_path("channel-rendezvous");
     fs::write(

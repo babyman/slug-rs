@@ -7,6 +7,9 @@
   losing channel, task, and timer registrations as soon as one case wins.
 - Added regression coverage for selected task failures: they now demonstrably
   follow ordinary `throw` cleanup and `defer onerror` recovery paths.
+- Audited the structured-concurrency roadmap: root and explicit nurseries,
+  task ownership and limits, cancellation, settlement, spawn capture, and
+  repeated awaits are complete; native channel producers remain outstanding.
 - Added bounded FIFO channel builtins: `channel(capacity)`, `send`, `recv`,
   and idempotent `close`. Spawned tasks now suspend without unwinding their VM
   state, preserve deferred cleanup while blocked, and resume through FIFO
