@@ -617,8 +617,10 @@ impl Parser {
             let token = self.next();
             let case_span = token.span.clone();
             let kind = match token.kind {
-                TokenKind::Recv => SelectCaseKind::Receive(self.expression()?),
-                TokenKind::Send => {
+                TokenKind::Name(name) if name == "recv" => {
+                    SelectCaseKind::Receive(self.expression()?)
+                }
+                TokenKind::Name(name) if name == "send" => {
                     let channel = self.expression()?;
                     self.consume(&TokenKind::Comma, "expected , after select send channel")?;
                     SelectCaseKind::Send {
@@ -626,7 +628,9 @@ impl Parser {
                         value: self.expression()?,
                     }
                 }
-                TokenKind::Await => SelectCaseKind::Await(self.expression()?),
+                TokenKind::Name(name) if name == "await" => {
+                    SelectCaseKind::Await(self.expression()?)
+                }
                 TokenKind::Name(name) if name == "_" => SelectCaseKind::Default,
                 _ => return Err(SourceError::at("expected select case", case_span)),
             };

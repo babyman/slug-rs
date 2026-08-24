@@ -13,7 +13,7 @@ use crate::{
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, Closure, GlobalEnvironment, RootWaiter, TaskAdmission,
-        WaitRegistration, Waiter, binding_cell, global_environment, module_binding,
+        WaitRegistration, WaitSet, Waiter, binding_cell, global_environment, module_binding,
     },
 };
 
@@ -142,7 +142,7 @@ impl TaskExecution {
         )));
     }
 
-    pub(crate) fn take_wait_registration(&mut self) -> Option<WaitRegistration> {
+    pub(crate) fn take_wait_registration(&mut self) -> Option<WaitSet> {
         self.vm.wait_registration.take()
     }
 }
@@ -164,7 +164,7 @@ pub struct Vm {
     current_waiter: Option<Waiter>,
     suspension: Option<Suspension>,
     resume: Option<VmResult<Value>>,
-    wait_registration: Option<WaitRegistration>,
+    wait_registration: Option<WaitSet>,
 }
 
 impl Default for Vm {
@@ -1843,7 +1843,8 @@ impl Vm {
                 }
                 let waiter = self.current_waiter(span.clone())?;
                 if matches!(waiter, Waiter::Task(_)) {
-                    self.wait_registration = Some(WaitRegistration::TaskAwait(task.clone()));
+                    self.wait_registration =
+                        Some(WaitSet::one(WaitRegistration::TaskAwait(task.clone())));
                 }
                 task.wait_for(waiter);
                 self.suspension = Some(Suspension::Await);
@@ -1948,7 +1949,8 @@ impl Vm {
             span.clone(),
         ));
         if matches!(sender, Waiter::Task(_)) {
-            self.wait_registration = Some(WaitRegistration::ChannelSend(channel.clone()));
+            self.wait_registration =
+                Some(WaitSet::one(WaitRegistration::ChannelSend(channel.clone())));
         }
         state.senders.push_back((sender, arguments[1].clone()));
         self.suspension = Some(Suspension::Send(span));
@@ -1987,7 +1989,9 @@ impl Vm {
         }
         let receiver = self.current_waiter(span.clone())?;
         if matches!(receiver, Waiter::Task(_)) {
-            self.wait_registration = Some(WaitRegistration::ChannelReceive(channel.clone()));
+            self.wait_registration = Some(WaitSet::one(WaitRegistration::ChannelReceive(
+                channel.clone(),
+            )));
         }
         state.receivers.push_back(receiver);
         self.suspension = Some(Suspension::Receive);

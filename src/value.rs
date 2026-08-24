@@ -101,6 +101,33 @@ impl WaitRegistration {
     }
 }
 
+/// All queues a suspended execution currently occupies. A regular blocking
+/// operation has one entry; a future select owns several and removes losers
+/// before its winner resumes.
+pub(crate) struct WaitSet {
+    registrations: Vec<WaitRegistration>,
+}
+
+impl WaitSet {
+    pub(crate) fn one(registration: WaitRegistration) -> Self {
+        Self {
+            registrations: vec![registration],
+        }
+    }
+
+    fn remove(self, task: &Task) {
+        for registration in self.registrations {
+            registration.remove(task);
+        }
+    }
+
+    fn remove_losers(self, task: &Task) {
+        if self.registrations.len() > 1 {
+            self.remove(task);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct RootWaiter {
     state: Rc<RefCell<RootWaiterState>>,
@@ -207,7 +234,7 @@ struct TaskState {
     observed: bool,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     waiters: Vec<Waiter>,
-    wait_registration: Option<WaitRegistration>,
+    wait_registration: Option<WaitSet>,
 }
 
 impl fmt::Debug for Task {
@@ -301,7 +328,7 @@ impl Task {
     pub(crate) fn suspend(
         &self,
         execution: crate::vm::TaskExecution,
-        wait_registration: Option<WaitRegistration>,
+        wait_registration: Option<WaitSet>,
     ) {
         let mut state = self.state.borrow_mut();
         state.running = false;
@@ -311,25 +338,31 @@ impl Task {
 
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
         let mut state = self.state.borrow_mut();
-        state.wait_registration = None;
+        let wait_registration = state.wait_registration.take();
         let Some(execution) = &mut state.pending else {
             return;
         };
         execution.resume(result);
         let ready = state.ready.clone();
         drop(state);
+        if let Some(wait_registration) = wait_registration {
+            wait_registration.remove_losers(self);
+        }
         ready.borrow_mut().push_back(Rc::new(self.clone()));
     }
 
     pub(crate) fn reject_closed_send(&self) {
         let mut state = self.state.borrow_mut();
-        state.wait_registration = None;
+        let wait_registration = state.wait_registration.take();
         let Some(execution) = &mut state.pending else {
             return;
         };
         execution.reject_closed_send();
         let ready = state.ready.clone();
         drop(state);
+        if let Some(wait_registration) = wait_registration {
+            wait_registration.remove_losers(self);
+        }
         ready.borrow_mut().push_back(Rc::new(self.clone()));
     }
 
