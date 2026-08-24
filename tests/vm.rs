@@ -1,9 +1,9 @@
 use std::{cell::Cell, rc::Rc};
 
 use slug_vm::{
-    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, NativeArity, NativeCall, NativeError,
-    NativeModule, NativeOwnedValue, NativeResourceType, NativeStatus, Op, Program,
-    RuntimeErrorKind, SchemaField, SourceSpan, Value, Vm, compile,
+    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, ModuleLoader, NativeArity,
+    NativeCall, NativeError, NativeModule, NativeOwnedValue, NativeResourceType, NativeStatus, Op,
+    Program, RuntimeErrorKind, SchemaField, SourceSpan, Value, Vm, compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {
@@ -20,6 +20,7 @@ mod native_resource_fixture {
     struct Payload {
         closed: Rc<Cell<usize>>,
         destroyed: Rc<Cell<usize>>,
+        panic_on_first_close: bool,
     }
 
     struct State {
@@ -56,6 +57,18 @@ mod native_resource_fixture {
             ),
             ("wrong_resource", NativeArity::Exact(1), wrong_resource),
             ("close_resource", NativeArity::Exact(1), close_resource),
+            ("busy_then_close", NativeArity::Exact(1), busy_then_close),
+            ("retry_close", NativeArity::Exact(1), retry_close),
+            (
+                "fail_with_resource",
+                NativeArity::Exact(0),
+                fail_with_resource,
+            ),
+            (
+                "make_panicking_resource",
+                NativeArity::Exact(0),
+                make_panicking_resource,
+            ),
         ] {
             vm.define_native(module.function(name, arity, callback).unwrap())
                 .unwrap();
@@ -63,6 +76,10 @@ mod native_resource_fixture {
     }
 
     fn close(payload: &mut Payload) {
+        if payload.panic_on_first_close {
+            payload.panic_on_first_close = false;
+            panic!("first close fails");
+        }
         payload.closed.set(payload.closed.get() + 1);
     }
 
@@ -77,6 +94,21 @@ mod native_resource_fixture {
         let payload = Payload {
             closed: state.closed.clone(),
             destroyed: state.destroyed.clone(),
+            panic_on_first_close: false,
+        };
+        match call.resource(&resource_type, payload) {
+            Ok(value) => call.return_value(value),
+            Err(error) => call.raise(error),
+        }
+    }
+
+    fn make_panicking_resource(call: &mut NativeCall<'_>) -> NativeStatus {
+        let state = call.state::<State>().unwrap();
+        let resource_type = state.first.borrow().as_ref().unwrap().clone();
+        let payload = Payload {
+            closed: state.closed.clone(),
+            destroyed: state.destroyed.clone(),
+            panic_on_first_close: true,
         };
         match call.resource(&resource_type, payload) {
             Ok(value) => call.return_value(value),
@@ -115,6 +147,70 @@ mod native_resource_fixture {
             return call.raise(error);
         }
         call.return_value(NativeOwnedValue::nil())
+    }
+
+    fn busy_then_close(call: &mut NativeCall<'_>) -> NativeStatus {
+        let resource_type = call
+            .state::<State>()
+            .unwrap()
+            .first
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .clone();
+        let nested = match call.with_resource(0, &resource_type, |_| {
+            call.close_resource(0, &resource_type)
+        }) {
+            Ok(result) => result,
+            Err(error) => return call.raise(error),
+        };
+        if nested.is_ok() {
+            return call.raise(NativeError::new(
+                "test.expected_busy",
+                "overlapping close unexpectedly succeeded",
+            ));
+        }
+        if let Err(error) = call.close_resource(0, &resource_type) {
+            return call.raise(error);
+        }
+        call.return_value(NativeOwnedValue::nil())
+    }
+
+    fn retry_close(call: &mut NativeCall<'_>) -> NativeStatus {
+        let resource_type = call
+            .state::<State>()
+            .unwrap()
+            .first
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .clone();
+        if call.close_resource(0, &resource_type).is_ok() {
+            return call.raise(NativeError::new(
+                "test.expected_close_failure",
+                "first close unexpectedly succeeded",
+            ));
+        }
+        if let Err(error) = call.close_resource(0, &resource_type) {
+            return call.raise(error);
+        }
+        call.return_value(NativeOwnedValue::nil())
+    }
+
+    fn fail_with_resource(call: &mut NativeCall<'_>) -> NativeStatus {
+        let state = call.state::<State>().unwrap();
+        let resource_type = state.first.borrow().as_ref().unwrap().clone();
+        let payload = Payload {
+            closed: state.closed.clone(),
+            destroyed: state.destroyed.clone(),
+            panic_on_first_close: false,
+        };
+        match call.resource(&resource_type, payload) {
+            Ok(value) => call.raise(
+                NativeError::new("test.resource_error", "resource in error data").with_data(value),
+            ),
+            Err(error) => call.raise(error),
+        }
     }
 }
 
@@ -1186,6 +1282,114 @@ fn validates_native_resource_types_and_closes_resources_on_teardown() {
     assert_eq!(closed.get(), 2);
     drop(resource);
     assert_eq!(destroyed.get(), 3);
+}
+
+#[test]
+fn retries_native_resource_close_after_busy_and_panicking_attempts() {
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed.clone(), destroyed);
+    let mut vm = Vm::new();
+    native_resource_fixture::install(&mut vm, &module);
+
+    for (factory, closer) in [
+        ("make_resource", "busy_then_close"),
+        ("make_panicking_resource", "retry_close"),
+    ] {
+        let mut main = Chunk::new("main", 0);
+        main.emit(Op::GetGlobal(closer.into()))
+            .emit(Op::GetGlobal(factory.into()))
+            .emit(Op::Call(0))
+            .emit(Op::Call(1))
+            .emit(Op::Return);
+        assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Nil);
+    }
+
+    assert_eq!(closed.get(), 2);
+}
+
+#[test]
+fn closes_a_native_resource_retained_by_structured_error_data() {
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed.clone(), destroyed.clone());
+    let mut vm = Vm::new();
+    native_resource_fixture::install(&mut vm, &module);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::GetGlobal("fail_with_resource".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Return);
+    let error = vm
+        .run(&program_with_main(main), 0)
+        .expect_err("native resource error should fail");
+    assert!(matches!(
+        error
+            .native
+            .as_deref()
+            .and_then(|native| native.data.as_ref()),
+        Some(Value::NativeResource(_))
+    ));
+
+    drop(vm);
+    assert_eq!(closed.get(), 1);
+    drop(error);
+    assert_eq!(destroyed.get(), 1);
+}
+
+#[test]
+fn shared_loader_closes_native_resources_only_after_its_last_runtime_owner() {
+    let closed = Rc::new(Cell::new(0));
+    let destroyed = Rc::new(Cell::new(0));
+    let module = native_resource_fixture::module(closed.clone(), destroyed.clone());
+    let loader = ModuleLoader::new(".", None);
+    let mut first = Vm::with_module_loader(loader.clone());
+    native_resource_fixture::install(&mut first, &module);
+
+    let mut make = Chunk::new("make", 0);
+    make.emit(Op::GetGlobal("make_resource".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Return);
+    let resource = first.run(&program_with_main(make), 0).unwrap();
+    let second = Vm::with_module_loader(loader.clone());
+
+    drop(second);
+    drop(first);
+    assert_eq!(closed.get(), 0);
+    drop(loader);
+    assert_eq!(closed.get(), 1);
+    drop(resource);
+    assert_eq!(destroyed.get(), 1);
+}
+
+#[test]
+fn native_descriptors_use_module_qualified_signature_identity() {
+    fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::nil())
+    }
+
+    let first = NativeModule::new("test.first", ()).unwrap();
+    let function = first
+        .function("read", NativeArity::Exact(0), returns_nil)
+        .unwrap();
+    assert_eq!(function.qualified_name(), "test.first.read");
+    assert!(
+        first
+            .function("read", NativeArity::Exact(0), returns_nil)
+            .is_err()
+    );
+    assert!(
+        first
+            .function("read", NativeArity::Exact(1), returns_nil)
+            .is_ok()
+    );
+
+    let second = NativeModule::new("test.second", ()).unwrap();
+    assert!(
+        second
+            .function("read", NativeArity::Exact(0), returns_nil)
+            .is_ok()
+    );
 }
 
 #[test]

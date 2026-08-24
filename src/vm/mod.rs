@@ -55,7 +55,6 @@ pub struct Vm {
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
     native_resources: NativeResourceRegistry,
-    owns_native_resources: bool,
 }
 
 impl Default for Vm {
@@ -70,7 +69,6 @@ impl Default for Vm {
             frames: Vec::new(),
             cleanup: Vec::new(),
             native_resources: native_resource_registry(),
-            owns_native_resources: true,
         }
     }
 }
@@ -83,16 +81,18 @@ impl Vm {
 
     #[must_use]
     pub fn with_module_loader(module_loader: ModuleLoader) -> Self {
-        let mut vm = Self::default();
-        vm.native_resources = module_loader.native_resources();
-        vm.module_loader = Some(module_loader);
+        let native_resources = module_loader.native_resources();
+        let mut vm = Self {
+            module_loader: Some(module_loader),
+            native_resources,
+            ..Self::default()
+        };
         vm.install_configuration_builtins();
         vm
     }
 
     pub(crate) fn with_module_bindings(module_loader: &ModuleLoader, names: &[String]) -> Self {
         let mut vm = Self::with_module_loader(module_loader.clone());
-        vm.owns_native_resources = false;
         vm.globals.extend(module_loader.native_globals());
         for name in names {
             vm.globals
@@ -179,7 +179,11 @@ impl Vm {
         ))
     }
 
-    /// Installs one validated native descriptor in the VM's global bindings.
+    /// Installs one validated native descriptor as a local VM global.
+    ///
+    /// The descriptor retains its module-qualified identity. This adapter uses
+    /// only its local binding name until `foreign` declarations gain a
+    /// module-qualified registry.
     ///
     /// # Errors
     ///
@@ -1035,7 +1039,6 @@ impl Vm {
             frames: Vec::new(),
             cleanup: Vec::new(),
             native_resources: self.native_resources.clone(),
-            owns_native_resources: false,
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
         locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
@@ -1378,14 +1381,15 @@ impl Vm {
     ) -> VmResult<Value> {
         match function.invoke(arguments) {
             NativeInvocation::Result(value, resources) => {
-                self.native_resources.borrow_mut().extend(resources);
+                self.native_resources.register(resources);
                 Ok(value)
             }
-            NativeInvocation::Error(error) => {
+            NativeInvocation::Error(error, resources) => {
+                self.native_resources.register(resources);
                 let (code, message, data) = error.into_parts();
                 let mut error = self.error(
                     RuntimeErrorKind::Native,
-                    format!("native `{}`: {message}", function.name()),
+                    format!("native `{}`: {message}", function.qualified_name()),
                     span,
                 );
                 error.native = Some(Box::new(NativeErrorDetails { code, data }));
@@ -1657,18 +1661,5 @@ impl Vm {
         }
         self.frames.last_mut().expect("active frame was checked").ip = target;
         Ok(())
-    }
-}
-
-impl Drop for Vm {
-    fn drop(&mut self) {
-        if !self.owns_native_resources {
-            return;
-        }
-        for resource in self.native_resources.borrow().iter() {
-            if let Some(resource) = resource.upgrade() {
-                let _ = resource.close();
-            }
-        }
     }
 }

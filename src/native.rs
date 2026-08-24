@@ -6,21 +6,110 @@ use std::{
     marker::PhantomData,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::{Rc, Weak},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Once,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use crate::Value;
 
-pub(crate) type NativeResourceRegistry = Rc<RefCell<Vec<Weak<NativeResource>>>>;
+#[derive(Clone)]
+pub(crate) struct NativeResourceRegistry(Rc<NativeResourceRegistryInner>);
+
+struct NativeResourceRegistryInner {
+    resources: RefCell<Vec<Weak<NativeResource>>>,
+}
 
 pub(crate) fn native_resource_registry() -> NativeResourceRegistry {
-    Rc::new(RefCell::new(Vec::new()))
+    NativeResourceRegistry(Rc::new(NativeResourceRegistryInner {
+        resources: RefCell::new(Vec::new()),
+    }))
+}
+
+impl NativeResourceRegistry {
+    pub(crate) fn register(&self, resources: Vec<Weak<NativeResource>>) {
+        let mut tracked = self.0.resources.borrow_mut();
+        tracked.retain(|resource| resource.strong_count() > 0);
+        tracked.extend(
+            resources
+                .into_iter()
+                .filter(|resource| resource.strong_count() > 0),
+        );
+    }
+
+    #[cfg(test)]
+    fn tracked_count(&self) -> usize {
+        self.0.resources.borrow().len()
+    }
+}
+
+impl fmt::Debug for NativeResourceRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NativeResourceRegistry")
+            .field("tracked", &self.0.resources.borrow().len())
+            .finish()
+    }
+}
+
+impl Drop for NativeResourceRegistryInner {
+    fn drop(&mut self) {
+        for resource in self.resources.get_mut().iter() {
+            if let Some(resource) = resource.upgrade() {
+                let _ = resource.close();
+            }
+        }
+    }
 }
 
 static NEXT_MODULE_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_RESOURCE_TYPE_ID: AtomicUsize = AtomicUsize::new(1);
+static NATIVE_PANIC_HOOK: Once = Once::new();
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+thread_local! {
+    static NATIVE_BOUNDARY_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+struct NativeBoundaryGuard {
+    previous_depth: usize,
+}
+
+impl NativeBoundaryGuard {
+    fn enter() -> Self {
+        install_native_panic_hook();
+        let previous_depth = NATIVE_BOUNDARY_DEPTH.with(|depth| {
+            let previous = depth.get();
+            depth.set(previous.saturating_add(1));
+            previous
+        });
+        Self { previous_depth }
+    }
+}
+
+impl Drop for NativeBoundaryGuard {
+    fn drop(&mut self) {
+        NATIVE_BOUNDARY_DEPTH.with(|depth| depth.set(self.previous_depth));
+    }
+}
+
+fn install_native_panic_hook() {
+    NATIVE_PANIC_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let inside_native = NATIVE_BOUNDARY_DEPTH.with(|depth| depth.get() > 0);
+            if !inside_native {
+                previous(info);
+            }
+        }));
+    });
+}
+
+fn catch_native_unwind<R>(operation: impl FnOnce() -> R) -> std::thread::Result<R> {
+    let _guard = NativeBoundaryGuard::enter();
+    catch_unwind(AssertUnwindSafe(operation))
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NativeArity {
     Exact(usize),
     Variadic { minimum: usize },
@@ -314,6 +403,7 @@ struct NativeModuleInner {
     id: usize,
     name: Rc<str>,
     state: Box<dyn Any>,
+    function_signatures: RefCell<HashSet<(String, NativeArity)>>,
     resource_types: RefCell<HashSet<String>>,
 }
 
@@ -335,6 +425,7 @@ impl NativeModule {
                 id: NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed),
                 name,
                 state: Box::new(state),
+                function_signatures: RefCell::new(HashSet::new()),
                 resource_types: RefCell::new(HashSet::new()),
             }),
         })
@@ -351,7 +442,24 @@ impl NativeModule {
         arity: NativeArity,
         callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
     ) -> Result<NativeFunction, NativeDescriptorError> {
-        NativeFunction::new(self.clone(), name, arity, callback)
+        let name = name.into();
+        if name.trim().is_empty() {
+            return Err(NativeDescriptorError::new(
+                "native function name cannot be empty",
+            ));
+        }
+        if !self
+            .inner
+            .function_signatures
+            .borrow_mut()
+            .insert((name.to_string(), arity))
+        {
+            return Err(NativeDescriptorError::new(format!(
+                "native function `{}.{name}` with arity {arity:?} is already registered",
+                self.inner.name
+            )));
+        }
+        Ok(NativeFunction::new(self.clone(), name, arity, callback))
     }
 
     /// Registers an identity-bearing resource type and its lifecycle callbacks.
@@ -416,27 +524,31 @@ struct NativeFunctionInner {
 impl NativeFunction {
     fn new(
         module: NativeModule,
-        name: impl Into<Rc<str>>,
+        name: Rc<str>,
         arity: NativeArity,
         callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
-    ) -> Result<Self, NativeDescriptorError> {
-        let name = name.into();
-        if name.trim().is_empty() {
-            return Err(NativeDescriptorError::new(
-                "native function name cannot be empty",
-            ));
-        }
-        Ok(Self(Rc::new(NativeFunctionInner {
+    ) -> Self {
+        Self(Rc::new(NativeFunctionInner {
             module,
             name,
             arity,
             callback,
-        })))
+        }))
     }
 
     #[must_use]
     pub fn name(&self) -> &str {
         &self.0.name
+    }
+
+    #[must_use]
+    pub fn module_name(&self) -> &str {
+        &self.0.module.inner.name
+    }
+
+    #[must_use]
+    pub fn qualified_name(&self) -> String {
+        format!("{}.{}", self.module_name(), self.name())
     }
 
     pub(crate) fn same_function(&self, other: &Self) -> bool {
@@ -445,16 +557,18 @@ impl NativeFunction {
 
     pub(crate) fn invoke(&self, arguments: &[Value]) -> NativeInvocation {
         if !self.0.arity.accepts(arguments.len()) {
-            return NativeInvocation::Error(NativeError::new(
-                "native.arity",
-                format!(
-                    "`{}.{}` expects {} arguments, got {}",
-                    self.0.module.inner.name,
-                    self.0.name,
-                    self.0.arity.describe(),
-                    arguments.len()
+            return NativeInvocation::Error(
+                NativeError::new(
+                    "native.arity",
+                    format!(
+                        "`{}` expects {} arguments, got {}",
+                        self.qualified_name(),
+                        self.0.arity.describe(),
+                        arguments.len()
+                    ),
                 ),
-            ));
+                Vec::new(),
+            );
         }
         let mut call = NativeCall {
             arguments,
@@ -463,48 +577,40 @@ impl NativeFunction {
             violation: None,
             resources: Vec::new(),
         };
-        let status = catch_unwind(AssertUnwindSafe(|| (self.0.callback)(&mut call)));
+        let status = catch_native_unwind(|| (self.0.callback)(&mut call));
         let Ok(status) = status else {
-            return NativeInvocation::ContractViolation(format!(
-                "native `{}.{}` panicked",
-                self.0.module.inner.name, self.0.name
-            ));
+            return call.contract_violation(format!("native `{}` panicked", self.qualified_name()));
         };
-        if let Some(message) = call.violation {
-            return NativeInvocation::ContractViolation(message);
+        if let Some(message) = call.violation.take() {
+            return call.contract_violation(message);
         }
-        match (status, call.outcome) {
+        match (status, call.outcome.take()) {
             (NativeStatus::Ok, Some(NativeOutcome::Result(value))) => {
                 NativeInvocation::Result(value.into_value(), call.resources)
             }
             (NativeStatus::Error, Some(NativeOutcome::Error(error))) => {
-                NativeInvocation::Error(error)
+                NativeInvocation::Error(error, call.resources)
             }
-            (NativeStatus::Ok, None) => NativeInvocation::ContractViolation(format!(
-                "native `{}.{}` returned ok without a result",
-                self.0.module.inner.name, self.0.name
+            (NativeStatus::Ok, None) => call.contract_violation(format!(
+                "native `{}` returned ok without a result",
+                self.qualified_name()
             )),
-            (NativeStatus::Error, None) => NativeInvocation::ContractViolation(format!(
-                "native `{}.{}` returned error without an error value",
-                self.0.module.inner.name, self.0.name
+            (NativeStatus::Error, None) => call.contract_violation(format!(
+                "native `{}` returned error without an error value",
+                self.qualified_name()
             )),
             (NativeStatus::Ok, Some(NativeOutcome::Error(_))) => {
-                NativeInvocation::ContractViolation(
-                    "native callback returned ok after setting an error".into(),
-                )
+                call.contract_violation("native callback returned ok after setting an error".into())
             }
-            (NativeStatus::Error, Some(NativeOutcome::Result(_))) => {
-                NativeInvocation::ContractViolation(
-                    "native callback returned error after setting a result".into(),
-                )
-            }
+            (NativeStatus::Error, Some(NativeOutcome::Result(_))) => call
+                .contract_violation("native callback returned error after setting a result".into()),
         }
     }
 }
 
 impl fmt::Debug for NativeFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<native {}.{}>", self.0.module.inner.name, self.0.name)
+        write!(f, "<native {}>", self.qualified_name())
     }
 }
 
@@ -554,12 +660,19 @@ struct ResourceTypeRegistration {
     destroy: Box<ResourceDestroy>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeResourceState {
+    Open,
+    Closing,
+    Closed,
+}
+
 #[doc(hidden)]
 pub struct NativeResource {
     registration: Rc<ResourceTypeRegistration>,
     module: Rc<NativeModuleInner>,
     payload: RefCell<Option<Box<dyn Any>>>,
-    closed: Cell<bool>,
+    state: Cell<NativeResourceState>,
 }
 
 impl fmt::Debug for NativeResource {
@@ -567,38 +680,53 @@ impl fmt::Debug for NativeResource {
         f.debug_struct("NativeResource")
             .field("module", &self.module.name)
             .field("resource_type", &self.registration.name)
-            .field("closed", &self.closed.get())
+            .field("state", &self.state.get())
             .finish_non_exhaustive()
     }
 }
 
 impl NativeResource {
     pub(crate) fn close(&self) -> Result<(), String> {
-        if self.closed.replace(true) {
-            return Ok(());
+        match self.state.get() {
+            NativeResourceState::Closed => return Ok(()),
+            NativeResourceState::Closing => {
+                return Err(format!(
+                    "native resource `{}` is already being closed",
+                    self.registration.name
+                ));
+            }
+            NativeResourceState::Open => self.state.set(NativeResourceState::Closing),
         }
-        let mut payload = self.payload.try_borrow_mut().map_err(|_| {
-            format!(
+
+        let Ok(mut payload) = self.payload.try_borrow_mut() else {
+            self.state.set(NativeResourceState::Open);
+            return Err(format!(
                 "native resource `{}` is already in use",
                 self.registration.name
-            )
-        })?;
+            ));
+        };
         let Some(payload) = payload.as_deref_mut() else {
+            self.state.set(NativeResourceState::Closed);
             return Ok(());
         };
-        catch_unwind(AssertUnwindSafe(|| (self.registration.close)(payload))).map_err(|_| {
-            format!(
+
+        if catch_native_unwind(|| (self.registration.close)(payload)).is_ok() {
+            self.state.set(NativeResourceState::Closed);
+            Ok(())
+        } else {
+            self.state.set(NativeResourceState::Open);
+            Err(format!(
                 "native resource `{}` close callback panicked",
                 self.registration.name
-            )
-        })
+            ))
+        }
     }
 }
 
 impl Drop for NativeResource {
     fn drop(&mut self) {
         if let Some(payload) = self.payload.get_mut().take() {
-            let _ = catch_unwind(AssertUnwindSafe(|| (self.registration.destroy)(payload)));
+            let _ = catch_native_unwind(|| (self.registration.destroy)(payload));
         }
     }
 }
@@ -678,7 +806,7 @@ impl NativeCall<'_> {
             registration: resource_type.registration.clone(),
             module: self.module.inner.clone(),
             payload: RefCell::new(Some(Box::new(payload))),
-            closed: Cell::new(false),
+            state: Cell::new(NativeResourceState::Open),
         });
         self.resources.push(Rc::downgrade(&resource));
         Ok(NativeOwnedValue(Value::NativeResource(resource)))
@@ -715,7 +843,7 @@ impl NativeCall<'_> {
                 ),
             ));
         }
-        if resource.closed.get() {
+        if resource.state.get() != NativeResourceState::Open {
             return Err(NativeError::new(
                 "native.resource_closed",
                 "native resource is closed",
@@ -788,11 +916,20 @@ impl NativeCall<'_> {
             self.outcome = Some(outcome);
         }
     }
+
+    fn contract_violation(&mut self, message: String) -> NativeInvocation {
+        for resource in &self.resources {
+            if let Some(resource) = resource.upgrade() {
+                let _ = resource.close();
+            }
+        }
+        NativeInvocation::ContractViolation(message)
+    }
 }
 
 pub(crate) enum NativeInvocation {
     Result(Value, Vec<Weak<NativeResource>>),
-    Error(NativeError),
+    Error(NativeError, Vec<Weak<NativeResource>>),
     ContractViolation(String),
 }
 
@@ -803,5 +940,31 @@ impl NativeError {
             self.message,
             self.data.map(NativeOwnedValue::into_value),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_resource_registry_compacts_dead_weak_entries() {
+        let registry = native_resource_registry();
+        let module = NativeModule::new("test.registry", ()).unwrap();
+        let resource_type = module
+            .resource_type("value", |_payload: &mut ()| {}, |_payload: ()| {})
+            .unwrap();
+        let resource = Rc::new(NativeResource {
+            registration: resource_type.registration,
+            module: module.inner,
+            payload: RefCell::new(Some(Box::new(()))),
+            state: Cell::new(NativeResourceState::Open),
+        });
+        registry.register(vec![Rc::downgrade(&resource)]);
+        assert_eq!(registry.tracked_count(), 1);
+
+        drop(resource);
+        registry.register(Vec::new());
+        assert_eq!(registry.tracked_count(), 0);
     }
 }

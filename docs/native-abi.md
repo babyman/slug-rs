@@ -72,6 +72,12 @@ is completed by the VM before the native callback begins. A callback therefore
 observes an ordered, already-bound argument list; it does not implement Slug's
 call-binding rules.
 
+The version 0 `Vm::define_native` API is a temporary adapter that installs one
+descriptor under its local name in a VM global environment. Descriptors retain
+their module-qualified identity, while the module-qualified registry used to
+resolve `foreign` declarations remains part of the later public-library and FFI
+milestone.
+
 Every native callback is synchronous. It runs as part of the calling Slug task
 and occupies that task's execution capacity until it returns. Registration does
 not classify a function as inline, blocking, asynchronous, or otherwise advise
@@ -126,6 +132,12 @@ a stable, module-owned error code, a UTF-8 message, and optional Slug data. Host
 panic, Rust unwind, C++ exception, or other non-local exit MUST NOT cross the
 callback boundary. The Rust facade catches unwinds where possible; external
 modules are responsible for containing their language's failure mechanism.
+
+The version 0 Rust facade installs one process-wide panic-hook wrapper. It
+delegates ordinary panics to the hook that was active at installation and
+suppresses hook output only while the current thread is inside a native
+callback, close operation, or destructor. A host that replaces the process hook
+afterward assumes responsibility for preserving that containment behavior.
 
 Version 1 does not permit a callback to suspend, resume later, recursively call
 Slug, or enter the VM from another thread. Those operations require a separate

@@ -194,7 +194,7 @@ impl fmt::Debug for Value {
                     .finish()
             }
             Self::Closure(_) => write!(f, "<fn>"),
-            Self::Native(function) => write!(f, "<native {}>", function.name()),
+            Self::Native(function) => write!(f, "<native {}>", function.qualified_name()),
             Self::NativeResource(_) => write!(f, "<native resource>"),
             Self::Builtin(builtin) => write!(f, "<builtin {builtin:?}>"),
             Self::Overloads(_) => write!(f, "<overloads>"),

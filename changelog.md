@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed version 0 native resource cleanup across failed close callbacks,
+  structured error data, shared module-loader runtimes, and long-lived resource
+  registries; native callback panics no longer emit a host panic diagnostic.
 - Replaced direct Rust `Value` exposure in native callbacks with the opaque,
   call-scoped version 0 facade, including checked conversions and result
   contracts, structured error code/message/data, panic containment,
