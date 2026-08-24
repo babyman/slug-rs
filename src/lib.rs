@@ -26,8 +26,9 @@ pub use conformance::FixtureRunner;
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use native::{
-    NativeArity, NativeCall, NativeDescriptorError, NativeError, NativeFunction, NativeModule,
-    NativeOwnedValue, NativeResourceType, NativeStatus, NativeValueKind, NativeValueRef,
+    NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeError,
+    NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus, NativeResourceType,
+    NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
 };
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
 pub use value::{Builtin, Channel, Closure, StructField, StructSchema, StructValue, Task, Value};

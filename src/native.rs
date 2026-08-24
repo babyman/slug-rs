@@ -1,18 +1,107 @@
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     fmt,
     marker::PhantomData,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::{Rc, Weak},
     sync::{
-        Once,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, Once,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
 use crate::Value;
+
+/// An owned value that a foreign thread may publish through a channel producer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NativeSendValue {
+    Nil,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Bytes(Vec<u8>),
+}
+
+impl NativeSendValue {
+    #[must_use]
+    pub fn nil() -> Self {
+        Self::Nil
+    }
+    #[must_use]
+    pub fn boolean(value: bool) -> Self {
+        Self::Bool(value)
+    }
+    #[must_use]
+    pub fn integer(value: i64) -> Self {
+        Self::Int(value)
+    }
+    #[must_use]
+    pub fn float(value: f64) -> Self {
+        Self::Float(value)
+    }
+    #[must_use]
+    pub fn string(value: impl Into<String>) -> Self {
+        Self::String(value.into())
+    }
+    #[must_use]
+    pub fn bytes(value: impl Into<Vec<u8>>) -> Self {
+        Self::Bytes(value.into())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeProducerStatus {
+    Sent,
+    Full,
+    Closed,
+}
+
+#[derive(Clone)]
+pub struct NativeChannelProducer(Arc<NativeProducerState>);
+
+struct NativeProducerState {
+    capacity: usize,
+    queue: Mutex<VecDeque<NativeSendValue>>,
+    closed: AtomicBool,
+}
+
+impl NativeChannelProducer {
+    #[must_use]
+    pub fn bounded(capacity: usize) -> Self {
+        Self(Arc::new(NativeProducerState {
+            capacity,
+            queue: Mutex::new(VecDeque::new()),
+            closed: AtomicBool::new(false),
+        }))
+    }
+    #[must_use]
+    pub fn try_send(&self, value: NativeSendValue) -> NativeProducerStatus {
+        if self.is_closed() {
+            return NativeProducerStatus::Closed;
+        }
+        let Ok(mut queue) = self.0.queue.lock() else {
+            return NativeProducerStatus::Closed;
+        };
+        if self.is_closed() {
+            return NativeProducerStatus::Closed;
+        }
+        if queue.len() >= self.0.capacity {
+            return NativeProducerStatus::Full;
+        }
+        queue.push_back(value);
+        NativeProducerStatus::Sent
+    }
+    pub fn close(&self) {
+        self.0.closed.store(true, Ordering::Release);
+    }
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.0.closed.load(Ordering::Acquire)
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct NativeResourceRegistry(Rc<NativeResourceRegistryInner>);
@@ -970,5 +1059,25 @@ mod tests {
         drop(resource);
         registry.register(Vec::new());
         assert_eq!(registry.tracked_count(), 0);
+    }
+
+    #[test]
+    fn producer_is_thread_safe_bounded_and_closed() {
+        let producer = NativeChannelProducer::bounded(1);
+        let sender = producer.clone();
+        let status = std::thread::spawn(move || sender.try_send(NativeSendValue::integer(7)))
+            .join()
+            .expect("producer thread completes");
+        assert_eq!(status, NativeProducerStatus::Sent);
+        assert_eq!(
+            producer.try_send(NativeSendValue::integer(8)),
+            NativeProducerStatus::Full
+        );
+        producer.close();
+        assert!(producer.is_closed());
+        assert_eq!(
+            producer.try_send(NativeSendValue::integer(9)),
+            NativeProducerStatus::Closed
+        );
     }
 }
