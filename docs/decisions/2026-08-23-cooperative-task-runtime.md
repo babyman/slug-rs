@@ -34,6 +34,10 @@ The initial task implementation shares one reference-counted, interior-mutable
 global environment between parent and child VMs; lexical binding cells remain
 the separate mechanism for capture semantics.
 
+The current dynamic nursery is likewise shared by task and imported-function
+VMs. Only an explicit `nursery` creates a new owner, which avoids treating a
+VM implementation boundary as a language-level ownership boundary.
+
 Native callbacks remain synchronous and execute in their calling task. Native
 producer capabilities wake runtime-owned work only through channels, as defined
 by the native extension interface.

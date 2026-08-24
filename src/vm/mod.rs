@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
 
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
@@ -42,6 +42,17 @@ struct Frame {
     cleanup_recovers: bool,
 }
 
+#[derive(Default)]
+struct Nursery {
+    tasks: RefCell<Vec<Rc<Task>>>,
+}
+
+struct ClosureCallOptions {
+    direct_task_limit: Option<usize>,
+    nursery: Rc<Nursery>,
+    settle_nursery: bool,
+}
+
 /// A small, checked stack VM for compiler-produced Slug bytecode.
 pub struct Vm {
     module_loader: Option<ModuleLoader>,
@@ -52,7 +63,7 @@ pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
-    tasks: Vec<Rc<Task>>,
+    nursery: Rc<Nursery>,
     direct_task_limit: Option<usize>,
     native_resources: NativeResourceRegistry,
 }
@@ -68,7 +79,7 @@ impl Default for Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
-            tasks: Vec::new(),
+            nursery: Rc::new(Nursery::default()),
             direct_task_limit: None,
             native_resources: native_resource_registry(),
         }
@@ -265,7 +276,7 @@ impl Vm {
         self.stack.clear();
         self.frames.clear();
         self.cleanup.clear();
-        self.tasks.clear();
+        self.nursery.tasks.borrow_mut().clear();
         self.module_metadata = program.declarations().to_vec();
         self.frames.push(Frame {
             closure: Rc::new(Closure {
@@ -914,7 +925,11 @@ impl Vm {
                         arguments,
                         provided,
                         span.clone(),
-                        None,
+                        ClosureCallOptions {
+                            direct_task_limit: None,
+                            nursery: self.nursery.clone(),
+                            settle_nursery: false,
+                        },
                     )?;
                     self.stack.truncate(base);
                     self.stack.push(result);
@@ -1035,7 +1050,7 @@ impl Vm {
         arguments: Vec<Value>,
         provided: Option<Vec<bool>>,
         span: Option<SourceSpan>,
-        direct_task_limit: Option<usize>,
+        options: ClosureCallOptions,
     ) -> VmResult<Value> {
         let chunk = program.chunk(closure.chunk).ok_or_else(|| {
             self.error(
@@ -1068,8 +1083,8 @@ impl Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
-            tasks: Vec::new(),
-            direct_task_limit,
+            nursery: options.nursery,
+            direct_task_limit: options.direct_task_limit,
             native_resources: self.native_resources.clone(),
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
@@ -1087,7 +1102,11 @@ impl Vm {
             cleanup_recovers: false,
         });
         let result = vm.execute(program);
-        vm.settle_tasks(result)
+        if options.settle_nursery {
+            vm.settle_tasks(result)
+        } else {
+            result
+        }
     }
 
     fn spawn_task(&mut self, program: &Program, span: Option<SourceSpan>) -> VmResult<()> {
@@ -1128,10 +1147,14 @@ impl Vm {
             Vec::new(),
             None,
             span,
-            None,
+            ClosureCallOptions {
+                direct_task_limit: None,
+                nursery: self.nursery.clone(),
+                settle_nursery: false,
+            },
         );
         let task = Rc::new(Task::settled(outcome));
-        self.tasks.push(task.clone());
+        self.nursery.tasks.borrow_mut().push(task.clone());
         self.stack.push(Value::Task(task));
         Ok(())
     }
@@ -1139,7 +1162,9 @@ impl Vm {
     fn settle_tasks(&self, result: VmResult<Value>) -> VmResult<Value> {
         match result {
             Ok(value) => self
+                .nursery
                 .tasks
+                .borrow()
                 .iter()
                 .find_map(|task| task.unobserved_error())
                 .map_or(Ok(value), Err),
@@ -1193,7 +1218,11 @@ impl Vm {
             Vec::new(),
             None,
             span,
-            limit,
+            ClosureCallOptions {
+                direct_task_limit: limit,
+                nursery: Rc::new(Nursery::default()),
+                settle_nursery: true,
+            },
         )?;
         self.stack.push(value);
         Ok(())
