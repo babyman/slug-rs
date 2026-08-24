@@ -3,7 +3,7 @@ use std::{
     cmp::Ordering,
     collections::{HashSet, VecDeque},
     path::Path,
-    rc::Rc,
+    rc::{Rc, Weak},
     time::{Duration, Instant},
 };
 
@@ -55,6 +55,7 @@ struct Nursery {
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     fail_fast: bool,
     timers: Rc<RefCell<TimerService>>,
+    native_channels: Rc<RefCell<Vec<Weak<Channel>>>>,
 }
 
 impl Nursery {
@@ -64,6 +65,7 @@ impl Nursery {
             ready: Rc::new(RefCell::new(VecDeque::new())),
             fail_fast: false,
             timers: Rc::new(RefCell::new(TimerService::new())),
+            native_channels: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -73,6 +75,7 @@ impl Nursery {
             ready: Rc::new(RefCell::new(VecDeque::new())),
             fail_fast: true,
             timers: Rc::new(RefCell::new(TimerService::new())),
+            native_channels: Rc::new(RefCell::new(Vec::new())),
         }
     }
 }
@@ -1425,7 +1428,31 @@ impl Vm {
     }
 
     fn make_progress(&self) -> bool {
-        self.run_next_ready_task() || self.wait_for_timer()
+        self.run_next_ready_task() || self.wait_for_timer() || self.wait_for_native_event()
+    }
+
+    fn wait_for_native_event(&self) -> bool {
+        let channels = {
+            let mut channels = self.nursery.native_channels.borrow_mut();
+            channels.retain(|channel| channel.strong_count() > 0);
+            channels
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>()
+        };
+        if channels.is_empty() {
+            return false;
+        }
+        if channels.iter().any(|channel| channel.drain_native()) {
+            return true;
+        }
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(1));
+            if channels.iter().any(|channel| channel.drain_native()) {
+                return true;
+            }
+        }
+        false
     }
 
     fn wait_for_timer(&self) -> bool {
@@ -2383,6 +2410,14 @@ impl Vm {
         match function.invoke(arguments) {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);
+                if let Value::Channel(channel) = &value
+                    && channel.has_native_producer()
+                {
+                    self.nursery
+                        .native_channels
+                        .borrow_mut()
+                        .push(Rc::downgrade(channel));
+                }
                 Ok(value)
             }
             NativeInvocation::Error(error, resources) => {

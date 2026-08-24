@@ -1615,3 +1615,31 @@ fn closing_a_native_producer_drains_events_then_closes_its_receiver() {
     vm.define_native(function).unwrap();
     assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(7));
 }
+
+#[test]
+fn a_foreign_thread_wakes_a_root_parked_on_a_native_channel() {
+    fn delayed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert_eq!(
+                producer.try_send(slug_vm::NativeSendValue::integer(42)),
+                slug_vm::NativeProducerStatus::Sent
+            );
+        });
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.producer_wake", ()).unwrap();
+    let function = module
+        .function("delayed_channel", NativeArity::Exact(0), delayed_channel)
+        .unwrap();
+    let program = compile(
+        "native-producer-wake.slug",
+        "val channel = delayed_channel()\nrecv(channel)\n",
+    )
+    .expect("compile native producer wake source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(42));
+}

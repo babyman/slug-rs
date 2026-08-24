@@ -304,11 +304,16 @@ impl Channel {
         )
     }
 
-    pub(crate) fn drain_native(&self) {
+    pub(crate) fn has_native_producer(&self) -> bool {
+        self.native_producer.is_some()
+    }
+
+    pub(crate) fn drain_native(&self) -> bool {
         let Some(producer) = &self.native_producer else {
-            return;
+            return false;
         };
         let values = producer.drain();
+        let changed = !values.is_empty() || producer.is_closed();
         let mut state = self.state.borrow_mut();
         let mut resumed = Vec::new();
         for value in values {
@@ -331,6 +336,7 @@ impl Channel {
         for (receiver, value) in resumed {
             receiver.resume(Ok(value));
         }
+        changed
     }
 }
 
