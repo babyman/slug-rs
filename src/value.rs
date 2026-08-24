@@ -308,6 +308,12 @@ impl Channel {
         self.native_producer.is_some()
     }
 
+    pub(crate) fn revoke_native_producer(&self) {
+        if let Some(producer) = &self.native_producer {
+            producer.close();
+        }
+    }
+
     pub(crate) fn drain_native(&self) -> bool {
         let Some(producer) = &self.native_producer else {
             return false;

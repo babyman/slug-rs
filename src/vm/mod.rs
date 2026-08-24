@@ -2380,6 +2380,7 @@ impl Vm {
                 span,
             ));
         };
+        channel.revoke_native_producer();
         let mut state = channel.state.borrow_mut();
         if state.closed {
             return Ok(Value::Nil);
