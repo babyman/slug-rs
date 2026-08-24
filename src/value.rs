@@ -115,11 +115,6 @@ impl Task {
         self.state.borrow().pending.is_some()
     }
 
-    pub(crate) fn is_pending_and_admitted(&self) -> bool {
-        let state = self.state.borrow();
-        state.pending.is_some() && state.admitted
-    }
-
     pub(crate) fn try_admit(&self) -> bool {
         let mut state = self.state.borrow_mut();
         if state.pending.is_none() || state.admitted {

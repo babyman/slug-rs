@@ -1,7 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     cmp::Ordering,
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     path::Path,
     rc::Rc,
 };
@@ -50,6 +50,7 @@ struct Frame {
 
 struct Nursery {
     tasks: RefCell<Vec<Rc<Task>>>,
+    ready: RefCell<VecDeque<Rc<Task>>>,
     fail_fast: bool,
 }
 
@@ -57,6 +58,7 @@ impl Nursery {
     fn root() -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
+            ready: RefCell::new(VecDeque::new()),
             fail_fast: false,
         }
     }
@@ -64,6 +66,7 @@ impl Nursery {
     fn explicit() -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
+            ready: RefCell::new(VecDeque::new()),
             fail_fast: true,
         }
     }
@@ -324,6 +327,7 @@ impl Vm {
         self.frames.clear();
         self.cleanup.clear();
         self.nursery.tasks.borrow_mut().clear();
+        self.nursery.ready.borrow_mut().clear();
         self.module_metadata = program.declarations().to_vec();
         self.frames.push(Frame {
             closure: Rc::new(Closure {
@@ -1225,32 +1229,37 @@ impl Vm {
         )?;
         let task = Rc::new(Task::pending(execution, admission));
         self.nursery.tasks.borrow_mut().push(task.clone());
+        self.nursery.ready.borrow_mut().push_back(task.clone());
         self.stack.push(Value::Task(task));
         Ok(())
     }
 
     fn run_task(&self, task: &Task) {
-        if !task.is_pending() {
-            return;
-        }
-        while !task.try_admit() {
-            let next = self
-                .nursery
-                .tasks
-                .borrow()
-                .iter()
-                .find(|candidate| candidate.is_pending_and_admitted())
-                .cloned();
-            let Some(next) = next else {
+        while task.is_pending() {
+            let Some(next) = self.next_ready_task() else {
                 return;
             };
-            self.run_task(&next);
+            let Some(run) = next.take_pending() else {
+                continue;
+            };
+            next.complete(run.run());
         }
-        let Some(run) = task.take_pending() else {
-            return;
-        };
-        let outcome = run.run();
-        task.complete(outcome);
+    }
+
+    fn next_ready_task(&self) -> Option<Rc<Task>> {
+        let mut ready = self.nursery.ready.borrow_mut();
+        let candidates = ready.len();
+        for _ in 0..candidates {
+            let task = ready.pop_front().expect("ready queue length was checked");
+            if !task.is_pending() {
+                continue;
+            }
+            if task.try_admit() {
+                return Some(task);
+            }
+            ready.push_back(task);
+        }
+        None
     }
 
     fn settle_tasks(&self, result: VmResult<Value>) -> VmResult<Value> {

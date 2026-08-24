@@ -224,6 +224,22 @@ fn awaiting_a_queued_task_preserves_nursery_admission_order() {
 }
 
 #[test]
+fn awaiting_a_later_task_drives_the_ready_queue_in_spawn_order() {
+    let path = fixture_path("task-ready-order");
+    fs::write(
+        &path,
+        "val first = spawn { println(\"first\"); 1 }\nval second = spawn { println(\"second\"); 2 }\nawait(second)\n",
+    )
+    .expect("write ready-order source");
+    let output = slug().arg(&path).output().expect("run ready-order source");
+    fs::remove_file(path).expect("remove ready-order source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "first\nsecond\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn explicit_nursery_cancels_pending_siblings_after_a_child_failure() {
     let path = fixture_path("nursery-fail-fast");
     fs::write(

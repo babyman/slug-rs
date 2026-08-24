@@ -14,7 +14,8 @@
   unobserved child failure. Nursery task limits now admit direct children up to
   capacity, queue further direct spawns, and release admission slots when tasks
   settle; awaiting a queued task preserves the nursery's direct-child admission
-  order.
+  order. Task execution now uses a deterministic FIFO ready queue, so awaiting
+  a later ready task first drives earlier spawned siblings.
 - Fixed version 0 native resource cleanup across failed close callbacks,
   structured error data, shared module-loader runtimes, and long-lived resource
   registries; native callback panics no longer emit a host panic diagnostic.

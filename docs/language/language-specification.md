@@ -678,6 +678,8 @@ limit and queues further direct spawns, releasing an admission slot at
 settlement. Awaiting a queued task first drives earlier admitted direct
 children, preserving admission order. A nursery limit must be a positive
 integer. Permit retention while blocked is deferred with task suspension.
+When execution is driven, ready tasks begin in spawn order; awaiting a later
+task therefore first drives earlier ready siblings.
 
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved
