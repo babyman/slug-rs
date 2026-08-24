@@ -155,7 +155,7 @@ and the host boundary in
 - [x] Integrate task failure with `throw`, deferred cleanup, and checked runtime
   diagnostics.
 - [x] Implement the timer host service used by timer-oriented language forms.
-- [ ] Add focused runtime and VM coverage for concurrency behavior.
+- [x] Add focused runtime and VM coverage for concurrency behavior.
 - [x] Run `make check`.
 
 ## 7. Add the public library and run full conformance

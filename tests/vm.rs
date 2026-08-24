@@ -3,7 +3,7 @@ use std::{cell::Cell, rc::Rc};
 use slug_vm::{
     CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, ModuleLoader, NativeArity,
     NativeCall, NativeError, NativeModule, NativeOwnedValue, NativeResourceType, NativeStatus, Op,
-    Program, RuntimeErrorKind, SchemaField, SourceSpan, Value, Vm, compile,
+    Program, RuntimeErrorKind, SchemaField, SelectCase, SourceSpan, Value, Vm, compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {
@@ -1457,4 +1457,106 @@ fn reports_function_names_and_call_sites_in_frames() {
     );
     assert_eq!(error.frames[2].function, "main");
     assert_eq!(error.frames[2].span, None);
+}
+
+#[test]
+fn private_select_await_resumes_a_suspended_task_frame_after_a_timer() {
+    let mut child = Chunk::new("child", 0);
+    let delay = child.constant(Value::Int(1));
+    let result = child.constant(Value::Int(42));
+    child
+        .emit(Op::Constant(delay))
+        .emit(Op::Select(vec![SelectCase::After { has_handler: false }]))
+        .emit(Op::SelectApply)
+        .emit(Op::Pop)
+        .emit(Op::Constant(result))
+        .emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::MakeClosure {
+        chunk: 0,
+        captures: vec![],
+    })
+    .emit(Op::Spawn)
+    .emit(Op::Select(vec![SelectCase::Await { has_handler: false }]))
+    .emit(Op::SelectApply)
+    .emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(child);
+    program.add_chunk(main);
+    assert_eq!(
+        Vm::new().run_named(&program, "main").unwrap(),
+        Value::Int(42)
+    );
+}
+
+#[test]
+fn select_removes_losing_channel_waiters_before_the_next_send() {
+    let program = compile(
+        "select-winner.slug",
+        "val left = channel(0)\n\
+         val right = channel(0)\n\
+         val sender = spawn { send(left, 11); send(right, 12) }\n\
+         val first = select {\n\
+           recv left\n\
+           recv right\n\
+         }\n\
+         val second = recv(right)\n\
+         await(sender)\n\
+         first + second\n",
+    )
+    .expect("compile select winner source");
+
+    assert_eq!(
+        Vm::new().run_named(&program, "main").unwrap(),
+        Value::Int(23)
+    );
+}
+
+#[test]
+fn cancellation_removes_select_channel_and_timer_waiters() {
+    let program = compile(
+        "select-cancellation.slug",
+        "val inbox = channel(0)\n\
+         val attempt = fn() {\n\
+           defer onerror(err) { nil }\n\
+           nursery {\n\
+             spawn { select { recv inbox; after 10 } }\n\
+             spawn { throw \"fail\" }\n\
+           }\n\
+         }\n\
+         attempt()\n\
+         val sender = spawn { send(inbox, 42) }\n\
+         await(sender)\n",
+    )
+    .expect("compile select cancellation source");
+
+    let error = Vm::new()
+        .run_named(&program, "main")
+        .expect_err("cancelled select must not receive a later send");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.message, "task remains blocked with no runnable work");
+}
+
+#[test]
+fn malformed_private_select_bytecode_returns_checked_errors() {
+    let mut missing_operand = Chunk::new("main", 0);
+    missing_operand
+        .emit(Op::Select(vec![SelectCase::Receive { has_handler: false }]))
+        .emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(missing_operand), 0)
+        .expect_err("select without its channel operand must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+
+    let mut malformed_result = Chunk::new("main", 0);
+    malformed_result
+        .emit(Op::Nil)
+        .emit(Op::SelectApply)
+        .emit(Op::Return);
+    let error = Vm::new()
+        .run(&program_with_main(malformed_result), 0)
+        .expect_err("select apply without a select result must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
 }

@@ -10,6 +10,9 @@
 - Audited the structured-concurrency roadmap: root and explicit nurseries,
   task ownership and limits, cancellation, settlement, spawn capture, and
   repeated awaits are complete; native channel producers remain outstanding.
+- Added focused VM coverage for suspended select-await resumption, losing
+  channel-waiter removal, cancellation of timer/channel waiters, and checked
+  malformed private select bytecode errors.
 - Added bounded FIFO channel builtins: `channel(capacity)`, `send`, `recv`,
   and idempotent `close`. Spawned tasks now suspend without unwinding their VM
   state, preserve deferred cleanup while blocked, and resume through FIFO
