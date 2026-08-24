@@ -428,6 +428,26 @@ cases is intentionally not specified yet. Implementations must preserve the
 observable behavior covered by the `select` VM conformance fixtures and must
 not leak host-level select panics into Slug programs.
 
+## Channels
+
+`channel(capacity)` creates a channel with a non-negative integer capacity.
+Channels preserve message and waiter order with FIFO queues. A send transfers
+directly to the oldest waiting receiver when one exists; otherwise it buffers
+until capacity is exhausted, then parks its task. A receive takes the oldest
+buffered message, pairs with the oldest waiting sender, or parks its task.
+Receiving from a closed, drained channel returns `nil`. Closing is idempotent,
+wakes parked receivers with `nil`, and resumes parked senders with the ordinary
+closed-send runtime error.
+
+Parking a task MUST retain its execution state, including frames, operand
+stack, lexical bindings, and pending deferred actions. Resumption MUST deliver
+the pending call result or error through that retained state; it MUST NOT rerun
+the task from its entrypoint or bypass cleanup. The initial runtime parks only
+spawned tasks. A blocking operation performed directly by a root evaluation is
+a checked runtime error. If an owner cannot settle a parked child because no
+runnable task can make progress, it reports a checked blocked-task runtime
+error. `select` and root-task suspension are deferred.
+
 ## Required implementation isolation
 
 The VM may use threads, goroutines, frames, environments, stacks, or slots

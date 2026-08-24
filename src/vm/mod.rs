@@ -12,7 +12,7 @@ use crate::{
     bytecode::Op,
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
-        BindingCell, Builtin, Closure, GlobalEnvironment, TaskAdmission, binding_cell,
+        BindingCell, Builtin, Channel, Closure, GlobalEnvironment, TaskAdmission, binding_cell,
         global_environment, module_binding,
     },
 };
@@ -50,7 +50,7 @@ struct Frame {
 
 struct Nursery {
     tasks: RefCell<Vec<Rc<Task>>>,
-    ready: RefCell<VecDeque<Rc<Task>>>,
+    ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     fail_fast: bool,
 }
 
@@ -58,7 +58,7 @@ impl Nursery {
     fn root() -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
-            ready: RefCell::new(VecDeque::new()),
+            ready: Rc::new(RefCell::new(VecDeque::new())),
             fail_fast: false,
         }
     }
@@ -66,7 +66,7 @@ impl Nursery {
     fn explicit() -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
-            ready: RefCell::new(VecDeque::new()),
+            ready: Rc::new(RefCell::new(VecDeque::new())),
             fail_fast: true,
         }
     }
@@ -90,14 +90,56 @@ pub(crate) struct TaskExecution {
     settle_nursery: bool,
 }
 
+enum TaskRunOutcome {
+    Settled(VmResult<Value>),
+    Suspended(Box<TaskExecution>),
+}
+
+enum ExecutionOutcome {
+    Settled(VmResult<Value>),
+    Suspended,
+}
+
+#[derive(Clone)]
+enum Suspension {
+    Await,
+    Receive,
+    Send(Option<SourceSpan>),
+}
+
 impl TaskExecution {
-    fn run(mut self) -> VmResult<Value> {
-        let result = self.vm.execute(&self.program);
-        if self.settle_nursery {
-            self.vm.settle_tasks(result)
-        } else {
-            result
+    fn run(mut self) -> TaskRunOutcome {
+        match self.vm.execute(&self.program) {
+            ExecutionOutcome::Suspended => TaskRunOutcome::Suspended(Box::new(self)),
+            ExecutionOutcome::Settled(result) => {
+                let result = if self.settle_nursery {
+                    self.vm.settle_tasks(result)
+                } else {
+                    result
+                };
+                TaskRunOutcome::Settled(result)
+            }
         }
+    }
+
+    pub(crate) fn set_current_task(&mut self, task: &Rc<Task>) {
+        self.vm.current_task = Some(Rc::downgrade(task));
+    }
+
+    pub(crate) fn resume(&mut self, result: VmResult<Value>) {
+        self.vm.resume = Some(result);
+    }
+
+    pub(crate) fn reject_closed_send(&mut self) {
+        let span = match &self.vm.suspension {
+            Some(Suspension::Send(span)) => span.clone(),
+            _ => None,
+        };
+        self.vm.resume = Some(Err(self.vm.error(
+            RuntimeErrorKind::InvalidCall,
+            "send on a closed channel".into(),
+            span,
+        )));
     }
 }
 
@@ -115,6 +157,9 @@ pub struct Vm {
     direct_task_limit: Option<usize>,
     direct_task_count: Option<Rc<Cell<usize>>>,
     native_resources: NativeResourceRegistry,
+    current_task: Option<std::rc::Weak<Task>>,
+    suspension: Option<Suspension>,
+    resume: Option<VmResult<Value>>,
 }
 
 impl Default for Vm {
@@ -132,6 +177,9 @@ impl Default for Vm {
             direct_task_limit: None,
             direct_task_count: None,
             native_resources: native_resource_registry(),
+            current_task: None,
+            suspension: None,
+            resume: None,
         }
     }
 }
@@ -204,7 +252,14 @@ impl Vm {
         self.stack.clear();
         self.stack.push(entrypoint);
         self.call(program, 0, None, None)?;
-        self.execute(program)
+        match self.execute(program) {
+            ExecutionOutcome::Settled(result) => result,
+            ExecutionOutcome::Suspended => Err(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "blocking operations require a spawned task".into(),
+                None,
+            )),
+        }
     }
 
     #[must_use]
@@ -287,6 +342,18 @@ impl Vm {
         self.globals
             .borrow_mut()
             .insert("await".into(), Value::Builtin(Builtin::Await));
+        self.globals
+            .borrow_mut()
+            .insert("channel".into(), Value::Builtin(Builtin::Channel));
+        self.globals
+            .borrow_mut()
+            .insert("send".into(), Value::Builtin(Builtin::Send));
+        self.globals
+            .borrow_mut()
+            .insert("recv".into(), Value::Builtin(Builtin::Recv));
+        self.globals
+            .borrow_mut()
+            .insert("close".into(), Value::Builtin(Builtin::Close));
     }
 
     /// Executes a zero-argument entry chunk.
@@ -349,8 +416,14 @@ impl Vm {
             cleanup_action: false,
             cleanup_recovers: false,
         });
-        let result = self.execute(program);
-        self.settle_tasks(result)
+        match self.execute(program) {
+            ExecutionOutcome::Settled(result) => self.settle_tasks(result),
+            ExecutionOutcome::Suspended => Err(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "blocking operations require a spawned task".into(),
+                None,
+            )),
+        }
     }
 
     /// Executes a zero-argument chunk selected by name.
@@ -371,15 +444,38 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn execute(&mut self, program: &Program) -> VmResult<Value> {
-        loop {
-            match self.execute_raw(program) {
-                Ok(value) => return Ok(value),
-                Err(error) if self.frames.is_empty() => return Err(error),
+    fn execute(&mut self, program: &Program) -> ExecutionOutcome {
+        if let Some(result) = self.resume.take() {
+            self.suspension = None;
+            match result {
+                Ok(value) => {
+                    if let Some(slot) = self.stack.last_mut() {
+                        *slot = value;
+                    }
+                }
                 Err(error) => {
                     self.begin_error(error);
-                    if let Some(value) = self.drive_cleanup(program)? {
-                        return Ok(value);
+                    match self.drive_cleanup(program) {
+                        Ok(Some(value)) => return ExecutionOutcome::Settled(Ok(value)),
+                        Ok(None) => {}
+                        Err(error) => return ExecutionOutcome::Settled(Err(error)),
+                    }
+                }
+            }
+        }
+        loop {
+            match self.execute_raw(program) {
+                Ok(ExecutionOutcome::Settled(result)) => return ExecutionOutcome::Settled(result),
+                Ok(ExecutionOutcome::Suspended) => return ExecutionOutcome::Suspended,
+                Err(error) if self.frames.is_empty() => {
+                    return ExecutionOutcome::Settled(Err(error));
+                }
+                Err(error) => {
+                    self.begin_error(error);
+                    match self.drive_cleanup(program) {
+                        Ok(Some(value)) => return ExecutionOutcome::Settled(Ok(value)),
+                        Ok(None) => {}
+                        Err(error) => return ExecutionOutcome::Settled(Err(error)),
                     }
                 }
             }
@@ -387,8 +483,11 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn execute_raw(&mut self, program: &Program) -> VmResult<Value> {
+    fn execute_raw(&mut self, program: &Program) -> VmResult<ExecutionOutcome> {
         loop {
+            if self.suspension.is_some() {
+                return Ok(ExecutionOutcome::Suspended);
+            }
             let (op, span) = self.next_instruction(program)?;
             match op {
                 Op::Constant(index) => {
@@ -832,7 +931,7 @@ impl Vm {
                         frame_depth: self.frames.len() - 1,
                     });
                     if let Some(value) = self.drive_cleanup(program)? {
-                        return Ok(value);
+                        return Ok(ExecutionOutcome::Settled(Ok(value)));
                     }
                 }
                 Op::Defer { mode } => {
@@ -867,7 +966,7 @@ impl Vm {
                 Op::Return => {
                     let value = self.pop(span.clone())?;
                     if let Some(value) = self.begin_return(program, value)? {
-                        return Ok(value);
+                        return Ok(ExecutionOutcome::Settled(Ok(value)));
                     }
                 }
             }
@@ -1139,6 +1238,9 @@ impl Vm {
             direct_task_limit: options.direct_task_limit,
             direct_task_count: options.direct_task_count,
             native_resources: self.native_resources.clone(),
+            current_task: None,
+            suspension: None,
+            resume: None,
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
         locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
@@ -1170,8 +1272,17 @@ impl Vm {
         span: Option<SourceSpan>,
         options: ClosureCallOptions,
     ) -> VmResult<Value> {
-        self.module_closure_execution(program.clone(), closure, arguments, provided, span, options)?
+        match self
+            .module_closure_execution(program.clone(), closure, arguments, provided, span, options)?
             .run()
+        {
+            TaskRunOutcome::Settled(result) => result,
+            TaskRunOutcome::Suspended(_) => Err(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "blocking operations require a spawned task".into(),
+                None,
+            )),
+        }
     }
 
     fn spawn_task(&mut self, program: &Program, span: Option<SourceSpan>) -> VmResult<()> {
@@ -1227,7 +1338,11 @@ impl Vm {
                 settle_nursery: false,
             },
         )?;
-        let task = Rc::new(Task::pending(execution, admission));
+        let task = Rc::new(Task::pending(
+            execution,
+            admission,
+            self.nursery.ready.clone(),
+        ));
         self.nursery.tasks.borrow_mut().push(task.clone());
         self.nursery.ready.borrow_mut().push_back(task.clone());
         self.stack.push(Value::Task(task));
@@ -1239,10 +1354,13 @@ impl Vm {
             let Some(next) = self.next_ready_task() else {
                 return;
             };
-            let Some(run) = next.take_pending() else {
+            let Some(run) = next.take_pending(&next) else {
                 continue;
             };
-            next.complete(run.run());
+            match run.run() {
+                TaskRunOutcome::Settled(result) => next.complete(&result),
+                TaskRunOutcome::Suspended(execution) => next.suspend(*execution),
+            }
         }
     }
 
@@ -1268,6 +1386,13 @@ impl Vm {
                 let mut index = 0;
                 while let Some(task) = self.nursery.tasks.borrow().get(index).cloned() {
                     self.run_task(&task);
+                    if task.is_pending() {
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidCall,
+                            "task remains blocked with no runnable work".into(),
+                            None,
+                        ));
+                    }
                     if self.nursery.fail_fast && task.unobserved_error().is_some() {
                         let cancellation = self.error(
                             RuntimeErrorKind::Thrown,
@@ -1608,19 +1733,9 @@ impl Vm {
         arguments: &[Value],
         span: Option<SourceSpan>,
     ) -> VmResult<Value> {
-        let configuration = self
-            .module_loader
-            .as_ref()
-            .ok_or_else(|| {
-                self.error(
-                    RuntimeErrorKind::Module,
-                    "configuration service is not configured".into(),
-                    span.clone(),
-                )
-            })?
-            .configuration();
         match builtin {
             Builtin::Cfg => {
+                let configuration = self.configuration(span.clone())?;
                 if arguments.len() != 2 {
                     return Err(self.error(
                         RuntimeErrorKind::Arity,
@@ -1643,6 +1758,7 @@ impl Vm {
                 Ok(configuration.resolve(&key, &arguments[1]))
             }
             Builtin::Argv => {
+                let configuration = self.configuration(span.clone())?;
                 if !arguments.is_empty() {
                     return Err(self.error(
                         RuntimeErrorKind::Arity,
@@ -1660,6 +1776,7 @@ impl Vm {
                 ))
             }
             Builtin::Argm => {
+                let configuration = self.configuration(span.clone())?;
                 if !arguments.is_empty() {
                     return Err(self.error(
                         RuntimeErrorKind::Arity,
@@ -1692,15 +1809,178 @@ impl Vm {
                         span,
                     ));
                 }
-                task.await_outcome().ok_or_else(|| {
-                    self.error(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "task has not settled".into(),
-                        span.clone(),
-                    )
-                })?
+                if let Some(outcome) = task.await_outcome() {
+                    return outcome;
+                }
+                let waiter = self.current_task(span.clone())?;
+                task.wait_for(waiter);
+                self.suspension = Some(Suspension::Await);
+                Ok(Value::Nil)
             }
+            Builtin::Channel => self.channel(arguments, span),
+            Builtin::Send => self.send(arguments, span),
+            Builtin::Recv => self.recv(arguments, span),
+            Builtin::Close => self.close_channel(arguments, span),
         }
+    }
+
+    fn configuration(&self, span: Option<SourceSpan>) -> VmResult<&crate::Configuration> {
+        self.module_loader
+            .as_ref()
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::Module,
+                    "configuration service is not configured".into(),
+                    span,
+                )
+            })
+            .map(ModuleLoader::configuration)
+    }
+
+    fn current_task(&self, span: Option<SourceSpan>) -> VmResult<Rc<Task>> {
+        self.current_task
+            .as_ref()
+            .and_then(std::rc::Weak::upgrade)
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidCall,
+                    "blocking operations require a spawned task".into(),
+                    span,
+                )
+            })
+    }
+
+    fn channel(&self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
+        if arguments.len() != 1 {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!("`channel` expects 1 argument, got {}", arguments.len()),
+                span,
+            ));
+        }
+        let Value::Int(capacity) = arguments[0] else {
+            return Err(self.error(
+                RuntimeErrorKind::Type,
+                format!(
+                    "channel capacity expects num, got {}",
+                    arguments[0].type_name()
+                ),
+                span,
+            ));
+        };
+        let capacity = usize::try_from(capacity).map_err(|_| {
+            self.error(
+                RuntimeErrorKind::Type,
+                "channel capacity must not be negative or too large".into(),
+                None,
+            )
+        })?;
+        Ok(Value::Channel(Rc::new(Channel::new(capacity))))
+    }
+
+    fn send(&mut self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
+        if arguments.len() != 2 {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!("`send` expects 2 arguments, got {}", arguments.len()),
+                span,
+            ));
+        }
+        let Value::Channel(channel) = &arguments[0] else {
+            return Err(self.error(
+                RuntimeErrorKind::Type,
+                format!("send expects chan, got {}", arguments[0].type_name()),
+                span,
+            ));
+        };
+        if matches!(arguments[1], Value::Nil) {
+            return Err(self.error(RuntimeErrorKind::Type, "send cannot send nil".into(), span));
+        }
+        let mut state = channel.state.borrow_mut();
+        if state.closed {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "send on a closed channel".into(),
+                span,
+            ));
+        }
+        if let Some(receiver) = state.receivers.pop_front() {
+            receiver.resume(Ok(arguments[1].clone()));
+            return Ok(Value::Nil);
+        }
+        if state.messages.len() < state.capacity {
+            state.messages.push_back(arguments[1].clone());
+            return Ok(Value::Nil);
+        }
+        let sender = self.current_task(span.clone())?;
+        state.senders.push_back((sender, arguments[1].clone()));
+        self.suspension = Some(Suspension::Send(span));
+        Ok(Value::Nil)
+    }
+
+    fn recv(&mut self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
+        if arguments.len() != 1 {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!("`recv` expects 1 argument, got {}", arguments.len()),
+                span,
+            ));
+        }
+        let Value::Channel(channel) = &arguments[0] else {
+            return Err(self.error(
+                RuntimeErrorKind::Type,
+                format!("recv expects chan, got {}", arguments[0].type_name()),
+                span,
+            ));
+        };
+        let mut state = channel.state.borrow_mut();
+        if let Some(value) = state.messages.pop_front() {
+            if let Some((sender, pending)) = state.senders.pop_front() {
+                state.messages.push_back(pending);
+                sender.resume(Ok(Value::Nil));
+            }
+            return Ok(value);
+        }
+        if let Some((sender, value)) = state.senders.pop_front() {
+            sender.resume(Ok(Value::Nil));
+            return Ok(value);
+        }
+        if state.closed {
+            return Ok(Value::Nil);
+        }
+        let receiver = self.current_task(span.clone())?;
+        state.receivers.push_back(receiver);
+        self.suspension = Some(Suspension::Receive);
+        Ok(Value::Nil)
+    }
+
+    fn close_channel(&mut self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
+        if arguments.len() != 1 {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!("`close` expects 1 argument, got {}", arguments.len()),
+                span,
+            ));
+        }
+        let Value::Channel(channel) = &arguments[0] else {
+            return Err(self.error(
+                RuntimeErrorKind::Type,
+                format!("close expects chan, got {}", arguments[0].type_name()),
+                span,
+            ));
+        };
+        let mut state = channel.state.borrow_mut();
+        if state.closed {
+            return Ok(Value::Nil);
+        }
+        state.closed = true;
+        for receiver in state.receivers.drain(..) {
+            receiver.resume(Ok(Value::Nil));
+        }
+        for (sender, _) in state.senders.drain(..) {
+            sender.reject_closed_send();
+        }
+        Ok(Value::Nil)
     }
 
     pub(super) fn invoke_native(

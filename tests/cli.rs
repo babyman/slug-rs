@@ -66,6 +66,104 @@ fn executes_spawned_tasks_and_explicit_nurseries() {
 }
 
 #[test]
+fn channels_rendezvous_between_cooperatively_scheduled_tasks() {
+    let path = fixture_path("channel-rendezvous");
+    fs::write(
+        &path,
+        "val inbox = channel(0)\nval sender = spawn { send(inbox, 42) }\nval receiver = spawn { recv(inbox) }\nprintln(await(receiver))\nawait(sender)\n",
+    )
+    .expect("write channel source");
+    let output = slug().arg(&path).output().expect("run channel source");
+    fs::remove_file(path).expect("remove channel source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+}
+
+#[test]
+fn channels_preserve_buffered_fifo_messages_and_resume_blocked_senders() {
+    let path = fixture_path("channel-buffer");
+    fs::write(
+        &path,
+        "val inbox = channel(1)\nval sender = spawn { send(inbox, 1); send(inbox, 2) }\nval receiver = spawn { println(recv(inbox)); println(recv(inbox)) }\nawait(receiver)\nawait(sender)\n",
+    )
+    .expect("write channel source");
+    let output = slug().arg(&path).output().expect("run channel source");
+    fs::remove_file(path).expect("remove channel source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n2\n");
+}
+
+#[test]
+fn closing_a_channel_wakes_receivers_and_rejects_sends() {
+    let path = fixture_path("channel-close");
+    fs::write(
+        &path,
+        "val inbox = channel(0)\nval receiver = spawn { recv(inbox) }\nval closer = spawn { close(inbox) }\nprintln(await(receiver))\nawait(closer)\n",
+    )
+    .expect("write channel source");
+    let output = slug().arg(&path).output().expect("run channel source");
+    fs::remove_file(&path).expect("remove channel source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "nil\n");
+
+    fs::write(
+        &path,
+        "val inbox = channel(0)\nclose(inbox)\nsend(inbox, 1)\n",
+    )
+    .expect("write closed-send source");
+    let output = slug().arg(&path).output().expect("run closed-send source");
+    fs::remove_file(&path).expect("remove closed-send source");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("send on a closed channel"));
+
+    fs::write(
+        &path,
+        "val inbox = channel(0)\nval sender = spawn { defer { println(\"cleaned\") }; send(inbox, 1) }\nval closer = spawn { close(inbox) }\nawait(closer)\nawait(sender)\n",
+    )
+    .expect("write blocked-send source");
+    let output = slug().arg(&path).output().expect("run blocked-send source");
+    fs::remove_file(path).expect("remove blocked-send source");
+
+    assert!(!output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "cleaned\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("send on a closed channel"));
+}
+
+#[test]
+fn reports_a_checked_error_for_a_channel_task_with_no_possible_progress() {
+    let path = fixture_path("channel-blocked");
+    fs::write(&path, "val inbox = channel(0)\nspawn { recv(inbox) }\n")
+        .expect("write blocked channel source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run blocked channel source");
+    fs::remove_file(path).expect("remove blocked channel source");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("task remains blocked with no runnable work")
+    );
+}
+
+#[test]
 fn spawned_tasks_share_root_globals() {
     let path = fixture_path("spawn-shared-globals");
     fs::write(

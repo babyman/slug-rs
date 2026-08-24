@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fmt,
     fmt::Write as _,
     rc::Rc,
@@ -15,6 +15,45 @@ pub enum Builtin {
     Argv,
     Argm,
     Await,
+    Channel,
+    Send,
+    Recv,
+    Close,
+}
+
+/// A FIFO channel with bounded buffering and parked task wait queues.
+#[derive(Clone)]
+pub struct Channel {
+    pub(crate) state: Rc<RefCell<ChannelState>>,
+}
+
+pub(crate) struct ChannelState {
+    pub(crate) capacity: usize,
+    pub(crate) messages: VecDeque<Value>,
+    pub(crate) senders: VecDeque<(Rc<Task>, Value)>,
+    pub(crate) receivers: VecDeque<Rc<Task>>,
+    pub(crate) closed: bool,
+}
+
+impl Channel {
+    #[must_use]
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(ChannelState {
+                capacity,
+                messages: VecDeque::new(),
+                senders: VecDeque::new(),
+                receivers: VecDeque::new(),
+                closed: false,
+            })),
+        }
+    }
+}
+
+impl fmt::Debug for Channel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<chan>")
+    }
 }
 
 /// Shared storage for a lexical binding captured by one or more closures.
@@ -60,6 +99,8 @@ struct TaskState {
     admission: Option<TaskAdmission>,
     admitted: bool,
     observed: bool,
+    ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
+    waiters: Vec<Rc<Task>>,
 }
 
 impl fmt::Debug for Task {
@@ -79,6 +120,7 @@ impl Task {
     pub(crate) fn pending(
         execution: crate::vm::TaskExecution,
         admission: Option<TaskAdmission>,
+        ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     ) -> Self {
         let admitted = admission.as_ref().is_none_or(|admission| {
             if admission.count.get() < admission.limit {
@@ -96,13 +138,18 @@ impl Task {
                 admission,
                 admitted,
                 observed: false,
+                ready,
+                waiters: Vec::new(),
             })),
         }
     }
 
-    pub(crate) fn take_pending(&self) -> Option<crate::vm::TaskExecution> {
+    pub(crate) fn take_pending(&self, task: &Rc<Task>) -> Option<crate::vm::TaskExecution> {
         let mut state = self.state.borrow_mut();
-        let pending = state.pending.take();
+        let mut pending = state.pending.take();
+        if let Some(execution) = &mut pending {
+            execution.set_current_task(task);
+        }
         state.running = pending.is_some();
         pending
     }
@@ -132,11 +179,48 @@ impl Task {
         true
     }
 
-    pub(crate) fn complete(&self, outcome: Result<Value, crate::RuntimeError>) {
+    pub(crate) fn complete(&self, outcome: &Result<Value, crate::RuntimeError>) {
         let mut state = self.state.borrow_mut();
         state.running = false;
-        state.outcome = Some(outcome);
+        state.outcome = Some(outcome.clone());
         release_admission(&mut state);
+        for waiter in state.waiters.drain(..) {
+            waiter.resume(outcome.clone());
+        }
+    }
+
+    pub(crate) fn suspend(&self, execution: crate::vm::TaskExecution) {
+        let mut state = self.state.borrow_mut();
+        state.running = false;
+        state.pending = Some(execution);
+    }
+
+    pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        let mut state = self.state.borrow_mut();
+        let Some(execution) = &mut state.pending else {
+            return;
+        };
+        execution.resume(result);
+        let ready = state.ready.clone();
+        drop(state);
+        ready.borrow_mut().push_back(Rc::new(self.clone()));
+    }
+
+    pub(crate) fn reject_closed_send(&self) {
+        let mut state = self.state.borrow_mut();
+        let Some(execution) = &mut state.pending else {
+            return;
+        };
+        execution.reject_closed_send();
+        let ready = state.ready.clone();
+        drop(state);
+        ready.borrow_mut().push_back(Rc::new(self.clone()));
+    }
+
+    pub(crate) fn wait_for(&self, waiter: Rc<Task>) {
+        let mut state = self.state.borrow_mut();
+        state.observed = true;
+        state.waiters.push(waiter);
     }
 
     pub(crate) fn cancel(&self, error: crate::RuntimeError) {
@@ -211,6 +295,7 @@ pub enum Value {
     Map(Rc<Vec<(Value, Value)>>),
     StructSchema(Rc<StructSchema>),
     Struct(Rc<StructValue>),
+    Channel(Rc<Channel>),
     Closure(Rc<Closure>),
     Task(Rc<Task>),
     Native(NativeFunction),
@@ -249,6 +334,7 @@ impl Value {
             Self::Map(_) => "map",
             Self::StructSchema(_) => "struct schema",
             Self::Struct(_) => "struct",
+            Self::Channel(_) => "chan",
             Self::Closure(_) | Self::Native(_) | Self::Builtin(_) | Self::Overloads(_) => "fn",
             Self::Task(_) => "task",
             Self::NativeResource(_) => "native resource",
@@ -300,6 +386,7 @@ impl PartialEq for Value {
             (Self::Struct(a), Self::Struct(b)) => {
                 Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
             }
+            (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
             (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
             (Self::Task(a), Self::Task(b)) => Rc::ptr_eq(a, b),
             (Self::Native(a), Self::Native(b)) => a.same_function(b),
@@ -339,6 +426,7 @@ impl fmt::Debug for Value {
                     )
                     .finish()
             }
+            Self::Channel(_) => write!(f, "<chan>"),
             Self::Closure(_) => write!(f, "<fn>"),
             Self::Task(_) => write!(f, "<task>"),
             Self::Native(function) => write!(f, "<native {}>", function.qualified_name()),

@@ -149,6 +149,7 @@ pub enum NativeValueKind {
     Map,
     StructSchema,
     Struct,
+    Channel,
     Function,
     Resource,
     Task,
@@ -263,6 +264,7 @@ impl<'call> NativeValueRef<'call> {
             Value::Map(_) => NativeValueKind::Map,
             Value::StructSchema(_) => NativeValueKind::StructSchema,
             Value::Struct(_) => NativeValueKind::Struct,
+            Value::Channel(_) => NativeValueKind::Channel,
             Value::Closure(_) | Value::Native(_) | Value::Builtin(_) | Value::Overloads(_) => {
                 NativeValueKind::Function
             }

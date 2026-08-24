@@ -30,5 +30,5 @@ pub use native::{
     NativeOwnedValue, NativeResourceType, NativeStatus, NativeValueKind, NativeValueRef,
 };
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
-pub use value::{Builtin, Closure, StructField, StructSchema, StructValue, Task, Value};
+pub use value::{Builtin, Channel, Closure, StructField, StructSchema, StructValue, Task, Value};
 pub use vm::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmResult};
