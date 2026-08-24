@@ -893,6 +893,13 @@ impl Vm {
                 Op::Import(kinds) => self.import(kinds, span)?,
                 Op::Spawn => self.spawn_task(program, span)?,
                 Op::Nursery { has_limit } => self.run_nursery(program, has_limit, span)?,
+                Op::Select(_) => {
+                    return Err(self.error(
+                        RuntimeErrorKind::NotImplemented,
+                        "select execution is not implemented yet".into(),
+                        span,
+                    ));
+                }
                 Op::TryMatch {
                     pattern,
                     bindings,

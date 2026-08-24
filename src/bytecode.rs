@@ -104,6 +104,15 @@ pub enum MatchPattern {
     },
 }
 
+/// One source-order case consumed by the private select instruction.
+#[derive(Clone, Debug)]
+pub enum SelectCase {
+    Receive,
+    Send,
+    Await,
+    Default,
+}
+
 /// One VM instruction. Opcode numbers are intentionally not stable.
 #[derive(Clone, Debug)]
 pub struct Instruction {
@@ -197,6 +206,7 @@ pub enum Op {
     Nursery {
         has_limit: bool,
     },
+    Select(Vec<SelectCase>),
     TryMatch {
         pattern: MatchPattern,
         bindings: usize,
