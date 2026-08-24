@@ -7,9 +7,10 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     rc::{Rc, Weak},
     sync::{
-        Arc, Mutex, Once,
+        Arc, Condvar, Mutex, Once, Weak as SyncWeak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 use crate::{Value, value::Channel};
@@ -78,6 +79,59 @@ struct NativeProducerState {
     occupied: AtomicUsize,
     queue: Mutex<VecDeque<NativeSendValue>>,
     closed: AtomicBool,
+    scheduler_signals: Mutex<Vec<SyncWeak<SchedulerSignal>>>,
+}
+
+/// A generation-counted wake signal shared with native producer threads.
+pub(crate) struct SchedulerSignal {
+    generation: Mutex<u64>,
+    changed: Condvar,
+}
+
+impl SchedulerSignal {
+    pub(crate) fn new() -> Self {
+        Self {
+            generation: Mutex::new(0),
+            changed: Condvar::new(),
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> u64 {
+        *self
+            .generation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn notify(&self) {
+        let mut generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *generation = generation.wrapping_add(1);
+        self.changed.notify_all();
+    }
+
+    pub(crate) fn wait(&self, observed: u64, timeout: Option<Duration>) {
+        let generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *generation != observed {
+            return;
+        }
+        if let Some(timeout) = timeout {
+            let _unused = self
+                .changed
+                .wait_timeout_while(generation, timeout, |generation| *generation == observed)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        } else {
+            let _unused = self
+                .changed
+                .wait_while(generation, |generation| *generation == observed)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
 }
 
 impl NativeChannelProducer {
@@ -88,6 +142,7 @@ impl NativeChannelProducer {
             occupied: AtomicUsize::new(0),
             queue: Mutex::new(VecDeque::new()),
             closed: AtomicBool::new(false),
+            scheduler_signals: Mutex::new(Vec::new()),
         }))
     }
     #[must_use]
@@ -112,10 +167,13 @@ impl NativeChannelProducer {
             return NativeProducerStatus::Closed;
         }
         queue.push_back(value);
+        drop(queue);
+        self.notify_schedulers();
         NativeProducerStatus::Sent
     }
     pub fn close(&self) {
         self.0.closed.store(true, Ordering::Release);
+        self.notify_schedulers();
     }
     #[must_use]
     pub fn is_closed(&self) -> bool {
@@ -152,6 +210,49 @@ impl NativeChannelProducer {
     pub(crate) fn release_slot(&self) {
         let previous = self.0.occupied.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(previous > 0, "native channel occupancy underflow");
+    }
+
+    pub(crate) fn register_scheduler(&self, signal: &Arc<SchedulerSignal>) {
+        let mut signals = self
+            .0
+            .scheduler_signals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        signals.retain(|candidate| candidate.strong_count() > 0);
+        if !signals
+            .iter()
+            .any(|candidate| candidate.ptr_eq(&Arc::downgrade(signal)))
+        {
+            signals.push(Arc::downgrade(signal));
+        }
+    }
+
+    pub(crate) fn has_external_producer(&self) -> bool {
+        Arc::strong_count(&self.0) > 1 && !self.is_closed()
+    }
+
+    fn notify_schedulers(&self) {
+        let signals = {
+            let mut signals = self
+                .0
+                .scheduler_signals
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            signals.retain(|signal| signal.strong_count() > 0);
+            signals
+                .iter()
+                .filter_map(SyncWeak::upgrade)
+                .collect::<Vec<_>>()
+        };
+        for signal in signals {
+            signal.notify();
+        }
+    }
+}
+
+impl Drop for NativeChannelProducer {
+    fn drop(&mut self) {
+        self.notify_schedulers();
     }
 }
 

@@ -667,18 +667,19 @@ repeated awaits return the same cached completion. The ordinary task-await API
 is a library callable, conventionally imported from `slug.channel`. `await` is
 also a `select` case form, not an independently reserved expression keyword.
 
-The current implementation's preliminary task subset also exposes
-`await(task)` as a builtin while `slug.channel` is deferred. It runs spawned
-tasks cooperatively at an await or when their owner settles, and propagates
-unawaited child failures when that evaluation settles. An explicit nursery
-logically cancels later pending siblings after its first unobserved child
-failure; it cannot yet interrupt a task that has started. Blocking scheduling
-is not implemented yet. Its current limiter admits direct children up to its
-limit and queues further direct spawns, releasing an admission slot at
-settlement. Awaiting a queued task first drives earlier admitted direct
-children, preserving admission order. A nursery limit must be a positive
-integer. Permit retention while blocked is deferred with task suspension.
-When execution is driven, ready tasks begin in spawn order; awaiting a later
+The current implementation also exposes `await(task)` as a builtin while
+`slug.channel` is deferred. Root evaluation, explicit nursery bodies, and
+spawned tasks suspend cooperatively on task, channel, timer, and `select`
+operations. Owner settlement runs after either a successful or failed body and
+propagates unobserved child failures. An explicit nursery logically cancels
+pending siblings after its first unobserved child failure; cancellation does
+not forcibly interrupt host execution.
+
+A nursery limiter admits direct children up to its limit and queues further
+direct spawns, releasing an admission slot at settlement. Awaiting a queued
+task first drives earlier admitted direct children, preserving admission
+order. A nursery limit must be a positive integer, and an admitted task retains
+its permit while suspended. Ready tasks begin in spawn order; awaiting a later
 task therefore first drives earlier ready siblings.
 
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
@@ -709,6 +710,8 @@ select {
 non-default case parks until one registered case becomes ready. The first case
 made ready resumes the evaluation and removes every other case's waiter; those
 losing cases must not consume a later channel value or task completion.
+Checking immediate readiness does not run or wait for an unsettled task. A
+losing task-await case does not mark that task's failure as observed.
 
 `recv(channel)` blocks for a value or returns `nil` after a closed channel has
 drained. Sending `nil` or sending on a closed channel is a runtime error.

@@ -4,10 +4,11 @@ use std::{
     fmt,
     fmt::Write as _,
     rc::Rc,
+    sync::Arc,
     time::Instant,
 };
 
-use crate::native::{NativeChannelProducer, NativeFunction, NativeResource};
+use crate::native::{NativeChannelProducer, NativeFunction, NativeResource, SchedulerSignal};
 
 /// VM-owned builtins that require host-service context at call time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +44,7 @@ pub(crate) enum Waiter {
     Select {
         state: Rc<RefCell<SelectWaitState>>,
         handler: Option<Value>,
+        observed_task: Option<Rc<Task>>,
     },
 }
 
@@ -57,7 +59,11 @@ impl Waiter {
         match self {
             Self::Task(task) => task.resume(result),
             Self::Root(root) => root.resume(result),
-            Self::Select { state, handler } => {
+            Self::Select {
+                state,
+                handler,
+                observed_task,
+            } => {
                 let mut state = state.borrow_mut();
                 if state.selected {
                     return;
@@ -66,6 +72,9 @@ impl Waiter {
                 let registrations = state.registrations.take();
                 let waiter = state.waiter.clone();
                 drop(state);
+                if let Some(task) = observed_task {
+                    task.observe();
+                }
                 if let Some(registrations) = registrations {
                     registrations.remove_for_waiter(&waiter);
                 }
@@ -313,6 +322,18 @@ impl Channel {
         }
     }
 
+    pub(crate) fn register_scheduler(&self, signal: &Arc<SchedulerSignal>) {
+        if let Some(producer) = &self.native_producer {
+            producer.register_scheduler(signal);
+        }
+    }
+
+    pub(crate) fn has_live_native_producer(&self) -> bool {
+        self.native_producer
+            .as_ref()
+            .is_some_and(NativeChannelProducer::has_external_producer)
+    }
+
     pub(crate) fn reserve_buffer_slot(&self) -> bool {
         self.native_producer
             .as_ref()
@@ -506,7 +527,9 @@ impl Task {
         state.outcome = Some(outcome.clone());
         state.wait_registration = None;
         release_admission(&mut state);
-        for waiter in state.waiters.drain(..) {
+        let waiters = std::mem::take(&mut state.waiters);
+        drop(state);
+        for waiter in waiters {
             waiter.resume(outcome.clone());
         }
     }
@@ -553,9 +576,15 @@ impl Task {
     }
 
     pub(crate) fn wait_for(&self, waiter: Waiter) {
-        let mut state = self.state.borrow_mut();
-        state.observed = true;
-        state.waiters.push(waiter);
+        self.state.borrow_mut().waiters.push(waiter);
+    }
+
+    pub(crate) fn observe(&self) {
+        self.state.borrow_mut().observed = true;
+    }
+
+    pub(crate) fn outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
+        self.state.borrow().outcome.clone()
     }
 
     pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
@@ -565,10 +594,14 @@ impl Task {
         }
         let wait_registration = state.wait_registration.take();
         let waiters = std::mem::take(&mut state.waiters);
+        let ready = state.ready.clone();
         state.running = false;
         state.outcome = Some(Err(error.clone()));
         release_admission(&mut state);
         drop(state);
+        ready
+            .borrow_mut()
+            .retain(|candidate| !Rc::ptr_eq(&candidate.state, &self.state));
         if let Some(wait_registration) = wait_registration {
             wait_registration.remove_for_waiter(&Waiter::Task(Rc::new(self.clone())));
         }
@@ -578,9 +611,8 @@ impl Task {
     }
 
     pub(crate) fn await_outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
-        let mut state = self.state.borrow_mut();
-        state.observed = true;
-        state.outcome.clone()
+        self.observe();
+        self.outcome()
     }
 
     pub(crate) fn unobserved_error(&self) -> Option<crate::RuntimeError> {

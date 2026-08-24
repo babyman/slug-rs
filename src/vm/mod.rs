@@ -4,6 +4,7 @@ use std::{
     collections::{HashSet, VecDeque},
     path::Path,
     rc::{Rc, Weak},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -11,7 +12,7 @@ use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, Task, Value,
     bytecode::{Op, SelectCase},
-    native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
+    native::{NativeInvocation, NativeResourceRegistry, SchedulerSignal, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, Closure, GlobalEnvironment, RootWaiter, TaskAdmission,
         TimerService, WaitRegistration, WaitSet, Waiter, binding_cell, global_environment,
@@ -56,6 +57,7 @@ struct Nursery {
     fail_fast: bool,
     timers: Rc<RefCell<TimerService>>,
     native_channels: Rc<RefCell<Vec<Weak<Channel>>>>,
+    signal: Arc<SchedulerSignal>,
 }
 
 impl Nursery {
@@ -66,6 +68,7 @@ impl Nursery {
             fail_fast: false,
             timers: Rc::new(RefCell::new(TimerService::new())),
             native_channels: Rc::new(RefCell::new(Vec::new())),
+            signal: Arc::new(SchedulerSignal::new()),
         }
     }
 
@@ -76,6 +79,7 @@ impl Nursery {
             fail_fast: true,
             timers: Rc::new(RefCell::new(TimerService::new())),
             native_channels: Rc::new(RefCell::new(Vec::new())),
+            signal: Arc::new(SchedulerSignal::new()),
         }
     }
 }
@@ -521,11 +525,15 @@ impl Vm {
                         break;
                     }
                     if !self.make_progress() {
-                        return Err(self.error(
+                        if let Some(wait_registration) = self.wait_registration.take() {
+                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                        }
+                        let blocked = self.error(
                             RuntimeErrorKind::InvalidCall,
                             "task remains blocked with no runnable work".into(),
                             None,
-                        ));
+                        );
+                        return self.settle_tasks(Err(blocked));
                     }
                 },
             }
@@ -1403,15 +1411,19 @@ impl Vm {
     }
 
     fn run_task(&self, task: &Task) {
+        Self::run_task_in_nursery(&self.nursery, task);
+    }
+
+    fn run_task_in_nursery(nursery: &Rc<Nursery>, task: &Task) {
         while task.is_pending() {
-            if !self.make_progress() {
+            if !Self::make_progress_in_nursery(nursery) {
                 return;
             }
         }
     }
 
-    fn run_next_ready_task(&self) -> bool {
-        let Some(next) = self.next_ready_task() else {
+    fn run_next_ready_task(nursery: &Rc<Nursery>) -> bool {
+        let Some(next) = Self::next_ready_task(nursery) else {
             return false;
         };
         let Some(run) = next.take_pending(&next) else {
@@ -1428,49 +1440,79 @@ impl Vm {
     }
 
     fn make_progress(&self) -> bool {
-        self.run_next_ready_task() || self.wait_for_timer() || self.wait_for_native_event()
+        Self::make_progress_in_nursery(&self.nursery)
     }
 
-    fn wait_for_native_event(&self) -> bool {
-        let channels = {
-            let mut channels = self.nursery.native_channels.borrow_mut();
+    fn make_progress_in_nursery(nursery: &Rc<Nursery>) -> bool {
+        loop {
+            if Self::run_next_ready_task(nursery)
+                || Self::drain_native_channels(nursery)
+                || Self::wake_due_timers(nursery)
+            {
+                return true;
+            }
+
+            let observed = nursery.signal.snapshot();
+            if Self::run_next_ready_task(nursery)
+                || Self::drain_native_channels(nursery)
+                || Self::wake_due_timers(nursery)
+            {
+                return true;
+            }
+
+            let deadline = nursery.timers.borrow().next_deadline();
+            let has_native_source = Self::has_live_native_source(nursery);
+            if deadline.is_none() && !has_native_source {
+                return false;
+            }
+            let timeout =
+                deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+            nursery.signal.wait(observed, timeout);
+        }
+    }
+
+    fn native_channels(nursery: &Rc<Nursery>) -> Vec<Rc<Channel>> {
+        {
+            let mut channels = nursery.native_channels.borrow_mut();
             channels.retain(|channel| channel.strong_count() > 0);
             channels
                 .iter()
                 .filter_map(Weak::upgrade)
                 .collect::<Vec<_>>()
-        };
-        if channels.is_empty() {
-            return false;
         }
-        if channels.iter().any(|channel| channel.drain_native()) {
-            return true;
-        }
-        for _ in 0..50 {
-            std::thread::sleep(Duration::from_millis(1));
-            if channels.iter().any(|channel| channel.drain_native()) {
-                return true;
-            }
-        }
-        false
     }
 
-    fn wait_for_timer(&self) -> bool {
-        if self.wake_due_timers() {
-            return true;
+    fn track_native_channel(nursery: &Rc<Nursery>, channel: &Rc<Channel>) {
+        if !channel.has_native_producer() {
+            return;
         }
-        let Some(deadline) = self.nursery.timers.borrow().next_deadline() else {
-            return false;
-        };
-        let now = Instant::now();
-        if deadline > now {
-            std::thread::sleep(deadline.duration_since(now));
+        channel.register_scheduler(&nursery.signal);
+        let mut channels = nursery.native_channels.borrow_mut();
+        if !channels.iter().any(|candidate| {
+            candidate
+                .upgrade()
+                .is_some_and(|candidate| Rc::ptr_eq(&candidate, channel))
+        }) {
+            channels.push(Rc::downgrade(channel));
         }
-        self.wake_due_timers()
     }
 
-    fn wake_due_timers(&self) -> bool {
-        let due = self.nursery.timers.borrow_mut().take_due();
+    fn drain_native_channels(nursery: &Rc<Nursery>) -> bool {
+        let mut changed = false;
+        for channel in Self::native_channels(nursery) {
+            changed |= channel.drain_native();
+        }
+        changed
+    }
+
+    fn has_live_native_source(nursery: &Rc<Nursery>) -> bool {
+        Self::native_channels(nursery)
+            .iter()
+            .any(|channel| channel.has_live_native_producer())
+    }
+
+    fn wake_due_timers(nursery: &Rc<Nursery>) -> bool {
+        let due = nursery.timers.borrow_mut().take_due();
         let woke = !due.is_empty();
         for waiter in due {
             waiter.resume(Ok(Value::Nil));
@@ -1478,8 +1520,8 @@ impl Vm {
         woke
     }
 
-    fn next_ready_task(&self) -> Option<Rc<Task>> {
-        let mut ready = self.nursery.ready.borrow_mut();
+    fn next_ready_task(nursery: &Rc<Nursery>) -> Option<Rc<Task>> {
+        let mut ready = nursery.ready.borrow_mut();
         let candidates = ready.len();
         for _ in 0..candidates {
             let task = ready.pop_front().expect("ready queue length was checked");
@@ -1495,43 +1537,65 @@ impl Vm {
     }
 
     fn settle_tasks(&self, result: VmResult<Value>) -> VmResult<Value> {
-        match result {
-            Ok(value) => {
-                let mut index = 0;
-                while let Some(task) = self.nursery.tasks.borrow().get(index).cloned() {
-                    self.run_task(&task);
-                    if self.nursery.fail_fast {
-                        let tasks = self.nursery.tasks.borrow().clone();
-                        if let Some(error) = tasks.iter().find_map(|task| task.unobserved_error()) {
-                            let cancellation = self.error(
-                                RuntimeErrorKind::Thrown,
-                                "sibling cancelled due to fail-fast".into(),
-                                None,
-                            );
-                            for sibling in &tasks {
-                                sibling.cancel(&cancellation);
-                            }
-                            return Err(error);
-                        }
-                    }
-                    if task.is_pending() {
-                        return Err(self.error(
-                            RuntimeErrorKind::InvalidCall,
-                            "task remains blocked with no runnable work".into(),
-                            None,
-                        ));
-                    }
-                    index += 1;
-                }
-                self.nursery
-                    .tasks
-                    .borrow()
-                    .iter()
-                    .find_map(|task| task.unobserved_error())
-                    .map_or(Ok(value), Err)
+        let (value, body_error) = match result {
+            Ok(value) => (Some(value), None),
+            Err(error) => (None, Some(error)),
+        };
+        let cancellation = self.error(
+            RuntimeErrorKind::Thrown,
+            "sibling cancelled due to fail-fast".into(),
+            None,
+        );
+        if self.nursery.fail_fast
+            && let Some(error) = body_error.clone()
+        {
+            for task in self.nursery.tasks.borrow().iter() {
+                task.cancel(&cancellation);
             }
-            Err(error) => Err(error),
+            return Err(error);
         }
+
+        let mut index = 0;
+        while let Some(task) = self.nursery.tasks.borrow().get(index).cloned() {
+            self.run_task(&task);
+            if self.nursery.fail_fast {
+                let tasks = self.nursery.tasks.borrow().clone();
+                if let Some(error) = tasks.iter().find_map(|task| task.unobserved_error()) {
+                    for sibling in &tasks {
+                        sibling.cancel(&cancellation);
+                    }
+                    return Err(error);
+                }
+            }
+            if task.is_pending() {
+                if let Some(error) = body_error {
+                    for task in self.nursery.tasks.borrow().iter() {
+                        task.cancel(&cancellation);
+                    }
+                    return Err(error);
+                }
+                let blocked = self.error(
+                    RuntimeErrorKind::InvalidCall,
+                    "task remains blocked with no runnable work".into(),
+                    None,
+                );
+                for task in self.nursery.tasks.borrow().iter() {
+                    task.cancel(&blocked);
+                }
+                return Err(blocked);
+            }
+            index += 1;
+        }
+        if let Some(error) = body_error {
+            return Err(error);
+        }
+        let value = value.expect("successful body has a value");
+        self.nursery
+            .tasks
+            .borrow()
+            .iter()
+            .find_map(|task| task.unobserved_error())
+            .map_or(Ok(value), Err)
     }
 
     fn run_nursery(
@@ -1581,19 +1645,42 @@ impl Vm {
                 span,
             ));
         };
-        let value = self.call_module_closure(
-            &Rc::new(program.clone()),
+        let nursery = Rc::new(Nursery::explicit());
+        let execution = self.module_closure_execution(
+            Rc::new(program.clone()),
             closure,
             Vec::new(),
             None,
-            span,
+            span.clone(),
             ClosureCallOptions {
                 direct_task_limit: limit,
                 direct_task_count: limit.map(|_| Rc::new(Cell::new(0))),
-                nursery: Rc::new(Nursery::explicit()),
+                nursery: nursery.clone(),
                 settle_nursery: true,
             },
         )?;
+        let body = Rc::new(Task::pending(execution, None, nursery.ready.clone()));
+        nursery.ready.borrow_mut().push_back(body.clone());
+        Self::run_task_in_nursery(&nursery, &body);
+        if body.is_pending() {
+            let blocked = self.error(
+                RuntimeErrorKind::InvalidCall,
+                "task remains blocked with no runnable work".into(),
+                span,
+            );
+            for task in nursery.tasks.borrow().iter() {
+                task.cancel(&blocked);
+            }
+            body.cancel(&blocked);
+            return Err(blocked);
+        }
+        let value = body.outcome().ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "nursery body settled without an outcome".into(),
+                span,
+            )
+        })??;
         self.stack.push(value);
         Ok(())
     }
@@ -1930,10 +2017,8 @@ impl Vm {
                     return outcome;
                 }
                 let waiter = self.current_waiter(span.clone())?;
-                if matches!(waiter, Waiter::Task(_)) {
-                    self.wait_registration =
-                        Some(WaitSet::one(WaitRegistration::TaskAwait(task.clone())));
-                }
+                self.wait_registration =
+                    Some(WaitSet::one(WaitRegistration::TaskAwait(task.clone())));
                 task.wait_for(waiter);
                 self.suspension = Some(Suspension::Await);
                 Ok(Value::Nil)
@@ -2062,6 +2147,7 @@ impl Vm {
         for case in &values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
+                    Self::track_native_channel(&self.nursery, channel);
                     channel.drain_native();
                     let mut state = channel.state.borrow_mut();
                     if let Some(value) = state.messages.pop_front() {
@@ -2093,6 +2179,7 @@ impl Vm {
                     value,
                     handler,
                 } => {
+                    Self::track_native_channel(&self.nursery, channel);
                     channel.drain_native();
                     let mut state = channel.state.borrow_mut();
                     if state.closed {
@@ -2115,7 +2202,6 @@ impl Vm {
                     }
                 }
                 RuntimeSelectCase::Await { task, handler } => {
-                    self.run_task(task);
                     if task.is_running() {
                         return Err(self.error(
                             RuntimeErrorKind::InvalidCall,
@@ -2123,7 +2209,8 @@ impl Vm {
                             span,
                         ));
                     }
-                    if let Some(outcome) = task.await_outcome() {
+                    if let Some(outcome) = task.outcome() {
+                        task.observe();
                         self.push_select_result(outcome?, handler.clone());
                         return Ok(());
                     }
@@ -2151,6 +2238,7 @@ impl Vm {
                     let waiter = Waiter::Select {
                         state: select_state.clone(),
                         handler,
+                        observed_task: None,
                     };
                     channel.state.borrow_mut().receivers.push_back(waiter);
                     registrations.push(WaitRegistration::ChannelReceive(channel));
@@ -2163,6 +2251,7 @@ impl Vm {
                     let waiter = Waiter::Select {
                         state: select_state.clone(),
                         handler,
+                        observed_task: None,
                     };
                     waiter.set_closed_send_error(self.error(
                         RuntimeErrorKind::InvalidCall,
@@ -2180,6 +2269,7 @@ impl Vm {
                     task.wait_for(Waiter::Select {
                         state: select_state.clone(),
                         handler,
+                        observed_task: Some(task.clone()),
                     });
                     registrations.push(WaitRegistration::TaskAwait(task));
                 }
@@ -2189,6 +2279,7 @@ impl Vm {
                         Waiter::Select {
                             state: select_state.clone(),
                             handler,
+                            observed_task: None,
                         },
                     );
                     registrations.push(WaitRegistration::Timer(self.nursery.timers.clone()));
@@ -2294,6 +2385,7 @@ impl Vm {
         if matches!(arguments[1], Value::Nil) {
             return Err(self.error(RuntimeErrorKind::Type, "send cannot send nil".into(), span));
         }
+        Self::track_native_channel(&self.nursery, channel);
         channel.drain_native();
         let mut state = channel.state.borrow_mut();
         if state.closed {
@@ -2318,10 +2410,7 @@ impl Vm {
             "send on a closed channel".into(),
             span.clone(),
         ));
-        if matches!(sender, Waiter::Task(_)) {
-            self.wait_registration =
-                Some(WaitSet::one(WaitRegistration::ChannelSend(channel.clone())));
-        }
+        self.wait_registration = Some(WaitSet::one(WaitRegistration::ChannelSend(channel.clone())));
         state.senders.push_back((sender, arguments[1].clone()));
         self.suspension = Some(Suspension::Send(span));
         Ok(Value::Nil)
@@ -2342,6 +2431,7 @@ impl Vm {
                 span,
             ));
         };
+        Self::track_native_channel(&self.nursery, channel);
         channel.drain_native();
         let mut state = channel.state.borrow_mut();
         if let Some(value) = state.messages.pop_front() {
@@ -2365,11 +2455,9 @@ impl Vm {
             return Ok(Value::Nil);
         }
         let receiver = self.current_waiter(span.clone())?;
-        if matches!(receiver, Waiter::Task(_)) {
-            self.wait_registration = Some(WaitSet::one(WaitRegistration::ChannelReceive(
-                channel.clone(),
-            )));
-        }
+        self.wait_registration = Some(WaitSet::one(WaitRegistration::ChannelReceive(
+            channel.clone(),
+        )));
         state.receivers.push_back(receiver);
         self.suspension = Some(Suspension::Receive);
         Ok(Value::Nil)
@@ -2424,10 +2512,7 @@ impl Vm {
                 if let Value::Channel(channel) = &value
                     && channel.has_native_producer()
                 {
-                    self.nursery
-                        .native_channels
-                        .borrow_mut()
-                        .push(Rc::downgrade(channel));
+                    Self::track_native_channel(&self.nursery, channel);
                 }
                 Ok(value)
             }

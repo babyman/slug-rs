@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed concurrency owner settlement, `select` arbitration, and native wakeups:
+  failed owners now settle or cancel their children, explicit nursery bodies
+  may suspend, losing task-await cases no longer suppress failures, waiter
+  callbacks cannot reborrow task state, and native producer notifications
+  compete correctly with timer deadlines without a fixed polling window.
 - Implemented bounded native channel producers with restricted owned send
   values, thread-safe mailbox publication, shared capacity accounting with
   Slug sends, receiver-drop revocation, and checked close wakeups.

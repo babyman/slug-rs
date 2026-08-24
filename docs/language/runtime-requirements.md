@@ -428,6 +428,11 @@ cases is intentionally not specified yet. Implementations must preserve the
 observable behavior covered by the `select` VM conformance fixtures and must
 not leak host-level select panics into Slug programs.
 
+Immediate readiness inspection MUST NOT wait for an unsettled task or otherwise
+allow an initially unready case to become ready before the remaining cases are
+inspected. Registering a task-await case does not observe its failure; only
+selecting that case does.
+
 ## Channels
 
 `channel(capacity)` creates a channel with a non-negative integer capacity.
@@ -445,7 +450,10 @@ the pending call result or error through that retained state; it MUST NOT rerun
 the task from its entrypoint or bypass cleanup. Root evaluations participate in
 the same scheduler and may park until an owned task wakes them. If an owner
 cannot settle a parked task because no runnable task or timer can make
-progress, it reports a checked blocked-task runtime error.
+progress, it reports a checked blocked-task runtime error. Explicit nursery
+bodies participate in the same scheduler and may park. A live native producer
+is a possible source of progress; its notification competes with ready tasks
+and the nearest timer deadline rather than an implementation polling timeout.
 
 Cancelling a parked task MUST remove its channel-send, channel-receive,
 task-await, and timer registrations before it settles. A later operation MUST
