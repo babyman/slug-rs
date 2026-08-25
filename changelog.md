@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `SLUG_HOME` now supplies both the optional library configuration and the
+  `$SLUG_HOME/lib` source-library root used by `import`.
+
 - Added `_` discard parameters for functions; they receive positional arguments
   without creating a body-visible binding.
 

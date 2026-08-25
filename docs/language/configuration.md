@@ -63,6 +63,19 @@ fully-qualified key.
 Both TOML files are optional. An unavailable or malformed optional TOML file contributes no values and does not expose a
 host parsing failure to the Slug program.
 
+## Library source path
+
+When `SLUG_HOME` is set, the runtime uses `$SLUG_HOME/lib` as the library
+module root as well as the location of the optional library TOML. Imports first
+search relative to their importer, then the project module root, and finally
+this library root. This allows a runtime installation and its Slug library
+sources to move together:
+
+```text
+SLUG_HOME=/opt/slug slug app.slug
+# imports `slug.std` from /opt/slug/lib/slug/std.slug
+```
+
 ### TOML
 
 TOML tables flatten to dot-separated keys. For a server module:

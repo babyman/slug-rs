@@ -30,8 +30,8 @@ compiled-module contract is documented separately as `.cslug`.
   nurseries, bounded FIFO channels with `channel`, `send`, `recv`, and `close`,
   `select` receive/send/timer/task-await/default cases, and `println`.
 - Source-level `import(name, ...)` with checked string module names,
-  importer-relative resolution, cached isolated module initialization, and
-  string-keyed exported-value maps.
+  importer-relative and project-root resolution, `$SLUG_HOME/lib` library
+  fallback, cached isolated module initialization, and string-keyed exported-value maps.
 - Immutable configuration collection from library and project TOML, `SLUG__`
   environment variables, and program options; source access through `cfg` is a
   subsequent milestone.

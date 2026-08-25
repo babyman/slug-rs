@@ -50,6 +50,40 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn imports_library_modules_from_slug_home() {
+    let path = fixture_path("slug-home-library");
+    let home = std::env::temp_dir().join(format!("slug-home-library-{}", std::process::id()));
+    fs::create_dir_all(home.join("lib/slug")).expect("create SLUG_HOME library directory");
+    fs::write(
+        home.join("lib/slug/example.slug"),
+        "export val answer = 42\n",
+    )
+    .expect("write SLUG_HOME library module");
+    fs::write(
+        &path,
+        "val example = import(\"slug.example\")\nprintln(example.answer)\n",
+    )
+    .expect("write library-importing source");
+
+    let output = slug()
+        .arg(&path)
+        .env("SLUG_HOME", &home)
+        .env_remove("SLUG_FIXTURE_LIBRARY_ROOT")
+        .output()
+        .expect("run source with SLUG_HOME");
+    fs::remove_file(&path).expect("remove library-importing source");
+    fs::remove_dir_all(&home).expect("remove SLUG_HOME library directory");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn executes_spawned_tasks_and_explicit_nurseries() {
     let path = fixture_path("tasks-and-nurseries");
     fs::write(

@@ -99,7 +99,9 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
         program_arguments,
         entry_module,
     );
-    let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT").map(PathBuf::from);
+    let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| slug_home.as_ref().map(|home| home.join("lib")));
     let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
     let mut vm = Vm::with_module_loader(loader.clone());
     let host = NativeModule::new("slug.host", ()).expect("static native module is valid");
