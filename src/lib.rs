@@ -12,6 +12,7 @@ mod conformance;
 mod fixture;
 mod module;
 mod native;
+mod scheduler_signal;
 mod source;
 mod value;
 mod vm;

@@ -3,12 +3,15 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt,
     fmt::Write as _,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
     time::Instant,
 };
 
-use crate::native::{NativeChannelProducer, NativeFunction, NativeResource, SchedulerSignal};
+use crate::{
+    native::{NativeChannelProducer, NativeFunction, NativeResource},
+    scheduler_signal::SchedulerSignal,
+};
 
 /// VM-owned builtins that require host-service context at call time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,15 +40,48 @@ pub(crate) struct ChannelState {
     pub(crate) closed: bool,
 }
 
+pub(crate) enum ChannelSend {
+    Ready,
+    Pending,
+    Closed,
+}
+
+pub(crate) enum ChannelReceive {
+    Ready(Value),
+    Pending,
+}
+
 #[derive(Clone)]
 pub(crate) enum Waiter {
     Task(Rc<Task>),
     Root(RootWaiter),
     Select {
         state: Rc<RefCell<SelectWaitState>>,
-        handler: Option<Value>,
-        observed_task: Option<Rc<Task>>,
+        wake: SelectWake,
     },
+}
+
+#[derive(Clone)]
+pub(crate) enum SelectWake {
+    Value {
+        handler: Option<Value>,
+    },
+    TaskAwait {
+        handler: Option<Value>,
+        observer: TaskObserver,
+    },
+}
+
+impl SelectWake {
+    fn selected(&self) -> Option<Value> {
+        match self {
+            Self::Value { handler } => handler.clone(),
+            Self::TaskAwait { handler, observer } => {
+                observer.observe();
+                handler.clone()
+            }
+        }
+    }
 }
 
 pub(crate) struct SelectWaitState {
@@ -59,11 +95,7 @@ impl Waiter {
         match self {
             Self::Task(task) => task.resume(result),
             Self::Root(root) => root.resume(result),
-            Self::Select {
-                state,
-                handler,
-                observed_task,
-            } => {
+            Self::Select { state, wake } => {
                 let mut state = state.borrow_mut();
                 if state.selected {
                     return;
@@ -72,15 +104,15 @@ impl Waiter {
                 let registrations = state.registrations.take();
                 let waiter = state.waiter.clone();
                 drop(state);
-                if let Some(task) = observed_task {
-                    task.observe();
-                }
+                let handler = wake.selected();
                 if let Some(registrations) = registrations {
                     registrations.remove_for_waiter(&waiter);
                 }
-                waiter.resume(result.map(|value| {
-                    Value::List(vec![value, handler.clone().unwrap_or(Value::Nil)].into())
-                }));
+                waiter.resume(
+                    result.map(|value| {
+                        Value::List(vec![value, handler.unwrap_or(Value::Nil)].into())
+                    }),
+                );
             }
         }
     }
@@ -306,7 +338,7 @@ impl Channel {
                     receivers: VecDeque::new(),
                     closed: false,
                 })),
-                native_producer: Some(producer.clone()),
+                native_producer: Some(producer.receiver_handle()),
             },
             producer,
         )
@@ -382,6 +414,58 @@ impl Channel {
         }
         changed
     }
+
+    pub(crate) fn try_send(&self, value: Value) -> ChannelSend {
+        self.drain_native();
+        let mut state = self.state.borrow_mut();
+        if state.closed {
+            return ChannelSend::Closed;
+        }
+        if let Some(receiver) = state.receivers.pop_front() {
+            drop(state);
+            receiver.resume(Ok(value));
+            return ChannelSend::Ready;
+        }
+        if state.messages.len() < state.capacity && self.reserve_buffer_slot() {
+            state.messages.push_back(value);
+            return ChannelSend::Ready;
+        }
+        ChannelSend::Pending
+    }
+
+    pub(crate) fn park_sender(&self, waiter: Waiter, value: Value) {
+        self.state.borrow_mut().senders.push_back((waiter, value));
+    }
+
+    pub(crate) fn try_receive(&self) -> ChannelReceive {
+        self.drain_native();
+        let mut state = self.state.borrow_mut();
+        if let Some(value) = state.messages.pop_front() {
+            self.release_buffer_slot();
+            if !state.senders.is_empty()
+                && self.reserve_buffer_slot()
+                && let Some((sender, pending)) = state.senders.pop_front()
+            {
+                state.messages.push_back(pending);
+                drop(state);
+                sender.resume(Ok(Value::Nil));
+            }
+            return ChannelReceive::Ready(value);
+        }
+        if let Some((sender, value)) = state.senders.pop_front() {
+            drop(state);
+            sender.resume(Ok(Value::Nil));
+            return ChannelReceive::Ready(value);
+        }
+        if state.closed {
+            return ChannelReceive::Ready(Value::Nil);
+        }
+        ChannelReceive::Pending
+    }
+
+    pub(crate) fn park_receiver(&self, waiter: Waiter) {
+        self.state.borrow_mut().receivers.push_back(waiter);
+    }
 }
 
 impl fmt::Debug for Channel {
@@ -433,15 +517,30 @@ pub struct Task {
 }
 
 struct TaskState {
-    outcome: Option<Result<Value, crate::RuntimeError>>,
-    pending: Option<crate::vm::TaskExecution>,
-    running: bool,
+    phase: TaskPhase,
     admission: Option<TaskAdmission>,
     admitted: bool,
     observed: bool,
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     waiters: Vec<Waiter>,
     wait_registration: Option<WaitSet>,
+}
+
+enum TaskPhase {
+    Pending(Box<crate::vm::TaskExecution>),
+    Running,
+    Settled(Result<Value, crate::RuntimeError>),
+}
+
+#[derive(Clone)]
+pub(crate) struct TaskObserver(Weak<RefCell<TaskState>>);
+
+impl TaskObserver {
+    fn observe(&self) {
+        if let Some(state) = self.0.upgrade() {
+            state.borrow_mut().observed = true;
+        }
+    }
 }
 
 impl fmt::Debug for Task {
@@ -473,9 +572,7 @@ impl Task {
         });
         Self {
             state: Rc::new(RefCell::new(TaskState {
-                outcome: None,
-                pending: Some(execution),
-                running: false,
+                phase: TaskPhase::Pending(Box::new(execution)),
                 admission,
                 admitted,
                 observed: false,
@@ -488,25 +585,30 @@ impl Task {
 
     pub(crate) fn take_pending(&self, task: &Rc<Task>) -> Option<crate::vm::TaskExecution> {
         let mut state = self.state.borrow_mut();
-        let mut pending = state.pending.take();
-        if let Some(execution) = &mut pending {
-            execution.set_current_task(task);
+        let phase = std::mem::replace(&mut state.phase, TaskPhase::Running);
+        match phase {
+            TaskPhase::Pending(mut execution) => {
+                execution.set_current_task(task);
+                Some(*execution)
+            }
+            phase => {
+                state.phase = phase;
+                None
+            }
         }
-        state.running = pending.is_some();
-        pending
     }
 
     pub(crate) fn is_running(&self) -> bool {
-        self.state.borrow().running
+        matches!(self.state.borrow().phase, TaskPhase::Running)
     }
 
     pub(crate) fn is_pending(&self) -> bool {
-        self.state.borrow().pending.is_some()
+        matches!(self.state.borrow().phase, TaskPhase::Pending(_))
     }
 
     pub(crate) fn try_admit(&self) -> bool {
         let mut state = self.state.borrow_mut();
-        if state.pending.is_none() || state.admitted {
+        if !matches!(state.phase, TaskPhase::Pending(_)) || state.admitted {
             return state.admitted;
         }
         let Some(admission) = &state.admission else {
@@ -523,8 +625,8 @@ impl Task {
 
     pub(crate) fn complete(&self, outcome: &Result<Value, crate::RuntimeError>) {
         let mut state = self.state.borrow_mut();
-        state.running = false;
-        state.outcome = Some(outcome.clone());
+        debug_assert!(matches!(state.phase, TaskPhase::Running));
+        state.phase = TaskPhase::Settled(outcome.clone());
         state.wait_registration = None;
         release_admission(&mut state);
         let waiters = std::mem::take(&mut state.waiters);
@@ -540,15 +642,15 @@ impl Task {
         wait_registration: Option<WaitSet>,
     ) {
         let mut state = self.state.borrow_mut();
-        state.running = false;
-        state.pending = Some(execution);
+        debug_assert!(matches!(state.phase, TaskPhase::Running));
+        state.phase = TaskPhase::Pending(Box::new(execution));
         state.wait_registration = wait_registration;
     }
 
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
         let mut state = self.state.borrow_mut();
         let wait_registration = state.wait_registration.take();
-        let Some(execution) = &mut state.pending else {
+        let TaskPhase::Pending(execution) = &mut state.phase else {
             return;
         };
         execution.resume(result);
@@ -563,7 +665,7 @@ impl Task {
     pub(crate) fn reject_closed_send(&self) {
         let mut state = self.state.borrow_mut();
         let wait_registration = state.wait_registration.take();
-        let Some(execution) = &mut state.pending else {
+        let TaskPhase::Pending(execution) = &mut state.phase else {
             return;
         };
         execution.reject_closed_send();
@@ -583,20 +685,28 @@ impl Task {
         self.state.borrow_mut().observed = true;
     }
 
+    pub(crate) fn observer(&self) -> TaskObserver {
+        TaskObserver(Rc::downgrade(&self.state))
+    }
+
     pub(crate) fn outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
-        self.state.borrow().outcome.clone()
+        match &self.state.borrow().phase {
+            TaskPhase::Settled(outcome) => Some(outcome.clone()),
+            TaskPhase::Pending(_) | TaskPhase::Running => None,
+        }
     }
 
     pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
-        if state.pending.take().is_none() {
+        let phase = std::mem::replace(&mut state.phase, TaskPhase::Running);
+        if !matches!(phase, TaskPhase::Pending(_)) {
+            state.phase = phase;
             return;
         }
         let wait_registration = state.wait_registration.take();
         let waiters = std::mem::take(&mut state.waiters);
         let ready = state.ready.clone();
-        state.running = false;
-        state.outcome = Some(Err(error.clone()));
+        state.phase = TaskPhase::Settled(Err(error.clone()));
         release_admission(&mut state);
         drop(state);
         ready
@@ -620,10 +730,10 @@ impl Task {
         if state.observed {
             None
         } else {
-            state
-                .outcome
-                .as_ref()
-                .and_then(|outcome| outcome.as_ref().err().cloned())
+            match &state.phase {
+                TaskPhase::Settled(Err(error)) => Some(error.clone()),
+                TaskPhase::Pending(_) | TaskPhase::Running | TaskPhase::Settled(Ok(_)) => None,
+            }
         }
     }
 }

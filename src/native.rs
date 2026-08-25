@@ -7,13 +7,12 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     rc::{Rc, Weak},
     sync::{
-        Arc, Condvar, Mutex, Once, Weak as SyncWeak,
+        Arc, Mutex, Once, Weak as SyncWeak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
-use crate::{Value, value::Channel};
+use crate::{Value, scheduler_signal::SchedulerSignal, value::Channel};
 
 /// An owned value that a foreign thread may publish through a channel producer.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,79 +70,34 @@ pub enum NativeProducerStatus {
     Closed,
 }
 
-#[derive(Clone)]
-pub struct NativeChannelProducer(Arc<NativeProducerState>);
+pub struct NativeChannelProducer {
+    state: Arc<NativeProducerState>,
+    producer_lease: bool,
+}
 
 struct NativeProducerState {
     capacity: usize,
     occupied: AtomicUsize,
     queue: Mutex<VecDeque<NativeSendValue>>,
     closed: AtomicBool,
+    producer_leases: AtomicUsize,
     scheduler_signals: Mutex<Vec<SyncWeak<SchedulerSignal>>>,
-}
-
-/// A generation-counted wake signal shared with native producer threads.
-pub(crate) struct SchedulerSignal {
-    generation: Mutex<u64>,
-    changed: Condvar,
-}
-
-impl SchedulerSignal {
-    pub(crate) fn new() -> Self {
-        Self {
-            generation: Mutex::new(0),
-            changed: Condvar::new(),
-        }
-    }
-
-    pub(crate) fn snapshot(&self) -> u64 {
-        *self
-            .generation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    pub(crate) fn notify(&self) {
-        let mut generation = self
-            .generation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *generation = generation.wrapping_add(1);
-        self.changed.notify_all();
-    }
-
-    pub(crate) fn wait(&self, observed: u64, timeout: Option<Duration>) {
-        let generation = self
-            .generation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *generation != observed {
-            return;
-        }
-        if let Some(timeout) = timeout {
-            let _unused = self
-                .changed
-                .wait_timeout_while(generation, timeout, |generation| *generation == observed)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        } else {
-            let _unused = self
-                .changed
-                .wait_while(generation, |generation| *generation == observed)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-    }
 }
 
 impl NativeChannelProducer {
     #[must_use]
     pub(crate) fn bounded(capacity: usize) -> Self {
-        Self(Arc::new(NativeProducerState {
-            capacity,
-            occupied: AtomicUsize::new(0),
-            queue: Mutex::new(VecDeque::new()),
-            closed: AtomicBool::new(false),
-            scheduler_signals: Mutex::new(Vec::new()),
-        }))
+        Self {
+            state: Arc::new(NativeProducerState {
+                capacity,
+                occupied: AtomicUsize::new(0),
+                queue: Mutex::new(VecDeque::new()),
+                closed: AtomicBool::new(false),
+                producer_leases: AtomicUsize::new(1),
+                scheduler_signals: Mutex::new(Vec::new()),
+            }),
+            producer_lease: true,
+        }
     }
     #[must_use]
     pub fn try_send(&self, value: NativeSendValue) -> NativeProducerStatus {
@@ -158,7 +112,7 @@ impl NativeChannelProducer {
             self.release_slot();
             return NativeProducerStatus::Closed;
         }
-        let Ok(mut queue) = self.0.queue.lock() else {
+        let Ok(mut queue) = self.state.queue.lock() else {
             self.release_slot();
             return NativeProducerStatus::Closed;
         };
@@ -172,15 +126,15 @@ impl NativeChannelProducer {
         NativeProducerStatus::Sent
     }
     pub fn close(&self) {
-        self.0.closed.store(true, Ordering::Release);
+        self.state.closed.store(true, Ordering::Release);
         self.notify_schedulers();
     }
     #[must_use]
     pub fn is_closed(&self) -> bool {
-        self.0.closed.load(Ordering::Acquire)
+        self.state.closed.load(Ordering::Acquire)
     }
     pub(crate) fn drain(&self, limit: usize) -> Vec<NativeSendValue> {
-        self.0.queue.lock().map_or_else(
+        self.state.queue.lock().map_or_else(
             |_| Vec::new(),
             |mut queue| {
                 let end = limit.min(queue.len());
@@ -190,12 +144,12 @@ impl NativeChannelProducer {
     }
 
     pub(crate) fn reserve_slot(&self) -> bool {
-        let mut occupied = self.0.occupied.load(Ordering::Acquire);
+        let mut occupied = self.state.occupied.load(Ordering::Acquire);
         loop {
-            if occupied >= self.0.capacity {
+            if occupied >= self.state.capacity {
                 return false;
             }
-            match self.0.occupied.compare_exchange_weak(
+            match self.state.occupied.compare_exchange_weak(
                 occupied,
                 occupied + 1,
                 Ordering::AcqRel,
@@ -208,13 +162,13 @@ impl NativeChannelProducer {
     }
 
     pub(crate) fn release_slot(&self) {
-        let previous = self.0.occupied.fetch_sub(1, Ordering::AcqRel);
+        let previous = self.state.occupied.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(previous > 0, "native channel occupancy underflow");
     }
 
     pub(crate) fn register_scheduler(&self, signal: &Arc<SchedulerSignal>) {
         let mut signals = self
-            .0
+            .state
             .scheduler_signals
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -228,13 +182,20 @@ impl NativeChannelProducer {
     }
 
     pub(crate) fn has_external_producer(&self) -> bool {
-        Arc::strong_count(&self.0) > 1 && !self.is_closed()
+        self.state.producer_leases.load(Ordering::Acquire) > 0 && !self.is_closed()
+    }
+
+    pub(crate) fn receiver_handle(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            producer_lease: false,
+        }
     }
 
     fn notify_schedulers(&self) {
         let signals = {
             let mut signals = self
-                .0
+                .state
                 .scheduler_signals
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -250,8 +211,24 @@ impl NativeChannelProducer {
     }
 }
 
+impl Clone for NativeChannelProducer {
+    fn clone(&self) -> Self {
+        if self.producer_lease {
+            self.state.producer_leases.fetch_add(1, Ordering::AcqRel);
+        }
+        Self {
+            state: self.state.clone(),
+            producer_lease: self.producer_lease,
+        }
+    }
+}
+
 impl Drop for NativeChannelProducer {
     fn drop(&mut self) {
+        if self.producer_lease {
+            let previous = self.state.producer_leases.fetch_sub(1, Ordering::AcqRel);
+            debug_assert!(previous > 0, "native producer lease underflow");
+        }
         self.notify_schedulers();
     }
 }
@@ -1241,6 +1218,19 @@ mod tests {
             producer.try_send(NativeSendValue::integer(9)),
             NativeProducerStatus::Closed
         );
+    }
+
+    #[test]
+    fn receiver_handles_do_not_count_as_external_producer_leases() {
+        let producer = NativeChannelProducer::bounded(1);
+        let receiver = producer.receiver_handle();
+        let second = producer.clone();
+        assert!(receiver.has_external_producer());
+
+        drop(producer);
+        assert!(receiver.has_external_producer());
+        drop(second);
+        assert!(!receiver.has_external_producer());
     }
 
     #[test]
