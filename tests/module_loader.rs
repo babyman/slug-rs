@@ -1,6 +1,13 @@
 use std::fs;
 
-use slug_vm::{ModuleLoadError, ModuleLoader, RuntimeErrorKind, Value, Vm, compile};
+use slug_vm::{
+    ModuleLoadError, ModuleLoader, NativeArity, NativeCall, NativeModule, NativeOwnedValue,
+    NativeStatus, RuntimeErrorKind, Value, Vm, compile,
+};
+
+fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
+    call.return_value(NativeOwnedValue::nil())
+}
 
 fn root(kind: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("slug-module-{kind}-{}", std::process::id()))
@@ -358,6 +365,21 @@ fn retains_top_level_declaration_documentation_and_evaluated_tags() {
     )
     .expect("write metadata module");
     let loader = ModuleLoader::new(&root, None);
+    let module = NativeModule::new("metadata", ()).expect("native module is valid");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.define_foreign(
+        module
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                returns_nil,
+            )
+            .expect("native function is valid"),
+    )
+    .expect("foreign binding is unique");
 
     let instance = loader
         .initialize(None, "metadata")
@@ -388,6 +410,43 @@ fn retains_top_level_declaration_documentation_and_evaluated_tags() {
     );
     assert!(foreign.tags.is_empty());
     fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn rejects_foreign_bindings_that_cannot_accept_the_declared_arity() {
+    let root = root("foreign-arity");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("arity.slug"),
+        "export foreign call = fn(capacity:num = 0, foo):chan<any|nil>\n",
+    )
+    .expect("write foreign module");
+    let loader = ModuleLoader::new(&root, None);
+    let module = NativeModule::new("arity", ()).expect("native module is valid");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.define_foreign(
+        module
+            .function(
+                "call",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                returns_nil,
+            )
+            .expect("native function is valid"),
+    )
+    .expect("foreign binding is unique");
+
+    let error = loader
+        .initialize(None, "arity")
+        .expect_err("incompatible foreign arity must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("foreign function `arity.call` does not accept its declared arity")
+    );
+    fs::remove_dir_all(root).expect("remove module directory");
 }
 
 #[test]

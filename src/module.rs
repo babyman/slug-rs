@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::{
-    Configuration, ModuleDeclaration, Program, Value, Vm, compile,
+    Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, Value, Vm,
+    compile,
     native::{NativeResourceRegistry, native_resource_registry},
 };
 
@@ -25,6 +26,7 @@ struct ModuleLoaderState {
     compiled: RefCell<HashMap<PathBuf, Program>>,
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
     native_globals: RefCell<HashMap<String, Value>>,
+    foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
 }
@@ -97,6 +99,7 @@ impl ModuleLoader {
                 compiled: RefCell::new(HashMap::new()),
                 instances: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
+                foreign_functions: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
                 warnings: RefCell::new(Vec::new()),
             }),
@@ -248,6 +251,37 @@ impl ModuleLoader {
 
     pub(crate) fn native_globals(&self) -> HashMap<String, Value> {
         self.state.native_globals.borrow().clone()
+    }
+
+    pub(crate) fn define_foreign(
+        &self,
+        function: NativeFunction,
+    ) -> Result<(), NativeDescriptorError> {
+        let key = (
+            function.module_name().to_string(),
+            function.name().to_string(),
+        );
+        if self
+            .state
+            .foreign_functions
+            .borrow_mut()
+            .insert(key.clone(), function)
+            .is_some()
+        {
+            return Err(NativeDescriptorError::new(format!(
+                "foreign binding `{}.{}` is already defined",
+                key.0, key.1
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn foreign(&self, module: &str, name: &str) -> Option<NativeFunction> {
+        self.state
+            .foreign_functions
+            .borrow()
+            .get(&(module.into(), name.into()))
+            .cloned()
     }
 
     pub(crate) fn native_resources(&self) -> NativeResourceRegistry {

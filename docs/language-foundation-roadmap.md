@@ -165,11 +165,12 @@ are stable:
 
 - [ ] Implement `slug.meta` introspection over retained module, declaration,
   tag, and documentation metadata.
-- [ ] Implement minimal `foreign` declarations and a declared-foreign host
-  registry, keeping FFI and ABI adaptation outside the language runtime.
+- [x] Implement minimal `foreign` declarations and a module-qualified
+  declared-foreign host registry, keeping FFI and ABI adaptation outside the
+  language runtime.
 - [ ] Implement `slug.test` assertions and fixture support.
 - [ ] Implement the required `slug.std` core and collection operations.
-- [ ] Implement the `slug.channel` API over the completed channel and task
+- [x] Implement the `slug.channel` API over the completed channel and task
   runtime.
 - [ ] Implement the `slug.time` API over the completed timer host service.
 - [ ] Run all non-concurrent supported and error-parity fixtures.

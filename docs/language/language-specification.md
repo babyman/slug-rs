@@ -557,10 +557,13 @@ duplicate callable signature is an error; a non-callable `val` remains
 immutable.
 
 A `foreign` declaration names a host-supplied callable in the current module.
-The current subset parses and retains its signature and metadata, while host
-resolution remains unimplemented. Calls therefore use an already-installed
-native binding of that name and otherwise fail with an ordinary unknown-name
-runtime error.
+Before that module initializes, the runtime resolves each declaration against
+the host's module-qualified foreign-function registry. The host function is
+then visible only through the declared local binding. The registered callable
+must have the same arity range as the declaration, including omitted defaults
+and variadic calls. An unavailable or incompatible binding is a checked
+foreign-resolution runtime error; it is never silently substituted with an
+unrelated host global.
 
 A doc block uses `/** ... */`. Every non-empty content line must begin with
 `*`, otherwise parsing fails. At top level, a doc block attaches to the next
@@ -673,8 +676,8 @@ repeated awaits return the same cached completion. The ordinary task-await API
 is a library callable, conventionally imported from `slug.channel`. `await` is
 also a `select` case form, not an independently reserved expression keyword.
 
-The current implementation also exposes `await(task)` as a builtin while
-`slug.channel` is deferred. Root evaluation, explicit nursery bodies, and
+The current implementation also exposes `await(task)` as a builtin while the
+library transition is completed. Root evaluation, explicit nursery bodies, and
 spawned tasks suspend cooperatively on task, channel, timer, and `select`
 operations. Owner settlement runs after either a successful or failed body and
 propagates unobserved child failures. An explicit nursery logically cancels

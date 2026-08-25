@@ -331,6 +331,7 @@ fn catch_native_unwind<R>(operation: impl FnOnce() -> R) -> std::thread::Result<
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NativeArity {
     Exact(usize),
+    Range { minimum: usize, maximum: usize },
     Variadic { minimum: usize },
 }
 
@@ -338,6 +339,7 @@ impl NativeArity {
     fn accepts(self, count: usize) -> bool {
         match self {
             Self::Exact(expected) => count == expected,
+            Self::Range { minimum, maximum } => (minimum..=maximum).contains(&count),
             Self::Variadic { minimum } => count >= minimum,
         }
     }
@@ -345,6 +347,7 @@ impl NativeArity {
     fn describe(self) -> String {
         match self {
             Self::Exact(expected) => expected.to_string(),
+            Self::Range { minimum, maximum } => format!("between {minimum} and {maximum}"),
             Self::Variadic { minimum } => format!("at least {minimum}"),
         }
     }
@@ -778,6 +781,23 @@ impl NativeFunction {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
+    pub(crate) fn matches_declared_arity(&self, minimum: usize, maximum: Option<usize>) -> bool {
+        match (self.0.arity, maximum) {
+            (NativeArity::Exact(expected), Some(maximum)) => {
+                expected == minimum && expected == maximum
+            }
+            (
+                NativeArity::Range {
+                    minimum: expected_minimum,
+                    maximum: expected_maximum,
+                },
+                Some(maximum),
+            ) => expected_minimum == minimum && expected_maximum == maximum,
+            (NativeArity::Variadic { minimum: expected }, None) => expected == minimum,
+            _ => false,
+        }
+    }
+
     pub(crate) fn invoke(&self, arguments: &[Value]) -> NativeInvocation {
         if !self.0.arity.accepts(arguments.len()) {
             return NativeInvocation::Error(
@@ -1021,6 +1041,26 @@ impl NativeCall<'_> {
     pub fn channel(&mut self, capacity: usize) -> (NativeOwnedValue, NativeChannelProducer) {
         let (channel, producer) = Channel::native(capacity);
         (NativeOwnedValue(Value::Channel(Rc::new(channel))), producer)
+    }
+
+    /// Creates an ordinary Slug channel without issuing a native producer capability.
+    #[must_use]
+    pub fn plain_channel(&mut self, capacity: usize) -> NativeOwnedValue {
+        NativeOwnedValue(Value::Channel(Rc::new(Channel::new(capacity))))
+    }
+
+    /// Closes a channel argument and wakes blocked Slug senders and receivers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `native.type` when the selected argument is not a channel.
+    pub fn close_channel(&mut self, index: usize) -> Result<(), NativeError> {
+        let value = self.argument(index)?;
+        let Value::Channel(channel) = value.value else {
+            return Err(value.type_error("chan"));
+        };
+        channel.close();
+        Ok(())
     }
 
     /// Constructs a typed resource owned by the callback's module.

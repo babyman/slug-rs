@@ -42,6 +42,9 @@ compiled-module contract is documented separately as `.cslug`.
 - Statically registered native functions use an opaque, call-scoped version 0
   Rust facade with structured errors and typed resources. It remains unstable;
   no public C ABI or dynamic native loader exists yet.
+- Top-level `foreign` declarations resolve through a module-qualified,
+  host-registered native-function registry. The bundled `slug.channel` module
+  uses this boundary for channel creation and closing.
 - A metadata-backed, syntax-focused conformance suite derived from the legacy
   Slug corpus runs with the integration tests.
 

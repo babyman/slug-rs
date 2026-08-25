@@ -76,6 +76,11 @@ pub struct ModuleDeclaration {
     pub bindings: Vec<String>,
     pub mutable: bool,
     pub exported: bool,
+    /// Whether this declaration must be supplied by the module-qualified host registry.
+    pub foreign: bool,
+    /// The inclusive declared call-arity range for a foreign binding. `None`
+    /// denotes a variadic declaration.
+    pub foreign_arity: Option<(usize, Option<usize>)>,
     pub documentation: Option<String>,
     pub tags: Vec<ModuleTag>,
 }

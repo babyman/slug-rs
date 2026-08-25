@@ -229,6 +229,7 @@ impl Vm {
 
     pub(crate) fn run_module(&mut self, program: &Rc<Program>) -> VmResult<Value> {
         self.module_program = Some(program.clone());
+        self.bind_foreign_declarations(program)?;
         self.run_named(program, "main")
     }
 
@@ -242,6 +243,7 @@ impl Vm {
     /// Returns a Slug runtime error when top-level execution or the entrypoint
     /// call fails.
     pub fn run_program(&mut self, program: &Program) -> VmResult<Value> {
+        self.bind_foreign_declarations(program)?;
         let top_level = self.run_named(program, "main")?;
         if !program.has_entrypoint() {
             return Ok(top_level);
@@ -310,10 +312,6 @@ impl Vm {
 
     /// Installs one validated native descriptor as a local VM global.
     ///
-    /// The descriptor retains its module-qualified identity. This adapter uses
-    /// only its local binding name until `foreign` declarations gain a
-    /// module-qualified registry.
-    ///
     /// # Errors
     ///
     /// Returns an error when that binding is already defined.
@@ -329,6 +327,83 @@ impl Vm {
             module_loader.define_native(name.clone(), value.clone());
         }
         self.globals.borrow_mut().insert(name, value);
+        Ok(())
+    }
+
+    /// Registers one native descriptor for a matching source `foreign` declaration.
+    ///
+    /// The descriptor is visible only through a declaration in its owning module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the VM has no module loader or the module-qualified
+    /// descriptor name is already registered.
+    pub fn define_foreign(
+        &mut self,
+        function: NativeFunction,
+    ) -> Result<(), NativeDescriptorError> {
+        let loader = self.module_loader.as_ref().ok_or_else(|| {
+            NativeDescriptorError::new("foreign bindings require a module loader")
+        })?;
+        loader.define_foreign(function)
+    }
+
+    fn bind_foreign_declarations(&mut self, program: &Program) -> VmResult<()> {
+        let Some(loader) = &self.module_loader else {
+            return if program
+                .declarations()
+                .iter()
+                .any(|declaration| declaration.foreign)
+            {
+                Err(self.error(
+                    RuntimeErrorKind::Module,
+                    "foreign declarations require a module loader".into(),
+                    None,
+                ))
+            } else {
+                Ok(())
+            };
+        };
+        for declaration in program
+            .declarations()
+            .iter()
+            .filter(|declaration| declaration.foreign)
+        {
+            for name in &declaration.bindings {
+                let function = loader.foreign(program.module_name(), name).ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::Module,
+                        format!(
+                            "foreign function `{}.{name}` is not registered",
+                            program.module_name()
+                        ),
+                        None,
+                    )
+                })?;
+                let (minimum, maximum) = declaration.foreign_arity.ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!("foreign declaration `{name}` has no arity metadata"),
+                        None,
+                    )
+                })?;
+                if !function.matches_declared_arity(minimum, maximum) {
+                    return Err(self.error(
+                        RuntimeErrorKind::Module,
+                        format!(
+                            "foreign function `{}.{name}` does not accept its declared arity",
+                            program.module_name()
+                        ),
+                        None,
+                    ));
+                }
+                let value = Value::Native(function);
+                let binding = self.globals.borrow().get(name).cloned();
+                if !binding.is_some_and(|binding| binding.replace_binding(value.clone())) {
+                    self.globals.borrow_mut().insert(name.clone(), value);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -501,6 +576,35 @@ impl Vm {
                             None,
                         );
                         return self.settle_tasks(Err(blocked));
+                    }
+                },
+            }
+        }
+    }
+
+    fn run_nested_execution(&mut self, program: &Program) -> VmResult<Value> {
+        let root = RootWaiter::new();
+        self.current_waiter = Some(Waiter::Root(root.clone()));
+        loop {
+            match self.execute(program) {
+                ExecutionOutcome::Settled(result) => return result,
+                ExecutionOutcome::Suspended => loop {
+                    if let Some(result) = root.take_resume() {
+                        if let Some(wait_registration) = self.wait_registration.take() {
+                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                        }
+                        self.resume = Some(result);
+                        break;
+                    }
+                    if !self.make_progress() {
+                        if let Some(wait_registration) = self.wait_registration.take() {
+                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                        }
+                        return Err(self.error(
+                            RuntimeErrorKind::InvalidCall,
+                            "task remains blocked with no runnable work".into(),
+                            None,
+                        ));
                     }
                 },
             }
@@ -1300,17 +1404,15 @@ impl Vm {
         span: Option<SourceSpan>,
         options: ClosureCallOptions,
     ) -> VmResult<Value> {
-        match self
-            .module_closure_execution(program.clone(), closure, arguments, provided, span, options)?
-            .run()
-        {
-            TaskRunOutcome::Settled(result) => result,
-            TaskRunOutcome::Suspended(_) => Err(self.error(
-                RuntimeErrorKind::InvalidCall,
-                "blocking operations require a spawned task".into(),
-                None,
-            )),
-        }
+        let mut execution = self.module_closure_execution(
+            program.clone(),
+            closure,
+            arguments,
+            provided,
+            span,
+            options,
+        )?;
+        execution.vm.run_nested_execution(&execution.program)
     }
 
     fn spawn_task(&mut self, program: &Program, span: Option<SourceSpan>) -> VmResult<()> {
@@ -2218,25 +2320,7 @@ impl Vm {
                 span,
             ));
         };
-        channel.revoke_native_producer();
-        let mut state = channel.state.borrow_mut();
-        if state.closed {
-            return Ok(Value::Nil);
-        }
-        state.closed = true;
-        let receivers = state.receivers.drain(..).collect::<Vec<_>>();
-        let senders = state
-            .senders
-            .drain(..)
-            .map(|(sender, _)| sender)
-            .collect::<Vec<_>>();
-        drop(state);
-        for receiver in receivers {
-            receiver.resume(Ok(Value::Nil));
-        }
-        for sender in senders {
-            sender.reject_closed_send();
-        }
+        channel.close();
         Ok(Value::Nil)
     }
 

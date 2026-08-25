@@ -8,8 +8,8 @@ use crate::{
 use super::{
     SourceError,
     ast::{
-        Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern, SelectCaseKind, StringPart, Tag,
+        Binary, CallArgument, Expr, ExprKind, ForeignSignature, ListElement, MapPatternKey,
+        MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind, StringPart, Tag,
     },
     state::{Binding, State},
 };
@@ -48,6 +48,8 @@ impl Compiler {
                     bindings: names.clone(),
                     mutable: *mutable,
                     exported: *exported,
+                    foreign: false,
+                    foreign_arity: None,
                     documentation: match &expression.kind {
                         ExprKind::Declare { documentation, .. } => documentation.clone(),
                         _ => unreachable!("declaration pattern was matched"),
@@ -76,13 +78,15 @@ impl Compiler {
                 name,
                 documentation,
                 tags,
-                ..
+                signature,
             } = &expression.kind
             {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
                     exported: *exported,
+                    foreign: true,
+                    foreign_arity: Some(foreign_arity(signature)),
                     documentation: documentation.clone(),
                     tags: tags
                         .iter()
@@ -95,6 +99,8 @@ impl Compiler {
                 if *exported {
                     exports.push(name.clone());
                 }
+                bindings.push(name.clone());
+                self.globals.insert(name.clone(), false);
             }
         }
         bindings.sort();
@@ -1231,6 +1237,20 @@ fn lower_rest_pattern(rest: Option<&RestPattern>) -> MatchRest {
         Some(RestPattern::Discard) => MatchRest::Discard,
         Some(RestPattern::Binding(_)) => MatchRest::Binding,
     }
+}
+
+fn foreign_arity(signature: &ForeignSignature) -> (usize, Option<usize>) {
+    let required = signature
+        .parameters
+        .iter()
+        .filter(|parameter| !parameter.variadic && parameter.default.is_none())
+        .count();
+    let maximum = (!signature
+        .parameters
+        .iter()
+        .any(|parameter| parameter.variadic))
+    .then_some(signature.parameters.len());
+    (required, maximum)
 }
 
 fn is_zero_argument_main(expression: &Expr) -> bool {

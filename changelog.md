@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added module-qualified declared-foreign resolution and the initial
+  `slug.channel` library. Its `chan` and `close` bindings use the static host
+  registry; source wrappers provide send, receive, non-blocking operations,
+  and timed task/channel waits.
+
 - `SLUG_HOME` now supplies both the optional library configuration and the
   `$SLUG_HOME/lib` source-library root used by `import`.
 

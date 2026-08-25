@@ -466,6 +466,28 @@ impl Channel {
     pub(crate) fn park_receiver(&self, waiter: Waiter) {
         self.state.borrow_mut().receivers.push_back(waiter);
     }
+
+    pub(crate) fn close(&self) {
+        self.revoke_native_producer();
+        let mut state = self.state.borrow_mut();
+        if state.closed {
+            return;
+        }
+        state.closed = true;
+        let receivers = state.receivers.drain(..).collect::<Vec<_>>();
+        let senders = state
+            .senders
+            .drain(..)
+            .map(|(sender, _)| sender)
+            .collect::<Vec<_>>();
+        drop(state);
+        for receiver in receivers {
+            receiver.resume(Ok(Value::Nil));
+        }
+        for sender in senders {
+            sender.reject_closed_send();
+        }
+    }
 }
 
 impl fmt::Debug for Channel {

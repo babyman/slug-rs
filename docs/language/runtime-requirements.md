@@ -166,9 +166,11 @@ Host services cannot become names visible to a Slug program except through a
 documented builtin, imported library module, or declared foreign function.
 
 Foreign functions are not required for the portable fixture set unless a
-fixture imports a library that declares one. If a required foreign function is
-unavailable, the implementation MUST report a Slug module or foreign-resolution
-error rather than substitute host behavior silently.
+fixture imports a library that declares one. A declared function resolves by
+its module name and local declaration name, not by an ambient host-global name.
+If a required foreign function is unavailable, the implementation MUST report
+a Slug module or foreign-resolution error rather than substitute host behavior
+silently.
 
 ## Configuration service
 

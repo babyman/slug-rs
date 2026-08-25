@@ -358,8 +358,11 @@ binary boundary rather than a more permissive private API.
 
 ## FFI and raw C libraries
 
-Dynamic discovery comes after the static interface, channels, and concurrency
-have validated this contract. A future loader will:
+Dynamic discovery comes after the static interface, declared-foreign registry,
+channels, and concurrency have validated this contract. The version 0 Rust
+facade registers a descriptor under its module-qualified name; a source
+`foreign` declaration is the sole mechanism that exposes that descriptor to a
+Slug module. A future loader will:
 
 1. locate a module by an explicit, host-controlled search policy;
 2. load one known entry symbol;

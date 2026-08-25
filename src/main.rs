@@ -24,6 +24,41 @@ fn native_println(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())
 }
 
+fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+    let capacity = match call.argument_count() {
+        0 => 0,
+        1 => match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+            Ok(value) => match usize::try_from(value) {
+                Ok(value) => value,
+                Err(_) => {
+                    return call.raise(slug_vm::NativeError::new(
+                        "native.type",
+                        "channel capacity must not be negative or too large",
+                    ));
+                }
+            },
+            Err(error) => {
+                return call.raise(error);
+            }
+        },
+        count => {
+            return call.raise(slug_vm::NativeError::new(
+                "native.arity",
+                format!("`slug.channel.chan` expects at most 1 argument, got {count}"),
+            ));
+        }
+    };
+    let channel = call.plain_channel(capacity);
+    call.return_value(channel)
+}
+
+fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
+    if let Err(error) = call.close_channel(0) {
+        return call.raise(error);
+    }
+    call.return_value(NativeOwnedValue::nil())
+}
+
 fn main() -> ExitCode {
     let mut args = env::args();
     let executable = args.next().unwrap_or_else(|| "slug".into());
@@ -114,6 +149,26 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
         .expect("static native function is valid");
     vm.define_native(println)
         .expect("static native binding is unique");
+    let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
+    vm.define_foreign(
+        channel
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                native_channel,
+            )
+            .expect("static foreign function is valid"),
+    )
+    .expect("static foreign binding is unique");
+    vm.define_foreign(
+        channel
+            .function("close", NativeArity::Exact(1), native_close)
+            .expect("static foreign function is valid"),
+    )
+    .expect("static foreign binding is unique");
     match vm.run_program(&program) {
         Ok(_) => {
             for warning in loader.take_warnings() {

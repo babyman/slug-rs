@@ -69,8 +69,8 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Cooperative task handles with `spawn`, `await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `tests/cli.rs` |
 | Bounded FIFO channels through `channel`, `send`, `recv`, and `close`, plus bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `tests/cli.rs` |
-| Foreign declaration syntax and metadata retention | partial | `tests/cli.rs` and `tests/module_loader.rs` |
-| Foreign host resolution and module metadata introspection | specified only | `language/language-specification.md` |
+| Foreign declaration syntax, metadata retention, and module-qualified host resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
+| Module metadata introspection | specified only | `language/language-specification.md` |
 | Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |
-| Standard library and remaining concurrency APIs | specified only | `language/runtime-requirements.md` |
+| Standard library and remaining concurrency APIs | partial | `lib/slug/channel.slug` and `tests/cli.rs` |

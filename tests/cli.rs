@@ -1047,7 +1047,7 @@ fn attaches_strict_documentation_blocks_to_top_level_declarations() {
 }
 
 #[test]
-fn accepts_documented_exported_foreign_declarations() {
+fn reports_unregistered_documented_foreign_declarations() {
     let path = fixture_path("documented-foreign-declaration");
     fs::write(
         &path,
@@ -1060,12 +1060,41 @@ fn accepts_documented_exported_foreign_declarations() {
         .expect("run documented foreign source");
     fs::remove_file(&path).expect("remove documented foreign source");
 
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("foreign function `")
+            && String::from_utf8_lossy(&output.stderr).contains(".chan` is not registered")
+    );
+}
+
+#[test]
+fn imports_slug_channel_with_its_registered_foreign_bindings() {
+    let path = fixture_path("slug-channel-library");
+    fs::write(
+        &path,
+        "val channel = import(\"slug.channel\")\n\
+         val inbox = channel.chan(1)\n\
+         channel.send(inbox, 42)\n\
+         println(channel.recv(inbox))\n\
+         channel.close(inbox)\n\
+         println(channel.recv(inbox))\n",
+    )
+    .expect("write slug.channel source");
+    let output = slug()
+        .arg(&path)
+        .env("SLUG_HOME", env!("CARGO_MANIFEST_DIR"))
+        .env_remove("SLUG_FIXTURE_LIBRARY_ROOT")
+        .output()
+        .expect("run slug.channel source");
+    fs::remove_file(path).expect("remove slug.channel source");
+
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stdout.is_empty());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\nnil\n");
     assert!(output.stderr.is_empty());
 }
 
