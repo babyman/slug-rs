@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added parsing and retained metadata for documented, tagged, and exported
+  `foreign` declarations. Host foreign-resolution remains a later milestone.
+
 - Fixed concurrency owner settlement, `select` arbitration, and native wakeups:
   failed owners now settle or cancel their children, explicit nursery bodies
   may suspend, losing task-await cases no longer suppress failures, waiter

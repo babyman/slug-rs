@@ -923,7 +923,7 @@ fn accepts_tags_and_evaluates_their_arguments_before_declarations() {
     let cases = [(
         "tagged-expression",
         "@audit println(1)\n",
-        "slug: parse error: documentation blocks and tags must prefix a val or var declaration",
+        "slug: parse error: documentation blocks and tags must prefix a val, var, or foreign declaration",
     )];
     for (kind, source, expected) in cases {
         let path = fixture_path(kind);
@@ -986,7 +986,7 @@ fn attaches_strict_documentation_blocks_to_top_level_declarations() {
         (
             "misplaced-documentation-block",
             "/**\n * Documentation\n */\nprintln(1)\n",
-            "slug: parse error: documentation blocks and tags must prefix a val or var declaration",
+            "slug: parse error: documentation blocks and tags must prefix a val, var, or foreign declaration",
         ),
         (
             "nested-documentation-block",
@@ -1010,6 +1010,29 @@ fn attaches_strict_documentation_blocks_to_top_level_declarations() {
                 .starts_with(expected)
         );
     }
+}
+
+#[test]
+fn accepts_documented_exported_foreign_declarations() {
+    let path = fixture_path("documented-foreign-declaration");
+    fs::write(
+        &path,
+        "/**\n * creates a new channel with an optional buffer capacity.\n *\n * An unbuffered channel (capacity 0) blocks the sender until a receiver\n * is ready. A buffered channel allows up to `capacity` messages to be\n * queued before blocking.\n */\nexport foreign chan = fn(capacity:num = 0):chan<any|nil>\n",
+    )
+    .expect("write documented foreign source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run documented foreign source");
+    fs::remove_file(&path).expect("remove documented foreign source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 #[test]

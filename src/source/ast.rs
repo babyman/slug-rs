@@ -21,6 +21,13 @@ pub(super) enum ExprKind {
         annotation: Option<TypeAnnotation>,
         value: Box<Expr>,
     },
+    Foreign {
+        exported: bool,
+        name: String,
+        documentation: Option<String>,
+        tags: Vec<Tag>,
+        signature: Box<ForeignSignature>,
+    },
     Assign {
         name: String,
         value: Box<Expr>,
@@ -123,6 +130,12 @@ pub(super) struct Parameter {
     pub(super) annotation: Option<TypeAnnotation>,
     pub(super) default: Option<Expr>,
     pub(super) variadic: bool,
+}
+#[derive(Clone, Debug)]
+pub(super) struct ForeignSignature {
+    pub(super) type_parameters: Vec<String>,
+    pub(super) parameters: Vec<Parameter>,
+    pub(super) return_annotation: Option<TypeAnnotation>,
 }
 #[derive(Clone, Debug)]
 pub(super) struct Tag {
@@ -244,6 +257,7 @@ pub(super) enum TokenKind {
     NotImplemented,
     Name(String),
     Export,
+    Foreign,
     Val,
     Var,
     Fn,

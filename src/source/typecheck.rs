@@ -48,6 +48,29 @@ pub(super) fn check(expressions: &[Expr]) -> Result<(), SourceError> {
                 },
             );
         }
+        if let ExprKind::Foreign {
+            name, signature, ..
+        } = &expression.kind
+        {
+            functions.insert(
+                name.clone(),
+                FunctionType {
+                    type_parameters: signature.type_parameters.clone(),
+                    parameters: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| {
+                            (
+                                parameter.name.clone(),
+                                parameter.annotation.clone(),
+                                parameter.variadic,
+                            )
+                        })
+                        .collect(),
+                    result: signature.return_annotation.clone(),
+                },
+            );
+        }
         check_expression(expression, &mut bindings, &functions)?;
     }
     Ok(())
@@ -74,6 +97,16 @@ fn check_expression(
                 bindings.insert(name.clone(), annotation.clone());
             }
             Ok(actual)
+        }
+        ExprKind::Foreign { signature, .. } => {
+            for parameter in &signature.parameters {
+                if let (Some(expected), Some(default)) = (&parameter.annotation, &parameter.default)
+                    && let Some(actual) = check_expression(default, bindings, functions)?
+                {
+                    require(expected, &actual, &default.span)?;
+                }
+            }
+            Ok(Some(TypeAnnotation::Name("fn".into())))
         }
         ExprKind::Function {
             type_parameters,

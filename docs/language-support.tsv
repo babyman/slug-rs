@@ -48,7 +48,7 @@ Type annotation syntax and basic `-type-check` validation|implemented|`tests/cli
 Generic call inference and explicit type applications|implemented|`tests/cli.rs`
 Complete static checking|specified only|`language/language-specification.md`
 Tags on `val`/`var` declarations and function parameters|partial|`tests/cli.rs`
-Documentation blocks on top-level `val`/`var` declarations|partial|`tests/cli.rs`
+Documentation blocks on top-level `val`/`var`/`foreign` declarations|partial|`tests/cli.rs`
 `???` checked runtime placeholder|implemented|`tests/cli.rs`
 Top-level `export` declaration metadata|partial|`tests/vm.rs`
 Source-level module imports and exported-value maps|partial|`tests/module_loader.rs`
@@ -63,7 +63,8 @@ Immutable configuration store and source precedence|implemented|`tests/configura
 Cooperative task handles with `spawn`, `await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption|partial|`tests/cli.rs`
 Bounded FIFO channels through `channel`, `send`, `recv`, and `close`, plus bounded thread-safe native producers|implemented|`tests/cli.rs` and `tests/vm.rs`
 Nursery ownership and `select` receive/send/timer/task-await/default cases|partial|`tests/cli.rs`
-Foreign declarations and module metadata introspection|specified only|`language/language-specification.md`
+Foreign declaration syntax and metadata retention|partial|`tests/cli.rs` and `tests/module_loader.rs`
+Foreign host resolution and module metadata introspection|specified only|`language/language-specification.md`
 Checked source and runtime diagnostics with locations|implemented|`tests/cli.rs` and `tests/vm.rs`
 Full language specification|specified only|`language/language-specification.md`
 Standard library and remaining concurrency APIs|specified only|`language/runtime-requirements.md`

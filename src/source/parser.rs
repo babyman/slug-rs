@@ -123,10 +123,13 @@ impl Parser {
             false
         };
         if (documentation.is_some() || !tags.is_empty())
-            && !matches!(self.kind(), TokenKind::Val | TokenKind::Var)
+            && !matches!(
+                self.kind(),
+                TokenKind::Val | TokenKind::Var | TokenKind::Foreign
+            )
         {
             return Err(SourceError::at(
-                "documentation blocks and tags must prefix a val or var declaration",
+                "documentation blocks and tags must prefix a val, var, or foreign declaration",
                 self.peek().span.clone(),
             ));
         }
@@ -214,7 +217,132 @@ impl Parser {
                 },
             });
         }
+        if self.matches(&TokenKind::Foreign) {
+            return self.foreign_declaration(exported, documentation, tags);
+        }
         self.expression()
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn foreign_declaration(
+        &mut self,
+        exported: bool,
+        documentation: Option<String>,
+        tags: Vec<Tag>,
+    ) -> Result<Expr, SourceError> {
+        let span = self.next().span;
+        if self.nesting != 0 {
+            return Err(SourceError::at(
+                "foreign declarations are only valid at top level",
+                span,
+            ));
+        }
+        let name = self.next();
+        let TokenKind::Name(name) = name.kind else {
+            return Err(SourceError::at(
+                "expected foreign declaration name",
+                name.span,
+            ));
+        };
+        self.consume(&TokenKind::Eq, "expected = after foreign declaration name")?;
+        self.consume(&TokenKind::Fn, "expected fn in foreign declaration")?;
+        let mut type_parameters = Vec::new();
+        if self.matches(&TokenKind::Less) {
+            self.next();
+            loop {
+                let parameter = self.next();
+                let TokenKind::Name(parameter) = parameter.kind else {
+                    return Err(SourceError::at(
+                        "expected type parameter name",
+                        parameter.span,
+                    ));
+                };
+                type_parameters.push(parameter);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+            }
+            self.consume(&TokenKind::Greater, "expected > after type parameters")?;
+        }
+        self.consume(&TokenKind::LParen, "expected ( after foreign fn")?;
+        let mut parameters = Vec::new();
+        let mut has_variadic = false;
+        while !self.matches(&TokenKind::RParen) {
+            let variadic = if self.matches(&TokenKind::Ellipsis) {
+                if has_variadic {
+                    return Err(SourceError::at(
+                        "function can have only one variadic parameter",
+                        self.next().span,
+                    ));
+                }
+                self.next();
+                true
+            } else {
+                false
+            };
+            let parameter = self.next();
+            let TokenKind::Name(name) = parameter.kind else {
+                return Err(SourceError::at("expected parameter name", parameter.span));
+            };
+            let annotation = if self.matches(&TokenKind::Colon) {
+                self.next();
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
+            let default = if self.matches(&TokenKind::Eq) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            if variadic && default.is_some() {
+                return Err(SourceError::at(
+                    "variadic parameters cannot have defaults",
+                    parameter.span,
+                ));
+            }
+            parameters.push(Parameter {
+                name,
+                tags: Vec::new(),
+                annotation,
+                default,
+                variadic,
+            });
+            has_variadic |= variadic;
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+            self.next();
+            if has_variadic && !self.matches(&TokenKind::RParen) {
+                return Err(SourceError::at(
+                    "variadic parameter must be final",
+                    self.peek().span.clone(),
+                ));
+            }
+        }
+        self.consume(&TokenKind::RParen, "expected ) after foreign parameters")?;
+        let return_annotation = if self.matches(&TokenKind::Colon) {
+            self.next();
+            Some(self.type_annotation()?)
+        } else {
+            None
+        };
+        Ok(Expr {
+            span,
+            kind: ExprKind::Foreign {
+                exported,
+                name,
+                documentation,
+                tags,
+                signature: Box::new(super::ast::ForeignSignature {
+                    type_parameters,
+                    parameters,
+                    return_annotation,
+                }),
+            },
+        })
     }
 
     fn documentation_prefix(&mut self) -> Result<DocumentationPrefix, SourceError> {

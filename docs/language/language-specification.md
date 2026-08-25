@@ -528,14 +528,14 @@ exported.
 The current Rust subset accepts tags on `val` and `var` declarations and on
 function parameters. It evaluates their arguments in the current lexical
 environment when the corresponding declaration or function literal is
-evaluated; declaration tags run before the declared value. Module metadata,
-`slug.meta` introspection, tagged exports, and tagged foreign declarations are
-not implemented yet.
+evaluated; declaration tags run before the declared value. Tagged foreign
+declarations retain their metadata, but host resolution and `slug.meta`
+introspection are not implemented yet.
 
-The subset also parses strict documentation blocks on top-level `val` and
-`var` declarations, as well as a first module doc block followed by a blank
-line. It retains top-level declaration documentation and evaluated tag metadata
-in the module model; metadata introspection is not implemented yet.
+The subset also parses strict documentation blocks on top-level `val`, `var`,
+and `foreign` declarations, as well as a first module doc block followed by a
+blank line. It retains top-level declaration documentation and evaluated tag
+metadata in the module model; metadata introspection is not implemented yet.
 
 ```slug
 @deprecated
@@ -551,10 +551,10 @@ duplicate callable signature is an error; a non-callable `val` remains
 immutable.
 
 A `foreign` declaration names a host-supplied callable in the current module.
-It is resolved before module code executes. If no implementation is registered
-for the module-qualified name, evaluation fails with an unknown-foreign error.
-Foreign declarations use the declared parameter, return-type, and tag metadata
-for ordinary call binding and introspection.
+The current subset parses and retains its signature and metadata, while host
+resolution remains unimplemented. Calls therefore use an already-installed
+native binding of that name and otherwise fail with an ordinary unknown-name
+runtime error.
 
 A doc block uses `/** ... */`. Every non-empty content line must begin with
 `*`, otherwise parsing fails. At top level, a doc block attaches to the next

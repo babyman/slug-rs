@@ -636,6 +636,7 @@ impl Lexer {
                     let kind = match text.as_str() {
                         "val" => TokenKind::Val,
                         "export" => TokenKind::Export,
+                        "foreign" => TokenKind::Foreign,
                         "var" => TokenKind::Var,
                         "fn" => TokenKind::Fn,
                         "if" => TokenKind::If,

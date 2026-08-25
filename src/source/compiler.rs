@@ -71,6 +71,31 @@ impl Compiler {
                     self.globals.insert(name, *mutable);
                 }
             }
+            if let ExprKind::Foreign {
+                exported,
+                name,
+                documentation,
+                tags,
+                ..
+            } = &expression.kind
+            {
+                self.declarations.push(ModuleDeclaration {
+                    bindings: vec![name.clone()],
+                    mutable: false,
+                    exported: *exported,
+                    documentation: documentation.clone(),
+                    tags: tags
+                        .iter()
+                        .map(|tag| ModuleTag {
+                            name: tag.name.clone(),
+                            arguments: Vec::new(),
+                        })
+                        .collect(),
+                });
+                if *exported {
+                    exports.push(name.clone());
+                }
+            }
         }
         bindings.sort();
         bindings.dedup();
@@ -183,6 +208,21 @@ impl Compiler {
                 self.tags(state, tags, declaration, &expression.span)?;
                 self.expression(state, value)?;
                 self.bind_pattern(state, pattern, *mutable, &expression.span)?;
+                state.emit(Op::Nil, &expression.span);
+            }
+            ExprKind::Foreign { tags, .. } => {
+                let declaration = self
+                    .expressions
+                    .iter()
+                    .filter(|candidate| {
+                        matches!(
+                            candidate.kind,
+                            ExprKind::Declare { .. } | ExprKind::Foreign { .. }
+                        )
+                    })
+                    .position(|candidate| candidate.span == expression.span)
+                    .expect("compiled declaration was recorded");
+                self.tags(state, tags, Some(declaration), &expression.span)?;
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::Assign { name, value } => {

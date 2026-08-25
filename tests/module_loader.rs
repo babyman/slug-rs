@@ -354,7 +354,7 @@ fn retains_top_level_declaration_documentation_and_evaluated_tags() {
     fs::create_dir_all(&root).expect("create module directory");
     fs::write(
         root.join("metadata.slug"),
-        "/**\n * A public value.\n */\n@label(\"stable\", 2)\nexport val value = 1\n",
+        "/**\n * A public value.\n */\n@label(\"stable\", 2)\nexport val value = 1\n\n/**\n * A host callable.\n */\nexport foreign chan = fn(capacity:num = 0):chan<any|nil>\n",
     )
     .expect("write metadata module");
     let loader = ModuleLoader::new(&root, None);
@@ -363,7 +363,7 @@ fn retains_top_level_declaration_documentation_and_evaluated_tags() {
         .initialize(None, "metadata")
         .expect("initialize metadata module");
 
-    assert_eq!(instance.metadata.len(), 1);
+    assert_eq!(instance.metadata.len(), 2);
     let declaration = &instance.metadata[0];
     assert_eq!(declaration.bindings, ["value"]);
     assert!(declaration.exported);
@@ -378,6 +378,15 @@ fn retains_top_level_declaration_documentation_and_evaluated_tags() {
         declaration.tags[0].arguments,
         [Value::string("stable"), Value::Int(2)]
     );
+    let foreign = &instance.metadata[1];
+    assert_eq!(foreign.bindings, ["chan"]);
+    assert!(foreign.exported);
+    assert!(!foreign.mutable);
+    assert_eq!(
+        foreign.documentation.as_deref(),
+        Some("\n * A host callable.\n ")
+    );
+    assert!(foreign.tags.is_empty());
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 
