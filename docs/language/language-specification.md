@@ -225,6 +225,11 @@ match_body       = "match" , "{" , [ match_case , { case_sep , match_case } ] , 
 Parameters may have default expressions. A variadic parameter uses `...` and
 must be final. Calls accept positional, named, and spread arguments:
 
+`_` is a discard parameter. It accepts its positional argument but does not
+introduce a name into the function body. Multiple discard parameters are
+allowed. Because it has no binding name, a discard parameter cannot be supplied
+by a named argument.
+
 ```ebnf
 call_arg  = spread_expr | named_arg | expression ;
 spread_expr = "..." , expression ;

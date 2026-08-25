@@ -305,6 +305,7 @@ impl Parser {
             }
             parameters.push(Parameter {
                 name,
+                discard: false,
                 tags: Vec::new(),
                 annotation,
                 default,
@@ -1127,12 +1128,12 @@ impl Parser {
                 let TokenKind::Name(name) = token.kind else {
                     return Err(SourceError::at("expected parameter name", token.span));
                 };
-                if name == "_" {
-                    return Err(SourceError::at(
-                        "discard parameters are not supported yet",
-                        token.span,
-                    ));
-                }
+                let discard = name == "_";
+                let name = if discard {
+                    format!("<discard parameter {}>", parameters.len())
+                } else {
+                    name
+                };
                 let annotation = if self.matches(&TokenKind::Colon) {
                     self.next();
                     Some(self.type_annotation()?)
@@ -1153,6 +1154,7 @@ impl Parser {
                 }
                 parameters.push(Parameter {
                     name,
+                    discard,
                     tags,
                     annotation,
                     default,

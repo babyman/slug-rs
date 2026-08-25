@@ -126,6 +126,7 @@ pub(super) enum StringPart {
 #[derive(Clone, Debug)]
 pub(super) struct Parameter {
     pub(super) name: String,
+    pub(super) discard: bool,
     pub(super) tags: Vec<Tag>,
     pub(super) annotation: Option<TypeAnnotation>,
     pub(super) default: Option<Expr>,

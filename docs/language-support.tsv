@@ -43,6 +43,7 @@ Native function calls and `println`|implemented|`tests/cli.rs` and `tests/vm.rs`
 Positional call spreads and list-literal spreads|implemented|`tests/cli.rs`
 Named ordinary-function arguments|implemented|`tests/cli.rs`
 Final variadic parameters|implemented|`tests/cli.rs`
+Discard function parameters|implemented|`tests/cli.rs`
 Call-time default parameters|implemented|`tests/cli.rs`
 Type annotation syntax and basic `-type-check` validation|implemented|`tests/cli.rs`
 Generic call inference and explicit type applications|implemented|`tests/cli.rs`

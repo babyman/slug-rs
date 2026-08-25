@@ -1036,6 +1036,29 @@ fn accepts_documented_exported_foreign_declarations() {
 }
 
 #[test]
+fn discards_function_parameters_without_introducing_bindings() {
+    let path = fixture_path("discard-parameters");
+    fs::write(
+        &path,
+        "val channel = channel(1)\nprintln(0 /> fn(_) { channel })\nprintln(fn(_, _) { 7 }(1, 2))\n",
+    )
+    .expect("write discard parameter source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run discard parameter source");
+    fs::remove_file(&path).expect("remove discard parameter source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "<chan>\n7\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn pipes_values_into_calls_and_subjectless_matches() {
     let path = fixture_path("pipeline");
     fs::write(

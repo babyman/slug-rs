@@ -291,6 +291,7 @@ impl Compiler {
                             .cloned()
                             .map(|name| Parameter {
                                 name,
+                                discard: false,
                                 tags: Vec::new(),
                                 annotation: None,
                                 default: None,
@@ -414,7 +415,9 @@ impl Compiler {
                 operator,
                 right,
             } => {
-                self.expression(state, left)?;
+                if !matches!(operator, Binary::Pipeline) {
+                    self.expression(state, left)?;
+                }
                 match operator {
                     Binary::Pipeline => {
                         if let ExprKind::Match {
@@ -1071,7 +1074,7 @@ fn plain_parameters(
     let mut names = HashSet::new();
     let mut plain = Vec::with_capacity(parameters.len());
     for parameter in parameters {
-        if !names.insert(&parameter.name) {
+        if !parameter.discard && !names.insert(&parameter.name) {
             return Err(SourceError::semantic(
                 format!("duplicate parameter '{}'", parameter.name),
                 span.clone(),

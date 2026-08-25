@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `_` discard parameters for functions; they receive positional arguments
+  without creating a body-visible binding.
+
 - Added parsing and retained metadata for documented, tagged, and exported
   `foreign` declarations. Host foreign-resolution remains a later milestone.
 
