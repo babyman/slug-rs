@@ -27,7 +27,7 @@ compiled-module contract is documented separately as `.cslug`.
   documentation blocks with retained module metadata (but without metadata
   introspection), comments, automatic invocation of a local zero-argument
   `main`, cooperative `spawn` task handles with `await`, explicit
-  nurseries, bounded FIFO channels with `channel`, `send`, `recv`, and `close`,
+  nurseries, bounded FIFO channels through the `slug.channel` library,
   `select` receive/send/timer/task-await/default cases, and `println`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library

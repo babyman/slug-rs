@@ -727,9 +727,10 @@ drained. Sending `nil` or sending on a closed channel is a runtime error.
 Closing a channel is idempotent. The selection policy among simultaneously
 ready cases is intentionally unspecified.
 
-The initial builtin channel surface is `channel(capacity)`, `send(channel,
-value)`, `recv(channel)`, and `close(channel)`. `capacity` is a non-negative
-integer. A zero-capacity channel performs FIFO rendezvous between blocked
+The public `slug.channel` surface is `chan(capacity = 0)`, `send(channel,
+value)`, `recv(channel, timeout = 0)`, and `close(channel)`. `channel` is an
+internal runtime operation, not a global Slug binding. `capacity` is a
+non-negative integer. A zero-capacity channel performs FIFO rendezvous between blocked
 senders and receivers; a positive capacity retains that many FIFO messages.
 `send` and `close` return `nil`. A blocked sender that is released because its
 channel closes fails as a normal `send on a closed channel` runtime error, so

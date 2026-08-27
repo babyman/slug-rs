@@ -422,9 +422,6 @@ impl Vm {
             .insert("await".into(), Value::Builtin(Builtin::Await));
         self.globals
             .borrow_mut()
-            .insert("channel".into(), Value::Builtin(Builtin::Channel));
-        self.globals
-            .borrow_mut()
             .insert("send".into(), Value::Builtin(Builtin::Send));
         self.globals
             .borrow_mut()
@@ -1923,7 +1920,6 @@ impl Vm {
                 self.suspension = Some(Suspension::Await);
                 Ok(Value::Nil)
             }
-            Builtin::Channel => self.channel(arguments, span),
             Builtin::Send => self.send(arguments, span),
             Builtin::Recv => self.recv(arguments, span),
             Builtin::Close => self.close_channel(arguments, span),
@@ -2205,34 +2201,6 @@ impl Vm {
                 span,
             )
         })
-    }
-
-    fn channel(&self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
-        if arguments.len() != 1 {
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                format!("`channel` expects 1 argument, got {}", arguments.len()),
-                span,
-            ));
-        }
-        let Value::Int(capacity) = arguments[0] else {
-            return Err(self.error(
-                RuntimeErrorKind::Type,
-                format!(
-                    "channel capacity expects num, got {}",
-                    arguments[0].type_name()
-                ),
-                span,
-            ));
-        };
-        let capacity = usize::try_from(capacity).map_err(|_| {
-            self.error(
-                RuntimeErrorKind::Type,
-                "channel capacity must not be negative or too large".into(),
-                None,
-            )
-        })?;
-        Ok(Value::Channel(Rc::new(Channel::new(capacity))))
     }
 
     fn send(&mut self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {

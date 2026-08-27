@@ -16,6 +16,35 @@ fn program_with_main(main: Chunk) -> Program {
     program
 }
 
+fn native_make_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+    let capacity = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+        Ok(value) => match usize::try_from(value) {
+            Ok(value) => value,
+            Err(_) => {
+                return call.raise(NativeError::new(
+                    "native.type",
+                    "channel capacity must not be negative or too large",
+                ));
+            }
+        },
+        Err(error) => return call.raise(error),
+    };
+    let channel = call.plain_channel(capacity);
+    call.return_value(channel)
+}
+
+fn vm_with_channel_constructor() -> Vm {
+    let mut vm = Vm::new();
+    let module = NativeModule::new("test.channels", ()).expect("native module is valid");
+    vm.define_native(
+        module
+            .function("make_channel", NativeArity::Exact(1), native_make_channel)
+            .expect("native channel constructor is valid"),
+    )
+    .expect("native channel constructor is unique");
+    vm
+}
+
 mod native_resource_fixture {
     use std::{cell::RefCell, rc::Rc};
 
@@ -1499,7 +1528,7 @@ fn private_select_await_resumes_a_suspended_task_frame_after_a_timer() {
 fn select_checks_ready_cases_before_driving_an_awaited_task() {
     let program = compile(
         "select-ready-snapshot.slug",
-        "val inbox = channel(1)\n\
+        "val inbox = make_channel(1)\n\
          send(inbox, 7)\n\
          val task = spawn { select { after 1 }; 9 }\n\
          val selected = select {\n\
@@ -1512,7 +1541,9 @@ fn select_checks_ready_cases_before_driving_an_awaited_task() {
     .expect("compile select ready snapshot source");
 
     assert_eq!(
-        Vm::new().run_named(&program, "main").unwrap(),
+        vm_with_channel_constructor()
+            .run_named(&program, "main")
+            .unwrap(),
         Value::Int(2)
     );
 }
@@ -1521,7 +1552,7 @@ fn select_checks_ready_cases_before_driving_an_awaited_task() {
 fn a_losing_select_await_does_not_observe_a_later_task_failure() {
     let program = compile(
         "select-losing-await.slug",
-        "val gate = channel(0)\n\
+        "val gate = make_channel(0)\n\
          val task = spawn { recv(gate); throw \"lost failure\" }\n\
          select { await task; after 1 }\n\
          val sender = spawn { send(gate, 1) }\n\
@@ -1529,7 +1560,7 @@ fn a_losing_select_await_does_not_observe_a_later_task_failure() {
     )
     .expect("compile losing select await source");
 
-    let error = Vm::new()
+    let error = vm_with_channel_constructor()
         .run_named(&program, "main")
         .expect_err("the losing await must not consume task failure propagation");
     assert_eq!(error.kind, RuntimeErrorKind::Thrown);
@@ -1597,8 +1628,8 @@ fn a_failed_root_body_joins_runnable_owned_tasks() {
 fn select_removes_losing_channel_waiters_before_the_next_send() {
     let program = compile(
         "select-winner.slug",
-        "val left = channel(0)\n\
-         val right = channel(0)\n\
+        "val left = make_channel(0)\n\
+         val right = make_channel(0)\n\
          val sender = spawn { send(left, 11); send(right, 12) }\n\
          val first = select {\n\
            recv left\n\
@@ -1611,7 +1642,9 @@ fn select_removes_losing_channel_waiters_before_the_next_send() {
     .expect("compile select winner source");
 
     assert_eq!(
-        Vm::new().run_named(&program, "main").unwrap(),
+        vm_with_channel_constructor()
+            .run_named(&program, "main")
+            .unwrap(),
         Value::Int(23)
     );
 }
@@ -1620,7 +1653,7 @@ fn select_removes_losing_channel_waiters_before_the_next_send() {
 fn cancellation_removes_select_channel_and_timer_waiters() {
     let program = compile(
         "select-cancellation.slug",
-        "val inbox = channel(0)\n\
+        "val inbox = make_channel(0)\n\
          val attempt = fn() {\n\
            defer onerror(err) { nil }\n\
            nursery {\n\
@@ -1634,7 +1667,7 @@ fn cancellation_removes_select_channel_and_timer_waiters() {
     )
     .expect("compile select cancellation source");
 
-    let error = Vm::new()
+    let error = vm_with_channel_constructor()
         .run_named(&program, "main")
         .expect_err("cancelled select must not receive a later send");
     assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);

@@ -1,0 +1,136 @@
+/**
+ * slug.channel — channel-based concurrency primitives
+ *
+ * Provides buffered and unbuffered channels for communicating between
+ * concurrent tasks, following Slug's structured concurrency model.
+ *
+ * Channels are created with `chan()` and closed with `close()`. Use `send`
+ * and `recv` for blocking operations, or `trySend`/`tryRecv` for
+ * non-blocking variants. Use `await` to block until a spawned task completes.
+ *
+ * ## Example
+ *
+ * ```slug
+ * val { chan, send, recv, close } = import("slug.channel")
+ *
+ * val ch = chan()
+ *
+ * nursery {
+ *   spawn { send(ch, "hello") }
+ *   val msg = recv(ch)
+ *   println(msg)  // => "hello"
+ * }
+ *
+ * close(ch)
+ * ```
+ *
+ * ## Timeouts
+ *
+ * Both `recv` and `await` accept an optional `timeout` in milliseconds.
+ * A timeout of `0` (default) means wait indefinitely. When a timeout
+ * elapses a `TimeoutError` is thrown.
+ */
+
+/**
+ * Standard error payload shape for idiomatic error handling.
+ *
+ * Always set `type` to a stable PascalCase string identifying the error kind
+ * (e.g. `"TypeError"`, `"NotFoundError"`). Use `cause` to chain errors.
+ */
+export val Error = struct {
+	type:str = "Error",
+	msg:str,
+	code  = nil,
+	data  = nil,
+	cause = nil,
+}
+
+/**
+ * creates a new channel with an optional buffer capacity.
+ *
+ * An unbuffered channel (capacity 0) blocks the sender until a receiver
+ * is ready. A buffered channel allows up to `capacity` messages to be
+ * queued before blocking.
+ */
+export foreign chan = fn(capacity:num = 0):chan<any|nil>
+
+/**
+ * closes a channel, signalling that no more values will be sent.
+ *
+ * Receivers on a closed channel return nil. Sending to a closed channel
+ * is a runtime error.
+ */
+export foreign close = fn(channel:chan<any|nil>):nil
+
+/**
+ * sends a value to a channel, blocking until a receiver is ready.
+ *
+ * `payload` must not be nil.
+ *
+ * Returns the channel, allowing chains: `ch /> send("a") /> send("b")`
+ */
+export val send = fn(channel:chan<any|nil>, payload) {
+	select {
+		send channel, payload /> fn(_) { channel }
+	}
+}
+
+/**
+ * attempts to send a value to a channel without blocking.
+ *
+ * `payload` must not be nil.
+ *
+ * Returns the channel if the send succeeded, nil if the channel was full.
+ */
+export val trySend = fn(channel:chan<any|nil>, payload) {
+	select {
+		send channel, payload /> fn(_) { channel }
+		_
+	}
+}
+
+/**
+ * receives a value from a channel, blocking until one is available.
+ *
+ * If `timeout` is greater than 0 and no value arrives within that many
+ * milliseconds, a `TimeoutError` is thrown.
+ */
+export val recv = fn(channel:chan<any|nil>, timeout:num = 0) {
+	if (timeout > 0) {
+		select {
+			recv channel
+			after timeout /> fn(_) { throw Error{ type: "TimeoutError", data: {ms: timeout, channel: channel} } }
+		}
+	} else {
+		select { recv channel }
+	}
+}
+
+/**
+ * attempts to receive a value from a channel without blocking.
+ *
+ * Returns the next value if one is immediately available, nil otherwise.
+ */
+export val tryRecv = fn(channel:chan<any|nil>) {
+	select {
+		recv channel
+		_
+	}
+}
+
+/**
+ * waits for a spawned task to complete and returns its result.
+ *
+ * If `timeout` is greater than 0 and the task does not complete within
+ * that many milliseconds, a `TimeoutError` is thrown.
+ */
+export val await = fn(handle:task, timeout:num = 0) {
+	if (timeout > 0) {
+		select {
+			await handle
+			after timeout /> fn(_) { throw Error{ type: "TimeoutError", data: {ms: timeout, handle: handle} } }
+		}
+	} else {
+		select { await handle }
+	}
+}

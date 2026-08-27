@@ -1,7 +1,16 @@
 use std::{fs, process::Command};
 
 fn slug() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_slug"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_slug"));
+    command.env("SLUG_HOME", env!("CARGO_MANIFEST_DIR"));
+    command
+}
+
+fn channel_source(source: &str) -> String {
+    format!(
+        "val {{ chan }} = import(\"slug.channel\")\n{}",
+        source.replace("channel(", "chan(")
+    )
 }
 
 fn fixture_path(kind: &str) -> std::path::PathBuf {
@@ -47,6 +56,21 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
         "2\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn does_not_expose_the_internal_channel_constructor_as_a_global() {
+    let path = fixture_path("no-global-channel");
+    fs::write(&path, "println(channel)\n").expect("write channel lookup source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run channel lookup source");
+    fs::remove_file(path).expect("remove channel lookup source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown name `channel`"));
 }
 
 #[test]
@@ -127,7 +151,7 @@ fn channels_rendezvous_between_cooperatively_scheduled_tasks() {
     let path = fixture_path("channel-rendezvous");
     fs::write(
         &path,
-        "val inbox = channel(0)\nval sender = spawn { send(inbox, 42) }\nval receiver = spawn { recv(inbox) }\nprintln(await(receiver))\nawait(sender)\n",
+        channel_source("val inbox = channel(0)\nval sender = spawn { send(inbox, 42) }\nval receiver = spawn { recv(inbox) }\nprintln(await(receiver))\nawait(sender)\n"),
     )
     .expect("write channel source");
     let output = slug().arg(&path).output().expect("run channel source");
@@ -146,7 +170,7 @@ fn root_evaluation_suspends_for_channel_messages_and_task_completion() {
     let path = fixture_path("channel-root-suspension");
     fs::write(
         &path,
-        "val inbox = channel(0)\nspawn { send(inbox, 42) }\nprintln(recv(inbox))\nval child = spawn { 6 * 7 }\nprintln(await(child))\n",
+        channel_source("val inbox = channel(0)\nspawn { send(inbox, 42) }\nprintln(recv(inbox))\nval child = spawn { 6 * 7 }\nprintln(await(child))\n"),
     )
     .expect("write root-suspension source");
     let output = slug()
@@ -166,7 +190,8 @@ fn root_evaluation_suspends_for_channel_messages_and_task_completion() {
 #[test]
 fn select_handles_ready_blocked_and_timer_cases_without_stale_waiters() {
     let path = fixture_path("select-cases");
-    let source = "val inbox = channel(1)\n\
+    let source = channel_source(
+        "val inbox = channel(1)\n\
          send(inbox, 7)\n\
          println(select {\n\
            recv inbox /> fn(value) { value }\n\
@@ -187,7 +212,8 @@ fn select_handles_ready_blocked_and_timer_cases_without_stale_waiters() {
            recv right /> fn(value) { value }\n\
          })\n\
          println(recv(right))\n\
-         await(sender)\n";
+         await(sender)\n",
+    );
     fs::write(&path, source).expect("write select source");
     let output = slug().arg(&path).output().expect("run select source");
     fs::remove_file(path).expect("remove select source");
@@ -260,7 +286,7 @@ fn channels_preserve_buffered_fifo_messages_and_resume_blocked_senders() {
     let path = fixture_path("channel-buffer");
     fs::write(
         &path,
-        "val inbox = channel(1)\nval sender = spawn { send(inbox, 1); send(inbox, 2) }\nval receiver = spawn { println(recv(inbox)); println(recv(inbox)) }\nawait(receiver)\nawait(sender)\n",
+        channel_source("val inbox = channel(1)\nval sender = spawn { send(inbox, 1); send(inbox, 2) }\nval receiver = spawn { println(recv(inbox)); println(recv(inbox)) }\nawait(receiver)\nawait(sender)\n"),
     )
     .expect("write channel source");
     let output = slug().arg(&path).output().expect("run channel source");
@@ -279,7 +305,7 @@ fn closing_a_channel_wakes_receivers_and_rejects_sends() {
     let path = fixture_path("channel-close");
     fs::write(
         &path,
-        "val inbox = channel(0)\nval receiver = spawn { recv(inbox) }\nval closer = spawn { close(inbox) }\nprintln(await(receiver))\nawait(closer)\n",
+        channel_source("val inbox = channel(0)\nval receiver = spawn { recv(inbox) }\nval closer = spawn { close(inbox) }\nprintln(await(receiver))\nawait(closer)\n"),
     )
     .expect("write channel source");
     let output = slug().arg(&path).output().expect("run channel source");
@@ -294,7 +320,7 @@ fn closing_a_channel_wakes_receivers_and_rejects_sends() {
 
     fs::write(
         &path,
-        "val inbox = channel(0)\nclose(inbox)\nsend(inbox, 1)\n",
+        channel_source("val inbox = channel(0)\nclose(inbox)\nsend(inbox, 1)\n"),
     )
     .expect("write closed-send source");
     let output = slug().arg(&path).output().expect("run closed-send source");
@@ -305,7 +331,7 @@ fn closing_a_channel_wakes_receivers_and_rejects_sends() {
 
     fs::write(
         &path,
-        "val inbox = channel(0)\nval sender = spawn { defer { println(\"cleaned\") }; send(inbox, 1) }\nval closer = spawn { close(inbox) }\nawait(closer)\nawait(sender)\n",
+        channel_source("val inbox = channel(0)\nval sender = spawn { defer { println(\"cleaned\") }; send(inbox, 1) }\nval closer = spawn { close(inbox) }\nawait(closer)\nawait(sender)\n"),
     )
     .expect("write blocked-send source");
     let output = slug().arg(&path).output().expect("run blocked-send source");
@@ -319,8 +345,11 @@ fn closing_a_channel_wakes_receivers_and_rejects_sends() {
 #[test]
 fn reports_a_checked_error_for_a_channel_task_with_no_possible_progress() {
     let path = fixture_path("channel-blocked");
-    fs::write(&path, "val inbox = channel(0)\nspawn { recv(inbox) }\n")
-        .expect("write blocked channel source");
+    fs::write(
+        &path,
+        channel_source("val inbox = channel(0)\nspawn { recv(inbox) }\n"),
+    )
+    .expect("write blocked channel source");
     let output = slug()
         .arg(&path)
         .output()
@@ -339,7 +368,7 @@ fn fail_fast_cancellation_removes_parked_channel_waiters() {
     let path = fixture_path("channel-cancelled-waiter");
     fs::write(
         &path,
-        "val inbox = channel(0)\nval attempt = fn() {\n  defer onerror(err) { nil }\n  nursery {\n    spawn { recv(inbox) }\n    spawn { throw \"fail\" }\n  }\n}\nattempt()\nval sender = spawn { send(inbox, 42) }\nawait(sender)\n",
+        channel_source("val inbox = channel(0)\nval attempt = fn() {\n  defer onerror(err) { nil }\n  nursery {\n    spawn { recv(inbox) }\n    spawn { throw \"fail\" }\n  }\n}\nattempt()\nval sender = spawn { send(inbox, 42) }\nawait(sender)\n"),
     )
     .expect("write cancellation source");
     let output = slug().arg(&path).output().expect("run cancellation source");
@@ -1103,7 +1132,7 @@ fn discards_function_parameters_without_introducing_bindings() {
     let path = fixture_path("discard-parameters");
     fs::write(
         &path,
-        "val channel = channel(1)\nprintln(0 /> fn(_) { channel })\nprintln(fn(_, _) { 7 }(1, 2))\n",
+        channel_source("val channel = channel(1)\nprintln(0 /> fn(_) { channel })\nprintln(fn(_, _) { 7 }(1, 2))\n"),
     )
     .expect("write discard parameter source");
     let output = slug()
