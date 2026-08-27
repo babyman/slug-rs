@@ -1535,7 +1535,7 @@ fn select_checks_ready_cases_before_driving_an_awaited_task() {
            await task /> fn(value) { 1 }\n\
            recv inbox /> fn(value) { 2 }\n\
          }\n\
-         await(task)\n\
+         select { await task }\n\
          selected\n",
     )
     .expect("compile select ready snapshot source");
@@ -1556,7 +1556,7 @@ fn a_losing_select_await_does_not_observe_a_later_task_failure() {
          val task = spawn { recv(gate); throw \"lost failure\" }\n\
          select { await task; after 1 }\n\
          val sender = spawn { send(gate, 1) }\n\
-         await(sender)\n",
+         select { await sender }\n",
     )
     .expect("compile losing select await source");
 
@@ -1594,7 +1594,7 @@ fn a_failed_nursery_body_settles_its_owned_tasks() {
            }\n\
          }\n\
          attempt()\n\
-         await(held)\n",
+         select { await held }\n",
     )
     .expect("compile nursery error settlement source");
 
@@ -1636,7 +1636,7 @@ fn select_removes_losing_channel_waiters_before_the_next_send() {
            recv right\n\
          }\n\
          val second = recv(right)\n\
-         await(sender)\n\
+         select { await sender }\n\
          first + second\n",
     )
     .expect("compile select winner source");
@@ -1663,7 +1663,7 @@ fn cancellation_removes_select_channel_and_timer_waiters() {
          }\n\
          attempt()\n\
          val sender = spawn { send(inbox, 42) }\n\
-         await(sender)\n",
+         select { await sender }\n",
     )
     .expect("compile select cancellation source");
 
@@ -1826,7 +1826,7 @@ fn closing_a_native_producer_rejects_parked_slug_senders() {
         "val channel = delayed_close()\n\
          send(channel, 1)\n\
          val sender = spawn { send(channel, 2) }\n\
-         await(sender)\n",
+         select { await sender }\n",
     )
     .expect("compile native producer sender-close source");
     let mut vm = Vm::new();

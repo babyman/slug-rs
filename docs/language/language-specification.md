@@ -689,13 +689,13 @@ val result = nursery fn() {
 Task completion is cached. Awaiting a task returns that result or propagates
 its error. An await marks the task's failure as observed by its owning nursery;
 repeated awaits return the same cached completion. The ordinary task-await API
-is a library callable, conventionally imported from `slug.channel`. `await` is
-also a `select` case form, not an independently reserved expression keyword.
+is the `slug.channel.await` library callable. It is implemented with the
+`await` `select` case form; `await` is not an independently reserved
+expression keyword or a builtin.
 
-The current implementation also exposes `await(task)` as a builtin while the
-library transition is completed. Root evaluation, explicit nursery bodies, and
-spawned tasks suspend cooperatively on task, channel, timer, and `select`
-operations. Owner settlement runs after either a successful or failed body and
+Root evaluation, explicit nursery bodies, and spawned tasks suspend
+cooperatively on task, channel, timer, and `select` operations. Owner
+settlement runs after either a successful or failed body and
 propagates unobserved child failures. An explicit nursery logically cancels
 pending siblings after its first unobserved child failure; cancellation does
 not forcibly interrupt host execution.

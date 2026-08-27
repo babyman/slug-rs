@@ -82,7 +82,6 @@ enum ExecutionOutcome {
 
 #[derive(Clone)]
 enum Suspension {
-    Await,
     Receive,
     Send(Option<SourceSpan>),
     Select,
@@ -478,9 +477,6 @@ impl Vm {
         self.globals
             .borrow_mut()
             .insert("argm".into(), Value::Builtin(Builtin::Argm));
-        self.globals
-            .borrow_mut()
-            .insert("await".into(), Value::Builtin(Builtin::Await));
         self.globals
             .borrow_mut()
             .insert("send".into(), Value::Builtin(Builtin::Send));
@@ -1533,10 +1529,6 @@ impl Vm {
         Ok(())
     }
 
-    fn run_task(&self, task: &Task) {
-        self.nursery.run_task(task);
-    }
-
     fn make_progress(&self) -> bool {
         self.nursery.make_progress()
     }
@@ -1944,39 +1936,6 @@ impl Vm {
                     ));
                 }
                 Ok(configuration.argument_map())
-            }
-            Builtin::Await => {
-                if arguments.len() != 1 {
-                    return Err(self.error(
-                        RuntimeErrorKind::Arity,
-                        format!("`await` expects 1 argument, got {}", arguments.len()),
-                        span,
-                    ));
-                }
-                let Value::Task(task) = &arguments[0] else {
-                    return Err(self.error(
-                        RuntimeErrorKind::Type,
-                        format!("await expects task, got {}", arguments[0].type_name()),
-                        span,
-                    ));
-                };
-                self.run_task(task);
-                if task.is_running() {
-                    return Err(self.error(
-                        RuntimeErrorKind::InvalidCall,
-                        "task cannot await itself while it is running".into(),
-                        span,
-                    ));
-                }
-                if let Some(outcome) = task.await_outcome() {
-                    return outcome;
-                }
-                let waiter = self.current_waiter(span.clone())?;
-                self.wait_registration =
-                    Some(WaitSet::one(WaitRegistration::TaskAwait(task.clone())));
-                task.wait_for(waiter);
-                self.suspension = Some(Suspension::Await);
-                Ok(Value::Nil)
             }
             Builtin::Send => self.send(arguments, span),
             Builtin::Recv => self.recv(arguments, span),

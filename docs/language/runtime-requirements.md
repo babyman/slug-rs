@@ -421,14 +421,15 @@ fixture for this contract.
 
 ## `await` and `select`
 
-`await` waits for task settlement and returns its cached result or propagates
-its error through normal cleanup. Awaiting a task marks its failure as observed
-by its owning nursery.
+`slug.channel.await` waits for task settlement and returns its cached result or
+propagates its error through normal cleanup. It is implemented by a `select`
+task-await case. Awaiting a task marks its failure as observed by its owning
+nursery.
 
 `select` evaluates a set of receive, send, timer, task-await, and default
-cases. A selected task-await failure follows the same ordinary error path as a
-standalone await. The exact fairness and tie-breaking policy for multiple ready
-cases is intentionally not specified yet. Implementations must preserve the
+cases. A selected task-await failure follows the same ordinary error path as
+`slug.channel.await`. The exact fairness and tie-breaking policy for multiple
+ready cases is intentionally not specified yet. Implementations must preserve the
 observable behavior covered by the `select` VM conformance fixtures and must
 not leak host-level select panics into Slug programs.
 

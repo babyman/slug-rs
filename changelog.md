@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Removed the ambient `await` builtin. Task joining is now provided by the
+  `slug.channel.await` source-library wrapper over the `select { await task }`
+  case form.
+
 - Removed the ambient `close` builtin. Channel closure is available exclusively
   through the exported `slug.channel.close` library binding.
 

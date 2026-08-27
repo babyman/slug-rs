@@ -19,7 +19,6 @@ pub enum Builtin {
     Cfg,
     Argv,
     Argm,
-    Await,
     Send,
     Recv,
 }
@@ -738,11 +737,6 @@ impl Task {
         for waiter in waiters {
             waiter.resume(Err(error.clone()));
         }
-    }
-
-    pub(crate) fn await_outcome(&self) -> Option<Result<Value, crate::RuntimeError>> {
-        self.observe();
-        self.outcome()
     }
 
     pub(crate) fn unobserved_error(&self) -> Option<crate::RuntimeError> {

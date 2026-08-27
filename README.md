@@ -26,7 +26,7 @@ compiled-module contract is documented separately as `.cslug`.
   declaration and parameter tags with evaluated arguments, declaration-attached
   documentation blocks with retained module metadata (but without metadata
   introspection), comments, automatic invocation of a local zero-argument
-  `main`, cooperative `spawn` task handles with `await`, explicit
+  `main`, cooperative `spawn` task handles with `slug.channel.await`, explicit
   nurseries, bounded FIFO channels through the `slug.channel` library,
   `select` receive/send/timer/task-await/default cases, and implicitly
   imported `slug.builtin.println`.

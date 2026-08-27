@@ -8,7 +8,7 @@ fn slug() -> Command {
 
 fn channel_source(source: &str) -> String {
     format!(
-        "val {{ chan, close }} = import(\"slug.channel\")\n{}",
+        "val {{ await, chan, close }} = import(\"slug.channel\")\n{}",
         source.replace("channel(", "chan(")
     )
 }
@@ -86,6 +86,18 @@ fn does_not_expose_channel_close_as_a_global() {
 }
 
 #[test]
+fn does_not_expose_task_await_as_a_global() {
+    let path = fixture_path("no-global-await");
+    fs::write(&path, "println(await)\n").expect("write await lookup source");
+    let output = slug().arg(&path).output().expect("run await lookup source");
+    fs::remove_file(path).expect("remove await lookup source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown name `await`"));
+}
+
+#[test]
 fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     let path = fixture_path("builtin-module");
     fs::write(
@@ -143,7 +155,7 @@ fn executes_spawned_tasks_and_explicit_nurseries() {
     let path = fixture_path("tasks-and-nurseries");
     fs::write(
         &path,
-        "val task = spawn { 20 + 22 }\nprintln(await(task))\nprintln(nursery limit 1 { 7 })\n",
+        "val { await } = import(\"slug.channel\")\nval task = spawn { 20 + 22 }\nprintln(await(task))\nprintln(nursery limit 1 { 7 })\n",
     )
     .expect("write task source");
     let output = slug().arg(&path).output().expect("run task source");
@@ -159,7 +171,7 @@ fn repeated_awaits_return_one_cached_task_completion() {
     let path = fixture_path("repeated-await");
     fs::write(
         &path,
-        "val task = spawn { println(\"ran\"); 42 }\nprintln(await(task))\nprintln(await(task))\n",
+        "val { await } = import(\"slug.channel\")\nval task = spawn { println(\"ran\"); 42 }\nprintln(await(task))\nprintln(await(task))\n",
     )
     .expect("write repeated await source");
     let output = slug()
@@ -417,7 +429,7 @@ fn spawned_tasks_share_root_globals() {
     let path = fixture_path("spawn-shared-globals");
     fs::write(
         &path,
-        "var answer = 0\nval task = spawn { answer = 42 }\nawait(task)\nprintln(answer)\n",
+        "val { await } = import(\"slug.channel\")\nvar answer = 0\nval task = spawn { answer = 42 }\nawait(task)\nprintln(answer)\n",
     )
     .expect("write shared-global task source");
     let output = slug()
@@ -436,7 +448,8 @@ fn spawned_tasks_snapshot_immediate_captures_but_keep_outer_captures_live() {
     let path = fixture_path("spawn-capture-boundary");
     fs::write(
         &path,
-        "val direct = fn() { var value = 1; val task = spawn { value }; value = 2; await(task) }\n\
+        "val { await } = import(\"slug.channel\")\n\
+         val direct = fn() { var value = 1; val task = spawn { value }; value = 2; await(task) }\n\
          val outer = fn() { var value = 1; val middle = fn() { val task = spawn { value }; value = 2; await(task) }; middle() }\n\
          println(direct())\nprintln(outer())\n",
     )
@@ -518,7 +531,7 @@ fn nursery_limit_releases_a_permit_after_a_task_settles() {
     let path = fixture_path("nursery-permit-release");
     fs::write(
         &path,
-        "println(nursery limit 1 { val first = spawn { 1 }; await(first); val second = spawn { 2 }; await(second) })\n",
+        "val { await } = import(\"slug.channel\")\nprintln(nursery limit 1 { val first = spawn { 1 }; await(first); val second = spawn { 2 }; await(second) })\n",
     )
     .expect("write permit-release nursery source");
     let output = slug()
@@ -537,7 +550,7 @@ fn nursery_limit_queues_direct_tasks_beyond_active_capacity() {
     let path = fixture_path("nursery-pending-limit");
     fs::write(
         &path,
-        "println(nursery limit 1 { val first = spawn { 1 }; val second = spawn { 2 }; await(first) + await(second) })\n",
+        "val { await } = import(\"slug.channel\")\nprintln(nursery limit 1 { val first = spawn { 1 }; val second = spawn { 2 }; await(first) + await(second) })\n",
     )
     .expect("write queued-task nursery source");
     let output = slug()
@@ -556,7 +569,7 @@ fn awaiting_a_queued_task_preserves_nursery_admission_order() {
     let path = fixture_path("nursery-admission-order");
     fs::write(
         &path,
-        "nursery limit 1 { val first = spawn { println(\"first\"); 1 }; val second = spawn { println(\"second\"); 2 }; await(second) }\n",
+        "val { await } = import(\"slug.channel\")\nnursery limit 1 { val first = spawn { println(\"first\"); 1 }; val second = spawn { println(\"second\"); 2 }; await(second) }\n",
     )
     .expect("write admission-order source");
     let output = slug()
@@ -575,7 +588,7 @@ fn awaiting_a_later_task_drives_the_ready_queue_in_spawn_order() {
     let path = fixture_path("task-ready-order");
     fs::write(
         &path,
-        "val first = spawn { println(\"first\"); 1 }\nval second = spawn { println(\"second\"); 2 }\nawait(second)\n",
+        "val { await } = import(\"slug.channel\")\nval first = spawn { println(\"first\"); 1 }\nval second = spawn { println(\"second\"); 2 }\nawait(second)\n",
     )
     .expect("write ready-order source");
     let output = slug().arg(&path).output().expect("run ready-order source");
