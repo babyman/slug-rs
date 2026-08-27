@@ -1,0 +1,11 @@
+/**
+ * slug.builtin — the implicit host-provided foundation module.
+ *
+ * A runtime injects these exports into every module only when it registers
+ * matching host bindings. Programs may also import this module explicitly.
+ */
+
+/**
+ * Writes values to standard output separated by spaces and terminated by a newline.
+ */
+export foreign println = fn(...values):nil

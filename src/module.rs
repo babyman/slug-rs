@@ -12,6 +12,8 @@ use crate::{
     native::{NativeResourceRegistry, native_resource_registry},
 };
 
+const BUILTIN_SOURCE: &str = "export foreign println = fn(...values):nil\n";
+
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
 pub struct ModuleLoader {
@@ -148,6 +150,12 @@ impl ModuleLoader {
                 }
             }
         }
+        if name == "slug.builtin" {
+            return Ok(ModuleSource {
+                path: PathBuf::from("<slug.builtin>"),
+                text: BUILTIN_SOURCE.into(),
+            });
+        }
         Err(ModuleLoadError::NotFound {
             name: name.into(),
             searched: candidates,
@@ -282,6 +290,14 @@ impl ModuleLoader {
             .borrow()
             .get(&(module.into(), name.into()))
             .cloned()
+    }
+
+    pub(crate) fn has_foreign_module(&self, module: &str) -> bool {
+        self.state
+            .foreign_functions
+            .borrow()
+            .keys()
+            .any(|(candidate, _)| candidate == module)
     }
 
     pub(crate) fn native_resources(&self) -> NativeResourceRegistry {

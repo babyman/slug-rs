@@ -139,16 +139,17 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
         .or_else(|| slug_home.as_ref().map(|home| home.join("lib")));
     let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
     let mut vm = Vm::with_module_loader(loader.clone());
-    let host = NativeModule::new("slug.host", ()).expect("static native module is valid");
-    let println = host
-        .function(
-            "println",
-            NativeArity::Variadic { minimum: 0 },
-            native_println,
-        )
-        .expect("static native function is valid");
-    vm.define_native(println)
-        .expect("static native binding is unique");
+    let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
+    vm.define_foreign(
+        builtins
+            .function(
+                "println",
+                NativeArity::Variadic { minimum: 0 },
+                native_println,
+            )
+            .expect("static builtin function is valid"),
+    )
+    .expect("static builtin binding is unique");
     let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
     vm.define_foreign(
         channel

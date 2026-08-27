@@ -28,7 +28,8 @@ compiled-module contract is documented separately as `.cslug`.
   introspection), comments, automatic invocation of a local zero-argument
   `main`, cooperative `spawn` task handles with `await`, explicit
   nurseries, bounded FIFO channels through the `slug.channel` library,
-  `select` receive/send/timer/task-await/default cases, and `println`.
+  `select` receive/send/timer/task-await/default cases, and implicitly
+  imported `slug.builtin.println`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, cached isolated module initialization, and string-keyed exported-value maps.

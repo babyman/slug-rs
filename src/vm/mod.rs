@@ -229,6 +229,7 @@ impl Vm {
 
     pub(crate) fn run_module(&mut self, program: &Rc<Program>) -> VmResult<Value> {
         self.module_program = Some(program.clone());
+        self.install_implicit_builtins(program)?;
         self.bind_foreign_declarations(program)?;
         self.run_named(program, "main")
     }
@@ -243,6 +244,7 @@ impl Vm {
     /// Returns a Slug runtime error when top-level execution or the entrypoint
     /// call fails.
     pub fn run_program(&mut self, program: &Program) -> VmResult<Value> {
+        self.install_implicit_builtins(program)?;
         self.bind_foreign_declarations(program)?;
         let top_level = self.run_named(program, "main")?;
         if !program.has_entrypoint() {
@@ -403,6 +405,42 @@ impl Vm {
                     self.globals.borrow_mut().insert(name.clone(), value);
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn install_implicit_builtins(&mut self, program: &Program) -> VmResult<()> {
+        if program.module_name() == "slug.builtin" {
+            return Ok(());
+        }
+        let Some(loader) = &self.module_loader else {
+            return Ok(());
+        };
+        if !loader.has_foreign_module("slug.builtin") {
+            return Ok(());
+        }
+        let instance = loader
+            .initialize(None, "slug.builtin")
+            .map_err(|error| self.error(RuntimeErrorKind::Module, error.to_string(), None))?;
+        let Value::Map(exports) = instance.live_exports else {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "slug.builtin exports are not a map".into(),
+                None,
+            ));
+        };
+        let mut globals = self.globals.borrow_mut();
+        for (name, value) in exports.iter() {
+            let Value::Str(name) = name else {
+                return Err(self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "slug.builtin export name is not a string".into(),
+                    None,
+                ));
+            };
+            globals
+                .entry(name.to_string())
+                .or_insert_with(|| value.clone());
         }
         Ok(())
     }

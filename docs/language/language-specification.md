@@ -482,6 +482,21 @@ imports with the same name and signature likewise retain the first loaded
 callable and issue a warning; callables with distinct signatures combine into
 the imported overload set.
 
+## Implicit builtin module
+
+`slug.builtin` is the small, host-provided foundation module. When the host
+registers matching bindings, its exports are implicitly available in every
+module and may also be imported explicitly with `import("slug.builtin")`.
+Local declarations take precedence over implicit builtin bindings. A host that
+does not provide `slug.builtin` injects nothing; it does not create unbound
+placeholder names.
+
+The bundled declaration module currently provides `println(...values)`. The
+module is intentionally limited to primitives that cannot be expressed in
+Slug. General utilities, channel operations, and portable error schemas belong
+to ordinary explicit modules such as `slug.channel`, `slug.std`, or a future
+`slug.error`.
+
 The standard library consists of modules loaded through this same mechanism.
 Its public API is defined by the library reference, not by this specification.
 

@@ -118,6 +118,8 @@ modules and builtins available with the behavior exercised by their source:
 - builtins including `import`, `len`, `print`, and `println`;
 - `slug.std` and `slug.test` for assertions and core collection operations;
 - `slug.channel` for channels, `await`, `send`, `recv`, and `close`;
+- `slug.builtin` for host-provided foundational bindings when the fixture or
+  host environment registers them;
 - `slug.time` for timer-oriented fixtures;
 - `slug.io.stderr` for standard-error output.
 
@@ -163,7 +165,7 @@ boundary. A conforming host MUST provide:
 
 The evaluator MUST keep these host capabilities separate from Slug bindings.
 Host services cannot become names visible to a Slug program except through a
-documented builtin, imported library module, or declared foreign function.
+`slug.builtin` export, imported library module, or declared foreign function.
 
 Foreign functions are not required for the portable fixture set unless a
 fixture imports a library that declares one. A declared function resolves by

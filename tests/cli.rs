@@ -74,6 +74,25 @@ fn does_not_expose_the_internal_channel_constructor_as_a_global() {
 }
 
 #[test]
+fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
+    let path = fixture_path("builtin-module");
+    fs::write(
+        &path,
+        "val builtin = import(\"slug.builtin\")\nbuiltin.println(42)\n",
+    )
+    .expect("write builtin import source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run builtin import source");
+    fs::remove_file(path).expect("remove builtin import source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn imports_library_modules_from_slug_home() {
     let path = fixture_path("slug-home-library");
     let home = std::env::temp_dir().join(format!("slug-home-library-{}", std::process::id()));
