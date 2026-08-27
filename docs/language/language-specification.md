@@ -750,10 +750,10 @@ timeout = 0)`, `trySend(channel, value)`, and `tryRecv(channel)`. These are
 library bindings, not global Slug bindings. `channel` is an internal runtime
 operation. `capacity` is a non-negative integer. A zero-capacity channel
 performs FIFO rendezvous between blocked senders and receivers; a positive
-capacity retains that many FIFO messages. `send` and `close` return `nil`. A
-blocked sender that is released because its channel closes fails as a normal
-`send on a closed channel` runtime error, so its active deferred cleanup still
-runs.
+capacity retains that many FIFO messages. `send` returns its channel so callers
+can chain sends with pipelines; `close` returns `nil`. A blocked sender that is
+released because its channel closes fails as a normal `send on a closed channel`
+runtime error, so its active deferred cleanup still runs.
 
 ## Implementation-independent limits
 

@@ -53,10 +53,12 @@ export foreign close = fn(channel:chan<any|nil>):nil
  *
  * `payload` must not be nil.
  *
- * Returns nil after the value is accepted.
+ * Returns the channel, allowing chains: `ch /> send("a") /> send("b")`
  */
 export val send = fn(channel:chan<any|nil>, payload) {
-	select { send channel, payload }
+	select {
+		send channel, payload /> fn(_) { channel }
+	}
 }
 
 /**

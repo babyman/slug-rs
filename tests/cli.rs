@@ -1167,8 +1167,10 @@ fn imports_slug_channel_with_its_registered_foreign_bindings() {
     fs::write(
         &path,
         "val channel = import(\"slug.channel\")\n\
-         val inbox = channel.chan(1)\n\
-         channel.send(inbox, 42)\n\
+         val inbox = channel.chan(2)\n\
+         val returned = inbox /> channel.send(7) /> channel.send(42)\n\
+         println(returned == inbox)\n\
+         println(channel.recv(inbox))\n\
          println(channel.recv(inbox))\n\
          channel.close(inbox)\n\
          println(channel.recv(inbox))\n",
@@ -1187,7 +1189,10 @@ fn imports_slug_channel_with_its_registered_foreign_bindings() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\nnil\n");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "true\n7\n42\nnil\n"
+    );
     assert!(output.stderr.is_empty());
 }
 
