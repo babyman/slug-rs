@@ -68,7 +68,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Immutable configuration store and source precedence | implemented | `tests/configuration.rs` |
 | `cfg`, `argv`, and `argm` builtins | implemented | `tests/configuration.rs` |
 | Cooperative task handles with `spawn`, `await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `tests/cli.rs` |
-| Bounded FIFO channels through `channel`, `send`, `recv`, and `close`, plus bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Bounded FIFO channels through the `slug.channel` module, plus bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `tests/cli.rs` |
 | Foreign declaration syntax, metadata retention, and module-qualified host resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
 | Module metadata introspection | specified only | `language/language-specification.md` |

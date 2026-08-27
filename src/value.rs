@@ -22,7 +22,6 @@ pub enum Builtin {
     Await,
     Send,
     Recv,
-    Close,
 }
 
 /// A FIFO channel with bounded buffering and parked task wait queues.

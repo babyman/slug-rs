@@ -8,7 +8,7 @@ fn slug() -> Command {
 
 fn channel_source(source: &str) -> String {
     format!(
-        "val {{ chan }} = import(\"slug.channel\")\n{}",
+        "val {{ chan, close }} = import(\"slug.channel\")\n{}",
         source.replace("channel(", "chan(")
     )
 }
@@ -71,6 +71,18 @@ fn does_not_expose_the_internal_channel_constructor_as_a_global() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown name `channel`"));
+}
+
+#[test]
+fn does_not_expose_channel_close_as_a_global() {
+    let path = fixture_path("no-global-channel-close");
+    fs::write(&path, "println(close)\n").expect("write close lookup source");
+    let output = slug().arg(&path).output().expect("run close lookup source");
+    fs::remove_file(path).expect("remove close lookup source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown name `close`"));
 }
 
 #[test]

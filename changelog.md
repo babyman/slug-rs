@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Removed the ambient `close` builtin. Channel closure is available exclusively
+  through the exported `slug.channel.close` library binding.
+
 - Added the implicit `slug.builtin` foundation module. Host registrations are
   available independently of its optional source file; that file documents
   host functions and supplies the standard `Error` schema. The module remains

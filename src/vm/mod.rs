@@ -487,9 +487,6 @@ impl Vm {
         self.globals
             .borrow_mut()
             .insert("recv".into(), Value::Builtin(Builtin::Recv));
-        self.globals
-            .borrow_mut()
-            .insert("close".into(), Value::Builtin(Builtin::Close));
     }
 
     /// Executes a zero-argument entry chunk.
@@ -1983,7 +1980,6 @@ impl Vm {
             }
             Builtin::Send => self.send(arguments, span),
             Builtin::Recv => self.recv(arguments, span),
-            Builtin::Close => self.close_channel(arguments, span),
         }
     }
 
@@ -2331,25 +2327,6 @@ impl Vm {
         )));
         channel.park_receiver(receiver);
         self.suspension = Some(Suspension::Receive);
-        Ok(Value::Nil)
-    }
-
-    fn close_channel(&mut self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
-        if arguments.len() != 1 {
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                format!("`close` expects 1 argument, got {}", arguments.len()),
-                span,
-            ));
-        }
-        let Value::Channel(channel) = &arguments[0] else {
-            return Err(self.error(
-                RuntimeErrorKind::Type,
-                format!("close expects chan, got {}", arguments[0].type_name()),
-                span,
-            ));
-        };
-        channel.close();
         Ok(Value::Nil)
     }
 
