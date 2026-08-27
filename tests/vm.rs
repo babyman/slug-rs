@@ -1529,7 +1529,7 @@ fn select_checks_ready_cases_before_driving_an_awaited_task() {
     let program = compile(
         "select-ready-snapshot.slug",
         "val inbox = make_channel(1)\n\
-         send(inbox, 7)\n\
+         select { send inbox, 7 }\n\
          val task = spawn { select { after 1 }; 9 }\n\
          val selected = select {\n\
            await task /> fn(value) { 1 }\n\
@@ -1553,9 +1553,9 @@ fn a_losing_select_await_does_not_observe_a_later_task_failure() {
     let program = compile(
         "select-losing-await.slug",
         "val gate = make_channel(0)\n\
-         val task = spawn { recv(gate); throw \"lost failure\" }\n\
+         val task = spawn { select { recv gate }; throw \"lost failure\" }\n\
          select { await task; after 1 }\n\
-         val sender = spawn { send(gate, 1) }\n\
+         val sender = spawn { select { send gate, 1 } }\n\
          select { await sender }\n",
     )
     .expect("compile losing select await source");
@@ -1630,12 +1630,12 @@ fn select_removes_losing_channel_waiters_before_the_next_send() {
         "select-winner.slug",
         "val left = make_channel(0)\n\
          val right = make_channel(0)\n\
-         val sender = spawn { send(left, 11); send(right, 12) }\n\
+         val sender = spawn { select { send left, 11 }; select { send right, 12 } }\n\
          val first = select {\n\
            recv left\n\
            recv right\n\
          }\n\
-         val second = recv(right)\n\
+         val second = select { recv right }\n\
          select { await sender }\n\
          first + second\n",
     )
@@ -1662,7 +1662,7 @@ fn cancellation_removes_select_channel_and_timer_waiters() {
            }\n\
          }\n\
          attempt()\n\
-         val sender = spawn { send(inbox, 42) }\n\
+         val sender = spawn { select { send inbox, 42 } }\n\
          select { await sender }\n",
     )
     .expect("compile select cancellation source");
@@ -1717,7 +1717,7 @@ fn native_channel_pair_delivers_owned_mailbox_values_on_the_vm_thread() {
         .unwrap();
     let program = compile(
         "native-producer.slug",
-        "val channel = channel_with_event()\nrecv(channel)\n",
+        "val channel = channel_with_event()\nselect { recv channel }\n",
     )
     .expect("compile native producer source");
     let mut vm = Vm::new();
@@ -1743,7 +1743,7 @@ fn closing_a_native_producer_drains_events_then_closes_its_receiver() {
         .unwrap();
     let program = compile(
         "native-producer-close.slug",
-        "val channel = closed_channel()\nrecv(channel) + if (recv(channel)) { 1 } else { 0 }\n",
+        "val channel = closed_channel()\nselect { recv channel } + if (select { recv channel }) { 1 } else { 0 }\n",
     )
     .expect("compile native producer close source");
     let mut vm = Vm::new();
@@ -1796,8 +1796,8 @@ fn native_and_slug_senders_share_a_channel_buffer_bound() {
     let program = compile(
         "native-producer-capacity.slug",
         "val channel = create_channel()\n\
-         send(channel, 1)\n\
-         if (send_native()) { 99 } else { recv(channel) }\n",
+         select { send channel, 1 }\n\
+         if (send_native()) { 99 } else { select { recv channel } }\n",
     )
     .expect("compile native producer capacity source");
     let mut vm = Vm::new();
@@ -1824,8 +1824,8 @@ fn closing_a_native_producer_rejects_parked_slug_senders() {
     let program = compile(
         "native-producer-sender-close.slug",
         "val channel = delayed_close()\n\
-         send(channel, 1)\n\
-         val sender = spawn { send(channel, 2) }\n\
+         select { send channel, 1 }\n\
+         val sender = spawn { select { send channel, 2 } }\n\
          select { await sender }\n",
     )
     .expect("compile native producer sender-close source");
@@ -1852,7 +1852,7 @@ fn a_closed_native_producer_rejects_the_next_slug_send() {
         .unwrap();
     let program = compile(
         "native-producer-closed-send.slug",
-        "val channel = closed_channel()\nsend(channel, 1)\n",
+        "val channel = closed_channel()\nselect { send channel, 1 }\n",
     )
     .expect("compile native producer closed-send source");
     let mut vm = Vm::new();
@@ -1884,7 +1884,7 @@ fn a_foreign_thread_wakes_a_root_parked_on_a_native_channel() {
         .unwrap();
     let program = compile(
         "native-producer-wake.slug",
-        "val channel = delayed_channel()\nrecv(channel)\n",
+        "val channel = delayed_channel()\nselect { recv channel }\n",
     )
     .expect("compile native producer wake source");
     let mut vm = Vm::new();
@@ -1912,7 +1912,7 @@ fn a_late_native_event_wakes_without_a_fixed_polling_deadline() {
         .unwrap();
     let program = compile(
         "late-native-producer-wake.slug",
-        "val channel = delayed_channel()\nrecv(channel)\n",
+        "val channel = delayed_channel()\nselect { recv channel }\n",
     )
     .expect("compile late native producer wake source");
     let mut vm = Vm::new();

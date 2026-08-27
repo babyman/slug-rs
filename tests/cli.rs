@@ -8,7 +8,7 @@ fn slug() -> Command {
 
 fn channel_source(source: &str) -> String {
     format!(
-        "val {{ await, chan, close }} = import(\"slug.channel\")\n{}",
+        "val {{ await, chan, close, recv, send }} = import(\"slug.channel\")\n{}",
         source.replace("channel(", "chan(")
     )
 }
@@ -95,6 +95,26 @@ fn does_not_expose_task_await_as_a_global() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown name `await`"));
+}
+
+#[test]
+fn does_not_expose_channel_operations_as_globals() {
+    for name in ["send", "recv"] {
+        let path = fixture_path(&format!("no-global-{name}"));
+        fs::write(&path, format!("println({name})\n"))
+            .expect("write channel operation lookup source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run channel operation lookup source");
+        fs::remove_file(path).expect("remove channel operation lookup source");
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(&format!("unknown name `{name}`"))
+        );
+    }
 }
 
 #[test]
@@ -249,12 +269,12 @@ fn select_handles_ready_blocked_and_timer_cases_without_stale_waiters() {
          println(select { after 1 /> fn(unused) { 10 } })\n\
          val left = channel(0)\n\
          val right = channel(0)\n\
-         val sender = spawn { send(left, 11); send(right, 12) }\n\
+         val sender = spawn { select { send left, 11 }; select { send right, 12 } }\n\
          println(select {\n\
            recv left /> fn(value) { value }\n\
            recv right /> fn(value) { value }\n\
          })\n\
-         println(recv(right))\n\
+         println(select { recv right })\n\
          await(sender)\n",
     );
     fs::write(&path, source).expect("write select source");

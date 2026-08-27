@@ -19,8 +19,6 @@ pub enum Builtin {
     Cfg,
     Argv,
     Argm,
-    Send,
-    Recv,
 }
 
 /// A FIFO channel with bounded buffering and parked task wait queues.
@@ -227,12 +225,6 @@ pub(crate) struct WaitSet {
 }
 
 impl WaitSet {
-    pub(crate) fn one(registration: WaitRegistration) -> Self {
-        Self {
-            registrations: vec![registration],
-        }
-    }
-
     pub(crate) fn many(registrations: Vec<WaitRegistration>) -> Self {
         Self { registrations }
     }

@@ -422,8 +422,9 @@ fixture for this contract.
 ## `await` and `select`
 
 `slug.channel.await` waits for task settlement and returns its cached result or
-propagates its error through normal cleanup. It is implemented by a `select`
-task-await case. Awaiting a task marks its failure as observed by its owning
+propagates its error through normal cleanup. `slug.channel.send` and
+`slug.channel.recv` are likewise source-library wrappers over `select` send and
+receive cases. Awaiting a task marks its failure as observed by its owning
 nursery.
 
 `select` evaluates a set of receive, send, timer, task-await, and default

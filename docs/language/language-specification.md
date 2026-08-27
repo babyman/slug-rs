@@ -738,19 +738,22 @@ losing cases must not consume a later channel value or task completion.
 Checking immediate readiness does not run or wait for an unsettled task. A
 losing task-await case does not mark that task's failure as observed.
 
-`recv(channel)` blocks for a value or returns `nil` after a closed channel has
-drained. Sending `nil` or sending on a closed channel is a runtime error.
+`slug.channel.recv(channel)` blocks for a value or returns `nil` after a closed
+channel has drained. Sending `nil` or sending on a closed channel is a runtime
+error.
 Closing a channel is idempotent. The selection policy among simultaneously
 ready cases is intentionally unspecified.
 
 The public `slug.channel` surface is `chan(capacity = 0)`, `send(channel,
-value)`, `recv(channel, timeout = 0)`, and `close(channel)`. `channel` is an
-internal runtime operation, not a global Slug binding. `capacity` is a
-non-negative integer. A zero-capacity channel performs FIFO rendezvous between blocked
-senders and receivers; a positive capacity retains that many FIFO messages.
-`send` and `close` return `nil`. A blocked sender that is released because its
-channel closes fails as a normal `send on a closed channel` runtime error, so
-its active deferred cleanup still runs.
+value)`, `recv(channel, timeout = 0)`, `close(channel)`, `await(handle,
+timeout = 0)`, `trySend(channel, value)`, and `tryRecv(channel)`. These are
+library bindings, not global Slug bindings. `channel` is an internal runtime
+operation. `capacity` is a non-negative integer. A zero-capacity channel
+performs FIFO rendezvous between blocked senders and receivers; a positive
+capacity retains that many FIFO messages. `send` and `close` return `nil`. A
+blocked sender that is released because its channel closes fails as a normal
+`send on a closed channel` runtime error, so its active deferred cleanup still
+runs.
 
 ## Implementation-independent limits
 

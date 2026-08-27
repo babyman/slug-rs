@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Removed the ambient `send` and `recv` builtins. Channel operations are now
+  available exclusively through the `slug.channel` source-library bindings,
+  backed by `select` send and receive case forms.
+
 - Removed the ambient `await` builtin. Task joining is now provided by the
   `slug.channel.await` source-library wrapper over the `select { await task }`
   case form.

@@ -82,9 +82,7 @@ enum ExecutionOutcome {
 
 #[derive(Clone)]
 enum Suspension {
-    Receive,
-    Send(Option<SourceSpan>),
-    Select,
+    Select(Option<SourceSpan>),
 }
 
 enum RuntimeSelectCase {
@@ -135,7 +133,7 @@ impl TaskExecution {
 
     pub(crate) fn reject_closed_send(&mut self) {
         let span = match &self.vm.suspension {
-            Some(Suspension::Send(span)) => span.clone(),
+            Some(Suspension::Select(span)) => span.clone(),
             _ => None,
         };
         self.vm.resume = Some(Err(self.vm.error(
@@ -477,12 +475,6 @@ impl Vm {
         self.globals
             .borrow_mut()
             .insert("argm".into(), Value::Builtin(Builtin::Argm));
-        self.globals
-            .borrow_mut()
-            .insert("send".into(), Value::Builtin(Builtin::Send));
-        self.globals
-            .borrow_mut()
-            .insert("recv".into(), Value::Builtin(Builtin::Recv));
     }
 
     /// Executes a zero-argument entry chunk.
@@ -1937,8 +1929,6 @@ impl Vm {
                 }
                 Ok(configuration.argument_map())
             }
-            Builtin::Send => self.send(arguments, span),
-            Builtin::Recv => self.recv(arguments, span),
         }
     }
 
@@ -2171,7 +2161,7 @@ impl Vm {
         WaitSet::set_select_registrations(&select_state, registrations.clone());
         self.wait_registration = Some(registrations);
         self.stack.push(Value::Nil);
-        self.suspension = Some(Suspension::Select);
+        self.suspension = Some(Suspension::Select(span));
         Ok(())
     }
 
@@ -2217,76 +2207,6 @@ impl Vm {
                 span,
             )
         })
-    }
-
-    fn send(&mut self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
-        if arguments.len() != 2 {
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                format!("`send` expects 2 arguments, got {}", arguments.len()),
-                span,
-            ));
-        }
-        let Value::Channel(channel) = &arguments[0] else {
-            return Err(self.error(
-                RuntimeErrorKind::Type,
-                format!("send expects chan, got {}", arguments[0].type_name()),
-                span,
-            ));
-        };
-        if matches!(arguments[1], Value::Nil) {
-            return Err(self.error(RuntimeErrorKind::Type, "send cannot send nil".into(), span));
-        }
-        self.nursery.track_native_channel(channel);
-        match channel.try_send(arguments[1].clone()) {
-            ChannelSend::Ready => return Ok(Value::Nil),
-            ChannelSend::Closed => {
-                return Err(self.error(
-                    RuntimeErrorKind::InvalidCall,
-                    "send on a closed channel".into(),
-                    span,
-                ));
-            }
-            ChannelSend::Pending => {}
-        }
-        let sender = self.current_waiter(span.clone())?;
-        sender.set_closed_send_error(self.error(
-            RuntimeErrorKind::InvalidCall,
-            "send on a closed channel".into(),
-            span.clone(),
-        ));
-        self.wait_registration = Some(WaitSet::one(WaitRegistration::ChannelSend(channel.clone())));
-        channel.park_sender(sender, arguments[1].clone());
-        self.suspension = Some(Suspension::Send(span));
-        Ok(Value::Nil)
-    }
-
-    fn recv(&mut self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
-        if arguments.len() != 1 {
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                format!("`recv` expects 1 argument, got {}", arguments.len()),
-                span,
-            ));
-        }
-        let Value::Channel(channel) = &arguments[0] else {
-            return Err(self.error(
-                RuntimeErrorKind::Type,
-                format!("recv expects chan, got {}", arguments[0].type_name()),
-                span,
-            ));
-        };
-        self.nursery.track_native_channel(channel);
-        if let ChannelReceive::Ready(value) = channel.try_receive() {
-            return Ok(value);
-        }
-        let receiver = self.current_waiter(span.clone())?;
-        self.wait_registration = Some(WaitSet::one(WaitRegistration::ChannelReceive(
-            channel.clone(),
-        )));
-        channel.park_receiver(receiver);
-        self.suspension = Some(Suspension::Receive);
-        Ok(Value::Nil)
     }
 
     pub(super) fn invoke_native(
