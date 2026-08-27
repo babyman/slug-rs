@@ -32,20 +32,6 @@
  */
 
 /**
- * Standard error payload shape for idiomatic error handling.
- *
- * Always set `type` to a stable PascalCase string identifying the error kind
- * (e.g. `"TypeError"`, `"NotFoundError"`). Use `cause` to chain errors.
- */
-export val Error = struct {
-	type:str = "Error",
-	msg:str,
-	code  = nil,
-	data  = nil,
-	cause = nil,
-}
-
-/**
  * creates a new channel with an optional buffer capacity.
  *
  * An unbuffered channel (capacity 0) blocks the sender until a receiver

@@ -45,6 +45,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Struct copies | implemented | `tests/cli.rs` |
 | Struct patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Implicit `slug.builtin` bindings and foundational Slug values | implemented | `tests/cli.rs` |
 | Positional call spreads and list-literal spreads | implemented | `tests/cli.rs` |
 | Named ordinary-function arguments | implemented | `tests/cli.rs` |
 | Final variadic parameters | implemented | `tests/cli.rs` |

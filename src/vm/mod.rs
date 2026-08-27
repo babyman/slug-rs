@@ -219,6 +219,9 @@ impl Vm {
         vm.globals
             .borrow_mut()
             .extend(module_loader.native_globals());
+        vm.globals
+            .borrow_mut()
+            .extend(module_loader.builtin_globals());
         for name in names {
             vm.globals
                 .borrow_mut()
@@ -350,6 +353,24 @@ impl Vm {
         loader.define_foreign(function)
     }
 
+    /// Registers a host function in the implicitly available foundation module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the function does not belong to `slug.builtin`,
+    /// or when its foreign descriptor cannot be registered.
+    pub fn define_builtin(
+        &mut self,
+        function: NativeFunction,
+    ) -> Result<(), NativeDescriptorError> {
+        if function.module_name() != "slug.builtin" {
+            return Err(NativeDescriptorError::new(
+                "builtin bindings must belong to module slug.builtin",
+            ));
+        }
+        self.define_foreign(function)
+    }
+
     fn bind_foreign_declarations(&mut self, program: &Program) -> VmResult<()> {
         let Some(loader) = &self.module_loader else {
             return if program
@@ -416,12 +437,14 @@ impl Vm {
         let Some(loader) = &self.module_loader else {
             return Ok(());
         };
-        if !loader.has_foreign_module("slug.builtin") {
-            return Ok(());
-        }
-        let instance = loader
-            .initialize(None, "slug.builtin")
-            .map_err(|error| self.error(RuntimeErrorKind::Module, error.to_string(), None))?;
+        self.globals.borrow_mut().extend(loader.builtin_globals());
+        let instance = match loader.initialize(None, "slug.builtin") {
+            Ok(instance) => instance,
+            Err(crate::ModuleLoadError::NotFound { .. }) => return Ok(()),
+            Err(error) => {
+                return Err(self.error(RuntimeErrorKind::Module, error.to_string(), None));
+            }
+        };
         let Value::Map(exports) = instance.live_exports else {
             return Err(self.error(
                 RuntimeErrorKind::InvalidBytecode,

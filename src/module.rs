@@ -12,8 +12,6 @@ use crate::{
     native::{NativeResourceRegistry, native_resource_registry},
 };
 
-const BUILTIN_SOURCE: &str = "export foreign println = fn(...values):nil\n";
-
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
 pub struct ModuleLoader {
@@ -150,12 +148,6 @@ impl ModuleLoader {
                 }
             }
         }
-        if name == "slug.builtin" {
-            return Ok(ModuleSource {
-                path: PathBuf::from("<slug.builtin>"),
-                text: BUILTIN_SOURCE.into(),
-            });
-        }
         Err(ModuleLoadError::NotFound {
             name: name.into(),
             searched: candidates,
@@ -202,7 +194,15 @@ impl ModuleLoader {
         importer: Option<&Path>,
         name: &str,
     ) -> Result<ModuleInstance, ModuleLoadError> {
-        let source = self.load(importer, name)?;
+        let source = match self.load(importer, name) {
+            Ok(source) => source,
+            Err(ModuleLoadError::NotFound { .. })
+                if name == "slug.builtin" && !self.builtin_globals().is_empty() =>
+            {
+                return Ok(self.virtual_builtin_module());
+            }
+            Err(error) => return Err(error),
+        };
         if let Some(instance) = self.state.instances.borrow().get(&source.path) {
             return Ok(instance.clone());
         }
@@ -261,6 +261,16 @@ impl ModuleLoader {
         self.state.native_globals.borrow().clone()
     }
 
+    pub(crate) fn builtin_globals(&self) -> HashMap<String, Value> {
+        self.state
+            .foreign_functions
+            .borrow()
+            .iter()
+            .filter(|((module, _), _)| module == "slug.builtin")
+            .map(|((_, name), function)| (name.clone(), Value::Native(function.clone())))
+            .collect()
+    }
+
     pub(crate) fn define_foreign(
         &self,
         function: NativeFunction,
@@ -292,16 +302,35 @@ impl ModuleLoader {
             .cloned()
     }
 
-    pub(crate) fn has_foreign_module(&self, module: &str) -> bool {
-        self.state
-            .foreign_functions
-            .borrow()
-            .keys()
-            .any(|(candidate, _)| candidate == module)
-    }
-
     pub(crate) fn native_resources(&self) -> NativeResourceRegistry {
         self.state.native_resources.clone()
+    }
+
+    fn virtual_builtin_module(&self) -> ModuleInstance {
+        let path = PathBuf::from("<slug.builtin>");
+        if let Some(instance) = self.state.instances.borrow().get(&path) {
+            return instance.clone();
+        }
+        let exports = Value::Map(Rc::new(
+            self.builtin_globals()
+                .into_iter()
+                .map(|(name, value)| (Value::string(name), value))
+                .collect(),
+        ));
+        let mut program = Program::new();
+        program.set_module_name("slug.builtin");
+        let instance = ModuleInstance {
+            path: path.clone(),
+            program,
+            exports: exports.clone(),
+            metadata: Vec::new(),
+            live_exports: exports,
+        };
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(path, instance.clone());
+        instance
     }
 }
 

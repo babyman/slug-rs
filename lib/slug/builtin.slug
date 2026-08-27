@@ -1,9 +1,21 @@
 /**
  * slug.builtin — the implicit host-provided foundation module.
  *
- * A runtime injects these exports into every module only when it registers
- * matching host bindings. Programs may also import this module explicitly.
+ * Registered host bindings are implicit even when this file is absent. When
+ * present, this module documents those bindings and exports Slug-defined
+ * foundation values. Programs may also import it explicitly.
  */
+
+/**
+ * Standard error payload shape for idiomatic error handling.
+ */
+export val Error = struct {
+	type:str = "Error",
+	msg:str,
+	code = nil,
+	data = nil,
+	cause = nil,
+}
 
 /**
  * Writes values to standard output separated by spaces and terminated by a newline.

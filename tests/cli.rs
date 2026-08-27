@@ -78,7 +78,7 @@ fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     let path = fixture_path("builtin-module");
     fs::write(
         &path,
-        "val builtin = import(\"slug.builtin\")\nbuiltin.println(42)\n",
+        "val builtin = import(\"slug.builtin\")\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\n",
     )
     .expect("write builtin import source");
     let output = slug()
@@ -88,7 +88,7 @@ fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     fs::remove_file(path).expect("remove builtin import source");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Error Error\n");
     assert!(output.stderr.is_empty());
 }
 
@@ -104,7 +104,7 @@ fn imports_library_modules_from_slug_home() {
     .expect("write SLUG_HOME library module");
     fs::write(
         &path,
-        "val example = import(\"slug.example\")\nprintln(example.answer)\n",
+        "val builtin = import(\"slug.builtin\")\nval example = import(\"slug.example\")\nbuiltin.println(example.answer)\n",
     )
     .expect("write library-importing source");
 

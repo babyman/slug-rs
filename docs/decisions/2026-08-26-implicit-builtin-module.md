@@ -9,21 +9,24 @@ shadowing, documentation, and foreign-signature validation less clear.
 ## Decision
 
 `slug.builtin` is a host-provided module whose registered exports are injected
-into every module. The bundled source declaration file documents those exports
-and can be imported explicitly. Injection occurs only when the host has
-registered at least one `slug.builtin` foreign binding. A local declaration
-takes precedence over the implicit binding.
+into every module. The bundled source declaration file is optional: host
+registration never depends on it. When present, it documents host exports and
+may define additional foundational Slug values; it can always be imported
+explicitly when either source or host exports exist. A local declaration takes
+precedence over the implicit binding.
 
-`slug.builtin` remains deliberately small: only primitives that cannot be
-written in Slug belong there. Structured error schemas and ordinary helpers are
-future explicit library modules.
+`slug.builtin` remains deliberately small: it holds host primitives that cannot
+be written in Slug plus universally shared Slug-level foundations such as the
+standard `Error` schema. Ordinary helpers remain in explicit library modules.
 
 ## Consequences
 
-Hosts register `println` as `slug.builtin.println`, rather than as a global.
-The loader initializes `slug.builtin` before modules that receive its exports.
-The module must not implicitly appear as an unbound placeholder on hosts that
-do not register it.
+Hosts register `println` as `slug.builtin.println` with the dedicated builtin
+registration API, rather than as a global.
+The loader injects registered values before evaluating the optional source
+module, so source declarations validate against the same descriptor. The
+module must not implicitly appear as an unbound placeholder on hosts that do
+not register it and provide no source module.
 
 ## Migration
 

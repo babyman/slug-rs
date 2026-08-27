@@ -140,7 +140,7 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
     let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
     let mut vm = Vm::with_module_loader(loader.clone());
     let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
-    vm.define_foreign(
+    vm.define_builtin(
         builtins
             .function(
                 "println",

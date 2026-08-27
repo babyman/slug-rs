@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Added the implicit `slug.builtin` foundation module. Its bundled `println`
-  declaration is backed by a module-qualified host registration and remains
-  explicitly importable; local declarations retain precedence.
+- Added the implicit `slug.builtin` foundation module. Host registrations are
+  available independently of its optional source file; that file documents
+  host functions and supplies the standard `Error` schema. The module remains
+  explicitly importable, and local declarations retain precedence.
 
 - Added module-qualified declared-foreign resolution and the initial
   `slug.channel` library. Its `chan` and `close` bindings use the static host

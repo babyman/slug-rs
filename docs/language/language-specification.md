@@ -492,10 +492,11 @@ does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
 The bundled declaration module currently provides `println(...values)`. The
-module is intentionally limited to primitives that cannot be expressed in
-Slug. General utilities, channel operations, and portable error schemas belong
-to ordinary explicit modules such as `slug.channel`, `slug.std`, or a future
-`slug.error`.
+host registers its functions independently of the file. When present,
+`lib/slug/builtin.slug` documents those functions and may export foundational
+Slug values such as `Error`. The module is intentionally limited to primitives
+and universally shared values. General utilities and channel operations belong
+to ordinary explicit modules such as `slug.channel` and `slug.std`.
 
 The standard library consists of modules loaded through this same mechanism.
 Its public API is defined by the library reference, not by this specification.
