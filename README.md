@@ -33,6 +33,10 @@ compiled-module contract is documented separately as `.cslug`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, cached isolated module initialization, and string-keyed exported-value maps.
+- Canonical source-annotation resolution in every compiler mode, including
+  checked built-in type names and constructor arity. Optional `-type-check`
+  validation distinguishes non-nil `any` from universal `any|nil`, normalizes
+  unions, and compares structured annotations reflexively.
 - Immutable configuration collection from library and project TOML, `SLUG__`
   environment variables, and program options; source access through `cfg` is a
   subsequent milestone.

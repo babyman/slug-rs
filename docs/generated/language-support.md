@@ -51,7 +51,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Final variadic parameters | implemented | `tests/cli.rs` |
 | Discard function parameters | implemented | `tests/cli.rs` |
 | Call-time default parameters | implemented | `tests/cli.rs` |
-| Type annotation syntax and basic `-type-check` validation | implemented | `tests/cli.rs` |
+| Type annotation syntax, mandatory resolution, and basic `-type-check` validation | implemented | `tests/cli.rs` |
 | Generic call inference and explicit type applications | implemented | `tests/cli.rs` |
 | Complete static checking | specified only | `language/language-specification.md` |
 | Tags on `val`/`var` declarations and function parameters | partial | `tests/cli.rs` |

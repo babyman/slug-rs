@@ -6,6 +6,11 @@
   universal value type. Unannotated parameters canonicalize to `any|nil`, while
   omitted binding and result annotations infer a precise type before falling
   back to `any|nil`; the checker's unknown state remains private.
+- Added the canonical semantic type foundation and mandatory annotation
+  resolution in both compiler modes. Unknown type names and invalid type
+  constructor arity are checked source errors; optional checking now enforces
+  `any` nilability, normalized unions, structured reflexivity, and non-nil bare
+  generic inference.
 
 - Defined static overload signatures by their type parameters and inputs.
   Parameter annotations participate in mandatory overload resolution in every

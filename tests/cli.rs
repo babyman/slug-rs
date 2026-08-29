@@ -1017,6 +1017,81 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
 }
 
 #[test]
+fn enforces_any_nil_and_canonical_type_rules() {
+    let path = fixture_path("semantic-types");
+    fs::write(
+        &path,
+        "val nonNil:any = \"ready\"\n\
+         val nullable:any|nil = nil\n\
+         val source:str|nil = \"value\"\n\
+         val duplicate:str|nil = source\n\
+         val values:list<str|nil> = [\"value\", nil]\n\
+         val same:list<str|nil> = values\n\
+         val safe = fn():any { nonNil }\n\
+         val maybe = fn():any|nil { nullable }\n\
+         println(duplicate, same, safe(), maybe())\n",
+    )
+    .expect("write canonical semantic type source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run canonical semantic type source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "value [\"value\", nil] ready nil\n"
+    );
+
+    fs::write(&path, "val invalid:any = nil\n").expect("write nil-to-any source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run nil-to-any source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: expected any, got nil")
+    );
+
+    fs::write(
+        &path,
+        "val identity = fn<T>(value:T):T { value }\nidentity(nil)\n",
+    )
+    .expect("write nil generic inference source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run nil generic inference source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: generic type argument cannot include nil")
+    );
+
+    fs::write(&path, "val invalid:nmu = 1\n").expect("write unknown annotation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run unknown annotation source");
+    fs::remove_file(path).expect("remove semantic type source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: unknown type `nmu`")
+    );
+}
+
+#[test]
 fn accepts_tags_and_evaluates_their_arguments_before_declarations() {
     let path = fixture_path("tags");
     fs::write(

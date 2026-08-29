@@ -9,6 +9,7 @@ mod ast;
 mod compiler;
 mod lexer;
 mod parser;
+mod semantic;
 mod state;
 mod typecheck;
 use compiler::Compiler;
@@ -64,7 +65,9 @@ impl std::error::Error for SourceError {}
 /// source semantics.
 pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
-    Compiler::new(path, Parser::new(tokens).parse()?).compile()
+    let expressions = Parser::new(tokens).parse()?;
+    typecheck::validate(&expressions)?;
+    Compiler::new(path, expressions).compile()
 }
 
 /// Compiles source with the optional static annotation checker enabled.
@@ -76,6 +79,7 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
 pub fn compile_type_checked(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
+    typecheck::validate(&expressions)?;
     typecheck::check(&expressions)?;
     Compiler::new(path, expressions).compile()
 }
