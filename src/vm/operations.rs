@@ -368,6 +368,7 @@ fn matches_type(
         )),
         MatchType::Task => Ok(matches!(value, Value::Task(_))),
         MatchType::Channel => Ok(matches!(value, Value::Channel(_))),
+        MatchType::Schema => Ok(matches!(value, Value::StructSchema(_))),
         MatchType::Struct(None) => Ok(matches!(value, Value::Struct(_))),
         MatchType::Struct(Some(index)) => {
             let expected = operands.get(*index).ok_or_else(|| {

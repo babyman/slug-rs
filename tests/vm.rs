@@ -356,6 +356,26 @@ fn matches_structs_through_private_pattern_bytecode() {
 }
 
 #[test]
+fn matches_schema_values_through_private_pattern_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::StructSchema(vec![]))
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Constrained {
+                pattern: Box::new(slug_vm::MatchPattern::Wildcard),
+                constraint: slug_vm::MatchType::Schema,
+            },
+            bindings: 0,
+            operands: 0,
+        })
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn executes_checked_bitwise_and_shift_bytecode() {
     let mut main = Chunk::new("main", 0);
     let left = main.constant(Value::Int(6));

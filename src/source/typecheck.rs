@@ -500,7 +500,7 @@ fn check_expression(
                     }
                 }
             }
-            Ok(Type::Struct(None))
+            Ok(Type::Schema)
         }
         ExprKind::Value(value) => Ok(value_type(value)),
         ExprKind::List(values) => {
@@ -710,7 +710,8 @@ fn check_expression(
             for (_, value) in fields {
                 check_expression(value, environment, type_parameters, strict)?;
             }
-            Ok(Type::Struct(None))
+            Ok(known_schema_name(schema, environment)
+                .map_or(Type::Struct(None), |name| Type::Struct(Some(name))))
         }
         ExprKind::StructCopy { value, fields } => {
             let result = check_expression(value, environment, type_parameters, strict)?;
@@ -1337,6 +1338,16 @@ fn substitute(value_type: &Type, substitutions: &HashMap<usize, Type>) -> Type {
     }
 }
 
+fn known_schema_name(expression: &Expr, environment: &Environment) -> Option<String> {
+    let ExprKind::Name(name) = &expression.kind else {
+        return None;
+    };
+    environment
+        .lookup(name)
+        .is_some_and(|binding| binding.value_type == Type::Schema)
+        .then(|| name.clone())
+}
+
 fn value_type(value: &Value) -> Type {
     match value {
         Value::Nil => Type::Nil,
@@ -1346,7 +1357,8 @@ fn value_type(value: &Value) -> Type {
         Value::Bytes(_) => Type::Bytes,
         Value::List(_) => Type::List(None),
         Value::Map(_) => Type::Map(None),
-        Value::StructSchema(_) | Value::Struct(_) => Type::Struct(None),
+        Value::StructSchema(_) => Type::Schema,
+        Value::Struct(_) => Type::Struct(None),
         Value::Channel(_) => Type::Channel(None),
         Value::Closure(_)
         | Value::Native(_)

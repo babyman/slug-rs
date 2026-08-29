@@ -307,8 +307,11 @@ user.name
 user["name"]
 ```
 
-A struct expression defines a schema. Applying a schema to `{...}` creates a
-struct value. Struct fields can have type annotations and defaults. `copy`
+A struct expression defines a schema and produces a value of type `schema`.
+Applying a schema to `{...}` creates a struct value. When the schema expression
+is a direct, statically known binding `S`, construction has type `struct<S>`;
+otherwise it has the less precise type `struct`. Struct fields can have type
+annotations and defaults. `copy`
 creates a value with replacement fields. Tags on struct fields are not syntax.
 
 ```slug
@@ -376,7 +379,8 @@ match value {
 Direct value-category annotations, `struct<Name>`, unions composed from
 runtime-checkable annotations, and recursively checked `list<T>` and
 `map<K, V>` annotations are runtime-checkable. `any` matches non-nil values;
-`any|nil` matches every value. A `struct<Name>` constraint requires the exact
+`any|nil` matches every value. `schema` matches schema values only. A
+`struct<Name>` constraint requires the exact
 schema identity named by `Name`; the schema binding must resolve, and a
 resolved non-schema value is a checked runtime type error. Function signatures,
 task or channel payload types, tuple types, and generic parameters are not
@@ -725,8 +729,9 @@ val widened = fn():any|nil { 1 }      // fn():any|nil
 val nonNil = fn():any { "ready" }     // cannot return nil
 ```
 
-The common parameterized forms are `list<T>`, `map<K, V>`, `chan<T>`,
-`task<T>`, and `struct<Name>`. A bracketed type such as `[str, num]` is a
+The built-in `schema` type describes schema values and does not accept type
+arguments. The common parameterized forms are `list<T>`, `map<K, V>`,
+`chan<T>`, `task<T>`, and `struct<Name>`. A bracketed type such as `[str, num]` is a
 fixed-length tuple type. A function type is written `fn<R, P1, P2, ...>`,
 where the first argument is the return type and the remaining arguments are
 the parameter types. For example, `fn<num, num, num>` denotes a function that

@@ -18,6 +18,7 @@ pub(super) enum Type {
     Function(Option<Vec<Type>>),
     Task(Option<Box<Type>>),
     Channel(Option<Box<Type>>),
+    Schema,
     Struct(Option<String>),
     Tuple(Vec<Type>),
     Generic(usize),
@@ -36,6 +37,7 @@ impl Type {
             | Self::Function(None)
             | Self::Task(None)
             | Self::Channel(None)
+            | Self::Schema
             | Self::Struct(_) => true,
             Self::List(element) => element
                 .as_deref()
@@ -155,6 +157,7 @@ impl Type {
                 }
                 _ => false,
             },
+            Self::Schema => matches!(self, Self::Schema),
             Self::Struct(expected) => match self {
                 Self::Struct(actual) => expected.is_none() || actual == expected,
                 _ => false,
@@ -233,6 +236,7 @@ impl fmt::Display for Type {
             }
             Self::Task(argument) => display_application(formatter, "task", argument.as_deref()),
             Self::Channel(argument) => display_application(formatter, "chan", argument.as_deref()),
+            Self::Schema => formatter.write_str("schema"),
             Self::Struct(name) => {
                 if let Some(name) = name {
                     write!(formatter, "struct<{name}>")
@@ -325,6 +329,7 @@ fn resolve_name(
         "fn" => Type::Function(None),
         "task" => Type::Task(None),
         "chan" => Type::Channel(None),
+        "schema" => Type::Schema,
         "struct" => Type::Struct(None),
         _ => {
             return Err(SourceError::semantic(
@@ -370,6 +375,7 @@ fn resolve_application(
         ("list" | "task" | "chan", _) => Err(wrong_type_arity(name, "1", span)),
         ("map", _) => Err(wrong_type_arity(name, "2", span)),
         ("fn", _) => Err(wrong_type_arity(name, "at least 1", span)),
+        ("schema", _) => Err(wrong_type_arity(name, "0", span)),
         _ => Err(SourceError::semantic(
             format!("unknown type constructor `{name}`"),
             span.clone(),

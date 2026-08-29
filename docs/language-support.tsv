@@ -39,6 +39,7 @@ List slicing|implemented|`tests/cli.rs` and `tests/vm.rs`
 Untyped struct schemas, construction, defaults, and field access|implemented|`tests/cli.rs` and `tests/vm.rs`
 Struct copies|implemented|`tests/cli.rs`
 Whole-case type constraints, schema matching, and type narrowing|implemented|`tests/cli.rs` and `tests/vm.rs`
+`schema` types and nominal `struct<S>` construction inference|implemented|`tests/cli.rs`, `tests/module_loader.rs`, and `tests/vm.rs`
 Native function calls and `println`|implemented|`tests/cli.rs` and `tests/vm.rs`
 Implicit `slug.builtin` bindings and foundational Slug values|implemented|`tests/cli.rs`
 Positional call spreads and list-literal spreads|implemented|`tests/cli.rs`

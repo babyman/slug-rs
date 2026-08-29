@@ -1583,6 +1583,74 @@ fn matches_reifiable_type_constraints_and_narrows_case_bindings() {
 }
 
 #[test]
+fn distinguishes_schema_values_from_struct_instances_and_infers_nominal_types() {
+    let path = fixture_path("schema-types");
+    fs::write(
+        &path,
+        "val S: schema = struct { name: str }\n\
+         val Alias = S\n\
+         val s: struct<S> = S {name: \"evan\"}\n\
+         val alias: struct<Alias> = Alias {name: \"ada\"}\n\
+         val takesSchema = fn(value: schema) { \"narrowed\" }\n\
+         val classify = fn(value) match {\n\
+           _: schema => \"schema\"\n\
+           _: struct => \"struct\"\n\
+           _ => \"other\"\n\
+         }\n\
+         val narrowed = fn(value) match { found: schema => takesSchema(found); _ => \"other\" }\n\
+         println(classify(S), classify(s), classify(alias), narrowed(S))\n",
+    )
+    .expect("write schema type source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run schema type source");
+    fs::remove_file(&path).expect("remove schema type source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "schema struct struct narrowed\n"
+    );
+
+    fs::write(
+        &path,
+        "val S = struct {}\nval Other = struct {}\nval value: struct<S> = Other {}\n",
+    )
+    .expect("write mismatched nominal struct source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run mismatched nominal struct source");
+    fs::remove_file(&path).expect("remove mismatched nominal struct source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected struct<S>, got struct<Other>")
+    );
+
+    fs::write(&path, "val S: schema<num> = struct {}\n")
+        .expect("write parameterized schema source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run parameterized schema source");
+    fs::remove_file(path).expect("remove parameterized schema source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: type `schema` expects 0 argument(s)")
+    );
+}
+
+#[test]
 fn rejects_non_reifiable_match_type_constraints() {
     let path = fixture_path("invalid-match-type-constraint");
     fs::write(&path, "match value { _: fn<num, num> => true }\n")

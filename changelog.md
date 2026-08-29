@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the non-parameterized `schema` type for struct-schema values. Direct
+  construction through a known schema binding `S` now infers `struct<S>`;
+  `_: schema` distinguishes schema values from `_: struct` instances.
+
 - Added whole-case match type constraints, including schema identity via
   `struct<User>`, recursive list/map checks, and case-local narrowing under
   `-type-check`. The former `Schema {field}` source pattern is replaced by

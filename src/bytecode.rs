@@ -128,6 +128,7 @@ pub enum MatchType {
     Function,
     Task,
     Channel,
+    Schema,
     Struct(Option<usize>),
     Union(Vec<MatchType>),
 }

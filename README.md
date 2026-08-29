@@ -34,7 +34,8 @@ compiled-module contract is documented separately as `.cslug`.
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, cached isolated module initialization, and string-keyed exported-value maps.
 - Canonical source-annotation resolution in every compiler mode, including
-  checked built-in type names and constructor arity. Optional `-type-check`
+  checked built-in type names and constructor arity, including distinct
+  `schema` values and nominal `struct<S>` construction. Optional `-type-check`
   validation distinguishes non-nil `any` from universal `any|nil`, normalizes
   unions, compares structured annotations reflexively, and preserves inferred
   function-value input and result types for higher-order positional calls.

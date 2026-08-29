@@ -7,6 +7,8 @@ implementation stage.
 ## Schemas and defaults
 
 A struct expression creates a new schema identity every time it is evaluated.
+Its value has type `schema`; values constructed through a direct known schema
+binding `S` have type `struct<S>`. `schema` itself has no type arguments.
 Fields are ordered by their declaration order and names must be unique. A field
 without a default is required.
 

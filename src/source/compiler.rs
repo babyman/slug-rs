@@ -1325,6 +1325,7 @@ fn lower_match_type(
             "fn" => Ok(MatchType::Function),
             "task" => Ok(MatchType::Task),
             "chan" => Ok(MatchType::Channel),
+            "schema" => Ok(MatchType::Schema),
             "struct" => Ok(MatchType::Struct(None)),
             _ => Err(SourceError::semantic(
                 format!("unknown type `{name}`"),

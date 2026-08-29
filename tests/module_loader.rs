@@ -100,6 +100,31 @@ fn source_imports_use_the_configured_library_fallback() {
 }
 
 #[test]
+fn imported_schema_bindings_preserve_nominal_construction_types() {
+    let root = root("imported-schema-types");
+    fs::create_dir_all(&root).expect("create schema module directory");
+    fs::write(root.join("shapes.slug"), "export val S = struct { name }\n")
+        .expect("write schema module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val {S} = import(\"shapes\")\nexport val value: struct<S> = S {name: \"Slug\"}\n",
+            true,
+        )
+        .expect("type-check importer using a schema binding");
+    let mut vm = Vm::with_module_loader(loader);
+    vm.run_named(&program, "main")
+        .expect("run importer using a schema binding");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"value\": struct {\"name\": \"Slug\"}}"
+    );
+    fs::remove_dir_all(root).expect("remove schema module directory");
+}
+
+#[test]
 fn source_imports_return_cached_export_maps_in_module_order() {
     let root = root("source-import");
     fs::create_dir_all(root.join("local")).expect("create module directory");
