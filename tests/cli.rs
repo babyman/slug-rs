@@ -1723,7 +1723,15 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
          }\n\
          val andResult = fn(value:str|nil) { (value != nil) && use(value) }\n\
          val orResult = fn(value:str|nil) { (value == nil) || use(value) }\n\
-         println(describe(\"Slug\"), describe(nil), describeEqual(\"Slug\"), andResult(\"go\"), orResult(\"go\"))\n",
+         val guarded = fn(value:str|nil) match { candidate if candidate != nil => use(candidate); _ => \"missing\" }\n\
+         val nested = fn(value:str|nil) { if (value != nil) { if (value != nil) { use(value) } else { \"impossible\" } } else { \"missing\" } }\n\
+         val shadowed = fn(value:str|nil) { if (value != nil) { val value:str = \"shadow\"; use(value) } else { \"missing\" } }\n\
+         val assigned = fn(flag:bool) {\n\
+           var value:str|nil = nil\n\
+           if (flag) { value = \"left\" } else { value = \"right\" }\n\
+           use(value)\n\
+         }\n\
+         println(describe(\"Slug\"), describe(nil), describeEqual(\"Slug\"), andResult(\"go\"), orResult(\"go\"), guarded(\"match\"), nested(\"nested\"), shadowed(\"outer\"), assigned(true))\n",
     )
     .expect("write nil narrowing source");
     let output = slug()
@@ -1739,7 +1747,7 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Slug! missing Slug! go! go!\n"
+        "Slug! missing Slug! go! go! match! nested! shadow! left!\n"
     );
 
     fs::write(
@@ -1756,7 +1764,29 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
         .arg(&path)
         .output()
         .expect("run escaped nil narrowing source");
-    fs::remove_file(path).expect("remove escaped nil narrowing source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected str, got str|nil")
+    );
+
+    fs::write(
+        &path,
+        "val use = fn(value:str):str { value }\n\
+         val incomplete = fn(flag:bool) {\n\
+           var value:str|nil = nil\n\
+           if (flag) { value = \"only\" }\n\
+           use(value)\n\
+         }\n",
+    )
+    .expect("write incomplete type-state source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run incomplete type-state source");
+    fs::remove_file(path).expect("remove nil narrowing sources");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8(output.stderr)

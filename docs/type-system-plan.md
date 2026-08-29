@@ -64,13 +64,13 @@ Generalize the case-local narrowing mechanism into reusable flow analysis.
   which comparisons intentionally do not refine a type.
 - [x] Represent positive and negative facts without exposing the checker's
   private `unknown` state in source types.
-- [ ] Analyze `if` branches using child environments and merge binding types
+- [x] Analyze `if` branches using child environments and merge binding types
   only when both continuing branches define compatible facts.
 - [x] Apply short-circuit facts to the right operand of `&&` and `||`, then
   discard branch-local facts afterward unless an explicit join preserves them.
-- [ ] Reuse the same narrowing and join rules for match guards and case-result
+- [x] Reuse the same narrowing and join rules for match guards and case-result
   inference so those paths do not diverge.
-- [ ] Add source tests for nilable values, nested conditions, shadowing,
+- [x] Add source tests for nilable values, nested conditions, shadowing,
   assignments, and intentionally non-refining predicates.
 
 ## 3. Match coverage and unreachable cases

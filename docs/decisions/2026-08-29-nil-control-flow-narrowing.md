@@ -17,12 +17,14 @@ reverses those facts. The facts apply to the right operand of short-circuit
 
 The checker analyzes each branch in a cloned environment. Facts, declarations,
 and assignment-side callable changes do not leak from an `if`, logical right
-operand, match case, or guard into its enclosing environment. An `if` result
-remains the union of its branch result types; logical expressions retain the
-union of their possible operand results.
+operand, match case, or guard into its enclosing environment. A mutable
+binding's inferred type survives an `if` only when both continuing paths agree
+on it. A successful match guard contributes its facts to that case result. An
+`if` result remains the union of its branch result types; logical expressions
+retain the union of their possible operand results.
 
 Only direct name-versus-`nil` comparisons refine today. Literal equality,
-ordering comparisons, arbitrary predicates, destructuring, and general
+ordering comparisons, arbitrary predicates, destructuring, and incompatible
 assignment joins remain conservative until their own rules are specified.
 
 ## Consequences

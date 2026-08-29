@@ -682,10 +682,12 @@ With `-type-check`, a direct binding comparison to `nil` refines that binding
 within the relevant control-flow path. `if (value != nil)` excludes `nil` in
 its then branch and gives `value` type `nil` in its else branch; `== nil`
 reverses the facts. The same facts apply to the evaluated right operand of
-short-circuit `&&` and `||`. Branch facts do not escape to the enclosing
-scope, and the result of `if`, `and`, or `or` is the union of its possible
-result values. Other predicates, assignments, and control-flow joins remain
-conservative.
+short-circuit `&&` and `||`, and a successful match guard contributes its
+facts to that case result. Branch facts do not escape to the enclosing scope.
+For a mutable binding, a refined assignment type survives an `if` only when
+both continuing paths agree on it. The result of `if`, `&&`, or `||` is the
+union of its possible result values. Other predicates and incompatible joins
+remain conservative.
 
 When a statically known value has a structural function type but no declaration
 callable metadata—for example, a function selected by an `if` expression—a

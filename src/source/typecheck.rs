@@ -551,6 +551,9 @@ fn check_expression(
             for value in values {
                 result = check_expression(value, &mut scoped, type_parameters, strict)?;
             }
+            if strict {
+                environment.merge_compatible_types(&scoped, &scoped);
+            }
             Ok(result)
         }
         ExprKind::If {
@@ -568,15 +571,18 @@ fn check_expression(
             apply_type_facts(&mut then_environment, then_facts);
             let left =
                 check_expression(then_branch, &mut then_environment, type_parameters, strict)?;
+            let mut else_environment = environment.clone();
+            apply_type_facts(&mut else_environment, else_facts);
             let right = else_branch
                 .as_ref()
                 .map(|branch| {
-                    let mut else_environment = environment.clone();
-                    apply_type_facts(&mut else_environment, else_facts);
                     check_expression(branch, &mut else_environment, type_parameters, strict)
                 })
                 .transpose()?
                 .unwrap_or(Type::Nil);
+            if strict {
+                environment.merge_compatible_types(&then_environment, &else_environment);
+            }
             Ok(Type::union([left, right]))
         }
         ExprKind::Binary {
@@ -649,6 +655,9 @@ fn check_expression(
             }
             if let Some(binding) = environment.lookup_mut(name) {
                 binding.callables.clear();
+                if strict && !matches!(actual, Type::Unknown) {
+                    binding.value_type = actual.clone();
+                }
             }
             Ok(actual)
         }
@@ -730,6 +739,10 @@ fn check_expression(
                 }
                 if let Some(guard) = &case.guard {
                     check_expression(guard, &mut scoped, type_parameters, strict)?;
+                    if strict {
+                        let (facts, _) = nil_condition_facts(guard, &scoped);
+                        apply_type_facts(&mut scoped, facts);
+                    }
                 }
                 results.push(check_expression(
                     &case.value,

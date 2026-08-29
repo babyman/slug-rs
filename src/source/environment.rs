@@ -207,6 +207,25 @@ impl Environment {
             .find_map(|scope| scope.get_mut(name))
     }
 
+    pub(super) fn merge_compatible_types(&mut self, left: &Self, right: &Self) {
+        for (index, scope) in self.scopes.iter_mut().enumerate() {
+            let (Some(left_scope), Some(right_scope)) =
+                (left.scopes.get(index), right.scopes.get(index))
+            else {
+                continue;
+            };
+            for (name, binding) in scope {
+                let (Some(left), Some(right)) = (left_scope.get(name), right_scope.get(name))
+                else {
+                    continue;
+                };
+                if left.value_type == right.value_type {
+                    binding.value_type = left.value_type.clone();
+                }
+            }
+        }
+    }
+
     pub(super) fn import(&self, name: &str) -> Option<&ModuleSnapshot> {
         self.imports.get(name)
     }
