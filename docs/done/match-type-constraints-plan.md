@@ -2,9 +2,9 @@
 
 This document plans the implementation of whole-case match type constraints.
 It is not a language specification; the accepted source rule is defined by
-[Match and Destructuring](language/Match%20and%20Destructuring%20-%20Mini%20Spec.md)
+[Match and Destructuring](../language/Match%20and%20Destructuring%20-%20Mini%20Spec.md)
 and its rationale by
-[Constrain whole match patterns with types](decisions/2026-08-29-typed-match-patterns.md).
+[Constrain whole match patterns with types](../decisions/2026-08-29-typed-match-patterns.md).
 
 ## Scope and invariants
 
@@ -37,8 +37,8 @@ constraints, runtime function/task/channel type metadata, or coercion.
 ## 1. Source AST and parser
 
 - [x] Add a constraint field to each match-case pattern in
-  `src/source/ast.rs`.
-- [x] Change `Parser::match_cases` in `src/source/parser.rs` to parse an
+  `../../src/source/ast.rs`.
+- [x] Change `Parser::match_cases` in `../../src/source/parser.rs` to parse an
   optional `: type_annotation` after each complete case pattern and before its
   guard or arrow.
 - [x] Preserve the existing non-binding restriction for comma-separated case
@@ -49,7 +49,7 @@ constraints, runtime function/task/channel type metadata, or coercion.
 
 ## 2. Semantic validation and match representation
 
-- [x] Add one private match-constraint representation to `src/bytecode.rs`.
+- [x] Add one private match-constraint representation to `../../src/bytecode.rs`.
   It must represent direct value categories, `any`, unions, recursive list/map
   checks, and a schema operand for `struct<Name>` without making source types
   or bytecode encoding public compatibility promises.
@@ -58,7 +58,7 @@ constraints, runtime function/task/channel type metadata, or coercion.
 - [x] Resolve the `Name` in `struct<Name>` through the same lexical operand
   mechanism used by the former struct pattern. Unknown names are source
   errors; a resolved non-schema value is a runtime type error.
-- [x] Extend `lower_case_patterns` and its callers in `src/source/compiler.rs`
+- [x] Extend `lower_case_patterns` and its callers in `../../src/source/compiler.rs`
   to lower both the structural pattern and its constraint, collecting dynamic
   schema operands in deterministic source order.
 - [x] Replace the source use of `MatchPattern::Struct`; remove the obsolete
@@ -66,7 +66,7 @@ constraints, runtime function/task/channel type metadata, or coercion.
 
 ## 3. VM matching
 
-- [x] Extend `matches_pattern` in `src/vm/operations.rs` so a constraint is
+- [x] Extend `matches_pattern` in `../../src/vm/operations.rs` so a constraint is
   tested before its structural pattern and rolls back pending bindings on
   failure.
 - [x] Implement direct checks for `nil`, `bool`, `num`, `str`, `bytes`,
@@ -82,7 +82,7 @@ constraints, runtime function/task/channel type metadata, or coercion.
 ## 4. Optional checker narrowing
 
 - [x] Analyze each match case in a child `Environment` in
-  `src/source/typecheck.rs`.
+  `../../src/source/typecheck.rs`.
 - [x] Narrow the match subject and every binding introduced by `@`, list/map
   patterns, and rests using the successful constraint.
 - [x] Make guards and case results use that child environment; do not leak
@@ -108,7 +108,7 @@ constraints, runtime function/task/channel type metadata, or coercion.
 ## 6. Documentation and verification
 
 - [x] Mark whole-case type constraints implemented in
-  `docs/language-support.tsv` and regenerate the support matrix.
+  `../language-support.tsv` and regenerate the support matrix.
 - [x] Update the README capability statement and replace the temporary
   changelog wording that says the feature is specified only.
 - [x] Remove the compatibility note describing the former struct-pattern
