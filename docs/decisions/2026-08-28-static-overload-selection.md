@@ -36,11 +36,12 @@ An exported module exposes a cached semantic snapshot of its exported callable
 sets to importers; import sites must not reconstruct signatures from call
 usage or re-analyze module source.
 
-A signature contains its ordered type parameters; parameter names, annotations,
-default-presence, and final-variadic flag; and its result annotation. Parameter
-names are part of the signature because named calls can observe them. This
-semantic metadata is private implementation data, not portable bytecode or a
-`.cslug` compatibility promise.
+A signature contains its ordered type parameters and its parameter names,
+annotations, default-presence, and final-variadic flag. Parameter names are part
+of the signature because named calls can observe them. The result annotation is
+retained alongside the signature for result inference and checking, but it is
+not part of overload identity or selection. This semantic metadata is private
+implementation data, not portable bytecode or a `.cslug` compatibility promise.
 
 ### Overloaded calls select one signature statically
 
@@ -63,6 +64,11 @@ broad fallback, but it must not hide a more-specific annotated candidate. Two
 applicable unconstrained candidates remain ambiguous. Union and generic
 signatures use the same instantiated assignability relation as ordinary static
 call checking; no runtime coercion is introduced.
+
+The selected candidate's result annotation determines the static type of the
+call after selection. An expected result type does not make a candidate
+applicable or more specific, so declarations that differ only in their result
+annotations do not form return-type-directed overloads.
 
 Calls through values whose callable set is not statically known retain ordinary
 dynamic-call behavior. Computed lookups, dynamic imports, and otherwise
@@ -87,9 +93,11 @@ runtime replacement to silently change which overload the source call means.
 ### Signature identity governs overload merging
 
 Module import merging and duplicate-callable diagnostics compare the complete
-semantic signature, including parameter names and annotations, rather than the
-current default/variadic shape alone. Distinct signatures form an overload set;
-identical signatures retain the established first-loaded binding and warning.
+input signature, including type parameters, parameter names, annotations,
+default-presence, and the final-variadic flag, rather than the current
+default/variadic shape alone. Result annotations do not participate. Distinct
+signatures form an overload set; identical signatures retain the established
+first-loaded binding and warning.
 
 ## Consequences
 
@@ -97,6 +105,8 @@ identical signatures retain the established first-loaded binding and warning.
   on import order at calls that have known argument types.
 - Local and imported calls share generic inference, nilability, named-argument,
   and ambiguity rules.
+- Return annotations remain available for checking and inference, but cannot
+  distinguish otherwise identical callable declarations.
 - The compiler, module metadata, and VM need a shared private signature
   identity and tests for both local and imported callable sets.
 - Static selection is a semantic compilation rule for known callable sets; it

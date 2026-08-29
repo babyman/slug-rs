@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Defined static overload signatures by their type parameters and inputs;
+  return annotations remain available for checking and inference but do not
+  participate in overload identity or selection.
+
 - Removed the ambient `send` and `recv` builtins. Channel operations are now
   available exclusively through the `slug.channel` source-library bindings,
   backed by `select` send and receive case forms.
