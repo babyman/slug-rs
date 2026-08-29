@@ -275,8 +275,11 @@ storage, but must preserve the sharing and capture rules in the task section.
 The runtime MUST preserve source evaluation order wherever it is observable.
 In particular, map-literal entries evaluate in source order rather than host
 map iteration order. Call arguments, list elements, map entries, struct fields,
-pipeline operands, and match guards evaluate left to right before their
-containing operation proceeds.
+pipeline operands, match type constraints, and match guards evaluate left to
+right before their containing operation proceeds. A match type constraint is
+tested before its guard; a failed constraint is a failed case rather than a
+runtime type error. Recursive list and map constraints inspect every element
+or entry.
 
 Each struct-schema evaluation creates a distinct schema identity. Field default
 expressions evaluate once, in declaration order, during that schema evaluation.

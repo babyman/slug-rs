@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Specified whole-case match type constraints, including schema identity via
+  `struct<User>` and recursive list/map checks. The current Rust subset does
+  not implement this feature yet; its former struct-pattern spelling remains
+  supported until implementation.
+
 - Structural function values selected by expressions such as `if` now support
   precise positional call-result inference and optional arity/type checking.
   Named and spread function-value calls remain dynamic because structural

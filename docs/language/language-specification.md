@@ -350,19 +350,38 @@ val classify = fn(value) {
 ```
 
 Patterns include literals, `_` as a wildcard, identifier bindings, pinned
-identifiers (`^name`), binding patterns (`name @ pattern`), list patterns, map
-patterns, and struct patterns. List and map patterns may have a final spread
-pattern such as `...rest`. Exact map patterns use `{|` and `|}` and do not
-permit a spread entry. A bracketed map-pattern key evaluates its expression
-once before its pattern is tested, in the enclosing lexical scope before the
-pattern's bindings exist. The resulting value must be a valid map key.
+identifiers (`^name`), binding patterns (`name @ pattern`), list patterns, and
+map patterns. List and map patterns may have a final spread pattern such as
+`...rest`. Exact map patterns use `{|` and `|}` and do not permit a spread
+entry. A bracketed map-pattern key evaluates its expression once before its
+pattern is tested, in the enclosing lexical scope before the pattern's
+bindings exist. The resulting value must be a valid map key.
 
-A struct pattern has the form `Schema {field, other: pattern}`. It matches only
-a struct value created by that exact schema identity. Fields are partial: each
-named field must exist and match its nested pattern, while unnamed fields are
-ignored. A non-struct subject or a value from a different schema does not
-match. The schema expression must evaluate to a schema; otherwise matching
-produces a checked runtime type error.
+A whole case pattern may have a postfix type constraint, written
+`pattern: Type`. It is part of matching rather than a declaration annotation:
+the subject must satisfy both the constraint and the pattern before its guard
+is evaluated. Type-constraint failure selects the next case and does not
+produce a runtime type error. Constraints are not permitted inside nested
+patterns, so map entries retain their ordinary `key: pattern` syntax.
+
+```slug
+match value {
+  user @ {age: 43, name}: struct<User> => name
+  {|k1, k2|}: map<str, str> => "two strings"
+  b: bool => "$b is bool"
+  _: struct => "another struct"
+}
+```
+
+Direct value-category annotations, `struct<Name>`, unions composed from
+runtime-checkable annotations, and recursively checked `list<T>` and
+`map<K, V>` annotations are runtime-checkable. `any` matches non-nil values;
+`any|nil` matches every value. A `struct<Name>` constraint requires the exact
+schema identity named by `Name`; the schema binding must resolve, and a
+resolved non-schema value is a checked runtime type error. Function signatures,
+task or channel payload types, tuple types, and generic parameters are not
+runtime-checkable and are source errors in a case constraint. The focused
+Match and Destructuring specification defines the complete rule.
 
 ```slug
 val headOrZero = fn(xs) {
@@ -639,7 +658,8 @@ annotations and declared or inferred result; that precision is retained through
 ordinary bindings and collection inference. It infers generic arguments from
 annotated call positions and supports explicit type applications. Flow-sensitive
 narrowing and inference for the remaining dynamic expression forms remain
-future work.
+future work. In particular, it does not yet implement the specified narrowing
+from successful match type constraints.
 
 When a statically known value has a structural function type but no declaration
 callable metadata—for example, a function selected by an `if` expression—a

@@ -163,18 +163,21 @@ match_expr = "match" , [ expression ] , "{" , [ match_case , { case_sep , match_
 (* A map-literal subject must be grouped: `match ({name: value}) { ... }`. *)
 case_sep = statement_sep , { statement_sep } ;
 
-match_case = match_pattern_list , [ "if" , expression ] , "=>" , ( block | statement ) ;
+match_case = case_pattern_list , [ "if" , expression ] , "=>" , ( block | statement ) ;
 
 (* Multi-pattern alternatives must be non-binding (see parser restrictions). *)
-match_pattern_list = match_pattern
-                   | match_pattern , "," , match_pattern , { "," , match_pattern }
+case_pattern_list = case_pattern
+                  | case_pattern , "," , case_pattern , { "," , case_pattern }
                    ;
+
+(* A type constraint applies to the complete case pattern, not to declarations
+   or nested patterns. *)
+case_pattern = match_pattern , [ ":" , type_annotation ] ;
 
 match_pattern = "_"
               | binding_pattern
               | spread_pattern
               | pinned_identifier
-              | struct_pattern
               | list_pattern
               | map_pattern
               | literal
@@ -202,10 +205,6 @@ map_pattern_entry = spread_pattern
                   | "[" , expression , "]" , ":" , match_pattern
                   ;
 (* Bare identifier pattern keys denote strings; computed keys require a value pattern. *)
-
-struct_pattern = identifier , "{" , [ struct_pattern_fields ] , "}" ;
-struct_pattern_fields = struct_pattern_field , { "," , struct_pattern_field } , [ "," ] ;
-struct_pattern_field = identifier , [ ":" , match_pattern ] ;
 
 block = "{" , { statement_sep } , { statement , { statement_sep } } , "}" ;
 (* In expression position, braces are classified structurally: map-entry shapes

@@ -40,7 +40,8 @@ The target language pattern forms are:
   map entry into the module scope;
 - exact map patterns, delimited by `{|` and `|}`, which reject extra keys and
 do not allow a spread entry; and
-- struct patterns such as `User {name}`.
+- a type constraint attached to a complete match-case pattern, such as
+  `user @ {name}: struct<User>`.
 
 A map entry without `:` uses the key name and binds it to a same-named
 identifier. For example, `{name}` requires the `"name"` key and binds its value
@@ -72,14 +73,49 @@ It is intended for selecting a module's exported values, for example
 `val {*} = import("slug.std")`; it is not a rest pattern and cannot be mixed
 with ordinary map-pattern entries.
 
-The current Rust subset implements literals, `_`, identifier bindings,
-pinned identifiers, `name @ pattern` bindings, list patterns with an optional
-named or anonymous final spread, and string-keyed map patterns with an optional
-named or anonymous final spread. It also implements exact map patterns and
-computed map keys, struct patterns, and non-binding, comma-separated case
-alternatives. Struct patterns match schema identity, support partial named
-fields, and reject duplicate field names; see the generated language support
-matrix for the implemented subset.
+### Type constraints
+
+A case pattern may end in `: Type`. The constraint applies to the whole
+pattern: the subject must satisfy both the type constraint and the structural
+pattern before the optional guard is evaluated. A failed constraint is an
+ordinary failed match, not a runtime type error.
+
+```slug
+match value {
+  user @ {age: 43, name}: struct<User> => name
+  {|k1, k2|}: map<str, str> => "two strings"
+  b: bool => "$b is bool"
+  _: struct => "another struct"
+  _ => "other"
+}
+```
+
+Type constraints are permitted only on whole case patterns. They are not
+declaration annotations and cannot appear within list, map, or struct fields.
+Consequently, `val value: str = "Slug"` remains a declaration annotation and
+`{name: pattern}` remains a map-pattern entry.
+
+The runtime-checkable annotations are the direct value categories `nil`,
+`bool`, `num`, `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and
+`struct`; `struct<Name>` schema identity; unions of runtime-checkable types;
+and recursively checked `list<T>` and `map<K, V>` forms. `any` matches every
+non-nil value, and `any|nil` matches every value. A collection constraint
+checks every element or entry, including entries captured by a rest pattern.
+
+Function signatures, task and channel payload annotations, tuple types, and
+generic parameters are not runtime-checkable. Using one as a case constraint
+is a source error. A `struct<Name>` constraint resolves `Name` as a schema
+binding; an unknown name is a source error, while a resolved value that is not
+a schema follows the checked runtime type-error path.
+
+When optional type checking is enabled, a successful constraint narrows the
+case bindings. For example, `b` has type `bool` in `b: bool`, and `name` has
+type `str` in `{name}: map<str, str>`.
+
+The current Rust subset does not yet implement type constraints. It retains
+the former `Schema {field}` struct-pattern spelling while this specified
+replacement is pending; see the generated language support matrix for the
+implemented subset.
 
 `var` and `val` accept these patterns on their left side. A non-matching
 destructuring declaration follows the language error path. See

@@ -62,9 +62,14 @@ field, or naming a field more than once is a checked runtime type error.
 
 ## Patterns
 
-`Schema {field, other: pattern}` matches a value only when it has the exact
-schema identity denoted by `Schema`. It is partial: named fields must exist and
-match their nested patterns, while omitted fields are ignored. A shorthand
-field such as `name` binds that field to `name`. Duplicate pattern field names
-are invalid source. A schema expression that does not evaluate to a schema is a
-checked runtime type error.
+Struct fields use ordinary map-pattern syntax together with a type constraint.
+For example, `user @ {name, active: true}: struct<User>` matches a value only
+when it has the exact schema identity denoted by `User` and its named fields
+match. Field requirements are partial: omitted fields are ignored, and a
+shorthand field such as `name` binds that field to `name`. Duplicate field names
+are invalid source.
+
+`_: struct` matches every struct value. The `User` binding in `struct<User>`
+must resolve to a schema; a non-schema binding follows the checked runtime
+type-error path. See [Match and Destructuring](Match%20and%20Destructuring%20-%20Mini%20Spec.md)
+for constraint evaluation and the current implementation boundary.
