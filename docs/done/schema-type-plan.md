@@ -50,7 +50,7 @@ instance identity belongs to `struct<S>`.
 
 ## 2. Type-system representation
 
-- [x] Add `Type::Schema` in `src/source/semantic.rs`, with display,
+- [x] Add `Type::Schema` in `../../src/source/semantic.rs`, with display,
   assignability, union normalization, and reifiability behavior.
 - [x] Resolve the bare annotation name `schema`; reject `schema<...>` with a
   checked source error.
