@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Direct `== nil` and `!= nil` conditions now narrow nilable bindings within
+  `if` branches and evaluated `&&`/`||` right-hand operands under
+  `-type-check`, without leaking facts to the enclosing scope.
+
 - Optional `-type-check` now validates statically known operator, index, and
   slice operands. It retains precise list/map access and list-combination
   result types while leaving unknown and `any` operands dynamic.

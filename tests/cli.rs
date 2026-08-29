@@ -1710,6 +1710,62 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
 }
 
 #[test]
+fn type_check_narrows_nilable_bindings_through_conditions() {
+    let path = fixture_path("nil-control-flow-narrowing");
+    fs::write(
+        &path,
+        "val use = fn(value:str):str { value + \"!\" }\n\
+         val describe = fn(value:str|nil) {\n\
+           if (value != nil) { use(value) } else { \"missing\" }\n\
+         }\n\
+         val describeEqual = fn(value:str|nil) {\n\
+           if (value == nil) { \"missing\" } else { use(value) }\n\
+         }\n\
+         val andResult = fn(value:str|nil) { (value != nil) && use(value) }\n\
+         val orResult = fn(value:str|nil) { (value == nil) || use(value) }\n\
+         println(describe(\"Slug\"), describe(nil), describeEqual(\"Slug\"), andResult(\"go\"), orResult(\"go\"))\n",
+    )
+    .expect("write nil narrowing source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run nil narrowing source");
+    fs::remove_file(&path).expect("remove nil narrowing source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug! missing Slug! go! go!\n"
+    );
+
+    fs::write(
+        &path,
+        "val use = fn(value:str):str { value }\n\
+         val invalid = fn(value:str|nil) {\n\
+           if (value != nil) { use(value) }\n\
+           use(value)\n\
+         }\n",
+    )
+    .expect("write escaped nil narrowing source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run escaped nil narrowing source");
+    fs::remove_file(path).expect("remove escaped nil narrowing source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected str, got str|nil")
+    );
+}
+
+#[test]
 fn rejects_non_reifiable_match_type_constraints() {
     let path = fixture_path("invalid-match-type-constraint");
     fs::write(&path, "match value { _: fn<num, num> => true }\n")

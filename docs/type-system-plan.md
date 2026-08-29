@@ -59,14 +59,14 @@ Make inferred types useful at the expression boundaries Slug already has.
 
 Generalize the case-local narrowing mechanism into reusable flow analysis.
 
-- [ ] Define narrowing predicates for `value != nil`, `value == nil`, boolean
-  conditions, type-constrained `match`, and short-circuit `and`/`or`; document
+- [x] Define narrowing predicates for `value != nil`, `value == nil`,
+  type-constrained `match`, and short-circuit `&&`/`||`; document
   which comparisons intentionally do not refine a type.
-- [ ] Represent positive and negative facts without exposing the checker's
+- [x] Represent positive and negative facts without exposing the checker's
   private `unknown` state in source types.
 - [ ] Analyze `if` branches using child environments and merge binding types
   only when both continuing branches define compatible facts.
-- [ ] Apply short-circuit facts to the right operand of `and` and `or`, then
+- [x] Apply short-circuit facts to the right operand of `&&` and `||`, then
   discard branch-local facts afterward unless an explicit join preserves them.
 - [ ] Reuse the same narrowing and join rules for match guards and case-result
   inference so those paths do not diverge.

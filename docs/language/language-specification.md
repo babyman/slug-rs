@@ -678,6 +678,15 @@ element type, and list combination operations union their element types. The
 and slice-bound operations, so those expressions accept `num` statically and
 retain their checked runtime error for a non-integral value.
 
+With `-type-check`, a direct binding comparison to `nil` refines that binding
+within the relevant control-flow path. `if (value != nil)` excludes `nil` in
+its then branch and gives `value` type `nil` in its else branch; `== nil`
+reverses the facts. The same facts apply to the evaluated right operand of
+short-circuit `&&` and `||`. Branch facts do not escape to the enclosing
+scope, and the result of `if`, `and`, or `or` is the union of its possible
+result values. Other predicates, assignments, and control-flow joins remain
+conservative.
+
 When a statically known value has a structural function type but no declaration
 callable metadata—for example, a function selected by an `if` expression—a
 positional, non-spread call has the function type's result type. With

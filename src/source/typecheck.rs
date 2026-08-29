@@ -559,10 +559,22 @@ fn check_expression(
             else_branch,
         } => {
             check_expression(condition, environment, type_parameters, strict)?;
-            let left = check_expression(then_branch, environment, type_parameters, strict)?;
+            let (then_facts, else_facts) = if strict {
+                nil_condition_facts(condition, environment)
+            } else {
+                Default::default()
+            };
+            let mut then_environment = environment.clone();
+            apply_type_facts(&mut then_environment, then_facts);
+            let left =
+                check_expression(then_branch, &mut then_environment, type_parameters, strict)?;
             let right = else_branch
                 .as_ref()
-                .map(|branch| check_expression(branch, environment, type_parameters, strict))
+                .map(|branch| {
+                    let mut else_environment = environment.clone();
+                    apply_type_facts(&mut else_environment, else_facts);
+                    check_expression(branch, &mut else_environment, type_parameters, strict)
+                })
                 .transpose()?
                 .unwrap_or(Type::Nil);
             Ok(Type::union([left, right]))
@@ -572,7 +584,7 @@ fn check_expression(
             operator,
             right,
         } => {
-            let left = check_expression(left, environment, type_parameters, strict)?;
+            let left_type = check_expression(left, environment, type_parameters, strict)?;
             if matches!(operator, Binary::Pipeline) {
                 return match &right.kind {
                     ExprKind::Call { callee, arguments } => check_call(
@@ -582,7 +594,7 @@ fn check_expression(
                         environment,
                         type_parameters,
                         strict,
-                        Some(left),
+                        Some(left_type),
                     ),
                     ExprKind::Name(_) | ExprKind::TypeApply { .. } | ExprKind::Index { .. } => {
                         check_call(
@@ -592,14 +604,33 @@ fn check_expression(
                             environment,
                             type_parameters,
                             strict,
-                            Some(left),
+                            Some(left_type),
                         )
                     }
                     _ => check_expression(right, environment, type_parameters, strict),
                 };
             }
+            if matches!(operator, Binary::And | Binary::Or) {
+                let mut right_environment = environment.clone();
+                let (then_facts, else_facts) = if strict {
+                    nil_condition_facts(left, environment)
+                } else {
+                    Default::default()
+                };
+                apply_type_facts(
+                    &mut right_environment,
+                    if matches!(operator, Binary::And) {
+                        then_facts
+                    } else {
+                        else_facts
+                    },
+                );
+                let right =
+                    check_expression(right, &mut right_environment, type_parameters, strict)?;
+                return Ok(Type::union([left_type, right]));
+            }
             let right = check_expression(right, environment, type_parameters, strict)?;
-            binary_result(*operator, &left, &right, strict, &expression.span)
+            binary_result(*operator, &left_type, &right, strict, &expression.span)
         }
         ExprKind::Prefix { operators, value } => {
             let mut result = check_expression(value, environment, type_parameters, strict)?;
@@ -947,6 +978,45 @@ fn is_dynamic_operation_type(value_type: &Type) -> bool {
         Type::Unknown | Type::Any => true,
         Type::Union(members) => members.iter().any(is_dynamic_operation_type),
         _ => false,
+    }
+}
+
+type TypeFacts = Vec<(String, Type)>;
+
+fn nil_condition_facts(expression: &Expr, environment: &Environment) -> (TypeFacts, TypeFacts) {
+    let ExprKind::Binary {
+        left,
+        operator,
+        right,
+    } = &expression.kind
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let ((ExprKind::Name(name), ExprKind::Value(Value::Nil))
+    | (ExprKind::Value(Value::Nil), ExprKind::Name(name))) = (&left.kind, &right.kind)
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    if !matches!(operator, Binary::Equal | Binary::NotEqual) {
+        return (Vec::new(), Vec::new());
+    }
+    let Some(binding) = environment.lookup(name) else {
+        return (Vec::new(), Vec::new());
+    };
+    let non_nil = binding.value_type.without_nil();
+    let nil = Type::Nil;
+    if matches!(operator, Binary::NotEqual) {
+        (vec![(name.clone(), non_nil)], vec![(name.clone(), nil)])
+    } else {
+        (vec![(name.clone(), nil)], vec![(name.clone(), non_nil)])
+    }
+}
+
+fn apply_type_facts(environment: &mut Environment, facts: TypeFacts) {
+    for (name, value_type) in facts {
+        if let Some(binding) = environment.lookup_mut(&name) {
+            binding.value_type = value_type;
+        }
     }
 }
 

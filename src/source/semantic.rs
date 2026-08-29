@@ -89,6 +89,19 @@ impl Type {
         }
     }
 
+    pub(super) fn without_nil(&self) -> Self {
+        match self {
+            Self::Nil => Self::Unknown,
+            Self::Union(members) => Self::union(
+                members
+                    .iter()
+                    .filter(|member| !matches!(member, Self::Nil))
+                    .cloned(),
+            ),
+            other => other.clone(),
+        }
+    }
+
     pub(super) fn widen_unknown(self) -> Self {
         match self {
             Self::Unknown => Self::universal(),
