@@ -387,8 +387,8 @@ fn check_expression(
                 require(expected, &actual, &expression.span)?;
             }
             if callable.is_none() {
-                let mut binding = expression_binding(value, environment)
-                    .unwrap_or_else(|| SemanticBinding::value(actual.clone().widen_unknown()));
+                let mut binding =
+                    value_binding(value, &actual, environment, type_parameters, strict)?;
                 if let Some(declared) = declared {
                     binding.value_type = declared;
                 }
@@ -801,24 +801,86 @@ fn check_expression(
             Ok(Type::union(results))
         }
         ExprKind::StructInit { schema, fields } => {
-            check_expression(schema, environment, type_parameters, strict)?;
-            for (_, value) in fields {
-                check_expression(value, environment, type_parameters, strict)?;
+            let schema_type = check_expression(schema, environment, type_parameters, strict)?;
+            require_operation_operand(&Type::Schema, &schema_type, strict, &expression.span)?;
+            let schema_binding = expression_binding(schema, environment)
+                .filter(|binding| binding.value_type == Type::Schema);
+            let mut provided = std::collections::HashSet::new();
+            for (name, value) in fields {
+                if strict && !provided.insert(name) {
+                    return Err(SourceError::semantic(
+                        format!("duplicate struct field `{name}`"),
+                        value.span.clone(),
+                    ));
+                }
+                let actual = check_expression(value, environment, type_parameters, strict)?;
+                if strict && let Some(schema) = &schema_binding {
+                    let expected = schema.members.get(name).ok_or_else(|| {
+                        SourceError::semantic(
+                            format!("struct schema has no field `{name}`"),
+                            value.span.clone(),
+                        )
+                    })?;
+                    require(&expected.value_type, &actual, &value.span)?;
+                }
+            }
+            if strict
+                && let Some(schema) = &schema_binding
+                && let Some(name) = schema
+                    .required_fields
+                    .iter()
+                    .find(|name| !provided.contains(*name))
+            {
+                return Err(SourceError::semantic(
+                    format!("missing required struct field `{name}`"),
+                    expression.span.clone(),
+                ));
             }
             Ok(known_schema_name(schema, environment)
                 .map_or(Type::Struct(None), |name| Type::Struct(Some(name))))
         }
         ExprKind::StructCopy { value, fields } => {
             let result = check_expression(value, environment, type_parameters, strict)?;
-            for (_, replacement) in fields {
-                check_expression(replacement, environment, type_parameters, strict)?;
+            let schema = known_struct_schema(&result, environment);
+            let mut replaced = std::collections::HashSet::new();
+            for (name, replacement) in fields {
+                if strict && !replaced.insert(name) {
+                    return Err(SourceError::semantic(
+                        format!("duplicate struct field `{name}`"),
+                        replacement.span.clone(),
+                    ));
+                }
+                let actual = check_expression(replacement, environment, type_parameters, strict)?;
+                if strict && let Some(schema) = &schema {
+                    let expected = schema.members.get(name).ok_or_else(|| {
+                        SourceError::semantic(
+                            format!("struct has no field `{name}`"),
+                            replacement.span.clone(),
+                        )
+                    })?;
+                    require(&expected.value_type, &actual, &replacement.span)?;
+                }
             }
             Ok(result)
         }
         ExprKind::Index { collection, index } => {
             let collection = check_expression(collection, environment, type_parameters, strict)?;
-            let index = check_expression(index, environment, type_parameters, strict)?;
-            index_result(&collection, &index, strict, &expression.span)
+            let index_type = check_expression(index, environment, type_parameters, strict)?;
+            let result = index_result(&collection, &index_type, strict, &expression.span)?;
+            if strict
+                && let Some(schema) = known_struct_schema(&collection, environment)
+                && let ExprKind::Value(Value::Str(name)) = &index.kind
+                && !schema.members.contains_key(name.as_ref())
+            {
+                return Err(SourceError::semantic(
+                    format!("struct has no field `{name}`"),
+                    expression.span.clone(),
+                ));
+            }
+            Ok(expression_binding(expression, environment)
+                .map(|binding| binding.value_type)
+                .or_else(|| known_struct_field_type(&collection, &expression.kind, environment))
+                .unwrap_or(result))
         }
         ExprKind::Slice {
             collection,
@@ -1180,6 +1242,85 @@ fn expression_binding(expression: &Expr, environment: &Environment) -> Option<Se
         }
         _ => None,
     }
+}
+
+fn value_binding(
+    expression: &Expr,
+    value_type: &Type,
+    environment: &mut Environment,
+    type_parameters: &[String],
+    strict: bool,
+) -> Result<SemanticBinding, SourceError> {
+    if let ExprKind::StructSchema(fields) = &expression.kind {
+        return schema_binding(fields, environment, type_parameters, strict);
+    }
+    if let Some(binding) = expression_binding(expression, environment) {
+        return Ok(binding);
+    }
+    if let Some(schema) = known_struct_schema(value_type, environment) {
+        let mut binding = SemanticBinding::value(value_type.clone().widen_unknown());
+        binding.members = schema.members;
+        return Ok(binding);
+    }
+    Ok(SemanticBinding::value(value_type.clone().widen_unknown()))
+}
+
+fn schema_binding(
+    fields: &[super::ast::StructSchemaField],
+    environment: &mut Environment,
+    type_parameters: &[String],
+    strict: bool,
+) -> Result<SemanticBinding, SourceError> {
+    let mut binding = SemanticBinding::value(Type::Schema);
+    for field in fields {
+        let value_type = if let Some(annotation) = &field.annotation {
+            resolve_annotation(
+                annotation,
+                type_parameters,
+                &field.default.as_ref().map_or_else(
+                    || SourceSpan::new("<schema>", 1, 1),
+                    |default| default.span.clone(),
+                ),
+            )?
+        } else if let Some(default) = &field.default {
+            check_expression(default, environment, type_parameters, strict)?.widen_unknown()
+        } else {
+            Type::Unknown
+        };
+        if field.default.is_none() {
+            binding.required_fields.insert(field.name.clone());
+        }
+        binding
+            .members
+            .insert(field.name.clone(), SemanticBinding::value(value_type));
+    }
+    Ok(binding)
+}
+
+fn known_struct_schema(value_type: &Type, environment: &Environment) -> Option<SemanticBinding> {
+    let Type::Struct(Some(name)) = value_type else {
+        return None;
+    };
+    environment
+        .lookup(name)
+        .filter(|binding| binding.value_type == Type::Schema)
+        .cloned()
+}
+
+fn known_struct_field_type(
+    collection_type: &Type,
+    expression: &ExprKind,
+    environment: &Environment,
+) -> Option<Type> {
+    let ExprKind::Index { index, .. } = expression else {
+        return None;
+    };
+    let ExprKind::Value(Value::Str(name)) = &index.kind else {
+        return None;
+    };
+    known_struct_schema(collection_type, environment)
+        .and_then(|schema| schema.members.get(name.as_ref()).cloned())
+        .map(|field| field.value_type)
 }
 
 fn imported_modules(

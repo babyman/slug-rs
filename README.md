@@ -40,8 +40,8 @@ compiled-module contract is documented separately as `.cslug`.
   unions, compares structured annotations reflexively, checks statically known
   operator and collection-access operands, narrows direct nil checks in
   control-flow paths, diagnoses closed typed-match coverage, preserves precise
-  collection results, and retains inferred function-value input and result
-  types for higher-order positional calls.
+  collection results, checks fields through known schemas, and retains inferred
+  function-value input and result types for higher-order positional calls.
 - Lexically scoped semantic bindings retain ordered callable signatures through
   local declarations, aliases, parameters, and nested blocks. Calls to locally
   known callables undergo mandatory shape, generic, and parameter-type

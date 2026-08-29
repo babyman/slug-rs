@@ -24,7 +24,9 @@ default expressions.
 
 The current Rust subset accepts fields with optional annotations and defaults.
 Under `-type-check`, a statically known default must conform to its field
-annotation; annotations do not coerce runtime values.
+annotation. Known local, aliased, and imported schema bindings retain their
+field metadata for construction, copy, and direct field-access checks;
+annotations do not coerce runtime values.
 
 ## Construction
 
@@ -37,6 +39,11 @@ in source order. Construction fails through the checked runtime type-error path
 when the target is not a schema, a field is unknown, a field is provided more
 than once, or a required field is omitted. Omitted fields with defaults receive
 their schema's stored default values.
+
+Under `-type-check`, construction through a known schema also rejects duplicate
+or unknown fields, missing required fields, and supplied values that do not
+conform to declared or inferred field types. Dynamically selected schemas keep
+the ordinary runtime behavior.
 
 An empty construction used directly as a match subject is parenthesized to
 distinguish its empty field list from the match case block:
@@ -61,6 +68,8 @@ schema identity as `value`. It evaluates `value` first and replacement
 expressions left to right. Each named field is replaced; fields not named in
 the copy retain their original values. Copying a non-struct, naming an unknown
 field, or naming a field more than once is a checked runtime type error.
+Under `-type-check`, a known `struct<S>` additionally checks replacement value
+types and infers direct field reads from `S`'s field metadata.
 
 ## Patterns
 

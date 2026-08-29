@@ -314,6 +314,12 @@ otherwise it has the less precise type `struct`. Struct fields can have type
 annotations and defaults. `copy`
 creates a value with replacement fields. Tags on struct fields are not syntax.
 
+With `-type-check`, a directly known schema binding also checks supplied and
+required fields and their values. Direct string field access and copies through
+a known `struct<S>` use the declared field types. Aliased and imported schema
+bindings retain this precision; dynamically selected schemas remain generic
+`struct` values and use their ordinary checked runtime behavior.
+
 ```slug
 val User = struct {
   name:str,

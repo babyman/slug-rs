@@ -52,7 +52,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Final variadic parameters | implemented | `tests/cli.rs` |
 | Discard function parameters | implemented | `tests/cli.rs` |
 | Call-time default parameters | implemented | `tests/cli.rs` |
-| Type annotation syntax, function-value inference/calls, nil-control-flow narrowing, closed match coverage, mandatory resolution, and checked known operations | implemented | `tests/cli.rs` |
+| Type annotation syntax, function-value inference/calls, nil-control-flow narrowing, closed match coverage, schema field checking, mandatory resolution, and checked known operations | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
 | Generic call inference and explicit type applications | implemented | `tests/cli.rs` |
 | Lexically scoped local callable metadata and mandatory call resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
 | Cached exported callable snapshots across static imports | implemented | `tests/module_loader.rs` |

@@ -1,4 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crate::SourceSpan;
 
@@ -44,6 +48,7 @@ pub(super) struct SemanticBinding {
     pub(super) value_type: Type,
     pub(super) callables: Vec<CallableSignature>,
     pub(super) members: HashMap<String, SemanticBinding>,
+    pub(super) required_fields: HashSet<String>,
 }
 
 impl SemanticBinding {
@@ -52,6 +57,7 @@ impl SemanticBinding {
             value_type,
             callables: Vec::new(),
             members: HashMap::new(),
+            required_fields: HashSet::new(),
         }
     }
 
@@ -60,6 +66,7 @@ impl SemanticBinding {
             value_type: function_value_type(&signature),
             callables: vec![signature],
             members: HashMap::new(),
+            required_fields: HashSet::new(),
         }
     }
 
@@ -68,6 +75,7 @@ impl SemanticBinding {
             value_type: Type::Map(None),
             callables: Vec::new(),
             members,
+            required_fields: HashSet::new(),
         }
     }
 }

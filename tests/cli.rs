@@ -1856,6 +1856,72 @@ fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
 }
 
 #[test]
+fn type_check_uses_known_schema_fields_for_struct_values() {
+    let path = fixture_path("schema-field-types");
+    fs::write(
+        &path,
+        "val User = struct { name:str, age:num = 0 }\n\
+         val Alias = User\n\
+         val user:struct<User> = User {name: \"Slug\"}\n\
+         val alias:struct<Alias> = Alias {name: \"Ada\", age: 42}\n\
+         val updated:struct<User> = user copy {age: 1}\n\
+         val name:str = user.name\n\
+         val age:num = updated.age\n\
+         println(name, alias.name, age)\n",
+    )
+    .expect("write typed schema field source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run typed schema field source");
+    fs::remove_file(&path).expect("remove typed schema field source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Slug Ada 1\n");
+
+    for (source, expected) in [
+        (
+            "val User = struct { name:str }\nUser {name: 1}\n",
+            "expected str, got num",
+        ),
+        (
+            "val User = struct { name:str }\nUser {name: \"Slug\", extra: true}\n",
+            "struct schema has no field `extra`",
+        ),
+        (
+            "val User = struct { name:str }\nUser {}\n",
+            "missing required struct field `name`",
+        ),
+        (
+            "val User = struct { name:str, age:num = 0 }\nval user = User {name: \"Slug\"}\nuser copy {age: \"old\"}\n",
+            "expected num, got str",
+        ),
+        (
+            "val User = struct { name:str }\nval user = User {name: \"Slug\"}\nuser.age\n",
+            "struct has no field `age`",
+        ),
+    ] {
+        fs::write(&path, source).expect("write invalid typed schema field source");
+        let output = slug()
+            .arg("-type-check")
+            .arg(&path)
+            .output()
+            .expect("run invalid typed schema field source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .starts_with(&format!("slug: semantic error: {expected}"))
+        );
+    }
+    fs::remove_file(path).expect("remove invalid typed schema field source");
+}
+
+#[test]
 fn rejects_non_reifiable_match_type_constraints() {
     let path = fixture_path("invalid-match-type-constraint");
     fs::write(&path, "match value { _: fn<num, num> => true }\n")

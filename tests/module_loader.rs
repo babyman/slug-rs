@@ -103,14 +103,17 @@ fn source_imports_use_the_configured_library_fallback() {
 fn imported_schema_bindings_preserve_nominal_construction_types() {
     let root = root("imported-schema-types");
     fs::create_dir_all(&root).expect("create schema module directory");
-    fs::write(root.join("shapes.slug"), "export val S = struct { name }\n")
-        .expect("write schema module");
+    fs::write(
+        root.join("shapes.slug"),
+        "export val S = struct { name:str, age:num = 0 }\n",
+    )
+    .expect("write schema module");
     let main_path = root.join("main.slug");
     let loader = ModuleLoader::new(&root, None);
     let program = loader
         .compile_source(
             &main_path.to_string_lossy(),
-            "val {S} = import(\"shapes\")\nexport val value: struct<S> = S {name: \"Slug\"}\n",
+            "val {S} = import(\"shapes\")\nexport val value: struct<S> = S {name: \"Slug\"}\nexport val name:str = value.name\nexport val updated:struct<S> = value copy {age: 2}\nexport val age:num = updated.age\n",
             true,
         )
         .expect("type-check importer using a schema binding");
@@ -119,7 +122,7 @@ fn imported_schema_bindings_preserve_nominal_construction_types() {
         .expect("run importer using a schema binding");
     assert_eq!(
         vm.exported_values(&program).to_string(),
-        "{\"value\": struct {\"name\": \"Slug\"}}"
+        "{\"value\": struct {\"name\": \"Slug\", \"age\": 0}, \"name\": \"Slug\", \"updated\": struct {\"name\": \"Slug\", \"age\": 2}, \"age\": 2}"
     );
     fs::remove_dir_all(root).expect("remove schema module directory");
 }

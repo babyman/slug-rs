@@ -100,16 +100,16 @@ Finish the static record model now that schemas and `struct<S>` exist.
 - [ ] Establish whether `struct<S>` requires `S` to resolve statically to a
   schema binding at every annotation site, including imports, aliases, and
   shadowed names; define the diagnostic when it does not.
-- [ ] Retain schema field declarations in semantic metadata suitable for type
+- [x] Retain schema field declarations in semantic metadata suitable for type
   checking, without making them a public bytecode representation.
-- [ ] Validate known-schema construction: required fields, unknown fields,
+- [x] Validate known-schema construction: required fields, unknown fields,
   supplied values, defaults, and spread/copy behavior where statically
   provable.
-- [ ] Infer field-access and copy results from nominal schemas while retaining
+- [x] Infer field-access and copy results from nominal schemas while retaining
   generic `struct` behavior for dynamically selected schemas.
-- [ ] Define how aliases preserve schema identity and how separately created
+- [x] Define how aliases preserve schema identity and how separately created
   lookalike schemas remain distinct.
-- [ ] Cover local, imported, aliased, and dynamically selected schema cases in
+- [x] Cover local, imported, aliased, and dynamically selected schema cases in
   CLI and module-loader tests.
 
 ## 5. Deliberate language-surface extensions

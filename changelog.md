@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Known local, aliased, and imported schemas now retain field metadata for
+  optional checking. Construction, copies, and direct field access diagnose
+  provable field-name, required-field, and field-value mistakes.
+
 - Closed, type-constrained match subjects now receive optional diagnostics for
   uncovered members, disjoint cases, and unreachable unguarded cases. Guards
   and structural patterns remain conservative.
