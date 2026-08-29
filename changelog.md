@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Defined spread-call resolution for static overload sets: calls with a
+  `...spread` argument now fail semantically instead of selecting an overload
+  from unknown runtime arity. Singleton known callables retain normal spread
+  binding.
+
 - Resolved `foreign` bindings now carry their private canonical callable
   identities. Statically selected foreign-only and mixed local/foreign
   overloads dispatch to the declared live member without native type checks.

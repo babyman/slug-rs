@@ -2058,6 +2058,40 @@ fn rejects_non_list_source_spreads() {
 }
 
 #[test]
+fn rejects_spread_arguments_for_statically_known_overloads() {
+    for (kind, source) in [
+        (
+            "overloaded-call-spread",
+            "val render = fn(value:num) { value }\n\
+             val render = fn(value:str) { value }\n\
+             val values = [1]\n\
+             render(...values)\n",
+        ),
+        (
+            "overloaded-pipeline-spread",
+            "val render = fn(first:num, second:num) { first + second }\n\
+             val render = fn(first:num, second:str) { first }\n\
+             val values = [2]\n\
+             1 /> render(...values)\n",
+        ),
+    ] {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write overloaded spread source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run overloaded spread source");
+        fs::remove_file(path).expect("remove overloaded spread source");
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8(output.stderr).unwrap().starts_with(
+            "slug: semantic error: cannot resolve overload `render` with spread arguments"
+        ));
+    }
+}
+
+#[test]
 fn constructs_and_compares_struct_values_with_stored_defaults() {
     let path = fixture_path("struct-foundation");
     fs::write(

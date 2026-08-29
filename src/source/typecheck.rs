@@ -919,6 +919,16 @@ fn check_call(
         return Ok(Type::Unknown);
     }
     let callables = binding.callables.clone();
+    if callables.len() > 1
+        && shapes
+            .iter()
+            .any(|shape| matches!(shape, ArgumentShape::Spread))
+    {
+        return Err(SourceError::semantic(
+            format!("cannot resolve overload `{name}` with spread arguments"),
+            expression.span.clone(),
+        ));
+    }
     let mut applicable = Vec::new();
     for signature in &callables {
         if let Some(candidate) = instantiate_candidate(

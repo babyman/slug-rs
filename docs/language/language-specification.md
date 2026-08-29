@@ -624,6 +624,12 @@ annotations for additional diagnostics and is enabled by the CLI `-type-check`
 flag. When it is enabled, those additional type diagnostics prevent execution;
 it does not change overload selection for a program accepted in both modes.
 
+Because a call spread has runtime-determined arity, a call to a statically known
+overload set with one or more `...spread` arguments is a semantic error. This
+also applies when a pipeline supplies its leading positional argument. A call
+to one statically known callable remains valid and uses ordinary runtime spread
+binding.
+
 The current Rust subset parses and retains declaration, parameter, return, and
 struct-field annotations. Its optional checker rejects directly provable
 annotation mismatches in declarations, parameter defaults, function returns,
