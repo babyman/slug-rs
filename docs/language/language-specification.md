@@ -572,6 +572,16 @@ distinct. This includes a local function and a `foreign` declaration. A
 duplicate callable signature is an error; a non-callable `val` remains
 immutable.
 
+Callable signature identity is canonical and structural. It includes generic
+arity and use by declaration-order position, each parameter's call-visible
+label, normalized annotation, default-presence, and variadic status. Generic
+parameter names do not participate. Union annotations are flattened,
+deduplicated, and canonically ordered; tuple elements and type arguments remain
+ordered. An unannotated parameter is explicitly unconstrained, and a discard
+parameter has no call label. Default expressions and return annotations do not
+participate in identity. Signature equality is distinct from assignability,
+which is used only to determine overload applicability and specificity.
+
 A `foreign` declaration names a host-supplied callable in the current module.
 Before that module initializes, the runtime resolves each declaration against
 the host's module-qualified foreign-function registry. The host function is

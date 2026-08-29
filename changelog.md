@@ -6,7 +6,9 @@
   Parameter annotations participate in mandatory overload resolution in every
   compiler mode, while `-type-check` adds diagnostics without changing
   selection. Return annotations remain available for checking and inference
-  but do not participate in overload identity or selection.
+  but do not participate in overload identity or selection. Signature equality
+  uses canonical input structure, including alpha-normalized generics and
+  normalized unions, rather than source spelling or assignability.
 
 - Removed the ambient `send` and `recv` builtins. Channel operations are now
   available exclusively through the `slug.channel` source-library bindings,

@@ -36,12 +36,13 @@ An exported module exposes a cached semantic snapshot of its exported callable
 sets to importers; import sites must not reconstruct signatures from call
 usage or re-analyze module source.
 
-A signature contains its ordered type parameters and its parameter names,
-annotations, default-presence, and final-variadic flag. Parameter names are part
-of the signature because named calls can observe them. The result annotation is
-retained alongside the signature for result inference and checking, but it is
-not part of overload identity or selection. This semantic metadata is private
-implementation data, not portable bytecode or a `.cslug` compatibility promise.
+A signature contains its type-parameter arity and its parameter call labels,
+annotations, default-presence, and final-variadic flag. Call labels are part of
+the signature because named calls can observe them; a discard parameter has no
+call label. The result annotation is retained alongside the signature for
+result inference and checking, but it is not part of overload identity or
+selection. This semantic metadata is private implementation data, not portable
+bytecode or a `.cslug` compatibility promise.
 
 ### Overloaded calls select one signature statically
 
@@ -104,12 +105,31 @@ runtime replacement to silently change which overload the source call means.
 
 ### Signature identity governs overload merging
 
-Module import merging and duplicate-callable diagnostics compare the complete
-input signature, including type parameters, parameter names, annotations,
-default-presence, and the final-variadic flag, rather than the current
-default/variadic shape alone. Result annotations do not participate. Distinct
-signatures form an overload set; identical signatures retain the established
-first-loaded binding and warning.
+Callable identity uses canonical structural equality rather than source-text
+equality or mutual assignability. The canonical input signature applies these
+rules recursively:
+
+- Type parameters are identified by declaration-order ordinal, and generic
+  arity is retained. Renaming `T` to `U` does not change identity, while using
+  the first and second type parameters in different positions does.
+- An unannotated parameter has an explicit unconstrained annotation identity.
+- Nested unions are flattened, duplicate members are removed, and members are
+  placed in canonical order. Tuple elements and type-application arguments
+  retain their declared order.
+- Each parameter retains its call-visible label, default-presence, and variadic
+  flag. A discard parameter has no label. The default expression itself does
+  not participate.
+- Result annotations, documentation, tags, source locations, local binding
+  names that are not call-visible, and implementation targets do not
+  participate.
+
+Assignability determines candidate applicability and specificity, never
+signature equality. Module import merging, local duplicate-callable
+diagnostics, and live-binding signature lookup all compare the same canonical
+input structure. Distinct signatures form an overload set. Identical local
+signatures are duplicate declarations; identical imported signatures retain
+the established first-loaded binding and warning. An implementation may hash
+the canonical structure for lookup, but the hash is not its semantic identity.
 
 ## Consequences
 
@@ -121,6 +141,9 @@ first-loaded binding and warning.
   distinguish otherwise identical callable declarations.
 - The compiler, module metadata, and VM need a shared private signature
   identity and tests for both local and imported callable sets.
+- Alpha-renaming generic parameters and reordering union members do not change
+  signature identity; changing a call label, default-presence, or variadic
+  status does.
 - Static selection is a mandatory semantic compilation rule for known callable
   sets. The optional `-type-check` mode may reject additional inconsistencies,
   but cannot change overload selection for a program accepted in both modes.
