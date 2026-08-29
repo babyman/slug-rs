@@ -324,6 +324,38 @@ fn imports_distinct_callable_signatures_as_an_overload_set() {
 }
 
 #[test]
+fn exports_local_callable_overloads_as_one_live_binding() {
+    let root = root("local-export-overloads");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val select = fn(value:num):str { \"number\" }\n\
+         export val select = fn(value:str):str { \"text\" }\n",
+    )
+    .expect("write overloaded module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\nexport val result = [api.select(1), api.select(\"x\")]\n",
+            false,
+        )
+        .expect("compile local exported overloads");
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("run local exported overloads");
+
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": [\"number\", \"text\"]}"
+    );
+    assert!(loader.take_warnings().is_empty());
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn imported_callable_snapshots_preserve_access_paths_generics_and_cache_identity() {
     let root = root("imported-callable-snapshots");
     fs::create_dir_all(&root).expect("create module directory");

@@ -20,6 +20,7 @@ pub(super) struct Compiler {
     expressions: Vec<Expr>,
     chunks: Vec<Chunk>,
     globals: HashMap<String, bool>,
+    callable_globals: HashSet<String>,
     declarations: Vec<ModuleDeclaration>,
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
@@ -32,6 +33,7 @@ impl Compiler {
             expressions,
             chunks: Vec::new(),
             globals: HashMap::new(),
+            callable_globals: HashSet::new(),
             declarations: Vec::new(),
             selected_calls: analysis.selected_calls.clone(),
             function_identities: analysis.function_identities.clone(),
@@ -131,6 +133,8 @@ impl Compiler {
         }
         program.set_bindings(bindings);
         program.set_declarations(self.declarations);
+        let mut seen_exports = HashSet::new();
+        exports.retain(|name| seen_exports.insert(name.clone()));
         program.set_exports(exports);
         program.set_has_entrypoint(has_entrypoint);
         program.set_callable_identities(self.callable_identities);
@@ -219,9 +223,67 @@ impl Compiler {
                 } else {
                     None
                 };
+                let callable_name = matches!(&value.kind, ExprKind::Function { .. })
+                    .then(|| match pattern {
+                        Pattern::Binding(name) => Some(name),
+                        _ => None,
+                    })
+                    .flatten();
+                let existing_callable = callable_name.and_then(|name| {
+                    if state.is_root() {
+                        self.callable_globals
+                            .contains(name)
+                            .then_some(Binding::Global { mutable: false })
+                    } else {
+                        state.current_callable(name)
+                    }
+                });
                 self.tags(state, tags, declaration, &expression.span)?;
                 self.expression(state, value)?;
-                self.bind_pattern(state, pattern, *mutable, &expression.span)?;
+                if let Some(binding) = existing_callable {
+                    match binding {
+                        Binding::Global { .. } => state.emit(
+                            Op::GetGlobal(callable_name.expect("callable name").clone()),
+                            &expression.span,
+                        ),
+                        Binding::Local { slot, .. } => {
+                            state.emit(Op::GetLocal(slot), &expression.span);
+                        }
+                        Binding::Capture { .. } => {
+                            unreachable!("current scope cannot contain a capture")
+                        }
+                    }
+                    state.emit(Op::CombineOverloads, &expression.span);
+                    match binding {
+                        Binding::Global { .. } => state.emit(
+                            Op::SetGlobal(callable_name.expect("callable name").clone()),
+                            &expression.span,
+                        ),
+                        Binding::Local { slot, .. } => {
+                            state.emit(Op::SetLocal(slot), &expression.span);
+                        }
+                        Binding::Capture { .. } => {
+                            unreachable!("current scope cannot contain a capture")
+                        }
+                    }
+                } else {
+                    self.bind_pattern(
+                        state,
+                        pattern,
+                        *mutable,
+                        callable_name.is_some(),
+                        &expression.span,
+                    )?;
+                    if state.is_root()
+                        && let Some(name) = callable_name
+                    {
+                        self.callable_globals.insert(name.clone());
+                    } else if state.is_root()
+                        && let Pattern::Binding(name) = pattern
+                    {
+                        self.callable_globals.remove(name);
+                    }
+                }
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::Foreign { tags, .. } => {
@@ -817,7 +879,7 @@ impl Compiler {
             state.enter_scope();
             let slots = names
                 .into_iter()
-                .map(|name| state.declare(name, false))
+                .map(|name| state.declare(name, false, false))
                 .collect::<Vec<_>>();
             let next = state.jump_if_false(&case.span);
             state.emit(Op::Pop, &case.span);
@@ -959,6 +1021,7 @@ impl Compiler {
         state: &mut State,
         pattern: &Pattern,
         mutable: bool,
+        callable: bool,
         span: &SourceSpan,
     ) -> Result<(), SourceError> {
         if matches!(pattern, Pattern::MapAll) {
@@ -994,7 +1057,7 @@ impl Compiler {
                     Binding::Global { mutable }
                 } else {
                     Binding::Local {
-                        slot: state.declare(name.clone(), mutable),
+                        slot: state.declare(name.clone(), mutable, callable),
                         mutable,
                     }
                 };

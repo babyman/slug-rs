@@ -251,6 +251,7 @@ impl Vm {
     /// Returns a Slug runtime error when top-level execution or the entrypoint
     /// call fails.
     pub fn run_program(&mut self, program: &Program) -> VmResult<Value> {
+        self.module_program = Some(Rc::new(program.clone()));
         self.install_implicit_builtins(program)?;
         self.bind_foreign_declarations(program)?;
         let top_level = self.run_named(program, "main")?;
@@ -786,6 +787,35 @@ impl Vm {
                     {
                         self.globals.borrow_mut().insert(name, value);
                     }
+                }
+                Op::CombineOverloads => {
+                    let existing = self.pop_unresolved(span.clone())?;
+                    let new = self.pop_unresolved(span.clone())?;
+                    let mut overloads = match existing {
+                        Value::Overloads(overloads) => overloads.as_ref().clone(),
+                        value if Self::callable_signature(&value).is_some() => vec![value],
+                        _ => {
+                            return Err(self.error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                "overload combination requires callable values".into(),
+                                span,
+                            ));
+                        }
+                    };
+                    match new {
+                        Value::Overloads(values) => overloads.extend(values.iter().cloned()),
+                        value if Self::callable_signature(&value).is_some() => {
+                            overloads.push(value);
+                        }
+                        _ => {
+                            return Err(self.error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                "overload combination requires callable values".into(),
+                                span,
+                            ));
+                        }
+                    }
+                    self.stack.push(Value::Overloads(Rc::new(overloads)));
                 }
                 Op::DefineMapGlobals => {
                     let value = self.pop_unresolved(span.clone())?;

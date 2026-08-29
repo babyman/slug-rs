@@ -129,6 +129,38 @@ impl Environment {
             .insert(name, binding);
     }
 
+    pub(super) fn declare_callable(
+        &mut self,
+        name: String,
+        signature: CallableSignature,
+        span: &SourceSpan,
+    ) -> Result<(), super::SourceError> {
+        let scope = self
+            .scopes
+            .last_mut()
+            .expect("a semantic environment always has a scope");
+        let Some(existing) = scope.get_mut(&name) else {
+            scope.insert(name, SemanticBinding::callable(signature));
+            return Ok(());
+        };
+        if existing.callables.is_empty() {
+            *existing = SemanticBinding::callable(signature);
+            return Ok(());
+        }
+        if existing
+            .callables
+            .iter()
+            .any(|candidate| candidate.has_same_input(&signature))
+        {
+            return Err(super::SourceError::semantic(
+                format!("duplicate callable signature for `{name}`"),
+                span.clone(),
+            ));
+        }
+        existing.callables.push(signature);
+        Ok(())
+    }
+
     pub(super) fn lookup(&self, name: &str) -> Option<&SemanticBinding> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }

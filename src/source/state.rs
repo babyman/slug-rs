@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{Capture, Chunk, Op, SourceSpan, Value};
 
@@ -11,6 +11,7 @@ pub(super) enum Binding {
 pub(super) struct State {
     chunk: Chunk,
     scopes: Vec<HashMap<String, Binding>>,
+    callables: Vec<HashSet<String>>,
     outer: HashMap<String, Binding>,
     captures: Vec<Capture>,
     root: bool,
@@ -21,6 +22,7 @@ impl State {
         Self {
             chunk: Chunk::new("main", 0),
             scopes: vec![HashMap::new()],
+            callables: vec![HashSet::new()],
             outer: HashMap::new(),
             captures: Vec::new(),
             root: true,
@@ -72,6 +74,7 @@ impl State {
         Self {
             chunk: Chunk::new("<fn>", parameters.len()),
             scopes: vec![parameters_scope],
+            callables: vec![HashSet::new()],
             outer,
             captures,
             root: false,
@@ -131,18 +134,40 @@ impl State {
     }
     pub(super) fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.callables.push(HashSet::new());
     }
     pub(super) fn leave_scope(&mut self) {
         self.scopes.pop();
+        self.callables.pop();
     }
-    pub(super) fn declare(&mut self, name: String, mutable: bool) -> usize {
+    pub(super) fn declare(&mut self, name: String, mutable: bool, callable: bool) -> usize {
         let slot = self.next_local;
         self.next_local += 1;
         self.scopes
             .last_mut()
             .expect("a compiler state always has a scope")
-            .insert(name, Binding::Local { slot, mutable });
+            .insert(name.clone(), Binding::Local { slot, mutable });
+        if callable {
+            self.callables
+                .last_mut()
+                .expect("a compiler state always has a callable scope")
+                .insert(name);
+        } else {
+            self.callables
+                .last_mut()
+                .expect("a compiler state always has a callable scope")
+                .remove(&name);
+        }
         slot
+    }
+    pub(super) fn current_callable(&self, name: &str) -> Option<Binding> {
+        self.callables.last()?.contains(name).then(|| {
+            self.scopes
+                .last()
+                .and_then(|scope| scope.get(name))
+                .cloned()
+                .expect("callable names have a local binding")
+        })
     }
     pub(super) fn lookup(&self, name: &str) -> Option<Binding> {
         self.scopes

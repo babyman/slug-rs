@@ -375,7 +375,7 @@ fn check_expression(
                 None
             };
             if let Some((name, signature)) = &callable {
-                environment.declare(name.clone(), SemanticBinding::callable(signature.clone()));
+                environment.declare_callable(name.clone(), signature.clone(), &expression.span)?;
             }
             let actual = check_expression(value, environment, type_parameters, strict)?;
             let declared = annotation

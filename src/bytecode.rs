@@ -159,6 +159,8 @@ pub enum Op {
     GetGlobal(String),
     NotImplemented,
     DefineGlobal(String),
+    /// Combines the existing callable value above the new callable below it.
+    CombineOverloads,
     /// Defines globals from the string keys of the map on top of the stack.
     DefineMapGlobals,
     RecordModuleTag {

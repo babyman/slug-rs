@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Local function declarations with the same name now form checked overload
+  sets in module and nested lexical scopes. Distinct canonical signatures keep
+  all live closures, duplicate signatures are semantic errors, and exported
+  overloads remain one live binding.
+
 - Defined `any` as the top type for non-nil values and `any|nil` as the
   universal value type. Unannotated parameters canonicalize to `any|nil`, while
   omitted binding and result annotations infer a precise type before falling

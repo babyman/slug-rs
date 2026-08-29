@@ -1832,6 +1832,61 @@ fn binds_named_source_arguments_and_reports_binding_errors() {
 }
 
 #[test]
+fn combines_distinct_local_function_declarations_into_overloads() {
+    let path = fixture_path("local-overloads");
+    fs::write(
+        &path,
+        "val render = fn(value:num):str { \"number\" }\n\
+         val render = fn(value:str):str { \"text\" }\n\
+         println(render(1), render(\"x\"))\n\
+         val main = fn() {\n\
+           val render = fn(value:num):str { \"nested-number\" }\n\
+           val render = fn(value:str):str { \"nested-text\" }\n\
+           println(render(2), render(\"y\"))\n\
+         }\n",
+    )
+    .expect("write local overload source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run local overload source");
+    fs::remove_file(path).expect("remove local overload source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "number text\nnested-number nested-text\n"
+    );
+}
+
+#[test]
+fn rejects_duplicate_local_callable_signatures() {
+    let path = fixture_path("duplicate-local-overload");
+    fs::write(
+        &path,
+        "val render = fn(value:num) { value }\nval render = fn(value:num) { value }\n",
+    )
+    .expect("write duplicate local overload source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run duplicate local overload source");
+    fs::remove_file(path).expect("remove local overload source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: duplicate callable signature for `render`")
+    );
+}
+
+#[test]
 fn rejects_duplicate_function_parameter_names() {
     let path = fixture_path("duplicate-parameter");
     fs::write(&path, "val duplicate = fn(value, value) { value }\n")

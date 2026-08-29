@@ -568,7 +568,9 @@ export foreign trim = fn(value:str)
 
 The `export` modifier makes a top-level binding visible to `import`. Callable
 declarations with the same name form overloads when their signatures are
-distinct. This includes a local function and a `foreign` declaration. A
+distinct. This applies independently in each lexical scope and at module scope;
+later declarations append to the current scope's callable set rather than
+replacing an earlier closure. This includes a local function and a `foreign` declaration. A
 duplicate callable signature is an error; a non-callable `val` remains
 immutable.
 
