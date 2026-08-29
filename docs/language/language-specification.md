@@ -582,6 +582,12 @@ parameter has no call label. Default expressions and return annotations do not
 participate in identity. Signature equality is distinct from assignability,
 which is used only to determine overload applicability and specificity.
 
+When applicable candidates have equivalent instantiated parameter types, the
+candidate with lower generic arity is more specific. A non-generic concrete
+overload therefore takes priority over a generic fallback that inference made
+equivalent for this call. Candidates with equal generic arity remain tied;
+declaration or import order does not resolve the ambiguity.
+
 A `foreign` declaration names a host-supplied callable in the current module.
 Before that module initializes, the runtime resolves each declaration against
 the host's module-qualified foreign-function registry. The host function is

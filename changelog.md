@@ -27,6 +27,10 @@
   member from the current live binding without runtime type validation. A live
   binding that no longer contains the selected identity now fails with a
   checked call error instead of silently choosing another overload.
+- Made lower generic arity the specificity tie-breaker when applicable
+  overloads have equivalent instantiated parameter types. Concrete overloads
+  now take priority over generic fallbacks independently of import order,
+  while equally generic candidates remain ambiguous.
 
 - Defined static overload signatures by their type parameters and inputs.
   Parameter annotations participate in mandatory overload resolution in every

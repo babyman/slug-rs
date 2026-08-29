@@ -988,6 +988,7 @@ fn check_argument(
 
 struct InstantiatedCandidate {
     bound_types: Vec<Type>,
+    generic_arity: usize,
     result: Type,
     identity: super::environment::CallableIdentity,
 }
@@ -1048,6 +1049,7 @@ fn instantiate_candidate(
         .collect();
     Ok(Some(InstantiatedCandidate {
         bound_types,
+        generic_arity: signature.generic_arity,
         result: substitute(&signature.result, &substitutions).widen_unknown(),
         identity: signature.identity(),
     }))
@@ -1112,17 +1114,20 @@ fn bind_arguments<'a>(
 }
 
 fn more_specific(left: &InstantiatedCandidate, right: &InstantiatedCandidate) -> bool {
-    left.bound_types.len() == right.bound_types.len()
-        && left
+    if left.bound_types.len() != right.bound_types.len()
+        || !left
             .bound_types
             .iter()
             .zip(&right.bound_types)
             .all(|(left, right)| left.is_assignable_to(right))
-        && left
-            .bound_types
-            .iter()
-            .zip(&right.bound_types)
-            .any(|(left, right)| !right.is_assignable_to(left))
+    {
+        return false;
+    }
+    left.bound_types
+        .iter()
+        .zip(&right.bound_types)
+        .any(|(left, right)| !right.is_assignable_to(left))
+        || left.generic_arity < right.generic_arity
 }
 
 fn infer(
@@ -1491,6 +1496,7 @@ mod tests {
     fn candidate(bound_types: Vec<Type>) -> InstantiatedCandidate {
         InstantiatedCandidate {
             bound_types,
+            generic_arity: 0,
             result: Type::Unknown,
             identity: CallableSignature {
                 generic_arity: 0,
@@ -1515,5 +1521,14 @@ mod tests {
         let number = candidate(vec![Type::Num]);
         assert!(!more_specific(&string, &number));
         assert!(!more_specific(&number, &string));
+    }
+
+    #[test]
+    fn lower_generic_arity_breaks_equivalent_instantiation_ties() {
+        let concrete = candidate(vec![Type::Str]);
+        let mut generic = candidate(vec![Type::Str]);
+        generic.generic_arity = 1;
+        assert!(more_specific(&concrete, &generic));
+        assert!(!more_specific(&generic, &concrete));
     }
 }

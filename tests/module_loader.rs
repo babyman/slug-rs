@@ -420,6 +420,42 @@ fn selected_signatures_dispatch_same_shape_typed_overloads() {
 }
 
 #[test]
+fn concrete_overloads_take_priority_over_generic_fallbacks() {
+    let root = root("concrete-generic-overloads");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("generic.slug"),
+        "export val choose = fn<T>(value:T):str { \"generic\" }\n",
+    )
+    .expect("write generic overload");
+    fs::write(
+        root.join("strings.slug"),
+        "export val choose = fn(value:str):str { \"specific\" }\n",
+    )
+    .expect("write concrete overload");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"generic\", \"strings\")\n\
+             export val text = api.choose(\"value\")\n\
+             export val number = api.choose(1)\n",
+            false,
+        )
+        .expect("compile concrete and generic overloads");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run concrete and generic overloads");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"text\": \"specific\", \"number\": \"generic\"}"
+    );
+    assert!(loader.take_warnings().is_empty());
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn selected_signatures_guard_live_overload_bindings() {
     let root = root("live-overload-selection");
     fs::create_dir_all(&root).expect("create module directory");
