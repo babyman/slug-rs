@@ -55,7 +55,7 @@ export foreign close = fn(channel:chan<any|nil>):nil
  *
  * Returns the channel, allowing chains: `ch /> send("a") /> send("b")`
  */
-export val send = fn(channel:chan<any|nil>, payload) {
+export val send = fn(channel:chan<any|nil>, payload):chan<any> {
 	select {
 		send channel, payload /> fn(_) { channel }
 	}
@@ -68,7 +68,7 @@ export val send = fn(channel:chan<any|nil>, payload) {
  *
  * Returns the channel if the send succeeded, nil if the channel was full.
  */
-export val trySend = fn(channel:chan<any|nil>, payload) {
+export val trySend = fn(channel:chan<any|nil>, payload):chan<any> {
 	select {
 		send channel, payload /> fn(_) { channel }
 		_
@@ -81,7 +81,7 @@ export val trySend = fn(channel:chan<any|nil>, payload) {
  * If `timeout` is greater than 0 and no value arrives within that many
  * milliseconds, a `TimeoutError` is thrown.
  */
-export val recv = fn(channel:chan<any|nil>, timeout:num = 0) {
+export val recv = fn(channel:chan<any|nil>, timeout:num = 0):any {
 	if (timeout > 0) {
 		select {
 			recv channel
@@ -97,7 +97,7 @@ export val recv = fn(channel:chan<any|nil>, timeout:num = 0) {
  *
  * Returns the next value if one is immediately available, nil otherwise.
  */
-export val tryRecv = fn(channel:chan<any|nil>) {
+export val tryRecv = fn(channel:chan<any|nil>):any {
 	select {
 		recv channel
 		_
@@ -110,7 +110,7 @@ export val tryRecv = fn(channel:chan<any|nil>) {
  * If `timeout` is greater than 0 and the task does not complete within
  * that many milliseconds, a `TimeoutError` is thrown.
  */
-export val await = fn(handle:task, timeout:num = 0) {
+export val await = fn(handle:task, timeout:num = 0):any {
 	if (timeout > 0) {
 		select {
 			await handle
