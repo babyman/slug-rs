@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{MatchMapKey, MatchPattern, MatchRest, StructValue, Value};
+use crate::{MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value};
 
 use super::RuntimeErrorKind;
 
@@ -169,6 +169,7 @@ pub(super) fn list_prepend(value: Value, list: Value) -> Result<Value, String> {
     Ok(Value::List(Rc::new(values)))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn matches_pattern(
     pattern: &MatchPattern,
     value: &Value,
@@ -238,81 +239,158 @@ pub(super) fn matches_pattern(
             exact,
         } => {
             let keys = resolve_map_pattern_keys(patterns, operands)?;
-            let Value::Map(entries) = value else {
-                return Ok(false);
-            };
-            if *exact && entries.len() != patterns.len() {
-                return Ok(false);
-            }
             let binding_start = bindings.len();
-            for ((_, pattern), key) in patterns.iter().zip(&keys) {
-                let Some((_, value)) = entries.iter().rev().find(|(entry, _)| entry == key) else {
-                    bindings.truncate(binding_start);
-                    return Ok(false);
-                };
-                if !matches_pattern(pattern, value, operands, bindings)? {
-                    bindings.truncate(binding_start);
-                    return Ok(false);
+            match value {
+                Value::Map(entries) => {
+                    if *exact && entries.len() != patterns.len() {
+                        return Ok(false);
+                    }
+                    for ((_, pattern), key) in patterns.iter().zip(&keys) {
+                        let Some((_, value)) = entries.iter().rev().find(|(entry, _)| entry == key)
+                        else {
+                            bindings.truncate(binding_start);
+                            return Ok(false);
+                        };
+                        if !matches_pattern(pattern, value, operands, bindings)? {
+                            bindings.truncate(binding_start);
+                            return Ok(false);
+                        }
+                    }
+                    if *rest == MatchRest::Binding {
+                        let rest_entries = entries
+                            .iter()
+                            .filter(|(key, _)| !keys.iter().any(|pattern_key| key == pattern_key))
+                            .cloned()
+                            .collect();
+                        bindings.push(Value::Map(Rc::new(rest_entries)));
+                    }
+                    Ok(true)
                 }
+                Value::Struct(value) => {
+                    if *exact && value.schema.fields.len() != patterns.len() {
+                        return Ok(false);
+                    }
+                    for ((_, pattern), key) in patterns.iter().zip(&keys) {
+                        let Value::Str(key) = key else {
+                            bindings.truncate(binding_start);
+                            return Ok(false);
+                        };
+                        let Some(index) = value
+                            .schema
+                            .fields
+                            .iter()
+                            .position(|field| field.name.as_ref() == key.as_ref())
+                        else {
+                            bindings.truncate(binding_start);
+                            return Ok(false);
+                        };
+                        if !matches_pattern(pattern, &value.values[index], operands, bindings)? {
+                            bindings.truncate(binding_start);
+                            return Ok(false);
+                        }
+                    }
+                    if *rest == MatchRest::Binding {
+                        let rest_entries = value
+                            .schema
+                            .fields
+                            .iter()
+                            .zip(&value.values)
+                            .filter(|(field, _)| {
+                                !keys.iter().any(|key| {
+                                    matches!(key, Value::Str(key) if key.as_ref() == field.name.as_ref())
+                                })
+                            })
+                            .map(|(field, value)| (Value::string(field.name.clone()), value.clone()))
+                            .collect();
+                        bindings.push(Value::Map(Rc::new(rest_entries)));
+                    }
+                    Ok(true)
+                }
+                _ => Ok(false),
             }
-            if *rest == MatchRest::Binding {
-                let rest_entries = entries
-                    .iter()
-                    .filter(|(key, _)| !keys.iter().any(|pattern_key| key == pattern_key))
-                    .cloned()
-                    .collect();
-                bindings.push(Value::Map(Rc::new(rest_entries)));
-            }
-            Ok(true)
         }
-        MatchPattern::Struct { schema, fields } => {
-            match_struct_pattern(*schema, fields, value, operands, bindings)
+        MatchPattern::Constrained {
+            pattern,
+            constraint,
+        } => {
+            if !matches_type(constraint, value, operands)? {
+                return Ok(false);
+            }
+            matches_pattern(pattern, value, operands, bindings)
         }
     }
 }
 
-fn match_struct_pattern(
-    schema: usize,
-    fields: &[(String, MatchPattern)],
+fn matches_type(
+    constraint: &MatchType,
     value: &Value,
     operands: &[Value],
-    bindings: &mut Vec<Value>,
 ) -> Result<bool, (RuntimeErrorKind, String)> {
-    let expected = operands.get(schema).ok_or_else(|| {
-        (
-            RuntimeErrorKind::InvalidBytecode,
-            format!("match pattern operand {schema} does not exist"),
-        )
-    })?;
-    let Value::StructSchema(expected) = expected else {
-        return Err((
-            RuntimeErrorKind::Type,
-            "struct pattern schema must be a struct schema".into(),
-        ));
-    };
-    let Value::Struct(value) = value else {
-        return Ok(false);
-    };
-    if !Rc::ptr_eq(&value.schema, expected) {
-        return Ok(false);
-    }
-    let binding_start = bindings.len();
-    for (name, pattern) in fields {
-        let Some(index) = value
-            .schema
-            .fields
-            .iter()
-            .position(|field| field.name.as_ref() == name)
-        else {
-            bindings.truncate(binding_start);
-            return Ok(false);
-        };
-        if !matches_pattern(pattern, &value.values[index], operands, bindings)? {
-            bindings.truncate(binding_start);
-            return Ok(false);
+    match constraint {
+        MatchType::Any => Ok(!matches!(value, Value::Nil)),
+        MatchType::Nil => Ok(matches!(value, Value::Nil)),
+        MatchType::Bool => Ok(matches!(value, Value::Bool(_))),
+        MatchType::Num => Ok(matches!(value, Value::Int(_) | Value::Float(_))),
+        MatchType::Str => Ok(matches!(value, Value::Str(_))),
+        MatchType::Bytes => Ok(matches!(value, Value::Bytes(_))),
+        MatchType::List(element) => {
+            let Value::List(values) = value else {
+                return Ok(false);
+            };
+            element.as_deref().map_or(Ok(true), |element| {
+                values
+                    .iter()
+                    .map(|value| matches_type(element, value, operands))
+                    .try_fold(true, |matches, next| next.map(|next| matches && next))
+            })
         }
+        MatchType::Map(entries) => {
+            let Value::Map(values) = value else {
+                return Ok(false);
+            };
+            entries.as_ref().map_or(Ok(true), |(key, value)| {
+                values
+                    .iter()
+                    .try_fold(true, |matches, (entry_key, entry_value)| {
+                        Ok(matches
+                            && matches_type(key, entry_key, operands)?
+                            && matches_type(value, entry_value, operands)?)
+                    })
+            })
+        }
+        MatchType::Function => Ok(matches!(
+            value,
+            Value::Closure(_)
+                | Value::Native(_)
+                | Value::DeclaredNative { .. }
+                | Value::Builtin(_)
+                | Value::Overloads(_)
+        )),
+        MatchType::Task => Ok(matches!(value, Value::Task(_))),
+        MatchType::Channel => Ok(matches!(value, Value::Channel(_))),
+        MatchType::Struct(None) => Ok(matches!(value, Value::Struct(_))),
+        MatchType::Struct(Some(index)) => {
+            let expected = operands.get(*index).ok_or_else(|| {
+                (
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!("match pattern operand {index} does not exist"),
+                )
+            })?;
+            let Value::StructSchema(expected) = expected else {
+                return Err((
+                    RuntimeErrorKind::Type,
+                    "struct match type must be a struct schema".into(),
+                ));
+            };
+            let Value::Struct(actual) = value else {
+                return Ok(false);
+            };
+            Ok(Rc::ptr_eq(&actual.schema, expected))
+        }
+        MatchType::Union(members) => members.iter().try_fold(false, |matches, member| {
+            Ok(matches || matches_type(member, value, operands)?)
+        }),
     }
-    Ok(true)
 }
 
 fn resolve_map_pattern_keys(

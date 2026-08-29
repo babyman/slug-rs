@@ -108,10 +108,28 @@ pub enum MatchPattern {
         rest: MatchRest,
         exact: bool,
     },
-    Struct {
-        schema: usize,
-        fields: Vec<(String, MatchPattern)>,
+    Constrained {
+        pattern: Box<MatchPattern>,
+        constraint: MatchType,
     },
+}
+
+/// Private runtime-checkable type form used by source match patterns.
+#[derive(Clone, Debug)]
+pub enum MatchType {
+    Any,
+    Nil,
+    Bool,
+    Num,
+    Str,
+    Bytes,
+    List(Option<Box<MatchType>>),
+    Map(Option<(Box<MatchType>, Box<MatchType>)>),
+    Function,
+    Task,
+    Channel,
+    Struct(Option<usize>),
+    Union(Vec<MatchType>),
 }
 
 /// One source-order case consumed by the private select instruction.

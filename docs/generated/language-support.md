@@ -43,8 +43,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | List slicing | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Untyped struct schemas, construction, defaults, and field access | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Struct copies | implemented | `tests/cli.rs` |
-| Struct patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Whole-case type constraints and type narrowing | specified only | `language/Match and Destructuring - Mini Spec.md` |
+| Whole-case type constraints, schema matching, and type narrowing | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Implicit `slug.builtin` bindings and foundational Slug values | implemented | `tests/cli.rs` |
 | Positional call spreads and list-literal spreads | implemented | `tests/cli.rs` |

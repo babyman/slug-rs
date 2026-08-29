@@ -172,10 +172,15 @@ pub(super) enum TypeAnnotation {
 }
 #[derive(Clone, Debug)]
 pub(super) struct MatchCase {
-    pub(super) patterns: Vec<Pattern>,
+    pub(super) patterns: Vec<CasePattern>,
     pub(super) guard: Option<Expr>,
     pub(super) value: Expr,
     pub(super) span: SourceSpan,
+}
+#[derive(Clone, Debug)]
+pub(super) struct CasePattern {
+    pub(super) pattern: Pattern,
+    pub(super) constraint: Option<TypeAnnotation>,
 }
 #[derive(Clone, Debug)]
 pub(super) enum RestPattern {
@@ -208,10 +213,6 @@ pub(super) enum Pattern {
     },
     /// Binds every string key of a map into a top-level declaration scope.
     MapAll,
-    Struct {
-        schema: String,
-        fields: Vec<(String, Pattern)>,
-    },
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Binary {

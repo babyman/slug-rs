@@ -1488,7 +1488,7 @@ fn matches_and_destructures_structs_by_schema_identity() {
     let path = fixture_path("struct-patterns");
     fs::write(
         &path,
-        "val User = struct { name, active = true }\nval OtherUser = struct { name, active = true }\nval user = User { name: \"Slug\" }\nval describe = fn(value) match {\n  User {name, active: true} => name\n  _ => \"other\"\n}\nval missing = fn(value) match {\n  User {missing} => \"matched\"\n  _ => \"other\"\n}\nval User {name: extracted} = user\nprintln(describe(user), describe(OtherUser { name: \"Slug\" }), missing(user), extracted)\n",
+        "val User = struct { name, active = true }\nval OtherUser = struct { name, active = true }\nval user = User { name: \"Slug\" }\nval describe = fn(value) match {\n  {name, active: true}: struct<User> => name\n  _ => \"other\"\n}\nval missing = fn(value) match {\n  {missing}: struct<User> => \"matched\"\n  _ => \"other\"\n}\nprintln(describe(user), describe(OtherUser { name: \"Slug\" }), missing(user), user.name)\n",
     )
     .expect("write struct pattern source");
     let output = slug()
@@ -1508,7 +1508,7 @@ fn matches_and_destructures_structs_by_schema_identity() {
 
     fs::write(
         &path,
-        "val User = struct { name }\nmatch User { name: \"Slug\" } { User {name, name} => name }\n",
+        "val User = struct { name }\nmatch User { name: \"Slug\" } { {name, name}: struct<User> => name }\n",
     )
     .expect("write duplicate struct pattern source");
     let output = slug()
@@ -1520,12 +1520,12 @@ fn matches_and_destructures_structs_by_schema_identity() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("slug: parse error: duplicate struct pattern field `name`")
+            .starts_with("slug: parse error: duplicate map pattern key `name`")
     );
 
     fs::write(
         &path,
-        "val NotSchema = 1\nmatch nil { NotSchema {} => true }\n",
+        "val NotSchema = 1\nmatch (nil) { _: struct<NotSchema> => true }\n",
     )
     .expect("write invalid struct pattern schema source");
     let output = slug()
@@ -1537,7 +1537,66 @@ fn matches_and_destructures_structs_by_schema_identity() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("slug: runtime error: struct pattern schema must be a struct schema")
+            .starts_with("slug: runtime error: struct match type must be a struct schema")
+    );
+}
+
+#[test]
+fn matches_reifiable_type_constraints_and_narrows_case_bindings() {
+    let path = fixture_path("match-type-constraints");
+    fs::write(
+        &path,
+        "val Marker = struct {}\n\
+         val classify = fn(value) match {\n\
+           b: bool => if (b) { \"true\" } else { \"false\" }\n\
+           {|first, second|}: map<str, str> => first + second\n\
+           [head, ...]: list<num> => head\n\
+           _: str|bytes => \"text\"\n\
+           _: struct => \"struct\"\n\
+           _: any => \"other\"\n\
+           _ => \"nil\"\n\
+         }\n\
+         val takesBool = fn(value:bool) { value }\n\
+         val narrowed = fn(value:any|nil) match {\n\
+           b: bool => takesBool(b)\n\
+           _ => false\n\
+         }\n\
+         val piped = true /> match { b: bool => b; _ => false }\n\
+         println(classify(true), classify({first: \"a\", second: \"b\"}), classify({first: \"a\", second: 2}), classify([7, 8]), classify([true]), classify(\"Slug\"), classify(Marker {}), classify(1), classify(nil), narrowed(true), piped)\n",
+    )
+    .expect("write match type constraint source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run match type constraint source");
+    fs::remove_file(path).expect("remove match type constraint source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "true ab other 7 other text struct other nil true true\n"
+    );
+}
+
+#[test]
+fn rejects_non_reifiable_match_type_constraints() {
+    let path = fixture_path("invalid-match-type-constraint");
+    fs::write(&path, "match value { _: fn<num, num> => true }\n")
+        .expect("write invalid match type constraint source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid match type constraint source");
+    fs::remove_file(path).expect("remove invalid match type constraint source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: match type constraint is not runtime-checkable")
     );
 }
 

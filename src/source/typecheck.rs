@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use crate::Value;
+use crate::{SourceSpan, Value};
 
 use super::{
     SourceError,
     ast::{
-        Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, Parameter, Pattern,
-        SelectCaseKind, Tag, TypeAnnotation,
+        Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, Parameter,
+        Pattern, SelectCaseKind, Tag, TypeAnnotation,
     },
     environment::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
@@ -345,11 +345,6 @@ fn pattern_binding_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a String>) 
                 pattern_binding_names(value, names);
             }
         }
-        Pattern::Struct { fields, .. } => {
-            for (_, value) in fields {
-                pattern_binding_names(value, names);
-            }
-        }
         Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) | Pattern::MapAll => {}
     }
 }
@@ -675,20 +670,35 @@ fn check_expression(
             Ok(Type::union(results))
         }
         ExprKind::Match { subject, cases } => {
-            if let Some(subject) = subject {
-                check_expression(subject, environment, type_parameters, strict)?;
-            }
+            let subject_type = subject
+                .as_ref()
+                .map(|subject| check_expression(subject, environment, type_parameters, strict))
+                .transpose()?
+                .unwrap_or_else(Type::universal);
             let mut results = Vec::new();
             for case in cases {
+                let mut scoped = environment.clone();
+                scoped.enter_scope();
                 for pattern in &case.patterns {
-                    check_pattern(pattern, environment, type_parameters, strict)?;
+                    let constraint = check_case_pattern(
+                        pattern,
+                        &mut scoped,
+                        type_parameters,
+                        strict,
+                        &case.span,
+                    )?;
+                    bind_case_pattern(
+                        &pattern.pattern,
+                        constraint.as_ref().unwrap_or(&subject_type),
+                        &mut scoped,
+                    );
                 }
                 if let Some(guard) = &case.guard {
-                    check_expression(guard, environment, type_parameters, strict)?;
+                    check_expression(guard, &mut scoped, type_parameters, strict)?;
                 }
                 results.push(check_expression(
                     &case.value,
-                    environment,
+                    &mut scoped,
                     type_parameters,
                     strict,
                 )?);
@@ -843,11 +853,7 @@ fn bind_semantic_pattern(
                 environment.declare(name.clone(), member.clone());
             }
         }
-        Pattern::List { .. }
-        | Pattern::Struct { .. }
-        | Pattern::Literal(_)
-        | Pattern::Wildcard
-        | Pattern::Pinned(_) => {}
+        Pattern::List { .. } | Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}
     }
 }
 
@@ -874,17 +880,80 @@ fn check_pattern(
             }
             Ok(())
         }
-        Pattern::Struct { fields, .. } => {
-            for (_, field) in fields {
-                check_pattern(field, environment, type_parameters, strict)?;
-            }
-            Ok(())
-        }
         Pattern::Literal(_)
         | Pattern::Wildcard
         | Pattern::Binding(_)
         | Pattern::Pinned(_)
         | Pattern::MapAll => Ok(()),
+    }
+}
+
+fn check_case_pattern(
+    pattern: &CasePattern,
+    environment: &mut Environment,
+    type_parameters: &[String],
+    strict: bool,
+    span: &SourceSpan,
+) -> Result<Option<Type>, SourceError> {
+    let constraint = if let Some(constraint) = &pattern.constraint {
+        let constraint = resolve_annotation(constraint, type_parameters, span)?;
+        if !constraint.is_reifiable_match_constraint() {
+            return Err(SourceError::semantic(
+                "match type constraint is not runtime-checkable",
+                span.clone(),
+            ));
+        }
+        Some(constraint)
+    } else {
+        None
+    };
+    check_pattern(&pattern.pattern, environment, type_parameters, strict)?;
+    Ok(constraint)
+}
+
+fn bind_case_pattern(pattern: &Pattern, value_type: &Type, environment: &mut Environment) {
+    match pattern {
+        Pattern::Binding(name) => {
+            environment.declare(name.clone(), SemanticBinding::value(value_type.clone()));
+        }
+        Pattern::At { name, pattern } => {
+            environment.declare(name.clone(), SemanticBinding::value(value_type.clone()));
+            bind_case_pattern(pattern, value_type, environment);
+        }
+        Pattern::List { items, rest } => {
+            let element = match value_type {
+                Type::List(Some(element)) => element.as_ref(),
+                _ => &Type::Unknown,
+            };
+            for item in items {
+                bind_case_pattern(item, element, environment);
+            }
+            if let Some(super::ast::RestPattern::Binding(name)) = rest {
+                environment.declare(
+                    name.clone(),
+                    SemanticBinding::value(Type::List(Some(Box::new(element.clone())))),
+                );
+            }
+        }
+        Pattern::Map { entries, rest, .. } => {
+            let (key, value) = match value_type {
+                Type::Map(Some((key, value))) => (key.as_ref(), value.as_ref()),
+                _ => (&Type::Unknown, &Type::Unknown),
+            };
+            for (_, pattern) in entries {
+                bind_case_pattern(pattern, value, environment);
+            }
+            if let Some(super::ast::RestPattern::Binding(name)) = rest {
+                environment.declare(
+                    name.clone(),
+                    SemanticBinding::value(Type::Map(Some((
+                        Box::new(key.clone()),
+                        Box::new(value.clone()),
+                    )))),
+                );
+            }
+        }
+        Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) | Pattern::MapAll => {}
     }
 }
 
@@ -1388,7 +1457,7 @@ fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<
             }
             for case in cases {
                 for pattern in &case.patterns {
-                    validate_pattern(pattern, type_parameters)?;
+                    validate_case_pattern(pattern, type_parameters, &case.span)?;
                 }
                 if let Some(guard) = &case.guard {
                     validate_expression(guard, type_parameters)?;
@@ -1527,6 +1596,23 @@ fn validate_arguments(
     Ok(())
 }
 
+fn validate_case_pattern(
+    pattern: &CasePattern,
+    type_parameters: &[String],
+    span: &SourceSpan,
+) -> Result<(), SourceError> {
+    if let Some(constraint) = &pattern.constraint {
+        let constraint = resolve_annotation(constraint, type_parameters, span)?;
+        if !constraint.is_reifiable_match_constraint() {
+            return Err(SourceError::semantic(
+                "match type constraint is not runtime-checkable",
+                span.clone(),
+            ));
+        }
+    }
+    validate_pattern(&pattern.pattern, type_parameters)
+}
+
 fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(), SourceError> {
     match pattern {
         Pattern::At { pattern, .. } => validate_pattern(pattern, type_parameters),
@@ -1542,12 +1628,6 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
                     validate_expression(key, type_parameters)?;
                 }
                 validate_pattern(value, type_parameters)?;
-            }
-            Ok(())
-        }
-        Pattern::Struct { fields, .. } => {
-            for (_, field) in fields {
-                validate_pattern(field, type_parameters)?;
             }
             Ok(())
         }

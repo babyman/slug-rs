@@ -333,9 +333,16 @@ fn matches_structs_through_private_pattern_bytecode() {
     .emit(Op::Struct(vec!["name".into()]))
     .emit(Op::GetGlobal("User".into()))
     .emit(Op::TryMatch {
-        pattern: slug_vm::MatchPattern::Struct {
-            schema: 0,
-            fields: vec![("name".into(), slug_vm::MatchPattern::Binding)],
+        pattern: slug_vm::MatchPattern::Constrained {
+            pattern: Box::new(slug_vm::MatchPattern::Map {
+                entries: vec![(
+                    (slug_vm::MatchMapKey::String("name".into())),
+                    slug_vm::MatchPattern::Binding,
+                )],
+                rest: slug_vm::MatchRest::None,
+                exact: false,
+            }),
+            constraint: slug_vm::MatchType::Struct(Some(0)),
         },
         bindings: 1,
         operands: 1,

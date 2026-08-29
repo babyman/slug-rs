@@ -1,9 +1,9 @@
 use super::{
     SourceError,
     ast::{
-        Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, MatchCase, Parameter,
-        Pattern, Prefix, RestPattern, SelectCase, SelectCaseKind, StringPart, StructSchemaField,
-        Tag, Token, TokenKind, TypeAnnotation,
+        Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, MatchCase,
+        Parameter, Pattern, Prefix, RestPattern, SelectCase, SelectCaseKind, StringPart,
+        StructSchemaField, Tag, Token, TokenKind, TypeAnnotation,
     },
 };
 use crate::{DeferMode, SourceSpan, Value};
@@ -847,6 +847,20 @@ impl Parser {
         if self.match_subject_nesting != Some(self.nesting) {
             return true;
         }
+        let mut depth = 0usize;
+        for token in &self.tokens[self.index..] {
+            match token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::Arrow if depth == 1 => return false,
+                _ => {}
+            }
+        }
         matches!(
             (
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
@@ -1255,10 +1269,10 @@ impl Parser {
             if self.matches(&TokenKind::End) {
                 return Err(SourceError::at("expected }", self.peek().span.clone()));
             }
-            let mut patterns = vec![self.pattern()?];
+            let mut patterns = vec![self.case_pattern()?];
             while self.matches(&TokenKind::Comma) {
                 self.next();
-                patterns.push(self.pattern()?);
+                patterns.push(self.case_pattern()?);
             }
             let guard = if self.matches(&TokenKind::If) {
                 self.next();
@@ -1291,6 +1305,19 @@ impl Parser {
             span,
         })
     }
+    fn case_pattern(&mut self) -> Result<CasePattern, SourceError> {
+        let pattern = self.pattern()?;
+        let constraint = if self.matches(&TokenKind::Colon) {
+            self.next();
+            Some(self.type_annotation()?)
+        } else {
+            None
+        };
+        Ok(CasePattern {
+            pattern,
+            constraint,
+        })
+    }
     fn pattern(&mut self) -> Result<Pattern, SourceError> {
         let token = self.next();
         match token.kind {
@@ -1319,9 +1346,6 @@ impl Parser {
                     name,
                     pattern: Box::new(pattern?),
                 })
-            }
-            TokenKind::Name(name) if self.matches(&TokenKind::LBrace) => {
-                self.struct_pattern(name, &token.span)
             }
             TokenKind::Name(name) => Ok(Pattern::Binding(name)),
             TokenKind::Select => Ok(Pattern::Binding("select".into())),
@@ -1440,6 +1464,16 @@ impl Parser {
                     };
                     MapPatternKey::String(name)
                 };
+                if let MapPatternKey::String(name) = &key
+                    && entries.iter().any(|(existing, _)| {
+                        matches!(existing, MapPatternKey::String(existing) if existing == name)
+                    })
+                {
+                    return Err(SourceError::at(
+                        format!("duplicate map pattern key `{name}`"),
+                        self.peek().span.clone(),
+                    ));
+                }
                 let pattern = if self.matches(&TokenKind::Colon) {
                     self.next();
                     self.pattern()?
@@ -1470,44 +1504,6 @@ impl Parser {
             exact,
         })
     }
-    fn struct_pattern(
-        &mut self,
-        schema: String,
-        span: &SourceSpan,
-    ) -> Result<Pattern, SourceError> {
-        self.next();
-        self.enter_nesting(span.clone())?;
-        let mut fields = Vec::new();
-        while !self.matches(&TokenKind::RBrace) {
-            let token = self.next();
-            let TokenKind::Name(name) = token.kind else {
-                return Err(SourceError::at("expected struct pattern field", token.span));
-            };
-            if fields.iter().any(|(existing, _)| existing == &name) {
-                return Err(SourceError::at(
-                    format!("duplicate struct pattern field `{name}`"),
-                    token.span,
-                ));
-            }
-            let pattern = if self.matches(&TokenKind::Colon) {
-                self.next();
-                self.pattern()?
-            } else {
-                Pattern::Binding(name.clone())
-            };
-            fields.push((name, pattern));
-            if !self.matches(&TokenKind::Comma) {
-                break;
-            }
-            self.next();
-            if self.matches(&TokenKind::RBrace) {
-                break;
-            }
-        }
-        self.consume(&TokenKind::RBrace, "expected }")?;
-        self.leave_nesting();
-        Ok(Pattern::Struct { schema, fields })
-    }
     fn type_annotation(&mut self) -> Result<TypeAnnotation, SourceError> {
         let mut members = vec![self.type_term()?];
         while self.matches(&TokenKind::Pipe) {
@@ -1525,6 +1521,7 @@ impl Parser {
         let mut annotation = match token.kind {
             TokenKind::Name(name) => TypeAnnotation::Name(name),
             TokenKind::Fn => TypeAnnotation::Name("fn".into()),
+            TokenKind::Struct => TypeAnnotation::Name("struct".into()),
             TokenKind::LBracket => {
                 let mut elements = Vec::new();
                 if !self.matches(&TokenKind::RBracket) {

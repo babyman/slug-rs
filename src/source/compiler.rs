@@ -1,15 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, ModuleDeclaration,
-    ModuleTag, Op, ParameterSignature, Program, SchemaField, SelectCase, SourceSpan,
+    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, MatchType,
+    ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SelectCase,
+    SourceSpan,
 };
 
 use super::{
     SourceError,
     ast::{
-        Binary, CallArgument, Expr, ExprKind, ForeignSignature, ListElement, MapPatternKey,
-        MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind, StringPart, Tag,
+        Binary, CallArgument, CasePattern, Expr, ExprKind, ForeignSignature, ListElement,
+        MapPatternKey, MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind,
+        StringPart, Tag, TypeAnnotation,
     },
     environment::{CallableIdentity, SemanticAnalysis},
     state::{Binding, State},
@@ -1256,35 +1258,24 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
             exact: *exact,
         },
         Pattern::MapAll => unreachable!("{{*}} declarations do not lower to match bytecode"),
-        Pattern::Struct { schema, fields } => {
-            let schema_index = operands.len();
-            operands.push(PatternOperand::StructSchema(schema.clone()));
-            MatchPattern::Struct {
-                schema: schema_index,
-                fields: fields
-                    .iter()
-                    .map(|(name, pattern)| (name.clone(), lower_pattern(pattern, operands)))
-                    .collect(),
-            }
-        }
     }
 }
 
 fn lower_case_patterns(
-    patterns: &[Pattern],
+    patterns: &[CasePattern],
     span: &SourceSpan,
 ) -> Result<(MatchPattern, Vec<String>, Vec<PatternOperand>), SourceError> {
     let mut operands = Vec::new();
     if let [pattern] = patterns {
         return Ok((
-            lower_pattern(pattern, &mut operands),
-            pattern_bindings(pattern, span)?,
+            lower_case_pattern(pattern, &mut operands)?,
+            pattern_bindings(&pattern.pattern, span)?,
             operands,
         ));
     }
 
     for pattern in patterns {
-        if !pattern_bindings(pattern, span)?.is_empty() {
+        if !pattern_bindings(&pattern.pattern, span)?.is_empty() {
             return Err(SourceError::semantic(
                 "match alternatives cannot introduce bindings",
                 span.clone(),
@@ -1295,12 +1286,79 @@ fn lower_case_patterns(
         MatchPattern::Alternatives(
             patterns
                 .iter()
-                .map(|pattern| lower_pattern(pattern, &mut operands))
-                .collect(),
+                .map(|pattern| lower_case_pattern(pattern, &mut operands))
+                .collect::<Result<Vec<_>, _>>()?,
         ),
         Vec::new(),
         operands,
     ))
+}
+
+fn lower_case_pattern(
+    case_pattern: &CasePattern,
+    operands: &mut Vec<PatternOperand>,
+) -> Result<MatchPattern, SourceError> {
+    let pattern = lower_pattern(&case_pattern.pattern, operands);
+    let Some(constraint) = &case_pattern.constraint else {
+        return Ok(pattern);
+    };
+    Ok(MatchPattern::Constrained {
+        pattern: Box::new(pattern),
+        constraint: lower_match_type(constraint, operands)?,
+    })
+}
+
+fn lower_match_type(
+    annotation: &TypeAnnotation,
+    operands: &mut Vec<PatternOperand>,
+) -> Result<MatchType, SourceError> {
+    match annotation {
+        TypeAnnotation::Name(name) => match name.as_str() {
+            "any" => Ok(MatchType::Any),
+            "nil" => Ok(MatchType::Nil),
+            "bool" => Ok(MatchType::Bool),
+            "num" => Ok(MatchType::Num),
+            "str" => Ok(MatchType::Str),
+            "bytes" => Ok(MatchType::Bytes),
+            "list" => Ok(MatchType::List(None)),
+            "map" => Ok(MatchType::Map(None)),
+            "fn" => Ok(MatchType::Function),
+            "task" => Ok(MatchType::Task),
+            "chan" => Ok(MatchType::Channel),
+            "struct" => Ok(MatchType::Struct(None)),
+            _ => Err(SourceError::semantic(
+                format!("unknown type `{name}`"),
+                SourceSpan::new("<internal>", 1, 1),
+            )),
+        },
+        TypeAnnotation::Apply { name, arguments } => match (name.as_str(), arguments.as_slice()) {
+            ("list", [element]) => Ok(MatchType::List(Some(Box::new(lower_match_type(
+                element, operands,
+            )?)))),
+            ("map", [key, value]) => Ok(MatchType::Map(Some((
+                Box::new(lower_match_type(key, operands)?),
+                Box::new(lower_match_type(value, operands)?),
+            )))),
+            ("struct", [TypeAnnotation::Name(name)]) => {
+                let index = operands.len();
+                operands.push(PatternOperand::StructSchema(name.clone()));
+                Ok(MatchType::Struct(Some(index)))
+            }
+            _ => Err(SourceError::semantic(
+                "match type constraint is not runtime-checkable",
+                SourceSpan::new("<internal>", 1, 1),
+            )),
+        },
+        TypeAnnotation::Union(members) => members
+            .iter()
+            .map(|member| lower_match_type(member, operands))
+            .collect::<Result<Vec<_>, _>>()
+            .map(MatchType::Union),
+        TypeAnnotation::Tuple(_) => Err(SourceError::semantic(
+            "match type constraint is not runtime-checkable",
+            SourceSpan::new("<internal>", 1, 1),
+        )),
+    }
 }
 
 fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>, SourceError> {
@@ -1325,11 +1383,6 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                 }
                 if let Some(RestPattern::Binding(name)) = rest {
                     names.push(name.clone());
-                }
-            }
-            Pattern::Struct { fields, .. } => {
-                for (_, pattern) in fields {
-                    collect(pattern, names);
                 }
             }
             Pattern::MapAll | Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}

@@ -25,6 +25,33 @@ pub(super) enum Type {
 }
 
 impl Type {
+    pub(super) fn is_reifiable_match_constraint(&self) -> bool {
+        match self {
+            Self::Any
+            | Self::Nil
+            | Self::Bool
+            | Self::Num
+            | Self::Str
+            | Self::Bytes
+            | Self::Function(None)
+            | Self::Task(None)
+            | Self::Channel(None)
+            | Self::Struct(_) => true,
+            Self::List(element) => element
+                .as_deref()
+                .is_none_or(Self::is_reifiable_match_constraint),
+            Self::Map(entries) => entries.as_ref().is_none_or(|(key, value)| {
+                key.is_reifiable_match_constraint() && value.is_reifiable_match_constraint()
+            }),
+            Self::Union(members) => members.iter().all(Self::is_reifiable_match_constraint),
+            Self::Unknown
+            | Self::Function(Some(_))
+            | Self::Task(Some(_))
+            | Self::Channel(Some(_))
+            | Self::Tuple(_)
+            | Self::Generic(_) => false,
+        }
+    }
     pub(super) fn universal() -> Self {
         Self::Union(vec![Self::Any, Self::Nil])
     }

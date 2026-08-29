@@ -656,10 +656,9 @@ struct defaults, and calls to statically known annotated functions. Function
 expressions infer structural `fn<R, P...>` value types from their parameter
 annotations and declared or inferred result; that precision is retained through
 ordinary bindings and collection inference. It infers generic arguments from
-annotated call positions and supports explicit type applications. Flow-sensitive
-narrowing and inference for the remaining dynamic expression forms remain
-future work. In particular, it does not yet implement the specified narrowing
-from successful match type constraints.
+annotated call positions and supports explicit type applications. Successful
+match type constraints narrow case-local bindings. Flow-sensitive narrowing
+and inference for the remaining dynamic expression forms remain future work.
 
 When a statically known value has a structural function type but no declaration
 callable metadata—for example, a function selected by an `if` expression—a
