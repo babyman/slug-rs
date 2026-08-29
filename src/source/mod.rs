@@ -7,6 +7,7 @@ use crate::{Program, SourceSpan};
 
 mod ast;
 mod compiler;
+mod environment;
 mod lexer;
 mod parser;
 mod semantic;

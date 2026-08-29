@@ -11,6 +11,11 @@
   constructor arity are checked source errors; optional checking now enforces
   `any` nilability, normalized unions, structured reflexivity, and non-nil bare
   generic inference.
+- Added lexically scoped semantic bindings with ordered callable sets. Locally
+  known calls now perform mandatory call-shape binding, generic inference, and
+  parameter-type resolution in both compiler modes; nested declarations and
+  parameters correctly shadow outer callable metadata, and immutable aliases
+  retain it.
 
 - Defined static overload signatures by their type parameters and inputs.
   Parameter annotations participate in mandatory overload resolution in every

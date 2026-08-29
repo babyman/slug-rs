@@ -37,6 +37,11 @@ compiled-module contract is documented separately as `.cslug`.
   checked built-in type names and constructor arity. Optional `-type-check`
   validation distinguishes non-nil `any` from universal `any|nil`, normalizes
   unions, and compares structured annotations reflexively.
+- Lexically scoped semantic bindings retain ordered callable signatures through
+  local declarations, aliases, parameters, and nested blocks. Calls to locally
+  known callables undergo mandatory shape, generic, and parameter-type
+  resolution in every compiler mode; imported signature snapshots and selected
+  signature lowering remain subsequent work.
 - Immutable configuration collection from library and project TOML, `SLUG__`
   environment variables, and program options; source access through `cfg` is a
   subsequent milestone.

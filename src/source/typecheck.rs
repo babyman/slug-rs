@@ -8,71 +8,25 @@ use super::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, Parameter, Pattern,
         SelectCaseKind, Tag, TypeAnnotation,
     },
+    environment::{CallableParameter, CallableSignature, Environment, SemanticBinding},
     semantic::{Type, resolve_annotation},
 };
-
-#[derive(Clone)]
-struct FunctionParameter {
-    name: String,
-    value_type: Type,
-    variadic: bool,
-}
-
-#[derive(Clone)]
-struct FunctionType {
-    type_parameters: Vec<String>,
-    parameters: Vec<FunctionParameter>,
-    result: Type,
-}
 
 pub(super) fn validate(expressions: &[Expr]) -> Result<(), SourceError> {
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
-    Ok(())
+    analyze(expressions, false)
 }
 
 pub(super) fn check(expressions: &[Expr]) -> Result<(), SourceError> {
-    let mut bindings = HashMap::new();
-    let mut functions = HashMap::new();
+    analyze(expressions, true)
+}
+
+fn analyze(expressions: &[Expr], strict: bool) -> Result<(), SourceError> {
+    let mut environment = Environment::new();
     for expression in expressions {
-        if let ExprKind::Declare {
-            pattern: Pattern::Binding(name),
-            value,
-            ..
-        } = &expression.kind
-            && let ExprKind::Function {
-                type_parameters,
-                parameters,
-                return_annotation,
-                ..
-            } = &value.kind
-        {
-            functions.insert(
-                name.clone(),
-                function_type(
-                    type_parameters,
-                    parameters,
-                    return_annotation.as_ref(),
-                    &expression.span,
-                )?,
-            );
-        }
-        if let ExprKind::Foreign {
-            name, signature, ..
-        } = &expression.kind
-        {
-            functions.insert(
-                name.clone(),
-                function_type(
-                    &signature.type_parameters,
-                    &signature.parameters,
-                    signature.return_annotation.as_ref(),
-                    &expression.span,
-                )?,
-            );
-        }
-        check_expression(expression, &mut bindings, &functions, &[])?;
+        check_expression(expression, &mut environment, &[], strict)?;
     }
     Ok(())
 }
@@ -82,20 +36,21 @@ fn function_type(
     parameters: &[Parameter],
     result: Option<&TypeAnnotation>,
     span: &crate::SourceSpan,
-) -> Result<FunctionType, SourceError> {
-    Ok(FunctionType {
-        type_parameters: type_parameters.to_vec(),
+) -> Result<CallableSignature, SourceError> {
+    Ok(CallableSignature {
+        generic_arity: type_parameters.len(),
         parameters: parameters
             .iter()
             .map(|parameter| {
-                Ok(FunctionParameter {
-                    name: parameter.name.clone(),
+                Ok(CallableParameter {
+                    label: (!parameter.discard).then(|| parameter.name.clone()),
                     value_type: parameter
                         .annotation
                         .as_ref()
                         .map(|annotation| resolve_annotation(annotation, type_parameters, span))
                         .transpose()?
                         .unwrap_or_else(Type::universal),
+                    has_default: parameter.default.is_some(),
                     variadic: parameter.variadic,
                 })
             })
@@ -107,12 +62,34 @@ fn function_type(
     })
 }
 
+fn callable_signature(
+    expression: &Expr,
+    span: &crate::SourceSpan,
+) -> Result<Option<CallableSignature>, SourceError> {
+    let ExprKind::Function {
+        type_parameters,
+        parameters,
+        return_annotation,
+        ..
+    } = &expression.kind
+    else {
+        return Ok(None);
+    };
+    function_type(
+        type_parameters,
+        parameters,
+        return_annotation.as_ref(),
+        span,
+    )
+    .map(Some)
+}
+
 #[allow(clippy::too_many_lines)]
 fn check_expression(
     expression: &Expr,
-    bindings: &mut HashMap<String, Type>,
-    functions: &HashMap<String, FunctionType>,
+    environment: &mut Environment,
     type_parameters: &[String],
+    strict: bool,
 ) -> Result<Type, SourceError> {
     match &expression.kind {
         ExprKind::Declare {
@@ -121,28 +98,53 @@ fn check_expression(
             value,
             ..
         } => {
-            let actual = check_expression(value, bindings, functions, type_parameters)?;
+            let callable = if let Pattern::Binding(name) = pattern {
+                callable_signature(value, &expression.span)?
+                    .map(|signature| (name.clone(), signature))
+            } else {
+                None
+            };
+            if let Some((name, signature)) = &callable {
+                environment.declare(name.clone(), SemanticBinding::callable(signature.clone()));
+            }
+            let actual = check_expression(value, environment, type_parameters, strict)?;
             let declared = annotation
                 .as_ref()
                 .map(|annotation| resolve_annotation(annotation, type_parameters, &expression.span))
                 .transpose()?;
-            if let Some(expected) = &declared {
+            if strict && let Some(expected) = &declared {
                 require(expected, &actual, &expression.span)?;
             }
-            if let Pattern::Binding(name) = pattern {
-                bindings.insert(
-                    name.clone(),
+            if let Pattern::Binding(name) = pattern
+                && callable.is_none()
+            {
+                let mut binding = SemanticBinding::value(
                     declared.unwrap_or_else(|| actual.clone().widen_unknown()),
                 );
+                if let ExprKind::Name(source) = &value.kind
+                    && let Some(source) = environment.lookup(source)
+                {
+                    binding.callables.clone_from(&source.callables);
+                }
+                environment.declare(name.clone(), binding);
             }
             Ok(actual)
         }
-        ExprKind::Foreign { signature, .. } => {
+        ExprKind::Foreign {
+            name, signature, ..
+        } => {
+            let callable = function_type(
+                &signature.type_parameters,
+                &signature.parameters,
+                signature.return_annotation.as_ref(),
+                &expression.span,
+            )?;
+            environment.declare(name.clone(), SemanticBinding::callable(callable));
             for parameter in &signature.parameters {
                 if let Some(default) = &parameter.default {
                     let actual =
-                        check_expression(default, bindings, functions, &signature.type_parameters)?;
-                    if let Some(annotation) = &parameter.annotation {
+                        check_expression(default, environment, &signature.type_parameters, strict)?;
+                    if strict && let Some(annotation) = &parameter.annotation {
                         let expected = resolve_annotation(
                             annotation,
                             &signature.type_parameters,
@@ -160,7 +162,8 @@ fn check_expression(
             return_annotation,
             body,
         } => {
-            let mut scoped = bindings.clone();
+            let mut scoped = environment.clone();
+            scoped.enter_scope();
             for parameter in parameters {
                 let parameter_type = parameter
                     .annotation
@@ -170,19 +173,22 @@ fn check_expression(
                     })
                     .transpose()?
                     .unwrap_or_else(Type::universal);
-                scoped.insert(parameter.name.clone(), parameter_type.clone());
+                if !parameter.discard {
+                    scoped.declare(
+                        parameter.name.clone(),
+                        SemanticBinding::value(parameter_type.clone()),
+                    );
+                }
                 if let Some(default) = &parameter.default {
-                    let actual = check_expression(
-                        default,
-                        &mut scoped,
-                        functions,
-                        function_type_parameters,
-                    )?;
-                    require(&parameter_type, &actual, &default.span)?;
+                    let actual =
+                        check_expression(default, &mut scoped, function_type_parameters, strict)?;
+                    if strict {
+                        require(&parameter_type, &actual, &default.span)?;
+                    }
                 }
             }
-            let actual = check_expression(body, &mut scoped, functions, function_type_parameters)?;
-            if let Some(return_annotation) = return_annotation {
+            let actual = check_expression(body, &mut scoped, function_type_parameters, strict)?;
+            if strict && let Some(return_annotation) = return_annotation {
                 let expected =
                     resolve_annotation(return_annotation, function_type_parameters, &body.span)?;
                 require(&expected, &actual, &body.span)?;
@@ -193,18 +199,19 @@ fn check_expression(
             callee,
             arguments,
             expression,
-            bindings,
-            functions,
+            environment,
             type_parameters,
+            strict,
+            None,
         ),
         ExprKind::TypeApply { callee, .. } => {
-            check_expression(callee, bindings, functions, type_parameters)
+            check_expression(callee, environment, type_parameters, strict)
         }
         ExprKind::StructSchema(fields) => {
             for field in fields {
                 if let Some(default) = &field.default {
-                    let actual = check_expression(default, bindings, functions, type_parameters)?;
-                    if let Some(annotation) = &field.annotation {
+                    let actual = check_expression(default, environment, type_parameters, strict)?;
+                    if strict && let Some(annotation) = &field.annotation {
                         let expected =
                             resolve_annotation(annotation, type_parameters, &default.span)?;
                         require(&expected, &actual, &default.span)?;
@@ -221,12 +228,12 @@ fn check_expression(
                 match value {
                     ListElement::Value(value) => elements.push(check_expression(
                         value,
-                        bindings,
-                        functions,
+                        environment,
                         type_parameters,
+                        strict,
                     )?),
                     ListElement::Spread(value) => {
-                        let spread = check_expression(value, bindings, functions, type_parameters)?;
+                        let spread = check_expression(value, environment, type_parameters, strict)?;
                         if let Type::List(Some(element)) = spread {
                             elements.push(*element);
                         } else {
@@ -243,12 +250,12 @@ fn check_expression(
             let mut keys = Vec::new();
             let mut values = Vec::new();
             for (key, value) in entries {
-                keys.push(check_expression(key, bindings, functions, type_parameters)?);
+                keys.push(check_expression(key, environment, type_parameters, strict)?);
                 values.push(check_expression(
                     value,
-                    bindings,
-                    functions,
+                    environment,
                     type_parameters,
+                    strict,
                 )?);
             }
             Ok(Type::Map((!entries.is_empty()).then(|| {
@@ -256,10 +263,11 @@ fn check_expression(
             })))
         }
         ExprKind::Block(values) => {
-            let mut scoped = bindings.clone();
+            let mut scoped = environment.clone();
+            scoped.enter_scope();
             let mut result = Type::Nil;
             for value in values {
-                result = check_expression(value, &mut scoped, functions, type_parameters)?;
+                result = check_expression(value, &mut scoped, type_parameters, strict)?;
             }
             Ok(result)
         }
@@ -268,11 +276,11 @@ fn check_expression(
             then_branch,
             else_branch,
         } => {
-            check_expression(condition, bindings, functions, type_parameters)?;
-            let left = check_expression(then_branch, bindings, functions, type_parameters)?;
+            check_expression(condition, environment, type_parameters, strict)?;
+            let left = check_expression(then_branch, environment, type_parameters, strict)?;
             let right = else_branch
                 .as_ref()
-                .map(|branch| check_expression(branch, bindings, functions, type_parameters))
+                .map(|branch| check_expression(branch, environment, type_parameters, strict))
                 .transpose()?
                 .unwrap_or(Type::Nil);
             Ok(Type::union([left, right]))
@@ -282,43 +290,71 @@ fn check_expression(
             operator,
             right,
         } => {
-            let left = check_expression(left, bindings, functions, type_parameters)?;
-            let right = check_expression(right, bindings, functions, type_parameters)?;
+            let left = check_expression(left, environment, type_parameters, strict)?;
+            if matches!(operator, Binary::Pipeline) {
+                return match &right.kind {
+                    ExprKind::Call { callee, arguments } => check_call(
+                        callee,
+                        arguments,
+                        right,
+                        environment,
+                        type_parameters,
+                        strict,
+                        Some(left),
+                    ),
+                    ExprKind::Name(_) | ExprKind::TypeApply { .. } => check_call(
+                        right,
+                        &[],
+                        right,
+                        environment,
+                        type_parameters,
+                        strict,
+                        Some(left),
+                    ),
+                    _ => check_expression(right, environment, type_parameters, strict),
+                };
+            }
+            let right = check_expression(right, environment, type_parameters, strict)?;
             Ok(binary_result(*operator, left, right))
         }
         ExprKind::Prefix { value, .. } => {
-            check_expression(value, bindings, functions, type_parameters)
+            check_expression(value, environment, type_parameters, strict)
         }
-        ExprKind::Name(name) => Ok(bindings.get(name).cloned().unwrap_or(Type::Unknown)),
+        ExprKind::Name(name) => Ok(environment
+            .lookup(name)
+            .map_or(Type::Unknown, |binding| binding.value_type.clone())),
         ExprKind::Assign { name, value } => {
-            let actual = check_expression(value, bindings, functions, type_parameters)?;
-            if let Some(expected) = bindings.get(name) {
-                require(expected, &actual, &value.span)?;
+            let actual = check_expression(value, environment, type_parameters, strict)?;
+            if strict && let Some(expected) = environment.lookup(name) {
+                require(&expected.value_type, &actual, &value.span)?;
+            }
+            if let Some(binding) = environment.lookup_mut(name) {
+                binding.callables.clear();
             }
             Ok(actual)
         }
-        ExprKind::Return { value } => check_expression(value, bindings, functions, type_parameters),
+        ExprKind::Return { value } => check_expression(value, environment, type_parameters, strict),
         ExprKind::Throw { value } => {
-            check_expression(value, bindings, functions, type_parameters)?;
+            check_expression(value, environment, type_parameters, strict)?;
             Ok(Type::Unknown)
         }
         ExprKind::Defer { value, .. } => {
-            check_expression(value, bindings, functions, type_parameters)?;
+            check_expression(value, environment, type_parameters, strict)?;
             Ok(Type::Nil)
         }
         ExprKind::Spawn(value) => {
-            let result = check_expression(value, bindings, functions, type_parameters)?;
+            let result = check_expression(value, environment, type_parameters, strict)?;
             Ok(Type::Task(Some(Box::new(result.widen_unknown()))))
         }
         ExprKind::Nursery { limit, body } => {
             if let Some(limit) = limit {
-                check_expression(limit, bindings, functions, type_parameters)?;
+                check_expression(limit, environment, type_parameters, strict)?;
             }
-            check_expression(body, bindings, functions, type_parameters)
+            check_expression(body, environment, type_parameters, strict)
         }
         ExprKind::Recur(arguments) => {
             for argument in arguments {
-                check_argument(argument, bindings, functions, type_parameters)?;
+                check_argument(argument, environment, type_parameters, strict)?;
             }
             Ok(Type::Unknown)
         }
@@ -329,11 +365,11 @@ fn check_expression(
                     SelectCaseKind::Receive(value)
                     | SelectCaseKind::After(value)
                     | SelectCaseKind::Await(value) => {
-                        check_expression(value, bindings, functions, type_parameters)?;
+                        check_expression(value, environment, type_parameters, strict)?;
                     }
                     SelectCaseKind::Send { channel, value } => {
-                        check_expression(channel, bindings, functions, type_parameters)?;
-                        check_expression(value, bindings, functions, type_parameters)?;
+                        check_expression(channel, environment, type_parameters, strict)?;
+                        check_expression(value, environment, type_parameters, strict)?;
                     }
                     SelectCaseKind::Default => {}
                 }
@@ -341,7 +377,7 @@ fn check_expression(
                     case.handler
                         .as_ref()
                         .map(|handler| {
-                            check_expression(handler, bindings, functions, type_parameters)
+                            check_expression(handler, environment, type_parameters, strict)
                         })
                         .transpose()?
                         .unwrap_or(Type::Unknown),
@@ -351,42 +387,42 @@ fn check_expression(
         }
         ExprKind::Match { subject, cases } => {
             if let Some(subject) = subject {
-                check_expression(subject, bindings, functions, type_parameters)?;
+                check_expression(subject, environment, type_parameters, strict)?;
             }
             let mut results = Vec::new();
             for case in cases {
                 for pattern in &case.patterns {
-                    check_pattern(pattern, bindings, functions, type_parameters)?;
+                    check_pattern(pattern, environment, type_parameters, strict)?;
                 }
                 if let Some(guard) = &case.guard {
-                    check_expression(guard, bindings, functions, type_parameters)?;
+                    check_expression(guard, environment, type_parameters, strict)?;
                 }
                 results.push(check_expression(
                     &case.value,
-                    bindings,
-                    functions,
+                    environment,
                     type_parameters,
+                    strict,
                 )?);
             }
             Ok(Type::union(results))
         }
         ExprKind::StructInit { schema, fields } => {
-            check_expression(schema, bindings, functions, type_parameters)?;
+            check_expression(schema, environment, type_parameters, strict)?;
             for (_, value) in fields {
-                check_expression(value, bindings, functions, type_parameters)?;
+                check_expression(value, environment, type_parameters, strict)?;
             }
             Ok(Type::Struct(None))
         }
         ExprKind::StructCopy { value, fields } => {
-            let result = check_expression(value, bindings, functions, type_parameters)?;
+            let result = check_expression(value, environment, type_parameters, strict)?;
             for (_, replacement) in fields {
-                check_expression(replacement, bindings, functions, type_parameters)?;
+                check_expression(replacement, environment, type_parameters, strict)?;
             }
             Ok(result)
         }
         ExprKind::Index { collection, index } => {
-            check_expression(collection, bindings, functions, type_parameters)?;
-            check_expression(index, bindings, functions, type_parameters)?;
+            check_expression(collection, environment, type_parameters, strict)?;
+            check_expression(index, environment, type_parameters, strict)?;
             Ok(Type::Unknown)
         }
         ExprKind::Slice {
@@ -395,9 +431,9 @@ fn check_expression(
             end,
             step,
         } => {
-            let result = check_expression(collection, bindings, functions, type_parameters)?;
+            let result = check_expression(collection, environment, type_parameters, strict)?;
             for bound in [start, end, step].into_iter().flatten() {
-                check_expression(bound, bindings, functions, type_parameters)?;
+                check_expression(bound, environment, type_parameters, strict)?;
             }
             Ok(result)
         }
@@ -439,30 +475,30 @@ fn binary_result(operator: Binary, left: Type, right: Type) -> Type {
 
 fn check_pattern(
     pattern: &Pattern,
-    bindings: &mut HashMap<String, Type>,
-    functions: &HashMap<String, FunctionType>,
+    environment: &mut Environment,
     type_parameters: &[String],
+    strict: bool,
 ) -> Result<(), SourceError> {
     match pattern {
-        Pattern::At { pattern, .. } => check_pattern(pattern, bindings, functions, type_parameters),
+        Pattern::At { pattern, .. } => check_pattern(pattern, environment, type_parameters, strict),
         Pattern::List { items, .. } => {
             for item in items {
-                check_pattern(item, bindings, functions, type_parameters)?;
+                check_pattern(item, environment, type_parameters, strict)?;
             }
             Ok(())
         }
         Pattern::Map { entries, .. } => {
             for (key, value) in entries {
                 if let MapPatternKey::Computed(key) = key {
-                    check_expression(key, bindings, functions, type_parameters)?;
+                    check_expression(key, environment, type_parameters, strict)?;
                 }
-                check_pattern(value, bindings, functions, type_parameters)?;
+                check_pattern(value, environment, type_parameters, strict)?;
             }
             Ok(())
         }
         Pattern::Struct { fields, .. } => {
             for (_, field) in fields {
-                check_pattern(field, bindings, functions, type_parameters)?;
+                check_pattern(field, environment, type_parameters, strict)?;
             }
             Ok(())
         }
@@ -478,15 +514,25 @@ fn check_call(
     callee: &Expr,
     arguments: &[CallArgument],
     expression: &Expr,
-    bindings: &mut HashMap<String, Type>,
-    functions: &HashMap<String, FunctionType>,
+    environment: &mut Environment,
     type_parameters: &[String],
+    strict: bool,
+    piped: Option<Type>,
 ) -> Result<Type, SourceError> {
-    check_expression(callee, bindings, functions, type_parameters)?;
-    let actuals = arguments
-        .iter()
-        .map(|argument| check_argument(argument, bindings, functions, type_parameters))
-        .collect::<Result<Vec<_>, _>>()?;
+    check_expression(callee, environment, type_parameters, strict)?;
+    let mut actuals = piped.into_iter().collect::<Vec<_>>();
+    actuals.extend(
+        arguments
+            .iter()
+            .map(|argument| check_argument(argument, environment, type_parameters, strict))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    let mut shapes = vec![ArgumentShape::Positional; actuals.len() - arguments.len()];
+    shapes.extend(arguments.iter().map(|argument| match argument {
+        CallArgument::Positional(_) => ArgumentShape::Positional,
+        CallArgument::Named { name, .. } => ArgumentShape::Named(name),
+        CallArgument::Spread(_) => ArgumentShape::Spread,
+    }));
     let (name, explicit) = match &callee.kind {
         ExprKind::Name(name) => (name, None),
         ExprKind::TypeApply { callee, arguments } => {
@@ -497,73 +543,201 @@ fn check_call(
         }
         _ => return Ok(Type::Unknown),
     };
-    let Some(function) = functions.get(name) else {
+    let Some(binding) = environment.lookup(name) else {
         return Ok(Type::Unknown);
     };
-    let mut substitutions = HashMap::new();
-    if let Some(explicit) = explicit {
-        if explicit.len() != function.type_parameters.len() {
-            return Err(SourceError::semantic(
-                "wrong number of type arguments",
-                expression.span.clone(),
-            ));
-        }
-        for (index, value) in explicit.iter().enumerate() {
-            let value = resolve_annotation(value, type_parameters, &expression.span)?;
-            if value.includes_nil() {
-                return Err(SourceError::semantic(
-                    "generic type argument cannot include nil",
-                    expression.span.clone(),
-                ));
-            }
-            substitutions.insert(index, value);
+    if binding.callables.is_empty() {
+        return Ok(Type::Unknown);
+    }
+    let callables = binding.callables.clone();
+    let mut applicable = Vec::new();
+    for signature in &callables {
+        if let Some(candidate) = instantiate_candidate(
+            signature,
+            &shapes,
+            &actuals,
+            explicit,
+            type_parameters,
+            &expression.span,
+            callables.len() == 1,
+        )? {
+            applicable.push(candidate);
         }
     }
-    let variadic = function
-        .parameters
-        .last()
-        .is_some_and(|parameter| parameter.variadic);
-    let mut positional = 0usize;
-    for (argument, actual) in arguments.iter().zip(&actuals) {
-        let parameter = match argument {
-            CallArgument::Positional(_) => {
-                let parameter = function
-                    .parameters
-                    .get(positional)
-                    .or_else(|| variadic.then(|| function.parameters.last()).flatten());
-                positional += 1;
-                parameter
-            }
-            CallArgument::Named { name, .. } => function
-                .parameters
-                .iter()
-                .find(|parameter| parameter.name == *name),
-            CallArgument::Spread(_) => None,
-        };
-        if let Some(parameter) = parameter {
-            infer(
-                &parameter.value_type,
-                actual,
-                &mut substitutions,
-                &expression.span,
-            )?;
-        }
+    if applicable.is_empty() {
+        return Err(SourceError::semantic(
+            format!("no matching overload for `{name}`"),
+            expression.span.clone(),
+        ));
     }
-    Ok(substitute(&function.result, &substitutions).widen_unknown())
+    let most_specific = applicable
+        .iter()
+        .enumerate()
+        .filter(|(index, candidate)| {
+            !applicable.iter().enumerate().any(|(other_index, other)| {
+                index != &other_index && more_specific(other, candidate)
+            })
+        })
+        .map(|(_, candidate)| candidate)
+        .collect::<Vec<_>>();
+    if most_specific.len() != 1 {
+        return Err(SourceError::semantic(
+            format!("ambiguous overload for `{name}`"),
+            expression.span.clone(),
+        ));
+    }
+    Ok(most_specific[0].result.clone())
 }
 
 fn check_argument(
     argument: &CallArgument,
-    bindings: &mut HashMap<String, Type>,
-    functions: &HashMap<String, FunctionType>,
+    environment: &mut Environment,
     type_parameters: &[String],
+    strict: bool,
 ) -> Result<Type, SourceError> {
     let value = match argument {
         CallArgument::Positional(value)
         | CallArgument::Named { value, .. }
         | CallArgument::Spread(value) => value,
     };
-    check_expression(value, bindings, functions, type_parameters)
+    check_expression(value, environment, type_parameters, strict)
+}
+
+struct InstantiatedCandidate {
+    bound_types: Vec<Type>,
+    result: Type,
+}
+
+#[derive(Clone, Copy)]
+enum ArgumentShape<'a> {
+    Positional,
+    Named(&'a str),
+    Spread,
+}
+
+fn instantiate_candidate(
+    signature: &CallableSignature,
+    arguments: &[ArgumentShape<'_>],
+    actuals: &[Type],
+    explicit: Option<&Vec<TypeAnnotation>>,
+    type_parameters: &[String],
+    span: &crate::SourceSpan,
+    report_mismatch: bool,
+) -> Result<Option<InstantiatedCandidate>, SourceError> {
+    let mut substitutions = HashMap::new();
+    if let Some(explicit) = explicit {
+        if explicit.len() != signature.generic_arity {
+            if report_mismatch {
+                return Err(SourceError::semantic(
+                    "wrong number of type arguments",
+                    span.clone(),
+                ));
+            }
+            return Ok(None);
+        }
+        for (index, value) in explicit.iter().enumerate() {
+            let value = resolve_annotation(value, type_parameters, span)?;
+            if value.includes_nil() {
+                return Err(SourceError::semantic(
+                    "generic type argument cannot include nil",
+                    span.clone(),
+                ));
+            }
+            substitutions.insert(index, value);
+        }
+    }
+    let Some(bound) = bind_arguments(&signature.parameters, arguments, actuals) else {
+        return Ok(None);
+    };
+    for (parameter, actual) in &bound {
+        let actual = (*actual).clone().widen_unknown();
+        if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
+            if report_mismatch {
+                return Err(error);
+            }
+            return Ok(None);
+        }
+    }
+    let bound_types = bound
+        .iter()
+        .map(|(parameter, _)| substitute(&parameter.value_type, &substitutions).widen_unknown())
+        .collect();
+    Ok(Some(InstantiatedCandidate {
+        bound_types,
+        result: substitute(&signature.result, &substitutions).widen_unknown(),
+    }))
+}
+
+fn bind_arguments<'a>(
+    parameters: &'a [CallableParameter],
+    arguments: &[ArgumentShape<'_>],
+    actuals: &'a [Type],
+) -> Option<Vec<(&'a CallableParameter, &'a Type)>> {
+    if arguments
+        .iter()
+        .any(|argument| matches!(argument, ArgumentShape::Spread))
+    {
+        return Some(Vec::new());
+    }
+    let variadic = parameters
+        .last()
+        .is_some_and(|parameter| parameter.variadic);
+    let fixed = parameters.len() - usize::from(variadic);
+    let mut assigned = vec![false; parameters.len()];
+    let mut bound = Vec::new();
+    let mut positional = 0usize;
+    for (argument, actual) in arguments.iter().zip(actuals) {
+        let parameter = match argument {
+            ArgumentShape::Positional => {
+                let index = if positional < fixed {
+                    positional
+                } else if variadic {
+                    parameters.len() - 1
+                } else {
+                    return None;
+                };
+                positional += 1;
+                if index < fixed {
+                    assigned[index] = true;
+                }
+                &parameters[index]
+            }
+            ArgumentShape::Named(name) => {
+                let index = parameters
+                    .iter()
+                    .position(|parameter| parameter.label.as_deref() == Some(*name))?;
+                if assigned[index] {
+                    return None;
+                }
+                assigned[index] = true;
+                &parameters[index]
+            }
+            ArgumentShape::Spread => unreachable!("spread calls were handled above"),
+        };
+        bound.push((parameter, actual));
+    }
+    if parameters
+        .iter()
+        .enumerate()
+        .any(|(index, parameter)| !assigned[index] && !parameter.has_default && !parameter.variadic)
+    {
+        return None;
+    }
+    Some(bound)
+}
+
+fn more_specific(left: &InstantiatedCandidate, right: &InstantiatedCandidate) -> bool {
+    left.bound_types.len() == right.bound_types.len()
+        && left
+            .bound_types
+            .iter()
+            .zip(&right.bound_types)
+            .all(|(left, right)| left.is_assignable_to(right))
+        && left
+            .bound_types
+            .iter()
+            .zip(&right.bound_types)
+            .any(|(left, right)| !right.is_assignable_to(left))
 }
 
 fn infer(
@@ -922,5 +1096,33 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
         | Pattern::Binding(_)
         | Pattern::Pinned(_)
         | Pattern::MapAll => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(bound_types: Vec<Type>) -> InstantiatedCandidate {
+        InstantiatedCandidate {
+            bound_types,
+            result: Type::Unknown,
+        }
+    }
+
+    #[test]
+    fn narrower_parameter_types_are_more_specific() {
+        let narrow = candidate(vec![Type::Str]);
+        let broad = candidate(vec![Type::universal()]);
+        assert!(more_specific(&narrow, &broad));
+        assert!(!more_specific(&broad, &narrow));
+    }
+
+    #[test]
+    fn incomparable_parameter_types_do_not_break_ties_by_order() {
+        let string = candidate(vec![Type::Str]);
+        let number = candidate(vec![Type::Num]);
+        assert!(!more_specific(&string, &number));
+        assert!(!more_specific(&number, &string));
     }
 }

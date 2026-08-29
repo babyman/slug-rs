@@ -1092,6 +1092,53 @@ fn enforces_any_nil_and_canonical_type_rules() {
 }
 
 #[test]
+fn resolves_statically_known_calls_through_lexical_callable_scopes() {
+    let path = fixture_path("scoped-callables");
+    fs::write(
+        &path,
+        "val render = fn(value:str):str { \"outer:\" + value }\n\
+         val alias = render\n\
+         val invoke = fn(render) { render(2) }\n\
+         val inner = {\n\
+           val render = fn(value:num):num { value + 1 }\n\
+           render(2)\n\
+         }\n\
+         println(inner, render(\"ok\"), alias(\"alias\"), invoke(fn(value) { value + 3 }))\n",
+    )
+    .expect("write scoped callable source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run scoped callable source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "3 outer:ok outer:alias 5\n"
+    );
+
+    fs::write(
+        &path,
+        "val render = fn(value:str):str { value }\nrender(1)\n",
+    )
+    .expect("write statically invalid call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run statically invalid call source");
+    fs::remove_file(path).expect("remove scoped callable source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: expected str, got num")
+    );
+}
+
+#[test]
 fn accepts_tags_and_evaluates_their_arguments_before_declarations() {
     let path = fixture_path("tags");
     fs::write(
@@ -1750,26 +1797,22 @@ fn binds_named_source_arguments_and_reports_binding_errors() {
     );
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "abc abc\n");
 
-    for (kind, source, expected) in [
+    for (kind, source) in [
         (
             "unknown-named-argument",
             "val f = fn(value) { value }\nf(other = 1)\n",
-            "slug: runtime error: unknown parameter `other`",
         ),
         (
             "duplicate-named-argument",
             "val f = fn(value) { value }\nf(value = 1, value = 2)\n",
-            "slug: runtime error: parameter `value` was assigned more than once",
         ),
         (
             "missing-required-argument",
             "val f = fn(value) { value }\nf()\n",
-            "slug: runtime error: missing required parameter `value`",
         ),
         (
             "excess-positional-arguments",
             "val f = fn(value) { value }\nf(1, 2)\n",
-            "slug: runtime error: `<fn #0>` received too many positional arguments",
         ),
     ] {
         let path = fixture_path(kind);
@@ -1781,7 +1824,10 @@ fn binds_named_source_arguments_and_reports_binding_errors() {
         fs::remove_file(path).expect("remove invalid named argument source");
         assert_eq!(output.status.code(), Some(1));
         let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(stderr.starts_with(expected), "{stderr}");
+        assert!(
+            stderr.starts_with("slug: semantic error: no matching overload for `f`"),
+            "{stderr}"
+        );
     }
 }
 
