@@ -6,7 +6,7 @@ use super::{
     SourceError,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, Parameter,
-        Pattern, SelectCaseKind, Tag, TypeAnnotation,
+        Pattern, Prefix, SelectCaseKind, Tag, TypeAnnotation,
     },
     environment::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
@@ -599,10 +599,14 @@ fn check_expression(
                 };
             }
             let right = check_expression(right, environment, type_parameters, strict)?;
-            Ok(binary_result(*operator, left, right))
+            binary_result(*operator, &left, &right, strict, &expression.span)
         }
-        ExprKind::Prefix { value, .. } => {
-            check_expression(value, environment, type_parameters, strict)
+        ExprKind::Prefix { operators, value } => {
+            let mut result = check_expression(value, environment, type_parameters, strict)?;
+            for (operator, span) in operators.iter().rev() {
+                result = prefix_result(*operator, &result, strict, span)?;
+            }
+            Ok(result)
         }
         ExprKind::Name(name) => Ok(environment
             .lookup(name)
@@ -721,10 +725,9 @@ fn check_expression(
             Ok(result)
         }
         ExprKind::Index { collection, index } => {
-            let binding = expression_binding(expression, environment);
-            check_expression(collection, environment, type_parameters, strict)?;
-            check_expression(index, environment, type_parameters, strict)?;
-            Ok(binding.map_or(Type::Unknown, |binding| binding.value_type))
+            let collection = check_expression(collection, environment, type_parameters, strict)?;
+            let index = check_expression(index, environment, type_parameters, strict)?;
+            index_result(&collection, &index, strict, &expression.span)
         }
         ExprKind::Slice {
             collection,
@@ -732,11 +735,12 @@ fn check_expression(
             end,
             step,
         } => {
-            let result = check_expression(collection, environment, type_parameters, strict)?;
+            let collection = check_expression(collection, environment, type_parameters, strict)?;
             for bound in [start, end, step].into_iter().flatten() {
-                check_expression(bound, environment, type_parameters, strict)?;
+                let bound = check_expression(bound, environment, type_parameters, strict)?;
+                require_operation_operand(&Type::Num, &bound, strict, &expression.span)?;
             }
-            Ok(result)
+            slice_result(&collection, strict, &expression.span)
         }
         ExprKind::Interpolate(_) => Ok(Type::Str),
         ExprKind::Documentation(_) => Ok(Type::Nil),
@@ -744,16 +748,19 @@ fn check_expression(
     }
 }
 
-fn binary_result(operator: Binary, left: Type, right: Type) -> Type {
+fn binary_result(
+    operator: Binary,
+    left: &Type,
+    right: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
     match operator {
-        Binary::Or
-        | Binary::And
-        | Binary::Equal
-        | Binary::NotEqual
-        | Binary::Greater
-        | Binary::GreaterEqual
-        | Binary::Less
-        | Binary::LessEqual => Type::Bool,
+        Binary::Or | Binary::And | Binary::Equal | Binary::NotEqual => Ok(Type::Bool),
+        Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual => {
+            numeric_operands(left, right, strict, span)?;
+            Ok(Type::Bool)
+        }
         Binary::BitOr
         | Binary::BitXor
         | Binary::BitAnd
@@ -761,16 +768,185 @@ fn binary_result(operator: Binary, left: Type, right: Type) -> Type {
         | Binary::ShiftRight
         | Binary::Subtract
         | Binary::Divide
-        | Binary::Modulo => Type::Num,
-        Binary::Append | Binary::Prepend => Type::List(None),
-        Binary::Add | Binary::Multiply => {
-            if matches!(left, Type::Unknown) {
-                right
-            } else {
-                left
-            }
+        | Binary::Modulo => {
+            numeric_operands(left, right, strict, span)?;
+            Ok(Type::Num)
         }
-        Binary::Pipeline => right,
+        Binary::Append => list_append_result(left, right, strict, span),
+        Binary::Prepend => list_append_result(right, left, strict, span),
+        Binary::Add => add_result(left, right, strict, span),
+        Binary::Multiply => multiply_result(left, right, strict, span),
+        Binary::Pipeline => Ok(right.clone()),
+    }
+}
+
+fn prefix_result(
+    operator: Prefix,
+    value: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    match operator {
+        Prefix::Not => Ok(Type::Bool),
+        Prefix::Negate | Prefix::BitNot => {
+            require_operation_operand(&Type::Num, value, strict, span)?;
+            Ok(Type::Num)
+        }
+    }
+}
+
+fn numeric_operands(
+    left: &Type,
+    right: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<(), SourceError> {
+    require_operation_operand(&Type::Num, left, strict, span)?;
+    require_operation_operand(&Type::Num, right, strict, span)
+}
+
+fn add_result(
+    left: &Type,
+    right: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
+        return Ok(Type::Unknown);
+    }
+    match (left, right) {
+        (Type::Num, Type::Num) | (Type::Str, Type::Str) => Ok(left.clone()),
+        (Type::List(left), Type::List(right)) => Ok(Type::List(match (left, right) {
+            (Some(left), Some(right)) => Some(Box::new(Type::union([
+                left.as_ref().clone(),
+                right.as_ref().clone(),
+            ]))),
+            _ => None,
+        })),
+        _ => invalid_operation("+", left, right, strict, span),
+    }
+}
+
+fn multiply_result(
+    left: &Type,
+    right: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
+        return Ok(Type::Unknown);
+    }
+    match (left, right) {
+        (Type::Num, Type::Num) => Ok(Type::Num),
+        (Type::Str, Type::Num) => Ok(Type::Str),
+        _ => invalid_operation("*", left, right, strict, span),
+    }
+}
+
+fn list_append_result(
+    list: &Type,
+    value: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if is_dynamic_operation_type(list) || is_dynamic_operation_type(value) {
+        return Ok(Type::List(None));
+    }
+    match list {
+        Type::List(element) => {
+            Ok(Type::List(element.as_ref().map(|element| {
+                Box::new(Type::union([element.as_ref().clone(), value.clone()]))
+            })))
+        }
+        other => invalid_operation(":+", other, value, strict, span),
+    }
+}
+
+fn index_result(
+    collection: &Type,
+    index: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if is_dynamic_operation_type(collection) || is_dynamic_operation_type(index) {
+        return Ok(Type::Unknown);
+    }
+    match collection {
+        Type::List(element) => {
+            require_operation_operand(&Type::Num, index, strict, span)?;
+            Ok(element.as_deref().cloned().unwrap_or(Type::Unknown))
+        }
+        Type::Map(entries) => match entries {
+            Some((key, value)) => {
+                require_operation_operand(key, index, strict, span)?;
+                Ok(Type::union([value.as_ref().clone(), Type::Nil]))
+            }
+            None => Ok(Type::Unknown),
+        },
+        Type::Struct(_) => {
+            require_operation_operand(&Type::Str, index, strict, span)?;
+            Ok(Type::Unknown)
+        }
+        other => invalid_operation("[]", other, index, strict, span),
+    }
+}
+
+fn slice_result(
+    collection: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if is_dynamic_operation_type(collection) {
+        return Ok(Type::Unknown);
+    }
+    match collection {
+        Type::List(element) => Ok(Type::List(element.clone())),
+        other => {
+            if strict {
+                return Err(SourceError::semantic(
+                    format!("expected list, got {other}"),
+                    span.clone(),
+                ));
+            }
+            Ok(Type::Unknown)
+        }
+    }
+}
+
+fn require_operation_operand(
+    expected: &Type,
+    actual: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<(), SourceError> {
+    if !strict || is_dynamic_operation_type(actual) || actual.is_assignable_to(expected) {
+        return Ok(());
+    }
+    require(expected, actual, span)
+}
+
+fn invalid_operation(
+    operator: &str,
+    left: &Type,
+    right: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if strict {
+        Err(SourceError::semantic(
+            format!("operator `{operator}` does not accept {left} and {right}"),
+            span.clone(),
+        ))
+    } else {
+        Ok(Type::Unknown)
+    }
+}
+
+fn is_dynamic_operation_type(value_type: &Type) -> bool {
+    match value_type {
+        Type::Unknown | Type::Any => true,
+        Type::Union(members) => members.iter().any(is_dynamic_operation_type),
+        _ => false,
     }
 }
 

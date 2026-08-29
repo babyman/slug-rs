@@ -1651,6 +1651,65 @@ fn distinguishes_schema_values_from_struct_instances_and_infers_nominal_types() 
 }
 
 #[test]
+fn type_check_validates_known_operations_and_preserves_collection_results() {
+    let path = fixture_path("checked-expression-operations");
+    fs::write(
+        &path,
+        "val numbers:list<num> = [1, 2]\n\
+         val labels:map<str, str> = {first: \"Slug\"}\n\
+         val item:num = numbers[0]\n\
+         val maybe:str|nil = labels.first\n\
+         val slice:list<num> = numbers[0:1]\n\
+         val joined:list<num> = numbers + [3]\n\
+         val appended:list<num> = joined :+ 4\n\
+         val prepended:list<num> = 0 +: appended\n\
+         val repeated:str = \"go\" * 2\n\
+         println(item, maybe, slice, prepended, repeated)\n",
+    )
+    .expect("write checked expression source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run checked expression source");
+    fs::remove_file(&path).expect("remove checked expression source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "1 Slug [1] [0, 1, 2, 3, 4] gogo\n"
+    );
+
+    for (source, expected) in [
+        ("val value = \"name\" - 1\n", "expected num, got str"),
+        ("val value = [1][\"first\"]\n", "expected num, got str"),
+        ("val value = {name: 1}[true]\n", "expected str, got bool"),
+        (
+            "val value = 1[0]\n",
+            "operator `[]` does not accept num and num",
+        ),
+        ("val value = \"name\"[0:1]\n", "expected list, got str"),
+    ] {
+        fs::write(&path, source).expect("write invalid checked expression source");
+        let output = slug()
+            .arg("-type-check")
+            .arg(&path)
+            .output()
+            .expect("run invalid checked expression source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .starts_with(&format!("slug: semantic error: {expected}"))
+        );
+    }
+    fs::remove_file(path).expect("remove invalid checked expression source");
+}
+
+#[test]
 fn rejects_non_reifiable_match_type_constraints() {
     let path = fixture_path("invalid-match-type-constraint");
     fs::write(&path, "match value { _: fn<num, num> => true }\n")

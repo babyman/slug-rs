@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Optional `-type-check` now validates statically known operator, index, and
+  slice operands. It retains precise list/map access and list-combination
+  result types while leaving unknown and `any` operands dynamic.
+
 - Added the non-parameterized `schema` type for struct-schema values. Direct
   construction through a known schema binding `S` now infers `struct<S>`;
   `_: schema` distinguishes schema values from `_: struct` instances.

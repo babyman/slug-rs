@@ -664,6 +664,20 @@ annotated call positions and supports explicit type applications. Successful
 match type constraints narrow case-local bindings. Flow-sensitive narrowing
 and inference for the remaining dynamic expression forms remain future work.
 
+When `-type-check` is enabled, operators, indexing, and slicing also check
+statically known operand families. Numeric arithmetic, bitwise and shift
+operators, unary numeric operations, ordering comparisons, list append and
+prepend, string concatenation and repetition, list concatenation, indexing,
+and list slicing reject a fully known incompatible operand. Equality and
+logical operators accept every value type. `unknown`, `any`, and unions that
+include either remain dynamic and do not introduce a static diagnostic.
+Successful operations retain their result type: list access yields its element
+type, map access yields its value type plus `nil`, list slices retain their
+element type, and list combination operations union their element types. The
+`num` annotation is broader than the VM's integer-only bitwise, shift, index,
+and slice-bound operations, so those expressions accept `num` statically and
+retain their checked runtime error for a non-integral value.
+
 When a statically known value has a structural function type but no declaration
 callable metadata—for example, a function selected by an `if` expression—a
 positional, non-spread call has the function type's result type. With

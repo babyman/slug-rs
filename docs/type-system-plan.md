@@ -38,16 +38,16 @@ that capability over adding more annotation forms.
 
 Make inferred types useful at the expression boundaries Slug already has.
 
-- [ ] Specify operand and result rules for prefix operators, arithmetic,
+- [x] Specify operand and result rules for prefix operators, arithmetic,
   bitwise operations, comparisons, equality, directional list operations,
-  indexing, slicing, interpolation, and field access.
-- [ ] In strict mode, reject provably invalid operand combinations with a
+  indexing, slicing, and interpolation. Field-level rules belong to stage 4.
+- [x] In strict mode, reject provably invalid operand combinations with a
   source diagnostic at the offending expression; preserve dynamic behavior for
   `unknown` and sufficiently broad union operands.
-- [ ] Derive precise result types where the operation proves them: for example
+- [x] Derive precise result types where the operation proves them: for example
   `num` arithmetic, `str` interpolation, list element lookup, map value
   lookup, and list slicing.
-- [ ] Preserve list/map precision through supported spreads; deliberately
+- [x] Preserve list/map precision through supported spreads; deliberately
   widen only when a spread's type cannot prove its element or key/value type.
 - [ ] Use nominal schema information to type-check statically known struct
   construction fields, copy replacements, and direct field access where the
