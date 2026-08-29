@@ -24,6 +24,7 @@ pub(super) struct Compiler {
     declarations: Vec<ModuleDeclaration>,
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
+    foreign_identities: HashMap<SourceSpan, CallableIdentity>,
     callable_identities: Vec<CallableIdentity>,
 }
 impl Compiler {
@@ -37,9 +38,11 @@ impl Compiler {
             declarations: Vec::new(),
             selected_calls: analysis.selected_calls.clone(),
             function_identities: analysis.function_identities.clone(),
+            foreign_identities: analysis.foreign_identities.clone(),
             callable_identities: Vec::new(),
         }
     }
+    #[allow(clippy::too_many_lines)]
     pub(super) fn compile(mut self) -> Result<Program, SourceError> {
         let mut exports = Vec::new();
         let mut bindings = Vec::new();
@@ -59,6 +62,7 @@ impl Compiler {
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
+                    foreign_callable_identity: None,
                     documentation: match &expression.kind {
                         ExprKind::Declare { documentation, .. } => documentation.clone(),
                         _ => unreachable!("declaration pattern was matched"),
@@ -90,12 +94,15 @@ impl Compiler {
                 signature,
             } = &expression.kind
             {
+                let foreign_callable_identity =
+                    self.foreign_identities.get(&expression.span).cloned();
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
                     exported: *exported,
                     foreign: true,
                     foreign_arity: Some(foreign_arity(signature)),
+                    foreign_callable_identity,
                     documentation: documentation.clone(),
                     tags: tags
                         .iter()
@@ -110,6 +117,7 @@ impl Compiler {
                 }
                 bindings.push(name.clone());
                 self.globals.insert(name.clone(), false);
+                self.callable_globals.insert(name.clone());
             }
         }
         bindings.sort();

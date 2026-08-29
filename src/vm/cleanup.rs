@@ -356,7 +356,7 @@ impl Vm {
                 });
                 Ok(None)
             }
-            Value::Native(function) => {
+            Value::Native(function) | Value::DeclaredNative { function, .. } => {
                 let arguments = if recovers_error {
                     let error = self
                         .active_error()

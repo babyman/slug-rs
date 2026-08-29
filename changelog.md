@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Resolved `foreign` bindings now carry their private canonical callable
+  identities. Statically selected foreign-only and mixed local/foreign
+  overloads dispatch to the declared live member without native type checks.
+
 - Local function declarations with the same name now form checked overload
   sets in module and nested lexical scopes. Distinct canonical signatures keep
   all live closures, duplicate signatures are semantic errors, and exported

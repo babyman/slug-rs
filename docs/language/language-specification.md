@@ -599,6 +599,13 @@ and variadic calls. An unavailable or incompatible binding is a checked
 foreign-resolution runtime error; it is never silently substituted with an
 unrelated host global.
 
+Each resolved foreign binding privately retains the canonical identity of its
+source declaration. This lets a statically selected overload dispatch to the
+declared foreign member without exposing source type annotations to native code
+or adding runtime type validation. Repeated compatible foreign declarations and
+mixed foreign/local callable declarations therefore retain each distinct
+declared member in their live overload set.
+
 A doc block uses `/** ... */`. Every non-empty content line must begin with
 `*`, otherwise parsing fails. At top level, a doc block attaches to the next
 `val`, `var`, or `foreign` declaration, whether or not it is exported, allowing

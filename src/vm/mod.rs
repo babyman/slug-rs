@@ -425,8 +425,36 @@ impl Vm {
                         None,
                     ));
                 }
-                let value = Value::Native(function);
+                let identity = declaration
+                    .foreign_callable_identity
+                    .clone()
+                    .ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("foreign declaration `{name}` has no callable identity"),
+                            None,
+                        )
+                    })?;
+                let value = Value::DeclaredNative {
+                    function,
+                    callable_identity: identity,
+                };
                 let binding = self.globals.borrow().get(name).cloned();
+                let value = binding
+                    .as_ref()
+                    .and_then(|binding| binding.resolve().ok())
+                    .and_then(|existing| Self::callable_signature(&existing).map(|_| existing))
+                    .map_or_else(
+                        || value.clone(),
+                        |existing| match existing {
+                            Value::Overloads(overloads) => {
+                                let mut overloads = overloads.as_ref().clone();
+                                overloads.push(value.clone());
+                                Value::Overloads(Rc::new(overloads))
+                            }
+                            existing => Value::Overloads(Rc::new(vec![existing, value.clone()])),
+                        },
+                    );
                 if !binding.is_some_and(|binding| binding.replace_binding(value.clone())) {
                     self.globals.borrow_mut().insert(name.clone(), value);
                 }
@@ -1169,7 +1197,10 @@ impl Vm {
                     let action = self.pop(span.clone())?;
                     if !matches!(
                         action,
-                        Value::Closure(_) | Value::Native(_) | Value::Builtin(_)
+                        Value::Closure(_)
+                            | Value::Native(_)
+                            | Value::DeclaredNative { .. }
+                            | Value::Builtin(_)
                     ) {
                         return Err(self.error(
                             RuntimeErrorKind::Type,
@@ -1366,7 +1397,7 @@ impl Vm {
                     cleanup_recovers: false,
                 });
             }
-            Value::Native(function) => {
+            Value::Native(function) | Value::DeclaredNative { function, .. } => {
                 let arguments = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
@@ -1773,23 +1804,31 @@ impl Vm {
     }
 
     fn callable_signature(value: &Value) -> Option<CallableRuntimeSignature> {
-        let Value::Closure(closure) = value.resolve().ok()? else {
-            return None;
-        };
-        let program = closure.program.as_deref()?;
-        program
-            .chunk(closure.chunk)
-            .map(|chunk| CallableRuntimeSignature {
-                identity: chunk
-                    .callable_identity
-                    .and_then(|identity| program.callable_identity(identity))
-                    .cloned(),
-                shape: chunk
-                    .parameters
-                    .iter()
-                    .map(|parameter| (parameter.has_default, parameter.variadic))
-                    .collect(),
-            })
+        match value.resolve().ok()? {
+            Value::Closure(closure) => {
+                let program = closure.program.as_deref()?;
+                program
+                    .chunk(closure.chunk)
+                    .map(|chunk| CallableRuntimeSignature {
+                        identity: chunk
+                            .callable_identity
+                            .and_then(|identity| program.callable_identity(identity))
+                            .cloned(),
+                        shape: chunk
+                            .parameters
+                            .iter()
+                            .map(|parameter| (parameter.has_default, parameter.variadic))
+                            .collect(),
+                    })
+            }
+            Value::DeclaredNative {
+                callable_identity, ..
+            } => Some(CallableRuntimeSignature {
+                identity: Some(callable_identity),
+                shape: Vec::new(),
+            }),
+            _ => None,
+        }
     }
 
     fn callable_signatures(value: &Value) -> Option<Vec<CallableRuntimeSignature>> {

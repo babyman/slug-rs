@@ -33,7 +33,8 @@ impl CallableSignature {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CallableIdentity {
+/// Opaque canonical input identity used by private callable dispatch metadata.
+pub struct CallableIdentity {
     generic_arity: usize,
     parameters: Vec<CallableParameter>,
 }
@@ -83,12 +84,14 @@ pub(super) struct SemanticAnalysis {
     pub(super) snapshot: ModuleSnapshot,
     pub(super) selected_calls: HashMap<SourceSpan, CallableIdentity>,
     pub(super) function_identities: HashMap<SourceSpan, CallableIdentity>,
+    pub(super) foreign_identities: HashMap<SourceSpan, CallableIdentity>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct SemanticRecords {
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
+    foreign_identities: HashMap<SourceSpan, CallableIdentity>,
 }
 
 #[derive(Clone, Debug)]
@@ -190,12 +193,20 @@ impl Environment {
             .insert(span, identity);
     }
 
+    pub(super) fn record_foreign(&self, span: SourceSpan, identity: CallableIdentity) {
+        self.records
+            .borrow_mut()
+            .foreign_identities
+            .insert(span, identity);
+    }
+
     pub(super) fn analysis(&self, snapshot: ModuleSnapshot) -> SemanticAnalysis {
         let records = self.records.borrow();
         SemanticAnalysis {
             snapshot,
             selected_calls: records.selected_calls.clone(),
             function_identities: records.function_identities.clone(),
+            foreign_identities: records.foreign_identities.clone(),
         }
     }
 }

@@ -487,9 +487,11 @@ impl<'call> NativeValueRef<'call> {
             Value::StructSchema(_) => NativeValueKind::StructSchema,
             Value::Struct(_) => NativeValueKind::Struct,
             Value::Channel(_) => NativeValueKind::Channel,
-            Value::Closure(_) | Value::Native(_) | Value::Builtin(_) | Value::Overloads(_) => {
-                NativeValueKind::Function
-            }
+            Value::Closure(_)
+            | Value::Native(_)
+            | Value::DeclaredNative { .. }
+            | Value::Builtin(_)
+            | Value::Overloads(_) => NativeValueKind::Function,
             Value::NativeResource(_) => NativeValueKind::Resource,
             Value::Task(_) => NativeValueKind::Task,
             Value::Uninitialized | Value::Binding { .. } => {

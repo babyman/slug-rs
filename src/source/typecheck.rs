@@ -404,7 +404,8 @@ fn check_expression(
                 signature.return_annotation.as_ref(),
                 &expression.span,
             )?;
-            environment.declare(name.clone(), SemanticBinding::callable(callable));
+            environment.record_foreign(expression.span.clone(), callable.identity());
+            environment.declare_callable(name.clone(), callable, &expression.span)?;
             for parameter in &signature.parameters {
                 if let Some(default) = &parameter.default {
                     let actual =
@@ -1211,9 +1212,11 @@ fn value_type(value: &Value) -> Type {
         Value::Map(_) => Type::Map(None),
         Value::StructSchema(_) | Value::Struct(_) => Type::Struct(None),
         Value::Channel(_) => Type::Channel(None),
-        Value::Closure(_) | Value::Native(_) | Value::Builtin(_) | Value::Overloads(_) => {
-            Type::Function(None)
-        }
+        Value::Closure(_)
+        | Value::Native(_)
+        | Value::DeclaredNative { .. }
+        | Value::Builtin(_)
+        | Value::Overloads(_) => Type::Function(None),
         Value::Task(_) => Type::Task(None),
         Value::NativeResource(_) => Type::Any,
         Value::Uninitialized | Value::Binding { .. } => Type::Unknown,

@@ -9,6 +9,10 @@ fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())
 }
 
+fn returns_native(call: &mut NativeCall<'_>) -> NativeStatus {
+    call.return_value(NativeOwnedValue::string("native"))
+}
+
 fn root(kind: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("slug-module-{kind}-{}", std::process::id()))
 }
@@ -319,6 +323,84 @@ fn imports_distinct_callable_signatures_as_an_overload_set() {
         .expect("run overloaded imports");
 
     assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 6}");
+    assert!(loader.take_warnings().is_empty());
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn selected_foreign_and_local_overloads_dispatch_by_declared_identity() {
+    let root = root("foreign-local-overloads");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val render = fn(value:str):str { \"local\" }\n\
+         export foreign render = fn(value:num):str\n",
+    )
+    .expect("write foreign overload module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\nexport val result = [api.render(1), api.render(\"x\")]\n",
+            false,
+        )
+        .expect("compile foreign and local overloads");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    let module = NativeModule::new("api", ()).expect("native module is valid");
+    vm.define_foreign(
+        module
+            .function("render", NativeArity::Exact(1), returns_native)
+            .expect("native function is valid"),
+    )
+    .expect("register foreign function");
+
+    vm.run_named(&program, "main")
+        .expect("run foreign and local overloads");
+
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": [\"native\", \"local\"]}"
+    );
+    assert!(loader.take_warnings().is_empty());
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn selected_foreign_overloads_retain_each_declaration_identity() {
+    let root = root("foreign-overloads");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export foreign render = fn(value:num):str\n\
+         export foreign render = fn(value:str):str\n",
+    )
+    .expect("write foreign overload module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\nexport val result = [api.render(1), api.render(\"x\")]\n",
+            false,
+        )
+        .expect("compile foreign overloads");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    let module = NativeModule::new("api", ()).expect("native module is valid");
+    vm.define_foreign(
+        module
+            .function("render", NativeArity::Exact(1), returns_native)
+            .expect("native function is valid"),
+    )
+    .expect("register foreign function");
+
+    vm.run_named(&program, "main")
+        .expect("run foreign overloads");
+
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": [\"native\", \"native\"]}"
+    );
     assert!(loader.take_warnings().is_empty());
     fs::remove_dir_all(root).expect("remove module test directory");
 }
