@@ -10,7 +10,7 @@ use super::{
     },
     environment::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
-        SemanticAnalysis, SemanticBinding,
+        SemanticAnalysis, SemanticBinding, function_value_type,
     },
     semantic::{Type, resolve_annotation},
 };
@@ -378,6 +378,12 @@ fn check_expression(
                 environment.declare_callable(name.clone(), signature.clone(), &expression.span)?;
             }
             let actual = check_expression(value, environment, type_parameters, strict)?;
+            if let Some((name, signature)) = &callable
+                && let Type::Function(Some(types)) = &actual
+                && let Some(result) = types.first()
+            {
+                environment.update_callable_result(name, &signature.identity(), result.clone());
+            }
             let declared = annotation
                 .as_ref()
                 .map(|annotation| resolve_annotation(annotation, type_parameters, &expression.span))
@@ -405,6 +411,7 @@ fn check_expression(
                 &expression.span,
             )?;
             environment.record_foreign(expression.span.clone(), callable.identity());
+            let value_type = function_value_type(&callable);
             environment.declare_callable(name.clone(), callable, &expression.span)?;
             for parameter in &signature.parameters {
                 if let Some(default) = &parameter.default {
@@ -420,7 +427,7 @@ fn check_expression(
                     }
                 }
             }
-            Ok(Type::Function(None))
+            Ok(value_type)
         }
         ExprKind::Function {
             type_parameters: function_type_parameters,
@@ -428,16 +435,13 @@ fn check_expression(
             return_annotation,
             body,
         } => {
-            environment.record_function(
-                expression.span.clone(),
-                function_type(
-                    function_type_parameters,
-                    parameters,
-                    return_annotation.as_ref(),
-                    &expression.span,
-                )?
-                .identity(),
-            );
+            let mut signature = function_type(
+                function_type_parameters,
+                parameters,
+                return_annotation.as_ref(),
+                &expression.span,
+            )?;
+            environment.record_function(expression.span.clone(), signature.identity());
             let mut scoped = environment.clone();
             scoped.enter_scope();
             for parameter in parameters {
@@ -469,7 +473,14 @@ fn check_expression(
                     resolve_annotation(return_annotation, function_type_parameters, &body.span)?;
                 require(&expected, &actual, &body.span)?;
             }
-            Ok(Type::Function(None))
+            signature.result = return_annotation
+                .as_ref()
+                .map(|annotation| {
+                    resolve_annotation(annotation, function_type_parameters, &body.span)
+                })
+                .transpose()?
+                .unwrap_or(actual);
+            Ok(function_value_type(&signature))
         }
         ExprKind::Call { callee, arguments } => check_call(
             callee,

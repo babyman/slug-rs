@@ -1017,6 +1017,62 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
 }
 
 #[test]
+fn infers_precise_function_values_and_return_results() {
+    let path = fixture_path("function-value-inference");
+    fs::write(
+        &path,
+        "val increment:fn<num, num> = fn(value:num) { value + 1 }\n\
+         val callbacks:list<fn<num, num> > = [increment, fn(value:num) { value * 2 }]\n\
+         val answer:num = increment(41)\n\
+         println(answer, callbacks)\n",
+    )
+    .expect("write precise function value source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run precise function value source");
+    fs::remove_file(&path).expect("remove precise function value source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "42 [<fn>, <fn>]\n"
+    );
+
+    for (_kind, source, expected) in [
+        (
+            "function-value-parameter-mismatch",
+            "val invalid:fn<str, num> = fn(value:str):str { value }\n",
+            "expected fn<str, num>, got fn<str, str>",
+        ),
+        (
+            "inferred-function-return-mismatch",
+            "val number = fn() { 1 }\nval invalid:str = number()\n",
+            "expected str, got num",
+        ),
+    ] {
+        fs::write(&path, source).expect("write invalid function value source");
+        let output = slug()
+            .arg("-type-check")
+            .arg(&path)
+            .output()
+            .expect("run invalid function value source");
+        fs::remove_file(&path).expect("remove invalid function value source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .starts_with(&format!("slug: semantic error: {expected}"))
+        );
+    }
+}
+
+#[test]
 fn enforces_any_nil_and_canonical_type_rules() {
     let path = fixture_path("semantic-types");
     fs::write(

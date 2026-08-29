@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Function expressions and declared foreign functions now retain structural
+  `fn<result, parameter...>` value types. Inferred function results propagate
+  through direct bindings and calls, enabling precise optional checks for
+  function-valued declarations and collections.
+
 - Completed overload conformance coverage for both compiler modes, union and
   nilable specificity, named/defaulted/variadic calls, explicit generic
   applications, ambiguity, selected pipelines, and live replacement. Pipeline

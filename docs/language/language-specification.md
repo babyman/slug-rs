@@ -633,9 +633,13 @@ binding.
 The current Rust subset parses and retains declaration, parameter, return, and
 struct-field annotations. Its optional checker rejects directly provable
 annotation mismatches in declarations, parameter defaults, function returns,
-struct defaults, and calls to statically known annotated functions. It infers
-generic arguments from annotated call positions and supports explicit type
-applications. Richer expression inference remains future work.
+struct defaults, and calls to statically known annotated functions. Function
+expressions infer structural `fn<R, P...>` value types from their parameter
+annotations and declared or inferred result; that precision is retained through
+ordinary bindings and collection inference. It infers generic arguments from
+annotated call positions and supports explicit type applications. Flow-sensitive
+narrowing and inference for the remaining dynamic expression forms remain
+future work.
 
 The checker recognizes the built-in value categories `nil`, `any`, `bool`,
 `num`, `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus

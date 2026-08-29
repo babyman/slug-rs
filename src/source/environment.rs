@@ -57,7 +57,7 @@ impl SemanticBinding {
 
     pub(super) fn callable(signature: CallableSignature) -> Self {
         Self {
-            value_type: Type::Function(None),
+            value_type: function_value_type(&signature),
             callables: vec![signature],
             members: HashMap::new(),
         }
@@ -70,6 +70,19 @@ impl SemanticBinding {
             members,
         }
     }
+}
+
+pub(super) fn function_value_type(signature: &CallableSignature) -> Type {
+    Type::Function(Some(
+        std::iter::once(signature.result.clone())
+            .chain(
+                signature
+                    .parameters
+                    .iter()
+                    .map(|parameter| parameter.value_type.clone()),
+            )
+            .collect(),
+    ))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -162,6 +175,25 @@ impl Environment {
         }
         existing.callables.push(signature);
         Ok(())
+    }
+
+    pub(super) fn update_callable_result(
+        &mut self,
+        name: &str,
+        identity: &CallableIdentity,
+        result: Type,
+    ) {
+        let Some(binding) = self.scopes.last_mut().and_then(|scope| scope.get_mut(name)) else {
+            return;
+        };
+        if let Some(signature) = binding
+            .callables
+            .iter_mut()
+            .find(|signature| signature.identity() == *identity)
+        {
+            signature.result = result;
+            binding.value_type = function_value_type(signature);
+        }
     }
 
     pub(super) fn lookup(&self, name: &str) -> Option<&SemanticBinding> {

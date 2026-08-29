@@ -36,7 +36,8 @@ compiled-module contract is documented separately as `.cslug`.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity. Optional `-type-check`
   validation distinguishes non-nil `any` from universal `any|nil`, normalizes
-  unions, and compares structured annotations reflexively.
+  unions, compares structured annotations reflexively, and preserves inferred
+  function-value input and result types.
 - Lexically scoped semantic bindings retain ordered callable signatures through
   local declarations, aliases, parameters, and nested blocks. Calls to locally
   known callables undergo mandatory shape, generic, and parameter-type
