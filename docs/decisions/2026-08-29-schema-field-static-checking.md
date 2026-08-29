@@ -21,15 +21,19 @@ names and replacement values and gives direct string field access the declared
 field type. Unknown or dynamically selected schemas retain generic `struct`
 behavior and the established checked runtime errors.
 
-`struct<S>` annotations remain nominal names resolved by the existing type
-annotation rules. Construction is the point at which a directly known schema
-binding proves its field metadata.
+`struct<S>` annotations resolve `S` lexically to a schema binding; another
+value produces a source diagnostic. Bindings carry a stable internal schema
+identity separate from the spelling used at an annotation site. Construction,
+aliases, imports, copies, and field access retain that identity, so shadowing
+cannot redirect field metadata.
 
 ## Consequences
 
 - Field annotations become useful at construction, copying, and reads without
   changing struct runtime values.
 - Imported schemas provide the same field precision as local schemas.
+- Schema aliases are assignment-compatible with the original `struct<S>`;
+  a non-schema `struct<S>` argument is now a static diagnostic.
 - Dynamic schema code remains valid and conservatively typed.
 
 ## Migration

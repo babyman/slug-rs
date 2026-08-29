@@ -6,7 +6,7 @@ use std::{
 
 use crate::SourceSpan;
 
-use super::semantic::Type;
+use super::semantic::{SchemaIdentity, Type};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CallableParameter {
@@ -49,6 +49,7 @@ pub(super) struct SemanticBinding {
     pub(super) callables: Vec<CallableSignature>,
     pub(super) members: HashMap<String, SemanticBinding>,
     pub(super) required_fields: HashSet<String>,
+    pub(super) schema_identity: Option<SchemaIdentity>,
 }
 
 impl SemanticBinding {
@@ -58,6 +59,7 @@ impl SemanticBinding {
             callables: Vec::new(),
             members: HashMap::new(),
             required_fields: HashSet::new(),
+            schema_identity: None,
         }
     }
 
@@ -67,6 +69,7 @@ impl SemanticBinding {
             callables: vec![signature],
             members: HashMap::new(),
             required_fields: HashSet::new(),
+            schema_identity: None,
         }
     }
 
@@ -76,6 +79,7 @@ impl SemanticBinding {
             callables: Vec::new(),
             members,
             required_fields: HashSet::new(),
+            schema_identity: None,
         }
     }
 }
@@ -215,6 +219,14 @@ impl Environment {
             .find_map(|scope| scope.get_mut(name))
     }
 
+    pub(super) fn schema_by_identity(&self, identity: &str) -> Option<SemanticBinding> {
+        self.scopes
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.values())
+            .find_map(|binding| find_schema_binding(binding, identity))
+    }
+
     pub(super) fn merge_compatible_types(&mut self, left: &Self, right: &Self) {
         for (index, scope) in self.scopes.iter_mut().enumerate() {
             let (Some(left_scope), Some(right_scope)) =
@@ -268,6 +280,20 @@ impl Environment {
             foreign_identities: records.foreign_identities.clone(),
         }
     }
+}
+
+fn find_schema_binding(binding: &SemanticBinding, identity: &str) -> Option<SemanticBinding> {
+    if binding
+        .schema_identity
+        .as_ref()
+        .is_some_and(|schema| schema.id == identity)
+    {
+        return Some(binding.clone());
+    }
+    binding
+        .members
+        .values()
+        .find_map(|member| find_schema_binding(member, identity))
 }
 
 #[cfg(test)]

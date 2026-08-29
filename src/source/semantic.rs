@@ -1,8 +1,31 @@
-use std::fmt;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use crate::SourceSpan;
 
 use super::{SourceError, ast::TypeAnnotation};
+
+#[derive(Clone, Debug)]
+pub(super) struct SchemaIdentity {
+    pub(super) id: String,
+    pub(super) name: String,
+}
+
+impl PartialEq for SchemaIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for SchemaIdentity {}
+
+impl Hash for SchemaIdentity {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Type {
@@ -19,7 +42,7 @@ pub(super) enum Type {
     Task(Option<Box<Type>>),
     Channel(Option<Box<Type>>),
     Schema,
-    Struct(Option<String>),
+    Struct(Option<SchemaIdentity>),
     Tuple(Vec<Type>),
     Generic(usize),
     Union(Vec<Type>),
@@ -252,7 +275,7 @@ impl fmt::Display for Type {
             Self::Schema => formatter.write_str("schema"),
             Self::Struct(name) => {
                 if let Some(name) = name {
-                    write!(formatter, "struct<{name}>")
+                    write!(formatter, "struct<{}>", name.name)
                 } else {
                     formatter.write_str("struct")
                 }
@@ -370,7 +393,10 @@ fn resolve_application(
                 span.clone(),
             ));
         };
-        return Ok(Type::Struct(Some(name.clone())));
+        return Ok(Type::Struct(Some(SchemaIdentity {
+            id: name.clone(),
+            name: name.clone(),
+        })));
     }
     let resolved = arguments
         .iter()

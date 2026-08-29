@@ -28,6 +28,11 @@ annotation. Known local, aliased, and imported schema bindings retain their
 field metadata for construction, copy, and direct field-access checks;
 annotations do not coerce runtime values.
 
+In a `struct<S>` annotation, `S` must be a lexical schema binding. The
+annotation records that schema's stable identity, so an alias has the original
+schema's nominal type and later shadowing cannot change field checking for an
+existing struct value.
+
 ## Construction
 
 Applying a schema to a brace-delimited field list constructs a value:

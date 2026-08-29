@@ -113,7 +113,7 @@ fn imported_schema_bindings_preserve_nominal_construction_types() {
     let program = loader
         .compile_source(
             &main_path.to_string_lossy(),
-            "val {S} = import(\"shapes\")\nexport val value: struct<S> = S {name: \"Slug\"}\nexport val name:str = value.name\nexport val updated:struct<S> = value copy {age: 2}\nexport val age:num = updated.age\n",
+            "val {S} = import(\"shapes\")\nval Alias = S\nexport val value: struct<S> = S {name: \"Slug\"}\nexport val alias:struct<Alias> = value\nexport val name:str = alias.name\nexport val updated:struct<S> = alias copy {age: 2}\nexport val age:num = updated.age\n",
             true,
         )
         .expect("type-check importer using a schema binding");
@@ -122,7 +122,7 @@ fn imported_schema_bindings_preserve_nominal_construction_types() {
         .expect("run importer using a schema binding");
     assert_eq!(
         vm.exported_values(&program).to_string(),
-        "{\"value\": struct {\"name\": \"Slug\", \"age\": 0}, \"name\": \"Slug\", \"updated\": struct {\"name\": \"Slug\", \"age\": 2}, \"age\": 2}"
+        "{\"value\": struct {\"name\": \"Slug\", \"age\": 0}, \"alias\": struct {\"name\": \"Slug\", \"age\": 0}, \"name\": \"Slug\", \"updated\": struct {\"name\": \"Slug\", \"age\": 2}, \"age\": 2}"
     );
     fs::remove_dir_all(root).expect("remove schema module directory");
 }

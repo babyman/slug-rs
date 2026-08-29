@@ -1864,10 +1864,14 @@ fn type_check_uses_known_schema_fields_for_struct_values() {
          val Alias = User\n\
          val user:struct<User> = User {name: \"Slug\"}\n\
          val alias:struct<Alias> = Alias {name: \"Ada\", age: 42}\n\
+         val same_schema:struct<Alias> = user\n\
          val updated:struct<User> = user copy {age: 1}\n\
          val name:str = user.name\n\
          val age:num = updated.age\n\
-         println(name, alias.name, age)\n",
+         { val User = struct { name:num }\n\
+           val shadow_safe:str = user.name\n\
+           println(shadow_safe) }\n\
+         println(name, alias.name, same_schema.name, age)\n",
     )
     .expect("write typed schema field source");
     let output = slug()
@@ -1881,7 +1885,10 @@ fn type_check_uses_known_schema_fields_for_struct_values() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Slug Ada 1\n");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug\nSlug Ada Slug 1\n"
+    );
 
     for (source, expected) in [
         (
@@ -1903,6 +1910,10 @@ fn type_check_uses_known_schema_fields_for_struct_values() {
         (
             "val User = struct { name:str }\nval user = User {name: \"Slug\"}\nuser.age\n",
             "struct has no field `age`",
+        ),
+        (
+            "val NotSchema = 1\nval value:struct<NotSchema> = nil\n",
+            "struct type argument `NotSchema` must resolve to a schema binding",
         ),
     ] {
         fs::write(&path, source).expect("write invalid typed schema field source");

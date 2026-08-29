@@ -97,7 +97,7 @@ diagnostics without changing match's runtime first-match semantics.
 
 Finish the static record model now that schemas and `struct<S>` exist.
 
-- [ ] Establish whether `struct<S>` requires `S` to resolve statically to a
+- [x] Require `struct<S>` to resolve statically to a
   schema binding at every annotation site, including imports, aliases, and
   shadowed names; define the diagnostic when it does not.
 - [x] Retain schema field declarations in semantic metadata suitable for type

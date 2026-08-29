@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `struct<S>` annotations now require `S` to resolve to a schema and retain
+  stable schema identity through aliases, imports, and shadowing.
+
 - Known local, aliased, and imported schemas now retain field metadata for
   optional checking. Construction, copies, and direct field access diagnose
   provable field-name, required-field, and field-value mistakes.

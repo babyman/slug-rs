@@ -12,7 +12,7 @@ use super::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
         SemanticAnalysis, SemanticBinding, function_value_type,
     },
-    semantic::{Type, resolve_annotation},
+    semantic::{SchemaIdentity, Type, resolve_annotation},
 };
 
 pub(super) fn validate(expressions: &[Expr]) -> Result<SemanticAnalysis, SourceError> {
@@ -252,6 +252,7 @@ fn function_type(
     parameters: &[Parameter],
     result: Option<&TypeAnnotation>,
     span: &crate::SourceSpan,
+    environment: &Environment,
 ) -> Result<CallableSignature, SourceError> {
     Ok(CallableSignature {
         generic_arity: type_parameters.len(),
@@ -263,7 +264,14 @@ fn function_type(
                     value_type: parameter
                         .annotation
                         .as_ref()
-                        .map(|annotation| resolve_annotation(annotation, type_parameters, span))
+                        .map(|annotation| {
+                            resolve_annotation_in_environment(
+                                annotation,
+                                type_parameters,
+                                span,
+                                environment,
+                            )
+                        })
                         .transpose()?
                         .unwrap_or_else(Type::universal),
                     has_default: parameter.default.is_some(),
@@ -272,7 +280,9 @@ fn function_type(
             })
             .collect::<Result<Vec<_>, SourceError>>()?,
         result: result
-            .map(|annotation| resolve_annotation(annotation, type_parameters, span))
+            .map(|annotation| {
+                resolve_annotation_in_environment(annotation, type_parameters, span, environment)
+            })
             .transpose()?
             .unwrap_or(Type::Unknown),
     })
@@ -281,6 +291,7 @@ fn function_type(
 fn callable_signature(
     expression: &Expr,
     span: &crate::SourceSpan,
+    environment: &Environment,
 ) -> Result<Option<CallableSignature>, SourceError> {
     let ExprKind::Function {
         type_parameters,
@@ -296,6 +307,7 @@ fn callable_signature(
         parameters,
         return_annotation.as_ref(),
         span,
+        environment,
     )
     .map(Some)
 }
@@ -364,7 +376,7 @@ fn check_expression(
             ..
         } => {
             let callable = if let Pattern::Binding(name) = pattern {
-                callable_signature(value, &expression.span)?
+                callable_signature(value, &expression.span, environment)?
                     .map(|signature| (name.clone(), signature))
             } else {
                 None
@@ -381,7 +393,14 @@ fn check_expression(
             }
             let declared = annotation
                 .as_ref()
-                .map(|annotation| resolve_annotation(annotation, type_parameters, &expression.span))
+                .map(|annotation| {
+                    resolve_annotation_in_environment(
+                        annotation,
+                        type_parameters,
+                        &expression.span,
+                        environment,
+                    )
+                })
                 .transpose()?;
             if strict && let Some(expected) = &declared {
                 require(expected, &actual, &expression.span)?;
@@ -389,6 +408,12 @@ fn check_expression(
             if callable.is_none() {
                 let mut binding =
                     value_binding(value, &actual, environment, type_parameters, strict)?;
+                if matches!(value.kind, ExprKind::StructSchema(_))
+                    && let Pattern::Binding(name) = pattern
+                    && let Some(identity) = &mut binding.schema_identity
+                {
+                    identity.name.clone_from(name);
+                }
                 if let Some(declared) = declared {
                     binding.value_type = declared;
                 }
@@ -404,6 +429,7 @@ fn check_expression(
                 &signature.parameters,
                 signature.return_annotation.as_ref(),
                 &expression.span,
+                environment,
             )?;
             environment.record_foreign(expression.span.clone(), callable.identity());
             let value_type = function_value_type(&callable);
@@ -413,10 +439,11 @@ fn check_expression(
                     let actual =
                         check_expression(default, environment, &signature.type_parameters, strict)?;
                     if strict && let Some(annotation) = &parameter.annotation {
-                        let expected = resolve_annotation(
+                        let expected = resolve_annotation_in_environment(
                             annotation,
                             &signature.type_parameters,
                             &default.span,
+                            environment,
                         )?;
                         require(&expected, &actual, &default.span)?;
                     }
@@ -435,6 +462,7 @@ fn check_expression(
                 parameters,
                 return_annotation.as_ref(),
                 &expression.span,
+                environment,
             )?;
             environment.record_function(expression.span.clone(), signature.identity());
             let mut scoped = environment.clone();
@@ -444,7 +472,12 @@ fn check_expression(
                     .annotation
                     .as_ref()
                     .map(|annotation| {
-                        resolve_annotation(annotation, function_type_parameters, &body.span)
+                        resolve_annotation_in_environment(
+                            annotation,
+                            function_type_parameters,
+                            &body.span,
+                            environment,
+                        )
                     })
                     .transpose()?
                     .unwrap_or_else(Type::universal);
@@ -464,14 +497,23 @@ fn check_expression(
             }
             let actual = check_expression(body, &mut scoped, function_type_parameters, strict)?;
             if strict && let Some(return_annotation) = return_annotation {
-                let expected =
-                    resolve_annotation(return_annotation, function_type_parameters, &body.span)?;
+                let expected = resolve_annotation_in_environment(
+                    return_annotation,
+                    function_type_parameters,
+                    &body.span,
+                    environment,
+                )?;
                 require(&expected, &actual, &body.span)?;
             }
             signature.result = return_annotation
                 .as_ref()
                 .map(|annotation| {
-                    resolve_annotation(annotation, function_type_parameters, &body.span)
+                    resolve_annotation_in_environment(
+                        annotation,
+                        function_type_parameters,
+                        &body.span,
+                        environment,
+                    )
                 })
                 .transpose()?
                 .unwrap_or(actual);
@@ -494,8 +536,12 @@ fn check_expression(
                 if let Some(default) = &field.default {
                     let actual = check_expression(default, environment, type_parameters, strict)?;
                     if strict && let Some(annotation) = &field.annotation {
-                        let expected =
-                            resolve_annotation(annotation, type_parameters, &default.span)?;
+                        let expected = resolve_annotation_in_environment(
+                            annotation,
+                            type_parameters,
+                            &default.span,
+                            environment,
+                        )?;
                         require(&expected, &actual, &default.span)?;
                     }
                 }
@@ -836,8 +882,8 @@ fn check_expression(
                     expression.span.clone(),
                 ));
             }
-            Ok(known_schema_name(schema, environment)
-                .map_or(Type::Struct(None), |name| Type::Struct(Some(name))))
+            Ok(known_schema_identity(schema, environment)
+                .map_or(Type::Struct(None), |identity| Type::Struct(Some(identity))))
         }
         ExprKind::StructCopy { value, fields } => {
             let result = check_expression(value, environment, type_parameters, strict)?;
@@ -1152,8 +1198,10 @@ fn type_intersection(left: &Type, right: &Type) -> Option<Type> {
         return Some(left.clone());
     }
     match (left, right) {
-        (Type::Struct(None), Type::Struct(Some(name)))
-        | (Type::Struct(Some(name)), Type::Struct(None)) => Some(Type::Struct(Some(name.clone()))),
+        (Type::Struct(None), Type::Struct(Some(identity)))
+        | (Type::Struct(Some(identity)), Type::Struct(None)) => {
+            Some(Type::Struct(Some(identity.clone())))
+        }
         _ => None,
     }
 }
@@ -1218,6 +1266,90 @@ fn nil_condition_facts(expression: &Expr, environment: &Environment) -> (TypeFac
     }
 }
 
+fn resolve_annotation_in_environment(
+    annotation: &TypeAnnotation,
+    type_parameters: &[String],
+    span: &SourceSpan,
+    environment: &Environment,
+) -> Result<Type, SourceError> {
+    resolve_schema_references(
+        resolve_annotation(annotation, type_parameters, span)?,
+        span,
+        environment,
+    )
+}
+
+fn resolve_schema_references(
+    value_type: Type,
+    span: &SourceSpan,
+    environment: &Environment,
+) -> Result<Type, SourceError> {
+    match value_type {
+        Type::Struct(Some(identity)) if identity.id == identity.name => {
+            let name = identity.name;
+            let binding = environment.lookup(&name).ok_or_else(|| {
+                SourceError::semantic(
+                    format!("struct type argument `{name}` must resolve to a schema binding"),
+                    span.clone(),
+                )
+            })?;
+            binding.schema_identity.clone().map_or_else(
+                || {
+                    Err(SourceError::semantic(
+                        format!("struct type argument `{name}` must resolve to a schema binding"),
+                        span.clone(),
+                    ))
+                },
+                |mut resolved| {
+                    resolved.name.clone_from(&name);
+                    Ok(Type::Struct(Some(resolved)))
+                },
+            )
+        }
+        Type::List(element) => element
+            .map(|element| resolve_schema_references(*element, span, environment).map(Box::new))
+            .transpose()
+            .map(Type::List),
+        Type::Map(entries) => entries
+            .map(|(key, value)| {
+                Ok::<_, SourceError>((
+                    Box::new(resolve_schema_references(*key, span, environment)?),
+                    Box::new(resolve_schema_references(*value, span, environment)?),
+                ))
+            })
+            .transpose()
+            .map(Type::Map),
+        Type::Function(signature) => signature
+            .map(|types| {
+                types
+                    .into_iter()
+                    .map(|value| resolve_schema_references(value, span, environment))
+                    .collect()
+            })
+            .transpose()
+            .map(Type::Function),
+        Type::Task(result) => result
+            .map(|result| resolve_schema_references(*result, span, environment).map(Box::new))
+            .transpose()
+            .map(Type::Task),
+        Type::Channel(value) => value
+            .map(|value| resolve_schema_references(*value, span, environment).map(Box::new))
+            .transpose()
+            .map(Type::Channel),
+        Type::Tuple(values) => values
+            .into_iter()
+            .map(|value| resolve_schema_references(value, span, environment))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Type::Tuple),
+        Type::Union(values) => values
+            .into_iter()
+            .map(|value| resolve_schema_references(value, span, environment))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Type::union),
+        other => Ok(other),
+    }
+}
+
 fn apply_type_facts(environment: &mut Environment, facts: TypeFacts) {
     for (name, value_type) in facts {
         if let Some(binding) = environment.lookup_mut(&name) {
@@ -1252,7 +1384,13 @@ fn value_binding(
     strict: bool,
 ) -> Result<SemanticBinding, SourceError> {
     if let ExprKind::StructSchema(fields) = &expression.kind {
-        return schema_binding(fields, environment, type_parameters, strict);
+        return schema_binding(
+            fields,
+            environment,
+            type_parameters,
+            strict,
+            &expression.span,
+        );
     }
     if let Some(binding) = expression_binding(expression, environment) {
         return Ok(binding);
@@ -1270,17 +1408,23 @@ fn schema_binding(
     environment: &mut Environment,
     type_parameters: &[String],
     strict: bool,
+    span: &SourceSpan,
 ) -> Result<SemanticBinding, SourceError> {
     let mut binding = SemanticBinding::value(Type::Schema);
+    binding.schema_identity = Some(SchemaIdentity {
+        id: format!("{}:{}:{}", span.path, span.line, span.column),
+        name: "<schema>".into(),
+    });
     for field in fields {
         let value_type = if let Some(annotation) = &field.annotation {
-            resolve_annotation(
+            resolve_annotation_in_environment(
                 annotation,
                 type_parameters,
                 &field.default.as_ref().map_or_else(
                     || SourceSpan::new("<schema>", 1, 1),
                     |default| default.span.clone(),
                 ),
+                environment,
             )?
         } else if let Some(default) = &field.default {
             check_expression(default, environment, type_parameters, strict)?.widen_unknown()
@@ -1298,13 +1442,10 @@ fn schema_binding(
 }
 
 fn known_struct_schema(value_type: &Type, environment: &Environment) -> Option<SemanticBinding> {
-    let Type::Struct(Some(name)) = value_type else {
+    let Type::Struct(Some(identity)) = value_type else {
         return None;
     };
-    environment
-        .lookup(name)
-        .filter(|binding| binding.value_type == Type::Schema)
-        .cloned()
+    environment.schema_by_identity(&identity.id)
 }
 
 fn known_struct_field_type(
@@ -1428,7 +1569,11 @@ fn check_case_pattern(
     span: &SourceSpan,
 ) -> Result<Option<Type>, SourceError> {
     let constraint = if let Some(constraint) = &pattern.constraint {
-        let constraint = resolve_annotation(constraint, type_parameters, span)?;
+        let constraint = if strict {
+            resolve_annotation_in_environment(constraint, type_parameters, span, environment)?
+        } else {
+            resolve_annotation(constraint, type_parameters, span)?
+        };
         if !constraint.is_reifiable_match_constraint() {
             return Err(SourceError::semantic(
                 "match type constraint is not runtime-checkable",
@@ -1558,6 +1703,7 @@ fn check_call(
             explicit,
             type_parameters,
             &expression.span,
+            environment,
             callables.len() == 1,
         )? {
             applicable.push(candidate);
@@ -1669,6 +1815,7 @@ enum ArgumentShape<'a> {
     Spread,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn instantiate_candidate(
     signature: &CallableSignature,
     arguments: &[ArgumentShape<'_>],
@@ -1676,6 +1823,7 @@ fn instantiate_candidate(
     explicit: Option<&Vec<TypeAnnotation>>,
     type_parameters: &[String],
     span: &crate::SourceSpan,
+    environment: &Environment,
     report_mismatch: bool,
 ) -> Result<Option<InstantiatedCandidate>, SourceError> {
     let mut substitutions = HashMap::new();
@@ -1690,7 +1838,8 @@ fn instantiate_candidate(
             return Ok(None);
         }
         for (index, value) in explicit.iter().enumerate() {
-            let value = resolve_annotation(value, type_parameters, span)?;
+            let value =
+                resolve_annotation_in_environment(value, type_parameters, span, environment)?;
             if value.includes_nil() {
                 return Err(SourceError::semantic(
                     "generic type argument cannot include nil",
@@ -1869,14 +2018,15 @@ fn substitute(value_type: &Type, substitutions: &HashMap<usize, Type>) -> Type {
     }
 }
 
-fn known_schema_name(expression: &Expr, environment: &Environment) -> Option<String> {
+fn known_schema_identity(expression: &Expr, environment: &Environment) -> Option<SchemaIdentity> {
     let ExprKind::Name(name) = &expression.kind else {
         return None;
     };
-    environment
-        .lookup(name)
-        .is_some_and(|binding| binding.value_type == Type::Schema)
-        .then(|| name.clone())
+    environment.lookup(name).and_then(|binding| {
+        (binding.value_type == Type::Schema)
+            .then(|| binding.schema_identity.clone())
+            .flatten()
+    })
 }
 
 fn value_type(value: &Value) -> Type {
