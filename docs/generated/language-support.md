@@ -53,8 +53,8 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Call-time default parameters | implemented | `tests/cli.rs` |
 | Type annotation syntax, mandatory resolution, and basic `-type-check` validation | implemented | `tests/cli.rs` |
 | Generic call inference and explicit type applications | implemented | `tests/cli.rs` |
-| Lexically scoped local callable metadata and mandatory call resolution | partial | `tests/cli.rs` |
-| Cached exported callable snapshots across static imports | partial | `tests/module_loader.rs` |
+| Lexically scoped local callable metadata and mandatory call resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
+| Cached exported callable snapshots across static imports | implemented | `tests/module_loader.rs` |
 | Canonical selected-overload lowering and live-binding dispatch | implemented | `tests/module_loader.rs` and `tests/vm.rs` |
 | Concrete-over-generic overload specificity | implemented | `tests/module_loader.rs` |
 | Complete static checking | specified only | `language/language-specification.md` |

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Completed overload conformance coverage for both compiler modes, union and
+  nilable specificity, named/defaulted/variadic calls, explicit generic
+  applications, ambiguity, selected pipelines, and live replacement. Pipeline
+  member calls now participate in static overload resolution.
+
 - Defined spread-call resolution for static overload sets: calls with a
   `...spread` argument now fail semantically instead of selecting an overload
   from unknown runtime arity. Singleton known callables retain normal spread

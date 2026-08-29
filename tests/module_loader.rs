@@ -570,6 +570,103 @@ fn concrete_overloads_take_priority_over_generic_fallbacks() {
 }
 
 #[test]
+fn exported_overload_shapes_resolve_in_both_compiler_modes() {
+    let root = root("overload-shape-conformance");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val choose = fn<T>(value:T):str { \"generic\" }\n\
+         export val choose = fn(value:str):str { \"concrete\" }\n\
+         export val classify = fn(value:str):str { \"text\" }\n\
+         export val classify = fn(value:str|nil):str { \"nilable\" }\n\
+         export val join = fn(value:str, suffix:str = \"!\"):str { value + suffix }\n\
+         export val join = fn(value:num, ...rest:num):str { \"numbers\" }\n",
+    )
+    .expect("write overloaded API");
+    let main_path = root.join("main.slug");
+    let source = "val api = import(\"api\")\n\
+                  export val explicit = api.choose<str>(\"value\")\n\
+                  export val concrete = api.choose(\"value\")\n\
+                  export val text = api.classify(\"value\")\n\
+                  export val nilable = api.classify(nil)\n\
+                  export val named = api.join(value = \"named\")\n\
+                  export val variadic = api.join(1, 2, 3)\n\
+                  export val piped = \"pipe\" /> api.join\n";
+
+    for type_check in [false, true] {
+        let loader = ModuleLoader::new(&root, None);
+        let program = loader
+            .compile_source(&main_path.to_string_lossy(), source, type_check)
+            .expect("compile overload shapes");
+        let mut vm = Vm::with_module_loader(loader.clone());
+        vm.run_named(&program, "main").expect("run overload shapes");
+        assert_eq!(
+            vm.exported_values(&program).to_string(),
+            "{\"explicit\": \"generic\", \"concrete\": \"concrete\", \"text\": \"text\", \"nilable\": \"nilable\", \"named\": \"named!\", \"variadic\": \"numbers\", \"piped\": \"pipe!\"}"
+        );
+        assert!(loader.take_warnings().is_empty());
+    }
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn equal_and_incomparable_overload_candidates_remain_ambiguous() {
+    let root = root("ambiguous-overload-candidates");
+    fs::create_dir_all(&root).expect("create module directory");
+    let main_path = root.join("main.slug");
+    for source in [
+        "val same = fn<T>(left:T, right:T) { left }\n\
+         val same = fn<T>(left:T, right:str) { left }\n\
+         same(\"a\", \"b\")\n",
+        "val overlap = fn(value:str|num) { value }\n\
+         val overlap = fn(value:str|bool) { value }\n\
+         overlap(\"value\")\n",
+    ] {
+        let error = ModuleLoader::new(&root, None)
+            .compile_source(&main_path.to_string_lossy(), source, false)
+            .expect_err("ambiguous overloads are rejected");
+        assert!(error.to_string().starts_with("ambiguous overload"));
+    }
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn selected_defaulted_pipeline_rejects_a_replaced_live_binding() {
+    let root = root("live-defaulted-pipeline-overload");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("mutable.slug"),
+        "export var decorate = fn(value:str, suffix:str = \"!\"):str { value + suffix }\n\
+         export val replace = fn() { decorate = fn(value:num, suffix:num = 0):num { value + suffix } }\n",
+    )
+    .expect("write mutable overload module");
+    fs::write(
+        root.join("numbers.slug"),
+        "export val decorate = fn(value:num, suffix:num = 0):num { value + suffix }\n",
+    )
+    .expect("write numeric overload module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"mutable\", \"numbers\")\napi.replace()\n\"stale\" /> api.decorate\n",
+            false,
+        )
+        .expect("compile selected defaulted pipeline");
+    let error = Vm::with_module_loader(loader)
+        .run_named(&program, "main")
+        .expect_err("replaced selected pipeline rejects stale identity");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall, "{error:?}");
+    assert!(
+        error
+            .message
+            .contains("selected callable signature is no longer present in the live binding")
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn selected_signatures_guard_live_overload_bindings() {
     let root = root("live-overload-selection");
     fs::create_dir_all(&root).expect("create module directory");

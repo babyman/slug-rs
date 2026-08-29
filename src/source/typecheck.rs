@@ -578,15 +578,17 @@ fn check_expression(
                         strict,
                         Some(left),
                     ),
-                    ExprKind::Name(_) | ExprKind::TypeApply { .. } => check_call(
-                        right,
-                        &[],
-                        right,
-                        environment,
-                        type_parameters,
-                        strict,
-                        Some(left),
-                    ),
+                    ExprKind::Name(_) | ExprKind::TypeApply { .. } | ExprKind::Index { .. } => {
+                        check_call(
+                            right,
+                            &[],
+                            right,
+                            environment,
+                            type_parameters,
+                            strict,
+                            Some(left),
+                        )
+                    }
                     _ => check_expression(right, environment, type_parameters, strict),
                 };
             }
