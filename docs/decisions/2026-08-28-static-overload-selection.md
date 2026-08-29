@@ -23,7 +23,9 @@ the callable bound to its name. This record clarifies the callable-set
 architecture anticipated by [Bind imported closures to their defining
 module](2026-08-23-module-closure-contexts.md) and extends the private
 binding metadata adopted by [Keep callable signatures in private bytecode
-metadata](2026-08-22-private-call-signatures.md).
+metadata](2026-08-22-private-call-signatures.md). It uses the top-type and
+inference rules adopted by [Make `any` the non-nil top
+type](2026-08-28-non-nil-any-type.md).
 
 ## Decision
 
@@ -59,10 +61,11 @@ all known argument types satisfy its instantiated parameter annotations.
 The compiler trusts a binding's declared annotation for this purpose even when
 optional type checking is disabled.
 
-An argument whose type is not statically known does not disqualify a candidate.
-If argument shape and the known argument types do not identify one
-most-specific signature, compilation reports ambiguity rather than deferring
-type-aware selection to runtime.
+Unknown is a transient inference state, not a source type. If an argument's
+type remains unknown after inference, it widens to `any|nil` before overload
+selection. A narrow candidate is therefore inapplicable unless the argument is
+narrowed or annotated; selection never guesses a narrow overload from missing
+type information.
 
 The call must have one most-specific applicable candidate. A candidate is more
 specific when its instantiated parameter types accept a strict subset of the
@@ -72,11 +75,10 @@ multiple candidates remain equally specific or incomparable, compilation
 reports an ambiguous-overload source diagnostic. Declaration or import order
 must not break either tie.
 
-An unannotated parameter is unconstrained for this comparison. It may provide a
-broad fallback, but it must not hide a more-specific annotated candidate. Two
-applicable unconstrained candidates remain ambiguous. Union and generic
-signatures use the same instantiated assignability relation as ordinary static
-call checking; no runtime coercion is introduced.
+An unannotated parameter has type `any|nil` for this comparison. It may provide
+a broad fallback, but it must not hide a more-specific applicable candidate.
+Union and generic signatures use the same instantiated assignability relation
+as ordinary static call checking; no runtime coercion is introduced.
 
 The selected candidate's result annotation determines the static type of the
 call after selection. An expected result type does not make a candidate
@@ -112,7 +114,8 @@ rules recursively:
 - Type parameters are identified by declaration-order ordinal, and generic
   arity is retained. Renaming `T` to `U` does not change identity, while using
   the first and second type parameters in different positions does.
-- An unannotated parameter has an explicit unconstrained annotation identity.
+- An unannotated parameter canonicalizes to `any|nil`, so it is identical to an
+  explicit `any|nil` parameter.
 - Nested unions are flattened, duplicate members are removed, and members are
   placed in canonical order. Tuple elements and type-application arguments
   retain their declared order.

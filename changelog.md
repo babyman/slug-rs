@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Defined `any` as the top type for non-nil values and `any|nil` as the
+  universal value type. Unannotated parameters canonicalize to `any|nil`, while
+  omitted binding and result annotations infer a precise type before falling
+  back to `any|nil`; the checker's unknown state remains private.
+
 - Defined static overload signatures by their type parameters and inputs.
   Parameter annotations participate in mandatory overload resolution in every
   compiler mode, while `-type-check` adds diagnostics without changing

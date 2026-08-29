@@ -577,7 +577,7 @@ arity and use by declaration-order position, each parameter's call-visible
 label, normalized annotation, default-presence, and variadic status. Generic
 parameter names do not participate. Union annotations are flattened,
 deduplicated, and canonically ordered; tuple elements and type arguments remain
-ordered. An unannotated parameter is explicitly unconstrained, and a discard
+ordered. An unannotated parameter canonicalizes to `any|nil`, and a discard
 parameter has no call label. Default expressions and return annotations do not
 participate in identity. Signature equality is distinct from assignability,
 which is used only to determine overload applicability and specificity.
@@ -616,8 +616,8 @@ struct defaults, and calls to statically known annotated functions. It infers
 generic arguments from annotated call positions and supports explicit type
 applications. Richer expression inference remains future work.
 
-The checker recognizes the built-in value categories `nil`, `bool`, `num`,
-`str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus
+The checker recognizes the built-in value categories `nil`, `any`, `bool`,
+`num`, `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus
 unions and generic parameters. Its diagnostic precision is an implementation
 feature and does not add runtime coercions or change the language's dynamic
 value model.
@@ -644,12 +644,33 @@ declaration of `str|nil` permits both a string and `nil`. Union members may be
 nested within parameterized types, such as `list<str|nil>` and
 `map<str, num|nil>`.
 
+`any` is the top type for non-nil Slug values. Every non-nil type conforms to
+`any`, but `nil` does not; `any|nil` is the universal type containing every
+Slug value. Union normalization therefore reduces `any|str` to `any` and
+`any|nil|str` to `any|nil`. An unrecognized annotation name is a source error,
+not an unconstrained type. The analyzer may use a private unknown state while
+inference is incomplete, but unknown is not a source-visible or exported type.
+
 ```slug
 var label:str|nil = "ready"
 label = nil
 
 val names:list<str|nil> = ["Ada", nil]
 val scores:map<str, num|nil> = {ada: 10, bob: nil}
+```
+
+An unannotated parameter has type `any|nil`; `fn(value)` and
+`fn(value:any|nil)` therefore have identical input signatures. An unannotated
+binding is inferred from its initializer, and an unannotated function result is
+inferred from all reachable result expressions. If no more precise type can be
+inferred, its type widens to `any|nil` before it is retained or used in overload
+resolution. An explicit annotation remains the declaration's public type even
+when its value is inferred more narrowly:
+
+```slug
+val inferred = fn() { 1 }             // fn():num
+val widened = fn():any|nil { 1 }      // fn():any|nil
+val nonNil = fn():any { "ready" }     // cannot return nil
 ```
 
 The common parameterized forms are `list<T>`, `map<K, V>`, `chan<T>`,
@@ -674,7 +695,10 @@ Each call instantiates a generic declaration. The checker infers a type
 argument from annotated argument positions and uses the same instantiation for
 every occurrence of that parameter. Thus `fn<T>(left:T, right:T):T` requires
 its two arguments to agree on `T`. A bare type parameter does not accept
-`nil`; use `T|nil` wherever a nilable argument or result is intended.
+`nil` and cannot be instantiated with a type containing nil; use `T|nil`
+wherever a nilable argument or result is intended. Nil by itself does not infer
+`T` through a `T|nil` position, so the call must provide another inference
+position or an explicit non-nil type argument.
 
 Callers may provide type arguments explicitly with `name<Type>(...)`, for
 example `identity<str>("Slug")`. An explicit application must name a generic
