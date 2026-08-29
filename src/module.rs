@@ -7,9 +7,10 @@ use std::{
 };
 
 use crate::{
-    Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, Value, Vm,
-    compile,
+    Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceError,
+    Value, Vm,
     native::{NativeResourceRegistry, native_resource_registry},
+    source::{compile_with_resolver, environment::ModuleSnapshot, semantic_snapshot},
 };
 
 /// Host-owned roots used to load Slug module source.
@@ -24,6 +25,7 @@ struct ModuleLoaderState {
     library_root: Option<PathBuf>,
     configuration: Configuration,
     compiled: RefCell<HashMap<PathBuf, Program>>,
+    semantic_snapshots: RefCell<HashMap<PathBuf, ModuleSnapshot>>,
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
@@ -97,6 +99,7 @@ impl ModuleLoader {
                 library_root,
                 configuration,
                 compiled: RefCell::new(HashMap::new()),
+                semantic_snapshots: RefCell::new(HashMap::new()),
                 instances: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
                 foreign_functions: RefCell::new(HashMap::new()),
@@ -164,19 +167,51 @@ impl ModuleLoader {
         if let Some(program) = self.state.compiled.borrow().get(&source.path) {
             return Ok(program.clone());
         }
-        let mut program =
-            compile(&source.path.to_string_lossy(), &source.text).map_err(|error| {
-                ModuleLoadError::Source {
-                    path: source.path.clone(),
-                    message: error.to_string(),
-                }
+        let mut program = self
+            .compile_source(&source.path.to_string_lossy(), &source.text, false)
+            .map_err(|error| ModuleLoadError::Source {
+                path: source.path.clone(),
+                message: error.to_string(),
             })?;
         program.set_module_name(name);
+        self.state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(source.path.clone(), program.semantic_snapshot().clone());
         self.state
             .compiled
             .borrow_mut()
             .insert(source.path, program.clone());
         Ok(program)
+    }
+
+    /// Compiles source while resolving cached semantic snapshots for static imports.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked source error for invalid syntax or semantics.
+    pub fn compile_source(
+        &self,
+        path: &str,
+        source: &str,
+        type_check: bool,
+    ) -> Result<Program, SourceError> {
+        compile_with_resolver(path, source, type_check, |name| {
+            self.semantic_snapshot(Some(Path::new(path)), name)
+        })
+    }
+
+    fn semantic_snapshot(&self, importer: Option<&Path>, name: &str) -> Option<ModuleSnapshot> {
+        let source = self.load(importer, name).ok()?;
+        if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.path) {
+            return Some(snapshot.clone());
+        }
+        let snapshot = semantic_snapshot(&source.path.to_string_lossy(), &source.text).ok()?;
+        self.state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(source.path, snapshot.clone());
+        Some(snapshot)
     }
 
     #[must_use]

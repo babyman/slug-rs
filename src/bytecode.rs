@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::Value;
+use crate::{Value, source::environment::ModuleSnapshot};
 
 /// A source position attached to an instruction for language diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -298,6 +298,7 @@ pub struct Program {
     exports: Vec<String>,
     has_entrypoint: bool,
     module_name: String,
+    semantic_snapshot: ModuleSnapshot,
 }
 
 impl Program {
@@ -371,6 +372,14 @@ impl Program {
 
     pub(crate) fn set_has_entrypoint(&mut self, has_entrypoint: bool) {
         self.has_entrypoint = has_entrypoint;
+    }
+
+    pub(crate) fn semantic_snapshot(&self) -> &ModuleSnapshot {
+        &self.semantic_snapshot
+    }
+
+    pub(crate) fn set_semantic_snapshot(&mut self, snapshot: ModuleSnapshot) {
+        self.semantic_snapshot = snapshot;
     }
 
     /// Sets the module name used by module-relative host services.

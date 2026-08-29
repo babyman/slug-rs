@@ -54,6 +54,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Type annotation syntax, mandatory resolution, and basic `-type-check` validation | implemented | `tests/cli.rs` |
 | Generic call inference and explicit type applications | implemented | `tests/cli.rs` |
 | Lexically scoped local callable metadata and mandatory call resolution | partial | `tests/cli.rs` |
+| Cached exported callable snapshots across static imports | partial | `tests/module_loader.rs` |
 | Complete static checking | specified only | `language/language-specification.md` |
 | Tags on `val`/`var` declarations and function parameters | partial | `tests/cli.rs` |
 | Documentation blocks on top-level `val`/`var`/`foreign` declarations | partial | `tests/cli.rs` |

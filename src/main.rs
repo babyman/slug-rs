@@ -6,7 +6,7 @@ use std::{
 
 use slug_vm::{
     Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule, NativeOwnedValue,
-    NativeStatus, SourceErrorKind, Vm, compile, compile_type_checked,
+    NativeStatus, SourceErrorKind, Vm,
 };
 
 fn native_println(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -97,21 +97,6 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let mut program = match if type_check {
-        compile_type_checked(path, &source)
-    } else {
-        compile(path, &source)
-    } {
-        Ok(program) => program,
-        Err(error) => {
-            let category = match error.kind {
-                SourceErrorKind::Parse => "parse",
-                SourceErrorKind::Semantic => "semantic",
-            };
-            eprintln!("slug: {category} error: {error}");
-            return ExitCode::from(1);
-        }
-    };
     let source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map_or_else(
         || {
             Path::new(path)
@@ -125,7 +110,6 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    program.set_module_name(entry_module);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let configuration = Configuration::load(
         &source_root,
@@ -138,6 +122,18 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
         .map(PathBuf::from)
         .or_else(|| slug_home.as_ref().map(|home| home.join("lib")));
     let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
+    let mut program = match loader.compile_source(path, &source, type_check) {
+        Ok(program) => program,
+        Err(error) => {
+            let category = match error.kind {
+                SourceErrorKind::Parse => "parse",
+                SourceErrorKind::Semantic => "semantic",
+            };
+            eprintln!("slug: {category} error: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    program.set_module_name(entry_module);
     let mut vm = Vm::with_module_loader(loader.clone());
     let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
     vm.define_builtin(

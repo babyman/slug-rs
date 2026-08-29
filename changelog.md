@@ -16,6 +16,12 @@
   parameter-type resolution in both compiler modes; nested declarations and
   parameters correctly shadow outer callable metadata, and immutable aliases
   retain it.
+- Added cached semantic snapshots for exported callable sets. Loader-backed
+  compilation installs imported signatures through module member access,
+  explicit map destructuring, and `{*}` selection while preserving generic,
+  nilability, default, and variadic metadata. Same-runtime-shape typed overloads
+  remain guarded pending selected-signature lowering. This exposed and fixed
+  `slug.channel.send` and `trySend` return annotations to retain `chan<any|nil>`.
 
 - Defined static overload signatures by their type parameters and inputs.
   Parameter annotations participate in mandatory overload resolution in every

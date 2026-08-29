@@ -293,21 +293,26 @@ fn local_bindings_shadow_all_imports_with_a_warning() {
 fn imports_distinct_callable_signatures_as_an_overload_set() {
     let root = root("import-overloads");
     fs::create_dir_all(&root).expect("create module directory");
-    fs::write(root.join("zero.slug"), "export val select = fn() { 1 }\n")
-        .expect("write zero-argument module");
+    fs::write(
+        root.join("zero.slug"),
+        "export val select = fn():num { 1 }\n",
+    )
+    .expect("write zero-argument module");
     fs::write(
         root.join("increment.slug"),
-        "export val select = fn(value) { value + 1 }\n",
+        "export val select = fn(value:num):num { value + 1 }\n",
     )
     .expect("write one-argument module");
     let main_path = root.join("main.slug");
-    let program = compile(
-        &main_path.to_string_lossy(),
-        "val values = import(\"zero\", \"increment\")\n\
-         export val result = values.select() + values.select(4)\n",
-    )
-    .expect("compile overloaded import");
     let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val values = import(\"zero\", \"increment\")\n\
+         export val result = values.select() + values.select(4)\n",
+            false,
+        )
+        .expect("compile overloaded import");
     let mut vm = Vm::with_module_loader(loader.clone());
 
     vm.run_named(&program, "main")
@@ -315,6 +320,90 @@ fn imports_distinct_callable_signatures_as_an_overload_set() {
 
     assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 6}");
     assert!(loader.take_warnings().is_empty());
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn imported_callable_snapshots_preserve_access_paths_generics_and_cache_identity() {
+    let root = root("imported-callable-snapshots");
+    fs::create_dir_all(&root).expect("create module directory");
+    let typed_path = root.join("typed.slug");
+    fs::write(
+        &typed_path,
+        "export val render = fn(value:str):str { value }\n\
+         export val identity = fn<T>(value:T):T { value }\n",
+    )
+    .expect("write typed module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+
+    for source in [
+        "val api = import(\"typed\")\napi.render(1)\n",
+        "val { render } = import(\"typed\")\nrender(1)\n",
+        "val {*} = import(\"typed\")\nrender(1)\n",
+    ] {
+        let error = loader
+            .compile_source(&main_path.to_string_lossy(), source, false)
+            .expect_err("imported signature rejects number argument");
+        assert!(error.to_string().starts_with("expected str, got num"));
+    }
+
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val { identity } = import(\"typed\")\nidentity(nil)\n",
+            false,
+        )
+        .expect_err("imported generic rejects nil inference");
+    assert!(
+        error
+            .to_string()
+            .starts_with("generic type argument cannot include nil")
+    );
+
+    fs::write(
+        &typed_path,
+        "export val render = fn(value:num):num { value }\n",
+    )
+    .expect("replace typed module after snapshot");
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"typed\")\napi.render(1)\n",
+            false,
+        )
+        .expect_err("cached snapshot remains immutable");
+    assert!(error.to_string().starts_with("expected str, got num"));
+
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn defers_same_shape_typed_overloads_until_selected_calls_are_lowered() {
+    let root = root("typed-overload-lowering-guard");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("strings.slug"),
+        "export val render = fn(value:str):str { value }\n",
+    )
+    .expect("write string overload");
+    fs::write(
+        root.join("numbers.slug"),
+        "export val render = fn(value:num):num { value }\n",
+    )
+    .expect("write number overload");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"strings\", \"numbers\")\napi.render(1)\n",
+            false,
+        )
+        .expect_err("typed same-shape dispatch is guarded");
+    assert!(error.to_string().starts_with(
+        "typed overload `render` requires selected-signature lowering before execution"
+    ));
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 

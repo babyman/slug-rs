@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use super::semantic::Type;
 
@@ -18,9 +18,18 @@ pub(super) struct CallableSignature {
 }
 
 impl CallableSignature {
-    #[cfg(test)]
     pub(super) fn has_same_input(&self, other: &Self) -> bool {
         self.generic_arity == other.generic_arity && self.parameters == other.parameters
+    }
+
+    pub(super) fn has_same_runtime_shape(&self, other: &Self) -> bool {
+        self.parameters
+            .iter()
+            .map(|parameter| (parameter.has_default, parameter.variadic))
+            .eq(other
+                .parameters
+                .iter()
+                .map(|parameter| (parameter.has_default, parameter.variadic)))
     }
 }
 
@@ -28,6 +37,7 @@ impl CallableSignature {
 pub(super) struct SemanticBinding {
     pub(super) value_type: Type,
     pub(super) callables: Vec<CallableSignature>,
+    pub(super) members: HashMap<String, SemanticBinding>,
 }
 
 impl SemanticBinding {
@@ -35,6 +45,7 @@ impl SemanticBinding {
         Self {
             value_type,
             callables: Vec::new(),
+            members: HashMap::new(),
         }
     }
 
@@ -42,19 +53,42 @@ impl SemanticBinding {
         Self {
             value_type: Type::Function(None),
             callables: vec![signature],
+            members: HashMap::new(),
+        }
+    }
+
+    pub(super) fn module(members: HashMap<String, SemanticBinding>) -> Self {
+        Self {
+            value_type: Type::Map(None),
+            callables: Vec::new(),
+            members,
         }
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ModuleSnapshot {
+    pub(super) exports: HashMap<String, SemanticBinding>,
+}
+
+pub(super) type ImportSnapshots = HashMap<String, ModuleSnapshot>;
+
 #[derive(Clone, Debug)]
 pub(super) struct Environment {
     scopes: Vec<HashMap<String, SemanticBinding>>,
+    imports: Rc<ImportSnapshots>,
 }
 
 impl Environment {
+    #[cfg(test)]
     pub(super) fn new() -> Self {
+        Self::with_imports(HashMap::new())
+    }
+
+    pub(super) fn with_imports(imports: ImportSnapshots) -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            imports: Rc::new(imports),
         }
     }
 
@@ -84,6 +118,10 @@ impl Environment {
             .iter_mut()
             .rev()
             .find_map(|scope| scope.get_mut(name))
+    }
+
+    pub(super) fn import(&self, name: &str) -> Option<&ModuleSnapshot> {
+        self.imports.get(name)
     }
 }
 

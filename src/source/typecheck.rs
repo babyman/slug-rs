@@ -8,27 +8,243 @@ use super::{
         Binary, CallArgument, Expr, ExprKind, ListElement, MapPatternKey, Parameter, Pattern,
         SelectCaseKind, Tag, TypeAnnotation,
     },
-    environment::{CallableParameter, CallableSignature, Environment, SemanticBinding},
+    environment::{
+        CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
+        SemanticBinding,
+    },
     semantic::{Type, resolve_annotation},
 };
 
-pub(super) fn validate(expressions: &[Expr]) -> Result<(), SourceError> {
+pub(super) fn validate(expressions: &[Expr]) -> Result<ModuleSnapshot, SourceError> {
+    validate_with_imports(expressions, ImportSnapshots::new())
+}
+
+pub(super) fn validate_with_imports(
+    expressions: &[Expr],
+    imports: ImportSnapshots,
+) -> Result<ModuleSnapshot, SourceError> {
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
-    analyze(expressions, false)
+    analyze(expressions, false, imports)
 }
 
-pub(super) fn check(expressions: &[Expr]) -> Result<(), SourceError> {
-    analyze(expressions, true)
+pub(super) fn check_with_imports(
+    expressions: &[Expr],
+    imports: ImportSnapshots,
+) -> Result<ModuleSnapshot, SourceError> {
+    for expression in expressions {
+        validate_expression(expression, &[])?;
+    }
+    analyze(expressions, true, imports)
 }
 
-fn analyze(expressions: &[Expr], strict: bool) -> Result<(), SourceError> {
-    let mut environment = Environment::new();
+pub(super) fn static_import_names(expressions: &[Expr]) -> Vec<String> {
+    let mut names = Vec::new();
+    for expression in expressions {
+        collect_import_names(expression, &mut names);
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[allow(clippy::too_many_lines)]
+fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
+    match &expression.kind {
+        ExprKind::Call { callee, arguments } => {
+            if matches!(&callee.kind, ExprKind::Name(name) if name == "import") {
+                for argument in arguments {
+                    if let CallArgument::Positional(Expr {
+                        kind: ExprKind::Value(Value::Str(name)),
+                        ..
+                    }) = argument
+                    {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+            collect_import_names(callee, names);
+            for argument in arguments {
+                let value = match argument {
+                    CallArgument::Positional(value)
+                    | CallArgument::Named { value, .. }
+                    | CallArgument::Spread(value) => value,
+                };
+                collect_import_names(value, names);
+            }
+        }
+        ExprKind::Declare { value, tags, .. } => {
+            for tag in tags {
+                for argument in &tag.arguments {
+                    collect_import_names(argument, names);
+                }
+            }
+            collect_import_names(value, names);
+        }
+        ExprKind::Foreign {
+            signature, tags, ..
+        } => {
+            for tag in tags {
+                for argument in &tag.arguments {
+                    collect_import_names(argument, names);
+                }
+            }
+            for parameter in &signature.parameters {
+                if let Some(default) = &parameter.default {
+                    collect_import_names(default, names);
+                }
+            }
+        }
+        ExprKind::Function {
+            parameters, body, ..
+        } => {
+            for parameter in parameters {
+                if let Some(default) = &parameter.default {
+                    collect_import_names(default, names);
+                }
+            }
+            collect_import_names(body, names);
+        }
+        ExprKind::Assign { value, .. }
+        | ExprKind::Return { value }
+        | ExprKind::Throw { value }
+        | ExprKind::Defer { value, .. }
+        | ExprKind::Spawn(value)
+        | ExprKind::Prefix { value, .. }
+        | ExprKind::TypeApply { callee: value, .. } => collect_import_names(value, names),
+        ExprKind::Recur(arguments) => {
+            for argument in arguments {
+                let value = match argument {
+                    CallArgument::Positional(value)
+                    | CallArgument::Named { value, .. }
+                    | CallArgument::Spread(value) => value,
+                };
+                collect_import_names(value, names);
+            }
+        }
+        ExprKind::Nursery { limit, body } => {
+            if let Some(limit) = limit {
+                collect_import_names(limit, names);
+            }
+            collect_import_names(body, names);
+        }
+        ExprKind::Select(cases) => {
+            for case in cases {
+                match &case.kind {
+                    SelectCaseKind::Receive(value)
+                    | SelectCaseKind::After(value)
+                    | SelectCaseKind::Await(value) => collect_import_names(value, names),
+                    SelectCaseKind::Send { channel, value } => {
+                        collect_import_names(channel, names);
+                        collect_import_names(value, names);
+                    }
+                    SelectCaseKind::Default => {}
+                }
+                if let Some(handler) = &case.handler {
+                    collect_import_names(handler, names);
+                }
+            }
+        }
+        ExprKind::Match { subject, cases } => {
+            if let Some(subject) = subject {
+                collect_import_names(subject, names);
+            }
+            for case in cases {
+                if let Some(guard) = &case.guard {
+                    collect_import_names(guard, names);
+                }
+                collect_import_names(&case.value, names);
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_import_names(left, names);
+            collect_import_names(right, names);
+        }
+        ExprKind::Block(values) => {
+            for value in values {
+                collect_import_names(value, names);
+            }
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_import_names(condition, names);
+            collect_import_names(then_branch, names);
+            if let Some(else_branch) = else_branch {
+                collect_import_names(else_branch, names);
+            }
+        }
+        ExprKind::List(values) => {
+            for value in values {
+                let value = match value {
+                    ListElement::Value(value) | ListElement::Spread(value) => value,
+                };
+                collect_import_names(value, names);
+            }
+        }
+        ExprKind::Map(entries) => {
+            for (key, value) in entries {
+                collect_import_names(key, names);
+                collect_import_names(value, names);
+            }
+        }
+        ExprKind::StructSchema(fields) => {
+            for field in fields {
+                if let Some(default) = &field.default {
+                    collect_import_names(default, names);
+                }
+            }
+        }
+        ExprKind::StructInit { schema, fields } => {
+            collect_import_names(schema, names);
+            for (_, value) in fields {
+                collect_import_names(value, names);
+            }
+        }
+        ExprKind::StructCopy { value, fields } => {
+            collect_import_names(value, names);
+            for (_, replacement) in fields {
+                collect_import_names(replacement, names);
+            }
+        }
+        ExprKind::Index { collection, index } => {
+            collect_import_names(collection, names);
+            collect_import_names(index, names);
+        }
+        ExprKind::Slice {
+            collection,
+            start,
+            end,
+            step,
+        } => {
+            collect_import_names(collection, names);
+            for bound in [start, end, step].into_iter().flatten() {
+                collect_import_names(bound, names);
+            }
+        }
+        ExprKind::Value(_)
+        | ExprKind::Interpolate(_)
+        | ExprKind::Documentation(_)
+        | ExprKind::NotImplemented
+        | ExprKind::Name(_) => {}
+    }
+}
+
+fn analyze(
+    expressions: &[Expr],
+    strict: bool,
+    imports: ImportSnapshots,
+) -> Result<ModuleSnapshot, SourceError> {
+    let mut environment = Environment::with_imports(imports);
+    let mut exports = HashMap::new();
     for expression in expressions {
         check_expression(expression, &mut environment, &[], strict)?;
+        record_exports(expression, &environment, &mut exports);
     }
-    Ok(())
+    Ok(ModuleSnapshot { exports })
 }
 
 fn function_type(
@@ -84,6 +300,60 @@ fn callable_signature(
     .map(Some)
 }
 
+fn record_exports(
+    expression: &Expr,
+    environment: &Environment,
+    exports: &mut HashMap<String, SemanticBinding>,
+) {
+    match &expression.kind {
+        ExprKind::Declare {
+            exported: true,
+            pattern,
+            ..
+        } => {
+            let mut names = Vec::new();
+            pattern_binding_names(pattern, &mut names);
+            for name in names {
+                if let Some(binding) = environment.lookup(name) {
+                    exports.insert(name.clone(), binding.clone());
+                }
+            }
+        }
+        ExprKind::Foreign {
+            exported: true,
+            name,
+            ..
+        } => {
+            if let Some(binding) = environment.lookup(name) {
+                exports.insert(name.clone(), binding.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn pattern_binding_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a String>) {
+    match pattern {
+        Pattern::Binding(name) | Pattern::At { name, .. } => names.push(name),
+        Pattern::List { items, .. } => {
+            for item in items {
+                pattern_binding_names(item, names);
+            }
+        }
+        Pattern::Map { entries, .. } => {
+            for (_, value) in entries {
+                pattern_binding_names(value, names);
+            }
+        }
+        Pattern::Struct { fields, .. } => {
+            for (_, value) in fields {
+                pattern_binding_names(value, names);
+            }
+        }
+        Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) | Pattern::MapAll => {}
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn check_expression(
     expression: &Expr,
@@ -115,18 +385,13 @@ fn check_expression(
             if strict && let Some(expected) = &declared {
                 require(expected, &actual, &expression.span)?;
             }
-            if let Pattern::Binding(name) = pattern
-                && callable.is_none()
-            {
-                let mut binding = SemanticBinding::value(
-                    declared.unwrap_or_else(|| actual.clone().widen_unknown()),
-                );
-                if let ExprKind::Name(source) = &value.kind
-                    && let Some(source) = environment.lookup(source)
-                {
-                    binding.callables.clone_from(&source.callables);
+            if callable.is_none() {
+                let mut binding = expression_binding(value, environment)
+                    .unwrap_or_else(|| SemanticBinding::value(actual.clone().widen_unknown()));
+                if let Some(declared) = declared {
+                    binding.value_type = declared;
                 }
-                environment.declare(name.clone(), binding);
+                bind_semantic_pattern(pattern, &binding, environment);
             }
             Ok(actual)
         }
@@ -421,9 +686,10 @@ fn check_expression(
             Ok(result)
         }
         ExprKind::Index { collection, index } => {
+            let binding = expression_binding(expression, environment);
             check_expression(collection, environment, type_parameters, strict)?;
             check_expression(index, environment, type_parameters, strict)?;
-            Ok(Type::Unknown)
+            Ok(binding.map_or(Type::Unknown, |binding| binding.value_type))
         }
         ExprKind::Slice {
             collection,
@@ -470,6 +736,94 @@ fn binary_result(operator: Binary, left: Type, right: Type) -> Type {
             }
         }
         Binary::Pipeline => right,
+    }
+}
+
+fn expression_binding(expression: &Expr, environment: &Environment) -> Option<SemanticBinding> {
+    match &expression.kind {
+        ExprKind::Name(name) => environment.lookup(name).cloned(),
+        ExprKind::TypeApply { callee, .. } => expression_binding(callee, environment),
+        ExprKind::Index { collection, index } => {
+            let collection = expression_binding(collection, environment)?;
+            let ExprKind::Value(Value::Str(name)) = &index.kind else {
+                return None;
+            };
+            collection.members.get(name.as_ref()).cloned()
+        }
+        ExprKind::Call { callee, arguments } if matches!(&callee.kind, ExprKind::Name(name) if name == "import") => {
+            imported_modules(arguments, environment).map(SemanticBinding::module)
+        }
+        _ => None,
+    }
+}
+
+fn imported_modules(
+    arguments: &[CallArgument],
+    environment: &Environment,
+) -> Option<HashMap<String, SemanticBinding>> {
+    let mut result: HashMap<String, SemanticBinding> = HashMap::new();
+    for argument in arguments {
+        let CallArgument::Positional(Expr {
+            kind: ExprKind::Value(Value::Str(name)),
+            ..
+        }) = argument
+        else {
+            return None;
+        };
+        let snapshot = environment.import(name.as_ref())?;
+        for (name, incoming) in &snapshot.exports {
+            let Some(existing) = result.get_mut(name) else {
+                result.insert(name.clone(), incoming.clone());
+                continue;
+            };
+            if existing.callables.is_empty() || incoming.callables.is_empty() {
+                continue;
+            }
+            for signature in &incoming.callables {
+                if !existing
+                    .callables
+                    .iter()
+                    .any(|existing| existing.has_same_input(signature))
+                {
+                    existing.callables.push(signature.clone());
+                }
+            }
+        }
+    }
+    Some(result)
+}
+
+fn bind_semantic_pattern(
+    pattern: &Pattern,
+    binding: &SemanticBinding,
+    environment: &mut Environment,
+) {
+    match pattern {
+        Pattern::Binding(name) => environment.declare(name.clone(), binding.clone()),
+        Pattern::At { name, pattern } => {
+            environment.declare(name.clone(), binding.clone());
+            bind_semantic_pattern(pattern, binding, environment);
+        }
+        Pattern::Map { entries, .. } => {
+            for (key, pattern) in entries {
+                let MapPatternKey::String(key) = key else {
+                    continue;
+                };
+                if let Some(member) = binding.members.get(key) {
+                    bind_semantic_pattern(pattern, member, environment);
+                }
+            }
+        }
+        Pattern::MapAll => {
+            for (name, member) in &binding.members {
+                environment.declare(name.clone(), member.clone());
+            }
+        }
+        Pattern::List { .. }
+        | Pattern::Struct { .. }
+        | Pattern::Literal(_)
+        | Pattern::Wildcard
+        | Pattern::Pinned(_) => {}
     }
 }
 
@@ -533,23 +887,39 @@ fn check_call(
         CallArgument::Named { name, .. } => ArgumentShape::Named(name),
         CallArgument::Spread(_) => ArgumentShape::Spread,
     }));
-    let (name, explicit) = match &callee.kind {
-        ExprKind::Name(name) => (name, None),
+    let (name, binding, explicit) = match &callee.kind {
+        ExprKind::Name(name) => (name.clone(), environment.lookup(name).cloned(), None),
         ExprKind::TypeApply { callee, arguments } => {
-            let ExprKind::Name(name) = &callee.kind else {
+            let Some(binding) = expression_binding(callee, environment) else {
                 return Ok(Type::Unknown);
             };
-            (name, Some(arguments))
+            (callable_name(callee), Some(binding), Some(arguments))
         }
-        _ => return Ok(Type::Unknown),
+        _ => (
+            callable_name(callee),
+            expression_binding(callee, environment),
+            None,
+        ),
     };
-    let Some(binding) = environment.lookup(name) else {
+    let Some(binding) = binding else {
         return Ok(Type::Unknown);
     };
     if binding.callables.is_empty() {
         return Ok(Type::Unknown);
     }
     let callables = binding.callables.clone();
+    if callables.iter().enumerate().any(|(index, signature)| {
+        callables.iter().skip(index + 1).any(|other| {
+            signature.has_same_runtime_shape(other) && !signature.has_same_input(other)
+        })
+    }) {
+        return Err(SourceError::semantic(
+            format!(
+                "typed overload `{name}` requires selected-signature lowering before execution"
+            ),
+            expression.span.clone(),
+        ));
+    }
     let mut applicable = Vec::new();
     for signature in &callables {
         if let Some(candidate) = instantiate_candidate(
@@ -587,6 +957,17 @@ fn check_call(
         ));
     }
     Ok(most_specific[0].result.clone())
+}
+
+fn callable_name(expression: &Expr) -> String {
+    match &expression.kind {
+        ExprKind::Name(name) => name.clone(),
+        ExprKind::Index { index, .. } => match &index.kind {
+            ExprKind::Value(Value::Str(name)) => name.to_string(),
+            _ => "<computed>".into(),
+        },
+        _ => "<callable>".into(),
+    }
 }
 
 fn check_argument(

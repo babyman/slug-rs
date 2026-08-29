@@ -40,8 +40,10 @@ compiled-module contract is documented separately as `.cslug`.
 - Lexically scoped semantic bindings retain ordered callable signatures through
   local declarations, aliases, parameters, and nested blocks. Calls to locally
   known callables undergo mandatory shape, generic, and parameter-type
-  resolution in every compiler mode; imported signature snapshots and selected
-  signature lowering remain subsequent work.
+  resolution in every compiler mode. Loader-backed compilation caches exported
+  callable snapshots and preserves them through module members, explicit map
+  destructuring, and `{*}` selection. Typed overloads with identical runtime
+  shapes remain guarded until selected-signature lowering is implemented.
 - Immutable configuration collection from library and project TOML, `SLUG__`
   environment variables, and program options; source access through `cfg` is a
   subsequent milestone.
