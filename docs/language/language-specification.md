@@ -641,6 +641,14 @@ annotated call positions and supports explicit type applications. Flow-sensitive
 narrowing and inference for the remaining dynamic expression forms remain
 future work.
 
+When a statically known value has a structural function type but no declaration
+callable metadata—for example, a function selected by an `if` expression—a
+positional, non-spread call has the function type's result type. With
+`-type-check`, its arity and argument types must match the structural parameter
+types. Structural function types do not encode parameter labels, defaults, or
+variadic status, so named and spread calls retain ordinary dynamic call
+behavior.
+
 The checker recognizes the built-in value categories `nil`, `any`, `bool`,
 `num`, `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus
 unions and generic parameters. Its diagnostic precision is an implementation

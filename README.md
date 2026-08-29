@@ -37,7 +37,7 @@ compiled-module contract is documented separately as `.cslug`.
   checked built-in type names and constructor arity. Optional `-type-check`
   validation distinguishes non-nil `any` from universal `any|nil`, normalizes
   unions, compares structured annotations reflexively, and preserves inferred
-  function-value input and result types.
+  function-value input and result types for higher-order positional calls.
 - Lexically scoped semantic bindings retain ordered callable signatures through
   local declarations, aliases, parameters, and nested blocks. Calls to locally
   known callables undergo mandatory shape, generic, and parameter-type

@@ -929,7 +929,13 @@ fn check_call(
         return Ok(Type::Unknown);
     };
     if binding.callables.is_empty() {
-        return Ok(Type::Unknown);
+        return check_function_value_call(
+            &binding.value_type,
+            &shapes,
+            &actuals,
+            strict,
+            &expression.span,
+        );
     }
     let callables = binding.callables.clone();
     if callables.len() > 1
@@ -983,6 +989,44 @@ fn check_call(
             .record_selected_call(expression.span.clone(), most_specific[0].identity.clone());
     }
     Ok(most_specific[0].result.clone())
+}
+
+fn check_function_value_call(
+    value_type: &Type,
+    shapes: &[ArgumentShape<'_>],
+    actuals: &[Type],
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    let Type::Function(Some(signature)) = value_type else {
+        return Ok(Type::Unknown);
+    };
+    let Some((result, parameters)) = signature.split_first() else {
+        return Ok(Type::Unknown);
+    };
+    if shapes
+        .iter()
+        .any(|shape| !matches!(shape, ArgumentShape::Positional))
+    {
+        return Ok(Type::Unknown);
+    }
+    if strict && actuals.len() != parameters.len() {
+        return Err(SourceError::semantic(
+            format!(
+                "function value expects {} argument{}, got {}",
+                parameters.len(),
+                if parameters.len() == 1 { "" } else { "s" },
+                actuals.len()
+            ),
+            span.clone(),
+        ));
+    }
+    if strict {
+        for (expected, actual) in parameters.iter().zip(actuals) {
+            require(expected, &actual.clone().widen_unknown(), span)?;
+        }
+    }
+    Ok(result.clone().widen_unknown())
 }
 
 fn callable_name(expression: &Expr) -> String {

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Structural function values selected by expressions such as `if` now support
+  precise positional call-result inference and optional arity/type checking.
+  Named and spread function-value calls remain dynamic because structural
+  function types do not carry call-label or variadic metadata.
+
 - Function expressions and declared foreign functions now retain structural
   `fn<result, parameter...>` value types. Inferred function results propagate
   through direct bindings and calls, enabling precise optional checks for

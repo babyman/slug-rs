@@ -51,7 +51,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Final variadic parameters | implemented | `tests/cli.rs` |
 | Discard function parameters | implemented | `tests/cli.rs` |
 | Call-time default parameters | implemented | `tests/cli.rs` |
-| Type annotation syntax, function-value inference, mandatory resolution, and basic `-type-check` validation | implemented | `tests/cli.rs` |
+| Type annotation syntax, function-value inference/calls, mandatory resolution, and basic `-type-check` validation | implemented | `tests/cli.rs` |
 | Generic call inference and explicit type applications | implemented | `tests/cli.rs` |
 | Lexically scoped local callable metadata and mandatory call resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
 | Cached exported callable snapshots across static imports | implemented | `tests/module_loader.rs` |

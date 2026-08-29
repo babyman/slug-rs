@@ -1064,10 +1064,65 @@ fn infers_precise_function_values_and_return_results() {
         fs::remove_file(&path).expect("remove invalid function value source");
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(
-            String::from_utf8(output.stderr)
-                .unwrap()
-                .starts_with(&format!("slug: semantic error: {expected}"))
+            stderr.starts_with(&format!("slug: semantic error: {expected}")),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn checks_positional_calls_through_precise_function_values() {
+    let path = fixture_path("function-value-calls");
+    fs::write(
+        &path,
+        "val ready = true\n\
+         val choose:fn<str, str> = if (ready) {\n\
+           fn(value:str):str { value }\n\
+         } else {\n\
+           fn(value:str):str { \"fallback\" }\n\
+         }\n\
+         val result:str = choose(\"value\")\n\
+         println(result)\n",
+    )
+    .expect("write function value call source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run function value call source");
+    fs::remove_file(&path).expect("remove function value call source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "value\n");
+
+    for (source, expected) in [
+        (
+            "val choose:fn<str, str> = if (true) { fn(value:str):str { value } } else { fn(value:str):str { value } }\nchoose(1)\n",
+            "expected str, got num",
+        ),
+        (
+            "val choose:fn<str, str> = if (true) { fn(value:str):str { value } } else { fn(value:str):str { value } }\nchoose()\n",
+            "function value expects 1 argument, got 0",
+        ),
+    ] {
+        fs::write(&path, source).expect("write invalid function value call source");
+        let output = slug()
+            .arg("-type-check")
+            .arg(&path)
+            .output()
+            .expect("run invalid function value call source");
+        fs::remove_file(&path).expect("remove function value call source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.starts_with(&format!("slug: semantic error: {expected}")),
+            "{stderr}"
         );
     }
 }
