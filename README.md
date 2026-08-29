@@ -42,8 +42,9 @@ compiled-module contract is documented separately as `.cslug`.
   known callables undergo mandatory shape, generic, and parameter-type
   resolution in every compiler mode. Loader-backed compilation caches exported
   callable snapshots and preserves them through module members, explicit map
-  destructuring, and `{*}` selection. Typed overloads with identical runtime
-  shapes remain guarded until selected-signature lowering is implemented.
+  destructuring, and `{*}` selection. Statically selected overloads lower their
+  canonical input identity into private call bytecode; the VM invokes that
+  exact member of the current live binding without runtime type validation.
 - Immutable configuration collection from library and project TOML, `SLUG__`
   environment variables, and program options; source access through `cfg` is a
   subsequent milestone.

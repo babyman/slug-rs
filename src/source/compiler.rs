@@ -11,6 +11,7 @@ use super::{
         Binary, CallArgument, Expr, ExprKind, ForeignSignature, ListElement, MapPatternKey,
         MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind, StringPart, Tag,
     },
+    environment::{CallableIdentity, SemanticAnalysis},
     state::{Binding, State},
 };
 
@@ -20,15 +21,21 @@ pub(super) struct Compiler {
     chunks: Vec<Chunk>,
     globals: HashMap<String, bool>,
     declarations: Vec<ModuleDeclaration>,
+    selected_calls: HashMap<SourceSpan, CallableIdentity>,
+    function_identities: HashMap<SourceSpan, CallableIdentity>,
+    callable_identities: Vec<CallableIdentity>,
 }
 impl Compiler {
-    pub(super) fn new(path: &str, expressions: Vec<Expr>) -> Self {
+    pub(super) fn new(path: &str, expressions: Vec<Expr>, analysis: &SemanticAnalysis) -> Self {
         Self {
             path: path.into(),
             expressions,
             chunks: Vec::new(),
             globals: HashMap::new(),
             declarations: Vec::new(),
+            selected_calls: analysis.selected_calls.clone(),
+            function_identities: analysis.function_identities.clone(),
+            callable_identities: Vec::new(),
         }
     }
     pub(super) fn compile(mut self) -> Result<Program, SourceError> {
@@ -126,6 +133,7 @@ impl Compiler {
         program.set_declarations(self.declarations);
         program.set_exports(exports);
         program.set_has_entrypoint(has_entrypoint);
+        program.set_callable_identities(self.callable_identities);
         Ok(program)
     }
     #[allow(clippy::too_many_lines)]
@@ -569,14 +577,14 @@ impl Compiler {
                     };
                     self.expression(state, argument)?;
                 }
-                state.emit(
-                    if import {
-                        Op::Import(kinds)
-                    } else {
-                        Op::CallSpread(kinds)
-                    },
-                    &expression.span,
-                );
+                let op = if import {
+                    Op::Import(kinds)
+                } else if let Some(identity) = self.selected_identity(&expression.span) {
+                    Op::CallSelected { kinds, identity }
+                } else {
+                    Op::CallSpread(kinds)
+                };
+                state.emit(op, &expression.span);
             }
             ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
             ExprKind::List(values) => {
@@ -726,6 +734,9 @@ impl Compiler {
                 let names = plain_parameters(parameters, &expression.span)?;
                 let (mut chunk, captures) =
                     self.function(&names, parameters, body, state.visible())?;
+                if let Some(identity) = self.function_identity(&expression.span) {
+                    chunk.callable_identity = Some(identity);
+                }
                 chunk.parameters = parameters
                     .iter()
                     .map(|parameter| ParameterSignature {
@@ -874,12 +885,47 @@ impl Compiler {
                 };
                 self.expression(state, argument)?;
             }
-            state.emit(Op::PipelineCall(kinds), &expression.span);
+            let op = if let Some(identity) = self.selected_identity(&expression.span) {
+                Op::PipelineCallSelected { kinds, identity }
+            } else {
+                Op::PipelineCall(kinds)
+            };
+            state.emit(op, &expression.span);
         } else {
             self.expression(state, expression)?;
-            state.emit(Op::PipelineCall(Vec::new()), &expression.span);
+            let op = self.selected_identity(&expression.span).map_or_else(
+                || Op::PipelineCall(Vec::new()),
+                |identity| Op::PipelineCallSelected {
+                    kinds: Vec::new(),
+                    identity,
+                },
+            );
+            state.emit(op, &expression.span);
         }
         Ok(())
+    }
+
+    fn selected_identity(&mut self, span: &SourceSpan) -> Option<usize> {
+        let identity = self.selected_calls.get(span)?.clone();
+        Some(self.intern_callable_identity(identity))
+    }
+
+    fn function_identity(&mut self, span: &SourceSpan) -> Option<usize> {
+        let identity = self.function_identities.get(span)?.clone();
+        Some(self.intern_callable_identity(identity))
+    }
+
+    fn intern_callable_identity(&mut self, identity: CallableIdentity) -> usize {
+        if let Some(index) = self
+            .callable_identities
+            .iter()
+            .position(|existing| existing == &identity)
+        {
+            return index;
+        }
+        let index = self.callable_identities.len();
+        self.callable_identities.push(identity);
+        index
     }
     fn emit_pattern_operand(
         &mut self,

@@ -10,19 +10,19 @@ use super::{
     },
     environment::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
-        SemanticBinding,
+        SemanticAnalysis, SemanticBinding,
     },
     semantic::{Type, resolve_annotation},
 };
 
-pub(super) fn validate(expressions: &[Expr]) -> Result<ModuleSnapshot, SourceError> {
+pub(super) fn validate(expressions: &[Expr]) -> Result<SemanticAnalysis, SourceError> {
     validate_with_imports(expressions, ImportSnapshots::new())
 }
 
 pub(super) fn validate_with_imports(
     expressions: &[Expr],
     imports: ImportSnapshots,
-) -> Result<ModuleSnapshot, SourceError> {
+) -> Result<SemanticAnalysis, SourceError> {
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
@@ -32,7 +32,7 @@ pub(super) fn validate_with_imports(
 pub(super) fn check_with_imports(
     expressions: &[Expr],
     imports: ImportSnapshots,
-) -> Result<ModuleSnapshot, SourceError> {
+) -> Result<SemanticAnalysis, SourceError> {
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
@@ -237,14 +237,14 @@ fn analyze(
     expressions: &[Expr],
     strict: bool,
     imports: ImportSnapshots,
-) -> Result<ModuleSnapshot, SourceError> {
+) -> Result<SemanticAnalysis, SourceError> {
     let mut environment = Environment::with_imports(imports);
     let mut exports = HashMap::new();
     for expression in expressions {
         check_expression(expression, &mut environment, &[], strict)?;
         record_exports(expression, &environment, &mut exports);
     }
-    Ok(ModuleSnapshot { exports })
+    Ok(environment.analysis(ModuleSnapshot { exports }))
 }
 
 fn function_type(
@@ -427,6 +427,16 @@ fn check_expression(
             return_annotation,
             body,
         } => {
+            environment.record_function(
+                expression.span.clone(),
+                function_type(
+                    function_type_parameters,
+                    parameters,
+                    return_annotation.as_ref(),
+                    &expression.span,
+                )?
+                .identity(),
+            );
             let mut scoped = environment.clone();
             scoped.enter_scope();
             for parameter in parameters {
@@ -908,18 +918,6 @@ fn check_call(
         return Ok(Type::Unknown);
     }
     let callables = binding.callables.clone();
-    if callables.iter().enumerate().any(|(index, signature)| {
-        callables.iter().skip(index + 1).any(|other| {
-            signature.has_same_runtime_shape(other) && !signature.has_same_input(other)
-        })
-    }) {
-        return Err(SourceError::semantic(
-            format!(
-                "typed overload `{name}` requires selected-signature lowering before execution"
-            ),
-            expression.span.clone(),
-        ));
-    }
     let mut applicable = Vec::new();
     for signature in &callables {
         if let Some(candidate) = instantiate_candidate(
@@ -956,6 +954,10 @@ fn check_call(
             expression.span.clone(),
         ));
     }
+    if callables.len() > 1 {
+        environment
+            .record_selected_call(expression.span.clone(), most_specific[0].identity.clone());
+    }
     Ok(most_specific[0].result.clone())
 }
 
@@ -987,6 +989,7 @@ fn check_argument(
 struct InstantiatedCandidate {
     bound_types: Vec<Type>,
     result: Type,
+    identity: super::environment::CallableIdentity,
 }
 
 #[derive(Clone, Copy)]
@@ -1046,6 +1049,7 @@ fn instantiate_candidate(
     Ok(Some(InstantiatedCandidate {
         bound_types,
         result: substitute(&signature.result, &substitutions).widen_unknown(),
+        identity: signature.identity(),
     }))
 }
 
@@ -1488,6 +1492,12 @@ mod tests {
         InstantiatedCandidate {
             bound_types,
             result: Type::Unknown,
+            identity: CallableSignature {
+                generic_arity: 0,
+                parameters: Vec::new(),
+                result: Type::Unknown,
+            }
+            .identity(),
         }
     }
 

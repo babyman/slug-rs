@@ -912,6 +912,23 @@ fn rejects_non_list_spread_arguments_in_private_bytecode() {
 }
 
 #[test]
+fn rejects_missing_selected_callable_identity_in_private_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::CallSelected {
+            kinds: Vec::new(),
+            identity: 0,
+        })
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("missing selected identity must be rejected");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert_eq!(error.message, "selected callable identity does not exist");
+}
+
+#[test]
 fn constructs_and_indexes_collections() {
     let mut main = Chunk::new("main", 0);
     let ten = main.constant(Value::Int(10));

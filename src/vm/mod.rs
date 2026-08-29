@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::source::environment::CallableIdentity;
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, Task, Value,
@@ -37,6 +38,12 @@ pub type VmResult<T> = Result<T, RuntimeError>;
 
 type NamedArgument = (String, Value);
 type ExpandedCallArguments = (Vec<Value>, Vec<NamedArgument>);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CallableRuntimeSignature {
+    identity: Option<CallableIdentity>,
+    shape: Vec<(bool, bool)>,
+}
 
 #[derive(Clone)]
 struct Frame {
@@ -1045,8 +1052,28 @@ impl Vm {
                     }
                 }
                 Op::Call(count) => self.call(program, count, None, span)?,
-                Op::CallSpread(kinds) => self.call_spread(program, kinds, span)?,
-                Op::PipelineCall(kinds) => self.pipeline_call(program, kinds, span)?,
+                Op::CallSpread(kinds) => self.call_spread(program, kinds, None, span)?,
+                Op::CallSelected { kinds, identity } => {
+                    let identity = program.callable_identity(identity).ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "selected callable identity does not exist".into(),
+                            span.clone(),
+                        )
+                    })?;
+                    self.call_spread(program, kinds, Some(identity), span)?;
+                }
+                Op::PipelineCall(kinds) => self.pipeline_call(program, kinds, None, span)?,
+                Op::PipelineCallSelected { kinds, identity } => {
+                    let identity = program.callable_identity(identity).ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "selected callable identity does not exist".into(),
+                            span.clone(),
+                        )
+                    })?;
+                    self.pipeline_call(program, kinds, Some(identity), span)?;
+                }
                 Op::Import(kinds) => self.import(kinds, span)?,
                 Op::Spawn => self.spawn_task(program, span)?,
                 Op::Nursery { has_limit } => self.run_nursery(program, has_limit, span)?,
@@ -1715,21 +1742,27 @@ impl Vm {
         Ok(())
     }
 
-    fn callable_signature(value: &Value) -> Option<Vec<(bool, bool)>> {
+    fn callable_signature(value: &Value) -> Option<CallableRuntimeSignature> {
         let Value::Closure(closure) = value.resolve().ok()? else {
             return None;
         };
         let program = closure.program.as_deref()?;
-        program.chunk(closure.chunk).map(|chunk| {
-            chunk
-                .parameters
-                .iter()
-                .map(|parameter| (parameter.has_default, parameter.variadic))
-                .collect()
-        })
+        program
+            .chunk(closure.chunk)
+            .map(|chunk| CallableRuntimeSignature {
+                identity: chunk
+                    .callable_identity
+                    .and_then(|identity| program.callable_identity(identity))
+                    .cloned(),
+                shape: chunk
+                    .parameters
+                    .iter()
+                    .map(|parameter| (parameter.has_default, parameter.variadic))
+                    .collect(),
+            })
     }
 
-    fn callable_signatures(value: &Value) -> Option<Vec<Vec<(bool, bool)>>> {
+    fn callable_signatures(value: &Value) -> Option<Vec<CallableRuntimeSignature>> {
         match value {
             Value::Overloads(overloads) => overloads.iter().map(Self::callable_signature).collect(),
             value => Self::callable_signature(value).map(|signature| vec![signature]),
@@ -1761,6 +1794,7 @@ impl Vm {
         &mut self,
         program: &Program,
         kinds: Vec<CallArgumentKind>,
+        selected: Option<&CallableIdentity>,
         span: Option<SourceSpan>,
     ) -> VmResult<()> {
         let required = kinds.len().checked_add(1).ok_or_else(|| {
@@ -1784,8 +1818,31 @@ impl Vm {
         self.stack.truncate(base);
         let (positional, named) = self.expand_call_arguments(values, kinds, span.clone())?;
         let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
-            self.bind_overload_arguments(program, overloads, &positional, &named, span.clone())?
+            if let Some(selected) = selected {
+                self.bind_selected_overload_arguments(
+                    program,
+                    overloads,
+                    selected,
+                    &positional,
+                    &named,
+                    span.clone(),
+                )?
+            } else {
+                self.bind_overload_arguments(program, overloads, &positional, &named, span.clone())?
+            }
         } else {
+            if let Some(selected) = selected
+                && Self::callable_signature(&callee)
+                    .and_then(|signature| signature.identity)
+                    .as_ref()
+                    != Some(selected)
+            {
+                return Err(self.error(
+                    RuntimeErrorKind::InvalidCall,
+                    "selected callable signature is no longer present in the live binding".into(),
+                    span,
+                ));
+            }
             let (arguments, provided) =
                 self.bind_call_arguments(program, &callee, positional, named, span.clone())?;
             (callee, arguments, provided)
@@ -1800,6 +1857,7 @@ impl Vm {
         &mut self,
         program: &Program,
         kinds: Vec<CallArgumentKind>,
+        selected: Option<&CallableIdentity>,
         span: Option<SourceSpan>,
     ) -> VmResult<()> {
         let required = kinds.len().checked_add(2).ok_or_else(|| {
@@ -1836,7 +1894,7 @@ impl Vm {
         self.stack.extend(arguments);
         let mut kinds = kinds;
         kinds.insert(0, CallArgumentKind::Positional);
-        self.call_spread(program, kinds, span)
+        self.call_spread(program, kinds, selected, span)
     }
 
     fn expand_call_arguments(
@@ -2380,6 +2438,40 @@ impl Vm {
                 span,
             )
         }))
+    }
+
+    fn bind_selected_overload_arguments(
+        &self,
+        program: &Program,
+        overloads: &[Value],
+        selected: &CallableIdentity,
+        positional: &[Value],
+        named: &[NamedArgument],
+        span: Option<SourceSpan>,
+    ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
+        for callee in overloads {
+            let callee = callee
+                .resolve()
+                .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
+            let identity =
+                Self::callable_signature(&callee).and_then(|signature| signature.identity);
+            if identity.as_ref() != Some(selected) {
+                continue;
+            }
+            let (arguments, provided) = self.bind_call_arguments(
+                program,
+                &callee,
+                positional.to_vec(),
+                named.to_vec(),
+                span.clone(),
+            )?;
+            return Ok((callee, arguments, provided));
+        }
+        Err(self.error(
+            RuntimeErrorKind::InvalidCall,
+            "selected callable signature is no longer present in the live binding".into(),
+            span,
+        ))
     }
 
     fn binary(

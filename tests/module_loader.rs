@@ -379,8 +379,8 @@ fn imported_callable_snapshots_preserve_access_paths_generics_and_cache_identity
 }
 
 #[test]
-fn defers_same_shape_typed_overloads_until_selected_calls_are_lowered() {
-    let root = root("typed-overload-lowering-guard");
+fn selected_signatures_dispatch_same_shape_typed_overloads() {
+    let root = root("typed-overload-selection");
     fs::create_dir_all(&root).expect("create module directory");
     fs::write(
         root.join("strings.slug"),
@@ -394,16 +394,66 @@ fn defers_same_shape_typed_overloads_until_selected_calls_are_lowered() {
     .expect("write number overload");
     let main_path = root.join("main.slug");
     let loader = ModuleLoader::new(&root, None);
-    let error = loader
+    let program = loader
         .compile_source(
             &main_path.to_string_lossy(),
-            "val api = import(\"strings\", \"numbers\")\napi.render(1)\n",
+            "val api = import(\"strings\", \"numbers\")\n\
+             val { render: destructured } = import(\"strings\", \"numbers\")\n\
+             val {*} = import(\"strings\", \"numbers\")\n\
+             export val text = api.render(\"ready\")\n\
+             export val number = api.render(41)\n\
+             export val piped = 42 /> api.render\n\
+             export val destructuredResult = destructured(43)\n\
+             export val selectedResult = render(44)\n",
             false,
         )
-        .expect_err("typed same-shape dispatch is guarded");
-    assert!(error.to_string().starts_with(
-        "typed overload `render` requires selected-signature lowering before execution"
-    ));
+        .expect("compile typed same-shape overloads");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run statically selected overloads");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"text\": \"ready\", \"number\": 41, \"piped\": 42, \"destructuredResult\": 43, \"selectedResult\": 44}"
+    );
+    assert!(loader.take_warnings().is_empty());
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn selected_signatures_guard_live_overload_bindings() {
+    let root = root("live-overload-selection");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("mutable.slug"),
+        "export var render = fn(value:str):str { value }\n\
+         export val replace = fn() { render = fn(value:num):num { value } }\n",
+    )
+    .expect("write mutable overload");
+    fs::write(
+        root.join("numbers.slug"),
+        "export val render = fn(value:num):num { value }\n",
+    )
+    .expect("write number overload");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"mutable\", \"numbers\")\n\
+             api.replace()\n\
+             api.render(\"stale\")\n",
+            false,
+        )
+        .expect("compile live-binding overload call");
+    let error = Vm::with_module_loader(loader)
+        .run_named(&program, "main")
+        .expect_err("changed live binding rejects stale selection");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert!(
+        error
+            .message
+            .contains("selected callable signature is no longer present in the live binding")
+    );
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 
@@ -418,7 +468,7 @@ fn duplicate_callable_signatures_keep_the_first_import_with_a_warning() {
     .expect("write first callable module");
     fs::write(
         root.join("second.slug"),
-        "export val select = fn(other) { other + 2 }\n",
+        "export val select = fn(value) { value + 2 }\n",
     )
     .expect("write second callable module");
     let main_path = root.join("main.slug");

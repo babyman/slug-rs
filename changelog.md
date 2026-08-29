@@ -19,9 +19,14 @@
 - Added cached semantic snapshots for exported callable sets. Loader-backed
   compilation installs imported signatures through module member access,
   explicit map destructuring, and `{*}` selection while preserving generic,
-  nilability, default, and variadic metadata. Same-runtime-shape typed overloads
-  remain guarded pending selected-signature lowering. This exposed and fixed
+  nilability, default, and variadic metadata. This exposed and fixed
   `slug.channel.send` and `trySend` return annotations to retain `chan<any|nil>`.
+- Lowered statically selected overload identities into private call and
+  pipeline-call bytecode. Source callable closures retain their canonical
+  input identities across module merging, and the VM dispatches the selected
+  member from the current live binding without runtime type validation. A live
+  binding that no longer contains the selected identity now fails with a
+  checked call error instead of silently choosing another overload.
 
 - Defined static overload signatures by their type parameters and inputs.
   Parameter annotations participate in mandatory overload resolution in every

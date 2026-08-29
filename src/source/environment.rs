@@ -1,4 +1,6 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
+
+use crate::SourceSpan;
 
 use super::semantic::Type;
 
@@ -22,15 +24,18 @@ impl CallableSignature {
         self.generic_arity == other.generic_arity && self.parameters == other.parameters
     }
 
-    pub(super) fn has_same_runtime_shape(&self, other: &Self) -> bool {
-        self.parameters
-            .iter()
-            .map(|parameter| (parameter.has_default, parameter.variadic))
-            .eq(other
-                .parameters
-                .iter()
-                .map(|parameter| (parameter.has_default, parameter.variadic)))
+    pub(super) fn identity(&self) -> CallableIdentity {
+        CallableIdentity {
+            generic_arity: self.generic_arity,
+            parameters: self.parameters.clone(),
+        }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CallableIdentity {
+    generic_arity: usize,
+    parameters: Vec<CallableParameter>,
 }
 
 #[derive(Clone, Debug)]
@@ -73,10 +78,24 @@ pub(crate) struct ModuleSnapshot {
 
 pub(super) type ImportSnapshots = HashMap<String, ModuleSnapshot>;
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct SemanticAnalysis {
+    pub(super) snapshot: ModuleSnapshot,
+    pub(super) selected_calls: HashMap<SourceSpan, CallableIdentity>,
+    pub(super) function_identities: HashMap<SourceSpan, CallableIdentity>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SemanticRecords {
+    selected_calls: HashMap<SourceSpan, CallableIdentity>,
+    function_identities: HashMap<SourceSpan, CallableIdentity>,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Environment {
     scopes: Vec<HashMap<String, SemanticBinding>>,
     imports: Rc<ImportSnapshots>,
+    records: Rc<RefCell<SemanticRecords>>,
 }
 
 impl Environment {
@@ -89,6 +108,7 @@ impl Environment {
         Self {
             scopes: vec![HashMap::new()],
             imports: Rc::new(imports),
+            records: Rc::new(RefCell::new(SemanticRecords::default())),
         }
     }
 
@@ -122,6 +142,29 @@ impl Environment {
 
     pub(super) fn import(&self, name: &str) -> Option<&ModuleSnapshot> {
         self.imports.get(name)
+    }
+
+    pub(super) fn record_selected_call(&self, span: SourceSpan, identity: CallableIdentity) {
+        self.records
+            .borrow_mut()
+            .selected_calls
+            .insert(span, identity);
+    }
+
+    pub(super) fn record_function(&self, span: SourceSpan, identity: CallableIdentity) {
+        self.records
+            .borrow_mut()
+            .function_identities
+            .insert(span, identity);
+    }
+
+    pub(super) fn analysis(&self, snapshot: ModuleSnapshot) -> SemanticAnalysis {
+        let records = self.records.borrow();
+        SemanticAnalysis {
+            snapshot,
+            selected_calls: records.selected_calls.clone(),
+            function_identities: records.function_identities.clone(),
+        }
     }
 }
 

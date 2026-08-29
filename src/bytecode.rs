@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
-use crate::{Value, source::environment::ModuleSnapshot};
+use crate::{
+    Value,
+    source::environment::{CallableIdentity, ModuleSnapshot},
+};
 
 /// A source position attached to an instruction for language diagnostics.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SourceSpan {
     pub path: String,
     pub line: u32,
@@ -206,7 +209,15 @@ pub enum Op {
     },
     Call(usize),
     CallSpread(Vec<CallArgumentKind>),
+    CallSelected {
+        kinds: Vec<CallArgumentKind>,
+        identity: usize,
+    },
     PipelineCall(Vec<CallArgumentKind>),
+    PipelineCallSelected {
+        kinds: Vec<CallArgumentKind>,
+        identity: usize,
+    },
     Import(Vec<CallArgumentKind>),
     Spawn,
     Nursery {
@@ -253,6 +264,7 @@ pub struct Chunk {
     pub name: String,
     pub arity: usize,
     pub parameters: Vec<ParameterSignature>,
+    pub(crate) callable_identity: Option<usize>,
     /// Number of frame-local slots, including parameters.
     pub locals: usize,
     pub constants: Vec<Constant>,
@@ -266,6 +278,7 @@ impl Chunk {
             name: name.into(),
             arity,
             parameters: Vec::new(),
+            callable_identity: None,
             locals: arity,
             constants: Vec::new(),
             code: Vec::new(),
@@ -299,6 +312,7 @@ pub struct Program {
     has_entrypoint: bool,
     module_name: String,
     semantic_snapshot: ModuleSnapshot,
+    callable_identities: Vec<CallableIdentity>,
 }
 
 impl Program {
@@ -380,6 +394,14 @@ impl Program {
 
     pub(crate) fn set_semantic_snapshot(&mut self, snapshot: ModuleSnapshot) {
         self.semantic_snapshot = snapshot;
+    }
+
+    pub(crate) fn callable_identity(&self, index: usize) -> Option<&CallableIdentity> {
+        self.callable_identities.get(index)
+    }
+
+    pub(crate) fn set_callable_identities(&mut self, identities: Vec<CallableIdentity>) {
+        self.callable_identities = identities;
     }
 
     /// Sets the module name used by module-relative host services.
