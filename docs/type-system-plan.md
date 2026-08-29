@@ -78,19 +78,19 @@ Generalize the case-local narrowing mechanism into reusable flow analysis.
 Use the types and narrowing facts from the first two stages to improve match
 diagnostics without changing match's runtime first-match semantics.
 
-- [ ] Specify the supported coverage domain: closed unions, direct value
+- [x] Specify the supported coverage domain: closed unions, direct value
   categories, `schema`, and nominal `struct<S>` identities; leave open maps,
   lists, arbitrary guards, and dynamic values conservative.
-- [ ] Diagnose a case whose type constraint is disjoint from the remaining
+- [x] Diagnose a case whose type constraint is disjoint from the remaining
   statically known subject type.
-- [ ] Diagnose a case made unreachable by an earlier unguarded wildcard or
+- [x] Diagnose a case made unreachable by an earlier unguarded wildcard or
   equivalent covered type constraint.
-- [ ] Diagnose non-exhaustive matches only when the subject's coverage domain
+- [x] Diagnose non-exhaustive matches only when the subject's coverage domain
   is closed and the checker can name the remaining type(s); otherwise preserve
   the runtime `nil` result without a diagnostic.
-- [ ] Treat a guard as potentially false unless it can be proved true; it must
+- [x] Treat a guard as potentially false unless it can be proved true; it must
   not make following cases unreachable by itself.
-- [ ] Add CLI tests for covered/uncovered unions, schema identities, guarded
+- [x] Add CLI tests for covered/uncovered unions, schema identities, guarded
   cases, wildcard cases, and intentionally conservative collection patterns.
 
 ## 4. Schema-aware records and nominal-reference integrity

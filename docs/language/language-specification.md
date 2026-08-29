@@ -387,6 +387,17 @@ task or channel payload types, tuple types, and generic parameters are not
 runtime-checkable and are source errors in a case constraint. The focused
 Match and Destructuring specification defines the complete rule.
 
+With `-type-check`, a match whose subject is a closed union of direct runtime
+categories or exact `struct<Name>` identities receives conservative coverage
+diagnostics. An unguarded irrefutable pattern (`_`, a binding, or an `@`
+pattern around one) covers its whole type constraint; without a constraint it
+covers every remaining member. The checker reports disjoint constrained cases,
+unreachable unguarded cases, and uncovered remaining members. Guards are
+always potentially false, and structural list, map, literal, and pinned
+patterns do not establish coverage. `any`, `unknown`, collection types,
+parameterized runtime values, and generic `struct` identity remain dynamic;
+their matches retain the ordinary `nil` result when no runtime case matches.
+
 ```slug
 val headOrZero = fn(xs) {
   match xs {

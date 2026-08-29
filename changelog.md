@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Closed, type-constrained match subjects now receive optional diagnostics for
+  uncovered members, disjoint cases, and unreachable unguarded cases. Guards
+  and structural patterns remain conservative.
+
 - Direct `== nil` and `!= nil` conditions now narrow nilable bindings within
   `if` branches and evaluated `&&`/`||` right-hand operands under
   `-type-check`, without leaking facts to the enclosing scope.

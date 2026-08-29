@@ -719,10 +719,14 @@ fn check_expression(
                 .map(|subject| check_expression(subject, environment, type_parameters, strict))
                 .transpose()?
                 .unwrap_or_else(Type::universal);
+            let coverage_enabled = strict && is_closed_coverage_type(&subject_type);
+            let mut remaining = coverage_enabled.then_some(subject_type.clone());
             let mut results = Vec::new();
             for case in cases {
                 let mut scoped = environment.clone();
                 scoped.enter_scope();
+                let mut constraints = Vec::new();
+                let mut irrefutable_constraints = Vec::new();
                 for pattern in &case.patterns {
                     let constraint = check_case_pattern(
                         pattern,
@@ -731,11 +735,48 @@ fn check_expression(
                         strict,
                         &case.span,
                     )?;
+                    constraints.push(constraint.clone());
+                    if is_irrefutable_pattern(&pattern.pattern) {
+                        irrefutable_constraints.push(constraint.clone());
+                    }
                     bind_case_pattern(
                         &pattern.pattern,
                         constraint.as_ref().unwrap_or(&subject_type),
                         &mut scoped,
                     );
+                }
+                if coverage_enabled && remaining.is_none() {
+                    return Err(SourceError::semantic(
+                        "match case is unreachable",
+                        case.span.clone(),
+                    ));
+                }
+                if let Some(current) = &remaining {
+                    if constraints.iter().all(Option::is_some)
+                        && constraints.iter().all(|constraint| {
+                            type_intersection(current, constraint.as_ref().expect("checked above"))
+                                .is_none()
+                        })
+                    {
+                        return Err(SourceError::semantic(
+                            format!("match case cannot match remaining type {current}"),
+                            case.span.clone(),
+                        ));
+                    }
+                    if case.guard.is_none() && !irrefutable_constraints.is_empty() {
+                        let coverage = if irrefutable_constraints.iter().any(Option::is_none) {
+                            current.clone()
+                        } else {
+                            Type::union(irrefutable_constraints.into_iter().flatten())
+                        };
+                        if type_intersection(current, &coverage).is_none() {
+                            return Err(SourceError::semantic(
+                                "match case is unreachable",
+                                case.span.clone(),
+                            ));
+                        }
+                        remaining = type_subtract(current, &coverage);
+                    }
                 }
                 if let Some(guard) = &case.guard {
                     check_expression(guard, &mut scoped, type_parameters, strict)?;
@@ -750,6 +791,12 @@ fn check_expression(
                     type_parameters,
                     strict,
                 )?);
+            }
+            if coverage_enabled && let Some(remaining) = remaining {
+                return Err(SourceError::semantic(
+                    format!("non-exhaustive match; missing {remaining}"),
+                    expression.span.clone(),
+                ));
             }
             Ok(Type::union(results))
         }
@@ -991,6 +1038,90 @@ fn is_dynamic_operation_type(value_type: &Type) -> bool {
         Type::Unknown | Type::Any => true,
         Type::Union(members) => members.iter().any(is_dynamic_operation_type),
         _ => false,
+    }
+}
+
+fn is_closed_coverage_type(value_type: &Type) -> bool {
+    match value_type {
+        Type::Nil
+        | Type::Bool
+        | Type::Num
+        | Type::Str
+        | Type::Bytes
+        | Type::Schema
+        | Type::Struct(Some(_))
+        | Type::Function(None)
+        | Type::Task(None)
+        | Type::Channel(None) => true,
+        Type::Union(members) => members.iter().all(is_closed_coverage_type),
+        Type::Unknown
+        | Type::Any
+        | Type::List(_)
+        | Type::Map(_)
+        | Type::Function(Some(_))
+        | Type::Task(Some(_))
+        | Type::Channel(Some(_))
+        | Type::Struct(None)
+        | Type::Tuple(_)
+        | Type::Generic(_) => false,
+    }
+}
+
+fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Wildcard | Pattern::Binding(_) => true,
+        Pattern::At { pattern, .. } => is_irrefutable_pattern(pattern),
+        Pattern::List { .. }
+        | Pattern::Map { .. }
+        | Pattern::Literal(_)
+        | Pattern::Pinned(_)
+        | Pattern::MapAll => false,
+    }
+}
+
+fn type_intersection(left: &Type, right: &Type) -> Option<Type> {
+    if let Type::Union(members) = left {
+        return union_intersections(members, right);
+    }
+    if let Type::Union(members) = right {
+        return union_intersections(members, left);
+    }
+    if left == right {
+        return Some(left.clone());
+    }
+    match (left, right) {
+        (Type::Struct(None), Type::Struct(Some(name)))
+        | (Type::Struct(Some(name)), Type::Struct(None)) => Some(Type::Struct(Some(name.clone()))),
+        _ => None,
+    }
+}
+
+fn union_intersections(members: &[Type], other: &Type) -> Option<Type> {
+    let intersections = members
+        .iter()
+        .filter_map(|member| type_intersection(member, other))
+        .collect::<Vec<_>>();
+    (!intersections.is_empty()).then(|| Type::union(intersections))
+}
+
+fn type_subtract(left: &Type, right: &Type) -> Option<Type> {
+    if let Type::Union(members) = right {
+        return members.iter().try_fold(left.clone(), |remaining, member| {
+            type_subtract(&remaining, member)
+        });
+    }
+    if let Type::Union(members) = left {
+        let remaining = members
+            .iter()
+            .filter(|member| type_intersection(member, right).is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        return (!remaining.is_empty()).then(|| Type::union(remaining));
+    }
+    if type_intersection(left, right).is_some() {
+        None
+    } else {
+        Some(left.clone())
     }
 }
 

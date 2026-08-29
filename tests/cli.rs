@@ -1796,6 +1796,66 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
 }
 
 #[test]
+fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
+    let path = fixture_path("match-coverage");
+    fs::write(
+        &path,
+        "val S = struct {}\n\
+         val T = struct {}\n\
+         val classify = fn(value:str|nil) { match value { _:str => \"str\"; _:nil => \"nil\" } }\n\
+         val guarded = fn(value:str|nil) { match value { _:str if true => \"guarded\"; _:str => \"str\"; _:nil => \"nil\" } }\n\
+         val schema = fn(value:struct<S>|struct<T>) { match value { _:struct<S> => \"s\"; _:struct<T> => \"t\" } }\n\
+         val structural = fn(values:list<num>) { match values { [head, ...] => head } }\n\
+         println(classify(\"Slug\"), classify(nil), guarded(\"Slug\"), schema(S {}), schema(T {}), structural([]))\n",
+    )
+    .expect("write covered match source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run covered match source");
+    fs::remove_file(&path).expect("remove covered match source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "str nil guarded s t nil\n"
+    );
+
+    for (source, expected) in [
+        (
+            "val value:str|nil = nil\nmatch value { _:str => \"str\" }\n",
+            "non-exhaustive match; missing nil",
+        ),
+        (
+            "val value:str|nil = nil\nmatch value { _:str => \"str\"; _:num => \"num\"; _:nil => \"nil\" }\n",
+            "match case cannot match remaining type nil",
+        ),
+        (
+            "val value:str|nil = nil\nmatch value { _:str => \"str\"; _:nil => \"nil\"; _ => \"never\" }\n",
+            "match case is unreachable",
+        ),
+    ] {
+        fs::write(&path, source).expect("write invalid match coverage source");
+        let output = slug()
+            .arg("-type-check")
+            .arg(&path)
+            .output()
+            .expect("run invalid match coverage source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .starts_with(&format!("slug: semantic error: {expected}"))
+        );
+    }
+    fs::remove_file(path).expect("remove invalid match coverage source");
+}
+
+#[test]
 fn rejects_non_reifiable_match_type_constraints() {
     let path = fixture_path("invalid-match-type-constraint");
     fs::write(&path, "match value { _: fn<num, num> => true }\n")
