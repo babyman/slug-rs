@@ -45,11 +45,23 @@ implementation data, not portable bytecode or a `.cslug` compatibility promise.
 
 ### Overloaded calls select one signature statically
 
+Type annotations do not introduce runtime validation or coercion. Parameter
+annotations participate in mandatory resolution of statically known overloads.
+Optional type checking uses annotations for additional diagnostics; it never
+changes which signature a program accepted in both modes selects.
+
 Whenever the callee expression has a statically known callable set, semantic
 validation performs argument-shape binding and generic inference for every
 candidate before compilation. A candidate is applicable only when its named,
 positional, default, variadic, and explicit type-argument rules succeed and
 all known argument types satisfy its instantiated parameter annotations.
+The compiler trusts a binding's declared annotation for this purpose even when
+optional type checking is disabled.
+
+An argument whose type is not statically known does not disqualify a candidate.
+If argument shape and the known argument types do not identify one
+most-specific signature, compilation reports ambiguity rather than deferring
+type-aware selection to runtime.
 
 The call must have one most-specific applicable candidate. A candidate is more
 specific when its instantiated parameter types accept a strict subset of the
@@ -109,8 +121,11 @@ first-loaded binding and warning.
   distinguish otherwise identical callable declarations.
 - The compiler, module metadata, and VM need a shared private signature
   identity and tests for both local and imported callable sets.
-- Static selection is a semantic compilation rule for known callable sets; it
-  is not controlled by the optional `-type-check` diagnostic mode.
+- Static selection is a mandatory semantic compilation rule for known callable
+  sets. The optional `-type-check` mode may reject additional inconsistencies,
+  but cannot change overload selection for a program accepted in both modes.
+- Parameter annotations have compile-time operational meaning for overload
+  resolution even when optional type checking is disabled.
 - Dynamic function values remain supported, but they deliberately retain
   shape-based runtime dispatch and cannot promise typed overload selection.
 - The VM avoids a second type system and annotations remain non-coercive.
@@ -120,5 +135,7 @@ first-loaded binding and warning.
 Existing calls whose overload selection depended on import order will either
 resolve to their uniquely most-specific signature or fail at compilation as
 ambiguous. Module authors should add parameter annotations, use distinct names,
-or make the call's argument type explicit to remove ambiguity. No source
-syntax or portable-bytecode migration is introduced.
+or make the call's argument type explicit to remove ambiguity. Adding or
+changing a parameter or binding annotation can change static overload
+selection even without `-type-check`. No source syntax or portable-bytecode
+migration is introduced.

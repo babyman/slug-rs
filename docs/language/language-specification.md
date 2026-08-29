@@ -591,11 +591,13 @@ line. Documentation and tags are observable through `slug.meta` introspection.
 ## Static checking
 
 Slug always performs semantic validation, including `recur` tail-position
-validation, struct-schema checks, and zero-argument program-entrypoint
-validation. Inferred
-type checking is optional and is enabled by the CLI `-type-check` flag. When it
-is enabled, type diagnostics prevent execution. Without it, type tags remain
-metadata and unsupported operations fail through normal runtime errors.
+validation, struct-schema checks, zero-argument program-entrypoint validation,
+and resolution of statically known overloads. Type annotations do not introduce
+runtime validation or coercion. Parameter annotations participate in mandatory
+resolution of statically known overloads. Optional type checking uses
+annotations for additional diagnostics and is enabled by the CLI `-type-check`
+flag. When it is enabled, those additional type diagnostics prevent execution;
+it does not change overload selection for a program accepted in both modes.
 
 The current Rust subset parses and retains declaration, parameter, return, and
 struct-field annotations. Its optional checker rejects directly provable

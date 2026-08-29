@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Defined static overload signatures by their type parameters and inputs;
-  return annotations remain available for checking and inference but do not
-  participate in overload identity or selection.
+- Defined static overload signatures by their type parameters and inputs.
+  Parameter annotations participate in mandatory overload resolution in every
+  compiler mode, while `-type-check` adds diagnostics without changing
+  selection. Return annotations remain available for checking and inference
+  but do not participate in overload identity or selection.
 
 - Removed the ambient `send` and `recv` builtins. Channel operations are now
   available exclusively through the `slug.channel` source-library bindings,
