@@ -636,21 +636,51 @@ unacceptable growth.
 
 ### 5. Complete executable and allocation accounting
 
-- [ ] Measure inline instruction storage, heap-owned opcode operands,
+- [x] Measure inline instruction storage, heap-owned opcode operands,
   constants, metadata pools, source tables, capacities, and shared versus
   duplicated program storage.
-- [ ] Decide whether the remaining inline interpolation, spread, call,
+- [x] Decide whether the remaining inline interpolation, spread, call,
   import, `select`, and `recur` descriptors should use typed pools.
-- [ ] Measure verifier time separately and decide whether an immutable
+- [x] Measure verifier time separately and decide whether an immutable
   `VerifiedProgram` installation boundary should avoid repeated whole-program
   verification.
-- [ ] Add scoped `Value` clone, move, drop, and reference-count traffic for the
-  Stage 7 prototype rather than treating instruction bytes as total executable
-  size.
+- [x] Reserve scoped `Value` clone, move, drop, and reference-count traffic for
+  the Stage 7 prototype rather than treating instruction bytes as total
+  executable size. It is deliberately not installed as broad production
+  instrumentation before that prototype exists.
 
 Do not describe the current 64-byte typed instruction as a compact executable
 encoding. Installing an 8-bit-tag/32-bit-operand representation remains a
 future change that requires before/after total-size and dispatch evidence.
+
+#### Measurement record: executable and allocation accounting (2026-08-30)
+
+Command: `make bench-vm` (which enables the opt-in `metrics` feature).
+`Program::layout_metrics` now reports the inline `Program` object, vector
+capacities for chunks and constants, remaining inline opcode descriptors,
+indexed metadata pools, and source tables. It intentionally does not claim
+allocator-resident bytes for `HashMap` buckets, nested `Value` heap objects, or
+the contents owned by nested metadata values. The shared-versus-duplicated
+program counter remains `program_clones` and its estimated copied instruction
+bytes, added in item 1.
+
+| Workload                        | Program inline | Chunk storage | Constant capacity | Descriptor capacity | Metadata capacity | Source-table capacity | Verification time |
+|---------------------------------|---------------:|--------------:|------------------:|--------------------:|------------------:|----------------------:|------------------:|
+| calls and closures (1,000 runs) |          512 B |       3,068 B |             160 B |                48 B |             480 B |                 448 B |            2.8 ms |
+| 32 timed tasks (100 runs)       |          512 B |      83,152 B |             320 B |                66 B |           5,760 B |               6,208 B |           17.3 ms |
+| 128 timed tasks (25 runs)       |          512 B |     330,064 B |             320 B |               258 B |          22,656 B |              24,640 B |            7.0 ms |
+
+The capacity figures are for one compiled program; verification time is the
+aggregate across the stated runs and is directional machine-local evidence.
+The remaining descriptor vectors are small in this corpus, so they stay inline
+to preserve straightforward source construction. Pool them only if a
+descriptor-specific allocation or dispatch measurement identifies a material
+cost. Repeated validation is now measured separately, but no `VerifiedProgram`
+owner is installed: the public private-bytecode entry boundary remains checked,
+and an immutable boundary would need a separate design that preserves that
+failure behavior. `Value` traffic accounting is deferred to the Stage 7
+prototype, where its scope can distinguish register-lowering traffic from the
+existing stack VM rather than imposing broad, non-actionable instrumentation.
 
 ### 6. Make optimization metrics a tested contract
 

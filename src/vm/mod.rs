@@ -88,6 +88,8 @@ pub struct VmMetrics {
     pub peak_task_waiters: usize,
     /// Time spent blocked in the scheduler signal wait.
     pub scheduler_wait_time: Duration,
+    /// Time spent structurally validating private bytecode.
+    pub verification_time: Duration,
     /// Whole programs cloned to establish an installed execution owner.
     pub program_clones: usize,
     /// Estimated inline bytecode bytes copied by whole-program clones.
@@ -631,9 +633,15 @@ impl Vm {
 
     fn run_installed_execution(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<Value> {
         self.module_program = Some(program.clone());
+        #[cfg(feature = "metrics")]
+        let verification_started = Instant::now();
         program
             .validate(entry)
             .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().verification_time += verification_started.elapsed();
+        }
         let chunk = program.chunk(entry).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,

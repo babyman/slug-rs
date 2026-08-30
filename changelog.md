@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Expanded executable-layout accounting to include program, chunk, constant,
+  descriptor, metadata, and source-table capacities, and added separately
+  reported private-bytecode verification time to the opt-in VM metrics.
+
 - Added opt-in scheduler scaling counters for queue scans, waiter-removal
   work, queue peaks, and blocked scheduler time, plus scaled timer benchmarks
   and a cancellation workload that proves it does not wait for its timers.

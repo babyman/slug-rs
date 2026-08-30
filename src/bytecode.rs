@@ -448,9 +448,17 @@ pub struct Program {
 /// Layout measurements for private bytecode metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BytecodeLayoutMetrics {
+    pub program_inline_bytes: usize,
     pub instructions: usize,
     pub instruction_bytes: usize,
     pub instruction_size_bytes: usize,
+    pub chunk_storage_bytes: usize,
+    pub constant_pool_slots: usize,
+    pub constant_pool_capacity_bytes: usize,
+    pub descriptor_capacity_bytes: usize,
+    pub metadata_pool_slots: usize,
+    pub metadata_pool_capacity_bytes: usize,
+    pub source_table_capacity_bytes: usize,
     pub largest_chunk_instructions: usize,
     pub largest_constant_pool: usize,
     pub largest_local_frame: usize,
@@ -515,25 +523,108 @@ impl Program {
     #[must_use]
     pub fn layout_metrics(&self) -> BytecodeLayoutMetrics {
         let instructions = self.chunks.iter().map(|chunk| chunk.code.len()).sum();
-        let largest_chunk_instructions = self
-            .chunks
+        let (chunk_storage_bytes, constant_pool_slots, constant_pool_capacity_bytes) =
+            self.chunk_layout_metrics();
+        let (metadata_pool_slots, metadata_pool_capacity_bytes) = self.metadata_pool_metrics();
+        let largest_metadata_pool = self.largest_metadata_pool();
+        let span_runs = self.span_runs();
+        let source_table_capacity_bytes = self.source_table_capacity_bytes();
+        let descriptor_capacity_bytes = self.descriptor_capacity_bytes();
+        let (largest_chunk_instructions, largest_constant_pool, largest_local_frame) =
+            self.largest_chunk_metrics();
+        BytecodeLayoutMetrics {
+            program_inline_bytes: std::mem::size_of::<Self>(),
+            instructions,
+            instruction_bytes: instructions * std::mem::size_of::<Instruction>(),
+            instruction_size_bytes: std::mem::size_of::<Instruction>(),
+            chunk_storage_bytes,
+            constant_pool_slots,
+            constant_pool_capacity_bytes,
+            descriptor_capacity_bytes,
+            metadata_pool_slots,
+            metadata_pool_capacity_bytes,
+            source_table_capacity_bytes,
+            largest_chunk_instructions,
+            largest_constant_pool,
+            largest_local_frame,
+            largest_metadata_pool,
+            span_table_entries: self.spans.len(),
+            inline_span_bytes: instructions * std::mem::size_of::<Option<SpanId>>(),
+            compressed_span_map_bytes: span_runs * (std::mem::size_of::<u32>() * 2),
+        }
+    }
+
+    fn chunk_layout_metrics(&self) -> (usize, usize, usize) {
+        self.chunks.iter().fold((0, 0, 0), |totals, chunk| {
+            (
+                totals.0
+                    + chunk.code.capacity() * std::mem::size_of::<Instruction>()
+                    + chunk.constants.capacity() * std::mem::size_of::<Constant>()
+                    + chunk.parameters.capacity() * std::mem::size_of::<ParameterSignature>()
+                    + chunk.name.capacity(),
+                totals.1 + chunk.constants.len(),
+                totals.2 + chunk.constants.capacity() * std::mem::size_of::<Constant>(),
+            )
+        })
+    }
+
+    fn descriptor_capacity_bytes(&self) -> usize {
+        self.chunks
             .iter()
-            .map(|chunk| chunk.code.len())
-            .max()
-            .unwrap_or_default();
-        let largest_constant_pool = self
-            .chunks
-            .iter()
-            .map(|chunk| chunk.constants.len())
-            .max()
-            .unwrap_or_default();
-        let largest_local_frame = self
-            .chunks
-            .iter()
-            .map(|chunk| chunk.locals)
-            .max()
-            .unwrap_or_default();
-        let largest_metadata_pool = [
+            .flat_map(|chunk| &chunk.code)
+            .map(|instruction| match &instruction.op {
+                Op::Interpolate(parts) => {
+                    parts.capacity() * std::mem::size_of::<String>()
+                        + parts.iter().map(String::capacity).sum::<usize>()
+                }
+                Op::ListSpread(spreads) => spreads.capacity() * std::mem::size_of::<bool>(),
+                Op::CallSpread(kinds)
+                | Op::PipelineCall(kinds)
+                | Op::Import(kinds)
+                | Op::Recur(kinds) => kinds.capacity() * std::mem::size_of::<CallArgumentKind>(),
+                Op::CallSelected { kinds, .. } | Op::PipelineCallSelected { kinds, .. } => {
+                    kinds.capacity() * std::mem::size_of::<CallArgumentKind>()
+                }
+                Op::Select(cases) => cases.capacity() * std::mem::size_of::<SelectCase>(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    fn metadata_pool_metrics(&self) -> (usize, usize) {
+        let slots = self.callable_identities.len()
+            + self.global_names.len()
+            + self.capture_lists.len()
+            + self.schema_fields.len()
+            + self.struct_fields.len()
+            + self.match_patterns.len();
+        let capacity_bytes = self.callable_identities.capacity()
+            * std::mem::size_of::<CallableIdentity>()
+            + self.global_names.capacity() * std::mem::size_of::<String>()
+            + self.capture_lists.capacity() * std::mem::size_of::<Vec<Capture>>()
+            + self.schema_fields.capacity() * std::mem::size_of::<Vec<SchemaField>>()
+            + self.struct_fields.capacity() * std::mem::size_of::<Vec<String>>()
+            + self.match_patterns.capacity() * std::mem::size_of::<MatchPattern>();
+        (slots, capacity_bytes)
+    }
+
+    fn source_table_capacity_bytes(&self) -> usize {
+        self.sources.capacity() * std::mem::size_of::<Arc<str>>()
+            + self.spans.capacity() * std::mem::size_of::<SourceSpan>()
+    }
+
+    fn largest_chunk_metrics(&self) -> (usize, usize, usize) {
+        self.chunks.iter().fold((0, 0, 0), |largest, chunk| {
+            (
+                largest.0.max(chunk.code.len()),
+                largest.1.max(chunk.constants.len()),
+                largest.2.max(chunk.locals),
+            )
+        })
+    }
+
+    fn largest_metadata_pool(&self) -> usize {
+        [
             self.callable_identities.len(),
             self.global_names.len(),
             self.capture_lists.len(),
@@ -543,9 +634,11 @@ impl Program {
         ]
         .into_iter()
         .max()
-        .unwrap_or_default();
-        let span_runs = self
-            .chunks
+        .unwrap_or_default()
+    }
+
+    fn span_runs(&self) -> usize {
+        self.chunks
             .iter()
             .map(|chunk| {
                 let mut runs = 0usize;
@@ -558,19 +651,7 @@ impl Program {
                 }
                 runs
             })
-            .sum::<usize>();
-        BytecodeLayoutMetrics {
-            instructions,
-            instruction_bytes: instructions * std::mem::size_of::<Instruction>(),
-            instruction_size_bytes: std::mem::size_of::<Instruction>(),
-            largest_chunk_instructions,
-            largest_constant_pool,
-            largest_local_frame,
-            largest_metadata_pool,
-            span_table_entries: self.spans.len(),
-            inline_span_bytes: instructions * std::mem::size_of::<Option<SpanId>>(),
-            compressed_span_map_bytes: span_runs * (std::mem::size_of::<u32>() * 2),
-        }
+            .sum()
     }
 
     fn intern_span(&mut self, span: SourceSpan) -> SpanId {

@@ -22,10 +22,11 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?} ({scheduler_wait:?} scheduler wait); {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups/{deadline_entries} entries; {wakeups} timer wakeups/{wakeup_entries} entries; {removals} wait-registration removals; removal entries channel/task/timer {channel_entries}/{task_entries}/{timer_entries}; peak timers/ready/channel/task {peak_timers}/{peak_ready}/{peak_channel}/{peak_task}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {scheduler_wait:?} scheduler wait); {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups/{deadline_entries} entries; {wakeups} timer wakeups/{wakeup_entries} entries; {removals} wait-registration removals; removal entries channel/task/timer {channel_entries}/{task_entries}/{timer_entries}; peak timers/ready/channel/task {peak_timers}/{peak_ready}/{peak_channel}/{peak_task}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             scheduler_wait = metrics.scheduler_wait_time,
+            verification = metrics.verification_time,
             instructions = metrics.instructions_executed,
             clones = metrics.instruction_clones,
             spans = metrics.source_span_clones,
@@ -46,6 +47,12 @@ fn main() {
             peak_ready = metrics.peak_ready_queue,
             peak_channel = metrics.peak_channel_waiters,
             peak_task = metrics.peak_task_waiters,
+            program_inline = layout.program_inline_bytes,
+            chunk_storage = layout.chunk_storage_bytes,
+            constant_bytes = layout.constant_pool_capacity_bytes,
+            descriptor_bytes = layout.descriptor_capacity_bytes,
+            metadata_bytes = layout.metadata_pool_capacity_bytes,
+            source_bytes = layout.source_table_capacity_bytes,
             instruction_bytes = layout.instruction_bytes,
             instruction_size_bytes = layout.instruction_size_bytes,
             largest_chunk_instructions = layout.largest_chunk_instructions,
@@ -94,6 +101,7 @@ fn run(program: &Program, iterations: usize) -> (Duration, VmMetrics) {
             .max(run_metrics.peak_channel_waiters);
         metrics.peak_task_waiters = metrics.peak_task_waiters.max(run_metrics.peak_task_waiters);
         metrics.scheduler_wait_time += run_metrics.scheduler_wait_time;
+        metrics.verification_time += run_metrics.verification_time;
     }
     (started.elapsed(), metrics)
 }

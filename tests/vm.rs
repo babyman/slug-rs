@@ -156,7 +156,11 @@ fn interns_instruction_spans_and_preserves_diagnostics() {
     assert_eq!(program.source_count(), 1);
     assert_eq!(program.span_count(), 1);
     let layout = program.layout_metrics();
+    assert!(layout.program_inline_bytes > 0);
     assert_eq!(layout.instructions, 4);
+    assert_eq!(layout.constant_pool_slots, 2);
+    assert!(layout.chunk_storage_bytes >= layout.instruction_bytes);
+    assert!(layout.constant_pool_capacity_bytes >= 2 * std::mem::size_of::<slug_vm::Constant>());
     assert!(layout.compressed_span_map_bytes < layout.inline_span_bytes);
     let error = Vm::new()
         .run(&program, 0)
