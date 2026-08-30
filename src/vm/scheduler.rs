@@ -6,6 +6,8 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "metrics")]
+use crate::vm::VmMetrics;
 use crate::{
     RuntimeError, Task, Value,
     scheduler_signal::SchedulerSignal,
@@ -30,20 +32,34 @@ pub(super) struct Nursery {
 }
 
 impl Nursery {
-    pub(super) fn root() -> Self {
-        Self::new(SettlementPolicy::Join)
+    pub(super) fn root(#[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>) -> Self {
+        Self::new(
+            SettlementPolicy::Join,
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
     }
 
-    pub(super) fn explicit() -> Self {
-        Self::new(SettlementPolicy::FailFast)
+    pub(super) fn explicit(#[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>) -> Self {
+        Self::new(
+            SettlementPolicy::FailFast,
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
     }
 
-    fn new(policy: SettlementPolicy) -> Self {
+    fn new(
+        policy: SettlementPolicy,
+        #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
+    ) -> Self {
         Self {
             tasks: RefCell::new(Vec::new()),
             ready: Rc::new(RefCell::new(VecDeque::new())),
             policy,
-            timers: Rc::new(RefCell::new(TimerService::new())),
+            timers: Rc::new(RefCell::new(TimerService::new(
+                #[cfg(feature = "metrics")]
+                metrics,
+            ))),
             native_channels: RefCell::new(Vec::new()),
             signal: Arc::new(SchedulerSignal::new()),
         }

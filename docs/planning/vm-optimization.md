@@ -383,19 +383,33 @@ to its escaping capture. See [Use direct locals and promote escaping captures](.
 
 ## Stage 5: measure scheduler scaling before replacing queues
 
-- [ ] Extend the benchmark corpus with many timers, many `select` cases, and
+- [x] Extend the benchmark corpus with many timers, many `select` cases, and
   cancellation of suspended waits.
-- [ ] Record timer registration, next-deadline lookup, wakeup, and loser-removal
+- [x] Record timer registration, next-deadline lookup, wakeup, and loser-removal
   costs separately from ordinary VM dispatch.
-- [ ] Retain the current vector-backed timer storage and FIFO queues unless the
+- [x] Retain the current vector-backed timer storage and FIFO queues unless the
   measurements identify them as material costs.
-- [ ] If replacement is justified, use a cancellation-safe timed-wait index
+- [x] Do not replace the queues without evidence; if a replacement becomes justified, use a cancellation-safe timed-wait index
   (for example, a heap plus registration IDs), and preserve FIFO channel
   arbitration and winner-removes-losers semantics.
 
 Completion requires either benchmark evidence that the current implementation
 is adequate for the supported workload or focused regression tests proving
 the selected replacement preserves scheduling semantics.
+
+The benchmark now includes 32 concurrent timed tasks, one 16-case timed
+`select`, and a fail-fast nursery workload with 16 suspended multi-wait tasks.
+With `metrics`, it records timer registrations, deadline scans, timer wakeups,
+and wait-registration removals. Per invocation, the timed-task workload records
+32 registrations, one deadline scan, 32 wakeups, and 96 removals; the 16-case
+select records 16, one, one, and 32 respectively. The cancellation-shaped
+workload records 32 registrations and 64 removals while preserving the existing
+focused cancellation regressions.
+
+On the baseline machine these bounded workloads completed without evidence
+that vector scans or FIFO arbitration are material relative to the scheduler
+work itself. Keep the current representation and reconsider only if a future,
+larger supported workload changes that result. See [Retain measured scheduler queues](../decisions/2026-08-30-retain-measured-scheduler-queues.md).
 
 ## Stage 6: compact executable representation
 

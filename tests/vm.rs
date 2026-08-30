@@ -81,6 +81,21 @@ fn promotes_only_locals_that_a_closure_captures() {
 }
 
 #[test]
+#[cfg(feature = "metrics")]
+fn records_timer_and_select_cleanup_metrics() {
+    let program = compile("scheduler-metrics.slug", "select { after 1; after 10 }\n")
+        .expect("compile scheduler metrics source");
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Nil);
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.timer_registrations, 2);
+    assert!(metrics.timer_deadline_lookups >= 1);
+    assert_eq!(metrics.timer_wakeups, 1);
+    assert!(metrics.wait_registration_removals >= 2);
+}
+
+#[test]
 fn interns_instruction_spans_and_preserves_diagnostics() {
     let span = SourceSpan::new("interned.slug", 3, 5);
     let mut main = Chunk::new("main", 0);

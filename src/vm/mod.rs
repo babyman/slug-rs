@@ -60,6 +60,14 @@ pub struct VmMetrics {
     pub frames_created: usize,
     /// Frame-local binding cells allocated by the current representation.
     pub local_binding_cells_created: usize,
+    /// Timed waits registered with nursery timer services.
+    pub timer_registrations: usize,
+    /// Timer-service scans for the next deadline.
+    pub timer_deadline_lookups: usize,
+    /// Waiters resumed after their timer deadline became due.
+    pub timer_wakeups: usize,
+    /// Wait registrations removed when a select settles or a task is cancelled.
+    pub wait_registration_removals: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -222,6 +230,8 @@ pub struct Vm {
 
 impl Default for Vm {
     fn default() -> Self {
+        #[cfg(feature = "metrics")]
+        let metrics = Rc::new(RefCell::new(VmMetrics::default()));
         Self {
             module_loader: None,
             module_program: None,
@@ -231,7 +241,10 @@ impl Default for Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
-            nursery: Rc::new(Nursery::root()),
+            nursery: Rc::new(Nursery::root(
+                #[cfg(feature = "metrics")]
+                metrics.clone(),
+            )),
             direct_task_limit: None,
             direct_task_count: None,
             native_resources: native_resource_registry(),
@@ -240,7 +253,7 @@ impl Default for Vm {
             resume: None,
             wait_registration: None,
             #[cfg(feature = "metrics")]
-            metrics: Rc::new(RefCell::new(VmMetrics::default())),
+            metrics,
         }
     }
 }
@@ -2716,7 +2729,10 @@ impl Vm {
                 span,
             ));
         };
-        let nursery = Rc::new(Nursery::explicit());
+        let nursery = Rc::new(Nursery::explicit(
+            #[cfg(feature = "metrics")]
+            self.metrics.clone(),
+        ));
         let execution = self.module_closure_execution(
             Rc::new(program.clone()),
             closure,
@@ -2801,7 +2817,10 @@ impl Vm {
                 span,
             ));
         };
-        let nursery = Rc::new(Nursery::explicit());
+        let nursery = Rc::new(Nursery::explicit(
+            #[cfg(feature = "metrics")]
+            self.metrics.clone(),
+        ));
         let execution = self.module_closure_execution(
             Rc::new(program.clone()),
             closure,
@@ -3655,7 +3674,11 @@ impl Vm {
                 RuntimeSelectCase::Default { .. } => {}
             }
         }
-        let registrations = WaitSet::many(registrations);
+        let registrations = WaitSet::many(
+            registrations,
+            #[cfg(feature = "metrics")]
+            self.metrics.clone(),
+        );
         WaitSet::set_select_registrations(&select_state, registrations.clone());
         self.wait_registration = Some(registrations);
         self.stack.push(Value::Nil);
@@ -3872,7 +3895,11 @@ impl Vm {
                 RuntimeSelectCase::Default { .. } => {}
             }
         }
-        let registrations = WaitSet::many(registrations);
+        let registrations = WaitSet::many(
+            registrations,
+            #[cfg(feature = "metrics")]
+            self.metrics.clone(),
+        );
         WaitSet::set_select_registrations(&select_state, registrations.clone());
         self.wait_registration = Some(registrations);
         self.stack.push(Value::Nil);

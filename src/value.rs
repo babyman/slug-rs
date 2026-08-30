@@ -185,16 +185,26 @@ impl WaitRegistration {
 /// Shared monotonic timer queue for one dynamic nursery.
 pub(crate) struct TimerService {
     waiters: Vec<(Instant, Waiter)>,
+    #[cfg(feature = "metrics")]
+    metrics: Rc<RefCell<crate::vm::VmMetrics>>,
 }
 
 impl TimerService {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(
+        #[cfg(feature = "metrics")] metrics: Rc<RefCell<crate::vm::VmMetrics>>,
+    ) -> Self {
         Self {
             waiters: Vec::new(),
+            #[cfg(feature = "metrics")]
+            metrics,
         }
     }
 
     pub(crate) fn register(&mut self, deadline: Instant, waiter: Waiter) {
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().timer_registrations += 1;
+        }
         self.waiters.push((deadline, waiter));
     }
 
@@ -209,10 +219,18 @@ impl TimerService {
                 true
             }
         });
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().timer_wakeups += due.len();
+        }
         due
     }
 
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().timer_deadline_lookups += 1;
+        }
         self.waiters.iter().map(|(deadline, _)| *deadline).min()
     }
 }
@@ -223,11 +241,20 @@ impl TimerService {
 #[derive(Clone)]
 pub(crate) struct WaitSet {
     registrations: Vec<WaitRegistration>,
+    #[cfg(feature = "metrics")]
+    metrics: Rc<RefCell<crate::vm::VmMetrics>>,
 }
 
 impl WaitSet {
-    pub(crate) fn many(registrations: Vec<WaitRegistration>) -> Self {
-        Self { registrations }
+    pub(crate) fn many(
+        registrations: Vec<WaitRegistration>,
+        #[cfg(feature = "metrics")] metrics: Rc<RefCell<crate::vm::VmMetrics>>,
+    ) -> Self {
+        Self {
+            registrations,
+            #[cfg(feature = "metrics")]
+            metrics,
+        }
     }
 
     pub(crate) fn select_state(waiter: Waiter) -> Rc<RefCell<SelectWaitState>> {
@@ -246,6 +273,10 @@ impl WaitSet {
     }
 
     fn remove(self, waiter: &Waiter) {
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().wait_registration_removals += self.registrations.len();
+        }
         for registration in self.registrations {
             registration.remove(waiter);
         }
