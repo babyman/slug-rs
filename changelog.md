@@ -87,6 +87,9 @@
 - Added opt-in scheduler pressure benchmarks and counters for timer lifecycle
   and wait-registration cleanup; retained the existing vector/FIFO queues.
 
+- Added executable-layout limit reporting and selected fixed-width fields for
+  a future compact private encoding without creating a serialized opcode format.
+
 - The VM benchmark now reports bytecode layout and source-map compression
   estimates to support future representation decisions.
 

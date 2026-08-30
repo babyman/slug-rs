@@ -22,7 +22,7 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?}; {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups; {wakeups} timer wakeups; {removals} wait-registration removals; {instruction_bytes} instruction bytes; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?}; {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups; {wakeups} timer wakeups; {removals} wait-registration removals; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             instructions = metrics.instructions_executed,
@@ -35,6 +35,11 @@ fn main() {
             wakeups = metrics.timer_wakeups,
             removals = metrics.wait_registration_removals,
             instruction_bytes = layout.instruction_bytes,
+            instruction_size_bytes = layout.instruction_size_bytes,
+            largest_chunk_instructions = layout.largest_chunk_instructions,
+            largest_constant_pool = layout.largest_constant_pool,
+            largest_local_frame = layout.largest_local_frame,
+            largest_metadata_pool = layout.largest_metadata_pool,
             span_entries = layout.span_table_entries,
             inline_span_bytes = layout.inline_span_bytes,
             compressed_span_map_bytes = layout.compressed_span_map_bytes,

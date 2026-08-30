@@ -444,6 +444,11 @@ pub struct Program {
 pub struct BytecodeLayoutMetrics {
     pub instructions: usize,
     pub instruction_bytes: usize,
+    pub instruction_size_bytes: usize,
+    pub largest_chunk_instructions: usize,
+    pub largest_constant_pool: usize,
+    pub largest_local_frame: usize,
+    pub largest_metadata_pool: usize,
     pub span_table_entries: usize,
     pub inline_span_bytes: usize,
     pub compressed_span_map_bytes: usize,
@@ -504,6 +509,35 @@ impl Program {
     #[must_use]
     pub fn layout_metrics(&self) -> BytecodeLayoutMetrics {
         let instructions = self.chunks.iter().map(|chunk| chunk.code.len()).sum();
+        let largest_chunk_instructions = self
+            .chunks
+            .iter()
+            .map(|chunk| chunk.code.len())
+            .max()
+            .unwrap_or_default();
+        let largest_constant_pool = self
+            .chunks
+            .iter()
+            .map(|chunk| chunk.constants.len())
+            .max()
+            .unwrap_or_default();
+        let largest_local_frame = self
+            .chunks
+            .iter()
+            .map(|chunk| chunk.locals)
+            .max()
+            .unwrap_or_default();
+        let largest_metadata_pool = [
+            self.callable_identities.len(),
+            self.global_names.len(),
+            self.capture_lists.len(),
+            self.schema_fields.len(),
+            self.struct_fields.len(),
+            self.match_patterns.len(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or_default();
         let span_runs = self
             .chunks
             .iter()
@@ -522,6 +556,11 @@ impl Program {
         BytecodeLayoutMetrics {
             instructions,
             instruction_bytes: instructions * std::mem::size_of::<Instruction>(),
+            instruction_size_bytes: std::mem::size_of::<Instruction>(),
+            largest_chunk_instructions,
+            largest_constant_pool,
+            largest_local_frame,
+            largest_metadata_pool,
             span_table_entries: self.spans.len(),
             inline_span_bytes: instructions * std::mem::size_of::<Option<SpanId>>(),
             compressed_span_map_bytes: span_runs * (std::mem::size_of::<u32>() * 2),

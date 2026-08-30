@@ -413,18 +413,34 @@ larger supported workload changes that result. See [Retain measured scheduler qu
 
 ## Stage 6: compact executable representation
 
-- [ ] Select field widths and instruction formats from measured program limits;
+- [x] Select field widths and instruction formats from measured program limits;
   do not make Rust enum layout or host pointer width part of the format.
-- [ ] Keep regular operations for loads, moves, arithmetic, comparison, jumps,
+- [x] Keep regular operations for loads, moves, arithmetic, comparison, jumps,
   and returns.
-- [ ] Keep calls, closure creation, collection construction, matching, cleanup,
+- [x] Keep calls, closure creation, collection construction, matching, cleanup,
   throwing, and recurrence as medium-grained semantic operations where that
   avoids repeated dispatch or duplicated validation.
-- [ ] Add a fused superinstruction only when a benchmark identifies a stable
+- [x] Do not add a fused superinstruction unless a benchmark identifies a stable
   hot sequence and the added verifier/compiler complexity is justified.
 
 Compact encoding is independent of whether expression temporaries use an
 operand stack or frame registers.
+
+The layout report now records maximum chunk length, constant-pool size, local
+frame size, and metadata-pool size alongside the 64-byte Rust `Instruction`
+layout. The representative corpus reaches at most 525 instructions in one
+chunk, 16 constants, one local frame slot, and 33 metadata entries. These are
+comfortably below 16-bit limits, but a future installed encoding adopts an
+8-bit opcode tag plus 32-bit operand/index fields: `u32` aligns with the
+existing checked metadata IDs and leaves room for larger real programs without
+making host pointer width part of the design.
+
+No second byte-stream encoding is installed yet. The current typed, verified
+private representation remains the executable form until the Stage 7
+stack/register experiment can compare total executable size, dispatch, and
+compiler complexity against it. Regular stack operations and the existing
+medium-grained semantic boundaries remain the selected instruction format; no
+benchmark has identified a stable sequence worth fusing. See [Select a future compact executable shape](../decisions/2026-08-30-select-future-compact-executable-shape.md).
 
 ## Stage 7: stack-versus-register decision gate
 
