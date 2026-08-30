@@ -1431,6 +1431,7 @@ impl Vm {
                 let values = self.pop_values_at(*count, span)?;
                 self.stack.push(Value::List(Rc::new(values)));
             }
+            Op::ListSpread(spreads) => self.list_spread_at(spreads, span)?,
             Op::Map(count) => {
                 let values = self.pop_values_at(count.saturating_mul(2), span)?;
                 let mut entries = Vec::with_capacity(*count);
@@ -1518,6 +1519,7 @@ impl Vm {
                 })?;
                 self.pipeline_call_at(program, kinds, Some(identity), span)?;
             }
+            Op::Import(kinds) => self.import_at(kinds, span)?,
             Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
             Op::LeaveScope => {
                 let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {
@@ -1538,6 +1540,40 @@ impl Vm {
                 if let Some(value) = self.drive_cleanup(program)? {
                     return Ok(BorrowedSpanOpOutcome::Settled(value));
                 }
+            }
+            Op::Defer { mode } => {
+                let action = self.pop_at(span)?;
+                if !matches!(
+                    action,
+                    Value::Closure(_)
+                        | Value::Native(_)
+                        | Value::DeclaredNative { .. }
+                        | Value::Builtin(_)
+                ) {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::Type,
+                        "defer expects a callable action".into(),
+                        span,
+                    ));
+                }
+                let Some(frame) = self.frames.last_mut() else {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "no active call frame".into(),
+                        span,
+                    ));
+                };
+                let Some(scope) = frame.scopes.last_mut() else {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "no active scope".into(),
+                        span,
+                    ));
+                };
+                scope.push(Deferred {
+                    action,
+                    mode: *mode,
+                });
             }
             Op::Return => {
                 let value = self.pop_at(span)?;
@@ -2287,6 +2323,91 @@ impl Vm {
         Ok(())
     }
 
+    fn import_at(&mut self, kinds: &[CallArgumentKind], span: Option<&SourceSpan>) -> VmResult<()> {
+        let values = self.pop_values_at(kinds.len(), span)?;
+        let (names, named_arguments) = self.expand_call_arguments_at(values, kinds, span)?;
+        if !named_arguments.is_empty() {
+            return Err(self.error_at(
+                RuntimeErrorKind::Arity,
+                "import does not accept named arguments".into(),
+                span,
+            ));
+        }
+        if names.is_empty() {
+            return Err(self.error_at(
+                RuntimeErrorKind::Arity,
+                "import expects at least one module name".into(),
+                span,
+            ));
+        }
+        let loader = self.module_loader.clone().ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::Module,
+                "module loader is not configured".into(),
+                span,
+            )
+        })?;
+        let importer = span.map(|span| Path::new(&span.path));
+        let mut exports = Vec::new();
+        for name in names {
+            let Value::Str(name) = name else {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Type,
+                    format!(
+                        "import expects string module names, got {}",
+                        name.type_name()
+                    ),
+                    span,
+                ));
+            };
+            let instance = loader.initialize(importer, &name).map_err(|error| {
+                self.error_at(RuntimeErrorKind::Module, error.to_string(), span)
+            })?;
+            let Value::Map(module_exports) = instance.live_exports else {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "module exports are not a map".into(),
+                    span,
+                ));
+            };
+            for (key, value) in module_exports.iter() {
+                let Some(index) = exports.iter().position(|(existing, _)| existing == key) else {
+                    exports.push((key.clone(), value.clone()));
+                    continue;
+                };
+                let existing = exports[index].1.clone();
+                if let (Some(existing_signatures), Some(incoming_signature)) = (
+                    Self::callable_signatures(&existing),
+                    Self::callable_signature(value),
+                ) {
+                    if existing_signatures
+                        .iter()
+                        .any(|signature| signature == &incoming_signature)
+                    {
+                        if let Value::Str(name) = key {
+                            self.warning(format!(
+                                "imported callable `{name}` with a duplicate signature was ignored because an earlier module provided it"
+                            ));
+                        }
+                    } else {
+                        let mut overloads = match existing {
+                            Value::Overloads(overloads) => overloads.as_ref().clone(),
+                            value => vec![value],
+                        };
+                        overloads.push(value.clone());
+                        exports[index].1 = Value::Overloads(Rc::new(overloads));
+                    }
+                } else if let Value::Str(name) = key {
+                    self.warning(format!(
+                        "imported binding `{name}` was ignored because an earlier module provided it"
+                    ));
+                }
+            }
+        }
+        self.stack.push(Value::Map(Rc::new(exports)));
+        Ok(())
+    }
+
     fn callable_signature(value: &Value) -> Option<CallableRuntimeSignature> {
         match value.resolve().ok()? {
             Value::Closure(closure) => {
@@ -2329,6 +2450,27 @@ impl Vm {
             if spread {
                 let Value::List(values) = value else {
                     return Err(self.error(
+                        RuntimeErrorKind::Type,
+                        "list spread expects a list".into(),
+                        span,
+                    ));
+                };
+                result.extend(values.iter().cloned());
+            } else {
+                result.push(value);
+            }
+        }
+        self.stack.push(Value::List(Rc::new(result)));
+        Ok(())
+    }
+
+    fn list_spread_at(&mut self, spreads: &[bool], span: Option<&SourceSpan>) -> VmResult<()> {
+        let values = self.pop_values_at(spreads.len(), span)?;
+        let mut result = Vec::new();
+        for (value, spread) in values.into_iter().zip(spreads) {
+            if *spread {
+                let Value::List(values) = value else {
+                    return Err(self.error_at(
                         RuntimeErrorKind::Type,
                         "list spread expects a list".into(),
                         span,

@@ -37,6 +37,9 @@
   argument binding and native invocation, retaining ownership only for durable
   closure call frames or errors.
 
+- Imports, list spreads, and deferred-action registration now borrow source
+  spans during successful execution.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

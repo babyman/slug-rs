@@ -125,6 +125,11 @@ native call failures construct an owned diagnostic only on the error path.
 Imports, cleanup, and scheduler operations remain for the Stage 1 ownership
 audit.
 
+Imports, list spreads, and deferred-action registration now borrow their spans
+as well. The deferred-cleanup benchmark drops from three to two source-span
+clones per invocation; the remaining clones are call-frame diagnostics and
+other owned scheduler paths.
+
 ### Remaining Stage 1 execution plan
 
 Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI
