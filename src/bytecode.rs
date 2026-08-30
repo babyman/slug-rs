@@ -532,6 +532,58 @@ impl Program {
             Op::Select(cases) if cases.is_empty() => {
                 Err(format!("{} has no select cases", location()))
             }
+            Op::TryMatch {
+                pattern, operands, ..
+            } => Self::validate_pattern(pattern, *operands),
+            _ => Ok(()),
+        }
+    }
+
+    fn validate_pattern(pattern: &MatchPattern, operands: usize) -> Result<(), String> {
+        let operand = |index: usize| {
+            (index < operands)
+                .then_some(())
+                .ok_or_else(|| format!("match pattern operand {index} does not exist"))
+        };
+        match pattern {
+            MatchPattern::Literal(_) | MatchPattern::Wildcard | MatchPattern::Binding => Ok(()),
+            MatchPattern::Pinned(index) => operand(*index),
+            MatchPattern::At(pattern) => Self::validate_pattern(pattern, operands),
+            MatchPattern::Alternatives(patterns) => patterns
+                .iter()
+                .try_for_each(|pattern| Self::validate_pattern(pattern, operands)),
+            MatchPattern::List { items, .. } => items
+                .iter()
+                .try_for_each(|pattern| Self::validate_pattern(pattern, operands)),
+            MatchPattern::Map { entries, .. } => entries.iter().try_for_each(|(key, pattern)| {
+                if let MatchMapKey::Operand(index) = key {
+                    operand(*index)?;
+                }
+                Self::validate_pattern(pattern, operands)
+            }),
+            MatchPattern::Constrained {
+                pattern,
+                constraint,
+            } => {
+                Self::validate_pattern(pattern, operands)?;
+                Self::validate_match_type(constraint, operands)
+            }
+        }
+    }
+
+    fn validate_match_type(kind: &MatchType, operands: usize) -> Result<(), String> {
+        match kind {
+            MatchType::List(Some(element)) => Self::validate_match_type(element, operands),
+            MatchType::Map(Some((key, value))) => {
+                Self::validate_match_type(key, operands)?;
+                Self::validate_match_type(value, operands)
+            }
+            MatchType::Struct(Some(index)) => (*index < operands)
+                .then_some(())
+                .ok_or_else(|| format!("match pattern operand {index} does not exist")),
+            MatchType::Union(members) => members
+                .iter()
+                .try_for_each(|member| Self::validate_match_type(member, operands)),
             _ => Ok(()),
         }
     }

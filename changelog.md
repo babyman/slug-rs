@@ -63,6 +63,9 @@
   without match lowering; match chunks retain runtime stack checks pending a
   path-sensitive match-state verifier.
 
+- Private-bytecode verification now recursively validates match-pattern and
+  match-type operand references before execution.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

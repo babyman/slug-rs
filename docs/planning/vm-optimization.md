@@ -253,6 +253,12 @@ temporary bindings along distinct case and guard paths, so those chunks retain
 their existing dynamic stack checks until the verifier has an explicit
 match-state abstraction rather than a height-only model.
 
+Match metadata now receives its own structural pass: pinned operands, computed
+map keys, nested constrained patterns, and schema-constrained match types must
+all reference an operand supplied by the enclosing `TryMatch`. This preserves
+the existing missing-operand diagnostic while moving its detection before
+execution.
+
 ## Stage 3: compact source and opcode metadata
 
 - [ ] Intern source paths once per program or source table and identify them
