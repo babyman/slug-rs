@@ -32,25 +32,17 @@ A conforming implementation MUST execute Slug source files and the public
 library sources. It MUST NOT require Go ASTs, Go object representations, Go
 goroutines, or the current bytecode. The source-level conformance target is:
 
-- `../../tests/vm-conformance/supported`: each top-level fixture MUST complete without
-  a parse, semantic, or runtime error. Assertions in `slug.test` define the
-  expected values.
-- `../../tests/vm-conformance/error-parity`: each top-level fixture MUST fail. The
-  failure MAY occur during semantic analysis or evaluation when the language
-  rule permits either, but it MUST be a Slug diagnostic rather than a host
-  crash.
-- nested `mod/` directories are module fixtures, not independently executed
-  programs.
+- `../../tests/conformance`: entry fixtures, each consisting of a `.slug`
+  source file and an adjacent, versioned `<stem>.fixture.toml` sidecar.
 - `../../lib/slug`: source implementations of required standard-library modules.
 
-The current repository harness partitions every fixture into execution and
-runtime-boundary sets. A clean-room runner SHOULD run every top-level fixture
-in both directories and fail if an unclassified fixture is added. The current
-fixtures use source-level assertions and successful process completion as their
-primary oracle. `stdout-output.slug` and `stderr-output.slug` additionally
-demonstrate the required output streams, although exact stream matching should
-be added to the portable conformance runner before treating it as a release
-gate.
+Every entry fixture's sidecar defines its expected `success`, `parse-error`,
+`semantic-error`, or `runtime-error` outcome. It can also make standard output,
+standard error, a timeout, module and library roots, and a failure diagnostic
+observable. A clean-room runner MUST reject missing or invalid sidecars rather
+than infer expectations from directory names or host behavior. The full schema
+and validation rules are specified in
+[`../reference/conformance-fixtures.md`](../reference/conformance-fixtures.md).
 
 ### Fixture environment
 
@@ -75,40 +67,13 @@ to standard error.
 
 ### Portable fixture metadata
 
-Source files alone can assert ordinary successful behavior through `slug.test`,
-but they cannot fully describe expected process streams, time limits, or an
-expected top-level failure. A portable clean-room conformance release MUST
-therefore provide an adjacent manifest or sidecar for every entry fixture. The
-sidecar is part of the conformance suite, not part of the language grammar.
-
-Each fixture record MUST identify:
-
-```text
-fixture: relative/path/to/program.slug
-suite: supported | error-parity
-module_root: relative/path
-library_root: relative/path/to/lib
-timeout_ms: positive integer
-expect:
-  outcome: success | parse_error | semantic_error | module_error | runtime_error
-  stdout: exact text | unspecified
-  stderr: exact text | unspecified
-  error:
-    message: exact text | unspecified
-    source: path, line, column | unspecified
-```
-
-`success` requires exit status zero. Every error outcome requires a nonzero
-exit status and a Slug diagnostic. Any field marked `exact` is byte-for-byte
-observable, including final newlines. A field marked `unspecified` is not a
-portable compatibility promise. The manifest MAY add an expected serialized
-result only after Slug defines a stable value serialization.
-
-The current repository fixture directories predate this manifest. They are a
-valuable source suite, but their success/error directory placement and in-file
-assertions are the only portable expectations currently encoded. Implementers
-must not infer undocumented stream text or exact error wording from a host
-implementation.
+An entry fixture's sidecar is part of the conformance suite, not part of the
+language grammar. `success` requires exit status zero. Every error outcome
+requires a nonzero exit status and a Slug diagnostic. Exact stream and
+diagnostic fields are byte-for-byte observable, including final newlines;
+absent optional fields are not compatibility promises. A future sidecar schema
+MAY add an expected serialized result only after Slug defines a stable value
+serialization.
 
 ### Required fixture library surface
 
@@ -226,8 +191,8 @@ order without adopting any reference-internal representation:
    `recur` before adding task execution.
 3. Load source modules and `../../lib/slug`, including exports, live imports, cyclic
    initialization, and the `slug.test` assertion library.
-4. Run the non-concurrent fixtures in `../../tests/vm-conformance/supported` and the
-   error fixtures, treating every host crash as a conformance failure.
+4. Run the versioned fixtures in `../../tests/conformance`, treating every
+   host crash as a conformance failure.
 5. Implement channels, task handles, nurseries, spawn capture, await, timers,
    and `select`, then run the remaining fixtures.
 6. Verify standard output, standard error, exit status, and diagnostic source
@@ -419,8 +384,8 @@ When `spawn` executes, it snapshots only the immediate lexical binding cells:
 - root and loaded-module globals remain live and shared;
 - ordinary, non-spawn closures continue to share captured mutable cells.
 
-`../../tests/vm-conformance/supported/spawn-capture.slug` is the primary acceptance
-fixture for this contract.
+A dedicated fixture in `../../tests/conformance` must cover this contract;
+until it does, focused VM and CLI tests remain the implementation evidence.
 
 ## `await` and `select`
 

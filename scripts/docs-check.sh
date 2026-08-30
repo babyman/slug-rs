@@ -21,6 +21,17 @@ for file in \
     test -f "$file"
 done
 
+# The language handoff guide names these as mandatory repository contents.
+# Keep its paths actionable when the fixture layout changes.
+for directory in \
+    "$root/docs/language" \
+    "$root/lib/slug" \
+    "$root/tests/conformance"; do
+    test -d "$directory"
+done
+
+test -f "$root/docs/reference/conformance-fixtures.md"
+
 for file in "$root"/docs/language/*; do
     name=$(basename "$file")
     test "$name" = 'README.md' || grep -F "\`$name\`" "$language_index" >/dev/null

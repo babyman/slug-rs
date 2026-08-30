@@ -42,16 +42,16 @@ wide, or where reproducibility relies on moving tooling.
 
 ## 1. Make repository guidance self-consistent
 
-- [ ] Correct `docs/language/README.md` to name the existing
+- [x] Correct `docs/language/README.md` to name the existing
   `tests/conformance/` fixture suite rather than `tests/vm-conformance/`.
-- [ ] Update that document's fixture description to match the current
+- [x] Update that document's fixture description to match the current
   versioned `.fixture.toml` metadata contract.
-- [ ] Expand `docs/engineering/testing.md` and the test routing in `AGENTS.md`
+- [x] Expand `docs/engineering/testing.md` and the test routing in `AGENTS.md`
   to cover VM, CLI, module-loader, configuration, conformance-runner, and
   conformance-metadata tests.
-- [ ] Add focused Make targets only where they materially shorten a common
+- [x] Add focused Make targets only where they materially shorten a common
   iteration loop; otherwise document the direct `cargo test --test …` command.
-- [ ] Extend `scripts/docs-check.sh` with inexpensive checks for documented
+- [x] Extend `scripts/docs-check.sh` with inexpensive checks for documented
   repository paths that are intended as mandatory handoff contents.
 
 Completion evidence: links and paths named by contributor documentation exist,

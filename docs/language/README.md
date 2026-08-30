@@ -50,9 +50,9 @@ implementation-specific interpretation.
 
 ## Required handoff contents
 
-The four files in this directory define the specification, but source-level
-conformance also requires the public library and fixture suite. A complete
-handoff MUST preserve this repository layout:
+The normative documents in this directory define the specification, but
+source-level conformance also requires the public library and fixture suite. A
+complete handoff MUST preserve this repository layout:
 
 ```text
 slug/
@@ -61,19 +61,19 @@ slug/
 ├── lib/
 │   └── slug/                     # public standard-library source
 └── tests/
-    └── vm-conformance/           # supported and error-parity fixtures
+    └── conformance/              # source fixtures and `.fixture.toml` sidecars
 ```
 
-The implementation MUST treat `lib/slug` and `tests/vm-conformance` as
+The implementation MUST treat `lib/slug` and `tests/conformance` as
 source-level contracts, not as a dependency on Go. It may implement their
 behavior in another host language, provided the Slug-visible modules, exports,
 values, diagnostics, and stream behavior remain compatible.
 
-The present fixture directories predate portable sidecar metadata. Their
-in-source `slug.test` assertions and supported/error-parity classification are
-the current acceptance evidence. Before claiming a fully portable release,
-provide the fixture metadata schema required by `runtime-requirements.md` for
-every entry fixture.
+Each entry fixture is a `.slug` source file with an adjacent, versioned
+`<stem>.fixture.toml` sidecar. The schema-1 sidecar identifies the expected
+outcome and can specify exact streams, module and library roots, a timeout, and
+an exact diagnostic for failures. The complete metadata contract is in
+[`../reference/conformance-fixtures.md`](../reference/conformance-fixtures.md).
 
 ## Clean-room implementation path
 
@@ -83,8 +83,8 @@ every entry fixture.
    and diagnostics before optimizing execution.
 3. Implement module loading and the public `lib/slug` surface, including
    exports, live imports, and cyclic initialization.
-4. Implement configuration from `configuration.md`, then run the supported and
-   error-parity fixtures in `tests/vm-conformance`.
+4. Implement configuration from `configuration.md`, then run the versioned
+   fixtures in `tests/conformance`.
 5. Implement structured concurrency, channels, tasks, `select`, cleanup, and
    `recur` according to Runtime Requirements.
 
@@ -97,8 +97,7 @@ goroutines, or Go object representations to satisfy this package.
 Before sending the package, verify that the recipient receives:
 
 - this `docs/language` directory;
-- `lib/slug` and `tests/vm-conformance` at the relative paths above;
+- `lib/slug` and `tests/conformance` at the relative paths above;
 - the intended Slug version or commit identifier;
-- a fixture manifest or an explicit statement that the current source-only
-  fixture expectations are being used; and
+- the fixture sidecars that describe each entry source; and
 - no reference implementation source as a required runtime dependency.

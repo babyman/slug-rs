@@ -9,7 +9,7 @@ abstractions.
 
 ```
 src/        Runtime, bytecode, dynamic values, and source compiler
-tests/      VM and public-CLI integration tests
+tests/      VM, CLI, module-loader, configuration, and conformance integration tests
 docs/       Architecture, development policy, and canonical language documents
 .agents/    Agent workflows and decision-record guidance
 ```
@@ -38,6 +38,22 @@ cargo run -- --help
 Run the narrowest test that proves a change while iterating. Before handing off
 a Rust change, run `make check`. For documentation-only changes, run
 `git diff --check` and validate every command or file reference you changed.
+
+## Test routing
+
+| Boundary | Test | Focused command |
+|---|---|---|
+| Private bytecode and VM/runtime behavior | `tests/vm.rs` | `make test-vm` |
+| Source syntax, CLI output, and diagnostics | `tests/cli.rs` | `make test-cli` |
+| Imports, modules, exports, and live bindings | `tests/module_loader.rs` | `cargo test --features metrics --test module_loader` |
+| Configuration loading and `cfg`-related behavior | `tests/configuration.rs` | `cargo test --features metrics --test configuration` |
+| Fixture execution behavior | `tests/conformance_runner.rs` | `cargo test --features metrics --test conformance_runner` |
+| Fixture-sidecar validation | `tests/conformance_metadata.rs` | `cargo test --features metrics --test conformance_metadata` |
+| Repository legacy-syntax fixtures | `tests/legacy_syntax_conformance.rs` | `cargo test --features metrics --test legacy_syntax_conformance` |
+
+`make test` runs the full unit, binary, and integration suite. See
+[`docs/engineering/testing.md`](docs/engineering/testing.md) for each layer's
+scope and regression expectations.
 
 ## Tooling
 

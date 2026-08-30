@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Aligned contributor test routing and language-handoff documentation with the
+  versioned `tests/conformance` fixture suite, and made documentation checks
+  verify its mandatory repository paths.
+
 - Added an AI-assisted development plan covering repository guidance accuracy,
   bounded working sets, crate-boundary clarity, and reproducible tooling.
 
