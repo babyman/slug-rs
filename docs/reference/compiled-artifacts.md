@@ -87,7 +87,7 @@ Source locations are diagnostic metadata; their absence must not alter program
 semantics.
 
 Dependency resolution remains subject to the module rules in
-[`language/runtime-requirements.md`](language/runtime-requirements.md).  An
+[`language/runtime-requirements.md`](../language/runtime-requirements.md).  An
 artifact must identify its dependencies sufficiently for a loader to detect a
 missing or incompatible dependency.  It must not implicitly gain host
 capabilities or bindings beyond the documented module and builtin surface.

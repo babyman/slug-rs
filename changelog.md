@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reorganized documentation into language, reference, engineering, planning,
+  decisions, and generated areas; normalized supplemental language-document
+  filenames and retained completed plans under `docs/planning/completed`.
+
 - Expanded the private VM optimization plan with staged measurement, bytecode
   verification, capture-aware local storage, and scheduler-scaling gates.
 

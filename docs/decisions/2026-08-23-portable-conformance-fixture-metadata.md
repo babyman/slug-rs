@@ -14,7 +14,7 @@ relative module and library roots, a positive timeout, and an exact diagnostic.
 Invalid or incomplete sidecars are rejected.
 
 The complete schema is defined in
-[Conformance Fixtures](../conformance-fixtures.md).
+[Conformance Fixtures](../reference/conformance-fixtures.md).
 
 ## Consequences
 

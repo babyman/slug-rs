@@ -343,8 +343,8 @@ Construction rejects unknown or duplicate fields and missing required fields.
 Schema values compare by identity. Struct values compare equal only when they
 have the same schema identity and equal field values in schema order. Dot access
 and string-key bracket access read fields; invalid or unknown field access is a
-runtime type error. The Struct Syntax and Behavior mini spec defines the
-detailed rule and current implementation boundary.
+runtime type error. The [Structs](structs.md) supplement defines the detailed
+rule and current implementation boundary.
 
 ## Pattern matching
 
@@ -396,7 +396,8 @@ schema identity named by `Name`; the schema binding must resolve, and a
 resolved non-schema value is a checked runtime type error. Function signatures,
 task or channel payload types, tuple types, and generic parameters are not
 runtime-checkable and are source errors in a case constraint. The focused
-Match and Destructuring specification defines the complete rule.
+The [Match and Destructuring](match-and-destructuring.md) supplement defines
+the complete rule.
 
 With `-type-check`, a match whose subject is a closed union of direct runtime
 categories or exact `struct<Name>` identities receives conservative coverage

@@ -2,9 +2,9 @@
 
 This document plans the implementation of whole-case match type constraints.
 It is not a language specification; the accepted source rule is defined by
-[Match and Destructuring](../language/Match%20and%20Destructuring%20-%20Mini%20Spec.md)
+[Match and Destructuring](../../language/match-and-destructuring.md)
 and its rationale by
-[Constrain whole match patterns with types](../decisions/2026-08-29-typed-match-patterns.md).
+[Constrain whole match patterns with types](../../decisions/2026-08-29-typed-match-patterns.md).
 
 ## Scope and invariants
 

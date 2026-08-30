@@ -18,7 +18,7 @@ boundary.
 
 Slug will use one opaque native extension interface for statically registered
 host functions and future Slug-aware native modules. The detailed contract is
-defined in [`../native-abi.md`](../native-abi.md).
+defined in [`../reference/native-abi.md`](../reference/native-abi.md).
 
 Native callbacks are synchronous and receive a call-scoped opaque context.
 They return one value or one structured error and cannot suspend, re-enter Slug,

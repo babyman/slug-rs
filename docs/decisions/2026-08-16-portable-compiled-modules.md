@@ -21,7 +21,7 @@ conforming implementation will be able to save a compiled module and load an
 artifact produced by another compatible implementation or release.
 
 The detailed contract lives in
-[`../compiled-artifacts.md`](../compiled-artifacts.md).  It requires explicit
+[`../reference/compiled-artifacts.md`](../reference/compiled-artifacts.md).  It requires explicit
 format and language-compatibility versions, module identity and dependency
 metadata, a validated executable representation, and source-location
 information.  It also defines rejection behavior for malformed or incompatible

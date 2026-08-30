@@ -83,7 +83,7 @@ performance.
 
 `.cslug` will be a versioned, portable compiled-module format. It will remain
 separate from `Program`, `Chunk`, and `Op`, which are private Rust structures
-and may change freely. See [compiled artifacts](docs/compiled-artifacts.md)
+and may change freely. See [compiled artifacts](docs/reference/compiled-artifacts.md)
 for the adopted contract and the requirements before version 1 is implemented.
 
 ## Development

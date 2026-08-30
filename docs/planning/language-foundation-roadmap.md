@@ -2,9 +2,9 @@
 
 This document tracks implementation work needed to move the Rust VM from its
 current core subset toward clean-room source compatibility. It is a task list,
-not a source-language specification. The documents under [`language/`](language/README.md)
+not a source-language specification. The documents under [`language/`](../language/README.md)
 remain authoritative for syntax and observable behavior, and the generated
-[language support matrix](generated/language-support.md) remains the status
+[language support matrix](../generated/language-support.md) remains the status
 summary.
 
 Complete the milestones in dependency order. A milestone is complete only when
@@ -16,9 +16,9 @@ module system, runtime services, and VM behavior they expose are complete.
 ## 1. Complete function-call semantics
 
 The first priority is the call boundary described by the
-[Functions and calls](language/language-specification.md#functions-and-calls)
+[Functions and calls](../language/language-specification.md#functions-and-calls)
 section and the
-[Variadic Functions and Spread Syntax](language/Variadic%20Functions%20and%20Spread%20Syntax%20-%20Mini%20Spec.md)
+[Variadic Functions and Spread Syntax](../language/variadic-functions-and-spread-syntax.md)
 note.
 
 ### Representation and parsing
@@ -90,9 +90,9 @@ note.
 ## 3. Add modules
 
 Follow the module rules in
-[Modules, imports, and exports](language/language-specification.md#modules-imports-and-exports)
+[Modules, imports, and exports](../language/language-specification.md#modules-imports-and-exports)
 and the host boundary in
-[Runtime Requirements](language/runtime-requirements.md#required-host-services).
+[Runtime Requirements](../language/runtime-requirements.md#required-host-services).
 
 - [x] Define a source loader and explicit module-root and library-root host
   services without exposing host capabilities as ordinary Slug bindings.
@@ -121,7 +121,7 @@ and the host boundary in
 ## 4. Add configuration and the conformance harness
 
 - [x] Implement the immutable configuration store and precedence rules from
-  [`language/configuration.md`](language/configuration.md).
+  [`language/configuration.md`](../language/configuration.md).
 - [x] Implement `cfg`, `argv`, and `argm` with module-relative namespaces and
   checked conversions.
 - [x] Add portable fixture metadata for outcome, streams, roots, timeout, and
@@ -135,7 +135,7 @@ and the host boundary in
 ## 5. Establish the native extension boundary
 
 - [x] Replace the current Rust `NativeFunction` value exposure with the opaque,
-  call-scoped version 0 facade from [`native-abi.md`](native-abi.md).
+  call-scoped version 0 facade from [`native-abi.md`](../reference/native-abi.md).
 - [x] Add checked argument, result, structured-error, and native-resource
   operations without persistent roots or scheduler hints.
 - [x] Prove wrong-type, wrong-resource, callback-contract, panic-containment,
@@ -193,7 +193,7 @@ After channels and concurrency have exercised the native boundary:
 ## 9. Optimize only from measurements
 
 After the source foundation and representative workloads exist, follow the
-separate [VM Optimization Plan](vm-optimization.md).
+separate [VM Optimization Plan](../engineering/vm-optimization.md).
 
 - [ ] Establish the Stage 0 benchmark and instrumentation baseline.
 - [ ] Optimize dispatch, metadata, and local storage one measured stage at a

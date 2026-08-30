@@ -9,8 +9,8 @@ implements a small source subset through a checked bytecode virtual machine.
 |---|---|---|
 | Source front end | `src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
 | Private bytecode | `src/bytecode.rs` | Internal instruction and program representation. |
-| Compiled artifacts | `docs/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
-| Native extensions | `docs/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
+| Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
+| Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
 | Runtime values | `src/value.rs` | Dynamic language values and operations. |
 | Execution | `src/vm/` | VM dispatch, checked errors, cleanup unwinding, and value operations. |
 | CLI | `src/main.rs` | Process boundary and public error presentation. |
@@ -41,4 +41,4 @@ pools rather than executable instructions.
 
 The staged work and the evidence required before reconsidering a register VM
 are defined in [VM Optimization Plan](vm-optimization.md). The durable choice is
-recorded in [Adopt a measured private-bytecode optimization direction](decisions/2026-08-22-vm-bytecode-optimization-direction.md).
+recorded in [Adopt a measured private-bytecode optimization direction](../decisions/2026-08-22-vm-bytecode-optimization-direction.md).

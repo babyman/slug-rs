@@ -26,7 +26,7 @@ the behavior, record the selected rule there first; do not allow implementation
 behavior to become the de facto specification.
 
 Create a decision record when the choice meets the criteria in
-[`docs/decisions/README.md`](decisions/README.md). A decision record explains
+[`docs/decisions/README.md`](../decisions/README.md). A decision record explains
 why a non-trivial rule was selected, but does not replace the normative
 requirement. No new record is needed when the documentation already expressly
 determines the behavior; for example, exact map patterns already disallow

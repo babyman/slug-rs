@@ -11,7 +11,7 @@ Use the following order when sources disagree:
 2. `language/slug.ebnf` defines accepted source syntax.
 3. Focused documents in `language/` define feature-specific rules.
 4. `language/runtime-requirements.md` defines observable runtime obligations.
-5. `architecture.md` defines internal implementation boundaries.
+5. `engineering/architecture.md` defines internal implementation boundaries.
 6. Tests prove the implemented subset; they do not silently redefine language
    behavior.
 
@@ -20,25 +20,43 @@ implementation intentionally supports only a subset. Consult the generated
 [language support matrix](generated/language-support.md) before claiming that
 a specified feature is implemented.
 
-## Documents
+## Documentation areas
+
+| Area | Purpose |
+|---|---|
+| [language/](language/README.md) | Normative language specifications, grammar, and runtime requirements. |
+| [reference/](reference/) | Public compatibility and host-interface contracts. |
+| [engineering/](engineering/) | Rust implementation architecture and contributor workflow. |
+| [planning/](planning/) | Living implementation roadmaps and completed plans retained for context. |
+| [decisions/](decisions/README.md) | Immutable records of durable architecture and language decisions. |
+| [generated/](generated/) | Derived implementation-status artifacts. |
+
+### Reference
 
 | Document | Purpose |
 |---|---|
-| [architecture.md](architecture.md) | Compiler, bytecode, VM, and diagnostic ownership. |
-| [language-foundation-roadmap.md](language-foundation-roadmap.md) | Dependency-ordered implementation tasks for source compatibility. |
-| [expression-foundation-inventory.md](expression-foundation-inventory.md) | Current expression-support boundary and dependency-ordered implementation slices. |
-| [match-type-constraints-plan.md](done/match-type-constraints-plan.md) | Implementation plan for whole-case match type constraints. |
-| [schema-type-plan.md](done/schema-type-plan.md) | Implementation plan for the `schema` type and nominal struct construction. |
-| [type-system-plan.md](type-system-plan.md) | Dependency-ordered plan for the next static-checking milestones. |
-| [vm-optimization.md](vm-optimization.md) | Staged private VM and bytecode optimization plan. |
-| [development.md](development.md) | Local workflow, validation ladder, and change process. |
-| [testing.md](testing.md) | Test-layer selection and regression policy. |
-| [compatibility.md](compatibility.md) | Promises and intentional non-promises. |
-| [compiled-artifacts.md](compiled-artifacts.md) | Portable `.cslug` compiled-module contract. |
-| [conformance-fixtures.md](conformance-fixtures.md) | Portable fixture-sidecar contract. |
-| [native-abi.md](native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
-| [language/](language/README.md) | Normative language specifications and grammar. |
-| [decisions/](decisions/README.md) | Durable architecture and language decisions. |
+| [compatibility.md](reference/compatibility.md) | Promises and intentional non-promises. |
+| [compiled-artifacts.md](reference/compiled-artifacts.md) | Portable `.cslug` compiled-module contract. |
+| [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
+| [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
+
+### Engineering
+
+| Document | Purpose |
+|---|---|
+| [architecture.md](engineering/architecture.md) | Compiler, bytecode, VM, and diagnostic ownership. |
+| [development.md](engineering/development.md) | Local workflow, validation ladder, and change process. |
+| [testing.md](engineering/testing.md) | Test-layer selection and regression policy. |
+| [vm-optimization.md](engineering/vm-optimization.md) | Staged private VM and bytecode optimization plan. |
+
+### Planning
+
+| Document | Purpose |
+|---|---|
+| [language-foundation-roadmap.md](planning/language-foundation-roadmap.md) | Dependency-ordered implementation tasks for source compatibility. |
+| [expression-foundation-inventory.md](planning/expression-foundation-inventory.md) | Current expression-support boundary and dependency-ordered implementation slices. |
+| [type-system-plan.md](planning/type-system-plan.md) | Dependency-ordered plan for the next static-checking milestones. |
+| [completed/](planning/completed/) | Retained plans for completed implementation work. |
 
 Hand-authored documents describe decisions and requirements. Files in
 `generated/` are derived artifacts: edit their source manifest and regenerate

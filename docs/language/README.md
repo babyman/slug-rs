@@ -27,15 +27,15 @@ normative.
 | `slug.ebnf` | Parser grammar derived from the accepted source syntax. |
 | `runtime-requirements.md` | Observable evaluation, module, diagnostic, configuration, and concurrency requirements. |
 | `configuration.md` | The `cfg` contract, configuration sources, namespaces, precedence, and conversions. |
-| `Automatic Semicolon Insertion (ASI) Rules.md` | Automatic statement termination rules. |
-| `Errors - Mini Spec.md` | Error categories and diagnostic behavior. |
-| `Deferred Work.md` | Deferred-action execution and recovery behavior. |
-| `Map Syntax and Behavior - Mini Spec.md` | Map literals, keys, and operations. |
-| `Match and Destructuring - Mini Spec.md` | Match expressions and destructuring patterns. |
-| `Struct Syntax and Behavior - Mini Spec.md` | Schema identity, construction, defaults, field access, and equality. |
-| `Strings - Mini Spec.md` | String literals and string operations. |
-| `Value Pinning in match Patterns.md` | Pinning existing values in match patterns. |
-| `Variadic Functions and Spread Syntax - Mini Spec.md` | Variadic parameters and spread arguments. |
+| `automatic-semicolon-insertion.md` | Automatic statement termination rules. |
+| `errors.md` | Error categories and diagnostic behavior. |
+| `deferred-work.md` | Deferred-action execution and recovery behavior. |
+| `maps.md` | Map literals, keys, and operations. |
+| `match-and-destructuring.md` | Match expressions and destructuring patterns. |
+| `structs.md` | Schema identity, construction, defaults, field access, and equality. |
+| `strings.md` | String literals and string operations. |
+| `value-pinning-in-match-patterns.md` | Pinning existing values in match patterns. |
+| `variadic-functions-and-spread-syntax.md` | Variadic parameters and spread arguments. |
 
 The package also includes focused supplemental notes for automatic semicolon
 insertion, errors, deferred work, maps, matching and destructuring, structs,

@@ -9,10 +9,10 @@ trap 'rm -f "$temporary"' EXIT HUP INT TERM
 
 for file in \
     "$root/docs/README.md" \
-    "$root/docs/architecture.md" \
-    "$root/docs/compatibility.md" \
-    "$root/docs/development.md" \
-    "$root/docs/testing.md" \
+    "$root/docs/engineering/architecture.md" \
+    "$root/docs/reference/compatibility.md" \
+    "$root/docs/engineering/development.md" \
+    "$root/docs/engineering/testing.md" \
     "$root/docs/language/language-specification.md" \
     "$root/docs/language/runtime-requirements.md" \
     "$root/docs/language/slug.ebnf" \

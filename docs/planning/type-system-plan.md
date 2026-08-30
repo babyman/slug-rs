@@ -120,7 +120,7 @@ new abstractions materially improve Slug programs.
 - [x] Evaluate named closed variants (enums/sum types) as the next candidate
   for typed domain modelling. The proposed constructor, payload, match,
   nominal-identity, coverage, import, and runtime design is recorded in
-  [the deferred ADR](decisions/2026-08-29-named-closed-variants.md); no
+  [the deferred ADR](../decisions/2026-08-29-named-closed-variants.md); no
   implementation is scheduled by this plan.
 - [ ] Evaluate type aliases as a readability feature independently of nominal
   types; define expansion, diagnostics, export behavior, and cycle handling

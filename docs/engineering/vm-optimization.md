@@ -3,7 +3,7 @@
 This document tracks planned improvements to the private Rust VM and bytecode.
 It is an implementation roadmap, not a source-language specification or a
 portable `.cslug` contract. The governing architecture choice is recorded in
-[Adopt a measured private-bytecode optimization direction](decisions/2026-08-22-vm-bytecode-optimization-direction.md).
+[Adopt a measured private-bytecode optimization direction](../decisions/2026-08-22-vm-bytecode-optimization-direction.md).
 
 ## Goals and invariants
 

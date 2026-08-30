@@ -90,5 +90,5 @@ declared for that field by `User`, including in a destructuring declaration.
 
 `_: struct` matches every struct value. The `User` binding in `struct<User>`
 must resolve to a schema; a non-schema binding follows the checked runtime
-type-error path. See [Match and Destructuring](Match%20and%20Destructuring%20-%20Mini%20Spec.md)
+type-error path. See [Match and Destructuring](match-and-destructuring.md)
 for constraint evaluation and the current implementation boundary.

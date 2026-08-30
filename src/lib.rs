@@ -4,7 +4,7 @@
 //! `Program`, `Chunk`, and `Op` are a compiler-to-VM boundary, designed for
 //! clarity and validation rather than persistence. They are distinct from the
 //! future portable `.cslug` compiled-module format documented in
-//! `docs/compiled-artifacts.md`.
+//! `docs/reference/compiled-artifacts.md`.
 
 mod bytecode;
 mod configuration;
