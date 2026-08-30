@@ -1,5 +1,7 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, VecDeque},
+    mem,
     sync::Arc,
 };
 
@@ -51,6 +53,30 @@ impl SpanId {
         self.0 as usize
     }
 }
+
+macro_rules! metadata_id {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub struct $name(u32);
+
+        impl $name {
+            #[must_use]
+            pub const fn new(index: u32) -> Self {
+                Self(index)
+            }
+
+            fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
+    };
+}
+
+metadata_id!(GlobalNameId);
+metadata_id!(CaptureListId);
+metadata_id!(SchemaFieldsId);
+metadata_id!(StructFieldsId);
+metadata_id!(MatchPatternId);
 
 /// A literal embedded in a bytecode chunk.
 #[derive(Clone, Debug)]
@@ -206,8 +232,10 @@ pub enum Op {
     GetCapture(usize),
     SetCapture(usize),
     GetGlobal(String),
+    GetGlobalPooled(GlobalNameId),
     NotImplemented,
     DefineGlobal(String),
+    DefineGlobalPooled(GlobalNameId),
     /// Combines the existing callable value above the new callable below it.
     CombineOverloads,
     /// Defines globals from the string keys of the map on top of the stack.
@@ -218,16 +246,24 @@ pub enum Op {
         arguments: usize,
     },
     SetGlobal(String),
+    SetGlobalPooled(GlobalNameId),
     MakeClosure {
         chunk: usize,
         captures: Vec<Capture>,
+    },
+    MakeClosurePooled {
+        chunk: usize,
+        captures: CaptureListId,
     },
     List(usize),
     ListSpread(Vec<bool>),
     Map(usize),
     StructSchema(Vec<SchemaField>),
+    StructSchemaPooled(SchemaFieldsId),
     Struct(Vec<String>),
+    StructPooled(StructFieldsId),
     StructCopy(Vec<String>),
+    StructCopyPooled(StructFieldsId),
     GetIndex,
     GetSlice {
         has_start: bool,
@@ -279,6 +315,11 @@ pub enum Op {
     SelectApply,
     TryMatch {
         pattern: MatchPattern,
+        bindings: usize,
+        operands: usize,
+    },
+    TryMatchPooled {
+        pattern: MatchPatternId,
         bindings: usize,
         operands: usize,
     },
@@ -392,6 +433,11 @@ pub struct Program {
     source_ids: HashMap<Arc<str>, SourceId>,
     spans: Vec<SourceSpan>,
     span_ids: HashMap<SourceSpan, SpanId>,
+    global_names: Vec<String>,
+    capture_lists: Vec<Vec<Capture>>,
+    schema_fields: Vec<Vec<SchemaField>>,
+    struct_fields: Vec<Vec<String>>,
+    match_patterns: Vec<MatchPattern>,
 }
 
 impl Program {
@@ -410,6 +456,7 @@ impl Program {
             if let Some(span) = instruction.span {
                 instruction.span = span_remap.get(span.index()).copied().or(Some(span));
             }
+            self.pool_instruction_metadata(&mut instruction.op);
         }
         let index = self.chunks.len();
         self.names.insert(chunk.name.clone(), index);
@@ -476,6 +523,117 @@ impl Program {
 
     pub(crate) fn span(&self, id: SpanId) -> Option<&SourceSpan> {
         self.spans.get(id.index())
+    }
+
+    pub(crate) fn global_name(&self, id: GlobalNameId) -> Option<&str> {
+        self.global_names.get(id.index()).map(String::as_str)
+    }
+
+    pub(crate) fn capture_list(&self, id: CaptureListId) -> Option<&[Capture]> {
+        self.capture_lists.get(id.index()).map(Vec::as_slice)
+    }
+
+    pub(crate) fn schema_fields(&self, id: SchemaFieldsId) -> Option<&[SchemaField]> {
+        self.schema_fields.get(id.index()).map(Vec::as_slice)
+    }
+
+    pub(crate) fn struct_fields(&self, id: StructFieldsId) -> Option<&[String]> {
+        self.struct_fields.get(id.index()).map(Vec::as_slice)
+    }
+
+    pub(crate) fn match_pattern(&self, id: MatchPatternId) -> Option<&MatchPattern> {
+        self.match_patterns.get(id.index())
+    }
+
+    fn pool_instruction_metadata(&mut self, op: &mut Op) {
+        let pooled = match op {
+            Op::GetGlobal(name) => Some(Op::GetGlobalPooled(
+                self.intern_global_name(mem::take(name)),
+            )),
+            Op::DefineGlobal(name) => Some(Op::DefineGlobalPooled(
+                self.intern_global_name(mem::take(name)),
+            )),
+            Op::SetGlobal(name) => Some(Op::SetGlobalPooled(
+                self.intern_global_name(mem::take(name)),
+            )),
+            Op::MakeClosure { chunk, captures } => Some(Op::MakeClosurePooled {
+                chunk: *chunk,
+                captures: self.push_capture_list(mem::take(captures)),
+            }),
+            Op::StructSchema(fields) => Some(Op::StructSchemaPooled(
+                self.push_schema_fields(mem::take(fields)),
+            )),
+            Op::Struct(fields) => {
+                Some(Op::StructPooled(self.push_struct_fields(mem::take(fields))))
+            }
+            Op::StructCopy(fields) => Some(Op::StructCopyPooled(
+                self.push_struct_fields(mem::take(fields)),
+            )),
+            Op::TryMatch {
+                pattern,
+                bindings,
+                operands,
+            } => Some(Op::TryMatchPooled {
+                pattern: self.push_match_pattern(mem::replace(pattern, MatchPattern::Wildcard)),
+                bindings: *bindings,
+                operands: *operands,
+            }),
+            _ => None,
+        };
+        if let Some(pooled) = pooled {
+            *op = pooled;
+        }
+    }
+
+    fn intern_global_name(&mut self, name: String) -> GlobalNameId {
+        if let Some(index) = self
+            .global_names
+            .iter()
+            .position(|existing| existing == &name)
+        {
+            return GlobalNameId(u32::try_from(index).expect("private program has too many names"));
+        }
+        let id = GlobalNameId(
+            u32::try_from(self.global_names.len()).expect("private program has too many names"),
+        );
+        self.global_names.push(name);
+        id
+    }
+
+    fn push_capture_list(&mut self, captures: Vec<Capture>) -> CaptureListId {
+        let id = CaptureListId(
+            u32::try_from(self.capture_lists.len())
+                .expect("private program has too many capture lists"),
+        );
+        self.capture_lists.push(captures);
+        id
+    }
+
+    fn push_schema_fields(&mut self, fields: Vec<SchemaField>) -> SchemaFieldsId {
+        let id = SchemaFieldsId(
+            u32::try_from(self.schema_fields.len())
+                .expect("private program has too many schema field lists"),
+        );
+        self.schema_fields.push(fields);
+        id
+    }
+
+    fn push_struct_fields(&mut self, fields: Vec<String>) -> StructFieldsId {
+        let id = StructFieldsId(
+            u32::try_from(self.struct_fields.len())
+                .expect("private program has too many struct field lists"),
+        );
+        self.struct_fields.push(fields);
+        id
+    }
+
+    fn push_match_pattern(&mut self, pattern: MatchPattern) -> MatchPatternId {
+        let id = MatchPatternId(
+            u32::try_from(self.match_patterns.len())
+                .expect("private program has too many match patterns"),
+        );
+        self.match_patterns.push(pattern);
+        id
     }
 
     /// Names declared for export by a compiled source module.
@@ -590,11 +748,12 @@ impl Program {
                     .checked_add(1)
                     .ok_or_else(|| format!("function `{}` has too many parameters", chunk.name))?
             };
-            Self::validate_stack(chunk, initial_stack)?;
+            self.validate_stack(chunk, initial_stack)?;
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn validate_op(
         &self,
         _chunk_index: usize,
@@ -635,6 +794,48 @@ impl Program {
             {
                 Err(format!("{} captures a missing local", location()))
             }
+            Op::GetGlobalPooled(id) | Op::DefineGlobalPooled(id) | Op::SetGlobalPooled(id)
+                if self.global_name(*id).is_none() =>
+            {
+                Err(format!(
+                    "{} references missing global name metadata",
+                    location()
+                ))
+            }
+            Op::MakeClosurePooled {
+                chunk: target,
+                captures,
+            } if self.chunk(*target).is_none() => Err(format!(
+                "{} references missing function chunk {target}",
+                location()
+            )),
+            Op::MakeClosurePooled { captures, .. } if self.capture_list(*captures).is_none() => {
+                Err(format!(
+                    "{} references missing capture metadata",
+                    location()
+                ))
+            }
+            Op::MakeClosurePooled { captures, .. }
+                if self.capture_list(*captures).is_some_and(|captures| {
+                    captures.iter().any(
+                        |capture| matches!(capture, Capture::Local(slot) if *slot >= chunk.locals),
+                    )
+                }) =>
+            {
+                Err(format!("{} captures a missing local", location()))
+            }
+            Op::StructSchemaPooled(id) if self.schema_fields(*id).is_none() => Err(format!(
+                "{} references missing schema field metadata",
+                location()
+            )),
+            Op::StructPooled(id) | Op::StructCopyPooled(id)
+                if self.struct_fields(*id).is_none() =>
+            {
+                Err(format!(
+                    "{} references missing struct field metadata",
+                    location()
+                ))
+            }
             Op::CallSelected { identity, .. } | Op::PipelineCallSelected { identity, .. }
                 if self.callable_identity(*identity).is_none() =>
             {
@@ -669,6 +870,30 @@ impl Program {
                 }
                 Ok(())
             }
+            Op::TryMatchPooled {
+                pattern,
+                bindings,
+                operands,
+            } => {
+                if operands.checked_add(1).is_none() || bindings.checked_add(1).is_none() {
+                    return Err("match stack count is too large".into());
+                }
+                let pattern = self.match_pattern(*pattern).ok_or_else(|| {
+                    format!("{} references missing match pattern metadata", location())
+                })?;
+                Self::validate_pattern(pattern, *operands)?;
+                if Self::pattern_bindings(pattern) != Some(*bindings) {
+                    return Err("match pattern binding count is invalid".into());
+                }
+                Ok(())
+            }
+            Op::GetGlobal(_)
+            | Op::DefineGlobal(_)
+            | Op::SetGlobal(_)
+            | Op::MakeClosure { .. }
+            | Op::StructSchema(_)
+            | Op::Struct(_)
+            | Op::StructCopy(_) => Err(format!("{} retains unpooled opcode metadata", location())),
             _ => Ok(()),
         }
     }
@@ -744,7 +969,7 @@ impl Program {
         }
     }
 
-    fn validate_stack(chunk: &Chunk, initial_stack: usize) -> Result<(), String> {
+    fn validate_stack(&self, chunk: &Chunk, initial_stack: usize) -> Result<(), String> {
         let mut stacks = vec![None; chunk.code.len()];
         let mut pending = VecDeque::new();
         if !chunk.code.is_empty() {
@@ -754,8 +979,8 @@ impl Program {
         while let Some(index) = pending.pop_front() {
             let stack = stacks[index].as_ref().expect("queued stack state exists");
             let instruction = &chunk.code[index];
-            let Some(next_stack) = Self::apply_stack_effect(stack, &instruction.op) else {
-                let (pops, _) = Self::stack_effect(&instruction.op);
+            let Some(next_stack) = self.apply_stack_effect(stack, &instruction.op) else {
+                let (pops, _) = self.stack_effect(&instruction.op);
                 return Err(format!(
                     "function `{}` instruction {index} requires {pops} stack values, has {}",
                     chunk.name,
@@ -797,12 +1022,12 @@ impl Program {
         Ok(())
     }
 
-    fn apply_stack_effect(stack: &[StackValue], op: &Op) -> Option<Vec<StackValue>> {
-        let (pops, pushes) = Self::stack_effect(op);
+    fn apply_stack_effect(&self, stack: &[StackValue], op: &Op) -> Option<Vec<StackValue>> {
+        let (pops, pushes) = self.stack_effect(op);
         let remaining = stack.len().checked_sub(pops)?;
         let mut next = stack[..remaining].to_vec();
         match op {
-            Op::TryMatch { bindings, .. } => {
+            Op::TryMatch { bindings, .. } | Op::TryMatchPooled { bindings, .. } => {
                 next.extend((0..*bindings).map(|_| StackValue::MatchBinding));
                 next.push(StackValue::MatchResult);
             }
@@ -829,7 +1054,8 @@ impl Program {
         changed
     }
 
-    fn stack_effect(op: &Op) -> (usize, usize) {
+    #[allow(clippy::too_many_lines)]
+    fn stack_effect(&self, op: &Op) -> (usize, usize) {
         match op {
             Op::Constant(_)
             | Op::Nil
@@ -838,13 +1064,17 @@ impl Program {
             | Op::GetLocal(_)
             | Op::GetCapture(_)
             | Op::GetGlobal(_)
-            | Op::MakeClosure { .. } => (0, 1),
+            | Op::GetGlobalPooled(_)
+            | Op::MakeClosure { .. }
+            | Op::MakeClosurePooled { .. } => (0, 1),
             Op::Interpolate(parts) => (parts.len().saturating_sub(1), 1),
             Op::Pop
             | Op::SetLocal(_)
             | Op::SetCapture(_)
             | Op::DefineGlobal(_)
+            | Op::DefineGlobalPooled(_)
             | Op::SetGlobal(_)
+            | Op::SetGlobalPooled(_)
             | Op::DefineMapGlobals
             | Op::Defer { .. }
             | Op::Throw
@@ -857,7 +1087,22 @@ impl Program {
             Op::StructSchema(fields) => {
                 (fields.iter().filter(|field| field.has_default).count(), 1)
             }
+            Op::StructSchemaPooled(id) => (
+                self.schema_fields(*id)
+                    .expect("validated schema field metadata")
+                    .iter()
+                    .filter(|field| field.has_default)
+                    .count(),
+                1,
+            ),
             Op::Struct(fields) | Op::StructCopy(fields) => (fields.len() + 1, 1),
+            Op::StructPooled(id) | Op::StructCopyPooled(id) => (
+                self.struct_fields(*id)
+                    .expect("validated struct field metadata")
+                    .len()
+                    + 1,
+                1,
+            ),
             Op::CombineOverloads
             | Op::GetIndex
             | Op::Add
@@ -913,8 +1158,66 @@ impl Program {
             ),
             Op::TryMatch {
                 bindings, operands, ..
+            }
+            | Op::TryMatchPooled {
+                bindings, operands, ..
             } => (operands + 1, bindings + 1),
             Op::Recur(kinds) => (kinds.len(), 0),
+        }
+    }
+
+    pub(crate) fn resolve_opcode<'a>(&'a self, op: &'a Op) -> Cow<'a, Op> {
+        match op {
+            Op::GetGlobalPooled(id) => Cow::Owned(Op::GetGlobal(
+                self.global_name(*id)
+                    .expect("validated global name metadata")
+                    .into(),
+            )),
+            Op::DefineGlobalPooled(id) => Cow::Owned(Op::DefineGlobal(
+                self.global_name(*id)
+                    .expect("validated global name metadata")
+                    .into(),
+            )),
+            Op::SetGlobalPooled(id) => Cow::Owned(Op::SetGlobal(
+                self.global_name(*id)
+                    .expect("validated global name metadata")
+                    .into(),
+            )),
+            Op::MakeClosurePooled { chunk, captures } => Cow::Owned(Op::MakeClosure {
+                chunk: *chunk,
+                captures: self
+                    .capture_list(*captures)
+                    .expect("validated capture metadata")
+                    .to_vec(),
+            }),
+            Op::StructSchemaPooled(id) => Cow::Owned(Op::StructSchema(
+                self.schema_fields(*id)
+                    .expect("validated schema field metadata")
+                    .to_vec(),
+            )),
+            Op::StructPooled(id) => Cow::Owned(Op::Struct(
+                self.struct_fields(*id)
+                    .expect("validated struct field metadata")
+                    .to_vec(),
+            )),
+            Op::StructCopyPooled(id) => Cow::Owned(Op::StructCopy(
+                self.struct_fields(*id)
+                    .expect("validated struct field metadata")
+                    .to_vec(),
+            )),
+            Op::TryMatchPooled {
+                pattern,
+                bindings,
+                operands,
+            } => Cow::Owned(Op::TryMatch {
+                pattern: self
+                    .match_pattern(*pattern)
+                    .expect("validated match pattern metadata")
+                    .clone(),
+                bindings: *bindings,
+                operands: *operands,
+            }),
+            _ => Cow::Borrowed(op),
         }
     }
 }

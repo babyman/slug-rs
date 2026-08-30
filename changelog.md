@@ -69,6 +69,9 @@
 - Private bytecode now stores compact span IDs backed by program-owned,
   source-path-interned metadata while preserving source-located diagnostics.
 
+- Installed private bytecode now pools global names, match patterns, capture
+  lists, schema fields, and struct field lists behind checked metadata IDs.
+
 - Private-bytecode verification now recursively validates match-pattern and
   match-type operand references before execution.
 

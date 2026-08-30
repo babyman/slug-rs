@@ -6,9 +6,10 @@ use std::{
 };
 
 use slug_vm::{
-    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, ModuleLoader, NativeArity,
-    NativeCall, NativeError, NativeModule, NativeOwnedValue, NativeResourceType, NativeStatus, Op,
-    Program, RuntimeErrorKind, SchemaField, SelectCase, SourceSpan, SpanId, Value, Vm, compile,
+    CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPatternId,
+    MatchRest, ModuleLoader, NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue,
+    NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField, SchemaFieldsId,
+    SelectCase, SourceSpan, SpanId, StructFieldsId, Value, Vm, compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {
@@ -70,6 +71,48 @@ fn rejects_missing_instruction_span_metadata_before_execution() {
         .expect_err("missing source span must be rejected before execution");
     assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
     assert!(error.message.contains("references missing source span 7"));
+}
+
+#[test]
+fn rejects_missing_opcode_pool_metadata_before_execution() {
+    let cases = [
+        (
+            Op::GetGlobalPooled(GlobalNameId::new(0)),
+            "missing global name metadata",
+        ),
+        (
+            Op::MakeClosurePooled {
+                chunk: 0,
+                captures: CaptureListId::new(0),
+            },
+            "missing capture metadata",
+        ),
+        (
+            Op::StructSchemaPooled(SchemaFieldsId::new(0)),
+            "missing schema field metadata",
+        ),
+        (
+            Op::StructPooled(StructFieldsId::new(0)),
+            "missing struct field metadata",
+        ),
+        (
+            Op::TryMatchPooled {
+                pattern: MatchPatternId::new(0),
+                bindings: 0,
+                operands: 0,
+            },
+            "missing match pattern metadata",
+        ),
+    ];
+    for (op, expected) in cases {
+        let mut main = Chunk::new("main", 0);
+        main.emit(op).emit(Op::Return);
+        let error = Vm::new()
+            .run(&program_with_main(main), 0)
+            .expect_err("missing pool metadata must be rejected before execution");
+        assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+        assert!(error.message.contains(expected), "{}", error.message);
+    }
 }
 
 fn native_make_channel(call: &mut NativeCall<'_>) -> NativeStatus {

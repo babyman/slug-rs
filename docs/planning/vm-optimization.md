@@ -270,7 +270,7 @@ alternative consistency and list/map rest bindings—and rejects a mismatched
   with `SourceId`.
 - [x] Store compact `SpanId` references with bytecode and resolve them to the
   public `SourceSpan` form only when producing a diagnostic.
-- [ ] Move variable-size opcode data—global names, patterns, capture lists,
+- [x] Move variable-size opcode data—global names, patterns, capture lists,
   schema fields, and struct field lists—into indexed chunk or program metadata
   pools.
 - [ ] Evaluate a compressed per-chunk source map after the simple indexed form
@@ -289,6 +289,16 @@ entries for borrowed dispatch and retains an owned public `SourceSpan` only for
 errors, frames, throws, and suspension state that outlive the current lookup.
 Malformed span indices are rejected before execution, and focused coverage
 proves both deduplication and unchanged diagnostic locations.
+
+### Opcode-metadata pool slice
+
+`Program::add_chunk` now lowers build-time global names, captures, schema and
+struct fields, and match patterns into checked program-owned pools. Installed
+instructions contain typed pool IDs rather than variable-size operands, while
+source compilation and focused bytecode construction retain the existing
+ergonomic forms. Missing indices fail verification before dispatch; the next
+Stage 3 work is to measure the resulting instruction layout and decide whether
+the remaining opcode metadata warrants the same treatment.
 
 ## Stage 4: direct ordinary locals and promoted captures
 

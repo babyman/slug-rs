@@ -735,7 +735,8 @@ impl Vm {
             }
             let instruction = self.next_instruction(program)?;
             let span = instruction.span.and_then(|span| program.span(span));
-            match self.execute_borrowed_span_op(program, &instruction.op, span)? {
+            let opcode = program.resolve_opcode(&instruction.op);
+            match self.execute_borrowed_span_op(program, opcode.as_ref(), span)? {
                 BorrowedSpanOpOutcome::Continue => continue,
                 BorrowedSpanOpOutcome::Settled(value) => {
                     return Ok(ExecutionOutcome::Settled(Ok(value)));
@@ -745,7 +746,7 @@ impl Vm {
                 self.metrics.borrow_mut().source_span_clones += 1;
             }
             let span = span.cloned();
-            match &instruction.op {
+            match opcode.as_ref() {
                 Op::Constant(index) => {
                     let chunk = self.current_chunk(program)?;
                     let value = match chunk.constants.get(*index) {
@@ -1284,6 +1285,14 @@ impl Vm {
                         return Ok(ExecutionOutcome::Settled(Ok(value)));
                     }
                 }
+                Op::GetGlobalPooled(_)
+                | Op::DefineGlobalPooled(_)
+                | Op::SetGlobalPooled(_)
+                | Op::MakeClosurePooled { .. }
+                | Op::StructSchemaPooled(_)
+                | Op::StructPooled(_)
+                | Op::StructCopyPooled(_)
+                | Op::TryMatchPooled { .. } => unreachable!("pooled opcode was not resolved"),
             }
         }
     }
@@ -1295,6 +1304,8 @@ impl Vm {
         op: &Op,
         span: Option<&SourceSpan>,
     ) -> VmResult<BorrowedSpanOpOutcome> {
+        let opcode = program.resolve_opcode(op);
+        let op = opcode.as_ref();
         match op {
             Op::Constant(index) => {
                 let chunk = self.current_chunk(program)?;
@@ -1830,6 +1841,14 @@ impl Vm {
                     return Ok(BorrowedSpanOpOutcome::Settled(value));
                 }
             }
+            Op::GetGlobalPooled(_)
+            | Op::DefineGlobalPooled(_)
+            | Op::SetGlobalPooled(_)
+            | Op::MakeClosurePooled { .. }
+            | Op::StructSchemaPooled(_)
+            | Op::StructPooled(_)
+            | Op::StructCopyPooled(_)
+            | Op::TryMatchPooled { .. } => unreachable!("pooled opcode was not resolved"),
         }
         Ok(BorrowedSpanOpOutcome::Continue)
     }
