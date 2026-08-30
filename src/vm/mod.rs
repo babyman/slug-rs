@@ -1521,6 +1521,8 @@ impl Vm {
             }
             Op::Import(kinds) => self.import_at(kinds, span)?,
             Op::Select(cases) => self.select_at(cases, span)?,
+            Op::Spawn => self.spawn_task_at(program, span)?,
+            Op::Nursery { has_limit } => self.run_nursery_at(program, *has_limit, span)?,
             Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
             Op::LeaveScope => {
                 let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {
@@ -2130,6 +2132,69 @@ impl Vm {
         Ok(())
     }
 
+    fn spawn_task_at(&mut self, program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
+        let closure = self.pop_at(span)?;
+        let Value::Closure(closure) = closure else {
+            return Err(self.error_at(
+                RuntimeErrorKind::Type,
+                "spawn expects a function or block".into(),
+                span,
+            ));
+        };
+        let admission = if let Some(limit) = self.direct_task_limit {
+            let count = self.direct_task_count.as_ref().ok_or_else(|| {
+                self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "limited nursery is missing its task counter".into(),
+                    span,
+                )
+            })?;
+            Some(TaskAdmission {
+                limit,
+                count: count.clone(),
+            })
+        } else {
+            None
+        };
+        let captures = closure
+            .captures
+            .iter()
+            .zip(&closure.capture_sources)
+            .map(|(cell, source)| match source {
+                Capture::Local(_) => binding_cell(cell.borrow().clone()),
+                Capture::Capture(_) => cell.clone(),
+            })
+            .collect();
+        let closure = Rc::new(Closure {
+            chunk: closure.chunk,
+            captures,
+            program: closure.program.clone(),
+            globals: closure.globals.clone(),
+            capture_sources: closure.capture_sources.clone(),
+        });
+        let execution = self.module_closure_execution(
+            Rc::new(program.clone()),
+            closure,
+            Vec::new(),
+            None,
+            self.owned_span(span),
+            ClosureCallOptions {
+                direct_task_limit: None,
+                direct_task_count: None,
+                nursery: self.nursery.clone(),
+                settle_nursery: false,
+            },
+        )?;
+        let task = Rc::new(Task::pending(
+            execution,
+            admission,
+            self.nursery.ready_queue(),
+        ));
+        self.nursery.add_task(task.clone());
+        self.stack.push(Value::Task(task));
+        Ok(())
+    }
+
     fn make_progress(&self) -> bool {
         self.nursery.make_progress()
     }
@@ -2224,6 +2289,91 @@ impl Vm {
         }
         let value = body.outcome().ok_or_else(|| {
             self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "nursery body settled without an outcome".into(),
+                span,
+            )
+        })??;
+        self.stack.push(value);
+        Ok(())
+    }
+
+    fn run_nursery_at(
+        &mut self,
+        program: &Program,
+        has_limit: bool,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let closure = self.pop_at(span)?;
+        let limit = has_limit.then(|| self.pop_at(span)).transpose()?;
+        let limit = if let Some(limit) = limit {
+            let Value::Int(limit) = limit else {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Type,
+                    "nursery limit expects an integer".into(),
+                    span,
+                ));
+            };
+            if limit < 0 {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Type,
+                    "nursery limit must not be negative".into(),
+                    span,
+                ));
+            }
+            if limit == 0 {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Type,
+                    "nursery limit must be positive".into(),
+                    span,
+                ));
+            }
+            Some(usize::try_from(limit).map_err(|_| {
+                self.error_at(
+                    RuntimeErrorKind::Type,
+                    "nursery limit is too large".into(),
+                    span,
+                )
+            })?)
+        } else {
+            None
+        };
+        let Value::Closure(closure) = closure else {
+            return Err(self.error_at(
+                RuntimeErrorKind::Type,
+                "nursery expects a function or block".into(),
+                span,
+            ));
+        };
+        let nursery = Rc::new(Nursery::explicit());
+        let execution = self.module_closure_execution(
+            Rc::new(program.clone()),
+            closure,
+            Vec::new(),
+            None,
+            self.owned_span(span),
+            ClosureCallOptions {
+                direct_task_limit: limit,
+                direct_task_count: limit.map(|_| Rc::new(Cell::new(0))),
+                nursery: nursery.clone(),
+                settle_nursery: true,
+            },
+        )?;
+        let body = Rc::new(Task::pending(execution, None, nursery.ready_queue()));
+        nursery.enqueue(body.clone());
+        nursery.run_task(&body);
+        if body.is_pending() {
+            let blocked = self.error_at(
+                RuntimeErrorKind::InvalidCall,
+                "task remains blocked with no runnable work".into(),
+                span,
+            );
+            nursery.cancel_all(&blocked);
+            body.cancel(&blocked);
+            return Err(blocked);
+        }
+        let value = body.outcome().ok_or_else(|| {
+            self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "nursery body settled without an outcome".into(),
                 span,

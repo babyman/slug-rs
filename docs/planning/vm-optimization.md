@@ -136,6 +136,11 @@ case can settle immediately, when the wait set is stored as a durable
 `Suspension::Select`; resumed and closed-send errors therefore retain the
 original source location.
 
+Task spawning and explicit nursery setup now likewise borrow their spans while
+validating operands and limits. They clone only when creating the task body
+frame, which may outlive the instruction and must retain its call-site
+diagnostics.
+
 ### Remaining Stage 1 execution plan
 
 Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI

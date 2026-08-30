@@ -43,6 +43,9 @@
 - `select` now borrows spans for ready/default execution and clones only when
   storing a suspended wait set for later scheduler diagnostics.
 
+- Task spawning and nursery setup now borrow source spans until task-body
+  execution frames are created.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 
