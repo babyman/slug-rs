@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Private-bytecode verification now rejects reachable chunk fallthrough,
+  overflowing call and map operand counts, unmatched scopes, and scope-depth
+  conflicts before any frame executes; malformed-opcode coverage was expanded.
+
 - VM executions now share one installed immutable program across root closures,
   spawned tasks, and explicit nurseries. New `Rc<Program>` entry points avoid
   the compatibility wrapper's single root installation copy, and opt-in

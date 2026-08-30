@@ -356,6 +356,12 @@ enum StackValue {
     MatchResult,
 }
 
+#[derive(Clone)]
+struct VerificationState {
+    stack: Vec<StackValue>,
+    scope_depth: usize,
+}
+
 /// Independently callable code and its constant pool.
 #[derive(Clone, Debug)]
 pub struct Chunk {
@@ -839,6 +845,28 @@ impl Program {
     ) -> Result<(), String> {
         let location = || format!("function `{}` instruction {instruction_index}", chunk.name);
         match op {
+            Op::Call(count) if count.checked_add(1).is_none() => {
+                Err("call argument count is too large".into())
+            }
+            Op::Map(count) if count.checked_mul(2).is_none() => {
+                Err(format!("{} has too many map operands", location()))
+            }
+            Op::Select(cases)
+                if cases
+                    .iter()
+                    .try_fold(0usize, |count, case| {
+                        count.checked_add(match case {
+                            SelectCase::Receive { has_handler }
+                            | SelectCase::After { has_handler }
+                            | SelectCase::Await { has_handler } => 1 + usize::from(*has_handler),
+                            SelectCase::Send { has_handler } => 2 + usize::from(*has_handler),
+                            SelectCase::Default { has_handler } => usize::from(*has_handler),
+                        })
+                    })
+                    .is_none() =>
+            {
+                Err(format!("{} has too many select operands", location()))
+            }
             Op::Constant(index) if chunk.constants.get(*index).is_none() => Err(format!(
                 "{} references missing constant {index}",
                 location()
@@ -1046,22 +1074,44 @@ impl Program {
     }
 
     fn validate_stack(&self, chunk: &Chunk, initial_stack: usize) -> Result<(), String> {
+        if chunk.code.is_empty() {
+            return Err(format!(
+                "function `{}` falls through without Return",
+                chunk.name
+            ));
+        }
         let mut stacks = vec![None; chunk.code.len()];
         let mut pending = VecDeque::new();
-        if !chunk.code.is_empty() {
-            stacks[0] = Some(vec![StackValue::Unknown; initial_stack]);
-            pending.push_back(0usize);
-        }
+        stacks[0] = Some(VerificationState {
+            stack: vec![StackValue::Unknown; initial_stack],
+            scope_depth: 0,
+        });
+        pending.push_back(0usize);
         while let Some(index) = pending.pop_front() {
-            let stack = stacks[index].as_ref().expect("queued stack state exists");
+            let state = stacks[index].as_ref().expect("queued stack state exists");
             let instruction = &chunk.code[index];
-            let Some(next_stack) = self.apply_stack_effect(stack, &instruction.op) else {
+            let Some(next_stack) = self.apply_stack_effect(&state.stack, &instruction.op) else {
                 let (pops, _) = self.stack_effect(&instruction.op);
                 return Err(format!(
                     "function `{}` instruction {index} requires {pops} stack values, has {}",
                     chunk.name,
-                    stack.len()
+                    state.stack.len()
                 ));
+            };
+            let scope_depth = match instruction.op {
+                Op::EnterScope => state.scope_depth.checked_add(1).ok_or_else(|| {
+                    format!(
+                        "function `{}` instruction {index} has too many scopes",
+                        chunk.name
+                    )
+                })?,
+                Op::LeaveScope => state.scope_depth.checked_sub(1).ok_or_else(|| {
+                    format!(
+                        "function `{}` instruction {index} leaves no active scope",
+                        chunk.name
+                    )
+                })?,
+                _ => state.scope_depth,
             };
             let successors: Vec<usize> = match &instruction.op {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
@@ -1079,18 +1129,41 @@ impl Program {
                     .into_iter()
                     .collect(),
             };
+            if successors.is_empty()
+                && !matches!(
+                    instruction.op,
+                    Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented
+                )
+            {
+                return Err(format!(
+                    "function `{}` instruction {index} falls through without Return",
+                    chunk.name
+                ));
+            }
             for successor in successors {
-                let successor_stack = if matches!(instruction.op, Op::Recur(_)) {
-                    vec![StackValue::Unknown; initial_stack]
+                let successor_state = if matches!(instruction.op, Op::Recur(_)) {
+                    VerificationState {
+                        stack: vec![StackValue::Unknown; initial_stack],
+                        scope_depth: 0,
+                    }
                 } else {
-                    next_stack.clone()
+                    VerificationState {
+                        stack: next_stack.clone(),
+                        scope_depth,
+                    }
                 };
                 if let Some(existing) = &mut stacks[successor] {
-                    if Self::merge_stack(existing, successor_stack) {
+                    if existing.scope_depth != successor_state.scope_depth {
+                        return Err(format!(
+                            "function `{}` instruction {successor} has inconsistent scope depth",
+                            chunk.name
+                        ));
+                    }
+                    if Self::merge_stack(&mut existing.stack, successor_state.stack) {
                         pending.push_back(successor);
                     }
                 } else {
-                    stacks[successor] = Some(successor_stack);
+                    stacks[successor] = Some(successor_state);
                     pending.push_back(successor);
                 }
             }

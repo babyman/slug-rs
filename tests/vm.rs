@@ -1225,12 +1225,86 @@ fn rejects_stack_underflow_after_try_match_before_execution() {
 }
 
 #[test]
+fn rejects_reachable_fallthrough_and_unmatched_scopes_before_execution() {
+    let cases = [
+        (Chunk::new("main", 0), "falls through without Return"),
+        (
+            {
+                let mut chunk = Chunk::new("main", 0);
+                chunk.emit(Op::Nil);
+                chunk
+            },
+            "instruction 0 falls through without Return",
+        ),
+        (
+            {
+                let mut chunk = Chunk::new("main", 0);
+                chunk.emit(Op::LeaveScope).emit(Op::Nil).emit(Op::Return);
+                chunk
+            },
+            "leaves no active scope",
+        ),
+    ];
+    for (main, expected) in cases {
+        let error = Vm::new()
+            .run(&program_with_main(main), 0)
+            .expect_err("structural defect must be rejected before execution");
+        assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+        assert!(error.message.contains(expected), "{}", error.message);
+    }
+}
+
+#[test]
+fn rejects_scope_depth_mismatches_at_control_flow_joins() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::EnterScope)
+        .emit(Op::Nil)
+        .emit(Op::JumpIfFalse(5))
+        .emit(Op::LeaveScope)
+        .emit(Op::Jump(5))
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("scope-depth mismatch must be rejected before execution");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(error.message.contains("inconsistent scope depth"));
+}
+
+#[test]
+fn malformed_bytecode_does_not_mutate_globals_before_rejection() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil).emit(Op::DefineGlobal("changed".into()));
+
+    let mut vm = Vm::new();
+    let error = vm
+        .run(&program_with_main(main), 0)
+        .expect_err("fallthrough must be rejected before dispatch");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert_eq!(vm.global("changed"), None);
+    assert!(vm.global("cfg").is_some());
+}
+
+#[test]
 fn generated_malformed_private_bytecode_returns_checked_errors() {
     let templates = [
         Op::Pop,
         Op::Add,
         Op::GetLocal(0),
+        Op::LeaveScope,
+        Op::Call(usize::MAX),
+        Op::Map(usize::MAX),
         Op::Jump(usize::MAX),
+        Op::MakeClosure {
+            chunk: usize::MAX,
+            captures: Vec::new(),
+        },
+        Op::Select(Vec::new()),
+        Op::MakeClosurePooled {
+            chunk: 0,
+            captures: CaptureListId::new(u32::MAX),
+        },
         Op::TryMatch {
             pattern: slug_vm::MatchPattern::Wildcard,
             bindings: 0,

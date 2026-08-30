@@ -535,14 +535,14 @@ compatibility installation copy as well.
 
 ### 2. Close statically knowable verifier gaps
 
-- [ ] Reject every reachable fallthrough past the end of a chunk before a
+- [x] Reject every reachable fallthrough past the end of a chunk before a
   frame is created; terminal paths must end in `Return`, `Throw`,
   `MatchFailure`, `NotImplemented`, or another explicitly modeled terminal.
-- [ ] Reject overflowing operand counts, including `Call(usize::MAX)`, in the
+- [x] Reject overflowing operand counts, including `Call(usize::MAX)`, in the
   structural pass instead of representing them as a zero-pop operation.
-- [ ] Track scope depth through control flow and reject a reachable unmatched
+- [x] Track scope depth through control flow and reject a reachable unmatched
   `LeaveScope` before execution.
-- [ ] Expand malformed-program generation across opcode families, metadata
+- [x] Expand malformed-program generation across opcode families, metadata
   indices, control-flow joins, captures, scopes, calls, and scheduler
   operations.
 
@@ -550,6 +550,20 @@ Tests for pre-execution rejection must also assert that globals, evaluated
 module-tag data, task queues, and other observable VM state remain unchanged.
 Dispatch-time checks remain required for defects that depend on dynamic
 values or closure state.
+
+#### Measurement record: verifier gaps (2026-08-30)
+
+`cargo test --test vm` is the deterministic verification command. Before this
+change, a reachable non-terminal final instruction passed structural
+validation, `Call(usize::MAX)` reached dispatch through a zero-pop stack
+effect, and `LeaveScope` failed only after frame creation. After the change,
+focused malformed programs reject those cases, scope-depth conflicts at
+control-flow joins, invalid metadata, function references, calls, maps, and
+empty scheduler selections before dispatch. The generator combines malformed
+opcode families over 64 seeded cases and asserts checked errors without host
+panics. The global-mutation regression confirms a rejected program cannot
+define a global; no allocation or byte estimate applies because this is a
+validation-only change.
 
 ### 3. Remove the obsolete owned dispatch body
 
