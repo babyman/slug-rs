@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added an outstanding numeric-representation decision plan comparing the
+  current checked integer/binary-float model with DEC64, IEEE decimal,
+  fixed-point, runtime-specialized, arbitrary-decimal, and rational models,
+  including semantic gates and VM-focused performance experiments.
+
 - Expanded executable-layout accounting to include program, chunk, constant,
   descriptor, metadata, and source-table capacities, and added separately
   reported private-bytecode verification time to the opt-in VM metrics.
