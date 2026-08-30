@@ -734,20 +734,17 @@ impl Vm {
                 return Ok(ExecutionOutcome::Suspended);
             }
             let instruction = self.next_instruction(program)?;
-            match self.execute_borrowed_span_op(
-                program,
-                &instruction.op,
-                instruction.span.as_ref(),
-            )? {
+            let span = instruction.span.and_then(|span| program.span(span));
+            match self.execute_borrowed_span_op(program, &instruction.op, span)? {
                 BorrowedSpanOpOutcome::Continue => continue,
                 BorrowedSpanOpOutcome::Settled(value) => {
                     return Ok(ExecutionOutcome::Settled(Ok(value)));
                 }
             }
-            if instruction.span.is_some() {
+            if span.is_some() {
                 self.metrics.borrow_mut().source_span_clones += 1;
             }
-            let span = instruction.span.clone();
+            let span = span.cloned();
             match &instruction.op {
                 Op::Constant(index) => {
                     let chunk = self.current_chunk(program)?;
@@ -2661,7 +2658,7 @@ impl Vm {
                 span.clone(),
             )
         })?;
-        let importer = span.as_ref().map(|span| Path::new(&span.path));
+        let importer = span.as_ref().map(|span| Path::new(span.path.as_ref()));
         let mut exports = Vec::new();
         for name in names {
             let Value::Str(name) = name else {
@@ -2746,7 +2743,7 @@ impl Vm {
                 span,
             )
         })?;
-        let importer = span.map(|span| Path::new(&span.path));
+        let importer = span.map(|span| Path::new(span.path.as_ref()));
         let mut exports = Vec::new();
         for name in names {
             let Value::Str(name) = name else {

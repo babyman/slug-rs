@@ -66,6 +66,9 @@
   chunk, including explicit `TryMatch` binding/result temporaries and
   called-frame operand prefixes.
 
+- Private bytecode now stores compact span IDs backed by program-owned,
+  source-path-interned metadata while preserving source-located diagnostics.
+
 - Private-bytecode verification now recursively validates match-pattern and
   match-type operand references before execution.
 

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use crate::{
     Value,
@@ -8,7 +11,7 @@ use crate::{
 /// A source position attached to an instruction for language diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SourceSpan {
-    pub path: String,
+    pub path: Arc<str>,
     pub line: u32,
     pub column: u32,
 }
@@ -17,10 +20,35 @@ impl SourceSpan {
     #[must_use]
     pub fn new(path: impl Into<String>, line: u32, column: u32) -> Self {
         Self {
-            path: path.into(),
+            path: Arc::from(path.into()),
             line,
             column,
         }
+    }
+}
+
+/// Private source-path table index used by bytecode span metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceId(u32);
+
+impl SourceId {
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Private source-span table index used by bytecode instructions.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SpanId(u32);
+
+impl SpanId {
+    #[must_use]
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    fn index(self) -> usize {
+        self.0 as usize
     }
 }
 
@@ -147,7 +175,7 @@ pub enum SelectCase {
 #[derive(Clone, Debug)]
 pub struct Instruction {
     pub op: Op,
-    pub span: Option<SourceSpan>,
+    pub span: Option<SpanId>,
 }
 
 impl Instruction {
@@ -157,7 +185,7 @@ impl Instruction {
     }
 
     #[must_use]
-    pub fn at(mut self, span: SourceSpan) -> Self {
+    pub fn at(mut self, span: SpanId) -> Self {
         self.span = Some(span);
         self
     }
@@ -299,6 +327,8 @@ pub struct Chunk {
     pub locals: usize,
     pub constants: Vec<Constant>,
     pub code: Vec<Instruction>,
+    spans: Vec<SourceSpan>,
+    span_ids: HashMap<SourceSpan, SpanId>,
 }
 
 impl Chunk {
@@ -312,6 +342,8 @@ impl Chunk {
             locals: arity,
             constants: Vec::new(),
             code: Vec::new(),
+            spans: Vec::new(),
+            span_ids: HashMap::new(),
         }
     }
 
@@ -326,8 +358,21 @@ impl Chunk {
     }
 
     pub fn emit_at(&mut self, op: Op, span: SourceSpan) -> &mut Self {
+        let span = self.intern_span(span);
         self.code.push(Instruction::new(op).at(span));
         self
+    }
+
+    fn intern_span(&mut self, span: SourceSpan) -> SpanId {
+        if let Some(id) = self.span_ids.get(&span) {
+            return *id;
+        }
+        let id = SpanId(
+            u32::try_from(self.spans.len()).expect("private chunk has too many source spans"),
+        );
+        self.spans.push(span.clone());
+        self.span_ids.insert(span, id);
+        id
     }
 }
 
@@ -343,6 +388,10 @@ pub struct Program {
     module_name: String,
     semantic_snapshot: ModuleSnapshot,
     callable_identities: Vec<CallableIdentity>,
+    sources: Vec<Arc<str>>,
+    source_ids: HashMap<Arc<str>, SourceId>,
+    spans: Vec<SourceSpan>,
+    span_ids: HashMap<SourceSpan, SpanId>,
 }
 
 impl Program {
@@ -351,7 +400,17 @@ impl Program {
         Self::default()
     }
 
-    pub fn add_chunk(&mut self, chunk: Chunk) -> usize {
+    pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {
+        let span_remap = chunk
+            .spans
+            .drain(..)
+            .map(|span| self.intern_span(span))
+            .collect::<Vec<_>>();
+        for instruction in &mut chunk.code {
+            if let Some(span) = instruction.span {
+                instruction.span = span_remap.get(span.index()).copied().or(Some(span));
+            }
+        }
         let index = self.chunks.len();
         self.names.insert(chunk.name.clone(), index);
         self.chunks.push(chunk);
@@ -371,6 +430,52 @@ impl Program {
     #[must_use]
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
+    }
+
+    /// Number of interned source paths used by private bytecode metadata.
+    #[must_use]
+    pub fn source_count(&self) -> usize {
+        self.sources.len()
+    }
+
+    /// Number of interned source spans used by private bytecode metadata.
+    #[must_use]
+    pub fn span_count(&self) -> usize {
+        self.spans.len()
+    }
+
+    fn intern_span(&mut self, span: SourceSpan) -> SpanId {
+        let source = self.intern_source(span.path);
+        let span = SourceSpan {
+            path: self.sources[source.index()].clone(),
+            line: span.line,
+            column: span.column,
+        };
+        if let Some(id) = self.span_ids.get(&span) {
+            return *id;
+        }
+        let id = SpanId(
+            u32::try_from(self.spans.len()).expect("private program has too many source spans"),
+        );
+        self.spans.push(span.clone());
+        self.span_ids.insert(span, id);
+        id
+    }
+
+    fn intern_source(&mut self, path: Arc<str>) -> SourceId {
+        if let Some(id) = self.source_ids.get(&path) {
+            return *id;
+        }
+        let id = SourceId(
+            u32::try_from(self.sources.len()).expect("private program has too many source paths"),
+        );
+        self.sources.push(path.clone());
+        self.source_ids.insert(path, id);
+        id
+    }
+
+    pub(crate) fn span(&self, id: SpanId) -> Option<&SourceSpan> {
+        self.spans.get(id.index())
     }
 
     /// Names declared for export by a compiled source module.
@@ -466,6 +571,15 @@ impl Program {
                 }
             }
             for (instruction_index, instruction) in chunk.code.iter().enumerate() {
+                if let Some(span) = instruction.span
+                    && self.span(span).is_none()
+                {
+                    return Err(format!(
+                        "function `{}` instruction {instruction_index} references missing source span {}",
+                        chunk.name,
+                        span.index()
+                    ));
+                }
                 self.validate_op(chunk_index, instruction_index, chunk, &instruction.op)?;
             }
             let initial_stack = if chunk_index == entry {

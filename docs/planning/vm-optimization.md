@@ -266,9 +266,9 @@ alternative consistency and list/map rest bindings—and rejects a mismatched
 
 ## Stage 3: compact source and opcode metadata
 
-- [ ] Intern source paths once per program or source table and identify them
+- [x] Intern source paths once per program or source table and identify them
   with `SourceId`.
-- [ ] Store compact `SpanId` references with bytecode and resolve them to the
+- [x] Store compact `SpanId` references with bytecode and resolve them to the
   public `SourceSpan` form only when producing a diagnostic.
 - [ ] Move variable-size opcode data—global names, patterns, capture lists,
   schema fields, and struct field lists—into indexed chunk or program metadata
@@ -279,6 +279,16 @@ alternative consistency and list/map rest bindings—and rejects a mismatched
 
 Completion requires unchanged source-located error behavior, malformed-index
 tests for each metadata pool, and before/after instruction-size measurements.
+
+### Span-table slice
+
+Programs now own interned source paths and span records. Instructions carry an
+optional `SpanId`; `Chunk::emit_at` deduplicates local source spans before
+`Program::add_chunk` remaps them into the program table. The VM resolves table
+entries for borrowed dispatch and retains an owned public `SourceSpan` only for
+errors, frames, throws, and suspension state that outlive the current lookup.
+Malformed span indices are rejected before execution, and focused coverage
+proves both deduplication and unchanged diagnostic locations.
 
 ## Stage 4: direct ordinary locals and promoted captures
 

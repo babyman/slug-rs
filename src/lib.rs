@@ -20,7 +20,7 @@ mod vm;
 pub use bytecode::{
     CallArgumentKind, Capture, Chunk, Constant, DeferMode, Instruction, MatchMapKey, MatchPattern,
     MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program,
-    SchemaField, SelectCase, SourceSpan,
+    SchemaField, SelectCase, SourceId, SourceSpan, SpanId,
 };
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;

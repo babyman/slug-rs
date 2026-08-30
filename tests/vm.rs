@@ -8,7 +8,7 @@ use std::{
 use slug_vm::{
     CallArgumentKind, Capture, Chunk, MatchMapKey, MatchRest, ModuleLoader, NativeArity,
     NativeCall, NativeError, NativeModule, NativeOwnedValue, NativeResourceType, NativeStatus, Op,
-    Program, RuntimeErrorKind, SchemaField, SelectCase, SourceSpan, Value, Vm, compile,
+    Program, RuntimeErrorKind, SchemaField, SelectCase, SourceSpan, SpanId, Value, Vm, compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {
@@ -37,6 +37,39 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
     assert!(metrics.instructions_executed >= 4);
     assert_eq!(metrics.frames_created, 1);
     assert_eq!(metrics.local_binding_cells_created, 0);
+}
+
+#[test]
+fn interns_instruction_spans_and_preserves_diagnostics() {
+    let span = SourceSpan::new("interned.slug", 3, 5);
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    let zero = main.constant(Value::Int(0));
+    main.emit_at(Op::Constant(one), span.clone())
+        .emit_at(Op::Constant(zero), span.clone())
+        .emit_at(Op::Divide, span.clone())
+        .emit_at(Op::Return, span.clone());
+
+    let program = program_with_main(main);
+    assert_eq!(program.source_count(), 1);
+    assert_eq!(program.span_count(), 1);
+    let error = Vm::new()
+        .run(&program, 0)
+        .expect_err("division by zero must retain its source span");
+    assert_eq!(error.span, Some(span));
+}
+
+#[test]
+fn rejects_missing_instruction_span_metadata_before_execution() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil).emit(Op::Return);
+    main.code[0].span = Some(SpanId::new(7));
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("missing source span must be rejected before execution");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(error.message.contains("references missing source span 7"));
 }
 
 fn native_make_channel(call: &mut NativeCall<'_>) -> NativeStatus {
