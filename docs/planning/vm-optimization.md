@@ -567,15 +567,28 @@ validation-only change.
 
 ### 3. Remove the obsolete owned dispatch body
 
-- [ ] Delete the unreachable second opcode interpreter that follows the
+- [x] Delete the unreachable second opcode interpreter that follows the
   borrowed-dispatch outcome in `execute_raw`.
-- [ ] Remove owned-span helper variants that become unused, retaining explicit
+- [x] Remove owned-span helper variants that become unused, retaining explicit
   ownership only for runtime errors, call frames, suspended state, and other
   durable values.
-- [ ] Remove the `unreachable_code` lint allowance from the dispatch loop.
+- [x] Remove the `unreachable_code` lint allowance from the dispatch loop.
 
 Completion requires one authoritative opcode dispatch implementation and the
 same VM, CLI, malformed-bytecode, source-location, and call-frame behavior.
+
+#### Measurement record: borrowed dispatch consolidation (2026-08-30)
+
+`cargo test --features metrics --test vm` and `make check` are the
+verification commands. Before this change, the executable contained two opcode
+dispatch bodies and duplicate owned-span helper families, although the second
+body was unreachable after the borrowed dispatcher returned. After the change,
+one dispatch body and the borrowed-span helper family remain; only the owned
+span conversion required for durable errors, frames, and suspended state is
+retained. The metrics-enabled tests preserve zero successful-path source-span
+clones in the representative arithmetic dispatch test, while source-location,
+call-frame, malformed-bytecode, VM, and CLI coverage remain green. This is a
+dead-code removal, so it has no independent allocation or byte estimate.
 
 ### 4. Audit scheduler scaling with cost-sensitive evidence
 

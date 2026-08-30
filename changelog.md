@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Removed the obsolete unreachable owned VM dispatch body and its duplicate
+  owned-span helpers; borrowed dispatch is now the sole opcode interpreter.
+
 - Private-bytecode verification now rejects reachable chunk fallthrough,
   overflowing call and map operand counts, unmatched scopes, and scope-depth
   conflicts before any frame executes; malformed-opcode coverage was expanded.
