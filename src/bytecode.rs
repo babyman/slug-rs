@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crate::{
     Value,
@@ -526,6 +526,152 @@ impl Program {
                 Err(format!("{} has no select cases", location()))
             }
             _ => Ok(()),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn validate_stack(chunk: &Chunk) -> Result<(), String> {
+        let mut heights = vec![None; chunk.code.len()];
+        let mut pending = VecDeque::new();
+        if !chunk.code.is_empty() {
+            heights[0] = Some(0usize);
+            pending.push_back(0usize);
+        }
+        while let Some(index) = pending.pop_front() {
+            let height = heights[index].expect("queued stack height exists");
+            let instruction = &chunk.code[index];
+            let (pops, pushes) = Self::stack_effect(&instruction.op);
+            if height < pops {
+                return Err(format!(
+                    "function `{}` instruction {index} requires {pops} stack values, has {height}",
+                    chunk.name
+                ));
+            }
+            let next_height = height - pops + pushes;
+            let successors: Vec<usize> = match &instruction.op {
+                Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
+                Op::Recur(_) => vec![0],
+                Op::Jump(target) => vec![*target],
+                Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. } => [
+                    Some(*target),
+                    (index + 1 < chunk.code.len()).then_some(index + 1),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
+                _ => (index + 1 < chunk.code.len())
+                    .then_some(index + 1)
+                    .into_iter()
+                    .collect(),
+            };
+            for successor in successors {
+                let successor_height = if matches!(instruction.op, Op::Recur(_)) {
+                    0
+                } else {
+                    next_height
+                };
+                match heights[successor] {
+                    Some(existing) if successor_height < existing => {
+                        heights[successor] = Some(successor_height);
+                        pending.push_back(successor);
+                    }
+                    Some(_) => {}
+                    None => {
+                        heights[successor] = Some(successor_height);
+                        pending.push_back(successor);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn stack_effect(op: &Op) -> (usize, usize) {
+        match op {
+            Op::Constant(_)
+            | Op::Nil
+            | Op::True
+            | Op::False
+            | Op::GetLocal(_)
+            | Op::GetCapture(_)
+            | Op::GetGlobal(_)
+            | Op::MakeClosure { .. } => (0, 1),
+            Op::Interpolate(parts) => (parts.len().saturating_sub(1), 1),
+            Op::Pop
+            | Op::SetLocal(_)
+            | Op::SetCapture(_)
+            | Op::DefineGlobal(_)
+            | Op::SetGlobal(_)
+            | Op::DefineMapGlobals
+            | Op::Defer { .. }
+            | Op::Throw
+            | Op::Return => (1, 0),
+            Op::Duplicate => (1, 2),
+            Op::RecordModuleTag { arguments, .. } => (*arguments, 0),
+            Op::List(count) => (*count, 1),
+            Op::ListSpread(spreads) => (spreads.len(), 1),
+            Op::Map(count) => (count.saturating_mul(2), 1),
+            Op::StructSchema(fields) => {
+                (fields.iter().filter(|field| field.has_default).count(), 1)
+            }
+            Op::Struct(fields) | Op::StructCopy(fields) => (fields.len() + 1, 1),
+            Op::CombineOverloads
+            | Op::GetIndex
+            | Op::Add
+            | Op::Subtract
+            | Op::Multiply
+            | Op::Divide
+            | Op::Modulo
+            | Op::BitAnd
+            | Op::BitOr
+            | Op::BitXor
+            | Op::ShiftLeft
+            | Op::ShiftRight
+            | Op::ListAppend
+            | Op::ListPrepend
+            | Op::Equal
+            | Op::Greater
+            | Op::Less => (2, 1),
+            Op::GetSlice {
+                has_start,
+                has_end,
+                has_step,
+            } => (
+                1 + usize::from(*has_start) + usize::from(*has_end) + usize::from(*has_step),
+                1,
+            ),
+            Op::Negate | Op::Not | Op::BitNot | Op::Spawn | Op::SelectApply => (1, 1),
+            Op::Jump(_)
+            | Op::JumpIfFalse(_)
+            | Op::JumpIfProvided { .. }
+            | Op::EnterScope
+            | Op::LeaveScope
+            | Op::MatchFailure
+            | Op::NotImplemented => (0, 0),
+            Op::Call(count) => (count.checked_add(1).unwrap_or(0), 1),
+            Op::CallSpread(kinds) | Op::CallSelected { kinds, .. } => (kinds.len() + 1, 1),
+            Op::PipelineCall(kinds) | Op::PipelineCallSelected { kinds, .. } => {
+                (kinds.len() + 2, 1)
+            }
+            Op::Import(kinds) => (kinds.len(), 1),
+            Op::Nursery { has_limit } => (1 + usize::from(*has_limit), 1),
+            Op::Select(cases) => (
+                cases
+                    .iter()
+                    .map(|case| match case {
+                        SelectCase::Receive { has_handler }
+                        | SelectCase::After { has_handler }
+                        | SelectCase::Await { has_handler } => 1 + usize::from(*has_handler),
+                        SelectCase::Send { has_handler } => 2 + usize::from(*has_handler),
+                        SelectCase::Default { has_handler } => usize::from(*has_handler),
+                    })
+                    .sum(),
+                1,
+            ),
+            Op::TryMatch {
+                bindings, operands, ..
+            } => (operands + 1, bindings + 1),
+            Op::Recur(kinds) => (kinds.len(), 0),
         }
     }
 }
