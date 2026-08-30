@@ -130,6 +130,12 @@ as well. The deferred-cleanup benchmark drops from three to two source-span
 clones per invocation; the remaining clones are call-frame diagnostics and
 other owned scheduler paths.
 
+`select` now borrows its span while validating cases, resolving ready/default
+cases, and constructing its registrations. It clones the span only after no
+case can settle immediately, when the wait set is stored as a durable
+`Suspension::Select`; resumed and closed-send errors therefore retain the
+original source location.
+
 ### Remaining Stage 1 execution plan
 
 Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI

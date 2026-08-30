@@ -1520,6 +1520,7 @@ impl Vm {
                 self.pipeline_call_at(program, kinds, Some(identity), span)?;
             }
             Op::Import(kinds) => self.import_at(kinds, span)?,
+            Op::Select(cases) => self.select_at(cases, span)?,
             Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
             Op::LeaveScope => {
                 let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {
@@ -3056,6 +3057,223 @@ impl Vm {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
+    fn select_at(&mut self, cases: &[SelectCase], span: Option<&SourceSpan>) -> VmResult<()> {
+        if cases.is_empty() {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidCall,
+                "select requires at least one case".into(),
+                span,
+            ));
+        }
+        let mut values = Vec::with_capacity(cases.len());
+        for case in cases.iter().rev() {
+            let has_handler = match case {
+                SelectCase::Receive { has_handler }
+                | SelectCase::Send { has_handler }
+                | SelectCase::After { has_handler }
+                | SelectCase::Await { has_handler }
+                | SelectCase::Default { has_handler } => *has_handler,
+            };
+            let handler = has_handler.then(|| self.pop_at(span)).transpose()?;
+            let value = match case {
+                SelectCase::Receive { .. } => {
+                    let value = self.pop_at(span)?;
+                    let Value::Channel(channel) = value else {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            format!("select recv expects chan, got {}", value.type_name()),
+                            span,
+                        ));
+                    };
+                    RuntimeSelectCase::Receive { channel, handler }
+                }
+                SelectCase::Send { .. } => {
+                    let value = self.pop_at(span)?;
+                    let channel = self.pop_at(span)?;
+                    let Value::Channel(channel) = channel else {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            format!("select send expects chan, got {}", channel.type_name()),
+                            span,
+                        ));
+                    };
+                    if matches!(value, Value::Nil) {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            "send cannot send nil".into(),
+                            span,
+                        ));
+                    }
+                    RuntimeSelectCase::Send {
+                        channel,
+                        value,
+                        handler,
+                    }
+                }
+                SelectCase::After { .. } => {
+                    let duration = self.pop_at(span)?;
+                    let Value::Int(milliseconds) = duration else {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            format!("select after expects num, got {}", duration.type_name()),
+                            span,
+                        ));
+                    };
+                    let milliseconds = u64::try_from(milliseconds).map_err(|_| {
+                        self.error_at(
+                            RuntimeErrorKind::Type,
+                            "select after must not be negative or too large".into(),
+                            span,
+                        )
+                    })?;
+                    RuntimeSelectCase::After {
+                        deadline: Instant::now()
+                            .checked_add(Duration::from_millis(milliseconds))
+                            .ok_or_else(|| {
+                                self.error_at(
+                                    RuntimeErrorKind::Type,
+                                    "select after is too large".into(),
+                                    span,
+                                )
+                            })?,
+                        handler,
+                    }
+                }
+                SelectCase::Await { .. } => {
+                    let value = self.pop_at(span)?;
+                    let Value::Task(task) = value else {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            format!("select await expects task, got {}", value.type_name()),
+                            span,
+                        ));
+                    };
+                    RuntimeSelectCase::Await { task, handler }
+                }
+                SelectCase::Default { .. } => RuntimeSelectCase::Default { handler },
+            };
+            values.push(value);
+        }
+        values.reverse();
+        let mut default = None;
+        for case in &values {
+            match case {
+                RuntimeSelectCase::Receive { channel, handler } => {
+                    self.nursery.track_native_channel(channel);
+                    if let ChannelReceive::Ready(value) = channel.try_receive() {
+                        self.push_select_result(value, handler.clone());
+                        return Ok(());
+                    }
+                }
+                RuntimeSelectCase::Send {
+                    channel,
+                    value,
+                    handler,
+                } => {
+                    self.nursery.track_native_channel(channel);
+                    match channel.try_send(value.clone()) {
+                        ChannelSend::Ready => {
+                            self.push_select_result(Value::Nil, handler.clone());
+                            return Ok(());
+                        }
+                        ChannelSend::Closed => {
+                            return Err(self.error_at(
+                                RuntimeErrorKind::InvalidCall,
+                                "send on a closed channel".into(),
+                                span,
+                            ));
+                        }
+                        ChannelSend::Pending => {}
+                    }
+                }
+                RuntimeSelectCase::Await { task, handler } => {
+                    if task.is_running() {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidCall,
+                            "task cannot await itself while it is running".into(),
+                            span,
+                        ));
+                    }
+                    if let Some(outcome) = task.outcome() {
+                        task.observe();
+                        self.push_select_result(outcome?, handler.clone());
+                        return Ok(());
+                    }
+                }
+                RuntimeSelectCase::After { deadline, handler } => {
+                    if *deadline <= Instant::now() {
+                        self.push_select_result(Value::Nil, handler.clone());
+                        return Ok(());
+                    }
+                }
+                RuntimeSelectCase::Default { handler } => default = Some(handler.clone()),
+            }
+        }
+        if let Some(handler) = default {
+            self.push_select_result(Value::Nil, handler);
+            return Ok(());
+        }
+        let base = self.current_waiter_at(span)?;
+        let select_state = WaitSet::select_state(base.clone());
+        let mut registrations = Vec::new();
+        for case in values {
+            match case {
+                RuntimeSelectCase::Receive { channel, handler } => {
+                    channel.park_receiver(Waiter::Select {
+                        state: select_state.clone(),
+                        wake: SelectWake::Value { handler },
+                    });
+                    registrations.push(WaitRegistration::ChannelReceive(channel));
+                }
+                RuntimeSelectCase::Send {
+                    channel,
+                    value,
+                    handler,
+                } => {
+                    let waiter = Waiter::Select {
+                        state: select_state.clone(),
+                        wake: SelectWake::Value { handler },
+                    };
+                    waiter.set_closed_send_error(self.error_at(
+                        RuntimeErrorKind::InvalidCall,
+                        "send on a closed channel".into(),
+                        span,
+                    ));
+                    channel.park_sender(waiter, value);
+                    registrations.push(WaitRegistration::ChannelSend(channel));
+                }
+                RuntimeSelectCase::Await { task, handler } => {
+                    task.wait_for(Waiter::Select {
+                        state: select_state.clone(),
+                        wake: SelectWake::TaskAwait {
+                            handler,
+                            observer: task.observer(),
+                        },
+                    });
+                    registrations.push(WaitRegistration::TaskAwait(task));
+                }
+                RuntimeSelectCase::After { deadline, handler } => {
+                    self.nursery.timer_service().borrow_mut().register(
+                        deadline,
+                        Waiter::Select {
+                            state: select_state.clone(),
+                            wake: SelectWake::Value { handler },
+                        },
+                    );
+                    registrations.push(WaitRegistration::Timer(self.nursery.timer_service()));
+                }
+                RuntimeSelectCase::Default { .. } => {}
+            }
+        }
+        let registrations = WaitSet::many(registrations);
+        WaitSet::set_select_registrations(&select_state, registrations.clone());
+        self.wait_registration = Some(registrations);
+        self.stack.push(Value::Nil);
+        self.suspension = Some(Suspension::Select(self.owned_span(span)));
+        Ok(())
+    }
+
     fn push_select_result(&mut self, value: Value, handler: Option<Value>) {
         self.stack.push(Value::List(
             vec![value, handler.unwrap_or(Value::Nil)].into(),
@@ -3093,6 +3311,16 @@ impl Vm {
     fn current_waiter(&self, span: Option<SourceSpan>) -> VmResult<Waiter> {
         self.current_waiter.clone().ok_or_else(|| {
             self.error(
+                RuntimeErrorKind::InvalidCall,
+                "blocking operations require scheduler-owned execution".into(),
+                span,
+            )
+        })
+    }
+
+    fn current_waiter_at(&self, span: Option<&SourceSpan>) -> VmResult<Waiter> {
+        self.current_waiter.clone().ok_or_else(|| {
+            self.error_at(
                 RuntimeErrorKind::InvalidCall,
                 "blocking operations require scheduler-owned execution".into(),
                 span,

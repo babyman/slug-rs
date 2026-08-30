@@ -40,6 +40,9 @@
 - Imports, list spreads, and deferred-action registration now borrow source
   spans during successful execution.
 
+- `select` now borrows spans for ready/default execution and clones only when
+  storing a suspended wait set for later scheduler diagnostics.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 
