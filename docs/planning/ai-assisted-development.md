@@ -77,11 +77,11 @@ For new work, aim to keep production modules below roughly 1,500 lines and
 test modules below roughly 1,200 lines. Crossing a target triggers a review of
 module ownership; it does not mandate a split.
 
-- [ ] Add a brief module map at the entry point whenever a large file is split.
-- [ ] Keep tests colocated by observable behavior, with names that make focused
+- [x] Add a brief module map at the entry point whenever a large file is split.
+- [x] Keep tests colocated by observable behavior, with names that make focused
   search straightforward.
-- [ ] Avoid extracting a shared abstraction solely to reduce line count.
-- [ ] Run the focused affected suite after each slice and `make check` after a
+- [x] Avoid extracting a shared abstraction solely to reduce line count.
+- [x] Run the focused affected suite after each slice and `make check` after a
   completed refactor.
 
 Completion evidence: the priority files have feature-oriented navigation

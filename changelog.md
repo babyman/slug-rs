@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Split the CLI and VM integration-test harnesses into feature-oriented modules
+  with compact entry-point maps, preserving their existing test coverage.
+
 - Aligned contributor test routing and language-handoff documentation with the
   versioned `tests/conformance` fixture suite, and made documentation checks
   verify its mandatory repository paths.
