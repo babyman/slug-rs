@@ -62,9 +62,9 @@
 - The private-bytecode verifier now also rejects missing constants and empty
   `select` instructions before execution.
 
-- Added conservative private-bytecode stack-underflow verification for chunks
-  without match lowering; match chunks retain runtime stack checks pending a
-  path-sensitive match-state verifier.
+- Added conservative private-bytecode stack-state verification for every
+  chunk, including explicit `TryMatch` binding/result temporaries and
+  called-frame operand prefixes.
 
 - Private-bytecode verification now recursively validates match-pattern and
   match-type operand references before execution.

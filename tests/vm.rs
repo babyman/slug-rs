@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     sync::{Arc, Mutex},
 };
@@ -1000,6 +1001,14 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
             },
             "match pattern binding count is invalid",
         ),
+        (
+            Op::TryMatch {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                bindings: 0,
+                operands: usize::MAX,
+            },
+            "match stack count is too large",
+        ),
     ];
     for (op, expected) in cases {
         let mut main = Chunk::new("main", 0);
@@ -1009,6 +1018,71 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
             .expect_err("structural defect must be rejected before execution");
         assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
         assert!(error.message.contains(expected), "{}", error.message);
+    }
+}
+
+#[test]
+fn rejects_stack_underflow_after_try_match_before_execution() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Wildcard,
+            bindings: 0,
+            operands: 0,
+        })
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("match stack underflow must be rejected before execution");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(
+        error
+            .message
+            .contains("instruction 3 requires 1 stack values, has 0"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn generated_malformed_private_bytecode_returns_checked_errors() {
+    let templates = [
+        Op::Pop,
+        Op::Add,
+        Op::GetLocal(0),
+        Op::Jump(usize::MAX),
+        Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Wildcard,
+            bindings: 0,
+            operands: 0,
+        },
+        Op::TryMatch {
+            pattern: slug_vm::MatchPattern::Wildcard,
+            bindings: 0,
+            operands: usize::MAX,
+        },
+    ];
+    let mut state = 0x5EED_u64;
+    for _ in 0..64 {
+        let mut main = Chunk::new("main", 0);
+        for _ in 0..4 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let template_count = u64::try_from(templates.len()).expect("template count fits u64");
+            let index = usize::try_from(state % template_count).expect("index fits usize");
+            main.emit(templates[index].clone());
+        }
+        main.emit(Op::Return);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            Vm::new().run(&program_with_main(main), 0)
+        }));
+        let result = result.expect("malformed private bytecode must not panic");
+        assert!(result.is_err());
     }
 }
 

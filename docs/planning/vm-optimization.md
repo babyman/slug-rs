@@ -217,11 +217,13 @@ deferred until their stated size and dispatch evidence exists.
 - [x] Validate chunk and constant references, jump targets, local-slot bounds,
   declared arity/local consistency, and metadata-pool indices that can be
   checked without executing values.
-- [ ] Track a conservative operand-stack height through control flow and
-  reject statically provable underflow or incompatible control-flow joins.
-- [ ] Keep the dispatch-time checks for all dynamic and verifier-independent
+- [x] Track conservative operand-stack state through control flow, including
+  `TryMatch` success/failure temporaries, and reject statically provable
+  underflow without rejecting valid variable-shape joins.
+- [x] Keep the dispatch-time checks for all dynamic and verifier-independent
   failures: manually constructed private bytecode remains untrusted.
-- [ ] Add table-driven malformed-program tests plus property or fuzz coverage
+- [x] Add table-driven malformed-program tests plus generated malformed-program
+  coverage
   asserting that arbitrary private bytecode returns `RuntimeError` rather than
   panicking.
 
@@ -240,18 +242,19 @@ time. Focused malformed-bytecode tests prove that the initial structural cases
 return `RuntimeErrorKind::InvalidBytecode` before execution begins.
 
 The structural pass also validates `Constant` pool reads and rejects empty
-`select` instructions before stack values are consumed. Conservative operand
-stack analysis remains the next verifier slice because it must model branches,
-calls, recurrence, cleanup, and scheduler operations without rejecting valid
-compiler output.
+`select` instructions before stack values are consumed. The conservative
+control-flow analysis is now enabled for every chunk. It tracks abstract stack
+values through jumps, conditionals, calls, recurrence, cleanup, and scheduler
+operations, retaining explicit markers for `TryMatch` bindings and result
+flags. This models both match paths with their common temporary shape while
+joining variable-height paths conservatively, so only underflows possible on a
+reachable path are rejected.
 
-The first stack-analysis slice is enabled for chunks without `TryMatch`. It
-tracks exact instruction effects through jumps, conditionals, calls, cleanup,
-and scheduler operations, rejecting a reachable instruction whose known stack
-height is insufficient. Match lowering intentionally carries a subject and
-temporary bindings along distinct case and guard paths, so those chunks retain
-their existing dynamic stack checks until the verifier has an explicit
-match-state abstraction rather than a height-only model.
+Called chunks begin with their retained callee and arguments beneath their
+frame-local operand values, while the public entry chunk begins empty. The
+verifier seeds those states accordingly; this preserves valid guard fallthrough
+and allows the same analysis to cover source-compiled match functions and
+manually constructed bytecode.
 
 Match metadata now receives its own structural pass: pinned operands, computed
 map keys, nested constrained patterns, and schema-constrained match types must

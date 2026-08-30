@@ -281,6 +281,13 @@ pub enum DeferMode {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StackValue {
+    Unknown,
+    MatchBinding,
+    MatchResult,
+}
+
 /// Independently callable code and its constant pool.
 #[derive(Clone, Debug)]
 pub struct Chunk {
@@ -432,7 +439,7 @@ impl Program {
         self.module_name = module_name.into();
     }
 
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {
         for (chunk_index, chunk) in self.chunks.iter().enumerate() {
             if chunk.locals < chunk.arity {
                 return Err(format!(
@@ -461,13 +468,15 @@ impl Program {
             for (instruction_index, instruction) in chunk.code.iter().enumerate() {
                 self.validate_op(chunk_index, instruction_index, chunk, &instruction.op)?;
             }
-            if !chunk
-                .code
-                .iter()
-                .any(|instruction| matches!(instruction.op, Op::TryMatch { .. }))
-            {
-                Self::validate_stack(chunk)?;
-            }
+            let initial_stack = if chunk_index == entry {
+                0
+            } else {
+                chunk
+                    .arity
+                    .checked_add(1)
+                    .ok_or_else(|| format!("function `{}` has too many parameters", chunk.name))?
+            };
+            Self::validate_stack(chunk, initial_stack)?;
         }
         Ok(())
     }
@@ -537,6 +546,9 @@ impl Program {
                 bindings,
                 operands,
             } => {
+                if operands.checked_add(1).is_none() || bindings.checked_add(1).is_none() {
+                    return Err("match stack count is too large".into());
+                }
                 Self::validate_pattern(pattern, *operands)?;
                 if Self::pattern_bindings(pattern) != Some(*bindings) {
                     return Err("match pattern binding count is invalid".into());
@@ -618,24 +630,24 @@ impl Program {
         }
     }
 
-    fn validate_stack(chunk: &Chunk) -> Result<(), String> {
-        let mut heights = vec![None; chunk.code.len()];
+    fn validate_stack(chunk: &Chunk, initial_stack: usize) -> Result<(), String> {
+        let mut stacks = vec![None; chunk.code.len()];
         let mut pending = VecDeque::new();
         if !chunk.code.is_empty() {
-            heights[0] = Some(0usize);
+            stacks[0] = Some(vec![StackValue::Unknown; initial_stack]);
             pending.push_back(0usize);
         }
         while let Some(index) = pending.pop_front() {
-            let height = heights[index].expect("queued stack height exists");
+            let stack = stacks[index].as_ref().expect("queued stack state exists");
             let instruction = &chunk.code[index];
-            let (pops, pushes) = Self::stack_effect(&instruction.op);
-            if height < pops {
+            let Some(next_stack) = Self::apply_stack_effect(stack, &instruction.op) else {
+                let (pops, _) = Self::stack_effect(&instruction.op);
                 return Err(format!(
-                    "function `{}` instruction {index} requires {pops} stack values, has {height}",
-                    chunk.name
+                    "function `{}` instruction {index} requires {pops} stack values, has {}",
+                    chunk.name,
+                    stack.len()
                 ));
-            }
-            let next_height = height - pops + pushes;
+            };
             let successors: Vec<usize> = match &instruction.op {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
                 Op::Recur(_) => vec![0],
@@ -653,25 +665,54 @@ impl Program {
                     .collect(),
             };
             for successor in successors {
-                let successor_height = if matches!(instruction.op, Op::Recur(_)) {
-                    0
+                let successor_stack = if matches!(instruction.op, Op::Recur(_)) {
+                    vec![StackValue::Unknown; initial_stack]
                 } else {
-                    next_height
+                    next_stack.clone()
                 };
-                match heights[successor] {
-                    Some(existing) if successor_height < existing => {
-                        heights[successor] = Some(successor_height);
+                if let Some(existing) = &mut stacks[successor] {
+                    if Self::merge_stack(existing, successor_stack) {
                         pending.push_back(successor);
                     }
-                    Some(_) => {}
-                    None => {
-                        heights[successor] = Some(successor_height);
-                        pending.push_back(successor);
-                    }
+                } else {
+                    stacks[successor] = Some(successor_stack);
+                    pending.push_back(successor);
                 }
             }
         }
         Ok(())
+    }
+
+    fn apply_stack_effect(stack: &[StackValue], op: &Op) -> Option<Vec<StackValue>> {
+        let (pops, pushes) = Self::stack_effect(op);
+        let remaining = stack.len().checked_sub(pops)?;
+        let mut next = stack[..remaining].to_vec();
+        match op {
+            Op::TryMatch { bindings, .. } => {
+                next.extend((0..*bindings).map(|_| StackValue::MatchBinding));
+                next.push(StackValue::MatchResult);
+            }
+            _ => next.extend((0..pushes).map(|_| StackValue::Unknown)),
+        }
+        Some(next)
+    }
+
+    fn merge_stack(existing: &mut Vec<StackValue>, incoming: Vec<StackValue>) -> bool {
+        if incoming.len() < existing.len() {
+            *existing = incoming;
+            return true;
+        }
+        if incoming.len() != existing.len() {
+            return false;
+        }
+        let mut changed = false;
+        for (existing, incoming) in existing.iter_mut().zip(incoming) {
+            if *existing != incoming && *existing != StackValue::Unknown {
+                *existing = StackValue::Unknown;
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn stack_effect(op: &Op) -> (usize, usize) {
