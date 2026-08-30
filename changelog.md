@@ -18,6 +18,9 @@
 - Added a dependency-free VM benchmark harness and run-scoped dispatch,
   instruction-clone, frame, and local-binding-cell counters.
 
+- Documented that future execution-path VM metrics must be default-disabled
+  and compile to no-ops in ordinary builds.
+
 - VM dispatch now borrows private instructions rather than cloning every
   instruction before execution.
 

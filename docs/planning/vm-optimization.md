@@ -14,6 +14,8 @@ Optimization must preserve these boundaries:
 - source locations and language call frames remain available on failures;
 - mutable bindings captured by sibling or nested closures share identity;
 - private bytecode remains independent of the versioned `.cslug` format; and
+- any metric on an execution path is opt-in behind a Cargo feature disabled by
+  default, and compiles to a no-op in ordinary builds; and
 - each change is measured independently so its effect is not attributed to a
   simultaneous operand-model rewrite.
 
@@ -46,6 +48,8 @@ not become timing-sensitive test assertions.
 - [x] Record executed instruction count, elapsed time, whole-instruction
   cloning, and frame/local allocation. Add `Value` clone or reference-count
   traffic only when an optimization needs that more specific evidence.
+- [ ] Put every execution-path counter behind a default-disabled metrics
+  feature before treating benchmark results as ordinary VM performance.
 - [ ] Keep correctness tests separate from performance thresholds; benchmarks
   inform architecture and do not make timing a flaky test requirement.
 
@@ -56,7 +60,9 @@ whole-instruction clones, frame creation, and frame-local binding-cell
 allocation. Keep additional measurements, such as `Value` clone or reference
 count traffic, scoped to the representation change that needs them; do not
 instrument every dynamic-value clone until a baseline identifies it as a
-candidate cost.
+candidate cost. Program-layout measurements are computed only when explicitly
+requested and do not require this feature; runtime counters must not add work
+to normal dispatch.
 
 ### Initial baseline
 
