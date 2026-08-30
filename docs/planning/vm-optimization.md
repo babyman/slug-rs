@@ -81,8 +81,22 @@ After the first Stage 1 slice, all five workloads report zero whole-instruction
 clones. The arithmetic-and-branches workload completed 1,000 runs in about
 286 ms on the baseline machine, compared with about 301 ms before the change.
 This is directional evidence only; do not treat it as a portable timing
-threshold. Source spans are still cloned at the dispatch boundary, so Stage 1
-remains active until that diagnostic path borrows or otherwise defers spans.
+threshold. At this point, source spans were still cloned at the dispatch
+boundary, so Stage 1 remained active until the diagnostic path could borrow or
+otherwise defer spans.
+
+The next Stage 1 slice borrows source spans for the common stack, arithmetic,
+comparison, and control-flow operations. It records a separate source-span
+clone counter for instructions that still require the owned-span path. The
+arithmetic-and-branches workload now completes 1,000 runs in about 142 ms and
+clones 611 source spans per run, down from 2,825 before borrowed-span dispatch.
+Calls, `recur`, cleanup, and scheduler operations still use owned-span helper
+APIs and are the remaining Stage 1 target.
+
+List construction, map construction, and indexed access now share the borrowed
+span path. The list-and-maps workload drops from 15 to 9 source-span clones per
+invocation, while pattern matching drops from 9 to 8. These counts identify
+`recur` and call binding as the next material sources of owned spans.
 
 ## Stage 1: borrow during dispatch
 

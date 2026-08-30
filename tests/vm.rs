@@ -21,16 +21,18 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));
     let two = main.constant(Value::Int(2));
-    main.emit(Op::Constant(one))
-        .emit(Op::Constant(two))
-        .emit(Op::Add)
-        .emit(Op::Return);
+    let span = SourceSpan::new("metrics.slug", 1, 1);
+    main.emit_at(Op::Constant(one), span.clone())
+        .emit_at(Op::Constant(two), span.clone())
+        .emit_at(Op::Add, span.clone())
+        .emit_at(Op::Return, span);
 
     let mut vm = Vm::new();
     assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Int(3));
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instruction_clones, 0);
+    assert_eq!(metrics.source_span_clones, 1);
     assert!(metrics.instructions_executed >= 4);
     assert_eq!(metrics.frames_created, 1);
     assert_eq!(metrics.local_binding_cells_created, 0);

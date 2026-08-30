@@ -15,6 +15,12 @@
 - VM dispatch now borrows private instructions rather than cloning every
   instruction before execution.
 
+- Common VM stack, arithmetic, comparison, and control-flow operations now
+  borrow instruction source spans until an error needs an owned diagnostic.
+
+- VM list/map construction and indexed access now also borrow instruction
+  source spans during successful execution.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

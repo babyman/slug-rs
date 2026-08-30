@@ -50,6 +50,8 @@ pub struct VmMetrics {
     pub instructions_executed: usize,
     /// Whole instructions cloned while fetching them for dispatch.
     pub instruction_clones: usize,
+    /// Source spans cloned because an instruction takes the owned-span path.
+    pub source_span_clones: usize,
     /// Frames allocated for the root invocation, calls, and spawned tasks.
     pub frames_created: usize,
     /// Frame-local binding cells allocated by the current representation.
@@ -724,6 +726,12 @@ impl Vm {
                 return Ok(ExecutionOutcome::Suspended);
             }
             let instruction = self.next_instruction(program)?;
+            if self.execute_borrowed_span_op(program, &instruction.op, instruction.span.as_ref())? {
+                continue;
+            }
+            if instruction.span.is_some() {
+                self.metrics.borrow_mut().source_span_clones += 1;
+            }
             let span = instruction.span.clone();
             match &instruction.op {
                 Op::Constant(index) => {
@@ -1266,6 +1274,147 @@ impl Vm {
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn execute_borrowed_span_op(
+        &mut self,
+        program: &Program,
+        op: &Op,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<bool> {
+        match op {
+            Op::Constant(index) => {
+                let chunk = self.current_chunk(program)?;
+                let value = match chunk.constants.get(*index) {
+                    Some(crate::Constant::Value(value)) => value.clone(),
+                    Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
+                        chunk: *function,
+                        captures: Vec::new(),
+                        program: self.module_program.clone(),
+                        globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                        capture_sources: Vec::new(),
+                    })),
+                    None => {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("constant {index} does not exist"),
+                            span,
+                        ));
+                    }
+                };
+                self.stack.push(value);
+            }
+            Op::Nil => self.stack.push(Value::Nil),
+            Op::True => self.stack.push(Value::Bool(true)),
+            Op::False => self.stack.push(Value::Bool(false)),
+            Op::Pop => {
+                self.pop_at(span)?;
+            }
+            Op::Duplicate => self.stack.push(self.peek_at(span)?.clone()),
+            Op::GetLocal(slot) => self
+                .stack
+                .push(self.local_at(*slot, span)?.borrow().clone()),
+            Op::SetLocal(slot) => {
+                let value = self.pop_at(span)?;
+                self.set_local_at(*slot, value, span)?;
+            }
+            Op::Add => self.binary_at(span, add)?,
+            Op::Subtract => self.binary_at(span, subtract)?,
+            Op::Multiply => self.binary_at(span, multiply)?,
+            Op::Divide => self.binary_at(span, divide)?,
+            Op::Modulo => self.binary_at(span, modulo)?,
+            Op::BitAnd => {
+                self.binary_at(span, |left, right| bitwise(left, right, |a, b| a & b))?;
+            }
+            Op::BitOr => {
+                self.binary_at(span, |left, right| bitwise(left, right, |a, b| a | b))?;
+            }
+            Op::BitXor => {
+                self.binary_at(span, |left, right| bitwise(left, right, |a, b| a ^ b))?;
+            }
+            Op::ShiftLeft => {
+                self.binary_at(span, |left, right| shift(left, right, i64::checked_shl))?;
+            }
+            Op::ShiftRight => {
+                self.binary_at(span, |left, right| shift(left, right, i64::checked_shr))?;
+            }
+            Op::ListAppend => self.binary_at(span, |list, value| {
+                list_append(list, value).map_err(|message| (RuntimeErrorKind::Type, message))
+            })?,
+            Op::ListPrepend => self.binary_at(span, |value, list| {
+                list_prepend(value, list).map_err(|message| (RuntimeErrorKind::Type, message))
+            })?,
+            Op::List(count) => {
+                let values = self.pop_values_at(*count, span)?;
+                self.stack.push(Value::List(Rc::new(values)));
+            }
+            Op::Map(count) => {
+                let values = self.pop_values_at(count.saturating_mul(2), span)?;
+                let mut entries = Vec::with_capacity(*count);
+                for pair in values.chunks_exact(2) {
+                    if !is_map_key(&pair[0]) {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            format!("{} cannot be used as a map key", pair[0].type_name()),
+                            span,
+                        ));
+                    }
+                    entries.push((pair[0].clone(), pair[1].clone()));
+                }
+                self.stack.push(Value::Map(Rc::new(entries)));
+            }
+            Op::GetIndex => {
+                let (collection, index) = self.pop_pair_at(span)?;
+                self.stack.push(
+                    index_value(collection, &index)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::Negate => {
+                let value = self.pop_at(span)?;
+                self.stack.push(
+                    negate(value)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::Not => {
+                let value = self.pop_at(span)?;
+                self.stack.push(Value::Bool(!value.is_truthy()));
+            }
+            Op::BitNot => {
+                let value = self.pop_at(span)?;
+                self.stack.push(
+                    bit_not(&value)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::Equal => {
+                let (left, right) = self.pop_pair_at(span)?;
+                self.stack.push(Value::Bool(left == right));
+            }
+            Op::Greater => self.compare_at(span, Ordering::Greater)?,
+            Op::Less => self.compare_at(span, Ordering::Less)?,
+            Op::Jump(target) => self.jump_at(*target, span)?,
+            Op::JumpIfFalse(target) => {
+                if !self.peek_at(span)?.is_truthy() {
+                    self.jump_at(*target, span)?;
+                }
+            }
+            Op::JumpIfProvided { slot, target } => {
+                if self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.provided.get(*slot))
+                    .copied()
+                    == Some(true)
+                {
+                    self.jump_at(*target, span)?;
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 
     fn next_instruction<'program>(
@@ -2707,5 +2856,150 @@ impl Vm {
         let mut metrics = self.metrics.borrow_mut();
         metrics.frames_created += 1;
         metrics.local_binding_cells_created += local_count;
+    }
+
+    fn error_at(
+        &self,
+        kind: RuntimeErrorKind,
+        message: String,
+        span: Option<&SourceSpan>,
+    ) -> RuntimeError {
+        self.error(kind, message, span.cloned())
+    }
+
+    fn pop_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
+        self.pop_unresolved_at(span)?
+            .resolve()
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+    }
+
+    fn pop_unresolved_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
+        self.stack.pop().ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "stack underflow".into(),
+                span,
+            )
+        })
+    }
+
+    fn pop_values_at(&mut self, count: usize, span: Option<&SourceSpan>) -> VmResult<Vec<Value>> {
+        if self.stack.len() < count {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "stack underflow".into(),
+                span,
+            ));
+        }
+        self.stack
+            .split_off(self.stack.len() - count)
+            .into_iter()
+            .map(|value| {
+                value
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+            })
+            .collect()
+    }
+
+    fn peek_at(&self, span: Option<&SourceSpan>) -> VmResult<&Value> {
+        self.stack.last().ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "stack underflow".into(),
+                span,
+            )
+        })
+    }
+
+    fn local_at(&self, slot: usize, span: Option<&SourceSpan>) -> VmResult<BindingCell> {
+        self.frames
+            .last()
+            .and_then(|frame| frame.locals.get(slot))
+            .cloned()
+            .ok_or_else(|| {
+                self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!("local {slot} does not exist"),
+                    span,
+                )
+            })
+    }
+
+    fn set_local_at(
+        &mut self,
+        slot: usize,
+        value: Value,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        if self.frames.last().is_none() {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active call frame".into(),
+                span,
+            ));
+        }
+        if self
+            .frames
+            .last()
+            .is_none_or(|frame| slot >= frame.locals.len())
+        {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("local {slot} does not exist"),
+                span,
+            ));
+        }
+        *self
+            .frames
+            .last_mut()
+            .expect("active frame was checked")
+            .locals[slot]
+            .borrow_mut() = value;
+        Ok(())
+    }
+
+    fn pop_pair_at(&mut self, span: Option<&SourceSpan>) -> VmResult<(Value, Value)> {
+        let right = self.pop_at(span)?;
+        let left = self.pop_at(span)?;
+        Ok((left, right))
+    }
+
+    fn binary_at(
+        &mut self,
+        span: Option<&SourceSpan>,
+        operation: fn(Value, Value) -> Result<Value, (RuntimeErrorKind, String)>,
+    ) -> VmResult<()> {
+        let (left, right) = self.pop_pair_at(span)?;
+        self.stack.push(
+            operation(left, right).map_err(|(kind, message)| self.error_at(kind, message, span))?,
+        );
+        Ok(())
+    }
+
+    fn compare_at(&mut self, span: Option<&SourceSpan>, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair_at(span)?;
+        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+            left.cmp(right) == expected
+        } else {
+            let (left, right) = numbers(left, right)
+                .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?;
+            left.partial_cmp(&right)
+                .is_some_and(|ordering| ordering == expected)
+        };
+        self.stack.push(Value::Bool(result));
+        Ok(())
+    }
+
+    fn jump_at(&mut self, target: usize, span: Option<&SourceSpan>) -> VmResult<()> {
+        if self.frames.last().is_none() {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active call frame".into(),
+                span,
+            ));
+        }
+        self.frames.last_mut().expect("active frame was checked").ip = target;
+        Ok(())
     }
 }

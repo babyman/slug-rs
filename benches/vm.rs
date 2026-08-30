@@ -18,11 +18,12 @@ fn main() {
             .unwrap_or_else(|error| panic!("compile {}: {error}", workload.name));
         let (elapsed, metrics) = run(&program);
         println!(
-            "{name}: {iterations} runs in {elapsed:?}; {instructions} instructions; {clones} instruction clones; {frames} frames; {cells} local cells",
+            "{name}: {iterations} runs in {elapsed:?}; {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {frames} frames; {cells} local cells",
             name = workload.name,
             iterations = ITERATIONS,
             instructions = metrics.instructions_executed,
             clones = metrics.instruction_clones,
+            spans = metrics.source_span_clones,
             frames = metrics.frames_created,
             cells = metrics.local_binding_cells_created,
         );
@@ -41,6 +42,7 @@ fn run(program: &Program) -> (Duration, VmMetrics) {
         let run_metrics = vm.metrics();
         metrics.instructions_executed += run_metrics.instructions_executed;
         metrics.instruction_clones += run_metrics.instruction_clones;
+        metrics.source_span_clones += run_metrics.source_span_clones;
         metrics.frames_created += run_metrics.frames_created;
         metrics.local_binding_cells_created += run_metrics.local_binding_cells_created;
     }
