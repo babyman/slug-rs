@@ -992,6 +992,14 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
             "references missing function chunk 1",
         ),
         (Op::Select(Vec::new()), "has no select cases"),
+        (
+            Op::TryMatch {
+                pattern: slug_vm::MatchPattern::Wildcard,
+                bindings: 1,
+                operands: 0,
+            },
+            "match pattern binding count is invalid",
+        ),
     ];
     for (op, expected) in cases {
         let mut main = Chunk::new("main", 0);

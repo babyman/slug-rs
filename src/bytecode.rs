@@ -533,8 +533,16 @@ impl Program {
                 Err(format!("{} has no select cases", location()))
             }
             Op::TryMatch {
-                pattern, operands, ..
-            } => Self::validate_pattern(pattern, *operands),
+                pattern,
+                bindings,
+                operands,
+            } => {
+                Self::validate_pattern(pattern, *operands)?;
+                if Self::pattern_bindings(pattern) != Some(*bindings) {
+                    return Err("match pattern binding count is invalid".into());
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -585,6 +593,28 @@ impl Program {
                 .iter()
                 .try_for_each(|member| Self::validate_match_type(member, operands)),
             _ => Ok(()),
+        }
+    }
+
+    fn pattern_bindings(pattern: &MatchPattern) -> Option<usize> {
+        match pattern {
+            MatchPattern::Literal(_) | MatchPattern::Wildcard | MatchPattern::Pinned(_) => Some(0),
+            MatchPattern::Binding => Some(1),
+            MatchPattern::At(pattern) => Self::pattern_bindings(pattern)?.checked_add(1),
+            MatchPattern::Alternatives(patterns) => {
+                let mut counts = patterns.iter().map(Self::pattern_bindings);
+                let count = counts.next()??;
+                counts.all(|next| next == Some(count)).then_some(count)
+            }
+            MatchPattern::List { items, rest } => items.iter().try_fold(
+                usize::from(*rest == MatchRest::Binding),
+                |count, pattern| count.checked_add(Self::pattern_bindings(pattern)?),
+            ),
+            MatchPattern::Map { entries, rest, .. } => entries.iter().try_fold(
+                usize::from(*rest == MatchRest::Binding),
+                |count, (_, pattern)| count.checked_add(Self::pattern_bindings(pattern)?),
+            ),
+            MatchPattern::Constrained { pattern, .. } => Self::pattern_bindings(pattern),
         }
     }
 

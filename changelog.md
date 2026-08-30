@@ -9,6 +9,9 @@
 - Expanded the private VM optimization plan with staged measurement, bytecode
   verification, capture-aware local storage, and scheduler-scaling gates.
 
+- Private-bytecode verification now rejects `TryMatch` declarations whose
+  binding count disagrees with their pattern metadata before execution.
+
 - Sequenced the remaining borrowed-dispatch work around variable-shape calls,
   durable suspended state, and an opcode ownership audit before verifier work.
 

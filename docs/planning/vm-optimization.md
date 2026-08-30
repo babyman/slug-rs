@@ -257,7 +257,9 @@ Match metadata now receives its own structural pass: pinned operands, computed
 map keys, nested constrained patterns, and schema-constrained match types must
 all reference an operand supplied by the enclosing `TryMatch`. This preserves
 the existing missing-operand diagnostic while moving its detection before
-execution.
+execution. The verifier also derives each pattern's binding count—including
+alternative consistency and list/map rest bindings—and rejects a mismatched
+`TryMatch` declaration before it can perturb the operand stack.
 
 ## Stage 3: compact source and opcode metadata
 
