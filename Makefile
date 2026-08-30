@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test test-vm test-cli docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test test-vm test-cli bench-vm docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -17,6 +17,9 @@ test-vm:
 
 test-cli:
 	cargo test --test cli
+
+bench-vm:
+	cargo bench --bench vm
 
 docs-generate:
 	sh scripts/generate-language-support.sh

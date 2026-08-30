@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     cmp::Ordering,
     collections::HashSet,
     path::Path,
@@ -38,6 +38,23 @@ pub type VmResult<T> = Result<T, RuntimeError>;
 
 type NamedArgument = (String, Value);
 type ExpandedCallArguments = (Vec<Value>, Vec<NamedArgument>);
+
+/// Execution counters for one public VM invocation.
+///
+/// The counters describe private representation costs, not source semantics.
+/// They provide a measurement seam while bytecode changes, but are not a
+/// profiling or compatibility API.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct VmMetrics {
+    /// Instructions fetched by the dispatch loop, including spawned tasks.
+    pub instructions_executed: usize,
+    /// Whole instructions cloned while fetching them for dispatch.
+    pub instruction_clones: usize,
+    /// Frames allocated for the root invocation, calls, and spawned tasks.
+    pub frames_created: usize,
+    /// Frame-local binding cells allocated by the current representation.
+    pub local_binding_cells_created: usize,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CallableRuntimeSignature {
@@ -173,6 +190,7 @@ pub struct Vm {
     suspension: Option<Suspension>,
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
+    metrics: Rc<RefCell<VmMetrics>>,
 }
 
 impl Default for Vm {
@@ -194,6 +212,7 @@ impl Default for Vm {
             suspension: None,
             resume: None,
             wait_registration: None,
+            metrics: Rc::new(RefCell::new(VmMetrics::default())),
         }
     }
 }
@@ -285,6 +304,12 @@ impl Vm {
     #[must_use]
     pub fn global(&self, name: &str) -> Option<Value> {
         self.globals.borrow().get(name).cloned()
+    }
+
+    /// Returns counters for the most recent public VM invocation.
+    #[must_use]
+    pub fn metrics(&self) -> VmMetrics {
+        self.metrics.borrow().clone()
     }
 
     #[must_use]
@@ -520,6 +545,7 @@ impl Vm {
     /// Returns a Slug runtime error when the entry is invalid or evaluation
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run(&mut self, program: &Program, entry: usize) -> VmResult<Value> {
+        self.metrics.borrow_mut().clone_from(&VmMetrics::default());
         let chunk = program.chunk(entry).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -552,6 +578,7 @@ impl Vm {
         self.cleanup.clear();
         self.nursery.clear();
         self.module_metadata = program.declarations().to_vec();
+        self.record_frame(chunk.locals);
         self.frames.push(Frame {
             closure: Rc::new(Closure {
                 chunk: entry,
@@ -1265,6 +1292,10 @@ impl Vm {
                 )
             })?
             .clone();
+        let mut metrics = self.metrics.borrow_mut();
+        metrics.instructions_executed += 1;
+        metrics.instruction_clones += 1;
+        drop(metrics);
         self.frames.last_mut().expect("active frame was checked").ip += 1;
         Ok((instruction.op, instruction.span))
     }
@@ -1384,6 +1415,7 @@ impl Vm {
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+                self.record_frame(chunk.locals);
                 self.frames.push(Frame {
                     closure,
                     function: chunk.name.clone(),
@@ -1504,9 +1536,11 @@ impl Vm {
             suspension: None,
             resume: None,
             wait_registration: None,
+            metrics: self.metrics.clone(),
         };
         let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
         locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+        vm.record_frame(chunk.locals);
         vm.frames.push(Frame {
             closure,
             function: chunk.name.clone(),
@@ -2663,5 +2697,11 @@ impl Vm {
         }
         self.frames.last_mut().expect("active frame was checked").ip = target;
         Ok(())
+    }
+
+    fn record_frame(&self, local_count: usize) {
+        let mut metrics = self.metrics.borrow_mut();
+        metrics.frames_created += 1;
+        metrics.local_binding_cells_created += local_count;
     }
 }

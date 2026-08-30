@@ -41,12 +41,41 @@ not become timing-sensitive test assertions.
 
 ## Stage 0: establish measurements
 
-- [ ] Add representative benchmarks for arithmetic and branches, calls,
+- [x] Add representative benchmarks for arithmetic and branches, calls,
   closures, `recur`, matching, deferred cleanup, and list/map operations.
-- [ ] Record executed instruction count, elapsed time, instruction storage,
-  `Value` cloning or reference-count traffic, and frame/local allocation.
+- [x] Record executed instruction count, elapsed time, whole-instruction
+  cloning, and frame/local allocation. Add `Value` clone or reference-count
+  traffic only when an optimization needs that more specific evidence.
 - [ ] Keep correctness tests separate from performance thresholds; benchmarks
   inform architecture and do not make timing a flaky test requirement.
+
+The benchmark harness is invoked with `make bench-vm`. It compiles each
+representative source workload once, then reports elapsed time plus the
+per-run VM counters accumulated across the benchmark: executed instructions,
+whole-instruction clones, frame creation, and frame-local binding-cell
+allocation. Keep additional measurements, such as `Value` clone or reference
+count traffic, scoped to the representation change that needs them; do not
+instrument every dynamic-value clone until a baseline identifies it as a
+candidate cost.
+
+### Initial baseline
+
+The initial `make bench-vm` run establishes the following representation
+counters per source-program invocation. These counts are stable regression
+evidence; elapsed time remains machine-dependent and is intentionally not
+recorded here.
+
+| Workload | Instructions | Instruction clones | Frames | Local binding cells |
+|---|---:|---:|---:|---:|
+| arithmetic and branches | 2,825 | 2,825 | 2 | 2 |
+| calls and closures | 32 | 32 | 3 | 2 |
+| pattern matching | 28 | 28 | 2 | 3 |
+| deferred cleanup | 26 | 26 | 3 | 1 |
+| lists and maps | 35 | 35 | 1 | 0 |
+
+The one-to-one instruction-clone ratio is the immediate justification for
+Stage 1. Re-run the harness after that stage and compare counters and elapsed
+time using the same workload set.
 
 ## Stage 1: borrow during dispatch
 

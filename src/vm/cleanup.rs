@@ -331,6 +331,7 @@ impl Vm {
                         None,
                     ));
                 }
+                self.record_frame(chunk.locals);
                 self.frames.push(Frame {
                     closure,
                     function: chunk.name.clone(),

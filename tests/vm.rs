@@ -16,6 +16,26 @@ fn program_with_main(main: Chunk) -> Program {
     program
 }
 
+#[test]
+fn records_execution_metrics_for_the_current_dispatch_representation() {
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    let two = main.constant(Value::Int(2));
+    main.emit(Op::Constant(one))
+        .emit(Op::Constant(two))
+        .emit(Op::Add)
+        .emit(Op::Return);
+
+    let mut vm = Vm::new();
+    assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Int(3));
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.instructions_executed, metrics.instruction_clones);
+    assert!(metrics.instructions_executed >= 4);
+    assert_eq!(metrics.frames_created, 1);
+    assert_eq!(metrics.local_binding_cells_created, 0);
+}
+
 fn native_make_channel(call: &mut NativeCall<'_>) -> NativeStatus {
     let capacity = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
         Ok(value) => match usize::try_from(value) {
