@@ -474,6 +474,10 @@ impl Program {
     ) -> Result<(), String> {
         let location = || format!("function `{}` instruction {instruction_index}", chunk.name);
         match op {
+            Op::Constant(index) if chunk.constants.get(*index).is_none() => Err(format!(
+                "{} references missing constant {index}",
+                location()
+            )),
             Op::GetLocal(slot) | Op::SetLocal(slot) | Op::JumpIfProvided { slot, .. }
                 if *slot >= chunk.locals =>
             {
@@ -517,6 +521,9 @@ impl Program {
                     "{} references missing module tag metadata",
                     location()
                 ))
+            }
+            Op::Select(cases) if cases.is_empty() => {
+                Err(format!("{} has no select cases", location()))
             }
             _ => Ok(()),
         }

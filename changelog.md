@@ -56,6 +56,9 @@
   local slots, jumps, function references, selected-call identities, and
   module-tag metadata.
 
+- The private-bytecode verifier now also rejects missing constants and empty
+  `select` instructions before execution.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

@@ -980,6 +980,7 @@ fn rejects_missing_selected_callable_identity_in_private_bytecode() {
 #[test]
 fn rejects_structurally_invalid_private_bytecode_before_execution() {
     let cases = [
+        (Op::Constant(0), "references missing constant 0"),
         (Op::GetLocal(0), "references missing local 0"),
         (Op::Jump(2), "jumps to missing instruction 2"),
         (
@@ -989,6 +990,7 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
             },
             "references missing function chunk 1",
         ),
+        (Op::Select(Vec::new()), "has no select cases"),
     ];
     for (op, expected) in cases {
         let mut main = Chunk::new("main", 0);

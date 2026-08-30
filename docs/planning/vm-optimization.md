@@ -239,6 +239,12 @@ and all operations a manually constructed program can still invalidate at run
 time. Focused malformed-bytecode tests prove that the initial structural cases
 return `RuntimeErrorKind::InvalidBytecode` before execution begins.
 
+The structural pass also validates `Constant` pool reads and rejects empty
+`select` instructions before stack values are consumed. Conservative operand
+stack analysis remains the next verifier slice because it must model branches,
+calls, recurrence, cleanup, and scheduler operations without rejecting valid
+compiler output.
+
 ## Stage 3: compact source and opcode metadata
 
 - [ ] Intern source paths once per program or source table and identify them
