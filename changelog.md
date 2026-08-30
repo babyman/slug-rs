@@ -49,6 +49,9 @@
 - Struct, slice, and match VM operations now borrow source spans; `throw`
   retains one only for its durable runtime error.
 
+- Completed borrowed-span VM dispatch for interpolation, captures, global and
+  module metadata operations, overload setup, and `select` handler execution.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

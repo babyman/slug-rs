@@ -107,7 +107,6 @@ enum ExecutionOutcome {
 }
 
 enum BorrowedSpanOpOutcome {
-    NotHandled,
     Continue,
     Settled(Value),
 }
@@ -725,7 +724,7 @@ impl Vm {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, unreachable_code)]
     fn execute_raw(&mut self, program: &Program) -> VmResult<ExecutionOutcome> {
         loop {
             if self.suspension.is_some() {
@@ -741,7 +740,6 @@ impl Vm {
                 BorrowedSpanOpOutcome::Settled(value) => {
                     return Ok(ExecutionOutcome::Settled(Ok(value)));
                 }
-                BorrowedSpanOpOutcome::NotHandled => {}
             }
             if instruction.span.is_some() {
                 self.metrics.borrow_mut().source_span_clones += 1;
@@ -1319,6 +1317,54 @@ impl Vm {
                 };
                 self.stack.push(value);
             }
+            Op::Interpolate(parts) => {
+                let values = self.pop_values_at(parts.len().saturating_sub(1), span)?;
+                let mut output = String::new();
+                for (index, text) in parts.iter().enumerate() {
+                    output.push_str(text);
+                    if let Some(value) = values.get(index) {
+                        output.push_str(&value.to_string());
+                    }
+                }
+                self.stack.push(Value::string(output));
+            }
+            Op::GetCapture(slot) => {
+                let value = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.closure.captures.get(*slot))
+                    .map(|cell| cell.borrow().clone())
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("capture {slot} does not exist"),
+                            span,
+                        )
+                    })?;
+                self.stack.push(value);
+            }
+            Op::SetCapture(slot) => {
+                let value = self.pop_at(span)?;
+                let capture = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.closure.captures.get(*slot))
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("capture {slot} does not exist"),
+                            span,
+                        )
+                    })?;
+                *capture.borrow_mut() = value;
+            }
+            Op::NotImplemented => {
+                return Err(self.error_at(
+                    RuntimeErrorKind::NotImplemented,
+                    "not implemented".into(),
+                    span,
+                ));
+            }
             Op::Nil => self.stack.push(Value::Nil),
             Op::True => self.stack.push(Value::Bool(true)),
             Op::False => self.stack.push(Value::Bool(false)),
@@ -1357,6 +1403,106 @@ impl Vm {
                         "local binding `{name}` shadows an imported binding"
                     ));
                 }
+                if !self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .is_some_and(|binding| binding.replace_binding(value.clone()))
+                {
+                    self.globals.borrow_mut().insert(name.clone(), value);
+                }
+            }
+            Op::CombineOverloads => {
+                let existing = self.pop_unresolved_at(span)?;
+                let new = self.pop_unresolved_at(span)?;
+                let mut overloads = match existing {
+                    Value::Overloads(overloads) => overloads.as_ref().clone(),
+                    value if Self::callable_signature(&value).is_some() => vec![value],
+                    _ => {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "overload combination requires callable values".into(),
+                            span,
+                        ));
+                    }
+                };
+                match new {
+                    Value::Overloads(values) => overloads.extend(values.iter().cloned()),
+                    value if Self::callable_signature(&value).is_some() => overloads.push(value),
+                    _ => {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "overload combination requires callable values".into(),
+                            span,
+                        ));
+                    }
+                }
+                self.stack.push(Value::Overloads(Rc::new(overloads)));
+            }
+            Op::DefineMapGlobals => {
+                let value = self.pop_unresolved_at(span)?;
+                let Value::Map(entries) = value else {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::Type,
+                        format!("{{*}} binding expects a map, got {}", value.type_name()),
+                        span,
+                    ));
+                };
+                for (key, value) in entries.iter() {
+                    let Value::Str(name) = key else {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            "{*} binding requires string map keys".into(),
+                            span,
+                        ));
+                    };
+                    let name = name.to_string();
+                    let existing = self.globals.borrow().get(&name).cloned();
+                    let Some(existing) = existing else {
+                        self.globals
+                            .borrow_mut()
+                            .insert(name.clone(), value.clone());
+                        self.imported_globals.insert(name);
+                        continue;
+                    };
+                    if existing.is_uninitialized_binding() {
+                        existing.replace_binding(value.clone());
+                        self.imported_globals.insert(name);
+                    } else {
+                        self.warning(format!(
+                            "imported binding `{name}` is shadowed by a local binding"
+                        ));
+                    }
+                }
+            }
+            Op::RecordModuleTag {
+                declaration,
+                tag,
+                arguments,
+            } => {
+                let arguments = self.pop_values_at(*arguments, span)?;
+                if self
+                    .module_metadata
+                    .get(*declaration)
+                    .is_none_or(|declaration| declaration.tags.get(*tag).is_none())
+                {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "module tag metadata does not exist".into(),
+                        span,
+                    ));
+                }
+                self.module_metadata[*declaration].tags[*tag].arguments = arguments;
+            }
+            Op::SetGlobal(name) => {
+                if !self.globals.borrow().contains_key(name) {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::Name,
+                        format!("unknown name `{name}`"),
+                        span,
+                    ));
+                }
+                let value = self.pop_at(span)?;
                 if !self
                     .globals
                     .borrow()
@@ -1585,6 +1731,7 @@ impl Vm {
             }
             Op::Import(kinds) => self.import_at(kinds, span)?,
             Op::Select(cases) => self.select_at(cases, span)?,
+            Op::SelectApply => self.select_apply_at(program, span)?,
             Op::Spawn => self.spawn_task_at(program, span)?,
             Op::Nursery { has_limit } => self.run_nursery_at(program, *has_limit, span)?,
             Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
@@ -1683,7 +1830,6 @@ impl Vm {
                     return Ok(BorrowedSpanOpOutcome::Settled(value));
                 }
             }
-            _ => return Ok(BorrowedSpanOpOutcome::NotHandled),
         }
         Ok(BorrowedSpanOpOutcome::Continue)
     }
@@ -3553,6 +3699,34 @@ impl Vm {
             self.stack.push(handler);
             self.stack.push(value);
             self.call(program, 1, None, span)?;
+        }
+        Ok(())
+    }
+
+    fn select_apply_at(&mut self, program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
+        let selected = self.pop_at(span)?;
+        let Value::List(values) = selected else {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "select result is invalid".into(),
+                span,
+            ));
+        };
+        if values.len() != 2 {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "select result has invalid arity".into(),
+                span,
+            ));
+        }
+        let value = values[0].clone();
+        let handler = values[1].clone();
+        if matches!(handler, Value::Nil) {
+            self.stack.push(value);
+        } else {
+            self.stack.push(handler);
+            self.stack.push(value);
+            self.call_at(program, 1, None, span)?;
         }
         Ok(())
     }

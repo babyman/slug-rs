@@ -145,6 +145,13 @@ Struct construction, slicing, and match execution now borrow spans through
 their normal path. A thrown value becomes a durable `RuntimeError`, so `throw`
 clones its span only while constructing that error.
 
+Interpolation, captures, global and module-metadata updates, overload setup,
+and `select` handler application now complete the borrowed dispatch path. The
+final benchmark ownership counts per invocation are: arithmetic and branches
+1, calls and closures 2, pattern matching 1, deferred cleanup 1, and lists
+and maps 0. The remaining clones are intentional durable owners: closure or
+task call frames, suspended selects, and constructed runtime errors.
+
 ### Remaining Stage 1 execution plan
 
 Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI
@@ -182,9 +189,9 @@ the measurements will conflate independent representation changes.
 
 - [x] Make instruction fetch return a borrowed instruction and borrowed opcode.
 - [x] Remove the unconditional `Instruction::clone` from the dispatch loop.
-- [ ] Clone names, descriptors, and source locations only on paths that need
+- [x] Clone names, descriptors, and source locations only on paths that need
   owned data, especially error construction and global definition.
-- [ ] Preserve all invalid-bytecode checks and existing runtime diagnostics.
+- [x] Preserve all invalid-bytecode checks and existing runtime diagnostics.
 
 Completion requires the VM and CLI suites plus a benchmark comparison showing
 the change in instruction cloning and execution time.
