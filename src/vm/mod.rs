@@ -1333,6 +1333,74 @@ impl Vm {
                 let value = self.pop_at(span)?;
                 self.set_local_at(*slot, value, span)?;
             }
+            Op::GetGlobal(name) => {
+                let value = self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::Name,
+                            format!("unknown name `{name}`"),
+                            span,
+                        )
+                    })?
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+                self.stack.push(value);
+            }
+            Op::DefineGlobal(name) => {
+                let value = self.pop_unresolved_at(span)?;
+                if self.imported_globals.remove(name) {
+                    self.warning(format!(
+                        "local binding `{name}` shadows an imported binding"
+                    ));
+                }
+                if !self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .is_some_and(|binding| binding.replace_binding(value.clone()))
+                {
+                    self.globals.borrow_mut().insert(name.clone(), value);
+                }
+            }
+            Op::MakeClosure { chunk, captures } => {
+                program.chunk(*chunk).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!("function chunk {chunk} does not exist"),
+                        span,
+                    )
+                })?;
+                let capture_sources = captures.clone();
+                let captures = captures
+                    .iter()
+                    .map(|capture| match capture {
+                        Capture::Local(slot) => self.local_at(*slot, span),
+                        Capture::Capture(slot) => self
+                            .frames
+                            .last()
+                            .and_then(|frame| frame.closure.captures.get(*slot))
+                            .cloned()
+                            .ok_or_else(|| {
+                                self.error_at(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    format!("capture {slot} does not exist"),
+                                    span,
+                                )
+                            }),
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                self.stack.push(Value::Closure(Rc::new(Closure {
+                    chunk: *chunk,
+                    captures,
+                    program: self.module_program.clone(),
+                    globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                    capture_sources,
+                })));
+            }
             Op::Add => self.binary_at(span, add)?,
             Op::Subtract => self.binary_at(span, subtract)?,
             Op::Multiply => self.binary_at(span, multiply)?,
@@ -1427,6 +1495,7 @@ impl Vm {
                 }
             }
             Op::Recur(kinds) => self.recur_at(program, kinds, span)?,
+            Op::Call(count) => self.call(program, *count, None, self.owned_span(span))?,
             Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
             Op::LeaveScope => {
                 let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {
@@ -3044,6 +3113,13 @@ impl Vm {
         span: Option<&SourceSpan>,
     ) -> RuntimeError {
         self.error(kind, message, span.cloned())
+    }
+
+    fn owned_span(&self, span: Option<&SourceSpan>) -> Option<SourceSpan> {
+        if span.is_some() {
+            self.metrics.borrow_mut().source_span_clones += 1;
+        }
+        span.cloned()
     }
 
     fn pop_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {

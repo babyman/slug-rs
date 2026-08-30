@@ -27,6 +27,9 @@
 - VM scope exit and return handling now borrow source spans while preserving
   cleanup-driven completion behavior.
 
+- Global declarations, closure construction, and ordinary calls now borrow
+  source spans, cloning only call sites retained in runtime call frames.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

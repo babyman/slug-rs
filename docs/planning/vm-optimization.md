@@ -111,6 +111,13 @@ not assume those operations merely continue dispatch. The remaining clones are
 function/declaration setup and ordinary calls, which require a separate
 call-boundary refactor.
 
+Global declarations, global lookup, closure construction, and ordinary calls
+now use the borrowed-span path. An ordinary closure call clones its span only
+to retain the call site in a durable call frame. The arithmetic workload now
+has two source-span clones per invocation and completes 1,000 runs in about
+100 ms across repeated warm runs. Spread, pipeline, import, cleanup, and
+scheduler operations remain on owned-span paths.
+
 ## Stage 1: borrow during dispatch
 
 - [x] Make instruction fetch return a borrowed instruction and borrowed opcode.
