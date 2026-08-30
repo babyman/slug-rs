@@ -982,6 +982,7 @@ fn rejects_structurally_invalid_private_bytecode_before_execution() {
     let cases = [
         (Op::Constant(0), "references missing constant 0"),
         (Op::GetLocal(0), "references missing local 0"),
+        (Op::Add, "requires 2 stack values, has 0"),
         (Op::Jump(2), "jumps to missing instruction 2"),
         (
             Op::MakeClosure {

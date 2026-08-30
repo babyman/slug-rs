@@ -245,6 +245,14 @@ stack analysis remains the next verifier slice because it must model branches,
 calls, recurrence, cleanup, and scheduler operations without rejecting valid
 compiler output.
 
+The first stack-analysis slice is enabled for chunks without `TryMatch`. It
+tracks exact instruction effects through jumps, conditionals, calls, cleanup,
+and scheduler operations, rejecting a reachable instruction whose known stack
+height is insufficient. Match lowering intentionally carries a subject and
+temporary bindings along distinct case and guard paths, so those chunks retain
+their existing dynamic stack checks until the verifier has an explicit
+match-state abstraction rather than a height-only model.
+
 ## Stage 3: compact source and opcode metadata
 
 - [ ] Intern source paths once per program or source table and identify them

@@ -59,6 +59,10 @@
 - The private-bytecode verifier now also rejects missing constants and empty
   `select` instructions before execution.
 
+- Added conservative private-bytecode stack-underflow verification for chunks
+  without match lowering; match chunks retain runtime stack checks pending a
+  path-sensitive match-state verifier.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

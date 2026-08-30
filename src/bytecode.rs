@@ -461,6 +461,13 @@ impl Program {
             for (instruction_index, instruction) in chunk.code.iter().enumerate() {
                 self.validate_op(chunk_index, instruction_index, chunk, &instruction.op)?;
             }
+            if !chunk
+                .code
+                .iter()
+                .any(|instruction| matches!(instruction.op, Op::TryMatch { .. }))
+            {
+                Self::validate_stack(chunk)?;
+            }
         }
         Ok(())
     }
@@ -529,7 +536,6 @@ impl Program {
         }
     }
 
-    #[allow(dead_code)]
     fn validate_stack(chunk: &Chunk) -> Result<(), String> {
         let mut heights = vec![None; chunk.code.len()];
         let mut pending = VecDeque::new();
