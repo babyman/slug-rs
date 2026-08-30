@@ -52,6 +52,10 @@
 - Completed borrowed-span VM dispatch for interpolation, captures, global and
   module metadata operations, overload setup, and `select` handler execution.
 
+- Added initial private-bytecode verification before VM frame creation for
+  local slots, jumps, function references, selected-call identities, and
+  module-tag metadata.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

@@ -978,6 +978,30 @@ fn rejects_missing_selected_callable_identity_in_private_bytecode() {
 }
 
 #[test]
+fn rejects_structurally_invalid_private_bytecode_before_execution() {
+    let cases = [
+        (Op::GetLocal(0), "references missing local 0"),
+        (Op::Jump(2), "jumps to missing instruction 2"),
+        (
+            Op::MakeClosure {
+                chunk: 1,
+                captures: Vec::new(),
+            },
+            "references missing function chunk 1",
+        ),
+    ];
+    for (op, expected) in cases {
+        let mut main = Chunk::new("main", 0);
+        main.emit(op).emit(Op::Return);
+        let error = Vm::new()
+            .run(&program_with_main(main), 0)
+            .expect_err("structural defect must be rejected before execution");
+        assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+        assert!(error.message.contains(expected), "{}", error.message);
+    }
+}
+
+#[test]
 fn constructs_and_indexes_collections() {
     let mut main = Chunk::new("main", 0);
     let ten = main.constant(Value::Int(10));

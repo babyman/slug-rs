@@ -553,6 +553,9 @@ impl Vm {
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run(&mut self, program: &Program, entry: usize) -> VmResult<Value> {
         self.metrics.borrow_mut().clone_from(&VmMetrics::default());
+        program
+            .validate()
+            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
         let chunk = program.chunk(entry).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,

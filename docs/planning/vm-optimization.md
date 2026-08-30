@@ -212,9 +212,9 @@ deferred until their stated size and dispatch evidence exists.
 
 ## Stage 2: verify private bytecode before execution
 
-- [ ] Add a verifier invoked at the public VM entry boundary before a frame is
+- [x] Add a verifier invoked at the public VM entry boundary before a frame is
   created.
-- [ ] Validate chunk and constant references, jump targets, local-slot bounds,
+- [x] Validate chunk and constant references, jump targets, local-slot bounds,
   declared arity/local consistency, and metadata-pool indices that can be
   checked without executing values.
 - [ ] Track a conservative operand-stack height through control flow and
@@ -228,6 +228,16 @@ deferred until their stated size and dispatch evidence exists.
 Completion requires malformed bytecode to fail deterministically before
 observable partial execution whenever the defect is statically knowable, and
 all existing source-located runtime diagnostics to remain intact.
+
+### Initial verifier slice
+
+The verifier now runs before the root frame is allocated. It rejects invalid
+local slots, jump targets, function-chunk references from constants and closure
+creation, selected-call identities, and module-tag metadata references. The VM
+retains dispatch-time checks for dynamic values, stack shape, captured slots,
+and all operations a manually constructed program can still invalidate at run
+time. Focused malformed-bytecode tests prove that the initial structural cases
+return `RuntimeErrorKind::InvalidBytecode` before execution begins.
 
 ## Stage 3: compact source and opcode metadata
 

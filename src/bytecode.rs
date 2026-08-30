@@ -431,4 +431,94 @@ impl Program {
     pub fn set_module_name(&mut self, module_name: impl Into<String>) {
         self.module_name = module_name.into();
     }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for (chunk_index, chunk) in self.chunks.iter().enumerate() {
+            if chunk.locals < chunk.arity {
+                return Err(format!(
+                    "function `{}` has {} local slots for {} parameters",
+                    chunk.name, chunk.locals, chunk.arity
+                ));
+            }
+            if !chunk.parameters.is_empty() && chunk.parameters.len() != chunk.arity {
+                return Err(format!(
+                    "function `{}` has {} parameter metadata entries for {} parameters",
+                    chunk.name,
+                    chunk.parameters.len(),
+                    chunk.arity
+                ));
+            }
+            for constant in &chunk.constants {
+                if let Constant::Function(target) = constant
+                    && self.chunk(*target).is_none()
+                {
+                    return Err(format!(
+                        "function `{}` references missing function chunk {target}",
+                        chunk.name
+                    ));
+                }
+            }
+            for (instruction_index, instruction) in chunk.code.iter().enumerate() {
+                self.validate_op(chunk_index, instruction_index, chunk, &instruction.op)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_op(
+        &self,
+        _chunk_index: usize,
+        instruction_index: usize,
+        chunk: &Chunk,
+        op: &Op,
+    ) -> Result<(), String> {
+        let location = || format!("function `{}` instruction {instruction_index}", chunk.name);
+        match op {
+            Op::GetLocal(slot) | Op::SetLocal(slot) | Op::JumpIfProvided { slot, .. }
+                if *slot >= chunk.locals =>
+            {
+                Err(format!("{} references missing local {slot}", location()))
+            }
+            Op::Jump(target) | Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. }
+                if *target >= chunk.code.len() =>
+            {
+                Err(format!(
+                    "{} jumps to missing instruction {target}",
+                    location()
+                ))
+            }
+            Op::MakeClosure {
+                chunk: target,
+                captures,
+            } if self.chunk(*target).is_none() => Err(format!(
+                "{} references missing function chunk {target}",
+                location()
+            )),
+            Op::MakeClosure { captures, .. }
+                if captures.iter().any(
+                    |capture| matches!(capture, Capture::Local(slot) if *slot >= chunk.locals),
+                ) =>
+            {
+                Err(format!("{} captures a missing local", location()))
+            }
+            Op::CallSelected { identity, .. } | Op::PipelineCallSelected { identity, .. }
+                if self.callable_identity(*identity).is_none() =>
+            {
+                Err("selected callable identity does not exist".into())
+            }
+            Op::RecordModuleTag {
+                declaration, tag, ..
+            } if self
+                .declarations
+                .get(*declaration)
+                .is_none_or(|declaration| declaration.tags.get(*tag).is_none()) =>
+            {
+                Err(format!(
+                    "{} references missing module tag metadata",
+                    location()
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
 }
