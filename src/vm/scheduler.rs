@@ -29,6 +29,8 @@ pub(super) struct Nursery {
     timers: Rc<RefCell<TimerService>>,
     native_channels: RefCell<Vec<Weak<Channel>>>,
     signal: Arc<SchedulerSignal>,
+    #[cfg(feature = "metrics")]
+    metrics: Rc<RefCell<VmMetrics>>,
 }
 
 impl Nursery {
@@ -58,10 +60,12 @@ impl Nursery {
             policy,
             timers: Rc::new(RefCell::new(TimerService::new(
                 #[cfg(feature = "metrics")]
-                metrics,
+                metrics.clone(),
             ))),
             native_channels: RefCell::new(Vec::new()),
             signal: Arc::new(SchedulerSignal::new()),
+            #[cfg(feature = "metrics")]
+            metrics,
         }
     }
 
@@ -80,11 +84,25 @@ impl Nursery {
 
     pub(super) fn add_task(&self, task: Rc<Task>) {
         self.tasks.borrow_mut().push(task.clone());
-        self.ready.borrow_mut().push_back(task);
+        let mut ready = self.ready.borrow_mut();
+        ready.push_back(task);
+        #[cfg(feature = "metrics")]
+        {
+            let depth = ready.len();
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.peak_ready_queue = metrics.peak_ready_queue.max(depth);
+        }
     }
 
     pub(super) fn enqueue(&self, task: Rc<Task>) {
-        self.ready.borrow_mut().push_back(task);
+        let mut ready = self.ready.borrow_mut();
+        ready.push_back(task);
+        #[cfg(feature = "metrics")]
+        {
+            let depth = ready.len();
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.peak_ready_queue = metrics.peak_ready_queue.max(depth);
+        }
     }
 
     fn first_unobserved_error(&self) -> Option<RuntimeError> {
@@ -179,7 +197,13 @@ impl Nursery {
             }
             let timeout =
                 deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+            #[cfg(feature = "metrics")]
+            let wait_started = Instant::now();
             self.signal.wait(observed, timeout);
+            #[cfg(feature = "metrics")]
+            {
+                self.metrics.borrow_mut().scheduler_wait_time += wait_started.elapsed();
+            }
         }
     }
 

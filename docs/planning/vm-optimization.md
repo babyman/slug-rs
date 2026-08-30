@@ -592,19 +592,47 @@ dead-code removal, so it has no independent allocation or byte estimate.
 
 ### 4. Audit scheduler scaling with cost-sensitive evidence
 
-- [ ] Count timer entries examined by deadline lookup and wakeup scans, plus
+- [x] Count timer entries examined by deadline lookup and wakeup scans, plus
   channel, task, and timer entries examined during wait removal.
-- [ ] Record peak timer, ready-queue, channel-waiter, and task-waiter depth.
-- [ ] Exercise several workload sizes rather than one bounded point and report
+- [x] Record peak timer, ready-queue, channel-waiter, and task-waiter depth.
+- [x] Exercise several workload sizes rather than one bounded point and report
   work growth alongside elapsed time.
-- [ ] Make the cancellation workload prove cancellation before its deadline;
+- [x] Make the cancellation workload prove cancellation before its deadline;
   it must report zero timer wakeups and no timer-duration wall-clock floor.
-- [ ] Separate scheduler work from sleeping, VM construction, verification,
+- [x] Separate scheduler work from sleeping, VM construction, verification,
   and program ownership costs.
 
 After this audit, either reaffirm the vector-backed queues with stated
 supported limits or reopen the cancellation-safe timed-wait-index decision.
 FIFO channel arbitration and winner-removes-losers behavior remain mandatory.
+
+#### Measurement record: scheduler scaling (2026-08-30)
+
+`make bench-vm` runs the scaled timer workloads with the default-disabled
+`metrics` feature. Before this audit, the scheduler exposed only registrations,
+lookups, wakeups, and registration removals; entries examined, peaks, and
+blocked scheduler time were not measured. After it, the benchmark distinguishes
+time blocked in `SchedulerSignal::wait` from total wall time, while compilation
+is outside the measured loop and program-clone counters report the remaining
+root installation work.
+
+| Timer tasks per run | Runs | Deadline entries examined | Wakeup entries examined | Peak timer / ready depth |
+|--------------------:|-----:|--------------------------:|------------------------:|-------------------------:|
+|                   8 |  100 |                       800 |                   2,400 |                    8 / 8 |
+|                  32 |  100 |                     3,200 |                   9,616 |                  32 / 32 |
+|                 128 |   25 |                     3,200 |                   9,729 |                128 / 128 |
+
+Entry examination and peak depth grow with queue size as expected for the
+retained vector-backed timer queue. The 8-, 32-, and 128-task runs spent about
+125 ms, 121 ms, and 25 ms respectively blocked in scheduler waits; the latter
+two use different repetition counts, so wall-clock values are directional only.
+Removal counters also now report channel, task, and timer entries examined and
+their observed queue peaks. The cancellation workload puts the failing task
+first: across 10 runs it registered and woke zero timers, spent 0 ns in the
+scheduler wait, and completed in about 1.1 ms total—there is no 50 ms timer
+floor. The existing FIFO queues are retained for the currently measured range;
+reopen the timed-wait-index decision if larger workload measurements show
+unacceptable growth.
 
 ### 5. Complete executable and allocation accounting
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added opt-in scheduler scaling counters for queue scans, waiter-removal
+  work, queue peaks, and blocked scheduler time, plus scaled timer benchmarks
+  and a cancellation workload that proves it does not wait for its timers.
+
 - Removed the obsolete unreachable owned VM dispatch body and its duplicate
   owned-span helpers; borrowed dispatch is now the sole opcode interpreter.
 

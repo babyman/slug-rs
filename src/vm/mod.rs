@@ -68,6 +68,26 @@ pub struct VmMetrics {
     pub timer_wakeups: usize,
     /// Wait registrations removed when a select settles or a task is cancelled.
     pub wait_registration_removals: usize,
+    /// Timer entries examined while finding the next deadline.
+    pub timer_deadline_entries_examined: usize,
+    /// Timer entries examined while waking due waiters.
+    pub timer_wakeup_entries_examined: usize,
+    /// Channel waiter entries examined while removing registrations.
+    pub channel_waiter_entries_examined: usize,
+    /// Task waiter entries examined while removing registrations.
+    pub task_waiter_entries_examined: usize,
+    /// Timer waiter entries examined while removing registrations.
+    pub timer_waiter_entries_examined: usize,
+    /// Largest timer queue depth in the invocation.
+    pub peak_timer_waiters: usize,
+    /// Largest ready-queue depth in the invocation.
+    pub peak_ready_queue: usize,
+    /// Largest channel waiter queue observed during registration removal.
+    pub peak_channel_waiters: usize,
+    /// Largest task waiter queue observed during registration removal.
+    pub peak_task_waiters: usize,
+    /// Time spent blocked in the scheduler signal wait.
+    pub scheduler_wait_time: Duration,
     /// Whole programs cloned to establish an installed execution owner.
     pub program_clones: usize,
     /// Estimated inline bytecode bytes copied by whole-program clones.

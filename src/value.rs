@@ -149,32 +149,55 @@ pub(crate) enum WaitRegistration {
 }
 
 impl WaitRegistration {
-    fn remove(self, waiter: &Waiter) {
+    fn remove(
+        self,
+        waiter: &Waiter,
+        #[cfg(feature = "metrics")] metrics: &Rc<RefCell<crate::vm::VmMetrics>>,
+    ) {
         match self {
             Self::ChannelSend(channel) => {
-                channel
-                    .state
-                    .borrow_mut()
+                let mut state = channel.state.borrow_mut();
+                #[cfg(feature = "metrics")]
+                {
+                    let mut metrics = metrics.borrow_mut();
+                    metrics.channel_waiter_entries_examined += state.senders.len();
+                    metrics.peak_channel_waiters =
+                        metrics.peak_channel_waiters.max(state.senders.len());
+                }
+                state
                     .senders
                     .retain(|(candidate, _)| !candidate.is_same(waiter));
             }
             Self::ChannelReceive(channel) => {
-                channel
-                    .state
-                    .borrow_mut()
+                let mut state = channel.state.borrow_mut();
+                #[cfg(feature = "metrics")]
+                {
+                    let mut metrics = metrics.borrow_mut();
+                    metrics.channel_waiter_entries_examined += state.receivers.len();
+                    metrics.peak_channel_waiters =
+                        metrics.peak_channel_waiters.max(state.receivers.len());
+                }
+                state
                     .receivers
                     .retain(|candidate| !candidate.is_same(waiter));
             }
             Self::TaskAwait(target) => {
-                target
-                    .state
-                    .borrow_mut()
-                    .waiters
-                    .retain(|candidate| !candidate.is_same(waiter));
+                let mut state = target.state.borrow_mut();
+                #[cfg(feature = "metrics")]
+                {
+                    let mut metrics = metrics.borrow_mut();
+                    metrics.task_waiter_entries_examined += state.waiters.len();
+                    metrics.peak_task_waiters = metrics.peak_task_waiters.max(state.waiters.len());
+                }
+                state.waiters.retain(|candidate| !candidate.is_same(waiter));
             }
             Self::Timer(timers) => {
+                let mut timers = timers.borrow_mut();
+                #[cfg(feature = "metrics")]
+                {
+                    metrics.borrow_mut().timer_waiter_entries_examined += timers.waiters.len();
+                }
                 timers
-                    .borrow_mut()
                     .waiters
                     .retain(|(_, candidate)| !candidate.is_same(waiter));
             }
@@ -206,11 +229,18 @@ impl TimerService {
             self.metrics.borrow_mut().timer_registrations += 1;
         }
         self.waiters.push((deadline, waiter));
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.peak_timer_waiters = metrics.peak_timer_waiters.max(self.waiters.len());
+        }
     }
 
     pub(crate) fn take_due(&mut self) -> Vec<Waiter> {
         let now = Instant::now();
         let mut due = Vec::new();
+        #[cfg(feature = "metrics")]
+        let examined = self.waiters.len();
         self.waiters.retain(|(deadline, waiter)| {
             if *deadline <= now {
                 due.push(waiter.clone());
@@ -221,7 +251,9 @@ impl TimerService {
         });
         #[cfg(feature = "metrics")]
         {
-            self.metrics.borrow_mut().timer_wakeups += due.len();
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.timer_wakeups += due.len();
+            metrics.timer_wakeup_entries_examined += examined;
         }
         due
     }
@@ -229,7 +261,9 @@ impl TimerService {
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         #[cfg(feature = "metrics")]
         {
-            self.metrics.borrow_mut().timer_deadline_lookups += 1;
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.timer_deadline_lookups += 1;
+            metrics.timer_deadline_entries_examined += self.waiters.len();
         }
         self.waiters.iter().map(|(deadline, _)| *deadline).min()
     }
@@ -278,7 +312,11 @@ impl WaitSet {
             self.metrics.borrow_mut().wait_registration_removals += self.registrations.len();
         }
         for registration in self.registrations {
-            registration.remove(waiter);
+            registration.remove(
+                waiter,
+                #[cfg(feature = "metrics")]
+                &self.metrics,
+            );
         }
     }
 
