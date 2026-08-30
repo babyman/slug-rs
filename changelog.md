@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Expanded the private VM optimization plan with staged measurement, bytecode
+  verification, capture-aware local storage, and scheduler-scaling gates.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

@@ -17,6 +17,28 @@ Optimization must preserve these boundaries:
 - each change is measured independently so its effect is not attributed to a
   simultaneous operand-model rewrite.
 
+## Implementation sequence
+
+Work through the stages in order. A stage may change private bytecode and its
+direct VM tests, but it must not change source-language semantics or the
+portable `.cslug` contract. Land one independently measurable change at a
+time; do not combine representation changes with a register-VM experiment.
+
+| Stage | Outcome | Entry evidence | Completion gate |
+|---|---|---|---|
+| 0 | Repeatable measurements | Representative programs and counters | Baseline report checked into the change description or an adjacent note |
+| 1 | Borrowed dispatch | Stage 0 clone and time baseline | No unconditional instruction clone; diagnostics unchanged |
+| 2 | Verified private bytecode | Existing malformed-bytecode coverage | Structural defects rejected before execution, with runtime checks retained |
+| 3 | Compact metadata | Stage 1 measurements | Indexed metadata and unchanged source locations |
+| 4 | Direct ordinary locals | Capture and `recur` regression matrix | Uncaptured locals avoid binding cells without changing capture identity |
+| 5 | Scheduler scaling decision | Timer/select workload measurements | Keep the current queues or adopt a measured replacement |
+| 6 | Compact executable representation | Program-size and dispatch measurements | Chosen encoding is justified by measured limits |
+| 7 | Stack/register decision | Results from stages 0--6 | Separate decision record, if a register prototype wins |
+
+Every implementation stage runs `make test-vm` during iteration and `make
+check` before handoff. Benchmark numbers inform engineering decisions but do
+not become timing-sensitive test assertions.
+
 ## Stage 0: establish measurements
 
 - [ ] Add representative benchmarks for arithmetic and branches, calls,
@@ -38,7 +60,26 @@ Optimization must preserve these boundaries:
 Completion requires the VM and CLI suites plus a benchmark comparison showing
 the change in instruction cloning and execution time.
 
-## Stage 2: compact source and opcode metadata
+## Stage 2: verify private bytecode before execution
+
+- [ ] Add a verifier invoked at the public VM entry boundary before a frame is
+  created.
+- [ ] Validate chunk and constant references, jump targets, local-slot bounds,
+  declared arity/local consistency, and metadata-pool indices that can be
+  checked without executing values.
+- [ ] Track a conservative operand-stack height through control flow and
+  reject statically provable underflow or incompatible control-flow joins.
+- [ ] Keep the dispatch-time checks for all dynamic and verifier-independent
+  failures: manually constructed private bytecode remains untrusted.
+- [ ] Add table-driven malformed-program tests plus property or fuzz coverage
+  asserting that arbitrary private bytecode returns `RuntimeError` rather than
+  panicking.
+
+Completion requires malformed bytecode to fail deterministically before
+observable partial execution whenever the defect is statically knowable, and
+all existing source-located runtime diagnostics to remain intact.
+
+## Stage 3: compact source and opcode metadata
 
 - [ ] Intern source paths once per program or source table and identify them
   with `SourceId`.
@@ -54,7 +95,7 @@ the change in instruction cloning and execution time.
 Completion requires unchanged source-located error behavior, malformed-index
 tests for each metadata pool, and before/after instruction-size measurements.
 
-## Stage 3: direct ordinary locals and promoted captures
+## Stage 4: direct ordinary locals and promoted captures
 
 - [ ] Represent an ordinary frame local as a direct `Value`.
 - [ ] Promote a local to a shared binding cell when a closure captures it.
@@ -69,7 +110,23 @@ Focused coverage must include uncaptured mutable locals, capture before and
 after assignment, sibling closures, captures through intermediate functions,
 captured parameters, escaping captures across `recur`, and deferred closures.
 
-## Stage 4: compact executable representation
+## Stage 5: measure scheduler scaling before replacing queues
+
+- [ ] Extend the benchmark corpus with many timers, many `select` cases, and
+  cancellation of suspended waits.
+- [ ] Record timer registration, next-deadline lookup, wakeup, and loser-removal
+  costs separately from ordinary VM dispatch.
+- [ ] Retain the current vector-backed timer storage and FIFO queues unless the
+  measurements identify them as material costs.
+- [ ] If replacement is justified, use a cancellation-safe timed-wait index
+  (for example, a heap plus registration IDs), and preserve FIFO channel
+  arbitration and winner-removes-losers semantics.
+
+Completion requires either benchmark evidence that the current implementation
+is adequate for the supported workload or focused regression tests proving
+the selected replacement preserves scheduling semantics.
+
+## Stage 6: compact executable representation
 
 - [ ] Select field widths and instruction formats from measured program limits;
   do not make Rust enum layout or host pointer width part of the format.
@@ -84,7 +141,7 @@ captured parameters, escaping captures across `recur`, and deferred closures.
 Compact encoding is independent of whether expression temporaries use an
 operand stack or frame registers.
 
-## Stage 5: stack-versus-register decision gate
+## Stage 7: stack-versus-register decision gate
 
 Do not convert to a register VM based only on the general performance of Lua or
 another language. Build a prototype or lowering experiment after the earlier
