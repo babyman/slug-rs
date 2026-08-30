@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an AI-assisted development plan covering repository guidance accuracy,
+  bounded working sets, crate-boundary clarity, and reproducible tooling.
+
 - VM dispatch now retains `SpanId`s and resolves source-table entries only at
   diagnostic or durable ownership boundaries; benchmark output also reports
   runtime layout sizes and source-table lookup counts.

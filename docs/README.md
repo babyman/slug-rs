@@ -57,6 +57,7 @@ a specified feature is implemented.
 | [expression-foundation-inventory.md](planning/expression-foundation-inventory.md) | Current expression-support boundary and dependency-ordered implementation slices. |
 | [type-system-plan.md](planning/type-system-plan.md) | Dependency-ordered plan for the next static-checking milestones. |
 | [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |
+| [ai-assisted-development.md](planning/ai-assisted-development.md) | Plan for trustworthy agent guidance, bounded working sets, and reproducible validation. |
 | [completed/](planning/completed/) | Retained plans for completed implementation work. |
 
 Hand-authored documents describe decisions and requirements. Files in
