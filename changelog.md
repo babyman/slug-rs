@@ -21,6 +21,12 @@
 - VM list/map construction and indexed access now also borrow instruction
   source spans during successful execution.
 
+- Tail-position `recur` now borrows source spans through argument binding and
+  preserves its existing cleanup and captured-local behavior.
+
+- VM scope exit and return handling now borrow source spans while preserving
+  cleanup-driven completion behavior.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

@@ -118,6 +118,70 @@ impl Vm {
         Ok(())
     }
 
+    pub(super) fn recur_at(
+        &mut self,
+        program: &Program,
+        kinds: &[crate::CallArgumentKind],
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let values = self.pop_values_at(kinds.len(), span)?;
+        let (positional, named) = self.expand_call_arguments_at(values, kinds, span)?;
+        let closure = self
+            .frames
+            .last()
+            .map(|frame| crate::Value::Closure(frame.closure.clone()))
+            .ok_or_else(|| {
+                self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "no active call frame".into(),
+                    span,
+                )
+            })?;
+        let (arguments, provided) =
+            self.bind_call_arguments_at(program, &closure, positional, named, span)?;
+        let arity = self.current_chunk(program)?.arity;
+        let (_, local_count, stack_base) = self
+            .frames
+            .last()
+            .map(|frame| (frame.closure.chunk, frame.locals.len(), frame.stack_base))
+            .ok_or_else(|| {
+                self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "no active call frame".into(),
+                    span,
+                )
+            })?;
+        if local_count < arity {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("active function has {local_count} local slots for {arity} parameters"),
+                span,
+            ));
+        }
+        let nested_scopes = self
+            .frames
+            .last_mut()
+            .expect("active frame was checked")
+            .scopes
+            .split_off(1);
+        if !nested_scopes.is_empty() {
+            self.cleanup.push(Cleanup::Recur {
+                arguments,
+                provided,
+            });
+            self.cleanup
+                .extend(nested_scopes.into_iter().map(|actions| Cleanup::Actions {
+                    actions,
+                    success: true,
+                    frame_depth: self.frames.len() - 1,
+                }));
+            self.drive_cleanup(program)?;
+            return Ok(());
+        }
+        self.finish_recur(arguments, provided, local_count, stack_base);
+        Ok(())
+    }
+
     pub(super) fn finish_recur(
         &mut self,
         arguments: Vec<Value>,
@@ -140,6 +204,20 @@ impl Vm {
     ) -> VmResult<&mut Vec<Vec<Deferred>>> {
         if self.frames.is_empty() {
             return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active call frame".into(),
+                span,
+            ));
+        }
+        Ok(&mut self.frames.last_mut().expect("frame was checked").scopes)
+    }
+
+    pub(super) fn current_scopes_at(
+        &mut self,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<&mut Vec<Vec<Deferred>>> {
+        if self.frames.is_empty() {
+            return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "no active call frame".into(),
                 span,

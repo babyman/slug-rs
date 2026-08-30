@@ -106,6 +106,12 @@ enum ExecutionOutcome {
     Suspended,
 }
 
+enum BorrowedSpanOpOutcome {
+    NotHandled,
+    Continue,
+    Settled(Value),
+}
+
 #[derive(Clone)]
 enum Suspension {
     Select(Option<SourceSpan>),
@@ -726,8 +732,16 @@ impl Vm {
                 return Ok(ExecutionOutcome::Suspended);
             }
             let instruction = self.next_instruction(program)?;
-            if self.execute_borrowed_span_op(program, &instruction.op, instruction.span.as_ref())? {
-                continue;
+            match self.execute_borrowed_span_op(
+                program,
+                &instruction.op,
+                instruction.span.as_ref(),
+            )? {
+                BorrowedSpanOpOutcome::Continue => continue,
+                BorrowedSpanOpOutcome::Settled(value) => {
+                    return Ok(ExecutionOutcome::Settled(Ok(value)));
+                }
+                BorrowedSpanOpOutcome::NotHandled => {}
             }
             if instruction.span.is_some() {
                 self.metrics.borrow_mut().source_span_clones += 1;
@@ -1282,7 +1296,7 @@ impl Vm {
         program: &Program,
         op: &Op,
         span: Option<&SourceSpan>,
-    ) -> VmResult<bool> {
+    ) -> VmResult<BorrowedSpanOpOutcome> {
         match op {
             Op::Constant(index) => {
                 let chunk = self.current_chunk(program)?;
@@ -1412,9 +1426,37 @@ impl Vm {
                     self.jump_at(*target, span)?;
                 }
             }
-            _ => return Ok(false),
+            Op::Recur(kinds) => self.recur_at(program, kinds, span)?,
+            Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
+            Op::LeaveScope => {
+                let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "no active scope".into(),
+                        span,
+                    )
+                })?;
+                if self.frames.last().is_some_and(|frame| frame.cleanup_action) {
+                    self.cleanup.push(Cleanup::Resume);
+                }
+                self.cleanup.push(Cleanup::Actions {
+                    actions,
+                    success: true,
+                    frame_depth: self.frames.len() - 1,
+                });
+                if let Some(value) = self.drive_cleanup(program)? {
+                    return Ok(BorrowedSpanOpOutcome::Settled(value));
+                }
+            }
+            Op::Return => {
+                let value = self.pop_at(span)?;
+                if let Some(value) = self.begin_return(program, value)? {
+                    return Ok(BorrowedSpanOpOutcome::Settled(value));
+                }
+            }
+            _ => return Ok(BorrowedSpanOpOutcome::NotHandled),
         }
-        Ok(true)
+        Ok(BorrowedSpanOpOutcome::Continue)
     }
 
     fn next_instruction<'program>(
@@ -2183,6 +2225,36 @@ impl Vm {
         Ok((positional, named))
     }
 
+    fn expand_call_arguments_at(
+        &self,
+        values: Vec<Value>,
+        kinds: &[CallArgumentKind],
+        span: Option<&SourceSpan>,
+    ) -> VmResult<ExpandedCallArguments> {
+        let mut positional = Vec::new();
+        let mut named = Vec::new();
+        for (value, kind) in values.into_iter().zip(kinds) {
+            let value = value
+                .resolve()
+                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            match kind {
+                CallArgumentKind::Positional => positional.push(value),
+                CallArgumentKind::Spread => {
+                    let Value::List(values) = value else {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            "call spread expects a list".into(),
+                            span,
+                        ));
+                    };
+                    positional.extend(values.iter().cloned());
+                }
+                CallArgumentKind::Named(name) => named.push((name.clone(), value)),
+            }
+        }
+        Ok((positional, named))
+    }
+
     fn call_builtin(
         &mut self,
         builtin: Builtin,
@@ -2656,6 +2728,113 @@ impl Vm {
                                 chunk.parameters[slot].name
                             ),
                             span.clone(),
+                        )
+                    })
+            })
+            .collect::<VmResult<Vec<_>>>()?;
+        Ok((values, provided))
+    }
+
+    fn bind_call_arguments_at(
+        &self,
+        program: &Program,
+        callee: &Value,
+        mut positional: Vec<Value>,
+        named: Vec<(String, Value)>,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<(Vec<Value>, Vec<bool>)> {
+        let Value::Closure(closure) = callee else {
+            if named.is_empty() {
+                return Ok((positional.clone(), vec![true; positional.len()]));
+            }
+            return Err(self.error_at(
+                RuntimeErrorKind::Arity,
+                "native functions do not accept named arguments".into(),
+                span,
+            ));
+        };
+        let closure_program = closure.program.as_deref().unwrap_or(program);
+        let chunk = closure_program.chunk(closure.chunk).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "closure references missing chunk".into(),
+                span,
+            )
+        })?;
+        if chunk.parameters.is_empty() {
+            if chunk.arity != 0 {
+                return Ok((positional.clone(), vec![true; positional.len()]));
+            }
+            if positional.is_empty() && named.is_empty() {
+                return Ok((Vec::new(), Vec::new()));
+            }
+            return Err(self.error_at(
+                RuntimeErrorKind::Arity,
+                format!("`{}` expects no arguments", chunk.name),
+                span,
+            ));
+        }
+        let variadic = chunk
+            .parameters
+            .last()
+            .filter(|parameter| parameter.variadic);
+        let fixed = chunk.parameters.len() - usize::from(variadic.is_some());
+        if positional.len() > chunk.parameters.len() && variadic.is_none() {
+            return Err(self.error_at(
+                RuntimeErrorKind::Arity,
+                format!("`{}` received too many positional arguments", chunk.name),
+                span,
+            ));
+        }
+        let rest = positional.split_off(fixed.min(positional.len()));
+        let mut bound = positional.into_iter().map(Some).collect::<Vec<_>>();
+        bound.resize_with(chunk.parameters.len(), || None);
+        for (name, value) in named {
+            let slot = chunk
+                .parameters
+                .iter()
+                .position(|parameter| parameter.name == name)
+                .ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::Name,
+                        format!("unknown parameter `{name}`"),
+                        span,
+                    )
+                })?;
+            if bound[slot].is_some() {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Arity,
+                    format!("parameter `{name}` was assigned more than once"),
+                    span,
+                ));
+            }
+            if chunk.parameters[slot].variadic && !matches!(value, Value::List(_)) {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Type,
+                    format!("variadic parameter `{name}` expects a list"),
+                    span,
+                ));
+            }
+            bound[slot] = Some(value);
+        }
+        if variadic.is_some() && bound[fixed].is_none() {
+            bound[fixed] = Some(Value::List(Rc::new(rest)));
+        }
+        let provided = bound.iter().map(Option::is_some).collect::<Vec<_>>();
+        let values = bound
+            .into_iter()
+            .enumerate()
+            .map(|(slot, value)| {
+                value
+                    .or_else(|| chunk.parameters[slot].has_default.then_some(Value::Nil))
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::Arity,
+                            format!(
+                                "missing required parameter `{}`",
+                                chunk.parameters[slot].name
+                            ),
+                            span,
                         )
                     })
             })

@@ -98,6 +98,19 @@ span path. The list-and-maps workload drops from 15 to 9 source-span clones per
 invocation, while pattern matching drops from 9 to 8. These counts identify
 `recur` and call binding as the next material sources of owned spans.
 
+`recur` now borrows its span through argument extraction, expansion, and
+parameter binding. The arithmetic-and-branches workload drops from 611 to 411
+source-span clones per invocation and completes 1,000 runs in about 120 ms.
+The remaining arithmetic clones are ordinary call, return, and declaration
+operations rather than recurrence iterations.
+
+Borrowed scope entry/exit and return handling reduce the arithmetic workload
+from 411 to 5 source-span clones per invocation. The fast path preserves
+cleanup-driven settlement when a scope exits or a function returns; it does
+not assume those operations merely continue dispatch. The remaining clones are
+function/declaration setup and ordinary calls, which require a separate
+call-boundary refactor.
+
 ## Stage 1: borrow during dispatch
 
 - [x] Make instruction fetch return a borrowed instruction and borrowed opcode.

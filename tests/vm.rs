@@ -32,7 +32,7 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instruction_clones, 0);
-    assert_eq!(metrics.source_span_clones, 1);
+    assert_eq!(metrics.source_span_clones, 0);
     assert!(metrics.instructions_executed >= 4);
     assert_eq!(metrics.frames_created, 1);
     assert_eq!(metrics.local_binding_cells_created, 0);
