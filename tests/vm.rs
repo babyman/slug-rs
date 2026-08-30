@@ -39,6 +39,49 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
     assert!(metrics.instructions_executed >= 4);
     assert_eq!(metrics.frames_created, 1);
     assert_eq!(metrics.local_binding_cells_created, 0);
+    assert_eq!(metrics.program_clones, 1);
+    assert!(metrics.program_clone_bytes > 0);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn installed_program_is_shared_by_root_tasks_and_nested_nurseries() {
+    let mut child = Chunk::new("child", 0);
+    let result = child.constant(Value::Int(7));
+    child.emit(Op::Constant(result)).emit(Op::Return);
+
+    let mut nursery_body = Chunk::new("nursery_body", 0);
+    nursery_body
+        .emit(Op::MakeClosure {
+            chunk: 0,
+            captures: vec![],
+        })
+        .emit(Op::Spawn)
+        .emit(Op::Pop)
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::MakeClosure {
+        chunk: 1,
+        captures: vec![],
+    })
+    .emit(Op::Nursery { has_limit: false })
+    .emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(child);
+    program.add_chunk(nursery_body);
+    program.add_chunk(main);
+
+    let mut vm = Vm::new();
+    assert_eq!(
+        vm.run_named_installed(&Rc::new(program), "main").unwrap(),
+        Value::Nil
+    );
+    let metrics = vm.metrics();
+    assert_eq!(metrics.program_clones, 0);
+    assert_eq!(metrics.program_clone_bytes, 0);
 }
 
 #[test]

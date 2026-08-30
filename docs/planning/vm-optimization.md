@@ -484,13 +484,15 @@ and borrowed-dispatch behavior remains the baseline.
 
 ### 1. Share installed programs across executions
 
-- [ ] Replace per-task and per-nursery `Program::clone` operations with clones
-  of one installed `Rc<Program>` or an equivalent shared immutable owner.
-- [ ] Make the public root execution boundary establish that owner once, while
+- [x] Replace per-task and per-nursery `Program::clone` operations with clones
+  of one installed `Rc<Program>`.
+- [x] Make the public root execution boundary establish that owner once, while
   preserving the checked direct-bytecode API and module-relative closure
   behavior.
-- [ ] Record full-program clone count and estimated cloned bytes until the
-  copies reach zero on ordinary root, task, and nursery paths.
+- [x] Record full-program clone count and estimated cloned bytes. The legacy
+  `&Program` entry points make one root installation copy; the installed
+  `Rc<Program>` entry points make no full-program copies on root, task, or
+  nursery paths.
 - [ ] Re-run scheduler measurements after removing program-copy cost from task
   creation.
 

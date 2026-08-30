@@ -68,6 +68,10 @@ pub struct VmMetrics {
     pub timer_wakeups: usize,
     /// Wait registrations removed when a select settles or a task is cancelled.
     pub wait_registration_removals: usize,
+    /// Whole programs cloned to establish an installed execution owner.
+    pub program_clones: usize,
+    /// Estimated inline bytecode bytes copied by whole-program clones.
+    pub program_clone_bytes: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -298,7 +302,7 @@ impl Vm {
         self.module_program = Some(program.clone());
         self.install_implicit_builtins(program)?;
         self.bind_foreign_declarations(program)?;
-        self.run_named(program, "main")
+        self.run_named_installed_execution(program, "main")
     }
 
     /// Executes top-level code and then the program module's zero-argument `main`.
@@ -311,10 +315,11 @@ impl Vm {
     /// Returns a Slug runtime error when top-level execution or the entrypoint
     /// call fails.
     pub fn run_program(&mut self, program: &Program) -> VmResult<Value> {
-        self.module_program = Some(Rc::new(program.clone()));
-        self.install_implicit_builtins(program)?;
-        self.bind_foreign_declarations(program)?;
-        let top_level = self.run_named(program, "main")?;
+        self.reset_metrics();
+        let program = self.install_program(program);
+        self.install_implicit_builtins(&program)?;
+        self.bind_foreign_declarations(&program)?;
+        let top_level = self.run_named_installed_execution(&program, "main")?;
         if !program.has_entrypoint() {
             return Ok(top_level);
         }
@@ -333,8 +338,8 @@ impl Vm {
             .map_err(|message| self.error(RuntimeErrorKind::Name, message, None))?;
         self.stack.clear();
         self.stack.push(entrypoint);
-        self.call(program, 0, None, None)?;
-        self.run_root_execution(program)
+        self.call(&program, 0, None, None)?;
+        self.run_root_execution(&program)
     }
 
     #[must_use]
@@ -587,8 +592,25 @@ impl Vm {
     /// Returns a Slug runtime error when the entry is invalid or evaluation
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run(&mut self, program: &Program, entry: usize) -> VmResult<Value> {
-        #[cfg(feature = "metrics")]
-        self.metrics.borrow_mut().clone_from(&VmMetrics::default());
+        self.reset_metrics();
+        let program = self.install_program(program);
+        self.run_installed_execution(&program, entry)
+    }
+
+    /// Executes an already installed zero-argument entry chunk without cloning
+    /// its immutable bytecode.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Slug runtime error when the entry is invalid or evaluation
+    /// encounters invalid bytecode or a language-level runtime fault.
+    pub fn run_installed(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<Value> {
+        self.reset_metrics();
+        self.run_installed_execution(program, entry)
+    }
+
+    fn run_installed_execution(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<Value> {
+        self.module_program = Some(program.clone());
         program
             .validate(entry)
             .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
@@ -654,6 +676,27 @@ impl Vm {
     /// Returns a Slug runtime error when the entry is absent or evaluation
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run_named(&mut self, program: &Program, entry: &str) -> VmResult<Value> {
+        self.reset_metrics();
+        let program = self.install_program(program);
+        self.run_named_installed_execution(&program, entry)
+    }
+
+    /// Executes an entry selected by name from an installed program.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Slug runtime error when the entry is absent or evaluation
+    /// encounters invalid bytecode or a language-level runtime fault.
+    pub fn run_named_installed(&mut self, program: &Rc<Program>, entry: &str) -> VmResult<Value> {
+        self.reset_metrics();
+        self.run_named_installed_execution(program, entry)
+    }
+
+    fn run_named_installed_execution(
+        &mut self,
+        program: &Rc<Program>,
+        entry: &str,
+    ) -> VmResult<Value> {
         let index = program.find_chunk(entry).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::Name,
@@ -661,7 +704,40 @@ impl Vm {
                 None,
             )
         })?;
-        self.run(program, index)
+        self.run_installed_execution(program, index)
+    }
+
+    fn reset_metrics(&self) {
+        #[cfg(feature = "metrics")]
+        self.metrics.borrow_mut().clone_from(&VmMetrics::default());
+    }
+
+    fn install_program(&mut self, program: &Program) -> Rc<Program> {
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.program_clones += 1;
+            metrics.program_clone_bytes += program.layout_metrics().instruction_bytes;
+        }
+        Rc::new(program.clone())
+    }
+
+    fn installed_program(&self, program: &Program) -> VmResult<Rc<Program>> {
+        let installed = self.module_program.clone().ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "execution has no installed program".into(),
+                None,
+            )
+        })?;
+        if !std::ptr::eq(Rc::as_ref(&installed), program) {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "task execution program differs from the installed program".into(),
+                None,
+            ));
+        }
+        Ok(installed)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2579,7 +2655,7 @@ impl Vm {
             capture_sources: closure.capture_sources.clone(),
         });
         let execution = self.module_closure_execution(
-            Rc::new(program.clone()),
+            self.installed_program(program)?,
             closure,
             Vec::new(),
             None,
@@ -2642,7 +2718,7 @@ impl Vm {
             capture_sources: closure.capture_sources.clone(),
         });
         let execution = self.module_closure_execution(
-            Rc::new(program.clone()),
+            self.installed_program(program)?,
             closure,
             Vec::new(),
             None,
@@ -2734,7 +2810,7 @@ impl Vm {
             self.metrics.clone(),
         ));
         let execution = self.module_closure_execution(
-            Rc::new(program.clone()),
+            self.installed_program(program)?,
             closure,
             Vec::new(),
             None,
@@ -2822,7 +2898,7 @@ impl Vm {
             self.metrics.clone(),
         ));
         let execution = self.module_closure_execution(
-            Rc::new(program.clone()),
+            self.installed_program(program)?,
             closure,
             Vec::new(),
             None,
