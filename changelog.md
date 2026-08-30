@@ -72,6 +72,9 @@
 - Installed private bytecode now pools global names, match patterns, capture
   lists, schema fields, and struct field lists behind checked metadata IDs.
 
+- VM dispatch now borrows pooled opcode metadata directly, avoiding transitional
+  opcode reconstruction on the execution path.
+
 - The VM benchmark now reports bytecode layout and source-map compression
   estimates to support future representation decisions.
 

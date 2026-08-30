@@ -735,8 +735,7 @@ impl Vm {
             }
             let instruction = self.next_instruction(program)?;
             let span = instruction.span.and_then(|span| program.span(span));
-            let opcode = program.resolve_opcode(&instruction.op);
-            match self.execute_borrowed_span_op(program, opcode.as_ref(), span)? {
+            match self.execute_borrowed_span_op(program, &instruction.op, span)? {
                 BorrowedSpanOpOutcome::Continue => continue,
                 BorrowedSpanOpOutcome::Settled(value) => {
                     return Ok(ExecutionOutcome::Settled(Ok(value)));
@@ -746,7 +745,7 @@ impl Vm {
                 self.metrics.borrow_mut().source_span_clones += 1;
             }
             let span = span.cloned();
-            match opcode.as_ref() {
+            match &instruction.op {
                 Op::Constant(index) => {
                     let chunk = self.current_chunk(program)?;
                     let value = match chunk.constants.get(*index) {
@@ -1304,8 +1303,6 @@ impl Vm {
         op: &Op,
         span: Option<&SourceSpan>,
     ) -> VmResult<BorrowedSpanOpOutcome> {
-        let opcode = program.resolve_opcode(op);
-        let op = opcode.as_ref();
         match op {
             Op::Constant(index) => {
                 let chunk = self.current_chunk(program)?;
@@ -1841,14 +1838,184 @@ impl Vm {
                     return Ok(BorrowedSpanOpOutcome::Settled(value));
                 }
             }
-            Op::GetGlobalPooled(_)
-            | Op::DefineGlobalPooled(_)
-            | Op::SetGlobalPooled(_)
-            | Op::MakeClosurePooled { .. }
-            | Op::StructSchemaPooled(_)
-            | Op::StructPooled(_)
-            | Op::StructCopyPooled(_)
-            | Op::TryMatchPooled { .. } => unreachable!("pooled opcode was not resolved"),
+            Op::GetGlobalPooled(id) => {
+                let name = program
+                    .global_name(*id)
+                    .expect("validated global name metadata");
+                let value = self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::Name,
+                            format!("unknown name `{name}`"),
+                            span,
+                        )
+                    })?
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+                self.stack.push(value);
+            }
+            Op::DefineGlobalPooled(id) => {
+                let name = program
+                    .global_name(*id)
+                    .expect("validated global name metadata");
+                let value = self.pop_unresolved_at(span)?;
+                if self.imported_globals.remove(name) {
+                    self.warning(format!(
+                        "local binding `{name}` shadows an imported binding"
+                    ));
+                }
+                if !self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .is_some_and(|binding| binding.replace_binding(value.clone()))
+                {
+                    self.globals.borrow_mut().insert(name.into(), value);
+                }
+            }
+            Op::SetGlobalPooled(id) => {
+                let name = program
+                    .global_name(*id)
+                    .expect("validated global name metadata");
+                if !self.globals.borrow().contains_key(name) {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::Name,
+                        format!("unknown name `{name}`"),
+                        span,
+                    ));
+                }
+                let value = self.pop_at(span)?;
+                if !self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .is_some_and(|binding| binding.replace_binding(value.clone()))
+                {
+                    self.globals.borrow_mut().insert(name.into(), value);
+                }
+            }
+            Op::MakeClosurePooled { chunk, captures } => {
+                program.chunk(*chunk).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!("function chunk {chunk} does not exist"),
+                        span,
+                    )
+                })?;
+                let capture_sources = program
+                    .capture_list(*captures)
+                    .expect("validated capture metadata");
+                let captures = capture_sources
+                    .iter()
+                    .map(|capture| match capture {
+                        Capture::Local(slot) => self.local_at(*slot, span),
+                        Capture::Capture(slot) => self
+                            .frames
+                            .last()
+                            .and_then(|frame| frame.closure.captures.get(*slot))
+                            .cloned()
+                            .ok_or_else(|| {
+                                self.error_at(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    format!("capture {slot} does not exist"),
+                                    span,
+                                )
+                            }),
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                self.stack.push(Value::Closure(Rc::new(Closure {
+                    chunk: *chunk,
+                    captures,
+                    program: self.module_program.clone(),
+                    globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                    capture_sources: capture_sources.to_vec(),
+                })));
+            }
+            Op::StructSchemaPooled(id) => {
+                let fields = program
+                    .schema_fields(*id)
+                    .expect("validated schema field metadata");
+                let default_count = fields.iter().filter(|field| field.has_default).count();
+                let defaults = self.pop_values_at(default_count, span)?;
+                let mut defaults = defaults.into_iter();
+                let mut names = Vec::with_capacity(fields.len());
+                let mut schema_fields = Vec::with_capacity(fields.len());
+                for field in fields {
+                    if names.contains(&field.name) {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("duplicate struct schema field '{}'", field.name),
+                            span,
+                        ));
+                    }
+                    names.push(field.name.clone());
+                    schema_fields.push(crate::StructField {
+                        name: field.name.clone().into(),
+                        default: field.has_default.then(|| {
+                            defaults
+                                .next()
+                                .expect("default count was derived from field metadata")
+                        }),
+                    });
+                }
+                self.stack
+                    .push(Value::StructSchema(Rc::new(crate::StructSchema {
+                        fields: schema_fields,
+                    })));
+            }
+            Op::StructPooled(id) => {
+                let fields = program
+                    .struct_fields(*id)
+                    .expect("validated struct field metadata");
+                let values = self.pop_values_at(fields.len(), span)?;
+                let schema = self.pop_at(span)?;
+                self.stack.push(
+                    construct_struct(schema, fields, &values)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::StructCopyPooled(id) => {
+                let fields = program
+                    .struct_fields(*id)
+                    .expect("validated struct field metadata");
+                let replacements = self.pop_values_at(fields.len(), span)?;
+                let value = self.pop_at(span)?;
+                self.stack.push(
+                    copy_struct(value, fields, &replacements)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::TryMatchPooled {
+                pattern,
+                bindings,
+                operands,
+            } => {
+                let pattern = program
+                    .match_pattern(*pattern)
+                    .expect("validated match pattern metadata");
+                let operands = self.pop_values_at(*operands, span)?;
+                let value = self.pop_at(span)?;
+                let mut values = Vec::new();
+                let matched = matches_pattern(pattern, &value, &operands, &mut values)
+                    .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+                if matched && values.len() != *bindings {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "match pattern binding count is invalid".into(),
+                        span,
+                    ));
+                }
+                if matched {
+                    self.stack.extend(values);
+                } else {
+                    self.stack.extend((0..*bindings).map(|_| Value::Nil));
+                }
+                self.stack.push(Value::Bool(matched));
+            }
         }
         Ok(BorrowedSpanOpOutcome::Continue)
     }

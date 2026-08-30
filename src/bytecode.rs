@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     collections::{HashMap, VecDeque},
     mem,
     sync::Arc,
@@ -1201,61 +1200,6 @@ impl Program {
                 bindings, operands, ..
             } => (operands + 1, bindings + 1),
             Op::Recur(kinds) => (kinds.len(), 0),
-        }
-    }
-
-    pub(crate) fn resolve_opcode<'a>(&'a self, op: &'a Op) -> Cow<'a, Op> {
-        match op {
-            Op::GetGlobalPooled(id) => Cow::Owned(Op::GetGlobal(
-                self.global_name(*id)
-                    .expect("validated global name metadata")
-                    .into(),
-            )),
-            Op::DefineGlobalPooled(id) => Cow::Owned(Op::DefineGlobal(
-                self.global_name(*id)
-                    .expect("validated global name metadata")
-                    .into(),
-            )),
-            Op::SetGlobalPooled(id) => Cow::Owned(Op::SetGlobal(
-                self.global_name(*id)
-                    .expect("validated global name metadata")
-                    .into(),
-            )),
-            Op::MakeClosurePooled { chunk, captures } => Cow::Owned(Op::MakeClosure {
-                chunk: *chunk,
-                captures: self
-                    .capture_list(*captures)
-                    .expect("validated capture metadata")
-                    .to_vec(),
-            }),
-            Op::StructSchemaPooled(id) => Cow::Owned(Op::StructSchema(
-                self.schema_fields(*id)
-                    .expect("validated schema field metadata")
-                    .to_vec(),
-            )),
-            Op::StructPooled(id) => Cow::Owned(Op::Struct(
-                self.struct_fields(*id)
-                    .expect("validated struct field metadata")
-                    .to_vec(),
-            )),
-            Op::StructCopyPooled(id) => Cow::Owned(Op::StructCopy(
-                self.struct_fields(*id)
-                    .expect("validated struct field metadata")
-                    .to_vec(),
-            )),
-            Op::TryMatchPooled {
-                pattern,
-                bindings,
-                operands,
-            } => Cow::Owned(Op::TryMatch {
-                pattern: self
-                    .match_pattern(*pattern)
-                    .expect("validated match pattern metadata")
-                    .clone(),
-                bindings: *bindings,
-                operands: *operands,
-            }),
-            _ => Cow::Borrowed(op),
         }
     }
 }

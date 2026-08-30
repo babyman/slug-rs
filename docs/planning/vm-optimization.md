@@ -275,10 +275,13 @@ alternative consistency and list/map rest bindings—and rejects a mismatched
   pools.
 - [x] Evaluate a compressed per-chunk source map after the simple indexed form
   is measured.
-- [ ] Keep Rust-owned metadata and layout out of the `.cslug` contract.
+- [x] Keep Rust-owned metadata and layout out of the `.cslug` contract.
 
 Completion requires unchanged source-located error behavior, malformed-index
 tests for each metadata pool, and before/after instruction-size measurements.
+All of these IDs, pools, and Rust layouts remain private implementation detail:
+`.cslug` has no encoder or loader yet, and its future versioned representation
+must translate into `Program`, `Chunk`, and `Op` rather than serialize them.
 
 ### Span-table slice
 
@@ -298,7 +301,30 @@ instructions contain typed pool IDs rather than variable-size operands, while
 source compilation and focused bytecode construction retain the existing
 ergonomic forms. Missing indices fail verification before dispatch; the next
 Stage 3 work is to measure the resulting instruction layout and decide whether
-the remaining opcode metadata warrants the same treatment.
+the remaining opcode metadata warrants the same treatment. The VM dispatches
+against borrowed pool entries directly; it does not reconstruct a legacy
+variable-size opcode on the execution path. Closure creation retains a copied
+capture recipe only because that recipe outlives the pool lookup.
+
+### Direct pooled-dispatch measurement
+
+The benchmark compared the resolver-based pooled-dispatch baseline with direct
+borrowed-pool dispatch. Instruction layout is intentionally unchanged by this
+execution-path-only change; instruction bytes remain as follows before and
+after the change:
+
+| Workload | Before/after instruction bytes |
+|---|---:|
+| arithmetic and branches | 2,432 / 2,432 |
+| calls and closures | 2,432 / 2,432 |
+| pattern matching | 2,816 / 2,816 |
+| deferred cleanup | 1,856 / 1,856 |
+| lists and maps | 2,624 / 2,624 |
+
+On this local run, direct dispatch was directionally faster in every workload
+(about 0–12%, with no claim of portability). The important result is that the
+installed compact representation now remains compact through dispatch rather
+than being re-expanded per execution.
 
 ### Compressed source-map evaluation
 
