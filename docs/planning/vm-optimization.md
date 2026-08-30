@@ -33,8 +33,8 @@ time; do not combine representation changes with a register-VM experiment.
 | 2 | Verified private bytecode | Existing malformed-bytecode coverage | Structural defects rejected before execution, with runtime checks retained |
 | 3 | Compact metadata | Stage 1 measurements | Indexed metadata and unchanged source locations |
 | 4 | Direct ordinary locals | Capture and `recur` regression matrix | Uncaptured locals avoid binding cells without changing capture identity |
-| 5 | Scheduler scaling decision | Timer/select workload measurements | Keep the current queues or adopt a measured replacement |
-| 6 | Compact executable representation | Program-size and dispatch measurements | Chosen encoding is justified by measured limits |
+| 5 | Provisional scheduler scaling decision | Timer/select workload measurements | Initial bounded evidence, followed by the scaling audit below |
+| 6 | Future compact encoding direction | Program-layout and dispatch measurements | Field-width direction recorded; installation remains future work |
 | 7 | Stack/register decision | Results from stages 0--6 | Separate decision record, if a register prototype wins |
 
 Every implementation stage runs `make test-vm` during iteration and `make
@@ -50,7 +50,7 @@ not become timing-sensitive test assertions.
   traffic only when an optimization needs that more specific evidence.
 - [x] Put every execution-path counter behind a default-disabled `metrics`
   feature before treating benchmark results as ordinary VM performance.
-- [ ] Keep correctness tests separate from performance thresholds; benchmarks
+- [x] Keep correctness tests separate from performance thresholds; benchmarks
   inform architecture and do not make timing a flaky test requirement.
 
 The benchmark harness is invoked with `make bench-vm`, which enables the
@@ -159,11 +159,10 @@ final benchmark ownership counts per invocation are: arithmetic and branches
 and maps 0. The remaining clones are intentional durable owners: closure or
 task call frames, suspended selects, and constructed runtime errors.
 
-### Remaining Stage 1 execution plan
+### Historical Stage 1 execution plan
 
-Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI
-tests after each slice, then compare the affected benchmark workloads before
-starting the next one.
+Stage 1 was completed through the following narrow slices. The sequence is
+retained as implementation history; it is not the current work queue.
 
 1. **Variable-shape calls.** Thread borrowed spans through spread calls,
    pipeline calls, and imports, including argument expansion and native-call
@@ -185,12 +184,10 @@ starting the next one.
    construction, call-frame diagnostics, and suspended runtime state. Run
    `make check` before declaring the stage complete.
 
-The immediate implementation slice is variable-shape calls. Its acceptance
-criteria are unchanged source locations and language frames for failed calls,
-unchanged overload selection and argument binding, and fewer source-span
-clones in the calls-and-closures workload. Do not start bytecode verification
-or metadata pooling until this borrowed-dispatch audit is complete; otherwise
-the measurements will conflate independent representation changes.
+The slices used unchanged source locations and language frames for failed
+calls, unchanged overload selection and argument binding, and reduced
+source-span clones as their acceptance criteria. Bytecode verification and
+metadata pooling began only after this borrowed-dispatch audit completed.
 
 ## Stage 1: borrow during dispatch
 
@@ -411,7 +408,17 @@ that vector scans or FIFO arbitration are material relative to the scheduler
 work itself. Keep the current representation and reconsider only if a future,
 larger supported workload changes that result. See [Retain measured scheduler queues](../decisions/2026-08-30-retain-measured-scheduler-queues.md).
 
-## Stage 6: compact executable representation
+This is a provisional bounded-workload decision, not a completed scaling
+result. The counters record registrations, lookup calls, wakeups, and requested
+removals; they do not count vector entries examined by deadline or removal
+scans. The current workloads also perform one next-deadline lookup per
+invocation. During the 2026-08-30 plan review, the cancellation-shaped workload
+reported 16 timer wakeups per invocation and ran for approximately one 50 ms
+timer interval, so it did not isolate pre-deadline fail-fast cancellation cost.
+The scheduler measurement audit below must close these evidence gaps before a
+larger supported workload is declared adequately measured.
+
+## Stage 6: select a future compact executable direction
 
 - [x] Select field widths and instruction formats from measured program limits;
   do not make Rust enum layout or host pointer width part of the format.
@@ -442,6 +449,12 @@ compiler complexity against it. Regular stack operations and the existing
 medium-grained semantic boundaries remain the selected instruction format; no
 benchmark has identified a stable sequence worth fusing. See [Select a future compact executable shape](../decisions/2026-08-30-select-future-compact-executable-shape.md).
 
+Accordingly, this stage records a field-width and instruction-shape direction;
+it does not claim that a compact executable representation has been installed.
+The current layout report counts inline Rust `Instruction` storage and pool
+limits, not heap storage owned by inline vectors and strings, constant and
+metadata pool contents, or copies of a program retained by task execution.
+
 ## Stage 7: stack-versus-register decision gate
 
 Do not convert to a register VM based only on the general performance of Lua or
@@ -460,3 +473,171 @@ A register proposal must report:
 
 Adopting a register VM requires a new decision record. Until then, the operand
 stack remains the implementation strategy, not a compatibility promise.
+
+## Review findings and future work
+
+The 2026-08-30 holistic review found no failing correctness suite, but it
+identified ownership, verification, measurement, data-locality, and plan-status
+work that must precede a stack/register decision. Work through these items in
+order and land each independently measurable change. The existing direct-local
+and borrowed-dispatch behavior remains the baseline.
+
+### 1. Share installed programs across executions
+
+- [ ] Replace per-task and per-nursery `Program::clone` operations with clones
+  of one installed `Rc<Program>` or an equivalent shared immutable owner.
+- [ ] Make the public root execution boundary establish that owner once, while
+  preserving the checked direct-bytecode API and module-relative closure
+  behavior.
+- [ ] Record full-program clone count and estimated cloned bytes until the
+  copies reach zero on ordinary root, task, and nursery paths.
+- [ ] Re-run scheduler measurements after removing program-copy cost from task
+  creation.
+
+Completion requires program storage to remain approximately constant as task
+count grows, apart from task-specific frames, stacks, captures, and suspension
+state. Add focused coverage for root closures, imported-module closures,
+nested nurseries, and tasks spawned by tasks.
+
+### 2. Close statically knowable verifier gaps
+
+- [ ] Reject every reachable fallthrough past the end of a chunk before a
+  frame is created; terminal paths must end in `Return`, `Throw`,
+  `MatchFailure`, `NotImplemented`, or another explicitly modeled terminal.
+- [ ] Reject overflowing operand counts, including `Call(usize::MAX)`, in the
+  structural pass instead of representing them as a zero-pop operation.
+- [ ] Track scope depth through control flow and reject a reachable unmatched
+  `LeaveScope` before execution.
+- [ ] Expand malformed-program generation across opcode families, metadata
+  indices, control-flow joins, captures, scopes, calls, and scheduler
+  operations.
+
+Tests for pre-execution rejection must also assert that globals, evaluated
+module-tag data, task queues, and other observable VM state remain unchanged.
+Dispatch-time checks remain required for defects that depend on dynamic
+values or closure state.
+
+### 3. Remove the obsolete owned dispatch body
+
+- [ ] Delete the unreachable second opcode interpreter that follows the
+  borrowed-dispatch outcome in `execute_raw`.
+- [ ] Remove owned-span helper variants that become unused, retaining explicit
+  ownership only for runtime errors, call frames, suspended state, and other
+  durable values.
+- [ ] Remove the `unreachable_code` lint allowance from the dispatch loop.
+
+Completion requires one authoritative opcode dispatch implementation and the
+same VM, CLI, malformed-bytecode, source-location, and call-frame behavior.
+
+### 4. Audit scheduler scaling with cost-sensitive evidence
+
+- [ ] Count timer entries examined by deadline lookup and wakeup scans, plus
+  channel, task, and timer entries examined during wait removal.
+- [ ] Record peak timer, ready-queue, channel-waiter, and task-waiter depth.
+- [ ] Exercise several workload sizes rather than one bounded point and report
+  work growth alongside elapsed time.
+- [ ] Make the cancellation workload prove cancellation before its deadline;
+  it must report zero timer wakeups and no timer-duration wall-clock floor.
+- [ ] Separate scheduler work from sleeping, VM construction, verification,
+  and program ownership costs.
+
+After this audit, either reaffirm the vector-backed queues with stated
+supported limits or reopen the cancellation-safe timed-wait-index decision.
+FIFO channel arbitration and winner-removes-losers behavior remain mandatory.
+
+### 5. Complete executable and allocation accounting
+
+- [ ] Measure inline instruction storage, heap-owned opcode operands,
+  constants, metadata pools, source tables, capacities, and shared versus
+  duplicated program storage.
+- [ ] Decide whether the remaining inline interpolation, spread, call,
+  import, `select`, and `recur` descriptors should use typed pools.
+- [ ] Measure verifier time separately and decide whether an immutable
+  `VerifiedProgram` installation boundary should avoid repeated whole-program
+  verification.
+- [ ] Add scoped `Value` clone, move, drop, and reference-count traffic for the
+  Stage 7 prototype rather than treating instruction bytes as total executable
+  size.
+
+Do not describe the current 64-byte typed instruction as a compact executable
+encoding. Installing an 8-bit-tag/32-bit-operand representation remains a
+future change that requires before/after total-size and dispatch evidence.
+
+### 6. Make optimization metrics a tested contract
+
+- [ ] Run metrics-enabled VM tests in the normal handoff and CI gate while
+  keeping the feature disabled in ordinary runtime builds.
+- [ ] Count source-span ownership consistently on diagnostic error paths, not
+  only successful durable-frame and suspension paths.
+- [ ] Add focused failing-call, thrown-error, suspended-select, task, and
+  native-error metric tests.
+- [ ] Retire counters that no longer provide actionable regression evidence,
+  or make their instrumentation capable of detecting the regression they
+  claim to measure.
+
+Timing remains benchmark evidence rather than a correctness assertion. Stable
+representation counters may use exact assertions when their ownership
+boundary is intentional and documented.
+
+### 7. Improve hot-path data locality before changing the operand model
+
+The current implementation already keeps each chunk's instructions, the
+operand stack, frame list, ordinary local slots, and scheduler queues in
+contiguous Rust collections. Direct locals also avoid a binding-cell allocation
+and pointer chase until capture promotion is required. The remaining hot path
+still combines a 64-byte instruction, eager span-table access, separately
+allocated frame-local vectors, string-keyed global lookup, and pointer-heavy
+runtime objects. Improve those costs in measured, independent slices before
+attributing them to the stack operand model.
+
+- [ ] Extend layout reporting with `Value`, `LocalSlot`, `Frame`, closure,
+  task-state, and instruction size/alignment, plus allocation count and peak
+  resident-memory measurements for representative workloads.
+- [ ] Keep `SpanId` on the ordinary dispatch path and resolve it to
+  `SourceSpan` only when an error, call frame, suspension, or another durable
+  owner needs source information.
+- [ ] Prototype one VM-owned contiguous local-slot arena. Frames retain a
+  local-range base and length; calls append slots, returns truncate them, and
+  `recur` replaces the active range without changing captured-cell identity.
+- [ ] Compare compiler-resolved global-slot IDs backed by contiguous module
+  storage with the current pooled-name plus string-`HashMap` lookup. Retain the
+  name map for linking, imports, host access, conflicts, and diagnostics.
+- [ ] After full executable accounting, prototype a fixed-width typed
+  instruction with an opcode tag and 32-bit operands or metadata IDs. Measure
+  a practical 16--24-byte target against the current 64-byte Rust enum; do not
+  assume that a byte stream is required.
+- [ ] Profile instructions per cycle, branch misses, L1 data misses, and
+  last-level cache misses where supported. Keep portable allocation, size, and
+  representation counters as the cross-platform baseline.
+- [ ] Measure collection access before replacing the cache-friendly small
+  vector representation of maps or other values with a pointer-heavier index.
+
+Each prototype must report dispatch time, allocations, peak memory, cache or
+portable locality proxies, `Value` clone/drop traffic, and changes in verifier
+or compiler complexity. It must retain checked failures, source locations,
+call frames, mutable-capture identity, cleanup behavior, scheduler semantics,
+and `recur` behavior.
+
+Do not introduce manual prefetching, a custom allocator, unsafe tagged
+pointers, forced cache-line alignment, task arenas, or scheduler handle tables
+without a profile showing that shared program ownership, lazy span resolution,
+contiguous locals, indexed globals, and denser instructions are insufficient.
+Rust allocator addresses are not themselves an optimization contract; favor
+compact contiguous ownership and fewer allocations over attempts to prescribe
+absolute memory locations.
+
+### 8. Strengthen the Stage 7 comparison protocol
+
+- [ ] Add warmup and repeated samples and report distributions rather than one
+  aggregate `Instant` measurement.
+- [ ] Separate compiler, verifier, VM setup, dispatch, scheduler wait, and
+  teardown time.
+- [ ] Include representative real modules and size-scaled synthetic workloads
+  in addition to the small feature-focused corpus.
+- [ ] Compare peak memory and allocation traffic as well as instruction count,
+  elapsed time, and executable size.
+
+Only begin a production register lowering after the shared-program,
+verification, scheduler-measurement, full-layout, and hot-data-locality audits
+above are closed. A prototype may proceed earlier only as an isolated
+experiment whose results do not determine the production operand model.

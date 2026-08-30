@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Audited the VM optimization plan against its implementation, clarified the
+  provisional scheduler and compact-encoding decisions, and added prioritized
+  follow-up work for program ownership, verification, dispatch cleanup,
+  measurement, executable accounting, metrics coverage, hot-path data
+  locality, and the register-VM comparison gate.
+
 - Reorganized documentation into language, reference, engineering, planning,
   decisions, and generated areas; normalized supplemental language-document
   filenames and retained completed plans under `docs/planning/completed`.
