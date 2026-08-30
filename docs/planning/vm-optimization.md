@@ -48,21 +48,22 @@ not become timing-sensitive test assertions.
 - [x] Record executed instruction count, elapsed time, whole-instruction
   cloning, and frame/local allocation. Add `Value` clone or reference-count
   traffic only when an optimization needs that more specific evidence.
-- [ ] Put every execution-path counter behind a default-disabled metrics
+- [x] Put every execution-path counter behind a default-disabled `metrics`
   feature before treating benchmark results as ordinary VM performance.
 - [ ] Keep correctness tests separate from performance thresholds; benchmarks
   inform architecture and do not make timing a flaky test requirement.
 
-The benchmark harness is invoked with `make bench-vm`. It compiles each
-representative source workload once, then reports elapsed time plus the
-per-run VM counters accumulated across the benchmark: executed instructions,
-whole-instruction clones, frame creation, and frame-local binding-cell
-allocation. Keep additional measurements, such as `Value` clone or reference
-count traffic, scoped to the representation change that needs them; do not
-instrument every dynamic-value clone until a baseline identifies it as a
-candidate cost. Program-layout measurements are computed only when explicitly
-requested and do not require this feature; runtime counters must not add work
-to normal dispatch.
+The benchmark harness is invoked with `make bench-vm`, which enables the
+default-disabled `metrics` feature. It compiles each representative source
+workload once, then reports elapsed time plus the per-run VM counters
+accumulated across the benchmark: executed instructions, whole-instruction
+clones, frame creation, and frame-local binding-cell allocation. Keep
+additional measurements, such as `Value` clone or reference-count traffic,
+scoped to the representation change that needs them; do not instrument every
+dynamic-value clone until a baseline identifies it as a candidate cost.
+Program-layout measurements are computed only when explicitly requested and do
+not require this feature; runtime counters must not add work to normal
+dispatch.
 
 ### Initial baseline
 

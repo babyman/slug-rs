@@ -21,6 +21,9 @@
 - Documented that future execution-path VM metrics must be default-disabled
   and compile to no-ops in ordinary builds.
 
+- Added the default-disabled `metrics` feature for VM execution counters;
+  `make bench-vm` enables it explicitly.
+
 - VM dispatch now borrows private instructions rather than cloning every
   instruction before execution.
 

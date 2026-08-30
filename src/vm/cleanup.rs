@@ -409,6 +409,7 @@ impl Vm {
                         None,
                     ));
                 }
+                #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
                     closure,

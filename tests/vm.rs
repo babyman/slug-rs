@@ -19,6 +19,7 @@ fn program_with_main(main: Chunk) -> Program {
 }
 
 #[test]
+#[cfg(feature = "metrics")]
 fn records_execution_metrics_for_the_current_dispatch_representation() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));

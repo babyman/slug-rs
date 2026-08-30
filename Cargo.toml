@@ -10,6 +10,9 @@ repository = "https://github.com/sluglang/slug"
 name = "slug_vm"
 path = "src/lib.rs"
 
+[features]
+metrics = []
+
 [[bin]]
 name = "slug"
 path = "src/main.rs"
@@ -17,6 +20,7 @@ path = "src/main.rs"
 [[bench]]
 name = "vm"
 harness = false
+required-features = ["metrics"]
 
 [lints.rust]
 unsafe_code = "forbid"

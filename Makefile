@@ -19,7 +19,7 @@ test-cli:
 	cargo test --test cli
 
 bench-vm:
-	cargo bench --bench vm
+	cargo bench --bench vm --features metrics
 
 docs-generate:
 	sh scripts/generate-language-support.sh
