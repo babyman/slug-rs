@@ -1,6 +1,6 @@
-use crate::{DeferMode, Program, SourceSpan, Value, value::binding_cell};
+use crate::{DeferMode, Program, SourceSpan, Value};
 
-use super::{Frame, RuntimeError, RuntimeErrorKind, Vm, VmResult};
+use super::{Frame, RuntimeError, RuntimeErrorKind, Vm, VmResult, frame_locals};
 
 #[derive(Clone)]
 pub(super) struct Deferred {
@@ -190,8 +190,7 @@ impl Vm {
         stack_base: usize,
     ) {
         self.stack.truncate(stack_base);
-        let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
-        locals.resize_with(local_count, || binding_cell(Value::Nil));
+        let locals = frame_locals(arguments, local_count);
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
         frame.provided = provided;
@@ -421,13 +420,9 @@ impl Vm {
                         let error = self
                             .active_error()
                             .expect("error cleanup has an active error");
-                        let mut locals = vec![binding_cell(Self::error_value(error))];
-                        locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
-                        locals
+                        frame_locals(vec![Self::error_value(error)], chunk.locals)
                     } else {
-                        (0..chunk.locals)
-                            .map(|_| binding_cell(Value::Nil))
-                            .collect()
+                        frame_locals(Vec::new(), chunk.locals)
                     },
                     provided: vec![true; chunk.arity],
                     scopes: vec![Vec::new()],

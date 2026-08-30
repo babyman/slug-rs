@@ -202,6 +202,7 @@ impl Compiler {
                 Some(Binding::Capture { slot, .. }) => {
                     state.emit(Op::GetCapture(slot), &expression.span);
                 }
+                Some(Binding::Outer { .. }) => unreachable!("outer bindings are captured lazily"),
             },
             ExprKind::Declare {
                 mutable,
@@ -262,6 +263,9 @@ impl Compiler {
                         Binding::Capture { .. } => {
                             unreachable!("current scope cannot contain a capture")
                         }
+                        Binding::Outer { .. } => {
+                            unreachable!("current scope cannot contain an outer binding")
+                        }
                     }
                     state.emit(Op::CombineOverloads, &expression.span);
                     match binding {
@@ -274,6 +278,9 @@ impl Compiler {
                         }
                         Binding::Capture { .. } => {
                             unreachable!("current scope cannot contain a capture")
+                        }
+                        Binding::Outer { .. } => {
+                            unreachable!("current scope cannot contain an outer binding")
                         }
                     }
                 } else {
@@ -328,7 +335,8 @@ impl Compiler {
                 let mutable = match binding {
                     Binding::Global { mutable }
                     | Binding::Local { mutable, .. }
-                    | Binding::Capture { mutable, .. } => mutable,
+                    | Binding::Capture { mutable, .. }
+                    | Binding::Outer { mutable, .. } => mutable,
                 };
                 if !mutable {
                     return Err(SourceError::semantic(
@@ -347,6 +355,7 @@ impl Compiler {
                     Binding::Capture { slot, .. } => {
                         state.emit(Op::SetCapture(slot), &expression.span);
                     }
+                    Binding::Outer { .. } => unreachable!("outer bindings are captured lazily"),
                 }
                 state.emit(Op::Nil, &expression.span);
             }
@@ -804,8 +813,7 @@ impl Compiler {
                     self.tags(state, &parameter.tags, None, &expression.span)?;
                 }
                 let names = plain_parameters(parameters, &expression.span)?;
-                let (mut chunk, captures) =
-                    self.function(&names, parameters, body, state.visible())?;
+                let (mut chunk, captures) = self.function(&names, parameters, body, state)?;
                 if let Some(identity) = self.function_identity(&expression.span) {
                     chunk.callable_identity = Some(identity);
                 }
@@ -1023,6 +1031,7 @@ impl Compiler {
             Binding::Global { .. } => state.emit(Op::GetGlobal(name.into()), span),
             Binding::Local { slot, .. } => state.emit(Op::GetLocal(slot), span),
             Binding::Capture { slot, .. } => state.emit(Op::GetCapture(slot), span),
+            Binding::Outer { .. } => unreachable!("outer bindings are captured lazily"),
         }
         Ok(())
     }
@@ -1079,6 +1088,7 @@ impl Compiler {
                 Binding::Global { .. } => state.emit(Op::DefineGlobal(name.clone()), span),
                 Binding::Local { slot, .. } => state.emit(Op::SetLocal(*slot), span),
                 Binding::Capture { .. } => unreachable!("new bindings cannot be captures"),
+                Binding::Outer { .. } => unreachable!("new bindings cannot be outer bindings"),
             }
         }
         let end = state.jump(span);
@@ -1174,9 +1184,9 @@ impl Compiler {
         parameters: &[String],
         parameter_metadata: &[Parameter],
         body: &Expr,
-        visible: HashMap<String, Binding>,
+        parent: &mut State,
     ) -> Result<(Chunk, Vec<Capture>), SourceError> {
-        let mut state = State::function(parameters, visible);
+        let mut state = State::function(parameters, parent.visible());
         for (slot, parameter) in parameter_metadata.iter().enumerate() {
             if let Some(default) = &parameter.default {
                 let end = state.jump_if_provided(slot, &default.span);
@@ -1187,7 +1197,7 @@ impl Compiler {
         }
         self.tail_expression(&mut state, body)?;
         state.emit(Op::Return, &body.span);
-        let captures = state.captures();
+        let captures = parent.resolve_child_captures(state.captures());
         Ok((state.finish("<fn>", parameters.len()), captures))
     }
 }

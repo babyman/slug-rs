@@ -7,13 +7,21 @@ pub(super) enum Binding {
     Global { mutable: bool },
     Local { slot: usize, mutable: bool },
     Capture { slot: usize, mutable: bool },
+    Outer { source: Capture, mutable: bool },
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum CaptureRequest {
+    Direct(Capture),
+    ThroughParent(Capture),
+}
+
 pub(super) struct State {
     chunk: Chunk,
     scopes: Vec<HashMap<String, Binding>>,
     callables: Vec<HashSet<String>>,
     outer: HashMap<String, Binding>,
-    captures: Vec<Capture>,
+    captures: Vec<CaptureRequest>,
     root: bool,
     next_local: usize,
 }
@@ -29,38 +37,7 @@ impl State {
             next_local: 0,
         }
     }
-    pub(super) fn function(parameters: &[String], visible: HashMap<String, Binding>) -> Self {
-        let mut outer = HashMap::new();
-        let mut captures = Vec::new();
-        for (name, binding) in visible {
-            match binding {
-                Binding::Global { mutable } => {
-                    outer.insert(name, Binding::Global { mutable });
-                }
-                Binding::Local { slot, mutable } => {
-                    let capture = captures.len();
-                    captures.push(Capture::Local(slot));
-                    outer.insert(
-                        name,
-                        Binding::Capture {
-                            slot: capture,
-                            mutable,
-                        },
-                    );
-                }
-                Binding::Capture { slot, mutable } => {
-                    let capture = captures.len();
-                    captures.push(Capture::Capture(slot));
-                    outer.insert(
-                        name,
-                        Binding::Capture {
-                            slot: capture,
-                            mutable,
-                        },
-                    );
-                }
-            }
-        }
+    pub(super) fn function(parameters: &[String], outer: HashMap<String, Binding>) -> Self {
         let mut parameters_scope = HashMap::new();
         for (slot, name) in parameters.iter().enumerate() {
             parameters_scope.insert(
@@ -76,7 +53,7 @@ impl State {
             scopes: vec![parameters_scope],
             callables: vec![HashSet::new()],
             outer,
-            captures,
+            captures: Vec::new(),
             root: false,
             next_local: parameters.len(),
         }
@@ -169,21 +146,137 @@ impl State {
                 .expect("callable names have a local binding")
         })
     }
-    pub(super) fn lookup(&self, name: &str) -> Option<Binding> {
-        self.scopes
+    pub(super) fn lookup(&mut self, name: &str) -> Option<Binding> {
+        if let Some(binding) = self
+            .scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
-            .or_else(|| self.outer.get(name).cloned())
+        {
+            return Some(binding);
+        }
+        let binding = self.outer.get(name).cloned()?;
+        match binding {
+            Binding::Global { .. } | Binding::Capture { .. } => Some(binding),
+            Binding::Local { slot, mutable } => {
+                let slot = self.request_capture(CaptureRequest::Direct(Capture::Local(slot)));
+                let binding = Binding::Capture { slot, mutable };
+                self.outer.insert(name.into(), binding.clone());
+                Some(binding)
+            }
+            Binding::Outer { source, mutable } => {
+                let slot = self.request_capture(CaptureRequest::ThroughParent(source));
+                let binding = Binding::Capture { slot, mutable };
+                self.outer.insert(name.into(), binding.clone());
+                Some(binding)
+            }
+        }
     }
     pub(super) fn visible(&self) -> HashMap<String, Binding> {
-        let mut result = self.outer.clone();
+        let mut result: HashMap<String, Binding> = self
+            .outer
+            .iter()
+            .map(|(name, binding)| {
+                let binding = match binding {
+                    Binding::Global { mutable } => Binding::Global { mutable: *mutable },
+                    Binding::Local { slot, mutable } => Binding::Outer {
+                        source: Capture::Local(*slot),
+                        mutable: *mutable,
+                    },
+                    Binding::Capture { slot, mutable } => Binding::Capture {
+                        slot: *slot,
+                        mutable: *mutable,
+                    },
+                    Binding::Outer { source, mutable } => Binding::Outer {
+                        source: source.clone(),
+                        mutable: *mutable,
+                    },
+                };
+                (name.clone(), binding)
+            })
+            .collect();
         for scope in &self.scopes {
             result.extend(scope.clone());
         }
         result
     }
-    pub(super) fn captures(&self) -> Vec<Capture> {
+    pub(super) fn resolve_child_captures(&mut self, captures: Vec<CaptureRequest>) -> Vec<Capture> {
+        captures
+            .into_iter()
+            .map(|capture| match capture {
+                CaptureRequest::Direct(capture) => capture,
+                CaptureRequest::ThroughParent(capture) => {
+                    Capture::Capture(self.request_capture(CaptureRequest::Direct(capture)))
+                }
+            })
+            .collect()
+    }
+    pub(super) fn captures(&self) -> Vec<CaptureRequest> {
         self.captures.clone()
+    }
+
+    fn request_capture(&mut self, capture: CaptureRequest) -> usize {
+        if let Some(slot) = self
+            .captures
+            .iter()
+            .position(|existing| existing == &capture)
+        {
+            return slot;
+        }
+        let slot = self.captures.len();
+        self.captures.push(capture);
+        if let Some(CaptureRequest::Direct(source)) = self.captures.last() {
+            for binding in self.outer.values_mut() {
+                if let Binding::Outer {
+                    source: outer_source,
+                    mutable,
+                } = binding
+                    && outer_source == source
+                {
+                    *binding = Binding::Capture {
+                        slot,
+                        mutable: *mutable,
+                    };
+                }
+            }
+        }
+        slot
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Binding, State};
+    use crate::Capture;
+
+    #[test]
+    fn captures_only_referenced_outer_bindings_through_intermediate_functions() {
+        let mut root = State::root();
+        root.declare("outer".into(), true, false);
+
+        let mut middle = State::function(&[], root.visible());
+        let mut inner = State::function(&[], middle.visible());
+        assert!(matches!(
+            inner.lookup("outer"),
+            Some(Binding::Capture { .. })
+        ));
+
+        let inner_captures = middle.resolve_child_captures(inner.captures());
+        assert_eq!(inner_captures, vec![Capture::Capture(0)]);
+        assert!(matches!(
+            middle.lookup("outer"),
+            Some(Binding::Capture { slot: 0, .. })
+        ));
+        let middle_captures = root.resolve_child_captures(middle.captures());
+        assert_eq!(middle_captures, vec![Capture::Local(0)]);
+    }
+
+    #[test]
+    fn does_not_capture_an_unused_outer_binding() {
+        let mut root = State::root();
+        root.declare("outer".into(), true, false);
+
+        let child = State::function(&[], root.visible());
+        assert!(root.resolve_child_captures(child.captures()).is_empty());
     }
 }

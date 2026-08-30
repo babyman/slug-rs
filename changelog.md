@@ -81,6 +81,9 @@
 - VM dispatch now borrows pooled opcode metadata directly, avoiding transitional
   opcode reconstruction on the execution path.
 
+- VM frames now store ordinary locals directly and create shared binding cells
+  only when closures capture them; source compilation emits captures lazily.
+
 - The VM benchmark now reports bytecode layout and source-map compression
   estimates to support future representation decisions.
 

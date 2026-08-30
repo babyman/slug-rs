@@ -42,6 +42,45 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
 }
 
 #[test]
+#[cfg(feature = "metrics")]
+fn promotes_only_locals_that_a_closure_captures() {
+    let mut captured = Chunk::new("captured", 0);
+    captured.emit(Op::GetCapture(0)).emit(Op::Return);
+
+    let mut factory = Chunk::new("factory", 0);
+    factory.locals = 2;
+    let one = factory.constant(Value::Int(1));
+    let two = factory.constant(Value::Int(2));
+    factory
+        .emit(Op::Constant(one))
+        .emit(Op::SetLocal(0))
+        .emit(Op::Constant(two))
+        .emit(Op::SetLocal(1))
+        .emit(Op::MakeClosure {
+            chunk: 0,
+            captures: vec![Capture::Local(0)],
+        })
+        .emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::MakeClosure {
+        chunk: 1,
+        captures: vec![],
+    })
+    .emit(Op::Call(0))
+    .emit(Op::Call(0))
+    .emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(captured);
+    program.add_chunk(factory);
+    program.add_chunk(main);
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(1));
+    assert_eq!(vm.metrics().local_binding_cells_created, 1);
+}
+
+#[test]
 fn interns_instruction_spans_and_preserves_diagnostics() {
     let span = SourceSpan::new("interned.slug", 3, 5);
     let mut main = Chunk::new("main", 0);

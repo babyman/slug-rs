@@ -85,7 +85,7 @@ pub enum Constant {
 }
 
 /// The enclosing slot from which a closure captures a value.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Capture {
     Local(usize),
     Capture(usize),

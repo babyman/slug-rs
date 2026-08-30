@@ -355,18 +355,31 @@ layout decision; see [Defer a compressed per-chunk source map](../decisions/2026
 
 ## Stage 4: direct ordinary locals and promoted captures
 
-- [ ] Represent an ordinary frame local as a direct `Value`.
-- [ ] Promote a local to a shared binding cell when a closure captures it.
-- [ ] Make local reads and writes transparently handle direct and promoted
+- [x] Represent an ordinary frame local as a direct `Value`.
+- [x] Promote a local to a shared binding cell when a closure captures it.
+- [x] Make local reads and writes transparently handle direct and promoted
   storage.
-- [ ] Emit captures only for outer bindings referenced by a function body,
+- [x] Emit captures only for outer bindings referenced by a function body,
   using lazy capture creation or explicit free-variable analysis.
-- [ ] Preserve capture identity when `recur` replaces the active function's
+- [x] Preserve capture identity when `recur` replaces the active function's
   parameter and local values.
 
 Focused coverage must include uncaptured mutable locals, capture before and
 after assignment, sibling closures, captures through intermediate functions,
 captured parameters, escaping captures across `recur`, and deferred closures.
+
+Frames now store ordinary locals directly and promote a slot to a shared cell
+only when `MakeClosure` captures that slot. Reads and writes handle both slot
+forms transparently. The source compiler records captures lazily, including
+the required intermediate capture when an inner function reaches past its
+parent; unused visible bindings no longer become closure captures. Replacing a
+frame's locals during `recur` leaves cells already held by escaping closures
+intact, so a closure keeps its iteration's binding identity.
+
+With `metrics` enabled, the current benchmark reports zero local binding-cell
+allocations for arithmetic, pattern matching, cleanup, and list/map workloads.
+The calls-and-closures workload reports one cell per invocation, corresponding
+to its escaping capture. See [Use direct locals and promote escaping captures](../decisions/2026-08-30-direct-locals-promoted-captures.md).
 
 ## Stage 5: measure scheduler scaling before replacing queues
 

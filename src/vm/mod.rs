@@ -75,11 +75,26 @@ struct Frame {
     call_span: Option<SourceSpan>,
     ip: usize,
     stack_base: usize,
-    locals: Vec<BindingCell>,
+    locals: Vec<LocalSlot>,
     provided: Vec<bool>,
     scopes: Vec<Vec<Deferred>>,
     cleanup_action: bool,
     cleanup_recovers: bool,
+}
+
+#[derive(Clone)]
+pub(super) enum LocalSlot {
+    Direct(Value),
+    Captured(BindingCell),
+}
+
+pub(super) fn frame_locals(arguments: Vec<Value>, local_count: usize) -> Vec<LocalSlot> {
+    let mut locals = arguments
+        .into_iter()
+        .map(LocalSlot::Direct)
+        .collect::<Vec<_>>();
+    locals.resize_with(local_count, || LocalSlot::Direct(Value::Nil));
+    locals
 }
 
 struct ClosureCallOptions {
@@ -610,9 +625,7 @@ impl Vm {
             call_span: None,
             ip: 0,
             stack_base: 0,
-            locals: (0..chunk.locals)
-                .map(|_| binding_cell(Value::Nil))
-                .collect(),
+            locals: frame_locals(Vec::new(), chunk.locals),
             provided: vec![false; chunk.arity],
             scopes: vec![Vec::new()],
             cleanup_action: false,
@@ -797,10 +810,10 @@ impl Vm {
                     self.pop(span)?;
                 }
                 Op::Duplicate => self.stack.push(self.peek(span)?.clone()),
-                Op::GetLocal(slot) => self.stack.push(self.local(*slot, span)?.borrow().clone()),
+                Op::GetLocal(slot) => self.stack.push(self.local_value(*slot, span.as_ref())?),
                 Op::SetLocal(slot) => {
                     let value = self.pop(span.clone())?;
-                    self.set_local(*slot, value, span)?;
+                    self.set_local(*slot, value, span.as_ref())?;
                 }
                 Op::GetCapture(slot) => {
                     let value = self
@@ -988,7 +1001,7 @@ impl Vm {
                     let captures = captures
                         .iter()
                         .map(|capture| match capture {
-                            Capture::Local(slot) => self.local(*slot, span.clone()),
+                            Capture::Local(slot) => self.promote_local_at(*slot, span.as_ref()),
                             Capture::Capture(slot) => self
                                 .frames
                                 .last()
@@ -1390,9 +1403,7 @@ impl Vm {
                 self.pop_at(span)?;
             }
             Op::Duplicate => self.stack.push(self.peek_at(span)?.clone()),
-            Op::GetLocal(slot) => self
-                .stack
-                .push(self.local_at(*slot, span)?.borrow().clone()),
+            Op::GetLocal(slot) => self.stack.push(self.local_value(*slot, span)?),
             Op::SetLocal(slot) => {
                 let value = self.pop_at(span)?;
                 self.set_local_at(*slot, value, span)?;
@@ -1542,7 +1553,7 @@ impl Vm {
                 let captures = captures
                     .iter()
                     .map(|capture| match capture {
-                        Capture::Local(slot) => self.local_at(*slot, span),
+                        Capture::Local(slot) => self.promote_local_at(*slot, span),
                         Capture::Capture(slot) => self
                             .frames
                             .last()
@@ -1922,7 +1933,7 @@ impl Vm {
                 let captures = capture_sources
                     .iter()
                     .map(|capture| match capture {
-                        Capture::Local(slot) => self.local_at(*slot, span),
+                        Capture::Local(slot) => self.promote_local_at(*slot, span),
                         Capture::Capture(slot) => self
                             .frames
                             .last()
@@ -2174,15 +2185,15 @@ impl Vm {
                         span,
                     ));
                 }
-                let mut locals = self.stack[base + 1..]
+                let locals = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
-                        value.resolve().map(binding_cell).map_err(|message| {
+                        value.resolve().map_err(|message| {
                             self.error(RuntimeErrorKind::Name, message, span.clone())
                         })
                     })
                     .collect::<VmResult<Vec<_>>>()?;
-                locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+                let locals = frame_locals(locals, chunk.locals);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
@@ -2342,16 +2353,15 @@ impl Vm {
                         span,
                     ));
                 }
-                let mut locals = self.stack[base + 1..]
+                let locals = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
                         value
                             .resolve()
-                            .map(binding_cell)
                             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
-                locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+                let locals = frame_locals(locals, chunk.locals);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
@@ -2473,8 +2483,7 @@ impl Vm {
             #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
         };
-        let mut locals = arguments.into_iter().map(binding_cell).collect::<Vec<_>>();
-        locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+        let locals = frame_locals(arguments, chunk.locals);
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
         vm.frames.push(Frame {
@@ -4437,45 +4446,8 @@ impl Vm {
             )
         })
     }
-    fn local(&self, slot: usize, span: Option<SourceSpan>) -> VmResult<BindingCell> {
-        self.frames
-            .last()
-            .and_then(|frame| frame.locals.get(slot))
-            .cloned()
-            .ok_or_else(|| {
-                self.error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    format!("local {slot} does not exist"),
-                    span,
-                )
-            })
-    }
-    fn set_local(&mut self, slot: usize, value: Value, span: Option<SourceSpan>) -> VmResult<()> {
-        if self.frames.last().is_none() {
-            return Err(self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "no active call frame".into(),
-                span,
-            ));
-        }
-        if self
-            .frames
-            .last()
-            .is_none_or(|frame| slot >= frame.locals.len())
-        {
-            return Err(self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                format!("local {slot} does not exist"),
-                None,
-            ));
-        }
-        *self
-            .frames
-            .last_mut()
-            .expect("active frame was checked")
-            .locals[slot]
-            .borrow_mut() = value;
-        Ok(())
+    fn set_local(&mut self, slot: usize, value: Value, span: Option<&SourceSpan>) -> VmResult<()> {
+        self.set_local_at(slot, value, span)
     }
     fn jump(&mut self, target: usize, span: Option<SourceSpan>) -> VmResult<()> {
         if self.frames.last().is_none() {
@@ -4490,10 +4462,14 @@ impl Vm {
     }
 
     #[cfg(feature = "metrics")]
-    fn record_frame(&self, local_count: usize) {
+    fn record_frame(&self, _local_count: usize) {
         let mut metrics = self.metrics.borrow_mut();
         metrics.frames_created += 1;
-        metrics.local_binding_cells_created += local_count;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_local_cell(&self) {
+        self.metrics.borrow_mut().local_binding_cells_created += 1;
     }
 
     fn error_at(
@@ -4558,18 +4534,49 @@ impl Vm {
         })
     }
 
-    fn local_at(&self, slot: usize, span: Option<&SourceSpan>) -> VmResult<BindingCell> {
-        self.frames
+    fn local_value(&self, slot: usize, span: Option<&SourceSpan>) -> VmResult<Value> {
+        match self.frames.last().and_then(|frame| frame.locals.get(slot)) {
+            Some(LocalSlot::Direct(value)) => Ok(value.clone()),
+            Some(LocalSlot::Captured(cell)) => Ok(cell.borrow().clone()),
+            None => Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("local {slot} does not exist"),
+                span,
+            )),
+        }
+    }
+
+    fn promote_local_at(
+        &mut self,
+        slot: usize,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<BindingCell> {
+        if self
+            .frames
             .last()
-            .and_then(|frame| frame.locals.get(slot))
-            .cloned()
-            .ok_or_else(|| {
-                self.error_at(
-                    RuntimeErrorKind::InvalidBytecode,
-                    format!("local {slot} does not exist"),
-                    span,
-                )
-            })
+            .is_none_or(|frame| slot >= frame.locals.len())
+        {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("local {slot} does not exist"),
+                span,
+            ));
+        }
+        let local = self
+            .frames
+            .last_mut()
+            .and_then(|frame| frame.locals.get_mut(slot))
+            .expect("local slot was checked");
+        match local {
+            LocalSlot::Direct(value) => {
+                let cell = binding_cell(value.clone());
+                *local = LocalSlot::Captured(cell.clone());
+                #[cfg(feature = "metrics")]
+                self.record_local_cell();
+                Ok(cell)
+            }
+            LocalSlot::Captured(cell) => Ok(cell.clone()),
+        }
     }
 
     fn set_local_at(
@@ -4596,12 +4603,15 @@ impl Vm {
                 span,
             ));
         }
-        *self
+        match &mut self
             .frames
             .last_mut()
             .expect("active frame was checked")
             .locals[slot]
-            .borrow_mut() = value;
+        {
+            LocalSlot::Direct(local) => *local = value,
+            LocalSlot::Captured(cell) => *cell.borrow_mut() = value,
+        }
         Ok(())
     }
 
