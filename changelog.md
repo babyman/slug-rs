@@ -9,6 +9,9 @@
 - Expanded the private VM optimization plan with staged measurement, bytecode
   verification, capture-aware local storage, and scheduler-scaling gates.
 
+- Sequenced the remaining borrowed-dispatch work around variable-shape calls,
+  durable suspended state, and an opcode ownership audit before verifier work.
+
 - Added a dependency-free VM benchmark harness and run-scoped dispatch,
   instruction-clone, frame, and local-binding-cell counters.
 

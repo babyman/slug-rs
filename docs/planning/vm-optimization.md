@@ -118,6 +118,39 @@ has two source-span clones per invocation and completes 1,000 runs in about
 100 ms across repeated warm runs. Spread, pipeline, import, cleanup, and
 scheduler operations remain on owned-span paths.
 
+### Remaining Stage 1 execution plan
+
+Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI
+tests after each slice, then compare the affected benchmark workloads before
+starting the next one.
+
+1. **Variable-shape calls.** Thread borrowed spans through spread calls,
+   pipeline calls, and imports, including argument expansion and native-call
+   errors. Clone a span only when a closure frame must retain its call site or
+   an error/suspended operation must own it. Cover positional, named, default,
+   variadic, spread, selected-overload, and pipeline call paths.
+2. **Cleanup and scheduling.** Borrow spans for `defer`, cleanup execution,
+   task creation, and immediately-ready `select` cases. When a `select` or
+   timed wait actually suspends, clone the span into its durable suspension
+   state; that ownership boundary is intentional and should remain visible in
+   the metrics. Preserve cancellation and winner-removes-losers behavior.
+3. **Residual dispatch audit.** Classify every opcode still using the
+   owned-span fallback. Move ordinary successful execution to the borrowed
+   path, or document the durable owner that requires a clone. Add a
+   per-opcode or per-category measurement only if the aggregate counter no
+   longer identifies the remaining work clearly.
+4. **Stage 1 closeout.** Capture the final benchmark counters beside the
+   initial baseline and record the permitted clone boundaries: runtime-error
+   construction, call-frame diagnostics, and suspended runtime state. Run
+   `make check` before declaring the stage complete.
+
+The immediate implementation slice is variable-shape calls. Its acceptance
+criteria are unchanged source locations and language frames for failed calls,
+unchanged overload selection and argument binding, and fewer source-span
+clones in the calls-and-closures workload. Do not start bytecode verification
+or metadata pooling until this borrowed-dispatch audit is complete; otherwise
+the measurements will conflate independent representation changes.
+
 ## Stage 1: borrow during dispatch
 
 - [x] Make instruction fetch return a borrowed instruction and borrowed opcode.
@@ -128,6 +161,20 @@ scheduler operations remain on owned-span paths.
 
 Completion requires the VM and CLI suites plus a benchmark comparison showing
 the change in instruction cloning and execution time.
+
+## Next-stage decision gates
+
+Once Stage 1 closes, begin Stage 2 with structural checks that are independent
+of execution: chunk and constant references, jump targets, declared
+arity/local consistency, local slots, and statically known metadata indices.
+Add stack-height analysis only after those simple checks have focused tests;
+keep runtime checks because private bytecode can still be constructed manually.
+
+After the verifier is established, Stage 3 may introduce indexed source and
+operand metadata. Stage 4's direct-local representation must follow its
+capture/recur regression matrix, not benchmark pressure alone. Stage 5 is a
+measurement decision, not a presumed queue replacement. Stages 6 and 7 remain
+deferred until their stated size and dispatch evidence exists.
 
 ## Stage 2: verify private bytecode before execution
 
