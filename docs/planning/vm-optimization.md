@@ -731,10 +731,13 @@ allocated frame-local vectors, string-keyed global lookup, and pointer-heavy
 runtime objects. Improve those costs in measured, independent slices before
 attributing them to the stack operand model.
 
-- [ ] Extend layout reporting with `Value`, `LocalSlot`, `Frame`, closure,
-  task-state, and instruction size/alignment, plus allocation count and peak
-  resident-memory measurements for representative workloads.
-- [ ] Keep `SpanId` on the ordinary dispatch path and resolve it to
+- [x] Extend layout reporting with `Value`, `LocalSlot`, `Frame`, closure,
+  task-state, task-execution, and instruction size/alignment. Static layout
+  reporting excludes heap allocations and allocator bookkeeping.
+- [ ] Add portable allocation-count and peak-resident-memory measurements for
+  representative workloads; use an external profiler or a narrowly scoped
+  allocator experiment rather than a misleading in-process estimate.
+- [x] Keep `SpanId` on the ordinary dispatch path and resolve it to
   `SourceSpan` only when an error, call frame, suspension, or another durable
   owner needs source information.
 - [ ] Prototype one VM-owned contiguous local-slot arena. Frames retain a
@@ -766,6 +769,30 @@ contiguous locals, indexed globals, and denser instructions are insufficient.
 Rust allocator addresses are not themselves an optimization contract; favor
 compact contiguous ownership and fewer allocations over attempts to prescribe
 absolute memory locations.
+
+#### Measurement record: locality reporting and lazy spans (2026-08-30)
+
+Command: `make bench-vm` (with `metrics`). Before this slice, dispatch resolved
+the program span table once for every fetched instruction. After it, dispatch
+retains the `SpanId` in VM state and resolves the table only when a diagnostic,
+call frame, spawned task, or suspension state takes ownership. The benchmark
+reports both owned-span clones and the corresponding source-table lookups.
+
+| Workload                             | Instructions | Before span-table lookups | After source-table lookups |
+|--------------------------------------|-------------:|--------------------------:|---------------------------:|
+| arithmetic and branches (1,000 runs) |    2,825,000 |                 2,825,000 |                      1,000 |
+| calls and closures (1,000 runs)      |       32,000 |                    32,000 |                      2,000 |
+| lists and maps (1,000 runs)          |       35,000 |                    35,000 |                          0 |
+
+The same run reports host-local deterministic layouts: `Value` 40 B/8-byte
+alignment, `LocalSlot` 40 B/8, `Frame` 152 B/8, `Closure` 72 B/8, `Task` 8
+B/8, `TaskState` 192 B/8, `TaskExecution` 464 B/8, and `Instruction` 64 B/8.
+These figures exclude vector capacities, heap payloads, reference-counted
+objects, and allocator metadata. The arena, global-slot, and fixed-width
+instruction proposals remain unchecked because no allocation, locality, or
+dispatch evidence yet justifies changing their current representations. Cache
+counter collection and collection-index changes likewise remain external
+profiling gates.
 
 ### 8. Strengthen the Stage 7 comparison protocol
 

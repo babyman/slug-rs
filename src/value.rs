@@ -607,6 +607,13 @@ struct TaskState {
     wait_registration: Option<WaitSet>,
 }
 
+pub(crate) fn task_state_layout() -> (usize, usize) {
+    (
+        std::mem::size_of::<TaskState>(),
+        std::mem::align_of::<TaskState>(),
+    )
+}
+
 enum TaskPhase {
     Pending(Box<crate::vm::TaskExecution>),
     Running,

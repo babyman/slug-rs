@@ -13,13 +13,13 @@ use std::cell::RefCell;
 use crate::source::environment::CallableIdentity;
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
-    NativeFunction, Program, SourceSpan, Task, Value,
+    NativeFunction, Program, SourceSpan, SpanId, Task, Value,
     bytecode::{Op, SelectCase},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment,
         RootWaiter, SelectWake, TaskAdmission, WaitRegistration, WaitSet, Waiter, binding_cell,
-        global_environment, module_binding,
+        global_environment, module_binding, task_state_layout,
     },
 };
 
@@ -42,6 +42,30 @@ pub type VmResult<T> = Result<T, RuntimeError>;
 type NamedArgument = (String, Value);
 type ExpandedCallArguments = (Vec<Value>, Vec<NamedArgument>);
 
+/// Deterministic Rust-layout measurements for the VM's hot data structures.
+///
+/// These sizes exclude heap allocations owned by vectors, reference counts,
+/// and host allocator bookkeeping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VmLayoutMetrics {
+    pub value_size_bytes: usize,
+    pub value_alignment_bytes: usize,
+    pub local_slot_size_bytes: usize,
+    pub local_slot_alignment_bytes: usize,
+    pub frame_size_bytes: usize,
+    pub frame_alignment_bytes: usize,
+    pub closure_size_bytes: usize,
+    pub closure_alignment_bytes: usize,
+    pub task_size_bytes: usize,
+    pub task_alignment_bytes: usize,
+    pub task_state_size_bytes: usize,
+    pub task_state_alignment_bytes: usize,
+    pub task_execution_size_bytes: usize,
+    pub task_execution_alignment_bytes: usize,
+    pub instruction_size_bytes: usize,
+    pub instruction_alignment_bytes: usize,
+}
+
 /// Execution counters for one public VM invocation.
 ///
 /// The counters describe private representation costs, not source semantics.
@@ -56,6 +80,8 @@ pub struct VmMetrics {
     pub instruction_clones: usize,
     /// Source spans cloned because execution needs an owned diagnostic or state.
     pub source_span_clones: usize,
+    /// Source-table entries resolved because execution needs an owned span.
+    pub source_span_lookups: usize,
     /// Frames allocated for the root invocation, calls, and spawned tasks.
     pub frames_created: usize,
     /// Frame-local binding cells allocated by the current representation.
@@ -250,6 +276,7 @@ pub struct Vm {
     suspension: Option<Suspension>,
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
+    active_span: Option<SpanId>,
     #[cfg(feature = "metrics")]
     metrics: Rc<RefCell<VmMetrics>>,
 }
@@ -278,6 +305,7 @@ impl Default for Vm {
             suspension: None,
             resume: None,
             wait_registration: None,
+            active_span: None,
             #[cfg(feature = "metrics")]
             metrics,
         }
@@ -290,6 +318,30 @@ impl Vm {
         let mut vm = Self::default();
         vm.install_configuration_builtins();
         vm
+    }
+
+    /// Returns deterministic Rust-layout measurements for VM runtime state.
+    #[must_use]
+    pub fn layout_metrics() -> VmLayoutMetrics {
+        let (task_state_size_bytes, task_state_alignment_bytes) = task_state_layout();
+        VmLayoutMetrics {
+            value_size_bytes: std::mem::size_of::<Value>(),
+            value_alignment_bytes: std::mem::align_of::<Value>(),
+            local_slot_size_bytes: std::mem::size_of::<LocalSlot>(),
+            local_slot_alignment_bytes: std::mem::align_of::<LocalSlot>(),
+            frame_size_bytes: std::mem::size_of::<Frame>(),
+            frame_alignment_bytes: std::mem::align_of::<Frame>(),
+            closure_size_bytes: std::mem::size_of::<Closure>(),
+            closure_alignment_bytes: std::mem::align_of::<Closure>(),
+            task_size_bytes: std::mem::size_of::<Task>(),
+            task_alignment_bytes: std::mem::align_of::<Task>(),
+            task_state_size_bytes,
+            task_state_alignment_bytes,
+            task_execution_size_bytes: std::mem::size_of::<TaskExecution>(),
+            task_execution_alignment_bytes: std::mem::align_of::<TaskExecution>(),
+            instruction_size_bytes: std::mem::size_of::<crate::Instruction>(),
+            instruction_alignment_bytes: std::mem::align_of::<crate::Instruction>(),
+        }
     }
 
     #[must_use]
@@ -735,7 +787,8 @@ impl Vm {
         self.run_installed_execution(program, index)
     }
 
-    fn reset_metrics(&self) {
+    fn reset_metrics(&mut self) {
+        self.active_span = None;
         #[cfg(feature = "metrics")]
         self.metrics.borrow_mut().clone_from(&VmMetrics::default());
     }
@@ -873,9 +926,9 @@ impl Vm {
                 return Ok(ExecutionOutcome::Suspended);
             }
             let instruction = self.next_instruction(program)?;
-            let span = instruction.span.and_then(|span| program.span(span));
+            self.active_span = instruction.span;
             if let BorrowedSpanOpOutcome::Settled(value) =
-                self.execute_borrowed_span_op(program, &instruction.op, span)?
+                self.execute_borrowed_span_op(program, &instruction.op, None)?
             {
                 return Ok(ExecutionOutcome::Settled(Ok(value)));
             }
@@ -2043,6 +2096,7 @@ impl Vm {
             suspension: None,
             resume: None,
             wait_registration: None,
+            active_span: None,
             #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
         };
@@ -2287,7 +2341,9 @@ impl Vm {
                 span,
             )
         })?;
-        let importer = span.map(|span| Path::new(span.path.as_ref()));
+        let importer = span
+            .or_else(|| self.active_span())
+            .map(|span| Path::new(span.path.as_ref()));
         let mut exports = Vec::new();
         for name in names {
             let Value::Str(name) = name else {
@@ -3285,11 +3341,24 @@ impl Vm {
     }
 
     fn owned_span(&self, span: Option<&SourceSpan>) -> Option<SourceSpan> {
+        let span = span.or_else(|| self.active_span());
         #[cfg(feature = "metrics")]
         if span.is_some() {
-            self.metrics.borrow_mut().source_span_clones += 1;
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.source_span_clones += 1;
         }
         span.cloned()
+    }
+
+    fn active_span(&self) -> Option<&SourceSpan> {
+        let span = self
+            .active_span
+            .and_then(|span| self.module_program.as_ref()?.span(span));
+        #[cfg(feature = "metrics")]
+        if span.is_some() {
+            self.metrics.borrow_mut().source_span_lookups += 1;
+        }
+        span
     }
 
     fn pop_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {

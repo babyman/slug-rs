@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VM dispatch now retains `SpanId`s and resolves source-table entries only at
+  diagnostic or durable ownership boundaries; benchmark output also reports
+  runtime layout sizes and source-table lookup counts.
+
 - The normal test targets now enable opt-in VM metrics; focused tests cover
   source-span ownership for diagnostic errors, suspended selects, spawned
   tasks, and native failures.

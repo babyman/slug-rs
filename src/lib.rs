@@ -36,4 +36,6 @@ pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
 pub use value::{Builtin, Channel, Closure, StructField, StructSchema, StructValue, Task, Value};
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
-pub use vm::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmResult};
+pub use vm::{
+    CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmResult,
+};

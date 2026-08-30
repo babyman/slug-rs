@@ -36,6 +36,7 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
     let metrics = vm.metrics();
     assert_eq!(metrics.instruction_clones, 0);
     assert_eq!(metrics.source_span_clones, 0);
+    assert_eq!(metrics.source_span_lookups, 0);
     assert!(metrics.instructions_executed >= 4);
     assert_eq!(metrics.frames_created, 1);
     assert_eq!(metrics.local_binding_cells_created, 0);
@@ -140,6 +141,7 @@ fn records_timer_and_select_cleanup_metrics() {
     assert!(metrics.timer_wakeup_entries_examined >= 2);
     assert_eq!(metrics.peak_timer_waiters, 2);
     assert_eq!(metrics.source_span_clones, 1);
+    assert_eq!(metrics.source_span_lookups, 1);
 }
 
 #[test]
@@ -164,6 +166,7 @@ fn records_owned_spans_for_diagnostic_task_and_native_metric_paths() {
     assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
     assert_eq!(error.span, Some(span.clone()));
     assert_eq!(vm.metrics().source_span_clones, 1);
+    assert_eq!(vm.metrics().source_span_lookups, 1);
 
     let mut thrown = Chunk::new("thrown", 0);
     let value = thrown.constant(Value::Int(1));
@@ -178,6 +181,7 @@ fn records_owned_spans_for_diagnostic_task_and_native_metric_paths() {
     assert_eq!(error.kind, RuntimeErrorKind::Thrown);
     assert_eq!(error.span, Some(span.clone()));
     assert_eq!(vm.metrics().source_span_clones, 1);
+    assert_eq!(vm.metrics().source_span_lookups, 1);
 
     let mut child = Chunk::new("child", 0);
     child.emit(Op::Nil).emit(Op::Return);
@@ -199,6 +203,7 @@ fn records_owned_spans_for_diagnostic_task_and_native_metric_paths() {
     let mut vm = Vm::new();
     assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Nil);
     assert_eq!(vm.metrics().source_span_clones, 1);
+    assert_eq!(vm.metrics().source_span_lookups, 1);
 
     let module = NativeModule::new("test.metrics", ()).expect("native module is valid");
     let mut vm = Vm::new();
@@ -218,6 +223,7 @@ fn records_owned_spans_for_diagnostic_task_and_native_metric_paths() {
         .expect_err("native failure must remain checked");
     assert_eq!(error.kind, RuntimeErrorKind::Native);
     assert_eq!(vm.metrics().source_span_clones, 1);
+    assert_eq!(vm.metrics().source_span_lookups, 1);
 }
 
 #[test]
@@ -245,6 +251,21 @@ fn interns_instruction_spans_and_preserves_diagnostics() {
         .run(&program, 0)
         .expect_err("division by zero must retain its source span");
     assert_eq!(error.span, Some(span));
+}
+
+#[test]
+fn reports_vm_runtime_layouts() {
+    let layout = Vm::layout_metrics();
+    assert_eq!(layout.value_size_bytes, std::mem::size_of::<Value>());
+    assert_eq!(layout.value_alignment_bytes, std::mem::align_of::<Value>());
+    assert_eq!(
+        layout.instruction_size_bytes,
+        std::mem::size_of::<slug_vm::Instruction>()
+    );
+    assert!(layout.local_slot_size_bytes >= layout.value_size_bytes);
+    assert!(layout.frame_size_bytes > layout.local_slot_size_bytes);
+    assert!(layout.closure_size_bytes > 0);
+    assert!(layout.task_state_size_bytes > layout.task_size_bytes);
 }
 
 #[test]

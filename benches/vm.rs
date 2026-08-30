@@ -15,6 +15,24 @@ struct Workload {
 }
 
 fn main() {
+    let vm_layout = Vm::layout_metrics();
+    println!(
+        "VM layout: Value {}/{}, LocalSlot {}/{}, Frame {}/{}, Closure {}/{}, Task {}/{}, TaskState {}/{}, TaskExecution {}/{} bytes/alignment",
+        vm_layout.value_size_bytes,
+        vm_layout.value_alignment_bytes,
+        vm_layout.local_slot_size_bytes,
+        vm_layout.local_slot_alignment_bytes,
+        vm_layout.frame_size_bytes,
+        vm_layout.frame_alignment_bytes,
+        vm_layout.closure_size_bytes,
+        vm_layout.closure_alignment_bytes,
+        vm_layout.task_size_bytes,
+        vm_layout.task_alignment_bytes,
+        vm_layout.task_state_size_bytes,
+        vm_layout.task_state_alignment_bytes,
+        vm_layout.task_execution_size_bytes,
+        vm_layout.task_execution_alignment_bytes,
+    );
     for workload in WORKLOADS {
         let source = (workload.source)();
         let program = compile(workload.name, &source)
@@ -22,7 +40,7 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {scheduler_wait:?} scheduler wait); {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups/{deadline_entries} entries; {wakeups} timer wakeups/{wakeup_entries} entries; {removals} wait-registration removals; removal entries channel/task/timer {channel_entries}/{task_entries}/{timer_entries}; peak timers/ready/channel/task {peak_timers}/{peak_ready}/{peak_channel}/{peak_task}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {scheduler_wait:?} scheduler wait); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups/{deadline_entries} entries; {wakeups} timer wakeups/{wakeup_entries} entries; {removals} wait-registration removals; removal entries channel/task/timer {channel_entries}/{task_entries}/{timer_entries}; peak timers/ready/channel/task {peak_timers}/{peak_ready}/{peak_channel}/{peak_task}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             scheduler_wait = metrics.scheduler_wait_time,
@@ -30,6 +48,7 @@ fn main() {
             instructions = metrics.instructions_executed,
             clones = metrics.instruction_clones,
             spans = metrics.source_span_clones,
+            span_lookups = metrics.source_span_lookups,
             program_clones = metrics.program_clones,
             program_clone_bytes = metrics.program_clone_bytes,
             frames = metrics.frames_created,
@@ -79,6 +98,7 @@ fn run(program: &Program, iterations: usize) -> (Duration, VmMetrics) {
         metrics.instructions_executed += run_metrics.instructions_executed;
         metrics.instruction_clones += run_metrics.instruction_clones;
         metrics.source_span_clones += run_metrics.source_span_clones;
+        metrics.source_span_lookups += run_metrics.source_span_lookups;
         metrics.program_clones += run_metrics.program_clones;
         metrics.program_clone_bytes += run_metrics.program_clone_bytes;
         metrics.frames_created += run_metrics.frames_created;
