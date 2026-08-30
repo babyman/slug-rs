@@ -8,6 +8,9 @@
 - Added a dependency-free VM benchmark harness and run-scoped dispatch,
   instruction-clone, frame, and local-binding-cell counters.
 
+- VM dispatch now borrows private instructions rather than cloning every
+  instruction before execution.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

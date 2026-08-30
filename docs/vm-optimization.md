@@ -77,11 +77,17 @@ The one-to-one instruction-clone ratio is the immediate justification for
 Stage 1. Re-run the harness after that stage and compare counters and elapsed
 time using the same workload set.
 
+After the first Stage 1 slice, all five workloads report zero whole-instruction
+clones. The arithmetic-and-branches workload completed 1,000 runs in about
+286 ms on the baseline machine, compared with about 301 ms before the change.
+This is directional evidence only; do not treat it as a portable timing
+threshold. Source spans are still cloned at the dispatch boundary, so Stage 1
+remains active until that diagnostic path borrows or otherwise defers spans.
+
 ## Stage 1: borrow during dispatch
 
-- [ ] Make instruction fetch return a borrowed instruction or borrowed opcode
-  and source-location reference.
-- [ ] Remove the unconditional `Instruction::clone` from the dispatch loop.
+- [x] Make instruction fetch return a borrowed instruction and borrowed opcode.
+- [x] Remove the unconditional `Instruction::clone` from the dispatch loop.
 - [ ] Clone names, descriptors, and source locations only on paths that need
   owned data, especially error construction and global definition.
 - [ ] Preserve all invalid-bytecode checks and existing runtime diagnostics.

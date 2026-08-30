@@ -723,11 +723,12 @@ impl Vm {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
             }
-            let (op, span) = self.next_instruction(program)?;
-            match op {
+            let instruction = self.next_instruction(program)?;
+            let span = instruction.span.clone();
+            match &instruction.op {
                 Op::Constant(index) => {
                     let chunk = self.current_chunk(program)?;
-                    let value = match chunk.constants.get(index) {
+                    let value = match chunk.constants.get(*index) {
                         Some(crate::Constant::Value(value)) => value.clone(),
                         Some(crate::Constant::Function(function)) => {
                             Value::Closure(Rc::new(Closure {
@@ -751,8 +752,8 @@ impl Vm {
                 Op::Interpolate(parts) => {
                     let values = self.pop_values(parts.len().saturating_sub(1), span.clone())?;
                     let mut output = String::new();
-                    for (index, text) in parts.into_iter().enumerate() {
-                        output.push_str(&text);
+                    for (index, text) in parts.iter().enumerate() {
+                        output.push_str(text);
                         if let Some(value) = values.get(index) {
                             output.push_str(&value.to_string());
                         }
@@ -766,16 +767,16 @@ impl Vm {
                     self.pop(span)?;
                 }
                 Op::Duplicate => self.stack.push(self.peek(span)?.clone()),
-                Op::GetLocal(slot) => self.stack.push(self.local(slot, span)?.borrow().clone()),
+                Op::GetLocal(slot) => self.stack.push(self.local(*slot, span)?.borrow().clone()),
                 Op::SetLocal(slot) => {
                     let value = self.pop(span.clone())?;
-                    self.set_local(slot, value, span)?;
+                    self.set_local(*slot, value, span)?;
                 }
                 Op::GetCapture(slot) => {
                     let value = self
                         .frames
                         .last()
-                        .and_then(|frame| frame.closure.captures.get(slot))
+                        .and_then(|frame| frame.closure.captures.get(*slot))
                         .map(|cell| cell.borrow().clone())
                         .ok_or_else(|| {
                             self.error(
@@ -791,7 +792,7 @@ impl Vm {
                     let capture = self
                         .frames
                         .last()
-                        .and_then(|frame| frame.closure.captures.get(slot))
+                        .and_then(|frame| frame.closure.captures.get(*slot))
                         .ok_or_else(|| {
                             self.error(
                                 RuntimeErrorKind::InvalidBytecode,
@@ -805,7 +806,7 @@ impl Vm {
                     let value = self
                         .globals
                         .borrow()
-                        .get(&name)
+                        .get(name)
                         .cloned()
                         .ok_or_else(|| {
                             self.error(
@@ -829,7 +830,7 @@ impl Vm {
                 }
                 Op::DefineGlobal(name) => {
                     let value = self.pop_unresolved(span.clone())?;
-                    if self.imported_globals.remove(&name) {
+                    if self.imported_globals.remove(name) {
                         self.warning(format!(
                             "local binding `{name}` shadows an imported binding"
                         ));
@@ -837,10 +838,10 @@ impl Vm {
                     if !self
                         .globals
                         .borrow()
-                        .get(&name)
+                        .get(name)
                         .is_some_and(|binding| binding.replace_binding(value.clone()))
                     {
-                        self.globals.borrow_mut().insert(name, value);
+                        self.globals.borrow_mut().insert(name.clone(), value);
                     }
                 }
                 Op::CombineOverloads => {
@@ -913,11 +914,11 @@ impl Vm {
                     tag,
                     arguments,
                 } => {
-                    let arguments = self.pop_values(arguments, span.clone())?;
+                    let arguments = self.pop_values(*arguments, span.clone())?;
                     if self
                         .module_metadata
-                        .get(declaration)
-                        .is_none_or(|declaration| declaration.tags.get(tag).is_none())
+                        .get(*declaration)
+                        .is_none_or(|declaration| declaration.tags.get(*tag).is_none())
                     {
                         return Err(self.error(
                             RuntimeErrorKind::InvalidBytecode,
@@ -925,10 +926,10 @@ impl Vm {
                             span,
                         ));
                     }
-                    self.module_metadata[declaration].tags[tag].arguments = arguments;
+                    self.module_metadata[*declaration].tags[*tag].arguments = arguments;
                 }
                 Op::SetGlobal(name) => {
-                    if !self.globals.borrow().contains_key(&name) {
+                    if !self.globals.borrow().contains_key(name) {
                         return Err(self.error(
                             RuntimeErrorKind::Name,
                             format!("unknown name `{name}`"),
@@ -939,14 +940,14 @@ impl Vm {
                     if !self
                         .globals
                         .borrow()
-                        .get(&name)
+                        .get(name)
                         .is_some_and(|binding| binding.replace_binding(value.clone()))
                     {
-                        self.globals.borrow_mut().insert(name, value);
+                        self.globals.borrow_mut().insert(name.clone(), value);
                     }
                 }
                 Op::MakeClosure { chunk, captures } => {
-                    program.chunk(chunk).ok_or_else(|| {
+                    program.chunk(*chunk).ok_or_else(|| {
                         self.error(
                             RuntimeErrorKind::InvalidBytecode,
                             format!("function chunk {chunk} does not exist"),
@@ -955,13 +956,13 @@ impl Vm {
                     })?;
                     let capture_sources = captures.clone();
                     let captures = captures
-                        .into_iter()
+                        .iter()
                         .map(|capture| match capture {
-                            Capture::Local(slot) => self.local(slot, span.clone()),
+                            Capture::Local(slot) => self.local(*slot, span.clone()),
                             Capture::Capture(slot) => self
                                 .frames
                                 .last()
-                                .and_then(|frame| frame.closure.captures.get(slot))
+                                .and_then(|frame| frame.closure.captures.get(*slot))
                                 .cloned()
                                 .ok_or_else(|| {
                                     self.error(
@@ -973,7 +974,7 @@ impl Vm {
                         })
                         .collect::<VmResult<Vec<_>>>()?;
                     self.stack.push(Value::Closure(Rc::new(Closure {
-                        chunk,
+                        chunk: *chunk,
                         captures,
                         program: self.module_program.clone(),
                         globals: self.module_program.as_ref().map(|_| self.globals.clone()),
@@ -1005,13 +1006,13 @@ impl Vm {
                     list_prepend(value, list).map_err(|message| (RuntimeErrorKind::Type, message))
                 })?,
                 Op::List(count) => {
-                    let values = self.pop_values(count, span.clone())?;
+                    let values = self.pop_values(*count, span.clone())?;
                     self.stack.push(Value::List(Rc::new(values)));
                 }
-                Op::ListSpread(spreads) => self.list_spread(spreads, span)?,
+                Op::ListSpread(spreads) => self.list_spread(spreads.clone(), span)?,
                 Op::Map(count) => {
                     let values = self.pop_values(count.saturating_mul(2), span.clone())?;
-                    let mut entries = Vec::with_capacity(count);
+                    let mut entries = Vec::with_capacity(*count);
                     for pair in values.chunks_exact(2) {
                         if !is_map_key(&pair[0]) {
                             return Err(self.error(
@@ -1040,7 +1041,7 @@ impl Vm {
                         }
                         names.push(field.name.clone());
                         schema_fields.push(crate::StructField {
-                            name: field.name.into(),
+                            name: field.name.clone().into(),
                             default: field.has_default.then(|| {
                                 defaults
                                     .next()
@@ -1057,7 +1058,7 @@ impl Vm {
                     let values = self.pop_values(fields.len(), span.clone())?;
                     let schema = self.pop(span.clone())?;
                     self.stack.push(
-                        construct_struct(schema, &fields, &values)
+                        construct_struct(schema, fields, &values)
                             .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?,
                     );
                 }
@@ -1065,7 +1066,7 @@ impl Vm {
                     let replacements = self.pop_values(fields.len(), span.clone())?;
                     let value = self.pop(span.clone())?;
                     self.stack.push(
-                        copy_struct(value, &fields, &replacements)
+                        copy_struct(value, fields, &replacements)
                             .map_err(|message| self.error(RuntimeErrorKind::Type, message, span))?,
                     );
                 }
@@ -1082,7 +1083,7 @@ impl Vm {
                     has_step,
                 } => {
                     let count =
-                        usize::from(has_start) + usize::from(has_end) + usize::from(has_step);
+                        usize::from(*has_start) + usize::from(*has_end) + usize::from(*has_step);
                     let mut values = self.pop_values(count + 1, span.clone())?.into_iter();
                     let collection = values
                         .next()
@@ -1119,62 +1120,64 @@ impl Vm {
                 }
                 Op::Greater => self.compare(span, Ordering::Greater)?,
                 Op::Less => self.compare(span, Ordering::Less)?,
-                Op::Jump(target) => self.jump(target, span)?,
+                Op::Jump(target) => self.jump(*target, span)?,
                 Op::JumpIfFalse(target) => {
                     if !self.peek(span.clone())?.is_truthy() {
-                        self.jump(target, span)?;
+                        self.jump(*target, span)?;
                     }
                 }
                 Op::JumpIfProvided { slot, target } => {
                     if self
                         .frames
                         .last()
-                        .and_then(|frame| frame.provided.get(slot))
+                        .and_then(|frame| frame.provided.get(*slot))
                         .copied()
                         == Some(true)
                     {
-                        self.jump(target, span)?;
+                        self.jump(*target, span)?;
                     }
                 }
-                Op::Call(count) => self.call(program, count, None, span)?,
-                Op::CallSpread(kinds) => self.call_spread(program, kinds, None, span)?,
+                Op::Call(count) => self.call(program, *count, None, span)?,
+                Op::CallSpread(kinds) => self.call_spread(program, kinds.clone(), None, span)?,
                 Op::CallSelected { kinds, identity } => {
-                    let identity = program.callable_identity(identity).ok_or_else(|| {
+                    let identity = program.callable_identity(*identity).ok_or_else(|| {
                         self.error(
                             RuntimeErrorKind::InvalidBytecode,
                             "selected callable identity does not exist".into(),
                             span.clone(),
                         )
                     })?;
-                    self.call_spread(program, kinds, Some(identity), span)?;
+                    self.call_spread(program, kinds.clone(), Some(identity), span)?;
                 }
-                Op::PipelineCall(kinds) => self.pipeline_call(program, kinds, None, span)?,
+                Op::PipelineCall(kinds) => {
+                    self.pipeline_call(program, kinds.clone(), None, span)?;
+                }
                 Op::PipelineCallSelected { kinds, identity } => {
-                    let identity = program.callable_identity(identity).ok_or_else(|| {
+                    let identity = program.callable_identity(*identity).ok_or_else(|| {
                         self.error(
                             RuntimeErrorKind::InvalidBytecode,
                             "selected callable identity does not exist".into(),
                             span.clone(),
                         )
                     })?;
-                    self.pipeline_call(program, kinds, Some(identity), span)?;
+                    self.pipeline_call(program, kinds.clone(), Some(identity), span)?;
                 }
-                Op::Import(kinds) => self.import(kinds, span)?,
+                Op::Import(kinds) => self.import(kinds.clone(), span)?,
                 Op::Spawn => self.spawn_task(program, span)?,
-                Op::Nursery { has_limit } => self.run_nursery(program, has_limit, span)?,
-                Op::Select(cases) => self.select(&cases, span)?,
+                Op::Nursery { has_limit } => self.run_nursery(program, *has_limit, span)?,
+                Op::Select(cases) => self.select(cases, span)?,
                 Op::SelectApply => self.select_apply(program, span)?,
                 Op::TryMatch {
                     pattern,
                     bindings,
                     operands,
                 } => {
-                    let operands = self.pop_values(operands, span.clone())?;
+                    let operands = self.pop_values(*operands, span.clone())?;
                     let value = self.pop(span.clone())?;
                     let mut values = Vec::new();
-                    let matched = matches_pattern(&pattern, &value, &operands, &mut values)
+                    let matched = matches_pattern(pattern, &value, &operands, &mut values)
                         .map_err(|(kind, message)| self.error(kind, message, span.clone()))?;
-                    if matched && values.len() != bindings {
+                    if matched && values.len() != *bindings {
                         return Err(self.error(
                             RuntimeErrorKind::InvalidBytecode,
                             "match pattern binding count is invalid".into(),
@@ -1184,7 +1187,7 @@ impl Vm {
                     if matched {
                         self.stack.extend(values);
                     } else {
-                        self.stack.extend((0..bindings).map(|_| Value::Nil));
+                        self.stack.extend((0..*bindings).map(|_| Value::Nil));
                     }
                     self.stack.push(Value::Bool(matched));
                 }
@@ -1249,9 +1252,12 @@ impl Vm {
                             None,
                         ));
                     };
-                    scope.push(Deferred { action, mode });
+                    scope.push(Deferred {
+                        action,
+                        mode: *mode,
+                    });
                 }
-                Op::Recur(kinds) => self.recur(program, kinds, span)?,
+                Op::Recur(kinds) => self.recur(program, kinds.clone(), span)?,
                 Op::Return => {
                     let value = self.pop(span.clone())?;
                     if let Some(value) = self.begin_return(program, value)? {
@@ -1262,7 +1268,10 @@ impl Vm {
         }
     }
 
-    fn next_instruction(&mut self, program: &Program) -> VmResult<(Op, Option<SourceSpan>)> {
+    fn next_instruction<'program>(
+        &mut self,
+        program: &'program Program,
+    ) -> VmResult<&'program crate::Instruction> {
         let (chunk_index, ip) = self
             .frames
             .last()
@@ -1281,23 +1290,18 @@ impl Vm {
                 None,
             )
         })?;
-        let instruction = chunk
-            .code
-            .get(ip)
-            .ok_or_else(|| {
-                self.error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    format!("function `{}` ended without Return", chunk.name),
-                    None,
-                )
-            })?
-            .clone();
+        let instruction = chunk.code.get(ip).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("function `{}` ended without Return", chunk.name),
+                None,
+            )
+        })?;
         let mut metrics = self.metrics.borrow_mut();
         metrics.instructions_executed += 1;
-        metrics.instruction_clones += 1;
         drop(metrics);
         self.frames.last_mut().expect("active frame was checked").ip += 1;
-        Ok((instruction.op, instruction.span))
+        Ok(instruction)
     }
 
     fn current_chunk<'a>(&self, program: &'a Program) -> VmResult<&'a crate::Chunk> {
