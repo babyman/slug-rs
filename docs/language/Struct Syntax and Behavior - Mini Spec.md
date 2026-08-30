@@ -85,6 +85,9 @@ match. Field requirements are partial: omitted fields are ignored, and a
 shorthand field such as `name` binds that field to `name`. Duplicate field names
 are invalid source.
 
+Under `-type-check`, a field bound from a known `struct<User>` has the type
+declared for that field by `User`, including in a destructuring declaration.
+
 `_: struct` matches every struct value. The `User` binding in `struct<User>`
 must resolve to a schema; a non-schema binding follows the checked runtime
 type-error path. See [Match and Destructuring](Match%20and%20Destructuring%20-%20Mini%20Spec.md)

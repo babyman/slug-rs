@@ -1915,6 +1915,18 @@ fn type_check_uses_known_schema_fields_for_struct_values() {
             "val NotSchema = 1\nval value:struct<NotSchema> = nil\n",
             "struct type argument `NotSchema` must resolve to a schema binding",
         ),
+        (
+            "val User = struct { name:str }\nval user = User {name: \"Slug\"}\nval takes_num = fn(value:num) { value }\nmatch user { {name}: struct<User> => takes_num(name) }\n",
+            "expected num, got str",
+        ),
+        (
+            "val User = struct { name:str }\nval user = User {name: \"Slug\"}\nval takes_num = fn(value:num) { value }\nval {name} = user\ntakes_num(name)\n",
+            "expected num, got str",
+        ),
+        (
+            "val User = struct { name:str }\nval user = User {name: \"Slug\"}\nval takes_num = fn(value:num) { value }\nval check = fn(value:struct<User>) { val {name} = value; takes_num(name) }\ncheck(user)\n",
+            "expected num, got str",
+        ),
     ] {
         fs::write(&path, source).expect("write invalid typed schema field source");
         let output = slug()

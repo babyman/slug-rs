@@ -5,7 +5,7 @@ use std::{
 
 use crate::SourceSpan;
 
-use super::{SourceError, ast::TypeAnnotation};
+use super::{SourceError, ast::TypeAnnotation, environment::Environment};
 
 #[derive(Clone, Debug)]
 pub(super) struct SchemaIdentity {
@@ -339,6 +339,92 @@ pub(super) fn resolve_annotation(
             .map(|member| resolve_annotation(member, type_parameters, span))
             .collect::<Result<Vec<_>, _>>()
             .map(Type::union),
+    }
+}
+
+/// Resolves a source annotation for static checking, including lexical schema
+/// references carried by `struct<S>`.
+pub(super) fn resolve_static_annotation(
+    annotation: &TypeAnnotation,
+    type_parameters: &[String],
+    span: &SourceSpan,
+    environment: &Environment,
+) -> Result<Type, SourceError> {
+    resolve_schema_references(
+        resolve_annotation(annotation, type_parameters, span)?,
+        span,
+        environment,
+    )
+}
+
+fn resolve_schema_references(
+    value_type: Type,
+    span: &SourceSpan,
+    environment: &Environment,
+) -> Result<Type, SourceError> {
+    match value_type {
+        Type::Struct(Some(identity)) if identity.id == identity.name => {
+            let name = identity.name;
+            let binding = environment.lookup(&name).ok_or_else(|| {
+                SourceError::semantic(
+                    format!("struct type argument `{name}` must resolve to a schema binding"),
+                    span.clone(),
+                )
+            })?;
+            binding.schema_identity.clone().map_or_else(
+                || {
+                    Err(SourceError::semantic(
+                        format!("struct type argument `{name}` must resolve to a schema binding"),
+                        span.clone(),
+                    ))
+                },
+                |mut resolved| {
+                    resolved.name.clone_from(&name);
+                    Ok(Type::Struct(Some(resolved)))
+                },
+            )
+        }
+        Type::List(element) => element
+            .map(|element| resolve_schema_references(*element, span, environment).map(Box::new))
+            .transpose()
+            .map(Type::List),
+        Type::Map(entries) => entries
+            .map(|(key, value)| {
+                Ok::<_, SourceError>((
+                    Box::new(resolve_schema_references(*key, span, environment)?),
+                    Box::new(resolve_schema_references(*value, span, environment)?),
+                ))
+            })
+            .transpose()
+            .map(Type::Map),
+        Type::Function(signature) => signature
+            .map(|types| {
+                types
+                    .into_iter()
+                    .map(|value| resolve_schema_references(value, span, environment))
+                    .collect()
+            })
+            .transpose()
+            .map(Type::Function),
+        Type::Task(result) => result
+            .map(|result| resolve_schema_references(*result, span, environment).map(Box::new))
+            .transpose()
+            .map(Type::Task),
+        Type::Channel(value) => value
+            .map(|value| resolve_schema_references(*value, span, environment).map(Box::new))
+            .transpose()
+            .map(Type::Channel),
+        Type::Tuple(values) => values
+            .into_iter()
+            .map(|value| resolve_schema_references(value, span, environment))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Type::Tuple),
+        Type::Union(values) => values
+            .into_iter()
+            .map(|value| resolve_schema_references(value, span, environment))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Type::union),
+        other => Ok(other),
     }
 }
 

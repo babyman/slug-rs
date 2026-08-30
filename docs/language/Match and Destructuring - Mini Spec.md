@@ -112,6 +112,10 @@ When optional type checking is enabled, a successful constraint narrows the
 case bindings. For example, `b` has type `bool` in `b: bool`, and `name` has
 type `str` in `{name}: map<str, str>`.
 
+For a known `struct<S>` constraint, a named map-pattern field uses the field
+type declared by `S`. The same field precision applies to declaration
+destructuring of a known `struct<S>`.
+
 The current Rust subset implements type constraints, including recursive list
 and map checks, schema identity, and case-local narrowing under `-type-check`.
 

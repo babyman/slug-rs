@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Known struct fields now retain their declared types when bound by match and
+  declaration destructuring patterns.
+
 - `struct<S>` annotations now require `S` to resolve to a schema and retain
   stable schema identity through aliases, imports, and shadowing.
 
