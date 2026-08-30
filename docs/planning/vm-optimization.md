@@ -482,6 +482,16 @@ work that must precede a stack/register decision. Work through these items in
 order and land each independently measurable change. The existing direct-local
 and borrowed-dispatch behavior remains the baseline.
 
+Every completed future-work item below must add a dated **Measurement record**
+subsection immediately before the next numbered item. It must identify the
+exact command, revision or pre-change derivation, workload sizes, relevant
+before/after counters, and byte or allocation accounting where applicable.
+It must distinguish measured values from values mechanically derived from the
+previous implementation, state what storage the byte estimate excludes, and
+avoid treating machine-dependent elapsed time as a threshold. A change is not
+complete until its record explains whether semantic checks, diagnostics, and
+the non-target scheduler or execution counters remained stable.
+
 ### 1. Share installed programs across executions
 
 - [x] Replace per-task and per-nursery `Program::clone` operations with clones
@@ -500,6 +510,28 @@ Completion requires program storage to remain approximately constant as task
 count grows, apart from task-specific frames, stacks, captures, and suspension
 state. Add focused coverage for root closures, imported-module closures,
 nested nurseries, and tasks spawned by tasks.
+
+#### Measurement record: ownership (2026-08-30)
+
+`make bench-vm` after this change reports whole-program clone counters and
+estimated copied inline instruction bytes. The compatibility benchmark uses
+the retained `&Program` entry point, so every invocation still makes one root
+installation copy. The before values are exact counts derived from the former
+per-`Spawn` and per-`Nursery` `Program::clone` sites; that version did not yet
+expose a program-clone counter. Estimated bytes use the benchmark's reported
+inline instruction storage only, not heap-owned constants or metadata.
+
+| Workload | Runs | Before clones / estimated bytes | After clones / estimated bytes | Change |
+|---|---:|---:|---:|---:|
+| many timers (32 spawned tasks) | 100 | 3,200 / 141,516,800 | 100 / 4,422,400 | 32× fewer |
+| cancelled suspended waits (17 tasks plus nursery body) | 10 | 180 / 2,269,440 | 10 / 126,080 | 18× fewer |
+
+The same run preserved the scheduler-work counters: many timers registered and
+woke 3,200 timers, while cancelled suspended waits registered 320 timers and
+woke 160 before cancellation. Elapsed time remains machine-dependent and is
+therefore not a plan threshold. Future scheduler measurements should use the
+installed `Rc<Program>` entry points when they need to exclude the remaining
+compatibility installation copy as well.
 
 ### 2. Close statically knowable verifier gaps
 

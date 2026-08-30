@@ -22,12 +22,14 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?}; {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups; {wakeups} timer wakeups; {removals} wait-registration removals; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?}; {instructions} instructions; {clones} instruction clones; {spans} source-span clones; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups; {wakeups} timer wakeups; {removals} wait-registration removals; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             instructions = metrics.instructions_executed,
             clones = metrics.instruction_clones,
             spans = metrics.source_span_clones,
+            program_clones = metrics.program_clones,
+            program_clone_bytes = metrics.program_clone_bytes,
             frames = metrics.frames_created,
             cells = metrics.local_binding_cells_created,
             timers = metrics.timer_registrations,
@@ -60,6 +62,8 @@ fn run(program: &Program, iterations: usize) -> (Duration, VmMetrics) {
         metrics.instructions_executed += run_metrics.instructions_executed;
         metrics.instruction_clones += run_metrics.instruction_clones;
         metrics.source_span_clones += run_metrics.source_span_clones;
+        metrics.program_clones += run_metrics.program_clones;
+        metrics.program_clone_bytes += run_metrics.program_clone_bytes;
         metrics.frames_created += run_metrics.frames_created;
         metrics.local_binding_cells_created += run_metrics.local_binding_cells_created;
         metrics.timer_registrations += run_metrics.timer_registrations;

@@ -5,7 +5,11 @@
 - VM executions now share one installed immutable program across root closures,
   spawned tasks, and explicit nurseries. New `Rc<Program>` entry points avoid
   the compatibility wrapper's single root installation copy, and opt-in
-  metrics report whole-program clones and estimated copied instruction bytes.
+  metrics and benchmark output report whole-program clones and estimated
+  copied instruction bytes.
+
+- The VM optimization plan now requires a dated, reproducible before/after
+  measurement record for every completed future-work item.
 
 - Audited the VM optimization plan against its implementation, clarified the
   provisional scheduler and compact-encoding decisions, and added prioritized
