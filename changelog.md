@@ -46,6 +46,9 @@
 - Task spawning and nursery setup now borrow source spans until task-body
   execution frames are created.
 
+- Struct, slice, and match VM operations now borrow source spans; `throw`
+  retains one only for its durable runtime error.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

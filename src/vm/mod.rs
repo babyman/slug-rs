@@ -1447,6 +1447,70 @@ impl Vm {
                 }
                 self.stack.push(Value::Map(Rc::new(entries)));
             }
+            Op::StructSchema(fields) => {
+                let default_count = fields.iter().filter(|field| field.has_default).count();
+                let defaults = self.pop_values_at(default_count, span)?;
+                let mut defaults = defaults.into_iter();
+                let mut names = Vec::with_capacity(fields.len());
+                let mut schema_fields = Vec::with_capacity(fields.len());
+                for field in fields {
+                    if names.contains(&field.name) {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("duplicate struct schema field '{}'", field.name),
+                            span,
+                        ));
+                    }
+                    names.push(field.name.clone());
+                    schema_fields.push(crate::StructField {
+                        name: field.name.clone().into(),
+                        default: field.has_default.then(|| {
+                            defaults
+                                .next()
+                                .expect("default count was derived from field metadata")
+                        }),
+                    });
+                }
+                self.stack
+                    .push(Value::StructSchema(Rc::new(crate::StructSchema {
+                        fields: schema_fields,
+                    })));
+            }
+            Op::Struct(fields) => {
+                let values = self.pop_values_at(fields.len(), span)?;
+                let schema = self.pop_at(span)?;
+                self.stack.push(
+                    construct_struct(schema, fields, &values)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::StructCopy(fields) => {
+                let replacements = self.pop_values_at(fields.len(), span)?;
+                let value = self.pop_at(span)?;
+                self.stack.push(
+                    copy_struct(value, fields, &replacements)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::GetSlice {
+                has_start,
+                has_end,
+                has_step,
+            } => {
+                let count =
+                    usize::from(*has_start) + usize::from(*has_end) + usize::from(*has_step);
+                let mut values = self.pop_values_at(count + 1, span)?.into_iter();
+                let collection = values
+                    .next()
+                    .expect("slice operation includes a collection");
+                let start = has_start.then(|| values.next().expect("slice start is present"));
+                let end = has_end.then(|| values.next().expect("slice end is present"));
+                let step = has_step.then(|| values.next().expect("slice step is present"));
+                self.stack.push(
+                    slice_value(collection, start.as_ref(), end.as_ref(), step.as_ref())
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
             Op::GetIndex => {
                 let (collection, index) = self.pop_pair_at(span)?;
                 self.stack.push(
@@ -1577,6 +1641,41 @@ impl Vm {
                     action,
                     mode: *mode,
                 });
+            }
+            Op::TryMatch {
+                pattern,
+                bindings,
+                operands,
+            } => {
+                let operands = self.pop_values_at(*operands, span)?;
+                let value = self.pop_at(span)?;
+                let mut values = Vec::new();
+                let matched = matches_pattern(pattern, &value, &operands, &mut values)
+                    .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+                if matched && values.len() != *bindings {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "match pattern binding count is invalid".into(),
+                        span,
+                    ));
+                }
+                if matched {
+                    self.stack.extend(values);
+                } else {
+                    self.stack.extend((0..*bindings).map(|_| Value::Nil));
+                }
+                self.stack.push(Value::Bool(matched));
+            }
+            Op::MatchFailure => {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Match,
+                    "destructuring pattern did not match".into(),
+                    span,
+                ));
+            }
+            Op::Throw => {
+                let value = self.pop_at(span)?;
+                return Err(self.thrown(value, self.owned_span(span)));
             }
             Op::Return => {
                 let value = self.pop_at(span)?;

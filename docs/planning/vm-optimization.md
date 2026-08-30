@@ -141,6 +141,10 @@ validating operands and limits. They clone only when creating the task body
 frame, which may outlive the instruction and must retain its call-site
 diagnostics.
 
+Struct construction, slicing, and match execution now borrow spans through
+their normal path. A thrown value becomes a durable `RuntimeError`, so `throw`
+clones its span only while constructing that error.
+
 ### Remaining Stage 1 execution plan
 
 Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI
