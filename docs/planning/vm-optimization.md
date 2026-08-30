@@ -684,19 +684,41 @@ existing stack VM rather than imposing broad, non-actionable instrumentation.
 
 ### 6. Make optimization metrics a tested contract
 
-- [ ] Run metrics-enabled VM tests in the normal handoff and CI gate while
+- [x] Run metrics-enabled VM tests in the normal handoff and CI gate while
   keeping the feature disabled in ordinary runtime builds.
-- [ ] Count source-span ownership consistently on diagnostic error paths, not
+- [x] Count source-span ownership consistently on diagnostic error paths, not
   only successful durable-frame and suspension paths.
-- [ ] Add focused failing-call, thrown-error, suspended-select, task, and
+- [x] Add focused failing-call, thrown-error, suspended-select, task, and
   native-error metric tests.
-- [ ] Retire counters that no longer provide actionable regression evidence,
+- [x] Retire counters that no longer provide actionable regression evidence,
   or make their instrumentation capable of detecting the regression they
   claim to measure.
 
 Timing remains benchmark evidence rather than a correctness assertion. Stable
 representation counters may use exact assertions when their ownership
 boundary is intentional and documented.
+
+#### Measurement record: optimization metrics contract (2026-08-30)
+
+Command: `make test` (and therefore `make check`). Before this slice, the
+normal test target omitted `--features metrics`, so feature-gated counter tests
+did not run in the ordinary handoff gate. After it, `make test`, `make test-vm`,
+and `make test-cli` all enable `metrics`, while normal library and binary builds
+remain feature-disabled by default.
+
+| Contract path | Before | After |
+| --- | --- | --- |
+| Normal handoff gate | Metrics tests excluded | Library, binary, and integration tests compile and run with `metrics` |
+| Borrowed-span diagnostic | Error construction was not counted | `error_at` acquires its owned span through the counter |
+| Failing call, throw, native error | No focused ownership assertions | Each source-located path asserts one owned-span boundary |
+| Suspended `select`, spawned task | Scheduler counters only | Each durable state path asserts one owned-span boundary |
+
+The existing exact instruction-clone, program-clone, and capture-promotion
+tests remain actionable, and scheduler queue counters retain dedicated
+assertions. No counter was retired: every retained counter now has a concrete
+representation or ownership regression it can expose. `verification_time` and
+`scheduler_wait_time` remain intentionally unasserted timing evidence; their
+values belong in repeated benchmarks rather than correctness tests.
 
 ### 7. Improve hot-path data locality before changing the operand model
 

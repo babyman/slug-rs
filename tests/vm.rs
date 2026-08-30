@@ -139,6 +139,85 @@ fn records_timer_and_select_cleanup_metrics() {
     assert!(metrics.timer_deadline_entries_examined >= 2);
     assert!(metrics.timer_wakeup_entries_examined >= 2);
     assert_eq!(metrics.peak_timer_waiters, 2);
+    assert_eq!(metrics.source_span_clones, 1);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn records_owned_spans_for_diagnostic_task_and_native_metric_paths() {
+    fn fail(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.raise(NativeError::new("test.metrics", "deliberate failure"))
+    }
+
+    let span = SourceSpan::new("metric-paths.slug", 1, 1);
+
+    let mut invalid_call = Chunk::new("invalid_call", 0);
+    let value = invalid_call.constant(Value::Int(1));
+    invalid_call
+        .emit_at(Op::Constant(value), span.clone())
+        .emit_at(Op::Call(0), span.clone())
+        .emit_at(Op::Return, span.clone());
+    let mut vm = Vm::new();
+    let error = vm
+        .run(&program_with_main(invalid_call), 0)
+        .expect_err("calling an integer must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.span, Some(span.clone()));
+    assert_eq!(vm.metrics().source_span_clones, 1);
+
+    let mut thrown = Chunk::new("thrown", 0);
+    let value = thrown.constant(Value::Int(1));
+    thrown
+        .emit_at(Op::Constant(value), span.clone())
+        .emit_at(Op::Throw, span.clone())
+        .emit_at(Op::Return, span.clone());
+    let mut vm = Vm::new();
+    let error = vm
+        .run(&program_with_main(thrown), 0)
+        .expect_err("throw must fail the root execution");
+    assert_eq!(error.kind, RuntimeErrorKind::Thrown);
+    assert_eq!(error.span, Some(span.clone()));
+    assert_eq!(vm.metrics().source_span_clones, 1);
+
+    let mut child = Chunk::new("child", 0);
+    child.emit(Op::Nil).emit(Op::Return);
+    let mut main = Chunk::new("main", 0);
+    main.emit_at(
+        Op::MakeClosure {
+            chunk: 0,
+            captures: vec![],
+        },
+        span.clone(),
+    )
+    .emit_at(Op::Spawn, span.clone())
+    .emit_at(Op::Pop, span.clone())
+    .emit_at(Op::Nil, span.clone())
+    .emit_at(Op::Return, span.clone());
+    let mut program = Program::new();
+    program.add_chunk(child);
+    program.add_chunk(main);
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Nil);
+    assert_eq!(vm.metrics().source_span_clones, 1);
+
+    let module = NativeModule::new("test.metrics", ()).expect("native module is valid");
+    let mut vm = Vm::new();
+    vm.define_native(
+        module
+            .function("fail", NativeArity::Exact(0), fail)
+            .expect("native function is valid"),
+    )
+    .expect("native function is unique");
+    let mut native = Chunk::new("native", 0);
+    native
+        .emit_at(Op::GetGlobal("fail".into()), span.clone())
+        .emit_at(Op::Call(0), span.clone())
+        .emit_at(Op::Return, span);
+    let error = vm
+        .run(&program_with_main(native), 0)
+        .expect_err("native failure must remain checked");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(vm.metrics().source_span_clones, 1);
 }
 
 #[test]

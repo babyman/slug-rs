@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The normal test targets now enable opt-in VM metrics; focused tests cover
+  source-span ownership for diagnostic errors, suspended selects, spawned
+  tasks, and native failures.
+
 - Added an outstanding numeric-representation decision plan comparing the
   current checked integer/binary-float model with DEC64, IEEE decimal,
   fixed-point, runtime-specialized, arbitrary-decimal, and rational models,

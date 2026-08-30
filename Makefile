@@ -10,13 +10,13 @@ lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 
 test:
-	cargo test --all-targets
+	cargo test --lib --bins --tests --features metrics
 
 test-vm:
-	cargo test --test vm
+	cargo test --features metrics --test vm
 
 test-cli:
-	cargo test --test cli
+	cargo test --features metrics --test cli
 
 bench-vm:
 	cargo bench --bench vm --features metrics

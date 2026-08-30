@@ -54,7 +54,7 @@ pub struct VmMetrics {
     pub instructions_executed: usize,
     /// Whole instructions cloned while fetching them for dispatch.
     pub instruction_clones: usize,
-    /// Source spans cloned because an instruction takes the owned-span path.
+    /// Source spans cloned because execution needs an owned diagnostic or state.
     pub source_span_clones: usize,
     /// Frames allocated for the root invocation, calls, and spawned tasks.
     pub frames_created: usize,
@@ -3281,7 +3281,7 @@ impl Vm {
         message: String,
         span: Option<&SourceSpan>,
     ) -> RuntimeError {
-        self.error(kind, message, span.cloned())
+        self.error(kind, message, self.owned_span(span))
     }
 
     fn owned_span(&self, span: Option<&SourceSpan>) -> Option<SourceSpan> {
