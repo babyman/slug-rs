@@ -18,7 +18,7 @@ model.
 ## Decision
 
 Optimize the existing stack VM before considering a register conversion. Work
-proceeds through the staged plan in [`../engineering/vm-optimization.md`](../engineering/vm-optimization.md):
+proceeds through the staged plan in [`../planning/vm-optimization.md`](../planning/vm-optimization.md):
 
 1. dispatch borrows instructions and clones diagnostic or opcode-owned data
    only when ownership is required;

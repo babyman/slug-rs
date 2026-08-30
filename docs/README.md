@@ -47,7 +47,7 @@ a specified feature is implemented.
 | [architecture.md](engineering/architecture.md) | Compiler, bytecode, VM, and diagnostic ownership. |
 | [development.md](engineering/development.md) | Local workflow, validation ladder, and change process. |
 | [testing.md](engineering/testing.md) | Test-layer selection and regression policy. |
-| [vm-optimization.md](engineering/vm-optimization.md) | Staged private VM and bytecode optimization plan. |
+| [vm-optimization.md](planning/vm-optimization.md) | Staged private VM and bytecode optimization plan. |
 
 ### Planning
 

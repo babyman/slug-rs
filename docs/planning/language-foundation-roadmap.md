@@ -193,7 +193,7 @@ After channels and concurrency have exercised the native boundary:
 ## 9. Optimize only from measurements
 
 After the source foundation and representative workloads exist, follow the
-separate [VM Optimization Plan](../engineering/vm-optimization.md).
+separate [VM Optimization Plan](vm-optimization.md).
 
 - [ ] Establish the Stage 0 benchmark and instrumentation baseline.
 - [ ] Optimize dispatch, metadata, and local storage one measured stage at a

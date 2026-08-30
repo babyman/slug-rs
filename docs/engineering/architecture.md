@@ -40,5 +40,5 @@ throwing, and recurrence. Variable-size descriptors belong in indexed metadata
 pools rather than executable instructions.
 
 The staged work and the evidence required before reconsidering a register VM
-are defined in [VM Optimization Plan](vm-optimization.md). The durable choice is
+are defined in [VM Optimization Plan](../planning/vm-optimization.md). The durable choice is
 recorded in [Adopt a measured private-bytecode optimization direction](../decisions/2026-08-22-vm-bytecode-optimization-direction.md).
