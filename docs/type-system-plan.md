@@ -117,10 +117,11 @@ Finish the static record model now that schemas and `struct<S>` exist.
 Only after expression checking and flow analysis have stabilized, decide which
 new abstractions materially improve Slug programs.
 
-- [ ] Evaluate named closed variants (enums/sum types) as the next candidate
-  for typed domain modelling. If adopted, specify constructors, payloads,
-  match syntax, nominal identity, coverage, imports, and runtime values in a
-  dedicated ADR and implementation plan.
+- [x] Evaluate named closed variants (enums/sum types) as the next candidate
+  for typed domain modelling. The proposed constructor, payload, match,
+  nominal-identity, coverage, import, and runtime design is recorded in
+  [the deferred ADR](decisions/2026-08-29-named-closed-variants.md); no
+  implementation is scheduled by this plan.
 - [ ] Evaluate type aliases as a readability feature independently of nominal
   types; define expansion, diagnostics, export behavior, and cycle handling
   before adding syntax.
