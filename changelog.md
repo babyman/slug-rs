@@ -72,6 +72,9 @@
 - Installed private bytecode now pools global names, match patterns, capture
   lists, schema fields, and struct field lists behind checked metadata IDs.
 
+- The VM benchmark now reports bytecode layout and source-map compression
+  estimates to support future representation decisions.
+
 - Private-bytecode verification now recursively validates match-pattern and
   match-type operand references before execution.
 

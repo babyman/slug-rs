@@ -18,8 +18,8 @@ mod value;
 mod vm;
 
 pub use bytecode::{
-    CallArgumentKind, Capture, CaptureListId, Chunk, Constant, DeferMode, GlobalNameId,
-    Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
+    BytecodeLayoutMetrics, CallArgumentKind, Capture, CaptureListId, Chunk, Constant, DeferMode,
+    GlobalNameId, Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SchemaFieldsId,
     SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };

@@ -440,6 +440,16 @@ pub struct Program {
     match_patterns: Vec<MatchPattern>,
 }
 
+/// Layout measurements for private bytecode metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BytecodeLayoutMetrics {
+    pub instructions: usize,
+    pub instruction_bytes: usize,
+    pub span_table_entries: usize,
+    pub inline_span_bytes: usize,
+    pub compressed_span_map_bytes: usize,
+}
+
 impl Program {
     #[must_use]
     pub fn new() -> Self {
@@ -489,6 +499,34 @@ impl Program {
     #[must_use]
     pub fn span_count(&self) -> usize {
         self.spans.len()
+    }
+
+    /// Returns deterministic layout measurements for private bytecode metadata.
+    #[must_use]
+    pub fn layout_metrics(&self) -> BytecodeLayoutMetrics {
+        let instructions = self.chunks.iter().map(|chunk| chunk.code.len()).sum();
+        let span_runs = self
+            .chunks
+            .iter()
+            .map(|chunk| {
+                let mut runs = 0usize;
+                let mut previous = None;
+                for instruction in &chunk.code {
+                    if instruction.span != previous {
+                        runs += 1;
+                        previous = instruction.span;
+                    }
+                }
+                runs
+            })
+            .sum::<usize>();
+        BytecodeLayoutMetrics {
+            instructions,
+            instruction_bytes: instructions * std::mem::size_of::<Instruction>(),
+            span_table_entries: self.spans.len(),
+            inline_span_bytes: instructions * std::mem::size_of::<Option<SpanId>>(),
+            compressed_span_map_bytes: span_runs * (std::mem::size_of::<u32>() * 2),
+        }
     }
 
     fn intern_span(&mut self, span: SourceSpan) -> SpanId {

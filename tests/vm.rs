@@ -54,6 +54,9 @@ fn interns_instruction_spans_and_preserves_diagnostics() {
     let program = program_with_main(main);
     assert_eq!(program.source_count(), 1);
     assert_eq!(program.span_count(), 1);
+    let layout = program.layout_metrics();
+    assert_eq!(layout.instructions, 4);
+    assert!(layout.compressed_span_map_bytes < layout.inline_span_bytes);
     let error = Vm::new()
         .run(&program, 0)
         .expect_err("division by zero must retain its source span");

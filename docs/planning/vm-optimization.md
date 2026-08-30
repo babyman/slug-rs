@@ -273,7 +273,7 @@ alternative consistency and list/map rest bindings—and rejects a mismatched
 - [x] Move variable-size opcode data—global names, patterns, capture lists,
   schema fields, and struct field lists—into indexed chunk or program metadata
   pools.
-- [ ] Evaluate a compressed per-chunk source map after the simple indexed form
+- [x] Evaluate a compressed per-chunk source map after the simple indexed form
   is measured.
 - [ ] Keep Rust-owned metadata and layout out of the `.cslug` contract.
 
@@ -299,6 +299,26 @@ source compilation and focused bytecode construction retain the existing
 ergonomic forms. Missing indices fail verification before dispatch; the next
 Stage 3 work is to measure the resulting instruction layout and decide whether
 the remaining opcode metadata warrants the same treatment.
+
+### Compressed source-map evaluation
+
+The benchmark harness now reports current instruction bytes, inline span-field
+bytes, and the estimated bytes for a per-chunk run map. On the representative
+programs, the compressed estimate is smaller, but the total instruction-layout
+saving is modest:
+
+| Workload | Inline span bytes | Compressed estimate | Saving |
+|---|---:|---:|---:|
+| arithmetic and branches | 304 | 200 | 34% |
+| calls and closures | 304 | 128 | 58% |
+| pattern matching | 352 | 144 | 59% |
+| deferred cleanup | 232 | 112 | 52% |
+| lists and maps | 328 | 168 | 49% |
+
+Because this corresponds to only about 4–8% of whole instruction storage and
+would add a source-map lookup on every fetch, the current direct `SpanId`
+representation remains in place. Reconsider it with Stage 6's executable
+layout decision; see [Defer a compressed per-chunk source map](../decisions/2026-08-30-defer-compressed-source-map.md).
 
 ## Stage 4: direct ordinary locals and promoted captures
 
