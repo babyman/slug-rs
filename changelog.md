@@ -33,6 +33,10 @@
 - Global declarations, closure construction, and ordinary calls now borrow
   source spans, cloning only call sites retained in runtime call frames.
 
+- Spread, selected-overload, and pipeline calls now borrow spans through
+  argument binding and native invocation, retaining ownership only for durable
+  closure call frames or errors.
+
 - Known struct fields now retain their declared types when bound by match and
   declaration destructuring patterns.
 

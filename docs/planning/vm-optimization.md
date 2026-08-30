@@ -118,6 +118,13 @@ has two source-span clones per invocation and completes 1,000 runs in about
 100 ms across repeated warm runs. Spread, pipeline, import, cleanup, and
 scheduler operations remain on owned-span paths.
 
+Spread calls, selected overload calls, and pipeline calls now also retain a
+borrowed span through argument expansion and overload binding. They clone only
+when a selected closure or cross-module closure creates a durable call frame;
+native call failures construct an owned diagnostic only on the error path.
+Imports, cleanup, and scheduler operations remain for the Stage 1 ownership
+audit.
+
 ### Remaining Stage 1 execution plan
 
 Finish Stage 1 in the following narrow slices. Re-run the focused VM and CLI

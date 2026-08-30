@@ -1495,7 +1495,29 @@ impl Vm {
                 }
             }
             Op::Recur(kinds) => self.recur_at(program, kinds, span)?,
-            Op::Call(count) => self.call(program, *count, None, self.owned_span(span))?,
+            Op::Call(count) => self.call_at(program, *count, None, span)?,
+            Op::CallSpread(kinds) => self.call_spread_at(program, kinds, None, span)?,
+            Op::CallSelected { kinds, identity } => {
+                let identity = program.callable_identity(*identity).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "selected callable identity does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.call_spread_at(program, kinds, Some(identity), span)?;
+            }
+            Op::PipelineCall(kinds) => self.pipeline_call_at(program, kinds, None, span)?,
+            Op::PipelineCallSelected { kinds, identity } => {
+                let identity = program.callable_identity(*identity).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "selected callable identity does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.pipeline_call_at(program, kinds, Some(identity), span)?;
+            }
             Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
             Op::LeaveScope => {
                 let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {
@@ -1743,6 +1765,170 @@ impl Vm {
             }
             value => {
                 return Err(self.error(
+                    RuntimeErrorKind::InvalidCall,
+                    format!("cannot call {}", value.type_name()),
+                    span,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn call_at(
+        &mut self,
+        program: &Program,
+        count: usize,
+        provided: Option<Vec<bool>>,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let required = count.checked_add(1).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call argument count is too large".into(),
+                span,
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call has too few stack values".into(),
+                span,
+            )
+        })?;
+        let callee = self.stack[base]
+            .resolve()
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+        match callee {
+            Value::Closure(closure) => {
+                if let Some(module_program) = &closure.program
+                    && self
+                        .module_program
+                        .as_ref()
+                        .is_none_or(|current| !Rc::ptr_eq(current, module_program))
+                {
+                    let arguments = self.stack[base + 1..]
+                        .iter()
+                        .map(|value| {
+                            value.resolve().map_err(|message| {
+                                self.error_at(RuntimeErrorKind::Name, message, span)
+                            })
+                        })
+                        .collect::<VmResult<Vec<_>>>()?;
+                    let result = self.call_module_closure(
+                        module_program,
+                        closure.clone(),
+                        arguments,
+                        provided,
+                        self.owned_span(span),
+                        ClosureCallOptions {
+                            direct_task_limit: None,
+                            direct_task_count: None,
+                            nursery: self.nursery.clone(),
+                            settle_nursery: false,
+                        },
+                    )?;
+                    self.stack.truncate(base);
+                    self.stack.push(result);
+                    return Ok(());
+                }
+                let chunk = program.chunk(closure.chunk).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "closure references missing chunk".into(),
+                        span,
+                    )
+                })?;
+                if chunk.arity != count {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::Arity,
+                        format!(
+                            "`{}` expects {} arguments, got {count}",
+                            chunk.name, chunk.arity
+                        ),
+                        span,
+                    ));
+                }
+                if chunk.locals < chunk.arity {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!(
+                            "function `{}` has {} local slots for {} parameters",
+                            chunk.name, chunk.locals, chunk.arity
+                        ),
+                        span,
+                    ));
+                }
+                let mut locals = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value
+                            .resolve()
+                            .map(binding_cell)
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                locals.resize_with(chunk.locals, || binding_cell(Value::Nil));
+                self.record_frame(chunk.locals);
+                self.frames.push(Frame {
+                    closure,
+                    function: chunk.name.clone(),
+                    call_span: self.owned_span(span),
+                    ip: 0,
+                    stack_base: base,
+                    locals,
+                    provided: provided.unwrap_or_else(|| vec![true; chunk.arity]),
+                    scopes: vec![Vec::new()],
+                    cleanup_action: false,
+                    cleanup_recovers: false,
+                });
+            }
+            Value::Native(function) | Value::DeclaredNative { function, .. } => {
+                let arguments = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value
+                            .resolve()
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                let result = self.invoke_native_at(&function, &arguments, span)?;
+                self.stack.truncate(base);
+                self.stack.push(result);
+            }
+            Value::Builtin(builtin) => {
+                let arguments = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value
+                            .resolve()
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                let result =
+                    self.call_builtin(builtin, program, &arguments, self.owned_span(span))?;
+                self.stack.truncate(base);
+                self.stack.push(result);
+            }
+            Value::Overloads(overloads) => {
+                let positional = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value
+                            .resolve()
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                let (callee, arguments, provided) =
+                    self.bind_overload_arguments_at(program, &overloads, &positional, &[], span)?;
+                self.stack.truncate(base);
+                self.stack.push(callee);
+                self.stack.extend(arguments);
+                let count = self.stack.len() - base - 1;
+                return self.call_at(program, count, Some(provided), span);
+            }
+            value => {
+                return Err(self.error_at(
                     RuntimeErrorKind::InvalidCall,
                     format!("cannot call {}", value.type_name()),
                     span,
@@ -2220,6 +2406,69 @@ impl Vm {
         self.call(program, count, Some(provided), span)
     }
 
+    fn call_spread_at(
+        &mut self,
+        program: &Program,
+        kinds: &[CallArgumentKind],
+        selected: Option<&CallableIdentity>,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let required = kinds.len().checked_add(1).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call argument count is too large".into(),
+                span,
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call has too few stack values".into(),
+                span,
+            )
+        })?;
+        let callee = self.stack[base]
+            .resolve()
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+        let values = self.stack.split_off(base + 1);
+        self.stack.truncate(base);
+        let (positional, named) = self.expand_call_arguments_at(values, kinds, span)?;
+        let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
+            if let Some(selected) = selected {
+                self.bind_selected_overload_arguments_at(
+                    program,
+                    overloads,
+                    selected,
+                    &positional,
+                    &named,
+                    span,
+                )?
+            } else {
+                self.bind_overload_arguments_at(program, overloads, &positional, &named, span)?
+            }
+        } else {
+            if let Some(selected) = selected
+                && Self::callable_signature(&callee)
+                    .and_then(|signature| signature.identity)
+                    .as_ref()
+                    != Some(selected)
+            {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidCall,
+                    "selected callable signature is no longer present in the live binding".into(),
+                    span,
+                ));
+            }
+            let (arguments, provided) =
+                self.bind_call_arguments_at(program, &callee, positional, named, span)?;
+            (callee, arguments, provided)
+        };
+        self.stack.push(callee);
+        self.stack.extend(arguments);
+        let count = self.stack.len() - base - 1;
+        self.call_at(program, count, Some(provided), span)
+    }
+
     fn pipeline_call(
         &mut self,
         program: &Program,
@@ -2262,6 +2511,51 @@ impl Vm {
         let mut kinds = kinds;
         kinds.insert(0, CallArgumentKind::Positional);
         self.call_spread(program, kinds, selected, span)
+    }
+
+    fn pipeline_call_at(
+        &mut self,
+        program: &Program,
+        kinds: &[CallArgumentKind],
+        selected: Option<&CallableIdentity>,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let required = kinds.len().checked_add(2).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline argument count is too large".into(),
+                span,
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline has too few stack values".into(),
+                span,
+            )
+        })?;
+        let arguments = self.stack.split_off(base + 2);
+        let callee = self.stack.pop().ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline has too few stack values".into(),
+                span,
+            )
+        })?;
+        let value = self.stack.pop().ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "pipeline has too few stack values".into(),
+                span,
+            )
+        })?;
+        self.stack.push(callee);
+        self.stack.push(value);
+        self.stack.extend(arguments);
+        let mut all_kinds = Vec::with_capacity(kinds.len() + 1);
+        all_kinds.push(CallArgumentKind::Positional);
+        all_kinds.extend_from_slice(kinds);
+        self.call_spread_at(program, &all_kinds, selected, span)
     }
 
     fn expand_call_arguments(
@@ -2697,6 +2991,39 @@ impl Vm {
         }
     }
 
+    fn invoke_native_at(
+        &mut self,
+        function: &NativeFunction,
+        arguments: &[Value],
+        span: Option<&SourceSpan>,
+    ) -> VmResult<Value> {
+        match function.invoke(arguments) {
+            NativeInvocation::Result(value, resources) => {
+                self.native_resources.register(resources);
+                if let Value::Channel(channel) = &value
+                    && channel.has_native_producer()
+                {
+                    self.nursery.track_native_channel(channel);
+                }
+                Ok(value)
+            }
+            NativeInvocation::Error(error, resources) => {
+                self.native_resources.register(resources);
+                let (code, message, data) = error.into_parts();
+                let mut error = self.error_at(
+                    RuntimeErrorKind::Native,
+                    format!("native `{}`: {message}", function.qualified_name()),
+                    span,
+                );
+                error.native = Some(Box::new(NativeErrorDetails { code, data }));
+                Err(error)
+            }
+            NativeInvocation::ContractViolation(message) => {
+                Err(self.error_at(RuntimeErrorKind::NativeContract, message, span))
+            }
+        }
+    }
+
     fn bind_call_arguments(
         &self,
         program: &Program,
@@ -2944,6 +3271,39 @@ impl Vm {
         }))
     }
 
+    fn bind_overload_arguments_at(
+        &self,
+        program: &Program,
+        overloads: &[Value],
+        positional: &[Value],
+        named: &[NamedArgument],
+        span: Option<&SourceSpan>,
+    ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
+        let mut error = None;
+        for callee in overloads {
+            let callee = callee
+                .resolve()
+                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            match self.bind_call_arguments_at(
+                program,
+                &callee,
+                positional.to_vec(),
+                named.to_vec(),
+                span,
+            ) {
+                Ok((arguments, provided)) => return Ok((callee, arguments, provided)),
+                Err(next) => error = Some(next),
+            }
+        }
+        Err(error.unwrap_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidCall,
+                "overload set is empty".into(),
+                span,
+            )
+        }))
+    }
+
     fn bind_selected_overload_arguments(
         &self,
         program: &Program,
@@ -2972,6 +3332,40 @@ impl Vm {
             return Ok((callee, arguments, provided));
         }
         Err(self.error(
+            RuntimeErrorKind::InvalidCall,
+            "selected callable signature is no longer present in the live binding".into(),
+            span,
+        ))
+    }
+
+    fn bind_selected_overload_arguments_at(
+        &self,
+        program: &Program,
+        overloads: &[Value],
+        selected: &CallableIdentity,
+        positional: &[Value],
+        named: &[NamedArgument],
+        span: Option<&SourceSpan>,
+    ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
+        for callee in overloads {
+            let callee = callee
+                .resolve()
+                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            let identity =
+                Self::callable_signature(&callee).and_then(|signature| signature.identity);
+            if identity.as_ref() != Some(selected) {
+                continue;
+            }
+            let (arguments, provided) = self.bind_call_arguments_at(
+                program,
+                &callee,
+                positional.to_vec(),
+                named.to_vec(),
+                span,
+            )?;
+            return Ok((callee, arguments, provided));
+        }
+        Err(self.error_at(
             RuntimeErrorKind::InvalidCall,
             "selected callable signature is no longer present in the live binding".into(),
             span,
