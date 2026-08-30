@@ -2,9 +2,10 @@
 
 This repository is a clean-room Rust implementation of the Slug language.
 It starts with the execution boundary recommended by the language package: a
-small, checked VM with internal Slug-specific bytecode. Private VM bytecode is
-not a file format or compatibility commitment; the planned, portable
-compiled-module contract is documented separately as `.cslug`.
+small, checked VM with Slug-specific bytecode. The bytecode types are a public
+but unstable in-process Rust embedding and testing surface: they are not a file
+format or a compatibility commitment. The planned portable compiled-module
+contract is documented separately as `.cslug`.
 
 ## Current milestone
 
@@ -70,9 +71,11 @@ compiled-module contract is documented separately as `.cslug`.
 
 `Program` owns indexed `Chunk`s. A `Chunk` owns its `Constant` pool and a list
 of `Instruction`s. Each instruction uses a typed `Op` enum, not numeric opcode
-bytes. This makes compiler/VM validation explicit while the instruction set is
-still changing. A compiler can attach a `SourceSpan` to any instruction, and
-the VM keeps the active call frames on failures.
+bytes. Rust hosts and integration tests may construct these types and execute
+them through `Vm`; malformed programs must fail through checked runtime errors.
+Their layouts, variants, constructors, and semantics remain unstable and may
+change during pre-release development. A compiler can attach a `SourceSpan` to
+any instruction, and the VM keeps the active call frames on failures.
 
 The VM uses an operand stack. Function calls use separate frame-local slots,
 with closures copying only the declared captured slots. The current model
@@ -82,8 +85,8 @@ performance.
 ## Portable compiled modules
 
 `.cslug` will be a versioned, portable compiled-module format. It will remain
-separate from `Program`, `Chunk`, and `Op`, which are private Rust structures
-and may change freely. See [compiled artifacts](docs/reference/compiled-artifacts.md)
+separate from the public-but-unstable in-process `Program`, `Chunk`, and `Op`
+types, which may change freely. See [compiled artifacts](docs/reference/compiled-artifacts.md)
 for the adopted contract and the requirements before version 1 is implemented.
 
 ## Development

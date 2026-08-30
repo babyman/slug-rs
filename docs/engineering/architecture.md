@@ -8,7 +8,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Area | Owner | Responsibility |
 |---|---|---|
 | Source front end | `src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
-| Private bytecode | `src/bytecode.rs` | Internal instruction and program representation. |
+| In-process bytecode | `src/bytecode.rs` | Public but unstable Rust instruction and program representation. |
 | Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
 | Runtime values | `src/value.rs` | Dynamic language values and operations. |
@@ -17,8 +17,10 @@ implements a small source subset through a checked bytecode virtual machine.
 
 ## Invariants
 
-- `Program`, `Chunk`, `Instruction`, and `Op` are an internal compiler-to-VM
-  boundary, not a serialized format or compatibility promise.
+- `Program`, `Chunk`, `Instruction`, and `Op` are a public but unstable
+  in-process Rust compiler-to-VM boundary. Rust hosts and integration tests may
+  construct and run them, but their layouts, variants, constructors, and
+  semantics are not a stable Rust API or serialized format.
 - `.cslug` is the future portable compiled-module format.  It is a distinct,
   versioned contract and must not serialize private bytecode directly.
 - Native extensions use an opaque call and resource boundary. They must not

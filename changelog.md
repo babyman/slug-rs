@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Clarified the public-but-unstable Rust bytecode embedding and testing surface;
+  it remains distinct from the future portable `.cslug` format.
+
 - Split the CLI and VM integration-test harnesses into feature-oriented modules
   with compact entry-point maps, preserving their existing test coverage.
 

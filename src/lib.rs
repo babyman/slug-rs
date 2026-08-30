@@ -1,10 +1,10 @@
 //! Slug's clean-room bytecode runtime.
 //!
-//! This crate deliberately keeps its VM bytecode an implementation detail.
-//! `Program`, `Chunk`, and `Op` are a compiler-to-VM boundary, designed for
-//! clarity and validation rather than persistence. They are distinct from the
-//! future portable `.cslug` compiled-module format documented in
-//! `docs/reference/compiled-artifacts.md`.
+//! `Program`, `Chunk`, and `Op` are a public but unstable in-process Rust
+//! embedding and testing surface. They are a compiler-to-VM boundary, designed
+//! for clarity and validation rather than persistence or cross-version use.
+//! They are distinct from the future portable `.cslug` compiled-module format
+//! documented in `docs/reference/compiled-artifacts.md`.
 
 mod bytecode;
 mod configuration;
@@ -17,6 +17,12 @@ mod source;
 mod value;
 mod vm;
 
+/// Experimental in-process bytecode construction and inspection types.
+///
+/// These types are public so Rust hosts and integration tests can construct
+/// programs for checked execution. Their layouts, variants, constructors, and
+/// semantics may change in any pre-release version; do not serialize them or
+/// treat them as a stable Rust API. `.cslug` is the future portable contract.
 pub use bytecode::{
     BytecodeLayoutMetrics, CallArgumentKind, Capture, CaptureListId, Chunk, Constant, DeferMode,
     GlobalNameId, Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,

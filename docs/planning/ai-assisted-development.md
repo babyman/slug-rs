@@ -94,14 +94,14 @@ The documentation calls `Program`, `Chunk`, and `Op` private implementation
 details, while `src/lib.rs` publicly re-exports them. Before changing code,
 make the compatibility choice explicit:
 
-- [ ] Decide whether the public Rust exports are an intentionally unstable
+- [x] Decide whether the public Rust exports are an intentionally unstable
   embedding/testing surface or an accidental exposure.
-- [ ] Record the choice in a decision record because it changes runtime
+- [x] Record the choice in a decision record because it changes runtime
   architecture and compatibility policy.
-- [ ] If retained, document the stability and supported-use limits next to the
+- [x] If retained, document the stability and supported-use limits next to the
   public API and in the compatibility reference.
-- [ ] If removed, first migrate integration tests to an appropriate internal
-  test boundary without weakening bytecode verification coverage.
+- [x] Retain direct-bytecode integration tests as checked-execution coverage;
+  no internal test-boundary migration is required.
 
 Completion evidence: the README, `AGENTS.md`, architecture documentation, and
 Rust exports describe one consistent boundary.

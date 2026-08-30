@@ -8,6 +8,9 @@ implemented source subset without preserving undocumented behavior.
 - Normative language documents define intended source-level behavior.
 - Source and runtime failures are Slug diagnostics, not host panics.
 - The public CLI's documented source subset is tested as a user-visible path.
+- The public Rust bytecode types support in-process construction and checked
+  execution during pre-release development. They are an unstable embedding and
+  testing surface, not a portable representation.
 - Once published, each `.cslug` artifact version is a portable compiled-module
   compatibility contract as defined in `compiled-artifacts.md`.
 - Once published, each native module ABI major version is a compatibility
@@ -15,8 +18,10 @@ implemented source subset without preserving undocumented behavior.
 
 ## Non-promises
 
-- Bytecode instructions, opcode values, chunks, stack layout, and closure
-  representation are internal implementation details.
+- Bytecode instruction layouts, opcode variants and values, chunks, stack
+  layout, and closure representation may change without Rust API compatibility.
+- Public bytecode types must not be serialized, exchanged between versions, or
+  treated as the `.cslug` compiled-module contract.
 - No `.cslug` artifact version is implemented or accepted yet.
 - The static Rust native facade is version 0 and no native module ABI version is
   implemented or accepted yet.

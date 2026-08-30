@@ -72,8 +72,8 @@ support the required operation.
   affected feature.
 - Prove bytecode behavior in `tests/vm.rs`. Prove source syntax, diagnostics,
   or observable output through `tests/cli.rs`.
-- Keep bytecode internal. Do not introduce serialized opcode formats or expose
-  opcode values as a language compatibility promise.
+- Keep bytecode in-process and unstable. Do not serialize it or treat opcode
+  layouts, values, or variants as language or Rust API compatibility promises.
 - Preserve checked failures: invalid source and runtime faults must produce
   `SourceError` or `RuntimeError`, never a host panic.
 - Keep comments and public Rust documentation focused on non-obvious behavior,
