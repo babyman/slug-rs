@@ -46,6 +46,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Whole-case type constraints, schema matching, and type narrowing | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | `schema` types and nominal `struct<S>` construction inference | implemented | `tests/cli.rs`, `tests/module_loader.rs`, and `tests/vm.rs` |
 | Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| `print` and `len` builtins | specified only | `language/language-specification.md` |
 | Implicit `slug.builtin` bindings and foundational Slug values | implemented | `tests/cli.rs` |
 | Positional call spreads and list-literal spreads | implemented | `tests/cli.rs` |
 | Named ordinary-function arguments | implemented | `tests/cli.rs` |

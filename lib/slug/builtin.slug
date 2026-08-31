@@ -18,6 +18,17 @@ export val Error = struct {
 }
 
 /**
- * Writes values to standard output separated by spaces and terminated by a newline.
+ * Writes values to standard output, separated by spaces, without a trailing newline.
+ */
+export foreign print = fn(...values):nil
+
+/**
+ * Writes values to standard output, separated by spaces and terminated by a newline.
  */
 export foreign println = fn(...values):nil
+
+/**
+ * Returns the number of Unicode scalar values in a string, bytes in a byte
+ * string, or elements in a list or map.
+ */
+export foreign len = fn(value:str|bytes|list|map):num

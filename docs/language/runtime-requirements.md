@@ -62,8 +62,8 @@ slug [-root MODULE_ROOT] program.slug [arguments...]
 Successful execution exits with status zero. Parse, semantic, module-loading,
 or runtime failure exits nonzero and writes a Slug diagnostic to standard error.
 The final expression value is not implicitly printed by the command-line
-runner. `println` writes to standard output and `slug.io.stderr.println` writes
-to standard error.
+runner. `print` and `println` write to standard output; only `println` appends
+a newline. `slug.io.stderr.println` writes to standard error.
 
 ### Portable fixture metadata
 

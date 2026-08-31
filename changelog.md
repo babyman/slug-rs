@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Specified `slug.builtin.print(...values)` as space-separated standard-output
+  writing without a trailing newline, and `slug.builtin.len(value)` for strings,
+  bytes, lists, and maps. Neither builtin is implemented by the Rust runtime yet.
+
 - Added typed program entrypoints: a program may define one local `main()`;
   `main(args:list)` receives raw program arguments and `main(args:map)` receives
   parsed options and positionals. The `argv` and `argm` builtins are removed.

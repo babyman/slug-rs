@@ -537,8 +537,9 @@ Local declarations take precedence over implicit builtin bindings. A host that
 does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
-The bundled declaration module currently provides `println(...values)`. The
-host registers its functions independently of the file. When present,
+The bundled declaration module documents `print(...values)`,
+`println(...values)`, and `len(value)`. The host registers its functions
+independently of the file. When present,
 `lib/slug/builtin.slug` documents those functions and may export foundational
 Slug values such as `Error`. The module is intentionally limited to primitives
 and universally shared values. General utilities and channel operations belong
@@ -546,6 +547,29 @@ to ordinary explicit modules such as `slug.channel` and `slug.std`.
 
 The standard library consists of modules loaded through this same mechanism.
 Its public API is defined by the library reference, not by this specification.
+
+### Output
+
+`print(...values)` and `println(...values)` each accept zero or more positional
+arguments, evaluate them in ordinary left-to-right call order, and return
+`nil`. Each argument is rendered using the value's display representation; a
+`str` is written as its contents without quotes. The rendered arguments are
+separated by one ASCII space. `print` writes no trailing newline, while
+`println` appends exactly one `\n` after the final rendered argument. Thus
+`print()` writes nothing and `println()` writes one newline. Both functions
+write to standard output.
+
+### Length
+
+`len(value)` accepts exactly one value and returns a non-negative integer:
+
+- for `str`, the number of Unicode scalar values;
+- for `bytes`, the number of bytes;
+- for `list`, the number of elements; and
+- for `map`, the number of entries.
+
+Calling `len` with any other value, including `nil`, or with an argument count
+other than one is a checked runtime error.
 
 ### Program entrypoint
 
