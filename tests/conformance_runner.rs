@@ -50,7 +50,7 @@ fn compares_exact_runtime_diagnostics_with_source_locations() {
     let source = root.join("failure.slug");
     fs::write(&source, "???\n").expect("write fixture source");
     let diagnostic = format!(
-        "slug: runtime error: not implemented at {}:1:1\n  in main\n",
+        "slug: runtime error: not implemented\n    --> {}:1:1\n  > 1 | ???\n      | ^ here\n  in main\n",
         source.display()
     );
     fs::write(

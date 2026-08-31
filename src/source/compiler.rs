@@ -1308,6 +1308,15 @@ fn lower_case_patterns(
     patterns: &[CasePattern],
     span: &SourceSpan,
 ) -> Result<(MatchPattern, Vec<String>, Vec<PatternOperand>), SourceError> {
+    if patterns
+        .iter()
+        .any(|pattern| matches!(pattern.pattern, Pattern::MapAll))
+    {
+        return Err(SourceError::semantic(
+            "{*} is only valid in a top-level declaration",
+            span.clone(),
+        ));
+    }
     let mut operands = Vec::new();
     if let [pattern] = patterns {
         return Ok((

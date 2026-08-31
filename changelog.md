@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Source parse and semantic diagnostics now render a contextual source excerpt
+  and caret when the referenced source text is available, while retaining the
+  location-only fallback for unavailable source.
+
+- Invalid `{*}` match cases now report a checked source error instead of
+  aborting during bytecode lowering.
+
 - Added `slug.builtin.print(...values)` for space-separated standard-output
   writing without a trailing newline, and `slug.builtin.len(value)` for strings,
   bytes, lists, and maps.

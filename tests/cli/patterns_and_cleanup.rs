@@ -600,6 +600,34 @@ fn captures_remaining_map_entries_in_match_and_destructuring() {
 }
 
 #[test]
+fn rejects_map_all_selection_in_match_cases_without_panicking() {
+    let path = fixture_path("map-all-match-case");
+    fs::write(&path, "val map = {value: 1}\nmatch map { {*} => value }\n")
+        .expect("write invalid map-all match source");
+
+    for type_check in [false, true] {
+        let mut command = slug();
+        if type_check {
+            command.arg("-type-check");
+        }
+        let output = command
+            .arg(&path)
+            .output()
+            .expect("run invalid map-all match source");
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with("slug: semantic error: {*} is only valid in a top-level declaration")
+        );
+    }
+
+    fs::remove_file(path).expect("remove invalid map-all match source");
+}
+
+#[test]
 fn discards_anonymous_list_and_map_pattern_remainders() {
     let path = fixture_path("anonymous-rest-patterns");
     fs::write(
@@ -706,13 +734,14 @@ fn reports_source_location_for_non_matching_destructuring() {
         .arg(&path)
         .output()
         .expect("run invalid destructuring source");
-    fs::remove_file(path).expect("remove invalid destructuring source");
+    fs::remove_file(&path).expect("remove invalid destructuring source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.starts_with("slug: runtime error: destructuring pattern did not match at "));
-    assert!(stderr.ends_with(":1:14\n  in main\n"));
+    assert!(stderr.starts_with("slug: runtime error: destructuring pattern did not match\n"));
+    assert!(stderr.contains(&format!("    --> {}:1:14\n", path.display())));
+    assert!(stderr.ends_with("\n  in main\n"));
 }
 
 #[test]
@@ -812,13 +841,13 @@ fn rejects_top_level_return_with_a_location() {
         .arg(&path)
         .output()
         .expect("run invalid return source");
-    fs::remove_file(path).expect("remove invalid return source");
+    fs::remove_file(&path).expect("remove invalid return source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.starts_with("slug: semantic error: return is only valid inside a function at "));
-    assert!(stderr.ends_with(":2:1\n"));
+    assert!(stderr.starts_with("slug: semantic error: return is only valid inside a function\n"));
+    assert!(stderr.contains(&format!("    --> {}:2:1\n", path.display())));
 }
 
 #[test]
@@ -833,13 +862,14 @@ fn reports_uncaught_throws_with_their_source_location_and_call_frames() {
     )
     .expect("write throwing source");
     let output = slug().arg(&path).output().expect("run throwing source");
-    fs::remove_file(path).expect("remove throwing source");
+    fs::remove_file(&path).expect("remove throwing source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.starts_with("slug: runtime error: uncaught throw: [\"bad\", 7] at "));
-    assert!(stderr.ends_with(":2:1\n  in <fn #0>\n  in main\n"));
+    assert!(stderr.starts_with("slug: runtime error: uncaught throw: [\"bad\", 7]\n"));
+    assert!(stderr.contains(&format!("    --> {}:2:1\n", path.display())));
+    assert!(stderr.ends_with("\n  in <fn #0>\n  in main\n"));
 }
 
 #[test]

@@ -145,15 +145,13 @@ fn does_not_invoke_main_when_top_level_evaluation_fails() {
         .expect("write failing entrypoint source");
 
     let output = slug().arg(&path).output().expect("run failing source");
-    fs::remove_file(path).expect("remove failing entrypoint source");
+    fs::remove_file(&path).expect("remove failing entrypoint source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .starts_with("slug: runtime error: not implemented at ")
-    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.starts_with("slug: runtime error: not implemented\n"));
+    assert!(stderr.contains(&format!("    --> {}:2:1\n", path.display())));
 }
 
 #[test]

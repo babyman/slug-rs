@@ -32,8 +32,11 @@ Slug has no `try` or `catch` syntax. `defer onerror` is its recovery construct.
 
 A source failure is classified as a parse, semantic, module, or runtime error.
 When source location information is available, the diagnostic identifies its
-path, line, and column. Runtime errors retain the thrown payload and Slug call
-frames. Frames introduced only to execute deferred work are omitted.
+path, line, and column. A command-line implementation may additionally render
+a source excerpt and caret when it can obtain the relevant source text; it must
+fall back to a location-only diagnostic when that text is unavailable. Runtime
+errors retain the thrown payload and Slug call frames beneath any excerpt.
+Frames introduced only to execute deferred work are omitted.
 
 `stacktrace(error)` takes exactly one argument and returns a **string**. It
 renders the runtime-error payload, the available source location, and Slug call

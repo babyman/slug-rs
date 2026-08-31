@@ -1,13 +1,15 @@
 use std::{
-    env, fs,
-    io::Write,
+    env,
+    fmt::Write as FmtWrite,
+    fs,
+    io::Write as IoWrite,
     path::{Path, PathBuf},
     process::ExitCode,
 };
 
 use slug_vm::{
     Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule, NativeOwnedValue,
-    NativeStatus, SourceErrorKind, Vm,
+    NativeStatus, RuntimeError, SourceError, SourceErrorKind, SourceSpan, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -179,7 +181,7 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
                 SourceErrorKind::Parse => "parse",
                 SourceErrorKind::Semantic => "semantic",
             };
-            eprintln!("slug: {category} error: {error}");
+            eprint_source_error(category, &error, path, &source);
             return ExitCode::from(1);
         }
     };
@@ -236,8 +238,141 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("slug: {error}");
+            eprint_runtime_error(&error, path, &source);
             ExitCode::from(1)
         }
+    }
+}
+
+fn eprint_source_error(category: &str, error: &SourceError, input_path: &str, input: &str) {
+    eprintln!(
+        "{}",
+        render_source_error(category, error, input_path, input)
+    );
+}
+
+fn render_source_error(
+    category: &str,
+    error: &SourceError,
+    input_path: &str,
+    input: &str,
+) -> String {
+    let headline = format!("slug: {category} error: {}", error.message);
+    render_source_context(&headline, error.span.as_ref(), input_path, input)
+        .unwrap_or_else(|| format!("slug: {category} error: {error}"))
+}
+
+fn eprint_runtime_error(error: &RuntimeError, input_path: &str, input: &str) {
+    eprintln!("{}", render_runtime_error(error, input_path, input));
+}
+
+fn render_runtime_error(error: &RuntimeError, input_path: &str, input: &str) -> String {
+    let headline = format!("slug: runtime error: {}", error.message);
+    let Some(mut rendered) =
+        render_source_context(&headline, error.span.as_ref(), input_path, input)
+    else {
+        return format!("slug: {error}");
+    };
+    for frame in &error.frames {
+        write!(rendered, "\n  in {}", frame.function).expect("writing to a string cannot fail");
+    }
+    rendered
+}
+
+fn render_source_context(
+    headline: &str,
+    span: Option<&SourceSpan>,
+    input_path: &str,
+    input: &str,
+) -> Option<String> {
+    let span = span?;
+    let source = if span.path.as_ref() == input_path {
+        Some(input.to_owned())
+    } else {
+        fs::read_to_string(span.path.as_ref()).ok()
+    };
+    let source = source?;
+    let line = source.lines().nth(span.line.saturating_sub(1) as usize)?;
+
+    let mut rendered = format!(
+        "{headline}\n    --> {}:{}:{}\n",
+        span.path, span.line, span.column
+    );
+    let first_line = span.line.saturating_sub(2).max(1);
+    let line_width = span.line.to_string().len();
+    for (index, source_line) in source
+        .lines()
+        .enumerate()
+        .skip(first_line as usize - 1)
+        .take((span.line - first_line + 1) as usize)
+    {
+        let number = index + 1;
+        let source_line = expand_tabs(source_line);
+        if number == span.line as usize {
+            writeln!(rendered, "  > {number:>line_width$} | {source_line}")
+                .expect("writing to a string cannot fail");
+        } else {
+            writeln!(rendered, "    {number:>line_width$} | {source_line}")
+                .expect("writing to a string cannot fail");
+        }
+    }
+    let caret_offset = display_column(line, span.column);
+    write!(
+        rendered,
+        "    {} | {}^ here",
+        " ".repeat(line_width),
+        " ".repeat(caret_offset)
+    )
+    .expect("writing to a string cannot fail");
+    Some(rendered)
+}
+
+fn expand_tabs(text: &str) -> String {
+    let mut expanded = String::new();
+    let mut column = 0;
+    for character in text.chars() {
+        if character == '\t' {
+            let spaces = 4 - (column % 4);
+            expanded.push_str(&" ".repeat(spaces));
+            column += spaces;
+        } else {
+            expanded.push(character);
+            column += 1;
+        }
+    }
+    expanded
+}
+
+fn display_column(text: &str, source_column: u32) -> usize {
+    let characters = source_column.saturating_sub(1) as usize;
+    let mut column = 0;
+    for character in text.chars().take(characters) {
+        if character == '\t' {
+            column += 4 - (column % 4);
+        } else {
+            column += 1;
+        }
+    }
+    column
+}
+
+#[cfg(test)]
+mod tests {
+    use slug_vm::{SourceError, SourceErrorKind, SourceSpan};
+
+    use super::render_source_error;
+
+    #[test]
+    fn falls_back_when_diagnostic_source_is_unavailable() {
+        let error = SourceError {
+            kind: SourceErrorKind::Parse,
+            message: "expected expression".into(),
+            span: Some(SourceSpan::new("missing.slug", 4, 2)),
+        };
+
+        assert_eq!(
+            render_source_error("parse", &error, "input.slug", "val = 1\n"),
+            "slug: parse error: expected expression at missing.slug:4:2"
+        );
     }
 }

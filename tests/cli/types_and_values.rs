@@ -642,12 +642,15 @@ fn rejects_malformed_hexadecimal_and_byte_literals_with_locations() {
             .arg(&path)
             .output()
             .expect("run malformed literal source");
-        fs::remove_file(path).expect("remove malformed literal source");
+        fs::remove_file(&path).expect("remove malformed literal source");
 
         assert_eq!(output.status.code(), Some(1));
         let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
         assert!(stderr.starts_with("slug: parse error:"), "{stderr}");
         assert!(stderr.contains(message), "{stderr}");
-        assert!(stderr.ends_with(":1:1\n"), "{stderr}");
+        assert!(
+            stderr.contains(&format!("    --> {}:1:1\n", path.display())),
+            "{stderr}"
+        );
     }
 }

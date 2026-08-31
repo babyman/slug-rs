@@ -230,15 +230,15 @@ fn rejects_assignment_to_an_immutable_binding_with_a_location() {
     let path = fixture_path("immutable-binding");
     fs::write(&path, "val answer = 1\nanswer = 2\n").expect("write invalid assignment");
     let output = slug().arg(&path).output().expect("run invalid assignment");
-    fs::remove_file(path).expect("remove invalid assignment");
+    fs::remove_file(&path).expect("remove invalid assignment");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(
-        stderr.starts_with("slug: semantic error: cannot assign to immutable binding `answer` at ")
+        stderr.starts_with("slug: semantic error: cannot assign to immutable binding `answer`\n")
     );
-    assert!(stderr.ends_with(":2:1\n"));
+    assert!(stderr.contains(&format!("    --> {}:2:1\n", path.display())));
 }
 
 #[test]
@@ -250,13 +250,14 @@ fn retains_source_locations_for_runtime_faults_from_source() {
         .arg(&path)
         .output()
         .expect("run runtime fault source");
-    fs::remove_file(path).expect("remove runtime fault source");
+    fs::remove_file(&path).expect("remove runtime fault source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.starts_with("slug: runtime error: division by zero at "));
-    assert!(stderr.ends_with(":2:11\n  in main\n"));
+    assert!(stderr.starts_with("slug: runtime error: division by zero\n"));
+    assert!(stderr.contains(&format!("    --> {}:2:11\n", path.display())));
+    assert!(stderr.ends_with("\n  in main\n"), "{stderr}");
 }
 
 #[test]
@@ -264,13 +265,41 @@ fn reports_source_parse_errors_without_a_host_crash() {
     let path = fixture_path("invalid");
     fs::write(&path, "val = 1\n").expect("write invalid Slug source");
     let output = slug().arg(&path).output().expect("run invalid Slug source");
-    fs::remove_file(path).expect("remove invalid Slug source");
+    fs::remove_file(&path).expect("remove invalid Slug source");
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.starts_with("slug: parse error: expected binding name at "));
-    assert!(stderr.ends_with(":1:5\n"));
+    assert!(stderr.starts_with("slug: parse error: expected binding name\n"));
+    assert!(stderr.contains(&format!("    --> {}:1:5\n", path.display())));
+}
+
+#[test]
+fn renders_available_source_context_for_parse_errors() {
+    let path = fixture_path("parse-error-context");
+    fs::write(
+        &path,
+        "\tif(acc <= max) {\n\t\tmatch [acc % 3, acc % 5] {\n\t\t\t[0, 0] => \"FizzBuzz\"x\n",
+    )
+    .expect("write invalid match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid match source");
+    fs::remove_file(&path).expect("remove invalid match source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.starts_with("slug: parse error: expected match case separator\n"));
+    assert!(
+        stderr.contains(&format!("    --> {}:3:24\n", path.display())),
+        "{stderr}"
+    );
+    assert!(stderr.contains("    1 |     if(acc <= max) {\n"));
+    assert!(stderr.contains("    2 |         match [acc % 3, acc % 5] {\n"));
+    assert!(stderr.contains("  > 3 |             [0, 0] => \"FizzBuzz\"x\n"));
+    assert!(stderr.ends_with("      |                                 ^ here\n"));
 }
 
 #[test]
