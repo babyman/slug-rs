@@ -7,7 +7,7 @@ fn help_describes_the_current_public_capability() {
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
-        "bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, and println"
+        "bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len"
     ));
     assert!(output.stderr.is_empty());
 }
@@ -39,6 +39,52 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
         "2\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn writes_with_print_without_a_newline_and_returns_nil() {
+    let path = fixture_path("print");
+    fs::write(
+        &path,
+        "val result = print(\"first\", 2)\nprint()\nprintln(result, \"last\")\n",
+    )
+    .expect("write print source");
+    let output = slug().arg(&path).output().expect("run print source");
+    fs::remove_file(path).expect("remove print source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "first 2nil last\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn returns_lengths_for_supported_values_and_rejects_other_values() {
+    let path = fixture_path("len");
+    fs::write(
+        &path,
+        "println(len(\"aé😀\"), len(0x\"414243\"), len([1, 2]), len({name: 1, active: true}))\n",
+    )
+    .expect("write len source");
+    let output = slug().arg(&path).output().expect("run len source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3 3 2 2\n");
+    assert!(output.stderr.is_empty());
+
+    fs::write(&path, "len(nil)\n").expect("write invalid len source");
+    let output = slug().arg(&path).output().expect("run invalid len source");
+    fs::remove_file(path).expect("remove len source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("`len` expects str, bytes, list, or map, got Nil")
+    );
 }
 
 #[test]
@@ -105,7 +151,7 @@ fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     let path = fixture_path("builtin-module");
     fs::write(
         &path,
-        "val builtin = import(\"slug.builtin\")\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\n",
+        "val builtin = import(\"slug.builtin\")\nbuiltin.print(builtin.len([1, 2]))\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\n",
     )
     .expect("write builtin import source");
     let output = slug()
@@ -115,7 +161,7 @@ fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     fs::remove_file(path).expect("remove builtin import source");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Error Error\n");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2Error Error\n");
     assert!(output.stderr.is_empty());
 }
 

@@ -31,7 +31,8 @@ contract is documented separately as `.cslug`.
   handles with `slug.channel.await`, explicit
   nurseries, bounded FIFO channels through the `slug.channel` library,
   `select` receive/send/timer/task-await/default cases, and implicitly
-  imported `slug.builtin.println`.
+  imported `slug.builtin.print`, `slug.builtin.println`, and
+  `slug.builtin.len`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, cached isolated module initialization, and string-keyed exported-value maps.

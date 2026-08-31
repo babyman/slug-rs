@@ -1,5 +1,6 @@
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -9,19 +10,68 @@ use slug_vm::{
     NativeStatus, SourceErrorKind, Vm,
 };
 
+fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
+    native_write(call, false)
+}
+
 fn native_println(call: &mut NativeCall<'_>) -> NativeStatus {
-    println!(
-        "{}",
-        (0..call.argument_count())
-            .map(|index| {
-                call.argument(index)
-                    .expect("index comes from the argument count")
-                    .to_display_string()
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
+    native_write(call, true)
+}
+
+fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
+    let output = (0..call.argument_count())
+        .map(|index| {
+            call.argument(index)
+                .expect("index comes from the argument count")
+                .to_display_string()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let result = if newline {
+        writeln!(std::io::stdout().lock(), "{output}")
+    } else {
+        write!(std::io::stdout().lock(), "{output}")
+    };
+    if let Err(error) = result {
+        return call.raise(slug_vm::NativeError::new(
+            "native.io",
+            format!("cannot write standard output: {error}"),
+        ));
+    }
     call.return_value(NativeOwnedValue::nil())
+}
+
+fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
+    let value = match call.argument(0) {
+        Ok(value) => value,
+        Err(error) => return call.raise(error),
+    };
+    let length = match value.kind() {
+        slug_vm::NativeValueKind::String => match value.as_str() {
+            Ok(value) => value.chars().count(),
+            Err(error) => return call.raise(error),
+        },
+        slug_vm::NativeValueKind::Bytes => match value.as_bytes() {
+            Ok(value) => value.len(),
+            Err(error) => return call.raise(error),
+        },
+        slug_vm::NativeValueKind::List | slug_vm::NativeValueKind::Map => {
+            value.len().expect("collection kind has a length")
+        }
+        kind => {
+            return call.raise(slug_vm::NativeError::new(
+                "native.type",
+                format!("`len` expects str, bytes, list, or map, got {kind:?}"),
+            ));
+        }
+    };
+    let Ok(length) = i64::try_from(length) else {
+        return call.raise(slug_vm::NativeError::new(
+            "native.range",
+            "`len` result exceeds the supported integer range",
+        ));
+    };
+    call.return_value(NativeOwnedValue::integer(length))
 }
 
 fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -69,7 +119,7 @@ fn main() -> ExitCode {
         }
         Some("--help" | "-h") | None => {
             println!(
-                "Usage: {executable} program.slug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, and println."
+                "Usage: {executable} program.slug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len."
             );
             ExitCode::SUCCESS
         }
@@ -138,11 +188,23 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
     let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
     vm.define_builtin(
         builtins
+            .function("print", NativeArity::Variadic { minimum: 0 }, native_print)
+            .expect("static builtin function is valid"),
+    )
+    .expect("static builtin binding is unique");
+    vm.define_builtin(
+        builtins
             .function(
                 "println",
                 NativeArity::Variadic { minimum: 0 },
                 native_println,
             )
+            .expect("static builtin function is valid"),
+    )
+    .expect("static builtin binding is unique");
+    vm.define_builtin(
+        builtins
+            .function("len", NativeArity::Exact(1), native_len)
             .expect("static builtin function is valid"),
     )
     .expect("static builtin binding is unique");
