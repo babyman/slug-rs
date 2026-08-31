@@ -15,11 +15,11 @@ loading unrelated large files or inferring a contract from stale guidance.
 
 The repository already has useful guardrails:
 
-- Root `AGENTS.md` defines repository-wide invariants and the standard
+- Root `../../../AGENTS.md` defines repository-wide invariants and the standard
   validation ladder.
-- `.agents/workflows/language-change.md` gives source-language work a concrete
+- `../../../.agents/workflows/language-change.md` gives source-language work a concrete
   documentation, implementation, testing, and handoff sequence.
-- `docs/README.md` establishes an authority order rather than allowing tests or
+- `../../README.md` establishes an authority order rather than allowing tests or
   implementation details to silently redefine language behavior.
 - `make check` is both the local handoff command and the CI gate.
 
@@ -30,7 +30,7 @@ wide, or where reproducibility relies on moving tooling.
 ## Scope and invariants
 
 - Preserve the current documentation authority order and keep language rules in
-  `docs/language/`.
+  `../../language`.
 - Treat file-size targets as navigation guidance, not a reason for mechanical
   refactors. Split only at an actual ownership boundary.
 - Preserve the public behavior and checked-error guarantees while reorganizing
@@ -42,16 +42,16 @@ wide, or where reproducibility relies on moving tooling.
 
 ## 1. Make repository guidance self-consistent
 
-- [x] Correct `docs/language/README.md` to name the existing
-  `tests/conformance/` fixture suite rather than `tests/vm-conformance/`.
+- [x] Correct `../../language/README.md` to name the existing
+  `../../../tests/conformance` fixture suite rather than `tests/vm-conformance/`.
 - [x] Update that document's fixture description to match the current
   versioned `.fixture.toml` metadata contract.
-- [x] Expand `docs/engineering/testing.md` and the test routing in `AGENTS.md`
+- [x] Expand `../../engineering/testing.md` and the test routing in `../../../AGENTS.md`
   to cover VM, CLI, module-loader, configuration, conformance-runner, and
   conformance-metadata tests.
 - [x] Add focused Make targets only where they materially shorten a common
   iteration loop; otherwise document the direct `cargo test --test …` command.
-- [x] Extend `scripts/docs-check.sh` with inexpensive checks for documented
+- [x] Extend `../../../scripts/docs-check.sh` with inexpensive checks for documented
   repository paths that are intended as mandatory handoff contents.
 
 Completion evidence: links and paths named by contributor documentation exist,
@@ -63,14 +63,14 @@ the test-routing table covers every integration-test boundary, and
 Prefer a small entry file and feature-focused modules over a monolithic file.
 The current review identifies these priority candidates:
 
-1. Split `tests/cli.rs` by observable language feature, retaining a thin test
+1. Split `../../../tests/cli.rs` by observable language feature, retaining a thin test
    harness if Rust integration-test discovery requires it.
-2. Split `tests/vm.rs` by VM/runtime subsystem or bytecode family.
-3. Extract coherent ownership areas from `src/vm/mod.rs`, such as dispatch,
+2. Split `../../../tests/vm.rs` by VM/runtime subsystem or bytecode family.
+3. Extract coherent ownership areas from `../../../src/vm/mod.rs`, such as dispatch,
    call/frame handling, and asynchronous/select behavior, only after confirming
    their dependency direction.
 4. Extract type representation, inference, overload resolution, or diagnostics
-   from `src/source/typecheck.rs` when their APIs can be explicit and
+   from `../../../src/source/typecheck.rs` when their APIs can be explicit and
    independently tested.
 
 For new work, aim to keep production modules below roughly 1,500 lines and
@@ -91,7 +91,7 @@ opening an unrelated multi-thousand-line file.
 ## 3. Clarify the crate and bytecode boundary
 
 The documentation calls `Program`, `Chunk`, and `Op` private implementation
-details, while `src/lib.rs` publicly re-exports them. Before changing code,
+details, while `../../../src/lib.rs` publicly re-exports them. Before changing code,
 make the compatibility choice explicit:
 
 - [x] Decide whether the public Rust exports are an intentionally unstable
@@ -103,13 +103,13 @@ make the compatibility choice explicit:
 - [x] Retain direct-bytecode integration tests as checked-execution coverage;
   no internal test-boundary migration is required.
 
-Completion evidence: the README, `AGENTS.md`, architecture documentation, and
+Completion evidence: the README, `../../../AGENTS.md`, architecture documentation, and
 Rust exports describe one consistent boundary.
 
 ## 4. Make toolchain results reproducible
 
-- [x] Select and pin a Rust toolchain in `rust-toolchain.toml`.
-- [x] Set the corresponding minimum supported Rust version in `Cargo.toml`.
+- [x] Select and pin a Rust toolchain in `../../../rust-toolchain.toml`.
+- [x] Set the corresponding minimum supported Rust version in `../../../Cargo.toml`.
 - [x] Update CI to use that pinned toolchain while retaining `rustfmt` and
   Clippy components.
 - [x] Document the toolchain update policy so dependency and lint changes are
