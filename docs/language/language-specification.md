@@ -537,8 +537,9 @@ Local declarations take precedence over implicit builtin bindings. A host that
 does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
-The bundled declaration module documents `print(...values)`,
-`println(...values)`, and `len(value)`. The host registers its functions
+The bundled declaration module documents `cfg(key, default)`,
+`print(...values)`, `println(...values)`, and `len(value)`. The host registers
+its functions
 independently of the file. When present,
 `lib/slug/builtin.slug` documents those functions and may export foundational
 Slug values such as `Error`. The module is intentionally limited to primitives

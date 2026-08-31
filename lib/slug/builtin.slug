@@ -4,6 +4,9 @@
  * Registered host bindings are implicit even when this file is absent. When
  * present, this module documents those bindings and exports Slug-defined
  * foundation values. Programs may also import it explicitly.
+ *
+ * The runtime also provides cfg(key, default) to read immutable configuration.
+ * It is a VM builtin rather than a registered host function.
  */
 
 /**
