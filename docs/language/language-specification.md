@@ -549,18 +549,48 @@ Its public API is defined by the library reference, not by this specification.
 
 ### Program entrypoint
 
-After a program module's top-level statements succeed, the runtime invokes a
-local top-level function named `main` only when it declares exactly zero
-parameters. A `main` binding imported from another module is not an entrypoint.
-Functions with required, defaulted, or variadic parameters are not entrypoints.
+After a program module's top-level statements succeed, the runtime invokes one
+local, top-level function named `main` when it has one of these exact
+signatures:
 
-If the program module does not define a zero-argument local `main`, evaluation
+```slug
+val main = fn() { ... }
+val main = fn(args:list) { ... }
+val main = fn(args:map) { ... }
+```
+
+The zero-argument form receives no values. The `list` form receives the raw
+arguments following the entry program, in order. The `map` form receives the
+parsed argument map with `"options"` and `"positional"` entries. Its option-map
+keys use the resulting configuration keys, including entry-module prefixes for
+undotted options.
+
+The parameter name is not significant, but the one parameter must be required,
+non-variadic, and annotated exactly `list` or `map`. An unannotated parameter,
+a parameter with another annotation, or a defaulted or variadic parameter does
+not define an entrypoint. Imported `main` bindings do not participate.
+
+A program may define at most one eligible local `main`; multiple eligible
+declarations are a semantic error. Other local functions named `main` remain
+ordinary callable declarations. If no eligible local `main` exists, evaluation
 ends after the top-level statements. A top-level failure prevents entrypoint
-invocation. The selected `main` is called with no arguments.
+invocation.
 
 ```slug
 val main = fn() {
   println("serve")
+}
+```
+
+```slug
+val main = fn(args:list) {
+  println(args)
+}
+```
+
+```slug
+val main = fn(args:map) {
+  println(args.positional)
 }
 ```
 
@@ -662,7 +692,7 @@ line. Documentation and tags are observable through `slug.meta` introspection.
 ## Static checking
 
 Slug always performs semantic validation, including `recur` tail-position
-validation, struct-schema checks, zero-argument program-entrypoint validation,
+validation, struct-schema checks, program-entrypoint signature validation,
 and resolution of statically known overloads. Type annotations do not introduce
 runtime validation or coercion. Parameter annotations participate in mandatory
 resolution of statically known overloads. Optional type checking uses

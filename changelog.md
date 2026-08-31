@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Specified typed program entrypoints: a program may define one local `main()`;
+  `main(args:list)` receives raw program arguments and `main(args:map)` receives
+  parsed options and positionals. This supersedes the `argv` and `argm`
+  builtins; implementation remains pending.
+
 - Pinned Rust 1.96.1 for local and CI validation, including `rustfmt` and
   Clippy, with a deliberate toolchain-update policy.
 

@@ -69,9 +69,11 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Imported-name shadowing and non-callable conflict warnings | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
 | Callable import conflict warnings and overload sets | implemented | `tests/module_loader.rs` |
 | Retained top-level declaration, tag, and documentation metadata | implemented | `tests/module_loader.rs` |
-| Automatic local zero-argument `main` entrypoint invocation | implemented | `tests/cli.rs` |
+| Automatic local `main()` entrypoint invocation | implemented | `tests/cli.rs` |
+| Typed `main(args:list)` and `main(args:map)` entrypoint invocation | specified only | `language/language-specification.md` |
 | Immutable configuration store and source precedence | implemented | `tests/configuration.rs` |
-| `cfg`, `argv`, and `argm` builtins | implemented | `tests/configuration.rs` |
+| `cfg` builtin and legacy `argv`/`argm` builtins pending removal | implemented | `tests/configuration.rs` |
+| Program arguments delivered through typed `main` entrypoints | specified only | `language/language-specification.md` |
 | Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `tests/cli.rs` |
 | Bounded FIFO channels through the `slug.channel` module, plus bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `tests/cli.rs` |

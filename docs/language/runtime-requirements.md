@@ -166,9 +166,9 @@ configuration file is absent or malformed.
 The command-line option grammar is `--key=value`, `--key value`, `-k value`, or
 a valueless boolean flag. Repeated options form a list. A command-line key
 without a dot is prefixed with the entry module name, so `slug server.slug
---port 3002` defines `server.port`; dotted keys are absolute. `argv()` exposes
-the original post-program arguments, while `argm()` exposes their parsed option
-and positional forms.
+--port 3002` defines `server.port`; dotted keys are absolute. A program's
+`main` entrypoint may receive the original post-program arguments as a list or
+their parsed option and positional forms as a map.
 
 `cfg` requires exactly two arguments. Its first argument MUST be a string. A
 dotted key is looked up as written. A non-dotted key is prefixed with the
@@ -211,17 +211,23 @@ For a program module, the runtime MUST perform these phases in order:
 3. create the module environment and predeclare statically knowable top-level
    bindings for cyclic imports;
 4. evaluate top-level statements in source order;
-5. if top-level evaluation succeeds, invoke the program module's local,
-   top-level zero-argument function named `main`, when it defines one.
+5. if top-level evaluation succeeds, invoke the program module's eligible
+   local, top-level `main` function, when it defines one.
 
-Only a `main` declaration with exactly zero parameters is an entrypoint.
-Defaulted and variadic parameters are not entrypoints, even when a call could
-omit them. Imported functions named `main` are not entrypoints. A module without
-a local zero-argument `main` finishes after top-level evaluation.
+An eligible `main` has exactly one of these signatures: `fn()`, `fn(args:list)`,
+or `fn(args:map)`. The parameter name is not significant. A one-parameter
+entrypoint parameter MUST be required, non-variadic, and annotated exactly
+`list` or `map`; a defaulted, variadic, unannotated, or differently annotated
+parameter is not eligible. Imported `main` bindings are not entrypoints.
 
-The selected function is called with no arguments. Evaluation completes with
-either a Slug value or a language runtime error, and a top-level failure MUST
-prevent entrypoint invocation.
+The runtime MUST reject a program with more than one eligible local `main` as a
+semantic error. A module without an eligible local `main` finishes after
+top-level evaluation. The selected function receives, respectively, no values,
+the original post-program argument list, or the parsed argument map. The map
+MUST contain `"options"` and `"positional"` entries, and its option keys MUST
+use the configuration keys resulting from command-line parsing. Evaluation
+completes with either a Slug value or a language runtime error, and a top-level
+failure MUST prevent entrypoint invocation.
 
 Both whole-program evaluation and direct function evaluation establish an
 implicit root task owner. The runtime must settle that owner before returning a
