@@ -275,6 +275,10 @@ fn render_runtime_error(error: &RuntimeError, input_path: &str, input: &str) -> 
     };
     for frame in &error.frames {
         write!(rendered, "\n  in {}", frame.function).expect("writing to a string cannot fail");
+        if let Some(span) = &frame.span {
+            write!(rendered, " at {}:{}:{}", span.path, span.line, span.column)
+                .expect("writing to a string cannot fail");
+        }
     }
     rendered
 }

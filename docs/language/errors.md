@@ -36,6 +36,7 @@ path, line, and column. A command-line implementation may additionally render
 a source excerpt and caret when it can obtain the relevant source text; it must
 fall back to a location-only diagnostic when that text is unavailable. Runtime
 errors retain the thrown payload and Slug call frames beneath any excerpt.
+Each frame identifies its call-site path, line, and column when available.
 Frames introduced only to execute deferred work are omitted.
 
 `stacktrace(error)` takes exactly one argument and returns a **string**. It

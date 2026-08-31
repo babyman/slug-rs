@@ -19,9 +19,10 @@ span is unavailable, it preserves the existing one-line location diagnostic.
 
 Diagnostic rendering is a CLI presentation concern; `SourceError` remains a
 structured API containing only its category, message, and optional position.
-Runtime call frames follow the contextual excerpt. The renderer expands tabs
-consistently in both the displayed source and caret padding. Exact fixture
-diagnostics may opt into either permitted rendering.
+Runtime call frames follow the contextual excerpt and include their call-site
+coordinates when available. The renderer expands tabs consistently in both the
+displayed source and caret padding. Exact fixture diagnostics may opt into
+either permitted rendering.
 
 ## Migration
 
