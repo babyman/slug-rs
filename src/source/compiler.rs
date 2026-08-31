@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::bytecode::{Entrypoint, EntrypointArguments};
 use crate::{
     CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, MatchType,
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SelectCase,
@@ -48,7 +49,7 @@ impl Compiler {
     pub(super) fn compile(mut self) -> Result<Program, SourceError> {
         let mut exports = Vec::new();
         let mut bindings = Vec::new();
-        let has_entrypoint = self.expressions.iter().any(is_zero_argument_main);
+        let entrypoint = self.entrypoint()?;
         for expression in &self.expressions {
             if let ExprKind::Declare {
                 mutable,
@@ -146,10 +147,42 @@ impl Compiler {
         let mut seen_exports = HashSet::new();
         exports.retain(|name| seen_exports.insert(name.clone()));
         program.set_exports(exports);
-        program.set_has_entrypoint(has_entrypoint);
+        program.set_entrypoint(entrypoint);
         program.set_callable_identities(self.callable_identities);
         Ok(program)
     }
+
+    fn entrypoint(&mut self) -> Result<Option<Entrypoint>, SourceError> {
+        let candidates = self
+            .expressions
+            .iter()
+            .filter_map(|expression| {
+                entrypoint_candidate(expression).map(|(arguments, span)| (arguments, span.clone()))
+            })
+            .collect::<Vec<_>>();
+        let mut entrypoint = None;
+        for (arguments, span) in candidates {
+            if entrypoint.is_some() {
+                return Err(SourceError::semantic(
+                    "program has more than one eligible `main` entrypoint",
+                    span,
+                ));
+            }
+            let identity = self
+                .function_identities
+                .get(&span)
+                .cloned()
+                .ok_or_else(|| {
+                    SourceError::semantic("cannot identify program entrypoint", span.clone())
+                })?;
+            entrypoint = Some(Entrypoint {
+                arguments,
+                callable_identity: self.intern_callable_identity(identity),
+            });
+        }
+        Ok(entrypoint)
+    }
+
     #[allow(clippy::too_many_lines)]
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
@@ -1434,15 +1467,41 @@ fn foreign_arity(signature: &ForeignSignature) -> (usize, Option<usize>) {
     (required, maximum)
 }
 
-fn is_zero_argument_main(expression: &Expr) -> bool {
+fn entrypoint_candidate(expression: &Expr) -> Option<(EntrypointArguments, &SourceSpan)> {
     let ExprKind::Declare { pattern, value, .. } = &expression.kind else {
-        return false;
+        return None;
     };
     let Pattern::Binding(name) = pattern else {
-        return false;
+        return None;
     };
-    let ExprKind::Function { parameters, .. } = &value.kind else {
-        return false;
+    let ExprKind::Function {
+        type_parameters,
+        parameters,
+        ..
+    } = &value.kind
+    else {
+        return None;
     };
-    name == "main" && parameters.is_empty()
+    if name != "main" || !type_parameters.is_empty() {
+        return None;
+    }
+    let arguments = match parameters.as_slice() {
+        [] => EntrypointArguments::None,
+        [parameter]
+            if parameter.default.is_none()
+                && !parameter.variadic
+                && matches!(&parameter.annotation, Some(TypeAnnotation::Name(name)) if name == "list") =>
+        {
+            EntrypointArguments::List
+        }
+        [parameter]
+            if parameter.default.is_none()
+                && !parameter.variadic
+                && matches!(&parameter.annotation, Some(TypeAnnotation::Name(name)) if name == "map") =>
+        {
+            EntrypointArguments::Map
+        }
+        _ => return None,
+    };
+    Some((arguments, &value.span))
 }

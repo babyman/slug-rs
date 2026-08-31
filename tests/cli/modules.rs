@@ -21,6 +21,95 @@ fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
 }
 
 #[test]
+fn passes_raw_program_arguments_to_a_list_main() {
+    let path = fixture_path("program-entrypoint-list");
+    fs::write(
+        &path,
+        "val main = fn(value:str) { println(\"wrong\") }\n\
+         val main = fn(args:list) { println(args[0], args[1]) }\n",
+    )
+    .expect("write list entrypoint source");
+
+    let output = slug()
+        .arg(&path)
+        .arg("--feature.enabled")
+        .arg("first")
+        .output()
+        .expect("run list entrypoint source");
+    fs::remove_file(path).expect("remove list entrypoint source");
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "--feature.enabled first\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn passes_parsed_program_arguments_to_a_map_main() {
+    let path = fixture_path("program-entrypoint-map");
+    fs::write(
+        &path,
+        "val main = fn(args:map) { println(args.options[\"feature.enabled\"], args.positional[0]) }\n",
+    )
+    .expect("write map entrypoint source");
+
+    let output = slug()
+        .arg(&path)
+        .arg("--feature.enabled=true")
+        .arg("first")
+        .output()
+        .expect("run map entrypoint source");
+    fs::remove_file(path).expect("remove map entrypoint source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "true first\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn rejects_multiple_eligible_main_entrypoints() {
+    let path = fixture_path("duplicate-program-entrypoint");
+    fs::write(
+        &path,
+        "val main = fn() { println(\"zero\") }\nval main = fn(args:list) { println(args) }\n",
+    )
+    .expect("write duplicate entrypoint source");
+
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run duplicate entrypoint source");
+    fs::remove_file(path).expect("remove duplicate entrypoint source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr).unwrap().starts_with(
+            "slug: semantic error: program has more than one eligible `main` entrypoint"
+        )
+    );
+}
+
+#[test]
+fn does_not_expose_retired_argument_builtins() {
+    let path = fixture_path("retired-argument-builtins");
+    fs::write(&path, "println(argv())\n").expect("write retired builtin source");
+
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run retired builtin source");
+    fs::remove_file(path).expect("remove retired builtin source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("unknown name `argv`"), "{stderr}");
+}
+
+#[test]
 fn skips_defaulted_and_imported_main_functions() {
     let root = std::env::temp_dir().join(format!("slug-cli-main-selection-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create entrypoint fixture directory");

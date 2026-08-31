@@ -26,8 +26,9 @@ contract is documented separately as `.cslug`.
   lists/maps/indexing, list slices, directional list append/prepend, pipeline calls and matches, positional/named/defaulted/variadic calls, positional call and list-literal spreads (except static overload-set calls),
   declaration and parameter tags with evaluated arguments, declaration-attached
   documentation blocks with retained module metadata (but without metadata
-  introspection), comments, automatic invocation of a local zero-argument
-  `main`, cooperative `spawn` task handles with `slug.channel.await`, explicit
+  introspection), comments, automatic invocation of a local `main()` or typed
+  `main(args:list)` / `main(args:map)` entrypoint, cooperative `spawn` task
+  handles with `slug.channel.await`, explicit
   nurseries, bounded FIFO channels through the `slug.channel` library,
   `select` receive/send/timer/task-await/default cases, and implicitly
   imported `slug.builtin.println`.
@@ -52,8 +53,7 @@ contract is documented separately as `.cslug`.
   canonical input identity into private call bytecode; the VM invokes that
   exact member of the current live binding without runtime type validation.
 - Immutable configuration collection from library and project TOML, `SLUG__`
-  environment variables, and program options; source access through `cfg` is a
-  subsequent milestone.
+  environment variables, and program options; source access through `cfg`.
 - The standard library, full type inference, and the remaining language forms are progressive
   milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no

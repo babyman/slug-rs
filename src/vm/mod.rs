@@ -14,7 +14,7 @@ use crate::source::environment::CallableIdentity;
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, SpanId, Task, Value,
-    bytecode::{Op, SelectCase},
+    bytecode::{EntrypointArguments, Op, SelectCase},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment,
@@ -379,7 +379,7 @@ impl Vm {
         self.run_named_installed_execution(program, "main")
     }
 
-    /// Executes top-level code and then the program module's zero-argument `main`.
+    /// Executes top-level code and then the program module's validated `main`.
     ///
     /// Loaded modules use [`Self::run_module`], which intentionally does not
     /// invoke their `main` binding.
@@ -394,9 +394,18 @@ impl Vm {
         self.install_implicit_builtins(&program)?;
         self.bind_foreign_declarations(&program)?;
         let top_level = self.run_named_installed_execution(&program, "main")?;
-        if !program.has_entrypoint() {
+        let Some(entrypoint_specification) = program.entrypoint() else {
             return Ok(top_level);
-        }
+        };
+        let identity = program
+            .callable_identity(entrypoint_specification.callable_identity)
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "program entrypoint references missing callable identity".into(),
+                    None,
+                )
+            })?;
         let entrypoint = self
             .globals
             .borrow()
@@ -410,9 +419,24 @@ impl Vm {
             })?
             .resolve()
             .map_err(|message| self.error(RuntimeErrorKind::Name, message, None))?;
+        let entrypoint = self.entrypoint_callable(entrypoint, identity)?;
+        let arguments = match entrypoint_specification.arguments {
+            EntrypointArguments::None => Vec::new(),
+            EntrypointArguments::List => vec![Value::List(
+                self.configuration(None)?
+                    .arguments()
+                    .iter()
+                    .map(|argument| Value::string(argument.as_str()))
+                    .collect::<Vec<_>>()
+                    .into(),
+            )],
+            EntrypointArguments::Map => vec![self.configuration(None)?.argument_map()],
+        };
         self.stack.clear();
         self.stack.push(entrypoint);
-        self.call(&program, 0, None, None)?;
+        self.stack.extend(arguments);
+        let count = self.stack.len() - 1;
+        self.call(&program, count, None, None)?;
         self.run_root_execution(&program)
     }
 
@@ -651,12 +675,6 @@ impl Vm {
         self.globals
             .borrow_mut()
             .insert("cfg".into(), Value::Builtin(Builtin::Cfg));
-        self.globals
-            .borrow_mut()
-            .insert("argv".into(), Value::Builtin(Builtin::Argv));
-        self.globals
-            .borrow_mut()
-            .insert("argm".into(), Value::Builtin(Builtin::Argm));
     }
 
     /// Executes a zero-argument entry chunk.
@@ -2439,6 +2457,41 @@ impl Vm {
         }
     }
 
+    fn entrypoint_callable(&self, value: Value, identity: &CallableIdentity) -> VmResult<Value> {
+        match value {
+            Value::Overloads(overloads) => overloads
+                .iter()
+                .find(|candidate| {
+                    Self::callable_signature(candidate)
+                        .and_then(|signature| signature.identity)
+                        .as_ref()
+                        == Some(identity)
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "selected program entrypoint is no longer present in the live `main` binding"
+                            .into(),
+                        None,
+                    )
+                }),
+            value
+                if Self::callable_signature(&value)
+                    .and_then(|signature| signature.identity)
+                    .as_ref()
+                    == Some(identity) =>
+            {
+                Ok(value)
+            }
+            _ => Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "selected program entrypoint is no longer present in the live `main` binding".into(),
+                None,
+            )),
+        }
+    }
+
     fn list_spread_at(&mut self, spreads: &[bool], span: Option<&SourceSpan>) -> VmResult<()> {
         let values = self.pop_values_at(spreads.len(), span)?;
         let mut result = Vec::new();
@@ -2628,35 +2681,6 @@ impl Vm {
                     format!("{}.{}", program.module_name(), key)
                 };
                 Ok(configuration.resolve(&key, &arguments[1]))
-            }
-            Builtin::Argv => {
-                let configuration = self.configuration(span.clone())?;
-                if !arguments.is_empty() {
-                    return Err(self.error(
-                        RuntimeErrorKind::Arity,
-                        format!("`argv` expects no arguments, got {}", arguments.len()),
-                        span,
-                    ));
-                }
-                Ok(Value::List(
-                    configuration
-                        .arguments()
-                        .iter()
-                        .map(|argument| Value::string(argument.as_str()))
-                        .collect::<Vec<_>>()
-                        .into(),
-                ))
-            }
-            Builtin::Argm => {
-                let configuration = self.configuration(span.clone())?;
-                if !arguments.is_empty() {
-                    return Err(self.error(
-                        RuntimeErrorKind::Arity,
-                        format!("`argm` expects no arguments, got {}", arguments.len()),
-                        span,
-                    ));
-                }
-                Ok(configuration.argument_map())
             }
         }
     }

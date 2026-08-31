@@ -85,7 +85,7 @@ fn ignores_missing_or_malformed_optional_toml_and_remains_immutable() {
 }
 
 #[test]
-fn exposes_cfg_argv_and_argm_to_program_and_imported_modules() {
+fn exposes_cfg_to_program_and_imported_modules() {
     let root = root("builtins");
     fs::create_dir_all(&root).expect("create configuration directory");
     fs::write(
@@ -118,11 +118,14 @@ fn exposes_cfg_argv_and_argm_to_program_and_imported_modules() {
     let mut program = compile(
         &main_path.to_string_lossy(),
         "val library = import(\"library\")\n\
-         export val values = [cfg(\"port\", 80), cfg(\"feature.enabled\", false), cfg(\"missing\", [\"fallback\"]), library.port, argv(), argm()]\n",
+         export val values = [cfg(\"port\", 80), cfg(\"feature.enabled\", false), cfg(\"missing\", [\"fallback\"]), library.port]\n",
     )
     .expect("compile configuration program");
     program.set_module_name("app");
     let mut vm = Vm::with_module_loader(loader);
+
+    assert!(vm.global("argv").is_none());
+    assert!(vm.global("argm").is_none());
 
     vm.run_named(&program, "main")
         .expect("execute configuration builtins");
@@ -131,30 +134,13 @@ fn exposes_cfg_argv_and_argm_to_program_and_imported_modules() {
         panic!("configuration values must be exported as a list");
     };
     assert_eq!(
-        &values[..5],
+        &values[..],
         [
             Value::Int(3002),
             Value::Bool(true),
             Value::List(vec![Value::string("fallback")].into()),
             Value::Int(4000),
-            Value::List(
-                vec![
-                    Value::string("--port"),
-                    Value::string("3002"),
-                    Value::string("first"),
-                    Value::string("--tag=alpha"),
-                    Value::string("--tag"),
-                    Value::string("beta"),
-                    Value::string("--"),
-                    Value::string("tail"),
-                ]
-                .into()
-            ),
         ]
     );
-    let argument_map = values[5].to_string();
-    assert!(argument_map.contains("\"app.port\": \"3002\""));
-    assert!(argument_map.contains("\"app.tag\": [\"alpha\", \"beta\"]"));
-    assert!(argument_map.contains("\"positional\": [\"first\", \"tail\"]"));
     fs::remove_dir_all(root).expect("remove configuration directory");
 }

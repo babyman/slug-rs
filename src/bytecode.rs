@@ -430,7 +430,7 @@ pub struct Program {
     bindings: Vec<String>,
     declarations: Vec<ModuleDeclaration>,
     exports: Vec<String>,
-    has_entrypoint: bool,
+    entrypoint: Option<Entrypoint>,
     module_name: String,
     semantic_snapshot: ModuleSnapshot,
     callable_identities: Vec<CallableIdentity>,
@@ -443,6 +443,20 @@ pub struct Program {
     schema_fields: Vec<Vec<SchemaField>>,
     struct_fields: Vec<Vec<String>>,
     match_patterns: Vec<MatchPattern>,
+}
+
+/// Argument value supplied to a validated program entrypoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EntrypointArguments {
+    None,
+    List,
+    Map,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Entrypoint {
+    pub(crate) arguments: EntrypointArguments,
+    pub(crate) callable_identity: usize,
 }
 
 /// Layout measurements for private bytecode metadata.
@@ -816,10 +830,10 @@ impl Program {
         &self.declarations
     }
 
-    /// Whether this program declares a local top-level zero-argument `main`.
+    /// Whether this program declares a validated local top-level `main`.
     #[must_use]
     pub fn has_entrypoint(&self) -> bool {
-        self.has_entrypoint
+        self.entrypoint.is_some()
     }
 
     /// Fully-qualified module name used for module-relative host services.
@@ -840,8 +854,12 @@ impl Program {
         self.exports = exports;
     }
 
-    pub(crate) fn set_has_entrypoint(&mut self, has_entrypoint: bool) {
-        self.has_entrypoint = has_entrypoint;
+    pub(crate) fn entrypoint(&self) -> Option<Entrypoint> {
+        self.entrypoint
+    }
+
+    pub(crate) fn set_entrypoint(&mut self, entrypoint: Option<Entrypoint>) {
+        self.entrypoint = entrypoint;
     }
 
     pub(crate) fn semantic_snapshot(&self) -> &ModuleSnapshot {
@@ -866,6 +884,13 @@ impl Program {
     }
 
     pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {
+        if let Some(entrypoint) = self.entrypoint
+            && self
+                .callable_identity(entrypoint.callable_identity)
+                .is_none()
+        {
+            return Err("program entrypoint references missing callable identity".into());
+        }
         for (chunk_index, chunk) in self.chunks.iter().enumerate() {
             if chunk.locals < chunk.arity {
                 return Err(format!(

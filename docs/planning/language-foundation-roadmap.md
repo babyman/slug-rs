@@ -112,8 +112,9 @@ and the host boundary in
 - [x] Implement callable import conflict and combination rules.
 - [x] Retain declaration, tag, and documentation metadata in the module model
   for later introspection.
-- [x] Invoke the main program module's local zero-argument `main` function
-  after successful top-level evaluation.
+- [x] Invoke the main program module's eligible local `main()`;
+  `main(args:list)`; or `main(args:map)` function after successful top-level
+  evaluation.
 - [x] Add module fixtures for relative resolution, library fallback, caching,
   cycles, live exports, and failure locations.
 - [x] Run `make check`.
@@ -122,8 +123,8 @@ and the host boundary in
 
 - [x] Implement the immutable configuration store and precedence rules from
   [`language/configuration.md`](../language/configuration.md).
-- [x] Implement `cfg`, `argv`, and `argm` with module-relative namespaces and
-  checked conversions.
+- [x] Implement module-relative `cfg` and deliver command-line arguments through
+  typed `main` entrypoints.
 - [x] Add portable fixture metadata for outcome, streams, roots, timeout, and
   optional exact diagnostics.
 - [x] Build a runner that rejects unclassified fixtures and treats every host
