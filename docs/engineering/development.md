@@ -13,6 +13,18 @@ appropriate handoff check.
 `make check` runs Rust formatting validation, Clippy with warnings denied, all
 tests, and documentation checks. CI runs the same target.
 
+## Toolchain policy
+
+[`../../rust-toolchain.toml`](../../rust-toolchain.toml) pins the Rust compiler
+and required `rustfmt` and Clippy components. `Cargo.toml`'s `rust-version`
+matches that pin, and CI installs the same version before it runs `make ci`.
+
+Update the toolchain only in a deliberate maintenance change. Update the pin,
+`rust-version`, and CI configuration together; then run `make check` with the
+candidate toolchain and review any resulting formatter, lint, dependency, or
+lockfile changes as part of that change. Do not make incidental toolchain or
+lockfile updates while implementing unrelated work.
+
 For a source-language change, follow
 `.agents/workflows/language-change.md` before editing. It identifies the
 language records and implementation tests that must remain synchronized.

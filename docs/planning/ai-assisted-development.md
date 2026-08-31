@@ -108,11 +108,11 @@ Rust exports describe one consistent boundary.
 
 ## 4. Make toolchain results reproducible
 
-- [ ] Select and pin a Rust toolchain in `rust-toolchain.toml`.
-- [ ] Set the corresponding minimum supported Rust version in `Cargo.toml`.
-- [ ] Update CI to use that pinned toolchain while retaining `rustfmt` and
+- [x] Select and pin a Rust toolchain in `rust-toolchain.toml`.
+- [x] Set the corresponding minimum supported Rust version in `Cargo.toml`.
+- [x] Update CI to use that pinned toolchain while retaining `rustfmt` and
   Clippy components.
-- [ ] Document the toolchain update policy so dependency and lint changes are
+- [x] Document the toolchain update policy so dependency and lint changes are
   deliberate maintenance work rather than incidental agent output.
 
 Completion evidence: a fresh local checkout and CI use the same Rust version,

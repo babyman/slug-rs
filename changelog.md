@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Pinned Rust 1.96.1 for local and CI validation, including `rustfmt` and
+  Clippy, with a deliberate toolchain-update policy.
+
 - Clarified the public-but-unstable Rust bytecode embedding and testing surface;
   it remains distinct from the future portable `.cslug` format.
 

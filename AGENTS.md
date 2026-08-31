@@ -20,7 +20,8 @@ language change, read the relevant file in `docs/language/` and
 
 ## Commands
 
-Rust is installed through `rustup`; use the repository's `Cargo.lock`.
+Rust is installed through `rustup`; `rust-toolchain.toml` pins version 1.96.1.
+Use the repository's `Cargo.lock`.
 
 ```sh
 make fmt          # Format Rust sources

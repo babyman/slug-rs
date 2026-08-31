@@ -2,6 +2,7 @@
 name = "slug-vm"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.96.1"
 description = "A clean-room Rust virtual machine for the Slug language"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/sluglang/slug"

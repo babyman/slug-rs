@@ -101,6 +101,10 @@ unit and integration tests. Use `make test-vm` or `make test-cli` for the
 focused test loop. Agent-specific development rules and language-change
 workflow guidance are in [AGENTS.md](AGENTS.md).
 
+The repository pins Rust 1.96.1, including `rustfmt` and Clippy, in
+[`rust-toolchain.toml`](rust-toolchain.toml). Rustup selects it automatically
+from the repository directory.
+
 The integration tests construct small programs directly, covering arithmetic,
 branching, closures, globals, native calls, and source-located runtime errors.
 
