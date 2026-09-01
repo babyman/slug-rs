@@ -1259,10 +1259,28 @@ impl Compiler {
                 state.patch(end);
             }
         }
-        self.tail_expression(&mut state, body)?;
+        self.tail_function_body(&mut state, body)?;
         state.emit(Op::Return, &body.span);
         let captures = parent.resolve_child_captures(state.captures());
         Ok((state.finish("<fn>", parameters.len()), captures))
+    }
+
+    fn tail_function_body(&mut self, state: &mut State, body: &Expr) -> Result<(), SourceError> {
+        let ExprKind::Block(values) = &body.kind else {
+            return self.tail_expression(state, body);
+        };
+        for (index, value) in values.iter().enumerate() {
+            if index + 1 == values.len() {
+                self.tail_expression(state, value)?;
+            } else {
+                self.expression(state, value)?;
+                state.emit(Op::Pop, &value.span);
+            }
+        }
+        if values.is_empty() {
+            state.emit(Op::Nil, &body.span);
+        }
+        Ok(())
     }
 }
 

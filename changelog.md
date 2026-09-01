@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Function-root defers now persist across `recur` iterations and run on the
+  function's final exit.
+
 - Static string-key map members now retain their callable and nested-map
   bindings across checked dot-access chains.
 

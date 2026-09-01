@@ -1338,6 +1338,37 @@ fn recur_exits_nested_scopes_before_starting_the_next_iteration() {
 }
 
 #[test]
+fn function_root_defers_persist_across_recur_iterations() {
+    let path = fixture_path("recur-function-defer");
+    fs::write(
+        &path,
+        "var remaining = 5\n\
+         val count = fn(value) {\n\
+           defer { remaining = remaining - 1 }\n\
+           if (remaining != 5) { throw \"defer ran too early\" }\n\
+           if (value > 0) { recur(value - 1) } else { value }\n\
+         }\n\
+         println(count(remaining), remaining)\n",
+    )
+    .expect("write function-root recur defer source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run function-root recur defer source");
+    fs::remove_file(path).expect("remove function-root recur defer source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "0 -1\n"
+    );
+}
+
+#[test]
 fn deferred_actions_run_their_own_pending_cleanup_before_returning() {
     let path = fixture_path("deferred-action-cleanup");
     fs::write(
