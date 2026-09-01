@@ -8,19 +8,20 @@ module define the broader collection API.
 
 ```slug
 val byName = {name: "Slug", status: "ok"}
+val byQuotedName = {"name": "Slug", "status": "ok"}
 val field = "name"
 val byValue = {[field]: "Slug"}
 ```
 
-A bare identifier in a map literal is a string key. Therefore `{name: x}` and
-`{["name"]: x}` use the same key. Bracketing a key evaluates an expression, so
-`{[field]: x}` uses the value of `field` as its key. Map literal entries are
-evaluated in source order.
+A bare identifier or quoted string in a map literal is a string key. Therefore
+`{name: x}`, `{"name": x}`, and `{["name"]: x}` use the same key. Bracketing a
+key evaluates an expression, so `{[field]: x}` uses the value of `field` as its
+key. Map literal entries are evaluated in source order.
 
 A key must be hashable. Numbers, strings, bytes, and booleans are hashable.
 `nil`, lists, maps, functions, and structs are not valid map keys.
 
-Map patterns use the same bare and bracketed key forms. A bracketed
+Map patterns use the same bare, quoted, and bracketed key forms. A bracketed
 map-pattern key is evaluated once before its pattern is tested; an unhashable
 result follows the runtime type-error path.
 

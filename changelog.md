@@ -4,6 +4,8 @@
 
 - Map patterns now accept quoted static string keys, such as `{"status": 200}`.
 
+- Map literals now accept quoted string keys, such as `{"status": "ok"}`.
+
 - String concatenation now accepts a number as its right operand and renders it
   in its display form.
 

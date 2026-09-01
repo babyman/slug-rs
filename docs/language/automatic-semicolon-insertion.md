@@ -38,8 +38,8 @@ and parameter forms use their own comma-delimited grammar. Match cases are
 separated by newlines or semicolons, and a case body may start after a newline.
 
 Braces are structurally disambiguated between blocks and map literals. In an
-expression position, write unambiguous map entries such as `{name: value}` or
-`{[key]: value}`. A standalone brace form is a block. See
+expression position, write unambiguous map entries such as `{name: value}`,
+`{"name": value}`, or `{[key]: value}`. A standalone brace form is a block. See
 [slug.ebnf](slug.ebnf) for the precise productions.
 
 These rules describe current parser behavior. When readability matters,

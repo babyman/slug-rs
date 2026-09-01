@@ -997,7 +997,7 @@ impl Parser {
                 span,
             });
         }
-        let map = (matches!(self.kind(), TokenKind::Name(_))
+        let map = ((matches!(self.kind(), TokenKind::Name(_) | TokenKind::Interpolated(_)))
             && matches!(
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
                 Some(TokenKind::Colon)
@@ -1044,12 +1044,20 @@ impl Parser {
                 key
             } else {
                 let token = self.next();
-                let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at("expected map key", token.span));
+                let kind = match token.kind {
+                    TokenKind::Name(name) => ExprKind::Value(Value::string(name)),
+                    TokenKind::Interpolated(parts) => {
+                        if let [StringPart::Text(value)] = parts.as_slice() {
+                            ExprKind::Value(Value::string(value.clone()))
+                        } else {
+                            ExprKind::Interpolate(parts)
+                        }
+                    }
+                    _ => return Err(SourceError::at("expected map key", token.span)),
                 };
                 Expr {
                     span: token.span,
-                    kind: ExprKind::Value(Value::string(name)),
+                    kind,
                 }
             };
             self.consume(&TokenKind::Colon, "expected :")?;

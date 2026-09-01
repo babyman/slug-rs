@@ -87,13 +87,15 @@ Strings are Slug's only textual value type. The language does not expose a
 separate symbol or atom value; implementations may still intern identifiers
 internally.
 
-Numbers may contain underscore separators. A bare identifier used as a map key
-is a string key, so `{name: "Slug"}` is indexed with `["name"]`. A bracketed
-map key evaluates an expression instead:
+Numbers may contain underscore separators. A bare identifier or quoted string
+used as a map key is a string key, so `{name: "Slug"}` and
+`{"name": "Slug"}` are indexed with `["name"]`. A bracketed map key evaluates
+an expression instead:
 
 ```slug
 val key = "name"
 val byName = {name: "Slug"}
+val byQuotedName = {"name": "Slug"}
 val byValue = {[key]: "Slug"}
 ```
 

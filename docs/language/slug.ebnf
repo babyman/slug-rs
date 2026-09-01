@@ -148,8 +148,8 @@ index_args = expression
 map_literal = "{" , [ map_entries ] , "}" ;
 map_entries = map_entry , { "," , map_entry } , [ "," ] ;
 map_entry = map_key , ":" , expression ;
-(* Bare identifiers denote string keys unless bracketed. *)
-map_key = identifier | "[" , expression , "]" ;
+(* Bare identifiers and quoted strings denote string keys unless bracketed. *)
+map_key = identifier | string | "[" , expression , "]" ;
 
 struct_schema = "struct" , "{" , [ struct_schema_fields ] , "}" ;
 struct_schema_fields = struct_schema_field , { "," , struct_schema_field } , [ "," ] ;

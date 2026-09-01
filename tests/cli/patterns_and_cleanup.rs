@@ -457,6 +457,32 @@ fn matches_quoted_string_map_pattern_keys() {
 }
 
 #[test]
+fn parses_quoted_string_map_literals_in_pipelines() {
+    let path = fixture_path("quoted-map-literal");
+    fs::write(
+        &path,
+        "val f = fn(value) match {\n\
+           {\"k\": \"v\"} => \"map with v\"\n\
+           _ => \"other\"\n\
+         }\n\
+         println({\"k\": \"v\"} /> f)\n",
+    )
+    .expect("write quoted map literal source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run quoted map literal source");
+    fs::remove_file(path).expect("remove quoted map literal source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "map with v\n");
+}
+
+#[test]
 fn computed_map_pattern_keys_support_expressions_and_lexical_bindings() {
     let path = fixture_path("computed-map-patterns");
     fs::write(
