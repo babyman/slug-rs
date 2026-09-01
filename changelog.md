@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Empty byte literals (`0x""`) now produce an empty `bytes` value.
+
 - Incompatible ordering comparisons in match guards now evaluate to `false`,
   allowing matching to continue with the next case.
 

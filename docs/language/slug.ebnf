@@ -234,7 +234,7 @@ decimal = DIGIT , { DIGIT | "_" } ,
           [ ( "e" | "E" ) , [ "+" | "-" ] , DIGIT , { DIGIT } ] ;
 hex = "0" , "x" , [ "_" ] , HEXDIGIT , { HEXDIGIT | "_" } ;
 
-bytes = "0x" , '"' , HEXDIGIT , { HEXDIGIT } , '"' ;
+bytes = "0x" , '"' , [ HEXDIGIT , { HEXDIGIT } ] , '"' ;
 
 string = double_string | raw_string | triple_string | triple_raw_string | interpolated_string ;
 

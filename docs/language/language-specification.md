@@ -78,7 +78,7 @@ Slug has the following literal value forms:
 | Booleans | `true`, `false` |
 | Numbers | `42`, `1_000`, `0x10` |
 | Strings | `"slug"`, `'raw text'` |
-| Bytes | `0x"414243"` |
+| Bytes | `0x"414243"`, `0x""` |
 | Lists | `[1, 2, 3]` |
 | Maps | `{name: "Slug"}` |
 | Functions | `fn(x) { x + 1 }` |
@@ -86,6 +86,9 @@ Slug has the following literal value forms:
 Strings are Slug's only textual value type. The language does not expose a
 separate symbol or atom value; implementations may still intern identifiers
 internally.
+
+Bytes use pairs of hexadecimal digits. `0x""` is the empty bytes value; a
+non-empty bytes literal must contain a whole number of pairs.
 
 Numbers may contain underscore separators. A bare identifier or quoted string
 used as a map key is a string key, so `{name: "Slug"}` and

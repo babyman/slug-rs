@@ -552,9 +552,9 @@ impl Lexer {
                                     }
                                 }
                             }
-                            if digits.is_empty() || !digits.len().is_multiple_of(2) {
+                            if !digits.len().is_multiple_of(2) {
                                 return Err(SourceError::at(
-                                    "byte literal must contain one or more complete hexadecimal byte pairs",
+                                    "byte literal must contain complete hexadecimal byte pairs",
                                     span,
                                 ));
                             }

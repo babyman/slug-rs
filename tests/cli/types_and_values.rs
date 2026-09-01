@@ -612,7 +612,7 @@ fn parses_decimal_hexadecimal_and_byte_literals() {
     let path = fixture_path("numeric-and-byte-literals");
     fs::write(
         &path,
-        "println(1_000, 1.5, 2e3, 1.25e-2, 0x10, 0x_ff, 0x\"414243\")\n",
+        "println(1_000, 1.5, 2e3, 1.25e-2, 0x10, 0x_ff, 0x\"414243\", len(0x\"\"))\n",
     )
     .expect("write numeric and byte literals");
     let output = slug()
@@ -628,7 +628,7 @@ fn parses_decimal_hexadecimal_and_byte_literals() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "1000 1.5 2000 0.0125 16 255 0x\"414243\"\n"
+        "1000 1.5 2000 0.0125 16 255 0x\"414243\" 0\n"
     );
 }
 
@@ -639,12 +639,7 @@ fn rejects_malformed_hexadecimal_and_byte_literals_with_locations() {
         (
             "odd-byte-literal",
             "0x\"f\"\n",
-            "byte literal must contain one or more complete hexadecimal byte pairs",
-        ),
-        (
-            "empty-byte-literal",
-            "0x\"\"\n",
-            "byte literal must contain one or more complete hexadecimal byte pairs",
+            "byte literal must contain complete hexadecimal byte pairs",
         ),
         (
             "invalid-byte-literal",
