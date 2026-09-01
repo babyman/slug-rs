@@ -30,6 +30,11 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
             values.extend(b.iter().cloned());
             Ok(Value::List(Rc::new(values)))
         }
+        (Value::Bytes(a), Value::Bytes(b)) => {
+            let mut values = a.to_vec();
+            values.extend(b.iter().copied());
+            Ok(Value::Bytes(values.into()))
+        }
         (a, b) => {
             let (a, b) = numbers(a, b).map_err(|message| (RuntimeErrorKind::Type, message))?;
             Ok(Value::Float(a + b))

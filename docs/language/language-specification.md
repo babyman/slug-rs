@@ -90,13 +90,15 @@ internally.
 Bytes use pairs of hexadecimal digits. `0x""` is the empty bytes value; a
 non-empty bytes literal must contain a whole number of pairs.
 
-Bytes support integer indexing and list-style slices. Indexing returns a number
-from `0` through `255`; slicing returns bytes.
+Bytes support integer indexing, list-style slices, and concatenation with
+other bytes. Indexing returns a number from `0` through `255`; slicing and
+concatenation return bytes.
 
 ```slug
 val bytes = 0x"020304"
 bytes[0] == 2
 bytes[1:] == 0x"0304"
+0x"0102" + 0x"0304" == 0x"01020304"
 ```
 
 Numbers may contain underscore separators. A bare identifier or quoted string
@@ -168,7 +170,8 @@ Bitwise operators (`&`, `|`, and `^`) accept two integers or byte operands.
 When either operand is bytes, an integer from `0` through `255` becomes a
 one-byte value and the result is bytes. A shorter non-empty bytes operand
 repeats to match the longer operand; an operation with empty bytes returns
-empty bytes. `~` and shifts (`<<`, `>>`) accept integers only. A shift count
+empty bytes. `~` accepts either integers or bytes and complements every byte
+of a bytes operand. Shifts (`<<`, `>>`) accept integers only. A shift count
 must be an integer from `0` through `63`; invalid operand or shift-count
 combinations are checked runtime type errors. Right shifts are arithmetic: they
 preserve the sign of a negative integer.
@@ -179,11 +182,12 @@ preserve the sign of a negative integer.
 255 & 0x"0ff0" == 0x"0ff0"
 ```
 
-`+` concatenates two lists into a new list. It also concatenates a string with
-any value, converting the right operand to its display form. The directional
-list operators also produce new lists: `list :+ value` appends one value, while
-`value +: list` prepends one value. The directional list operand must be a
-list; otherwise evaluation produces a checked runtime type error.
+`+` concatenates two lists or two byte values into a new value of the same
+collection type. It also concatenates a string with any value, converting the
+right operand to its display form. The directional list operators also produce
+new lists: `list :+ value` appends one value, while `value +: list` prepends
+one value. The directional list operand must be a list; otherwise evaluation
+produces a checked runtime type error.
 
 ```slug
 "list of two + " + 1 == "list of two + 1"

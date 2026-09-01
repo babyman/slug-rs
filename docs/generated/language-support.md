@@ -15,7 +15,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | `$identifier` interpolated strings | implemented | `tests/cli.rs` |
 | Boolean and nil literals | implemented | `tests/cli.rs` |
 | Lists and maps | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Arithmetic, string concatenation/repetition, and list concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Arithmetic, string concatenation/repetition, and list/bytes concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Equality and comparisons | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Integer bitwise, shift, and prefix `~` operators | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Directional list append and prepend (`:+`, `+:`) | implemented | `tests/cli.rs` and `tests/vm.rs` |

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `+` now concatenates two bytes values.
+
 - List patterns now match bytes as numeric byte sequences, including byte rest
   captures.
 

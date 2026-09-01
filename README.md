@@ -17,7 +17,8 @@ contract is documented separately as `.cslug`.
 - Checked errors with Slug source spans and call frames instead of host panics.
 - Source execution for a core subset: lexical `val`/`var` bindings, including
   list and map destructuring, assignment, integer, floating-point, hexadecimal,
-  byte, boolean, nil, string, list, and map literals, arithmetic/comparisons/logic, functions and captures, blocks, `if`,
+  byte, boolean, nil, string, list, and map literals, arithmetic/comparisons/logic
+  (including list and bytes concatenation), functions and captures, blocks, `if`,
   literal/list/map and type-constrained `match` (including byte-sequence list
   patterns) with computed map keys and non-binding case alternatives,
   pinned `^name` comparisons, `name @ pattern` bindings, and named or
