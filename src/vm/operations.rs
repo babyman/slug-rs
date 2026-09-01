@@ -442,6 +442,20 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
                 .cloned()
                 .ok_or_else(|| "list index is out of bounds".into())
         }
+        Value::Bytes(values) => {
+            let Value::Int(index) = index else {
+                return Err("bytes index must be an integer".into());
+            };
+            let length =
+                i64::try_from(values.len()).map_err(|_| "bytes are too large".to_owned())?;
+            let index = if *index < 0 { length + *index } else { *index };
+            values
+                .get(usize::try_from(index).map_err(|_| "bytes index is out of bounds")?)
+                .copied()
+                .map(i64::from)
+                .map(Value::Int)
+                .ok_or_else(|| "bytes index is out of bounds".into())
+        }
         Value::Map(entries) => Ok(entries
             .iter()
             .rev()
@@ -470,27 +484,52 @@ pub(super) fn slice_value(
     end: Option<&Value>,
     step: Option<&Value>,
 ) -> Result<Value, String> {
-    let Value::List(values) = collection else {
-        return Err(format!("cannot slice {}", collection.type_name()));
+    let (length, kind) = match &collection {
+        Value::List(values) => (
+            i64::try_from(values.len()).map_err(|_| "list is too large".to_owned())?,
+            "list",
+        ),
+        Value::Bytes(values) => (
+            i64::try_from(values.len()).map_err(|_| "bytes are too large".to_owned())?,
+            "bytes",
+        ),
+        value => return Err(format!("cannot slice {}", value.type_name())),
     };
-    let length = i64::try_from(values.len()).map_err(|_| "list is too large".to_owned())?;
     let start = slice_bound(start, 0, length, "start")?;
     let end = slice_bound(end, length, length, "end")?;
     let step = match step {
         None => 1,
         Some(Value::Int(step)) if *step > 0 => *step,
-        Some(Value::Int(_)) => return Err("list slice step must be positive".into()),
-        Some(_) => return Err("list slice step must be an integer".into()),
+        Some(Value::Int(_)) => return Err(format!("{kind} slice step must be positive")),
+        Some(_) => return Err(format!("{kind} slice step must be an integer")),
     };
-    let mut result = Vec::new();
-    let mut index = start;
-    while index < end {
-        result.push(values[usize::try_from(index).expect("slice bounds are non-negative")].clone());
-        index = index
-            .checked_add(step)
-            .ok_or_else(|| "list slice step is too large".to_owned())?;
+    match collection {
+        Value::List(values) => {
+            let mut result = Vec::new();
+            let mut index = start;
+            while index < end {
+                result.push(
+                    values[usize::try_from(index).expect("slice bounds are non-negative")].clone(),
+                );
+                index = index
+                    .checked_add(step)
+                    .ok_or_else(|| "list slice step is too large".to_owned())?;
+            }
+            Ok(Value::List(Rc::new(result)))
+        }
+        Value::Bytes(values) => {
+            let mut result = Vec::new();
+            let mut index = start;
+            while index < end {
+                result.push(values[usize::try_from(index).expect("slice bounds are non-negative")]);
+                index = index
+                    .checked_add(step)
+                    .ok_or_else(|| "bytes slice step is too large".to_owned())?;
+            }
+            Ok(Value::Bytes(result.into()))
+        }
+        _ => unreachable!("collection kind was checked above"),
     }
-    Ok(Value::List(Rc::new(result)))
 }
 
 fn slice_bound(

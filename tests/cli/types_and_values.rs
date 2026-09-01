@@ -612,7 +612,7 @@ fn parses_decimal_hexadecimal_and_byte_literals() {
     let path = fixture_path("numeric-and-byte-literals");
     fs::write(
         &path,
-        "println(1_000, 1.5, 2e3, 1.25e-2, 0x10, 0x_ff, 0x\"414243\", len(0x\"\"))\n",
+        "val bytes = 0x\"020304\"\nprintln(1_000, 1.5, 2e3, 1.25e-2, 0x10, 0x_ff, 0x\"414243\", len(0x\"\"), bytes[0], bytes[1:])\n",
     )
     .expect("write numeric and byte literals");
     let output = slug()
@@ -628,7 +628,7 @@ fn parses_decimal_hexadecimal_and_byte_literals() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "1000 1.5 2000 0.0125 16 255 0x\"414243\" 0\n"
+        "1000 1.5 2000 0.0125 16 255 0x\"414243\" 0 2 0x\"0304\"\n"
     );
 }
 

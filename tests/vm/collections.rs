@@ -20,6 +20,37 @@ fn constructs_and_indexes_collections() {
 }
 
 #[test]
+fn indexes_and_slices_bytes() {
+    let mut main = Chunk::new("main", 0);
+    let bytes = main.constant(Value::Bytes(vec![2, 3, 4].into()));
+    let index = main.constant(Value::Int(0));
+    main.emit(Op::Constant(bytes))
+        .emit(Op::Constant(index))
+        .emit(Op::GetIndex)
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Int(2)
+    );
+
+    let mut main = Chunk::new("main", 0);
+    let bytes = main.constant(Value::Bytes(vec![2, 3, 4].into()));
+    let start = main.constant(Value::Int(1));
+    main.emit(Op::Constant(bytes))
+        .emit(Op::Constant(start))
+        .emit(Op::GetSlice {
+            has_start: true,
+            has_end: false,
+            has_step: false,
+        })
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Bytes(vec![3, 4].into())
+    );
+}
+
+#[test]
 fn slices_lists_with_omitted_bounds_in_private_bytecode() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));

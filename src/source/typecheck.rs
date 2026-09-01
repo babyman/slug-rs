@@ -1078,6 +1078,10 @@ fn index_result(
             require_operation_operand(&Type::Num, index, strict, span)?;
             Ok(element.as_deref().cloned().unwrap_or(Type::Unknown))
         }
+        Type::Bytes => {
+            require_operation_operand(&Type::Num, index, strict, span)?;
+            Ok(Type::Num)
+        }
         Type::Map(entries) => match entries {
             Some((key, value)) => {
                 require_operation_operand(key, index, strict, span)?;
@@ -1103,6 +1107,7 @@ fn slice_result(
     }
     match collection {
         Type::List(element) => Ok(Type::List(element.clone())),
+        Type::Bytes => Ok(Type::Bytes),
         other => {
             if strict {
                 return Err(SourceError::semantic(

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bytes now support integer indexing and list-style slices.
+
 - Empty byte literals (`0x""`) now produce an empty `bytes` value.
 
 - Incompatible ordering comparisons in match guards now evaluate to `false`,

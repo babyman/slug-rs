@@ -90,6 +90,15 @@ internally.
 Bytes use pairs of hexadecimal digits. `0x""` is the empty bytes value; a
 non-empty bytes literal must contain a whole number of pairs.
 
+Bytes support integer indexing and list-style slices. Indexing returns a number
+from `0` through `255`; slicing returns bytes.
+
+```slug
+val bytes = 0x"020304"
+bytes[0] == 2
+bytes[1:] == 0x"0304"
+```
+
 Numbers may contain underscore separators. A bare identifier or quoted string
 used as a map key is a string key, so `{name: "Slug"}` and
 `{"name": "Slug"}` are indexed with `["name"]`. A bracketed map key evaluates
