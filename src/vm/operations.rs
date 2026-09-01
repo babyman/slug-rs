@@ -113,13 +113,44 @@ pub(super) fn bitwise(
     right: Value,
     operation: fn(i64, i64) -> i64,
 ) -> Result<Value, (RuntimeErrorKind, String)> {
-    let (Value::Int(left), Value::Int(right)) = (left, right) else {
-        return Err((
+    if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+        return Ok(Value::Int(operation(*left, *right)));
+    }
+    let left = bitwise_bytes(left)?;
+    let right = bitwise_bytes(right)?;
+    if left.is_empty() || right.is_empty() {
+        return Ok(Value::Bytes(Vec::new().into()));
+    }
+    let length = left.len().max(right.len());
+    let values = (0..length)
+        .map(|index| {
+            u8::try_from(operation(
+                i64::from(left[index % left.len()]),
+                i64::from(right[index % right.len()]),
+            ))
+            .expect("bitwise byte operation remains in range")
+        })
+        .collect::<Vec<_>>();
+    Ok(Value::Bytes(values.into()))
+}
+
+fn bitwise_bytes(value: Value) -> Result<Vec<u8>, (RuntimeErrorKind, String)> {
+    match value {
+        Value::Bytes(values) => Ok(values.to_vec()),
+        Value::Int(value) => u8::try_from(value).map_or_else(
+            |_| {
+                Err((
+                    RuntimeErrorKind::Type,
+                    "bitwise byte operands must be integers from 0 through 255".into(),
+                ))
+            },
+            |value| Ok(vec![value]),
+        ),
+        _ => Err((
             RuntimeErrorKind::Type,
-            "bitwise operators require integers".into(),
-        ));
-    };
-    Ok(Value::Int(operation(left, right)))
+            "bitwise operators require integers or bytes".into(),
+        )),
+    }
 }
 
 pub(super) fn shift(
@@ -144,10 +175,11 @@ pub(super) fn shift(
 }
 
 pub(super) fn bit_not(value: &Value) -> Result<Value, String> {
-    let Value::Int(value) = value else {
-        return Err("bitwise operators require integers".into());
-    };
-    Ok(Value::Int(!value))
+    match value {
+        Value::Int(value) => Ok(Value::Int(!value)),
+        Value::Bytes(values) => Ok(Value::Bytes(values.iter().map(|byte| !byte).collect())),
+        _ => Err("bitwise operators require integers or bytes".into()),
+    }
 }
 
 pub(super) fn list_append(list: Value, value: Value) -> Result<Value, String> {

@@ -540,7 +540,10 @@ fn rejects_non_reifiable_match_type_constraints() {
 #[test]
 fn evaluates_checked_bitwise_and_shift_operators() {
     let path = fixture_path("bitwise-and-shifts");
-    fs::write(&path, "println(6 & 3, 4 | 1, 6 ^ 3, ~0, 1 << 4, -8 >> 2)\n")
+    fs::write(
+        &path,
+        "println(6 & 3, 4 | 1, 6 ^ 3, ~0, 1 << 4, -8 >> 2, 0x\"ff00\" & 0x\"0ff0\", 0x\"ff\" ^ 0x\"0000\", 255 & 0x\"0ff0\", ~0x\"00ff\")\n",
+    )
         .expect("write bitwise source");
     let output = slug().arg(&path).output().expect("run bitwise source");
     fs::remove_file(&path).expect("remove bitwise source");
@@ -551,7 +554,7 @@ fn evaluates_checked_bitwise_and_shift_operators() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "2 5 5 -1 16 -2\n"
+        "2 5 5 -1 16 -2 0x\"0f00\" 0x\"ffff\" 0x\"0ff0\" 0x\"ff00\"\n"
     );
 
     for source in ["1 << -1\n", "1 << 64\n", "1.5 & 1\n", "~true\n"] {

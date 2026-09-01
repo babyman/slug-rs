@@ -960,10 +960,10 @@ fn binary_result(
             numeric_operands(left, right, strict, span)?;
             Ok(Type::Bool)
         }
-        Binary::BitOr
-        | Binary::BitXor
-        | Binary::BitAnd
-        | Binary::ShiftLeft
+        Binary::BitOr | Binary::BitXor | Binary::BitAnd => {
+            bitwise_result(left, right, strict, span)
+        }
+        Binary::ShiftLeft
         | Binary::ShiftRight
         | Binary::Subtract
         | Binary::Divide
@@ -979,6 +979,22 @@ fn binary_result(
     }
 }
 
+fn bitwise_result(
+    left: &Type,
+    right: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
+        return Ok(Type::Unknown);
+    }
+    match (left, right) {
+        (Type::Num, Type::Num) => Ok(Type::Num),
+        (Type::Bytes, Type::Bytes | Type::Num) | (Type::Num, Type::Bytes) => Ok(Type::Bytes),
+        _ => invalid_operation("bitwise operator", left, right, strict, span),
+    }
+}
+
 fn prefix_result(
     operator: Prefix,
     value: &Type,
@@ -987,10 +1003,30 @@ fn prefix_result(
 ) -> Result<Type, SourceError> {
     match operator {
         Prefix::Not => Ok(Type::Bool),
-        Prefix::Negate | Prefix::BitNot => {
+        Prefix::Negate => {
             require_operation_operand(&Type::Num, value, strict, span)?;
             Ok(Type::Num)
         }
+        Prefix::BitNot => bit_not_result(value, strict, span),
+    }
+}
+
+fn bit_not_result(
+    value: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if is_dynamic_operation_type(value) {
+        return Ok(Type::Unknown);
+    }
+    match value {
+        Type::Num => Ok(Type::Num),
+        Type::Bytes => Ok(Type::Bytes),
+        _ if strict => Err(SourceError::semantic(
+            format!("operator `~` does not accept {value}"),
+            span.clone(),
+        )),
+        _ => Ok(Type::Unknown),
     }
 }
 

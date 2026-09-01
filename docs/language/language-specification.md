@@ -164,10 +164,20 @@ Operator precedence, from lowest to highest, is:
 | pipeline `/>` | left |
 | calls, indexing, dot access, struct initialization and copy | left |
 
-Bitwise operators (`&`, `|`, `^`, and `~`) and shifts (`<<`, `>>`) accept
-integers only. A shift count must be an integer from `0` through `63`; invalid
-operand or shift-count combinations are checked runtime type errors. Right
-shifts are arithmetic: they preserve the sign of a negative integer.
+Bitwise operators (`&`, `|`, and `^`) accept two integers or byte operands.
+When either operand is bytes, an integer from `0` through `255` becomes a
+one-byte value and the result is bytes. A shorter non-empty bytes operand
+repeats to match the longer operand; an operation with empty bytes returns
+empty bytes. `~` and shifts (`<<`, `>>`) accept integers only. A shift count
+must be an integer from `0` through `63`; invalid operand or shift-count
+combinations are checked runtime type errors. Right shifts are arithmetic: they
+preserve the sign of a negative integer.
+
+```slug
+0x"ff00" & 0x"0ff0" == 0x"0f00"
+0x"ff" ^ 0x"0000" == 0x"ffff"
+255 & 0x"0ff0" == 0x"0ff0"
+```
 
 `+` concatenates two lists into a new list. It also concatenates a string with
 any value, converting the right operand to its display form. The directional
@@ -786,6 +796,11 @@ element type, and list combination operations union their element types. The
 `num` annotation is broader than the VM's integer-only bitwise, shift, index,
 and slice-bound operations, so those expressions accept `num` statically and
 retain their checked runtime error for a non-integral value.
+
+The bitwise operators `&`, `|`, and `^` accept two integers or byte operands.
+When either operand is bytes, an integer from `0` through `255` becomes a
+one-byte value and the shorter non-empty byte operand repeats to the longer
+length. Unary `~` complements either an integer or every byte in a bytes value.
 
 With `-type-check`, a direct binding comparison to `nil` refines that binding
 within the relevant control-flow path. `if (value != nil)` excludes `nil` in

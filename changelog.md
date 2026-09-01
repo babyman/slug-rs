@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bytewise `&`, `|`, `^`, and `~` now support bytes operands; binary byte
+  operands repeat when needed and accept one-byte integer operands.
+
 - Bytes now support integer indexing and list-style slices.
 
 - Empty byte literals (`0x""`) now produce an empty `bytes` value.
