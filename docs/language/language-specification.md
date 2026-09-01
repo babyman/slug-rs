@@ -808,6 +808,12 @@ element type, and list combination operations union their element types. The
 and slice-bound operations, so those expressions accept `num` statically and
 retain their checked runtime error for a non-integral value.
 
+For a map literal with a static string key, the checker retains the known
+binding at that key through dot-access chains. This permits a callable or
+nested map stored in a literal map to remain callable or indexable through
+successive `.key` accesses; lookup of an unknown map key still has the generic
+`V|nil` result type.
+
 The bitwise operators `&`, `|`, and `^` accept two integers or byte operands.
 When either operand is bytes, an integer from `0` through `255` becomes a
 one-byte value and the shorter non-empty byte operand repeats to the longer

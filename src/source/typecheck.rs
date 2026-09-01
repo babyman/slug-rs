@@ -1362,12 +1362,46 @@ fn value_binding(
     if let Some(binding) = expression_binding(expression, environment) {
         return Ok(binding);
     }
+    if let ExprKind::Map(entries) = &expression.kind {
+        let mut binding = SemanticBinding::value(value_type.clone().widen_unknown());
+        for (key, value) in entries {
+            if let ExprKind::Value(Value::Str(name)) = &key.kind {
+                binding.members.insert(
+                    name.to_string(),
+                    static_map_member_binding(value, environment, type_parameters, strict)?,
+                );
+            }
+        }
+        return Ok(binding);
+    }
     if let Some(schema) = known_struct_schema(value_type, environment) {
         let mut binding = SemanticBinding::value(value_type.clone().widen_unknown());
         binding.members = schema.members;
         return Ok(binding);
     }
     Ok(SemanticBinding::value(value_type.clone().widen_unknown()))
+}
+
+fn static_map_member_binding(
+    expression: &Expr,
+    environment: &mut Environment,
+    type_parameters: &[String],
+    strict: bool,
+) -> Result<SemanticBinding, SourceError> {
+    if let Some(binding) = expression_binding(expression, environment) {
+        return Ok(binding);
+    }
+    match &expression.kind {
+        ExprKind::Value(value) => Ok(SemanticBinding::value(value_type(value))),
+        ExprKind::Map(_) => value_binding(
+            expression,
+            &Type::Map(None),
+            environment,
+            type_parameters,
+            strict,
+        ),
+        _ => Ok(SemanticBinding::value(Type::Unknown)),
+    }
 }
 
 fn schema_binding(

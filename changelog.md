@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Static string-key map members now retain their callable and nested-map
+  bindings across checked dot-access chains.
+
 - Directional `:+` and `+:` now append and prepend numeric or one-byte bytes
   values to bytes. `+:` is now right-associative.
 

@@ -259,6 +259,32 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
 }
 
 #[test]
+fn type_check_preserves_static_map_members_across_dot_chains() {
+    let path = fixture_path("checked-map-member-chains");
+    fs::write(
+        &path,
+        "val times_two = fn(value) { value * 2 }\n\
+         val m1 = {key: times_two}\n\
+         val m2 = {key: m1}\n\
+         val m3 = {key: m2}\n\
+         println(10 /> m1.key, 10 /> m2.key.key, 10 /> m3.key.key.key)\n",
+    )
+    .expect("write checked map member chain source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run checked map member chain source");
+    fs::remove_file(path).expect("remove checked map member chain source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "20 20 20\n");
+}
+
+#[test]
 fn type_check_allows_strings_to_concatenate_lists_and_maps() {
     let path = fixture_path("string-collection-concatenation");
     fs::write(
