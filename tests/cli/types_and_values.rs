@@ -212,7 +212,8 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
          val appended:list<num> = joined :+ 4\n\
          val prepended:list<num> = 0 +: appended\n\
          val repeated:str = \"go\" * 2\n\
-         println(item, maybe, slice, prepended, repeated)\n",
+         val rendered:str = \"list of two + \" + len(numbers)\n\
+         println(item, maybe, slice, prepended, repeated, rendered)\n",
     )
     .expect("write checked expression source");
     let output = slug()
@@ -228,7 +229,7 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "1 Slug [1] [0, 1, 2, 3, 4] gogo\n"
+        "1 Slug [1] [0, 1, 2, 3, 4] gogo list of two + 2\n"
     );
 
     for (source, expected) in [

@@ -1014,7 +1014,8 @@ fn add_result(
         return Ok(Type::Unknown);
     }
     match (left, right) {
-        (Type::Num, Type::Num) | (Type::Str, Type::Str) => Ok(left.clone()),
+        (Type::Num, Type::Num) => Ok(Type::Num),
+        (Type::Str, Type::Str | Type::Num) => Ok(Type::Str),
         (Type::List(left), Type::List(right)) => Ok(Type::List(match (left, right) {
             (Some(left), Some(right)) => Some(Box::new(Type::union([
                 left.as_ref().clone(),

@@ -25,6 +25,8 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
             .map(Value::Int)
             .ok_or((RuntimeErrorKind::Type, "integer overflow".into())),
         (Value::Str(a), Value::Str(b)) => Ok(Value::string(format!("{a}{b}"))),
+        (Value::Str(a), Value::Int(b)) => Ok(Value::string(format!("{a}{b}"))),
+        (Value::Str(a), Value::Float(b)) => Ok(Value::string(format!("{a}{b}"))),
         (Value::List(a), Value::List(b)) => {
             let mut values = (*a).clone();
             values.extend(b.iter().cloned());

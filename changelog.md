@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- String concatenation now accepts a number as its right operand and renders it
+  in its display form.
+
 - Assignments now evaluate to their assigned value, allowing them to be used as
   final function expressions and within larger expressions.
 
