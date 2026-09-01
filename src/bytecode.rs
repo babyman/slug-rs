@@ -287,6 +287,8 @@ pub enum Op {
     Equal,
     Greater,
     Less,
+    GuardGreater,
+    GuardLess,
     Jump(usize),
     JumpIfFalse(usize),
     JumpIfProvided {
@@ -1374,7 +1376,9 @@ impl Program {
             | Op::ListPrepend
             | Op::Equal
             | Op::Greater
-            | Op::Less => (2, 1),
+            | Op::Less
+            | Op::GuardGreater
+            | Op::GuardLess => (2, 1),
             Op::GetSlice {
                 has_start,
                 has_end,

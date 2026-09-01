@@ -29,6 +29,7 @@ pub(super) struct Compiler {
     function_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
     callable_identities: Vec<CallableIdentity>,
+    guard_comparisons: bool,
 }
 impl Compiler {
     pub(super) fn new(path: &str, expressions: Vec<Expr>, analysis: &SemanticAnalysis) -> Self {
@@ -43,6 +44,7 @@ impl Compiler {
             function_identities: analysis.function_identities.clone(),
             foreign_identities: analysis.foreign_identities.clone(),
             callable_identities: Vec::new(),
+            guard_comparisons: false,
         }
     }
     #[allow(clippy::too_many_lines)]
@@ -586,12 +588,12 @@ impl Compiler {
                     }
                     Binary::GreaterEqual => {
                         self.expression(state, right)?;
-                        state.emit(Op::Less, &expression.span);
+                        state.emit(self.less_op(), &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::LessEqual => {
                         self.expression(state, right)?;
-                        state.emit(Op::Greater, &expression.span);
+                        state.emit(self.greater_op(), &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::Add => {
@@ -648,11 +650,11 @@ impl Compiler {
                     }
                     Binary::Greater => {
                         self.expression(state, right)?;
-                        state.emit(Op::Greater, &expression.span);
+                        state.emit(self.greater_op(), &expression.span);
                     }
                     Binary::Less => {
                         self.expression(state, right)?;
-                        state.emit(Op::Less, &expression.span);
+                        state.emit(self.less_op(), &expression.span);
                     }
                 }
             }
@@ -940,7 +942,7 @@ impl Compiler {
             }
             state.emit(Op::Pop, &case.span);
             let guard_next = if let Some(guard) = &case.guard {
-                self.expression(state, guard)?;
+                self.guard_expression(state, guard)?;
                 Some(state.jump_if_false(&case.span))
             } else {
                 None
@@ -974,6 +976,34 @@ impl Compiler {
         }
         Ok(())
     }
+
+    fn guard_expression(
+        &mut self,
+        state: &mut State,
+        expression: &Expr,
+    ) -> Result<(), SourceError> {
+        let previous = std::mem::replace(&mut self.guard_comparisons, true);
+        let result = self.expression(state, expression);
+        self.guard_comparisons = previous;
+        result
+    }
+
+    fn greater_op(&self) -> Op {
+        if self.guard_comparisons {
+            Op::GuardGreater
+        } else {
+            Op::Greater
+        }
+    }
+
+    fn less_op(&self) -> Op {
+        if self.guard_comparisons {
+            Op::GuardLess
+        } else {
+            Op::Less
+        }
+    }
+
     fn compile_pipeline_call(
         &mut self,
         state: &mut State,

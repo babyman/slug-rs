@@ -442,6 +442,36 @@ fn match_guards_use_case_bindings_and_continue_after_false() {
 }
 
 #[test]
+fn guards_with_incompatible_ordering_operands_continue_matching() {
+    let path = fixture_path("incompatible-guard-ordering");
+    fs::write(
+        &path,
+        "val f = fn(value) match {\n\
+           n if n < 10 => \"small number\"\n\
+           true => \"truthy\"\n\
+           _ => \"something else\"\n\
+         }\n\
+         println(f(true), f(false), f(3))\n",
+    )
+    .expect("write incompatible guard ordering source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible guard ordering source");
+    fs::remove_file(path).expect("remove incompatible guard ordering source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "truthy something else small number\n"
+    );
+}
+
+#[test]
 fn matches_string_keyed_maps_with_nested_patterns_and_extra_entries() {
     let path = fixture_path("map-patterns");
     fs::write(

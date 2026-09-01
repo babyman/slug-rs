@@ -1352,6 +1352,8 @@ impl Vm {
             }
             Op::Greater => self.compare_at(span, Ordering::Greater)?,
             Op::Less => self.compare_at(span, Ordering::Less)?,
+            Op::GuardGreater => self.guard_compare_at(span, Ordering::Greater)?,
+            Op::GuardLess => self.guard_compare_at(span, Ordering::Less)?,
             Op::Jump(target) => self.jump_at(*target, span)?,
             Op::JumpIfFalse(target) => {
                 if !self.peek_at(span)?.is_truthy() {
@@ -3562,6 +3564,20 @@ impl Vm {
             let (left, right) = numbers(left, right)
                 .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?;
             left.partial_cmp(&right)
+                .is_some_and(|ordering| ordering == expected)
+        };
+        self.stack.push(Value::Bool(result));
+        Ok(())
+    }
+
+    fn guard_compare_at(&mut self, span: Option<&SourceSpan>, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair_at(span)?;
+        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+            left.cmp(right) == expected
+        } else {
+            numbers(left, right)
+                .ok()
+                .and_then(|(left, right)| left.partial_cmp(&right))
                 .is_some_and(|ordering| ordering == expected)
         };
         self.stack.push(Value::Bool(result));

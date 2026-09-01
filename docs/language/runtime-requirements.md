@@ -252,6 +252,9 @@ tested before its guard; a failed constraint is a failed case rather than a
 runtime type error. Recursive list and map constraints inspect every element
 or entry.
 
+An ordering comparison in a match guard with incompatible operand types is a
+false guard, not a runtime error, so evaluation proceeds to the next case.
+
 Each struct-schema evaluation creates a distinct schema identity. Field default
 expressions evaluate once, in declaration order, during that schema evaluation.
 Construction evaluates supplied fields in source order, then validates and

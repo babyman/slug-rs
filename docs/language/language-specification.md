@@ -364,6 +364,9 @@ rule and current implementation boundary.
 `if`. Pattern alternatives in one case are allowed only when they do not create
 bindings. If the subject is a map literal, it must be parenthesized to avoid
 being read as the case block: `match ({name: "Slug"}) { {name} => name }`.
+A guard whose ordering comparison receives incompatible operand types evaluates
+to `false`, allowing matching to continue with the next case; ordering
+comparisons outside guards retain their checked runtime-error behavior.
 
 ```slug
 val classify = fn(value) {

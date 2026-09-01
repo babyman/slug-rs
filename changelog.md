@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Incompatible ordering comparisons in match guards now evaluate to `false`,
+  allowing matching to continue with the next case.
+
 - Pinned match cases can now follow a preceding case on the next line without
   being mistaken for a bitwise-XOR expression continuation.
 
