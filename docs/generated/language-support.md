@@ -18,7 +18,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Arithmetic, string concatenation/repetition, and list/bytes concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Equality and comparisons | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Integer bitwise, shift, and prefix `~` operators | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Directional list append and prepend (`:+`, `+:`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Directional list and bytes append/prepend (`:+`, `+:`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Pipeline operator (`/>`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Short-circuit logical-and and logical-or | implemented | `tests/cli.rs` |
 | Functions, blocks, conditionals, and captures | implemented | `tests/cli.rs` and `tests/vm.rs` |

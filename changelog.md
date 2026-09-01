@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Directional `:+` and `+:` now append and prepend numeric or one-byte bytes
+  values to bytes. `+:` is now right-associative.
+
 - `+` now concatenates two bytes values.
 
 - List patterns now match bytes as numeric byte sequences, including byte rest

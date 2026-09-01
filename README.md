@@ -26,7 +26,10 @@ contract is documented separately as `.cslug`.
   function match bodies, `return`,
   `throw`, `defer` including `onsuccess` and `onerror` recovery, contextual
   `stacktrace(error)` rendering during active error handling, tail-position `recur(...)`,
-  lists/maps/indexing, list slices, directional list append/prepend, pipeline calls and matches, positional/named/defaulted/variadic calls, positional call and list-literal spreads (except static overload-set calls),
+  lists/maps/indexing, list and bytes slices, directional list/bytes append and
+  prepend (with right-associative `+:`), pipeline calls and matches,
+  positional/named/defaulted/variadic calls,
+  positional call and list-literal spreads (except static overload-set calls),
   declaration and parameter tags with evaluated arguments, declaration-attached
   documentation blocks with retained module metadata (but without metadata
   introspection), comments, automatic invocation of a local `main()` or typed

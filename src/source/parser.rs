@@ -467,7 +467,11 @@ impl Parser {
                 break;
             }
             let span = self.next().span;
-            let right = self.binary(precedence + 1)?;
+            let right = self.binary(if matches!(operator, Binary::Prepend) {
+                precedence
+            } else {
+                precedence + 1
+            })?;
             left = Expr {
                 span,
                 kind: ExprKind::Binary {

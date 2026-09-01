@@ -188,22 +188,51 @@ pub(super) fn bit_not(value: &Value) -> Result<Value, String> {
 }
 
 pub(super) fn list_append(list: Value, value: Value) -> Result<Value, String> {
-    let Value::List(list) = list else {
-        return Err("left operand of :+ must be a list".into());
-    };
-    let mut values = (*list).clone();
-    values.push(value);
-    Ok(Value::List(Rc::new(values)))
+    match list {
+        Value::List(list) => {
+            let mut values = (*list).clone();
+            values.push(value);
+            Ok(Value::List(Rc::new(values)))
+        }
+        Value::Bytes(bytes) => {
+            let byte = byte_collection_element(&value, ":+")?;
+            let mut values = bytes.to_vec();
+            values.push(byte);
+            Ok(Value::Bytes(values.into()))
+        }
+        _ => Err("left operand of :+ must be a list or bytes".into()),
+    }
 }
 
 pub(super) fn list_prepend(value: Value, list: Value) -> Result<Value, String> {
-    let Value::List(list) = list else {
-        return Err("right operand of +: must be a list".into());
-    };
-    let mut values = Vec::with_capacity(list.len() + 1);
-    values.push(value);
-    values.extend(list.iter().cloned());
-    Ok(Value::List(Rc::new(values)))
+    match list {
+        Value::List(list) => {
+            let mut values = Vec::with_capacity(list.len() + 1);
+            values.push(value);
+            values.extend(list.iter().cloned());
+            Ok(Value::List(Rc::new(values)))
+        }
+        Value::Bytes(bytes) => {
+            let byte = byte_collection_element(&value, "+:")?;
+            let mut values = Vec::with_capacity(bytes.len() + 1);
+            values.push(byte);
+            values.extend(bytes.iter().copied());
+            Ok(Value::Bytes(values.into()))
+        }
+        _ => Err("right operand of +: must be a list or bytes".into()),
+    }
+}
+
+fn byte_collection_element(value: &Value, operator: &str) -> Result<u8, String> {
+    match value {
+        Value::Int(value) => u8::try_from(*value).map_err(|_| {
+            format!("value for {operator} on bytes must be an integer from 0 through 255")
+        }),
+        Value::Bytes(value) if value.len() == 1 => Ok(value[0]),
+        _ => Err(format!(
+            "value for {operator} on bytes must be an integer from 0 through 255 or one byte"
+        )),
+    }
 }
 
 #[allow(clippy::too_many_lines)]

@@ -1088,6 +1088,12 @@ fn list_append_result(
     strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
+    if matches!(list, Type::Bytes) {
+        if !strict || is_dynamic_operation_type(value) || matches!(value, Type::Num | Type::Bytes) {
+            return Ok(Type::Bytes);
+        }
+        return invalid_operation(":+", list, value, strict, span);
+    }
     if is_dynamic_operation_type(list) || is_dynamic_operation_type(value) {
         return Ok(Type::List(None));
     }

@@ -161,7 +161,8 @@ Operator precedence, from lowest to highest, is:
 | `<<` `>>` | left |
 | `+` `-` | left |
 | `*` `/` `%` | left |
-| `:+` `+:` | left |
+| `:+` | left |
+| `+:` | right |
 | prefix `!` `-` `~` | right |
 | pipeline `/>` | left |
 | calls, indexing, dot access, struct initialization and copy | left |
@@ -184,15 +185,20 @@ preserve the sign of a negative integer.
 
 `+` concatenates two lists or two byte values into a new value of the same
 collection type. It also concatenates a string with any value, converting the
-right operand to its display form. The directional list operators also produce
-new lists: `list :+ value` appends one value, while `value +: list` prepends
-one value. The directional list operand must be a list; otherwise evaluation
-produces a checked runtime type error.
+right operand to its display form. The directional collection operators also
+produce new values: `collection :+ value` appends one value, while
+`value +: collection` prepends one value. `+:` is right-associative, so
+`1 +: 2 +: bytes` prepends `1` and then `2` to `bytes`. They accept lists or
+bytes; a bytes element must be an integer from `0` through `255` or a one-byte
+`bytes` value. Other collection operands produce a checked runtime type error.
 
 ```slug
 "list of two + " + 1 == "list of two + 1"
 "items: " + [1, 2] == "items: [1, 2]"
 "data: " + {status: "ok"} == "data: {\"status\": \"ok\"}"
+1 +: 0x"0203" + 0x"04" :+ 5 == 0x"0102030405"
+0x"01" +: 0x"0203" + 0x"04" :+ 0x"05" == 0x"0102030405"
+1 +: 2 +: 3 +: 0x"" == 0x"010203"
 ```
 
 `string * count` repeats a string `count` times. The count must be a

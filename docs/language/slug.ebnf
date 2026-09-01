@@ -55,7 +55,9 @@ bitwise_and = shift , { "&" , shift } ;
 shift = sum , { ( "<<" | ">>" ) , sum } ;
 sum = product , { ( "+" | "-" ) , product } ;
 product = list_concat , { ( "*" | "/" | "%" ) , list_concat } ;
-list_concat = prefix , { ( ":+" | "+:" ) , prefix } ;
+(* `+:` is right-associative; `:+` remains left-associative. *)
+list_concat = list_prepend , { ":+" , list_prepend } ;
+list_prepend = prefix , [ "+:" , list_prepend ] ;
 
 prefix = ( "!" | "-" | "~" ) , prefix
        | call_chain

@@ -578,7 +578,7 @@ fn appends_and_prepends_list_values_with_checked_operands() {
     let path = fixture_path("list-concatenation");
     fs::write(
         &path,
-        "val original = [1, 2]\nval appended = original :+ 3\nval combined = original + [3, 4]\nprintln(original, appended, 0 +: original, combined, len(0x\"0102\" + 0x\"0304\"))\n",
+        "val original = [1, 2]\nval appended = original :+ 3\nval combined = original + [3, 4]\nprintln(original, appended, 0 +: original, combined, len(0x\"0102\" + 0x\"0304\"), 1 +: 0x\"0203\" + 0x\"04\" :+ 5, 0x\"01\" +: 0x\"0203\" + 0x\"04\" :+ 0x\"05\", 1 +: 2 +: 3 +: 0x\"\")\n",
     )
         .expect("write list concatenation source");
     let output = slug()
@@ -594,7 +594,7 @@ fn appends_and_prepends_list_values_with_checked_operands() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "[1, 2] [1, 2, 3] [0, 1, 2] [1, 2, 3, 4] 4\n"
+        "[1, 2] [1, 2, 3] [0, 1, 2] [1, 2, 3, 4] 4 0x\"0102030405\" 0x\"0102030405\" 0x\"010203\"\n"
     );
 
     fs::write(&path, "1 :+ 2\n").expect("write invalid list concatenation source");
