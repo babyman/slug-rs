@@ -874,6 +874,54 @@ fn reports_uncaught_throws_with_their_source_location_and_call_frames() {
 }
 
 #[test]
+fn renders_active_error_stacktraces_with_recursive_causes() {
+    let path = fixture_path("stacktrace-causes");
+    fs::write(
+        &path,
+        "val fail = fn() {\n\
+           defer onerror(err) { println(stacktrace(err)) }\n\
+           defer onerror(err) { throw \"replacement\" }\n\
+           throw \"original\"\n\
+         }\n\
+         fail()\n",
+    )
+    .expect("write stacktrace source");
+    let output = slug().arg(&path).output().expect("run stacktrace source");
+    fs::remove_file(&path).expect("remove stacktrace source");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert!(stdout.starts_with("runtime error: uncaught throw: replacement\n"));
+    assert!(stdout.contains(&format!("  at {}:3:22\n", path.display())));
+    assert!(stdout.contains(&format!("  in <fn #2> at {}:6:1\n", path.display())));
+    assert!(stdout.contains("caused by:\n  runtime error: uncaught throw: original\n"));
+    assert!(stdout.contains(&format!("    at {}:4:1\n", path.display())));
+    assert!(stdout.ends_with("    in main\n"));
+}
+
+#[test]
+fn rejects_stacktrace_calls_outside_active_error_handling() {
+    let path = fixture_path("stacktrace-inactive");
+    fs::write(&path, "stacktrace(\"no error\")\n").expect("write inactive stacktrace source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inactive stacktrace source");
+    fs::remove_file(&path).expect("remove inactive stacktrace source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with(
+                "slug: runtime error: `stacktrace` is only valid while handling an active error\n"
+            )
+    );
+}
+
+#[test]
 fn runs_deferred_actions_in_lifo_order_on_normal_return() {
     let path = fixture_path("defer");
     fs::write(

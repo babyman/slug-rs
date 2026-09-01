@@ -29,6 +29,7 @@ mod operations;
 mod scheduler;
 
 use cleanup::{Cleanup, Deferred};
+use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
 use operations::{
     add, bit_not, bitwise, construct_struct, copy_struct, divide, index_value, is_map_key,
@@ -672,9 +673,9 @@ impl Vm {
     }
 
     fn install_configuration_builtins(&mut self) {
-        self.globals
-            .borrow_mut()
-            .insert("cfg".into(), Value::Builtin(Builtin::Cfg));
+        let mut globals = self.globals.borrow_mut();
+        globals.insert("cfg".into(), Value::Builtin(Builtin::Cfg));
+        globals.insert("stacktrace".into(), Value::Builtin(Builtin::Stacktrace));
     }
 
     /// Executes a zero-argument entry chunk.
@@ -2681,6 +2682,30 @@ impl Vm {
                     format!("{}.{}", program.module_name(), key)
                 };
                 Ok(configuration.resolve(&key, &arguments[1]))
+            }
+            Builtin::Stacktrace => {
+                if arguments.len() != 1 {
+                    return Err(self.error(
+                        RuntimeErrorKind::Arity,
+                        format!("`stacktrace` expects 1 argument, got {}", arguments.len()),
+                        span,
+                    ));
+                }
+                let active = self.active_error().ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::InvalidCall,
+                        "`stacktrace` is only valid while handling an active error".into(),
+                        span.clone(),
+                    )
+                })?;
+                if arguments[0] != Self::error_value(active.clone()) {
+                    return Err(self.error(
+                        RuntimeErrorKind::InvalidCall,
+                        "`stacktrace` expects the active error".into(),
+                        span,
+                    ));
+                }
+                Ok(Value::string(render_stacktrace(&active)))
             }
         }
     }

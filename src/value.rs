@@ -18,6 +18,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Builtin {
     Cfg,
+    Stacktrace,
 }
 
 /// A FIFO channel with bounded buffering and parked task wait queues.

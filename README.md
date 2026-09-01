@@ -22,7 +22,8 @@ contract is documented separately as `.cslug`.
   pinned `^name` comparisons, `name @ pattern` bindings, and named or
   anonymous final rests, struct schemas with optional field annotations, construction and field access,
   function match bodies, `return`,
-  `throw`, `defer` including `onsuccess` and `onerror` recovery, tail-position `recur(...)`,
+  `throw`, `defer` including `onsuccess` and `onerror` recovery, contextual
+  `stacktrace(error)` rendering during active error handling, tail-position `recur(...)`,
   lists/maps/indexing, list slices, directional list append/prepend, pipeline calls and matches, positional/named/defaulted/variadic calls, positional call and list-literal spreads (except static overload-set calls),
   declaration and parameter tags with evaluated arguments, declaration-attached
   documentation blocks with retained module metadata (but without metadata

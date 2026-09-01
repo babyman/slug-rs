@@ -1,4 +1,4 @@
-use std::{fmt, rc::Rc};
+use std::{fmt, fmt::Write as _, rc::Rc};
 
 use crate::{SourceSpan, Value};
 
@@ -58,6 +58,39 @@ impl fmt::Display for RuntimeError {
 }
 
 impl std::error::Error for RuntimeError {}
+
+pub(super) fn render_stacktrace(error: &RuntimeError) -> String {
+    let mut rendered = String::new();
+    render_stacktrace_error(&mut rendered, error, 0);
+    rendered
+}
+
+fn render_stacktrace_error(rendered: &mut String, error: &RuntimeError, indent: usize) {
+    let padding = " ".repeat(indent);
+    let frame_padding = " ".repeat(indent + 2);
+    write!(rendered, "{padding}runtime error: {}", error.message)
+        .expect("writing to a string cannot fail");
+    if let Some(span) = &error.span {
+        write!(
+            rendered,
+            "\n{frame_padding}at {}:{}:{}",
+            span.path, span.line, span.column
+        )
+        .expect("writing to a string cannot fail");
+    }
+    for frame in &error.frames {
+        write!(rendered, "\n{frame_padding}in {}", frame.function)
+            .expect("writing to a string cannot fail");
+        if let Some(span) = &frame.span {
+            write!(rendered, " at {}:{}:{}", span.path, span.line, span.column)
+                .expect("writing to a string cannot fail");
+        }
+    }
+    if let Some(cause) = &error.cause {
+        write!(rendered, "\n\n{padding}caused by:\n").expect("writing to a string cannot fail");
+        render_stacktrace_error(rendered, cause, indent + 2);
+    }
+}
 
 impl Vm {
     #[allow(clippy::needless_pass_by_value)]

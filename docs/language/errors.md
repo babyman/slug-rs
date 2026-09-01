@@ -39,10 +39,13 @@ errors retain the thrown payload and Slug call frames beneath any excerpt.
 Each frame identifies its call-site path, line, and column when available.
 Frames introduced only to execute deferred work are omitted.
 
-`stacktrace(error)` takes exactly one argument and returns a **string**. It
-renders the runtime-error payload, the available source location, and Slug call
-frames when its argument is the active runtime error or the payload bound by an
-`onerror` handler. Passing an unrelated value is itself a runtime error.
+`stacktrace(error)` takes exactly one argument and returns a **string**. It is
+valid only for the active runtime error or the payload currently bound by an
+`onerror` handler; passing an unrelated value is a runtime error. It renders
+the active failure, its available source location, and Slug call frames with
+available call-site coordinates. If a failure replaced another while unwinding,
+the rendering recursively includes the prior failure under `caused by:`.
+`stacktrace` does not read source files or render source excerpts.
 
 Diagnostic text is not a stable contract unless conformance fixture metadata
 marks it exact. See Runtime Requirements, “Error observability”, for the

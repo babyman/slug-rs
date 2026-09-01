@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the contextual `stacktrace(error)` builtin for active error handlers.
+  It renders available locations, call-site coordinates, and recursive causes
+  without requiring source files to be available.
+
 - Source parse and semantic diagnostics now render a contextual source excerpt
   and caret when the referenced source text is available, while retaining the
   location-only fallback for unavailable source.
