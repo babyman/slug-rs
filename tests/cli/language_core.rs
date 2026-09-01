@@ -38,6 +38,33 @@ fn executes_bindings_assignments_comments_and_strings() {
 }
 
 #[test]
+fn assignments_evaluate_to_the_assigned_value() {
+    let path = fixture_path("assignment-value");
+    fs::write(
+        &path,
+        "var makeCounter = fn(start = 0) {\n\
+           var count = start\n\
+           fn() { count = count + 1 }\n\
+         }\n\
+         val c1 = makeCounter()\n\
+         println(c1())\n",
+    )
+    .expect("write assignment-value source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run assignment-value source");
+    fs::remove_file(path).expect("remove assignment-value source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+}
+
+#[test]
 fn parses_raw_triple_quoted_and_extended_escaped_strings() {
     let path = fixture_path("string-forms");
     fs::write(

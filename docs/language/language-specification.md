@@ -111,7 +111,8 @@ assignment = identifier , "=" , assignment | logical_or ;
 
 Bindings are lexical. A name resolves to its nearest enclosing binding. An
 assignment changes an existing `var` binding and is invalid for a `val` binding
-or an unknown name.
+or an unknown name. It evaluates to the value assigned, so an assignment may be
+the final expression of a function body or appear inside another expression.
 
 At module top level, `{*}` may be used as a declaration pattern. It requires a
 map with string keys and creates one top-level binding per entry. This is the
@@ -120,6 +121,8 @@ module-import selection form: `val {*} = import("slug.std")`.
 ```slug
 var count = 0
 count = count + 1
+
+val next = (count = count + 1)
 
 val label = "requests"
 ```

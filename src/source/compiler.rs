@@ -378,6 +378,8 @@ impl Compiler {
                     ));
                 }
                 self.expression(state, value)?;
+                // Stores consume their operand, while assignment expressions evaluate to it.
+                state.emit(Op::Duplicate, &expression.span);
                 match binding {
                     Binding::Global { .. } => {
                         state.emit(Op::SetGlobal(name.clone()), &expression.span);
@@ -390,7 +392,6 @@ impl Compiler {
                     }
                     Binding::Outer { .. } => unreachable!("outer bindings are captured lazily"),
                 }
-                state.emit(Op::Nil, &expression.span);
             }
             ExprKind::Return { value } => {
                 if !state.allows_return() {

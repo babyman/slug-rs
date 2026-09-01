@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Assignments now evaluate to their assigned value, allowing them to be used as
+  final function expressions and within larger expressions.
+
 - Added the contextual `stacktrace(error)` builtin for active error handlers.
   It renders available locations, call-site coordinates, and recursive causes
   without requiring source files to be available.
