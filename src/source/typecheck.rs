@@ -1573,16 +1573,19 @@ fn bind_case_pattern(pattern: &Pattern, value_type: &Type, environment: &mut Env
         Pattern::List { items, rest } => {
             let element = match value_type {
                 Type::List(Some(element)) => element.as_ref(),
+                Type::Bytes => &Type::Num,
                 _ => &Type::Unknown,
             };
             for item in items {
                 bind_case_pattern(item, element, environment);
             }
             if let Some(super::ast::RestPattern::Binding(name)) = rest {
-                environment.declare(
-                    name.clone(),
-                    SemanticBinding::value(Type::List(Some(Box::new(element.clone())))),
-                );
+                let rest_type = if matches!(value_type, Type::Bytes) {
+                    Type::Bytes
+                } else {
+                    Type::List(Some(Box::new(element.clone())))
+                };
+                environment.declare(name.clone(), SemanticBinding::value(rest_type));
             }
         }
         Pattern::Map { entries, rest, .. } => {

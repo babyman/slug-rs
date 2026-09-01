@@ -34,7 +34,8 @@ The target language pattern forms are:
 - an identifier to bind the matched value;
 - `^name` to compare with an existing enclosing binding;
 - `name @ pattern` to bind a value as well as require a nested pattern;
-- list patterns, with a final spread pattern such as `[head, ...tail]`;
+- list patterns, which also match bytes as a sequence of numeric bytes, with a
+  final spread pattern such as `[head, ...tail]`;
 - map patterns, with `{}` matching only an empty map and a final spread entry
   such as `{name, ...rest}`;
 - a top-level declaration map selector, `{*}`, which binds every string-keyed
@@ -73,6 +74,10 @@ match user {
 A list or map spread is final. An unnamed `...` discards the remainder and a
 named form binds it. Comma-separated alternatives in one case are permitted
 only when none of the alternatives introduces a binding.
+
+List patterns also apply to bytes. Each matched item is a `num` from `0`
+through `255`, and a named remainder binds a `bytes` value. Thus `[]` matches
+only empty bytes, while `[...]` matches every non-empty byte value.
 
 `{*}` is a declaration-only form and is valid only at module top level. Its
 right-hand side must be a map whose keys are strings. Each entry defines a

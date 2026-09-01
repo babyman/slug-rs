@@ -244,27 +244,45 @@ pub(super) fn matches_pattern(
             }
             Ok(false)
         }
-        MatchPattern::List { items, rest } => {
-            let Value::List(values) = value else {
-                return Ok(false);
-            };
-            if values.len() < items.len()
-                || (*rest == MatchRest::None && values.len() != items.len())
-            {
-                return Ok(false);
-            }
-            let binding_start = bindings.len();
-            for (item, value) in items.iter().zip(values.iter()) {
-                if !matches_pattern(item, value, operands, bindings)? {
-                    bindings.truncate(binding_start);
+        MatchPattern::List { items, rest } => match value {
+            Value::List(values) => {
+                if values.len() < items.len()
+                    || (*rest == MatchRest::None && values.len() != items.len())
+                {
                     return Ok(false);
                 }
+                let binding_start = bindings.len();
+                for (item, value) in items.iter().zip(values.iter()) {
+                    if !matches_pattern(item, value, operands, bindings)? {
+                        bindings.truncate(binding_start);
+                        return Ok(false);
+                    }
+                }
+                if *rest == MatchRest::Binding {
+                    bindings.push(Value::List(Rc::new(values[items.len()..].to_vec())));
+                }
+                Ok(true)
             }
-            if *rest == MatchRest::Binding {
-                bindings.push(Value::List(Rc::new(values[items.len()..].to_vec())));
+            Value::Bytes(values) => {
+                if values.len() < items.len()
+                    || (*rest == MatchRest::None && values.len() != items.len())
+                {
+                    return Ok(false);
+                }
+                let binding_start = bindings.len();
+                for (item, byte) in items.iter().zip(values.iter()) {
+                    if !matches_pattern(item, &Value::Int(i64::from(*byte)), operands, bindings)? {
+                        bindings.truncate(binding_start);
+                        return Ok(false);
+                    }
+                }
+                if *rest == MatchRest::Binding {
+                    bindings.push(Value::Bytes(values[items.len()..].to_vec().into()));
+                }
+                Ok(true)
             }
-            Ok(true)
-        }
+            _ => Ok(false),
+        },
         MatchPattern::Map {
             entries: patterns,
             rest,

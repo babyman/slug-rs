@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- List patterns now match bytes as numeric byte sequences, including byte rest
+  captures.
+
 - Bytewise `&`, `|`, `^`, and `~` now support bytes operands; binary byte
   operands repeat when needed and accept one-byte integer operands.
 

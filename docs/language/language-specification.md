@@ -401,7 +401,8 @@ val classify = fn(value) {
 ```
 
 Patterns include literals, `_` as a wildcard, identifier bindings, pinned
-identifiers (`^name`), binding patterns (`name @ pattern`), list patterns, and
+identifiers (`^name`), binding patterns (`name @ pattern`), list patterns
+(which also match bytes as numeric byte sequences), and
 map patterns. List and map patterns may have a final spread pattern such as
 `...rest`. `{}` matches only an empty map. Exact non-empty map patterns use
 `{|` and `|}` and do not permit a spread entry. A bare identifier or quoted

@@ -93,7 +93,21 @@ fn matches_literals_and_lists_with_case_local_bindings() {
              [head, ...tail] => recur(tail, total + head)\n\
            }\n\
          }\n\
-         println(describe(0), describe([4, 5]), describe(true), sum([1, 2, 3], 0), match 1 { 0 => \"no\" })\n",
+         val bytes = fn(value) {\n\
+           match value {\n\
+             [] => \"empty\"\n\
+             [head, ...tail] => head + tail[0]\n\
+             _ => \"other\"\n\
+           }\n\
+         }\n\
+         val has_bytes = fn(value) {\n\
+           match value {\n\
+             [] => false\n\
+             [...] => true\n\
+             _ => false\n\
+           }\n\
+         }\n\
+         println(describe(0), describe([4, 5]), describe(true), sum([1, 2, 3], 0), bytes(0x\"\"), bytes(0x\"0102\"), has_bytes(0x\"0102\"), match 1 { 0 => \"no\" })\n",
     )
     .expect("write match source");
     let output = slug().arg(&path).output().expect("run match source");
@@ -102,7 +116,7 @@ fn matches_literals_and_lists_with_case_local_bindings() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "zero 9 other 6 nil\n"
+        "zero 9 other 6 empty 3 true nil\n"
     );
     assert!(output.stderr.is_empty());
 }
