@@ -43,19 +43,21 @@ do not allow a spread entry; and
 - a type constraint attached to a complete match-case pattern, such as
   `user @ {name}: struct<User>`.
 
-A map entry without `:` uses the key name and binds it to a same-named
+A map entry without `:` uses a bare key name and binds it to a same-named
 identifier. For example, `{name}` requires the `"name"` key and binds its value
-to `name`. A bracketed map-pattern key evaluates its expression once before
-its containing pattern is tested. For a case with alternatives, all computed
-key expressions are evaluated in pattern traversal order before any alternative
-is tested. Each expression uses the enclosing lexical scope, before any
-bindings from that pattern exist, and its result must be a valid map key.
-Unlike a bare identifier key, a bracketed key must be followed by `:` and an
-explicit value pattern.
+to `name`. A quoted static string is also a string key, so `{"status": 200}`
+matches that exact key-value pair. A bracketed map-pattern key evaluates its
+expression once before its containing pattern is tested. For a case with
+alternatives, all computed key expressions are evaluated in pattern traversal
+order before any alternative is tested. Each expression uses the enclosing
+lexical scope, before any bindings from that pattern exist, and its result must
+be a valid map key. Unlike a bare identifier key, quoted and bracketed keys
+must be followed by `:` and an explicit value pattern.
 
 ```slug
 match user {
   {name, age: years, ...rest} => name
+  {"status": 200} => "ready"
   {[field]: value} => value
   {|name: "Slug"|} => "exact"
   _ => "other"

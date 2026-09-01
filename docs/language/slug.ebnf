@@ -201,10 +201,12 @@ map_pattern = "{" , [ map_pattern_body ] , "}"
    ("{| ... |}") disallow both it and spread entries. *)
 map_pattern_body = "*" | map_pattern_entry , { "," , map_pattern_entry } , [ "," ] ;
 map_pattern_entry = spread_pattern
-                  | identifier , [ ":" , match_pattern ]
+                  | ( identifier | string ) , ":" , match_pattern
+                  | identifier
                   | "[" , expression , "]" , ":" , match_pattern
                   ;
-(* Bare identifier pattern keys denote strings; computed keys require a value pattern. *)
+(* Bare identifiers and static string keys denote strings; quoted and computed
+   keys require a value pattern. *)
 
 block = "{" , { statement_sep } , { statement , { statement_sep } } , "}" ;
 (* In expression position, braces are classified structurally: map-entry shapes

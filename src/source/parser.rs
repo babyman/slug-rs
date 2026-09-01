@@ -1459,10 +1459,19 @@ impl Parser {
                     MapPatternKey::Computed(key)
                 } else {
                     let token = self.next();
-                    let TokenKind::Name(name) = token.kind else {
-                        return Err(SourceError::at("expected map pattern key", token.span));
-                    };
-                    MapPatternKey::String(name)
+                    match token.kind {
+                        TokenKind::Name(name) => MapPatternKey::String(name),
+                        TokenKind::Interpolated(parts) => {
+                            let [StringPart::Text(value)] = parts.as_slice() else {
+                                return Err(SourceError::at(
+                                    "interpolated strings are not map pattern keys",
+                                    token.span,
+                                ));
+                            };
+                            MapPatternKey::String(value.clone())
+                        }
+                        _ => return Err(SourceError::at("expected map pattern key", token.span)),
+                    }
                 };
                 if let MapPatternKey::String(name) = &key
                     && entries.iter().any(|(existing, _)| {

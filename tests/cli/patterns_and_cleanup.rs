@@ -428,6 +428,35 @@ fn matches_string_keyed_maps_with_nested_patterns_and_extra_entries() {
 }
 
 #[test]
+fn matches_quoted_string_map_pattern_keys() {
+    let path = fixture_path("quoted-map-pattern-key");
+    fs::write(
+        &path,
+        "val describe = fn(value) match {\n\
+           {\"k\": 1} => \"map with k == 1\"\n\
+           _ => \"other\"\n\
+         }\n\
+         println(describe({k: 1}), describe({k: 2}))\n",
+    )
+    .expect("write quoted map pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run quoted map pattern source");
+    fs::remove_file(path).expect("remove quoted map pattern source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "map with k == 1 other\n"
+    );
+}
+
+#[test]
 fn computed_map_pattern_keys_support_expressions_and_lexical_bindings() {
     let path = fixture_path("computed-map-patterns");
     fs::write(
