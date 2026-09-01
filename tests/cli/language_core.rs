@@ -319,6 +319,33 @@ fn combines_distinct_local_function_declarations_into_overloads() {
 }
 
 #[test]
+fn prefers_non_variadic_overloads_when_the_variadic_rest_is_empty() {
+    let path = fixture_path("empty-variadic-overload");
+    fs::write(
+        &path,
+        "val f = fn(a, b = 2) { \"fixed\" }\n\
+         val f = fn(a, b = 2, ...rest) { \"variadic\" }\n\
+         println(f(1), f(1, 3), f(1, 3, 4))\n",
+    )
+    .expect("write empty variadic overload source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run empty variadic overload source");
+    fs::remove_file(path).expect("remove empty variadic overload source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "fixed fixed variadic\n"
+    );
+}
+
+#[test]
 fn rejects_duplicate_local_callable_signatures() {
     let path = fixture_path("duplicate-local-overload");
     fs::write(

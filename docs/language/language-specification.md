@@ -741,7 +741,10 @@ When applicable candidates have equivalent instantiated parameter types, the
 candidate with lower generic arity is more specific. A non-generic concrete
 overload therefore takes priority over a generic fallback that inference made
 equivalent for this call. Candidates with equal generic arity remain tied;
-declaration or import order does not resolve the ambiguity.
+declaration or import order does not resolve the ambiguity. As a final
+tie-breaker, a non-variadic candidate takes priority over a variadic candidate
+whose rest parameter would be empty; no ranking is based on the number of
+omitted defaults.
 
 A `foreign` declaration names a host-supplied callable in the current module.
 Before that module initializes, the runtime resolves each declaration against

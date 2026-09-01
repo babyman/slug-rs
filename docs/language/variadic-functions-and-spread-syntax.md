@@ -25,6 +25,10 @@ Named arguments use `=` and may set the variadic parameter only to a list.
 Unknown, duplicate, and missing required arguments are language errors. Default
 expressions provide values for omitted non-variadic parameters.
 
+For an overloaded call that is otherwise tied, a non-variadic candidate wins
+over a variadic candidate whose rest parameter would be empty. Declaration
+order and the number of omitted defaults do not resolve overload ties.
+
 The same `...` token also has distinct list-literal and match-pattern meanings:
 `[...values]` spreads a list into a list literal, while `[head, ...tail]` is a
 match pattern. Context determines which form applies.

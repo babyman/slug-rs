@@ -1831,6 +1831,8 @@ fn check_argument(
 struct InstantiatedCandidate {
     bound_types: Vec<Type>,
     generic_arity: usize,
+    non_variadic: bool,
+    uses_empty_variadic: bool,
     result: Type,
     identity: super::environment::CallableIdentity,
 }
@@ -1878,7 +1880,7 @@ fn instantiate_candidate(
     let Some(bound) = bind_arguments(&signature.parameters, arguments, actuals) else {
         return Ok(None);
     };
-    for (parameter, actual) in &bound {
+    for (parameter, actual) in &bound.values {
         let actual = (*actual).clone().widen_unknown();
         if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
             if report_mismatch {
@@ -1888,27 +1890,43 @@ fn instantiate_candidate(
         }
     }
     let bound_types = bound
+        .values
         .iter()
         .map(|(parameter, _)| substitute(&parameter.value_type, &substitutions).widen_unknown())
         .collect();
     Ok(Some(InstantiatedCandidate {
         bound_types,
         generic_arity: signature.generic_arity,
+        non_variadic: !signature
+            .parameters
+            .last()
+            .is_some_and(|parameter| parameter.variadic),
+        uses_empty_variadic: bound.uses_empty_variadic,
         result: substitute(&signature.result, &substitutions).widen_unknown(),
         identity: signature.identity(),
     }))
+}
+
+struct BoundArguments<'a> {
+    values: Vec<(&'a CallableParameter, &'a Type)>,
+    uses_empty_variadic: bool,
 }
 
 fn bind_arguments<'a>(
     parameters: &'a [CallableParameter],
     arguments: &[ArgumentShape<'_>],
     actuals: &'a [Type],
-) -> Option<Vec<(&'a CallableParameter, &'a Type)>> {
+) -> Option<BoundArguments<'a>> {
     if arguments
         .iter()
         .any(|argument| matches!(argument, ArgumentShape::Spread))
     {
-        return Some(Vec::new());
+        return Some(BoundArguments {
+            values: Vec::new(),
+            uses_empty_variadic: parameters
+                .last()
+                .is_some_and(|parameter| parameter.variadic),
+        });
     }
     let variadic = parameters
         .last()
@@ -1917,6 +1935,7 @@ fn bind_arguments<'a>(
     let mut assigned = vec![false; parameters.len()];
     let mut bound = Vec::new();
     let mut positional = 0usize;
+    let mut variadic_supplied = false;
     for (argument, actual) in arguments.iter().zip(actuals) {
         let parameter = match argument {
             ArgumentShape::Positional => {
@@ -1930,6 +1949,8 @@ fn bind_arguments<'a>(
                 positional += 1;
                 if index < fixed {
                     assigned[index] = true;
+                } else {
+                    variadic_supplied = true;
                 }
                 &parameters[index]
             }
@@ -1941,6 +1962,9 @@ fn bind_arguments<'a>(
                     return None;
                 }
                 assigned[index] = true;
+                if parameters[index].variadic {
+                    variadic_supplied = true;
+                }
                 &parameters[index]
             }
             ArgumentShape::Spread => unreachable!("spread calls were handled above"),
@@ -1954,7 +1978,10 @@ fn bind_arguments<'a>(
     {
         return None;
     }
-    Some(bound)
+    Some(BoundArguments {
+        values: bound,
+        uses_empty_variadic: variadic && !variadic_supplied,
+    })
 }
 
 fn more_specific(left: &InstantiatedCandidate, right: &InstantiatedCandidate) -> bool {
@@ -1967,11 +1994,13 @@ fn more_specific(left: &InstantiatedCandidate, right: &InstantiatedCandidate) ->
     {
         return false;
     }
-    left.bound_types
+    let type_or_generic_more_specific = left
+        .bound_types
         .iter()
         .zip(&right.bound_types)
         .any(|(left, right)| !right.is_assignable_to(left))
-        || left.generic_arity < right.generic_arity
+        || left.generic_arity < right.generic_arity;
+    type_or_generic_more_specific || (left.non_variadic && right.uses_empty_variadic)
 }
 
 fn infer(
@@ -2366,6 +2395,8 @@ mod tests {
         InstantiatedCandidate {
             bound_types,
             generic_arity: 0,
+            non_variadic: true,
+            uses_empty_variadic: false,
             result: Type::Unknown,
             identity: CallableSignature {
                 generic_arity: 0,

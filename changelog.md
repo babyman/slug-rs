@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Overload resolution now prefers a non-variadic candidate over an otherwise
+  tied variadic candidate with an empty rest parameter.
+
 - Function-root defers now persist across `recur` iterations and run on the
   function's final exit.
 
