@@ -376,12 +376,12 @@ val classify = fn(value) {
 Patterns include literals, `_` as a wildcard, identifier bindings, pinned
 identifiers (`^name`), binding patterns (`name @ pattern`), list patterns, and
 map patterns. List and map patterns may have a final spread pattern such as
-`...rest`. Exact map patterns use `{|` and `|}` and do not permit a spread
-entry. A bare identifier or quoted static string denotes a string map key;
-only a bare identifier may omit its value pattern. A bracketed map-pattern key
-evaluates its expression once before its pattern is tested, in the enclosing
-lexical scope before the pattern's bindings exist. The resulting value must be
-a valid map key.
+`...rest`. `{}` matches only an empty map. Exact non-empty map patterns use
+`{|` and `|}` and do not permit a spread entry. A bare identifier or quoted
+static string denotes a string map key; only a bare identifier may omit its
+value pattern. A bracketed map-pattern key evaluates its expression once before
+its pattern is tested, in the enclosing lexical scope before the pattern's
+bindings exist. The resulting value must be a valid map key.
 
 A whole case pattern may have a postfix type constraint, written
 `pattern: Type`. It is part of matching rather than a declaration annotation:
@@ -392,6 +392,7 @@ patterns, so map entries retain their ordinary `key: pattern` syntax.
 
 ```slug
 match value {
+  {} => "empty map"
   user @ {age: 43, name}: struct<User> => name
   {"status": 200} => "ready"
   {|k1, k2|}: map<str, str> => "two strings"

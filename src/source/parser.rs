@@ -1515,6 +1515,9 @@ impl Parser {
         }
         self.consume(&closing, if exact { "expected |}" } else { "expected }" })?;
         self.leave_nesting();
+        // `{}` is the empty-map pattern; non-empty ordinary map patterns
+        // remain partial unless written with the explicit exact delimiters.
+        let exact = exact || entries.is_empty() && rest.is_none();
         Ok(Pattern::Map {
             entries,
             rest,

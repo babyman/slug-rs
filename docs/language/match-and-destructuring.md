@@ -35,7 +35,8 @@ The target language pattern forms are:
 - `^name` to compare with an existing enclosing binding;
 - `name @ pattern` to bind a value as well as require a nested pattern;
 - list patterns, with a final spread pattern such as `[head, ...tail]`;
-- map patterns, with a final spread entry such as `{name, ...rest}`;
+- map patterns, with `{}` matching only an empty map and a final spread entry
+  such as `{name, ...rest}`;
 - a top-level declaration map selector, `{*}`, which binds every string-keyed
   map entry into the module scope;
 - exact map patterns, delimited by `{|` and `|}`, which reject extra keys and
@@ -54,8 +55,13 @@ lexical scope, before any bindings from that pattern exist, and its result must
 be a valid map key. Unlike a bare identifier key, quoted and bracketed keys
 must be followed by `:` and an explicit value pattern.
 
+An empty map pattern, `{}`, matches only an empty map. Non-empty ordinary map
+patterns permit additional keys; use `{| ... |}` to require an exact non-empty
+map shape.
+
 ```slug
 match user {
+  {} => "empty"
   {name, age: years, ...rest} => name
   {"status": 200} => "ready"
   {[field]: value} => value

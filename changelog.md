@@ -6,6 +6,8 @@
 
 - Map literals now accept quoted string keys, such as `{"status": "ok"}`.
 
+- Empty map patterns (`{}`) now match only empty maps rather than every map.
+
 - String concatenation now accepts a number as its right operand and renders it
   in its display form.
 

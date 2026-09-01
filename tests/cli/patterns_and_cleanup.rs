@@ -483,6 +483,38 @@ fn parses_quoted_string_map_literals_in_pipelines() {
 }
 
 #[test]
+fn empty_map_patterns_do_not_match_non_empty_maps() {
+    let path = fixture_path("empty-map-pattern");
+    fs::write(
+        &path,
+        "var f = fn(x) {\n\
+           match x {\n\
+             {} => \"empty map\"\n\
+             {\"k\": k} => \"map with \" + k\n\
+             {...} => \"map with data\"\n\
+           }\n\
+         }\n\
+         println({} /> f, {\"k\": \"v\"} /> f)\n",
+    )
+    .expect("write empty map pattern source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run empty map pattern source");
+    fs::remove_file(path).expect("remove empty map pattern source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "empty map map with v\n"
+    );
+}
+
+#[test]
 fn computed_map_pattern_keys_support_expressions_and_lexical_bindings() {
     let path = fixture_path("computed-map-patterns");
     fs::write(
