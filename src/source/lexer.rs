@@ -220,12 +220,43 @@ impl Lexer {
         while matches!(self.input.get(index), Some(' ' | '\t' | '\r')) {
             index += 1;
         }
+        if self.pinned_match_case_starts_at(index) {
+            return false;
+        }
         !matches!(
             (self.input.get(index), self.input.get(index + 1)),
             (Some('/'), Some('/' | '*'))
         ) && matches!(
             self.input.get(index),
             Some('+' | '-' | '*' | '/' | '%' | ':' | '<' | '>' | '=' | '!' | '&' | '|' | '^' | '.',)
+        )
+    }
+
+    fn pinned_match_case_starts_at(&self, mut index: usize) -> bool {
+        if self.input.get(index) != Some(&'^') {
+            return false;
+        }
+        index += 1;
+        if !self
+            .input
+            .get(index)
+            .is_some_and(|value| *value == '_' || value.is_alphabetic())
+        {
+            return false;
+        }
+        while self
+            .input
+            .get(index)
+            .is_some_and(|value| *value == '_' || value.is_alphanumeric())
+        {
+            index += 1;
+        }
+        while matches!(self.input.get(index), Some(' ' | '\t' | '\r')) {
+            index += 1;
+        }
+        matches!(
+            (self.input.get(index), self.input.get(index + 1)),
+            (Some('='), Some('>'))
         )
     }
     fn push(tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {

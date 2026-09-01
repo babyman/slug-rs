@@ -36,6 +36,8 @@ items[0]
 Newlines inside parentheses and brackets are whitespace. Map, struct, list,
 and parameter forms use their own comma-delimited grammar. Match cases are
 separated by newlines or semicolons, and a case body may start after a newline.
+A newline before a pinned match case (`^name => ...`) separates cases even
+though `^` is otherwise an infix continuation token.
 
 Braces are structurally disambiguated between blocks and map literals. In an
 expression position, write unambiguous map entries such as `{name: value}`,

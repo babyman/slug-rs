@@ -259,6 +259,32 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
 }
 
 #[test]
+fn type_check_allows_strings_to_concatenate_lists_and_maps() {
+    let path = fixture_path("string-collection-concatenation");
+    fs::write(
+        &path,
+        "val listText:str = \"items: \" + [1, 2]\nval mapText:str = \"data: \" + {status: \"ok\"}\nprintln(listText, mapText)\n",
+    )
+    .expect("write string collection concatenation source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run string collection concatenation source");
+    fs::remove_file(path).expect("remove string collection concatenation source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "items: [1, 2] data: {\"status\": \"ok\"}\n"
+    );
+}
+
+#[test]
 fn type_check_narrows_nilable_bindings_through_conditions() {
     let path = fixture_path("nil-control-flow-narrowing");
     fs::write(

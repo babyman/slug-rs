@@ -158,13 +158,15 @@ operand or shift-count combinations are checked runtime type errors. Right
 shifts are arithmetic: they preserve the sign of a negative integer.
 
 `+` concatenates two lists into a new list. It also concatenates a string with
-a string or number, converting the number to its display form. The directional
+any value, converting the right operand to its display form. The directional
 list operators also produce new lists: `list :+ value` appends one value, while
 `value +: list` prepends one value. The directional list operand must be a
 list; otherwise evaluation produces a checked runtime type error.
 
 ```slug
 "list of two + " + 1 == "list of two + 1"
+"items: " + [1, 2] == "items: [1, 2]"
+"data: " + {status: "ok"} == "data: {\"status\": \"ok\"}"
 ```
 
 `string * count` repeats a string `count` times. The count must be a

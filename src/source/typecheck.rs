@@ -1010,12 +1010,14 @@ fn add_result(
     strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
+    if matches!(left, Type::Str) {
+        return Ok(Type::Str);
+    }
     if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
         return Ok(Type::Unknown);
     }
     match (left, right) {
         (Type::Num, Type::Num) => Ok(Type::Num),
-        (Type::Str, Type::Str | Type::Num) => Ok(Type::Str),
         (Type::List(left), Type::List(right)) => Ok(Type::List(match (left, right) {
             (Some(left), Some(right)) => Some(Box::new(Type::union([
                 left.as_ref().clone(),

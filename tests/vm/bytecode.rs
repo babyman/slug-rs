@@ -27,18 +27,21 @@ fn executes_integer_arithmetic() {
 }
 
 #[test]
-fn concatenates_strings_and_numbers_through_private_add_bytecode() {
+fn concatenates_strings_with_values_through_private_add_bytecode() {
     let mut main = Chunk::new("main", 0);
     let prefix = main.constant(Value::string("list of two + "));
-    let length = main.constant(Value::Int(1));
+    let data = main.constant(Value::Map(std::rc::Rc::new(vec![(
+        Value::string("k"),
+        Value::List(std::rc::Rc::new(vec![Value::Int(1)])),
+    )])));
     main.emit(Op::Constant(prefix))
-        .emit(Op::Constant(length))
+        .emit(Op::Constant(data))
         .emit(Op::Add)
         .emit(Op::Return);
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::string("list of two + 1")
+        Value::string("list of two + {\"k\": [1]}")
     );
 }
 

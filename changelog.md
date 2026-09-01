@@ -2,14 +2,17 @@
 
 ## Unreleased
 
+- Pinned match cases can now follow a preceding case on the next line without
+  being mistaken for a bitwise-XOR expression continuation.
+
 - Map patterns now accept quoted static string keys, such as `{"status": 200}`.
 
 - Map literals now accept quoted string keys, such as `{"status": "ok"}`.
 
 - Empty map patterns (`{}`) now match only empty maps rather than every map.
 
-- String concatenation now accepts a number as its right operand and renders it
-  in its display form.
+- String concatenation now accepts any value as its right operand and renders
+  it in its display form.
 
 - Assignments now evaluate to their assigned value, allowing them to be used as
   final function expressions and within larger expressions.

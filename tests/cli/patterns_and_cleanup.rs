@@ -220,6 +220,46 @@ fn pinned_patterns_observe_global_local_and_captured_bindings() {
 }
 
 #[test]
+fn matches_literal_and_pinned_case_alternatives() {
+    let path = fixture_path("literal-and-pinned-alternatives");
+    fs::write(
+        &path,
+        "var pinned = \"slug\"\n\
+         var p1 = 1\n\
+         var p2 = 2\n\
+         var f = fn(x) {\n\
+           match x {\n\
+             \"hello\", \"hi\" => \"greeting\"\n\
+             \"bye\" => \"farewell\"\n\
+             ^pinned => \"slug\"\n\
+             true => \"truthy\"\n\
+             42 => \"magic number\"\n\
+             10, 11, 12, 13 => \"multi-match\"\n\
+             0, ^p1, ^p2, 3 => \"multi-pin\"\n\
+             _ => \"something else\"\n\
+           }\n\
+         }\n\
+         println(f(\"hi\"), f(\"bye\"), f(pinned), f(true), f(42), f(12), f(p2), f(nil))\n",
+    )
+    .expect("write literal and pinned alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run literal and pinned alternatives source");
+    fs::remove_file(path).expect("remove literal and pinned alternatives source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "greeting farewell slug truthy magic number multi-match multi-pin something else\n"
+    );
+}
+
+#[test]
 fn pinned_patterns_work_in_collections_destructuring_and_alternatives() {
     let path = fixture_path("nested-pinned-patterns");
     fs::write(
