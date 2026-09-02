@@ -61,6 +61,8 @@ contract is documented separately as `.cslug`.
   exact member of the current live binding without runtime type validation.
 - Immutable configuration collection from library and project TOML, `SLUG__`
   environment variables, and program options; source access through `cfg`.
+- Command-line entry-program lookup for explicit paths and installed bare
+  names through `$SLUG_HOME/lib/<name>.slug`.
 - The standard library, full type inference, and the remaining language forms are progressive
   milestones beyond this subset.
 - Portable `.cslug` compiled modules are an adopted compatibility target; no

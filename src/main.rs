@@ -220,27 +220,32 @@ fn main() -> ExitCode {
 }
 
 fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
-    let source = match fs::read_to_string(path) {
+    let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
+    let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
+    let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| slug_home.as_ref().map(|home| home.join("lib")));
+    let (resolved_path, source) = match read_entry_source(
+        path,
+        configured_source_root.as_deref(),
+        library_root.as_deref(),
+    ) {
         Ok(source) => source,
-        Err(error) => {
-            eprintln!("slug: cannot read {path}: {error}");
+        Err((path, error)) => {
+            eprintln!("slug: cannot read {}: {error}", path.display());
             return ExitCode::from(1);
         }
     };
-    let source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map_or_else(
-        || {
-            Path::new(path)
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .into()
-        },
-        PathBuf::from,
-    );
-    let entry_module = Path::new(path)
+    let source_root = configured_source_root.unwrap_or_else(|| {
+        resolved_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .into()
+    });
+    let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let configuration = Configuration::load(
         &source_root,
         slug_home.as_deref(),
@@ -248,18 +253,16 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
         program_arguments,
         entry_module,
     );
-    let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| slug_home.as_ref().map(|home| home.join("lib")));
     let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
-    let mut program = match loader.compile_source(path, &source, type_check) {
+    let resolved_path = resolved_path.to_string_lossy();
+    let mut program = match loader.compile_source(&resolved_path, &source, type_check) {
         Ok(program) => program,
         Err(error) => {
             let category = match error.kind {
                 SourceErrorKind::Parse => "parse",
                 SourceErrorKind::Semantic => "semantic",
             };
-            eprint_source_error(category, &error, path, &source);
+            eprint_source_error(category, &error, &resolved_path, &source);
             return ExitCode::from(1);
         }
     };
@@ -274,10 +277,49 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprint_runtime_error(&error, path, &source);
+            eprint_runtime_error(&error, &resolved_path, &source);
             ExitCode::from(1)
         }
     }
+}
+
+/// Reads an entry program by explicit path, module root, or installed library name.
+///
+/// The library fallback accepts a bare name such as `hello` and reads
+/// `lib/hello.slug`; explicit paths retain their supplied extension.
+fn read_entry_source(
+    path: &str,
+    source_root: Option<&Path>,
+    library_root: Option<&Path>,
+) -> Result<(PathBuf, String), (PathBuf, std::io::Error)> {
+    let requested = Path::new(path);
+    let mut candidates = vec![requested.to_path_buf()];
+    if let Some(source_root) = source_root {
+        let candidate = source_root.join(requested);
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    if let Some(library_root) = library_root {
+        let library_entry = if requested.extension().is_some() {
+            requested.to_path_buf()
+        } else {
+            requested.with_extension("slug")
+        };
+        candidates.push(library_root.join(library_entry));
+    }
+
+    for candidate in candidates {
+        match fs::read_to_string(&candidate) {
+            Ok(source) => return Ok((candidate, source)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err((candidate, error)),
+        }
+    }
+    Err((
+        requested.to_path_buf(),
+        std::io::Error::from(std::io::ErrorKind::NotFound),
+    ))
 }
 
 fn eprint_source_error(category: &str, error: &SourceError, input_path: &str, input: &str) {

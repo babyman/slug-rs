@@ -59,6 +59,12 @@ The reference command-line shape is:
 slug [-root MODULE_ROOT] program.slug [arguments...]
 ```
 
+When the program argument does not name a readable file in the working
+directory or selected module root, the command-line runner searches its
+configured library root for `<program>.slug`. This supports installed tools
+such as `slug hello Ada` when `$SLUG_HOME/lib/hello.slug` is available. An
+explicit `.slug` extension is retained during the fallback lookup.
+
 Successful execution exits with status zero. Parse, semantic, module-loading,
 or runtime failure exits nonzero and writes a Slug diagnostic to standard error.
 The final expression value is not implicitly printed by the command-line

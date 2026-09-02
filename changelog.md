@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The CLI now runs installed bare program names such as `slug hello Ada` from
+  `$SLUG_HOME/lib/hello.slug` after local and module-root lookup.
+
 - Strings now support negative integer indexing and list-style slicing by
   Unicode scalar value.
 

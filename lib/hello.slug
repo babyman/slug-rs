@@ -1,0 +1,13 @@
+/**
+ * A very simple `Hello Slug` tool example
+ *
+ * Usage:
+ * ```bash
+ * slug hello [name]
+ * ```
+ */
+
+val main = fn(args:list) match {
+    [] => println("Hello Slug!")
+    [n, ...] => println("Hello $n!")
+}

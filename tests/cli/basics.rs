@@ -42,6 +42,37 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn executes_a_bare_program_name_from_the_library_directory() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-library-entrypoint-{}",
+        std::process::id()
+    ));
+    let home = root.join("home");
+    let working_directory = root.join("project");
+    fs::create_dir_all(home.join("lib")).expect("create library directory");
+    fs::create_dir_all(&working_directory).expect("create working directory");
+    fs::write(home.join("lib/hello.slug"), "println(\"Hello Slug!\")\n")
+        .expect("write installed Slug program");
+
+    let output = slug()
+        .current_dir(&working_directory)
+        .arg("hello")
+        .env("SLUG_HOME", &home)
+        .env_remove("SLUG_FIXTURE_LIBRARY_ROOT")
+        .output()
+        .expect("run installed Slug program");
+
+    fs::remove_dir_all(root).expect("remove entrypoint fixture directory");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Hello Slug!\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn writes_with_print_without_a_newline_and_returns_nil() {
     let path = fixture_path("print");
     fs::write(
