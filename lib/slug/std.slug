@@ -2,3 +2,16 @@
  * Returns a map's keys in insertion order.
  */
 export foreign keys = fn(m:map):list
+
+export val get = fn(m:map, k) {
+    m[k]
+}
+
+
+export val put = fn(m:map, k, v):map {
+    m + {[k]: v}
+}
+
+export val remove = fn(m:map, k):map {
+    m - k
+}
