@@ -184,8 +184,12 @@ preserve the sign of a negative integer.
 ```
 
 `+` concatenates two lists or two byte values into a new value of the same
-collection type. It also concatenates a string with any value, converting the
-right operand to its display form. The directional collection operators also
+collection type, and merges two maps into a new map. In a map merge, right-hand
+values overwrite matching left-hand keys without changing their position; new
+right-hand keys append in source order. `map - key` returns a new map without
+that key, leaving the map unchanged when the key is absent. It also concatenates
+a string with any value, converting the right operand to its display form. The
+directional collection operators also
 produce new values: `collection :+ value` appends one value, while
 `value +: collection` prepends one value. `+:` is right-associative, so
 `1 +: 2 +: bytes` prepends `1` and then `2` to `bytes`. They accept lists or
@@ -199,6 +203,8 @@ bytes; a bytes element must be an integer from `0` through `255` or a one-byte
 1 +: 0x"0203" + 0x"04" :+ 5 == 0x"0102030405"
 0x"01" +: 0x"0203" + 0x"04" :+ 0x"05" == 0x"0102030405"
 1 +: 2 +: 3 +: 0x"" == 0x"010203"
+{name: "Slug"} + {name: "VM", version: 1} == {name: "VM", version: 1}
+({name: "Slug", version: 1} - "name") == {version: 1}
 ```
 
 `string * count` repeats a string `count` times. The count must be a

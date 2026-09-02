@@ -35,6 +35,19 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
             values.extend(b.iter().copied());
             Ok(Value::Bytes(values.into()))
         }
+        (Value::Map(left), Value::Map(right)) => {
+            let mut entries = (*left).clone();
+            for (key, value) in right.iter() {
+                if let Some((_, existing)) =
+                    entries.iter_mut().find(|(existing, _)| existing == key)
+                {
+                    *existing = value.clone();
+                } else {
+                    entries.push((key.clone(), value.clone()));
+                }
+            }
+            Ok(Value::Map(Rc::new(entries)))
+        }
         (a, b) => {
             let (a, b) = numbers(a, b).map_err(|message| (RuntimeErrorKind::Type, message))?;
             Ok(Value::Float(a + b))
@@ -42,6 +55,21 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
     }
 }
 pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    if let Value::Map(entries) = left {
+        if !is_map_key(&right) {
+            return Err((
+                RuntimeErrorKind::Type,
+                format!("{} cannot be used as a map key", right.type_name()),
+            ));
+        }
+        return Ok(Value::Map(Rc::new(
+            entries
+                .iter()
+                .filter(|(key, _)| key != &right)
+                .cloned()
+                .collect(),
+        )));
+    }
     integer_or_float(left, right, i64::checked_sub, |a, b| a - b)
 }
 pub(super) fn multiply(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {

@@ -963,11 +963,8 @@ fn binary_result(
         Binary::BitOr | Binary::BitXor | Binary::BitAnd => {
             bitwise_result(left, right, strict, span)
         }
-        Binary::ShiftLeft
-        | Binary::ShiftRight
-        | Binary::Subtract
-        | Binary::Divide
-        | Binary::Modulo => {
+        Binary::Subtract => subtract_result(left, right, strict, span),
+        Binary::ShiftLeft | Binary::ShiftRight | Binary::Divide | Binary::Modulo => {
             numeric_operands(left, right, strict, span)?;
             Ok(Type::Num)
         }
@@ -1055,6 +1052,19 @@ fn add_result(
     match (left, right) {
         (Type::Num, Type::Num) => Ok(Type::Num),
         (Type::Bytes, Type::Bytes) => Ok(Type::Bytes),
+        (Type::Map(left), Type::Map(right)) => Ok(Type::Map(match (left, right) {
+            (Some((left_key, left_value)), Some((right_key, right_value))) => Some((
+                Box::new(Type::union([
+                    left_key.as_ref().clone(),
+                    right_key.as_ref().clone(),
+                ])),
+                Box::new(Type::union([
+                    left_value.as_ref().clone(),
+                    right_value.as_ref().clone(),
+                ])),
+            )),
+            _ => None,
+        })),
         (Type::List(left), Type::List(right)) => Ok(Type::List(match (left, right) {
             (Some(left), Some(right)) => Some(Box::new(Type::union([
                 left.as_ref().clone(),
@@ -1063,6 +1073,30 @@ fn add_result(
             _ => None,
         })),
         _ => invalid_operation("+", left, right, strict, span),
+    }
+}
+
+fn subtract_result(
+    left: &Type,
+    right: &Type,
+    strict: bool,
+    span: &crate::SourceSpan,
+) -> Result<Type, SourceError> {
+    if matches!(left, Type::Map(_)) {
+        if !strict || is_dynamic_operation_type(right) || is_map_key_type(right) {
+            return Ok(left.clone());
+        }
+        return invalid_operation("-", left, right, strict, span);
+    }
+    numeric_operands(left, right, strict, span)?;
+    Ok(Type::Num)
+}
+
+fn is_map_key_type(value: &Type) -> bool {
+    match value {
+        Type::Bool | Type::Num | Type::Str | Type::Bytes => true,
+        Type::Union(members) => members.iter().all(is_map_key_type),
+        _ => false,
     }
 }
 

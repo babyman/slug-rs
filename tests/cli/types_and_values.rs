@@ -638,6 +638,35 @@ fn appends_and_prepends_list_values_with_checked_operands() {
 }
 
 #[test]
+fn persistently_merges_removes_and_enumerates_maps() {
+    let path = fixture_path("persistent-map-updates");
+    fs::write(
+        &path,
+        "val {keys} = import(\"slug.std\")\n\
+         val original = {first: 1, second: 2}\n\
+         val merged = original + {second: 20, third: 3}\n\
+         val removed = merged - \"second\"\n\
+         println(original.second, merged.first, merged.second, merged.third, removed.second, keys(merged), keys(removed), len(original))\n",
+    )
+    .expect("write persistent map update source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run persistent map update source");
+    fs::remove_file(path).expect("remove persistent map update source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "2 1 20 3 nil [\"first\", \"second\", \"third\"] [\"first\", \"third\"] 2\n"
+    );
+}
+
+#[test]
 fn parses_decimal_hexadecimal_and_byte_literals() {
     let path = fixture_path("numeric-and-byte-literals");
     fs::write(

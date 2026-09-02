@@ -1,0 +1,4 @@
+/**
+ * Returns a map's keys in insertion order.
+ */
+export foreign keys = fn(m:map):list

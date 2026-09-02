@@ -122,6 +122,36 @@ fn matches_literals_and_lists_with_case_local_bindings() {
 }
 
 #[test]
+fn retries_list_match_cases_after_a_false_guard() {
+    let path = fixture_path("list-match-guard-fallback");
+    fs::write(
+        &path,
+        "val values = [\"v1\", \"v2\"]\n\
+         println(match values {\n\
+           [head, ...] if head == \"missing\" => \"wrong\";\n\
+           [head, ...] if head == \"v1\" => head;\n\
+           _ => \"fallback\"\n\
+         })\n",
+    )
+    .expect("write list match guard fallback source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run list match guard fallback source");
+    fs::remove_file(path).expect("remove list match guard fallback source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "v1\n"
+    );
+}
+
+#[test]
 fn binds_whole_values_with_nested_at_patterns() {
     let path = fixture_path("at-patterns");
     fs::write(

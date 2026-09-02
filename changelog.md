@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Maps are immutable: `+` merges maps, `-` removes a key, and
+  `slug.std.keys(map)` returns insertion-ordered keys.
+
+- Match guards now retain the subject while a false guard falls through to the
+  next case.
+
 - Overload resolution now prefers a non-variadic candidate over an otherwise
   tied variadic candidate with an empty rest parameter.
 

@@ -39,9 +39,24 @@ identifier as a string key. Missing map keys evaluate to `nil`.
 Maps do not have special method-call syntax. `m.key()` means ordinary lookup
 followed by an ordinary call; no implicit map receiver is inserted.
 
-## Collection operations
+## Persistent updates and keys
 
-The standard library exposes map operations such as `get`, `put`, `remove`,
-and `keys` through the public library surface. Their signatures, update
-semantics, and errors are defined by the versioned library sources in
-`../../lib/slug`, not by this syntax supplement.
+Maps are immutable values. `+` merges two maps into a new map, and `-` removes
+one key into a new map. A right-hand merge value overwrites an existing key
+without moving that key; newly introduced right-hand keys append in their
+source order. Removing a missing key leaves the map unchanged.
+
+```slug
+val base = {name: "Slug", status: "ready"}
+val updated = base + {status: "done", version: 1}
+val withoutName = updated - "name"
+```
+
+`keys(map)` is a `slug.std` foreign function that returns the current keys as a
+list in insertion order. Keys retain their language value types rather than
+being converted to strings.
+
+```slug
+val {keys} = import("slug.std")
+keys(updated) // ["name", "status", "version"]
+```

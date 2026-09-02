@@ -608,6 +608,11 @@ impl<'call> NativeValueRef<'call> {
         self.value.to_string()
     }
 
+    #[must_use]
+    pub fn to_owned(self) -> NativeOwnedValue {
+        NativeOwnedValue(self.value.clone())
+    }
+
     fn type_error(self, expected: &str) -> NativeError {
         NativeError::new(
             "native.type",

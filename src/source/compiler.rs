@@ -940,7 +940,6 @@ impl Compiler {
             for slot in slots.iter().rev() {
                 state.emit(Op::SetLocal(*slot), &case.span);
             }
-            state.emit(Op::Pop, &case.span);
             let guard_next = if let Some(guard) = &case.guard {
                 self.guard_expression(state, guard)?;
                 Some(state.jump_if_false(&case.span))
@@ -950,6 +949,7 @@ impl Compiler {
             if guard_next.is_some() {
                 state.emit(Op::Pop, &case.span);
             }
+            state.emit(Op::Pop, &case.span);
             if tail {
                 self.tail_expression(state, &case.value)?;
             } else {

@@ -46,6 +46,34 @@ fn concatenates_strings_with_values_through_private_add_bytecode() {
 }
 
 #[test]
+fn persistently_merges_and_removes_maps_through_private_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let left = main.constant(Value::Map(std::rc::Rc::new(vec![
+        (Value::string("first"), Value::Int(1)),
+        (Value::string("second"), Value::Int(2)),
+    ])));
+    let right = main.constant(Value::Map(std::rc::Rc::new(vec![
+        (Value::string("second"), Value::Int(20)),
+        (Value::string("third"), Value::Int(3)),
+    ])));
+    let removed = main.constant(Value::string("second"));
+    main.emit(Op::Constant(left))
+        .emit(Op::Constant(right))
+        .emit(Op::Add)
+        .emit(Op::Constant(removed))
+        .emit(Op::Subtract)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Map(std::rc::Rc::new(vec![
+            (Value::string("first"), Value::Int(1)),
+            (Value::string("third"), Value::Int(3)),
+        ]))
+    );
+}
+
+#[test]
 fn repeats_strings_through_private_multiply_bytecode() {
     let mut main = Chunk::new("main", 0);
     let dash = main.constant(Value::string("-"));

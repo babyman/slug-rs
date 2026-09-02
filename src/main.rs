@@ -76,6 +76,30 @@ fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::integer(length))
 }
 
+fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
+    let map = match call.argument(0) {
+        Ok(map) => map,
+        Err(error) => return call.raise(error),
+    };
+    if map.kind() != slug_vm::NativeValueKind::Map {
+        return call.raise(slug_vm::NativeError::new(
+            "native.type",
+            "`keys` expects a map",
+        ));
+    }
+    let length = map.len().expect("map kind has a length");
+    let mut keys = Vec::with_capacity(length);
+    for index in 0..length {
+        let (key, _) = match map.map_get(index) {
+            Ok(Some(entry)) => entry,
+            Ok(None) => unreachable!("map length bounds map entry access"),
+            Err(error) => return call.raise(error),
+        };
+        keys.push(key.to_owned());
+    }
+    call.return_value(NativeOwnedValue::list(keys))
+}
+
 fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
     let capacity = match call.argument_count() {
         0 => 0,
@@ -109,6 +133,60 @@ fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
         return call.raise(error);
     }
     call.return_value(NativeOwnedValue::nil())
+}
+
+fn register_native_modules(vm: &mut Vm) {
+    let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
+    vm.define_builtin(
+        builtins
+            .function("print", NativeArity::Variadic { minimum: 0 }, native_print)
+            .expect("static builtin function is valid"),
+    )
+    .expect("static builtin binding is unique");
+    vm.define_builtin(
+        builtins
+            .function(
+                "println",
+                NativeArity::Variadic { minimum: 0 },
+                native_println,
+            )
+            .expect("static builtin function is valid"),
+    )
+    .expect("static builtin binding is unique");
+    vm.define_builtin(
+        builtins
+            .function("len", NativeArity::Exact(1), native_len)
+            .expect("static builtin function is valid"),
+    )
+    .expect("static builtin binding is unique");
+
+    let std = NativeModule::new("slug.std", ()).expect("static native module is valid");
+    vm.define_foreign(
+        std.function("keys", NativeArity::Exact(1), native_keys)
+            .expect("static foreign function is valid"),
+    )
+    .expect("static foreign binding is unique");
+
+    let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
+    vm.define_foreign(
+        channel
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                native_channel,
+            )
+            .expect("static foreign function is valid"),
+    )
+    .expect("static foreign binding is unique");
+    vm.define_foreign(
+        channel
+            .function("close", NativeArity::Exact(1), native_close)
+            .expect("static foreign function is valid"),
+    )
+    .expect("static foreign binding is unique");
 }
 
 fn main() -> ExitCode {
@@ -187,49 +265,7 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
     };
     program.set_module_name(entry_module);
     let mut vm = Vm::with_module_loader(loader.clone());
-    let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
-    vm.define_builtin(
-        builtins
-            .function("print", NativeArity::Variadic { minimum: 0 }, native_print)
-            .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
-    vm.define_builtin(
-        builtins
-            .function(
-                "println",
-                NativeArity::Variadic { minimum: 0 },
-                native_println,
-            )
-            .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
-    vm.define_builtin(
-        builtins
-            .function("len", NativeArity::Exact(1), native_len)
-            .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
-    let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
-    vm.define_foreign(
-        channel
-            .function(
-                "chan",
-                NativeArity::Range {
-                    minimum: 0,
-                    maximum: 1,
-                },
-                native_channel,
-            )
-            .expect("static foreign function is valid"),
-    )
-    .expect("static foreign binding is unique");
-    vm.define_foreign(
-        channel
-            .function("close", NativeArity::Exact(1), native_close)
-            .expect("static foreign function is valid"),
-    )
-    .expect("static foreign binding is unique");
+    register_native_modules(&mut vm);
     match vm.run_program(&program) {
         Ok(_) => {
             for warning in loader.take_warnings() {

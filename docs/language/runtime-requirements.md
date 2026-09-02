@@ -252,6 +252,11 @@ tested before its guard; a failed constraint is a failed case rather than a
 runtime type error. Recursive list and map constraints inspect every element
 or entry.
 
+Map merge and key removal produce new map values; they do not modify either
+operand. A merge retains the left map's key order, replaces a shared key's
+value in that position, and appends keys introduced by the right map in source
+order. Map-key enumeration follows that resulting order.
+
 An ordering comparison in a match guard with incompatible operand types is a
 false guard, not a runtime error, so evaluation proceeds to the next case.
 
