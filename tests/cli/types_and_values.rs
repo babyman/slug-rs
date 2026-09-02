@@ -208,12 +208,14 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
          val item:num = numbers[0]\n\
          val maybe:str|nil = labels.first\n\
          val slice:list<num> = numbers[0:1]\n\
+         val letter:str = \"Slug\"[3]\n\
+         val textSlice:str = \"Slug\"[1:3]\n\
          val joined:list<num> = numbers + [3]\n\
          val appended:list<num> = joined :+ 4\n\
          val prepended:list<num> = 0 +: appended\n\
          val repeated:str = \"go\" * 2\n\
          val rendered:str = \"list of two + \" + len(numbers)\n\
-         println(item, maybe, slice, prepended, repeated, rendered)\n",
+         println(item, maybe, slice, letter, textSlice, prepended, repeated, rendered)\n",
     )
     .expect("write checked expression source");
     let output = slug()
@@ -229,7 +231,7 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "1 Slug [1] [0, 1, 2, 3, 4] gogo list of two + 2\n"
+        "1 Slug [1] g lu [0, 1, 2, 3, 4] gogo list of two + 2\n"
     );
 
     for (source, expected) in [
@@ -240,7 +242,7 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
             "val value = 1[0]\n",
             "operator `[]` does not accept num and num",
         ),
-        ("val value = \"name\"[0:1]\n", "expected list, got str"),
+        ("val value = 1[0:1]\n", "expected list, got num"),
     ] {
         fs::write(&path, source).expect("write invalid checked expression source");
         let output = slug()

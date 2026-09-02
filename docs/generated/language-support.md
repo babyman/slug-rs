@@ -9,7 +9,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Top-level `{*}` map selection declarations | implemented | `tests/cli.rs` |
 | Decimal integer literals with `_` separators | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Floating-point, hexadecimal, and byte literals | implemented | `tests/cli.rs` |
-| Double-quoted strings with basic escapes | implemented | `tests/cli.rs` |
+| Double-quoted strings with basic escapes, Unicode-scalar indexing, and slicing | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Raw and triple-quoted strings with basic escapes | implemented | `tests/cli.rs` |
 | One-to-three-digit octal escapes | implemented | `tests/cli.rs` |
 | `$identifier` interpolated strings | implemented | `tests/cli.rs` |

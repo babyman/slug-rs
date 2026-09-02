@@ -568,6 +568,19 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
                 .map(Value::Int)
                 .ok_or_else(|| "bytes index is out of bounds".into())
         }
+        Value::Str(value) => {
+            let Value::Int(index) = index else {
+                return Err("string index must be an integer".into());
+            };
+            let length = i64::try_from(value.chars().count())
+                .map_err(|_| "string is too large".to_owned())?;
+            let index = if *index < 0 { length + *index } else { *index };
+            value
+                .chars()
+                .nth(usize::try_from(index).map_err(|_| "string index is out of bounds")?)
+                .map(|character| Value::string(character.to_string()))
+                .ok_or_else(|| "string index is out of bounds".into())
+        }
         Value::Map(entries) => Ok(entries
             .iter()
             .rev()
@@ -605,10 +618,14 @@ pub(super) fn slice_value(
             i64::try_from(values.len()).map_err(|_| "bytes are too large".to_owned())?,
             "bytes",
         ),
+        Value::Str(value) => (
+            i64::try_from(value.chars().count()).map_err(|_| "string is too large".to_owned())?,
+            "string",
+        ),
         value => return Err(format!("cannot slice {}", value.type_name())),
     };
-    let start = slice_bound(start, 0, length, "start")?;
-    let end = slice_bound(end, length, length, "end")?;
+    let start = slice_bound(start, 0, length, "start", kind)?;
+    let end = slice_bound(end, length, length, "end", kind)?;
     let step = match step {
         None => 1,
         Some(Value::Int(step)) if *step > 0 => *step,
@@ -640,6 +657,18 @@ pub(super) fn slice_value(
             }
             Ok(Value::Bytes(result.into()))
         }
+        Value::Str(value) => {
+            let values = value.chars().collect::<Vec<_>>();
+            let mut result = String::new();
+            let mut index = start;
+            while index < end {
+                result.push(values[usize::try_from(index).expect("slice bounds are non-negative")]);
+                index = index
+                    .checked_add(step)
+                    .ok_or_else(|| "string slice step is too large".to_owned())?;
+            }
+            Ok(Value::string(result))
+        }
         _ => unreachable!("collection kind was checked above"),
     }
 }
@@ -649,12 +678,13 @@ fn slice_bound(
     default: i64,
     length: i64,
     name: &str,
+    kind: &str,
 ) -> Result<i64, String> {
     let value = match value {
         None => default,
         Some(Value::Int(value)) if *value < 0 => length.saturating_add(*value),
         Some(Value::Int(value)) => *value,
-        Some(_) => return Err(format!("list slice {name} must be an integer")),
+        Some(_) => return Err(format!("{kind} slice {name} must be an integer")),
     };
     Ok(value.clamp(0, length))
 }

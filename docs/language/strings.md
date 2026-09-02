@@ -30,3 +30,16 @@ including indentation, is preserved.
 
 Unterminated string literals are lexical errors. The language does not support
 Handlebars-style `#if`, `#each`, or `#with` blocks in strings.
+
+## Indexing and slicing
+
+Strings support integer indexing and list-style slices. Positions count Unicode
+scalar values rather than UTF-8 bytes, so indexing returns a one-character
+string and cannot split an encoded character. Negative indices and slice bounds
+count from the end; omitted slice bounds and steps follow list slicing rules.
+
+```slug
+"Slug"[3]      // "g"
+"aébc"[1]      // "é"
+"aébc"[1:-1]   // "éb"
+```

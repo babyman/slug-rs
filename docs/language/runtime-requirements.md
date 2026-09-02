@@ -258,6 +258,10 @@ shared key's value in that position, and appends keys introduced by the right
 map in source order. A map copy follows the same ordering rule for its
 string-key replacements. Map-key enumeration follows that resulting order.
 
+String indexing and slicing operate on Unicode scalar values, never UTF-8 byte
+offsets. A string index yields a one-character string, and a string slice yields
+a string without splitting an encoded scalar value.
+
 An ordering comparison in a match guard with incompatible operand types is a
 false guard, not a runtime error, so evaluation proceeds to the next case.
 

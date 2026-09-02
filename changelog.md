@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Strings now support negative integer indexing and list-style slicing by
+  Unicode scalar value.
+
 - Maps are immutable: `+` merges maps, `-` removes a key, `copy { key: value }`
   persistently updates string keys, and `slug.std.keys(map)` returns
   insertion-ordered keys.

@@ -51,6 +51,39 @@ fn indexes_and_slices_bytes() {
 }
 
 #[test]
+fn indexes_and_slices_strings_by_unicode_scalar_value() {
+    let mut main = Chunk::new("main", 0);
+    let string = main.constant(Value::string("aébc"));
+    let index = main.constant(Value::Int(1));
+    main.emit(Op::Constant(string))
+        .emit(Op::Constant(index))
+        .emit(Op::GetIndex)
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::string("é")
+    );
+
+    let mut main = Chunk::new("main", 0);
+    let string = main.constant(Value::string("aébc"));
+    let start = main.constant(Value::Int(1));
+    let end = main.constant(Value::Int(-1));
+    main.emit(Op::Constant(string))
+        .emit(Op::Constant(start))
+        .emit(Op::Constant(end))
+        .emit(Op::GetSlice {
+            has_start: true,
+            has_end: true,
+            has_step: false,
+        })
+        .emit(Op::Return);
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::string("éb")
+    );
+}
+
+#[test]
 fn slices_lists_with_omitted_bounds_in_private_bytecode() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));
