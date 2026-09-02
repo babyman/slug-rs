@@ -361,8 +361,8 @@ A struct expression defines a schema and produces a value of type `schema`.
 Applying a schema to `{...}` creates a struct value. When the schema expression
 is a direct, statically known binding `S`, construction has type `struct<S>`;
 otherwise it has the less precise type `struct`. Struct fields can have type
-annotations and defaults. `copy`
-creates a value with replacement fields. Tags on struct fields are not syntax.
+annotations and defaults. `copy` creates a new struct or map value with
+replacement fields or string keys. Tags on struct fields are not syntax.
 
 With `-type-check`, a directly known schema binding also checks supplied and
 required fields and their values. Direct string field access and copies through

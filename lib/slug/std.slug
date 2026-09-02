@@ -7,7 +7,6 @@ export val get = fn(m:map, k) {
     m[k]
 }
 
-
 export val put = fn(m:map, k, v):map {
     m + {[k]: v}
 }

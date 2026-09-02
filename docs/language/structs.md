@@ -71,8 +71,10 @@ when their field names and values are otherwise identical.
 `value copy { field: replacement }` creates a new struct value with the same
 schema identity as `value`. It evaluates `value` first and replacement
 expressions left to right. Each named field is replaced; fields not named in
-the copy retain their original values. Copying a non-struct, naming an unknown
-field, or naming a field more than once is a checked runtime type error.
+the copy retain their original values. This form also copies maps; see
+[Maps](maps.md) for map-key behavior. Copying a value that is neither a struct
+nor a map, naming an unknown struct field, or naming a field more than once is
+a checked runtime type error.
 Under `-type-check`, a known `struct<S>` additionally checks replacement value
 types and infers direct field reads from `S`'s field metadata.
 

@@ -46,10 +46,15 @@ one key into a new map. A right-hand merge value overwrites an existing key
 without moving that key; newly introduced right-hand keys append in their
 source order. Removing a missing key leaves the map unchanged.
 
+`map copy { key: value }` is a convenient persistent update for string keys.
+It replaces existing keys in place and appends missing keys in source order.
+Each key may occur only once in the copy body.
+
 ```slug
 val base = {name: "Slug", status: "ready"}
 val updated = base + {status: "done", version: 1}
 val withoutName = updated - "name"
+val configured = withoutName copy { timeout: 5000, mode: "fast" }
 ```
 
 `keys(map)` is a `slug.std` foreign function that returns the current keys as a

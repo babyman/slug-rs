@@ -32,7 +32,7 @@ use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
 use operations::{
-    add, bit_not, bitwise, construct_struct, copy_struct, divide, index_value, is_map_key,
+    add, bit_not, bitwise, construct_struct, copy_value, divide, index_value, is_map_key,
     list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
     slice_value, subtract,
 };
@@ -1298,7 +1298,7 @@ impl Vm {
                 let replacements = self.pop_values_at(fields.len(), span)?;
                 let value = self.pop_at(span)?;
                 self.stack.push(
-                    copy_struct(value, fields, &replacements)
+                    copy_value(value, fields, &replacements)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
                 );
             }
@@ -1643,7 +1643,7 @@ impl Vm {
                 let replacements = self.pop_values_at(fields.len(), span)?;
                 let value = self.pop_at(span)?;
                 self.stack.push(
-                    copy_struct(value, fields, &replacements)
+                    copy_value(value, fields, &replacements)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
                 );
             }

@@ -667,6 +667,30 @@ fn persistently_merges_removes_and_enumerates_maps() {
 }
 
 #[test]
+fn persistently_copies_maps_with_string_key_updates() {
+    let path = fixture_path("map-copy");
+    fs::write(
+        &path,
+        "val opts = {timeout: 1000, retries: 2}\n\
+         val next = opts copy {timeout: 5000, retries: 3, mode: \"fast\"}\n\
+         println(opts.timeout, opts.retries, opts.mode, next.timeout, next.retries, next.mode)\n",
+    )
+    .expect("write map copy source");
+    let output = slug().arg(&path).output().expect("run map copy source");
+    fs::remove_file(path).expect("remove map copy source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1000 2 nil 5000 3 fast\n"
+    );
+}
+
+#[test]
 fn parses_decimal_hexadecimal_and_byte_literals() {
     let path = fixture_path("numeric-and-byte-literals");
     fs::write(

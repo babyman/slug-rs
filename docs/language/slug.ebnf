@@ -73,7 +73,7 @@ type_application_call = "<" , type_annotation , { "," , type_annotation } , ">" 
 index_suffix = "[" , index_args , "]" ;
 dot_suffix = "." , identifier ;
 
-(* Struct init and copy are postfix forms. *)
+(* Struct construction and persistent copy are postfix forms. *)
 struct_init = "{" , [ struct_init_fields ] , "}" ;
 struct_copy = "copy" , "{" , [ struct_init_fields ] , "}" ;
 

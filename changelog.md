@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- Maps are immutable: `+` merges maps, `-` removes a key, and
-  `slug.std.keys(map)` returns insertion-ordered keys.
+- Maps are immutable: `+` merges maps, `-` removes a key, `copy { key: value }`
+  persistently updates string keys, and `slug.std.keys(map)` returns
+  insertion-ordered keys.
 
 - Match guards now retain the subject while a false guard falls through to the
   next case.

@@ -74,6 +74,31 @@ fn persistently_merges_and_removes_maps_through_private_bytecode() {
 }
 
 #[test]
+fn persistently_copies_maps_through_private_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let original = main.constant(Value::Map(std::rc::Rc::new(vec![
+        (Value::string("timeout"), Value::Int(1_000)),
+        (Value::string("retries"), Value::Int(2)),
+    ])));
+    let timeout = main.constant(Value::Int(5_000));
+    let mode = main.constant(Value::string("fast"));
+    main.emit(Op::Constant(original))
+        .emit(Op::Constant(timeout))
+        .emit(Op::Constant(mode))
+        .emit(Op::StructCopy(vec!["timeout".into(), "mode".into()]))
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Map(std::rc::Rc::new(vec![
+            (Value::string("timeout"), Value::Int(5_000)),
+            (Value::string("retries"), Value::Int(2)),
+            (Value::string("mode"), Value::string("fast")),
+        ]))
+    );
+}
+
+#[test]
 fn repeats_strings_through_private_multiply_bytecode() {
     let mut main = Chunk::new("main", 0);
     let dash = main.constant(Value::string("-"));

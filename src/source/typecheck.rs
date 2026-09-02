@@ -889,6 +889,7 @@ fn check_expression(
             let result = check_expression(value, environment, type_parameters, strict)?;
             let schema = known_struct_schema(&result, environment);
             let mut replaced = std::collections::HashSet::new();
+            let mut map_replacements = Vec::new();
             for (name, replacement) in fields {
                 if strict && !replaced.insert(name) {
                     return Err(SourceError::semantic(
@@ -897,6 +898,7 @@ fn check_expression(
                     ));
                 }
                 let actual = check_expression(replacement, environment, type_parameters, strict)?;
+                map_replacements.push(actual.clone());
                 if strict && let Some(schema) = &schema {
                     let expected = schema.members.get(name).ok_or_else(|| {
                         SourceError::semantic(
@@ -907,7 +909,16 @@ fn check_expression(
                     require(&expected.value_type, &actual, &replacement.span)?;
                 }
             }
-            Ok(result)
+            if let Type::Map(Some((key, value))) = &result {
+                Ok(Type::Map(Some((
+                    Box::new(Type::union([key.as_ref().clone(), Type::Str])),
+                    Box::new(Type::union(
+                        std::iter::once(value.as_ref().clone()).chain(map_replacements),
+                    )),
+                ))))
+            } else {
+                Ok(result)
+            }
         }
         ExprKind::Index { collection, index } => {
             let collection = check_expression(collection, environment, type_parameters, strict)?;

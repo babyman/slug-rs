@@ -697,41 +697,60 @@ pub(super) fn construct_struct(
     Ok(Value::Struct(Rc::new(StructValue { schema, values })))
 }
 
-pub(super) fn copy_struct(
+pub(super) fn copy_value(
     value: Value,
     names: &[String],
     replacements: &[Value],
 ) -> Result<Value, String> {
-    let Value::Struct(value) = value else {
-        return Err("cannot copy non-struct value".into());
-    };
-    for (index, name) in names.iter().enumerate() {
-        if names[..index].contains(name) {
-            return Err(format!("duplicate struct field '{name}'"));
+    match value {
+        Value::Struct(value) => {
+            for (index, name) in names.iter().enumerate() {
+                if names[..index].contains(name) {
+                    return Err(format!("duplicate struct field '{name}'"));
+                }
+                if !value
+                    .schema
+                    .fields
+                    .iter()
+                    .any(|field| field.name.as_ref() == name)
+                {
+                    return Err(format!("struct has no field '{name}'"));
+                }
+            }
+            let mut values = value.values.clone();
+            for (name, replacement) in names.iter().zip(replacements) {
+                let index = value
+                    .schema
+                    .fields
+                    .iter()
+                    .position(|field| field.name.as_ref() == name)
+                    .expect("field names were validated");
+                values[index] = replacement.clone();
+            }
+            Ok(Value::Struct(Rc::new(StructValue {
+                schema: value.schema.clone(),
+                values,
+            })))
         }
-        if !value
-            .schema
-            .fields
-            .iter()
-            .any(|field| field.name.as_ref() == name)
-        {
-            return Err(format!("struct has no field '{name}'"));
+        Value::Map(value) => {
+            let mut entries = (*value).clone();
+            for (index, (name, replacement)) in names.iter().zip(replacements).enumerate() {
+                if names[..index].contains(name) {
+                    return Err(format!("duplicate map key '{name}'"));
+                }
+                let key = Value::string(name.as_str());
+                if let Some((_, existing)) =
+                    entries.iter_mut().rev().find(|(entry, _)| entry == &key)
+                {
+                    *existing = replacement.clone();
+                } else {
+                    entries.push((key, replacement.clone()));
+                }
+            }
+            Ok(Value::Map(Rc::new(entries)))
         }
+        _ => Err("cannot copy non-struct or map value".into()),
     }
-    let mut values = value.values.clone();
-    for (name, replacement) in names.iter().zip(replacements) {
-        let index = value
-            .schema
-            .fields
-            .iter()
-            .position(|field| field.name.as_ref() == name)
-            .expect("field names were validated");
-        values[index] = replacement.clone();
-    }
-    Ok(Value::Struct(Rc::new(StructValue {
-        schema: value.schema.clone(),
-        values,
-    })))
 }
 
 fn integer_or_float(
