@@ -12,6 +12,7 @@ pub(super) struct Lexer {
     index: usize,
     line: u32,
     column: u32,
+    brace_depth: usize,
 }
 
 impl Lexer {
@@ -159,6 +160,7 @@ impl Lexer {
             index: 0,
             line: 1,
             column: 1,
+            brace_depth: 0,
         }
     }
 
@@ -279,7 +281,10 @@ impl Lexer {
                 '\n' => {
                     let blank = self.current_line_is_blank();
                     self.next();
-                    if delimiters == 0 && !self.newline_continues(&result) {
+                    // Parenthesized calls and list expressions normally continue across
+                    // lines, but their callback blocks still need statement separators.
+                    if (delimiters == 0 || self.brace_depth > 0) && !self.newline_continues(&result)
+                    {
                         Self::push(
                             &mut result,
                             if blank {
@@ -397,6 +402,7 @@ impl Lexer {
                 }
                 '{' => {
                     self.next();
+                    self.brace_depth += 1;
                     let kind = if self.peek() == Some('|') {
                         self.next();
                         TokenKind::LExactMap
@@ -407,6 +413,7 @@ impl Lexer {
                 }
                 '}' => {
                     self.next();
+                    self.brace_depth = self.brace_depth.saturating_sub(1);
                     Self::push(&mut result, TokenKind::RBrace, span);
                 }
                 '[' => {

@@ -393,6 +393,9 @@ impl Parser {
                         break;
                     }
                     self.next();
+                    if self.matches(&TokenKind::RParen) {
+                        break;
+                    }
                 }
             }
             self.consume(&TokenKind::RParen, "expected ) after tag arguments")?;

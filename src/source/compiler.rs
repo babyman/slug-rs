@@ -262,7 +262,12 @@ impl Compiler {
                     Some(
                         self.expressions
                             .iter()
-                            .filter(|candidate| matches!(candidate.kind, ExprKind::Declare { .. }))
+                            .filter(|candidate| {
+                                matches!(
+                                    candidate.kind,
+                                    ExprKind::Declare { .. } | ExprKind::Foreign { .. }
+                                )
+                            })
                             .position(|candidate| candidate.span == expression.span)
                             .expect("compiled declaration was recorded"),
                     )

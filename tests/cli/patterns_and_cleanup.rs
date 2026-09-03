@@ -152,6 +152,39 @@ fn retries_list_match_cases_after_a_false_guard() {
 }
 
 #[test]
+fn separates_match_cases_in_a_callback_passed_to_a_call() {
+    let path = fixture_path("match-cases-in-callback");
+    fs::write(
+        &path,
+        "@testWith(1,)\n\
+         val apply = fn(callback) { callback(1) }\n\
+         println(apply(fn(value) {\n\
+           match value {\n\
+             1 => \"one\"\n\
+             other => \"other\"\n\
+           }\n\
+         }))\n",
+    )
+    .expect("write callback match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run callback match source");
+    fs::remove_file(path).expect("remove callback match source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "one\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn binds_whole_values_with_nested_at_patterns() {
     let path = fixture_path("at-patterns");
     fs::write(

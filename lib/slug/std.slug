@@ -14,3 +14,67 @@ export val put = fn(m:map, k, v):map {
 export val remove = fn(m:map, k):map {
     m - k
 }
+
+/**
+ * applies `f` to each element of `vs` and returns the resulting list.
+ */
+@testWith(
+	[[1,2], fn(n) {n * 2}], [2,4]
+)
+export val map = fn(vs:list, f:fn, acc = []):list match {
+	[[], ...] => acc
+	[[h, ...t], ...] => recur(t, f, acc :+ h /> f())
+}
+
+/**
+ * applies `f` to each element of `vs` and concatenates the resulting lists.
+ *
+ * `f` must return a list or a single value (which is treated as a one-element list).
+ */
+@testWith(
+	[[1, 2, 3], fn(n) { [n, n] }],                              [1, 1, 2, 2, 3, 3],
+	[[1, 2, 3], fn(n) { if (n % 2 == 0) { [n] } else { [] } }], [2]
+)
+export val flatMap = fn(vs:list, f:fn):list {
+	vs /> reduce([], fn(acc, v) {
+		match f(v) {
+			[...items] => acc + items
+			item       => acc :+ item
+		}
+	})
+}
+
+/**
+ * returns a new list containing only elements for which `f` returns true.
+ */
+@testWith(
+	[[1,2,3,4], fn(v) { v % 2 == 0 }], [2,4]
+)
+export val filter = fn(vs:list, f:fn, acc:list = []):list match {
+	[[], ...] => acc
+	[[h, ...t], ...] if h /> f() => recur(t, f, acc :+ h)
+	[[h, ...t], ...] => recur(t, f, acc)
+}
+
+/**
+ * folds `vs` left with `f`, starting from initial value `v`.
+ */
+@testWith(
+	[[], 0, fn(a,b) {a+b}],    0,
+	[[1,2,3], 0, fn(a,b) {a+b}], 6,
+	[[1,2,3], 9, fn(a,b) {a+b}], 15,
+)
+export val reduce = fn(vs:list, v, f:fn) match {
+	[[], ...] => v
+	[[h, ...t], ...] => recur(t, f(v, h), f)
+}
+
+/**
+ * returns the first element of `xs` for which `f` returns true, or `nil`.
+ */
+export val find = fn<T>(xs:list<T>, f:fn<bool, T>):T|nil match {
+	[[], ...] => nil
+	[[h, ...t], ...] => {
+		if (f(h)) { h } else { recur(t, f) }
+	}
+}
