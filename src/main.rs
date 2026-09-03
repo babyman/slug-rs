@@ -2,9 +2,12 @@ use std::{
     env,
     fmt::Write as FmtWrite,
     fs,
-    io::Write as IoWrite,
+    io::{BufRead, Write as IoWrite},
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::Mutex,
+    thread,
+    time::Duration,
 };
 
 use slug_vm::{
@@ -135,6 +138,79 @@ fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())
 }
 
+const STDIN_CHANNEL_CAPACITY: usize = 32;
+
+#[derive(Default)]
+struct StdinState {
+    channel: Mutex<Option<NativeOwnedValue>>,
+}
+
+fn native_read_lines(call: &mut NativeCall<'_>) -> NativeStatus {
+    let existing = {
+        let state = call
+            .state::<StdinState>()
+            .expect("slug.io.stdin has matching native state");
+        state
+            .channel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    };
+    if let Some(channel) = existing {
+        return call.return_value(channel);
+    }
+
+    let (channel, producer) = call.channel(STDIN_CHANNEL_CAPACITY);
+    if let Err(error) = thread::Builder::new()
+        .name("slug-stdin".into())
+        .spawn(move || read_stdin_lines(&producer))
+    {
+        return call.raise(slug_vm::NativeError::new(
+            "native.io",
+            format!("cannot start standard-input reader: {error}"),
+        ));
+    }
+    call.state::<StdinState>()
+        .expect("slug.io.stdin has matching native state")
+        .channel
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(channel.clone());
+    call.return_value(channel)
+}
+
+fn read_stdin_lines(producer: &slug_vm::NativeChannelProducer) {
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let mut line = String::new();
+    loop {
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => {
+                producer.close();
+                return;
+            }
+            Ok(_) => {
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                let value = std::mem::take(&mut line);
+                loop {
+                    match producer.try_send(slug_vm::NativeSendValue::string(value.clone())) {
+                        slug_vm::NativeProducerStatus::Sent => break,
+                        slug_vm::NativeProducerStatus::Full => {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        slug_vm::NativeProducerStatus::Closed => return,
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn register_native_modules(vm: &mut Vm) {
     let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
     vm.define_builtin(
@@ -184,6 +260,15 @@ fn register_native_modules(vm: &mut Vm) {
     vm.define_foreign(
         channel
             .function("close", NativeArity::Exact(1), native_close)
+            .expect("static foreign function is valid"),
+    )
+    .expect("static foreign binding is unique");
+
+    let stdin = NativeModule::new("slug.io.stdin", StdinState::default())
+        .expect("static native module is valid");
+    vm.define_foreign(
+        stdin
+            .function("readLines", NativeArity::Exact(0), native_read_lines)
             .expect("static foreign function is valid"),
     )
     .expect("static foreign binding is unique");

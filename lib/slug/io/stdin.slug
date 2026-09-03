@@ -1,0 +1,43 @@
+/**
+ * slug.io.stdin — process standard input as a shared line stream
+ *
+ * `readLines()` exposes process standard input as one shared channel. Each
+ * line is delivered to one receiver; this is a stream, not a broadcast.
+ */
+
+/**
+ * Returns the shared process-standard-input line channel.
+ *
+ * Lines exclude their trailing newline. Empty lines and one final line without
+ * a newline are preserved. The channel closes when standard input ends.
+ */
+export foreign readLines = fn():chan<str|nil>
+
+/**
+ * Reads the next standard-input line, or nil after end of input.
+ */
+export val readLine = fn():str|nil {
+    select { recv readLines() }
+}
+
+/**
+ * Writes a prompt without a newline, then reads the next input line.
+ */
+export val prompt = fn(message:str):str|nil {
+    print(message)
+    readLine()
+}
+
+/**
+ * Prompts for a yes-or-no answer.
+ *
+ * Empty input, end of input, and unrecognized input return `default`.
+ */
+export val confirm = fn(message:str, default:bool = false):bool {
+    print(message + if (default) { " [Y/n]: " } else { " [y/N]: " })
+    readLine() /> match {
+        "y", "Y", "yes", "Yes", "YES", "true", "1" => true
+        "n", "N", "no", "No", "NO", "false", "0" => false
+        _ => default
+    }
+}

@@ -31,6 +31,8 @@ mod language_core;
 mod modules;
 #[path = "cli/patterns_and_cleanup.rs"]
 mod patterns_and_cleanup;
+#[path = "cli/stdin.rs"]
+mod stdin;
 #[path = "cli/types_and_metadata.rs"]
 mod types_and_metadata;
 #[path = "cli/types_and_values.rs"]

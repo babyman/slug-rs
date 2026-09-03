@@ -89,6 +89,8 @@ modules and builtins available with the behavior exercised by their source:
 - builtins including `import`, `len`, `print`, and `println`;
 - `slug.std` and `slug.test` for assertions and core collection operations;
 - `slug.channel` for channels, `await`, `send`, `recv`, and `close`;
+- `slug.io.stdin` for the shared standard-input line stream when a fixture or
+  library program imports it;
 - `slug.builtin` for host-provided foundational bindings when the fixture or
   host environment registers them;
 - `slug.time` for timer-oriented fixtures;
@@ -129,6 +131,8 @@ boundary. A conforming host MUST provide:
 - source loading and a stable path for diagnostics;
 - module loading using the fixture-environment rules above;
 - standard output and standard error streams;
+- a process standard-input stream for `slug.io.stdin` when that module is
+  available;
 - monotonic timer support for `after` select cases;
 - a configurable default nursery limit;
 - the immutable configuration service defined in [Configuration](configuration.md);

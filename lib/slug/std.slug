@@ -21,7 +21,7 @@ export val remove = fn(m:map, k):map {
 @testWith(
 	[[1,2], fn(n) {n * 2}], [2,4]
 )
-export val map = fn(vs:list, f:fn, acc = []):list match {
+export val map = fn<T>(vs:list<T>, f:fn<bool, T>, acc:list<T> = []):list<T> match {
 	[[], ...] => acc
 	[[h, ...t], ...] => recur(t, f, acc :+ h /> f())
 }

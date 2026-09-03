@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `slug.io.stdin`: a bounded shared stream of normalized standard-input
+  lines, plus `readLine`, `prompt`, and `confirm` helpers.
+
 - Newline-separated match cases now parse inside callback blocks passed to a
   parenthesized call.
 
