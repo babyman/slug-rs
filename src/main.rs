@@ -1,10 +1,12 @@
 use std::{
+    cell::RefCell,
     env,
     fmt::Write as FmtWrite,
     fs,
     io::{BufRead, Write as IoWrite},
     path::{Path, PathBuf},
     process::ExitCode,
+    rc::Rc,
     sync::Mutex,
     thread,
     time::Duration,
@@ -12,7 +14,7 @@ use std::{
 
 use slug_vm::{
     Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule, NativeOwnedValue,
-    NativeStatus, RuntimeError, SourceError, SourceErrorKind, SourceSpan, Vm,
+    NativeResourceType, NativeStatus, RuntimeError, SourceError, SourceErrorKind, SourceSpan, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -133,6 +135,141 @@ fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
 
 fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
     if let Err(error) = call.close_channel(0) {
+        return call.raise(error);
+    }
+    call.return_value(NativeOwnedValue::nil())
+}
+
+enum OpenFile {
+    Reader(std::io::BufReader<fs::File>),
+    Writer(fs::File),
+}
+
+struct FileHandle(Option<OpenFile>);
+
+struct FilesystemState {
+    file: Rc<RefCell<Option<NativeResourceType<FileHandle>>>>,
+}
+
+fn file_resource_type(call: &NativeCall<'_>) -> NativeResourceType<FileHandle> {
+    call.state::<FilesystemState>()
+        .expect("slug.io.fs has matching native state")
+        .file
+        .borrow()
+        .as_ref()
+        .expect("slug.io.fs file resource type is registered")
+        .clone()
+}
+
+fn release_file(handle: &mut FileHandle) {
+    handle.0.take();
+}
+
+fn destroy_file(_handle: FileHandle) {}
+
+fn native_open_read(call: &mut NativeCall<'_>) -> NativeStatus {
+    native_open_file(call, false, false)
+}
+
+fn native_open_write(call: &mut NativeCall<'_>) -> NativeStatus {
+    native_open_file(call, true, false)
+}
+
+fn native_open_append(call: &mut NativeCall<'_>) -> NativeStatus {
+    native_open_file(call, true, true)
+}
+
+fn native_open_file(call: &mut NativeCall<'_>, write: bool, append: bool) -> NativeStatus {
+    let path = match call.argument(0).and_then(slug_vm::NativeValueRef::as_str) {
+        Ok(path) => path.to_owned(),
+        Err(error) => return call.raise(error),
+    };
+    let opened = if write {
+        fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(!append)
+            .append(append)
+            .open(&path)
+            .map(OpenFile::Writer)
+    } else {
+        fs::File::open(&path).map(|file| OpenFile::Reader(std::io::BufReader::new(file)))
+    };
+    let handle = match opened {
+        Ok(handle) => FileHandle(Some(handle)),
+        Err(error) => {
+            return call.raise(slug_vm::NativeError::new(
+                "native.io",
+                format!("cannot open {path:?}: {error}"),
+            ));
+        }
+    };
+    match call.resource(&file_resource_type(call), handle) {
+        Ok(handle) => call.return_value(handle),
+        Err(error) => call.raise(error),
+    }
+}
+
+fn native_read_line(call: &mut NativeCall<'_>) -> NativeStatus {
+    let result = call.with_resource(0, &file_resource_type(call), |handle| {
+        let Some(OpenFile::Reader(reader)) = handle.0.as_mut() else {
+            return Err(slug_vm::NativeError::new(
+                "native.mode",
+                "file is not open for reading",
+            ));
+        };
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => Ok(None),
+            Ok(_) => {
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Ok(Some(line))
+            }
+            Err(error) => Err(slug_vm::NativeError::new(
+                "native.io",
+                format!("cannot read file: {error}"),
+            )),
+        }
+    });
+    match result {
+        Ok(Ok(Some(line))) => call.return_value(NativeOwnedValue::string(line)),
+        Ok(Ok(None)) => call.return_value(NativeOwnedValue::nil()),
+        Ok(Err(error)) | Err(error) => call.raise(error),
+    }
+}
+
+fn native_write_file(call: &mut NativeCall<'_>) -> NativeStatus {
+    let content = match call.argument(1).and_then(slug_vm::NativeValueRef::as_str) {
+        Ok(content) => content.to_owned(),
+        Err(error) => return call.raise(error),
+    };
+    let result = call.with_resource(0, &file_resource_type(call), |handle| {
+        let Some(OpenFile::Writer(file)) = handle.0.as_mut() else {
+            return Err(slug_vm::NativeError::new(
+                "native.mode",
+                "file is not open for writing",
+            ));
+        };
+        file.write_all(content.as_bytes()).map_err(|error| {
+            slug_vm::NativeError::new("native.io", format!("cannot write file: {error}"))
+        })?;
+        i64::try_from(content.len()).map_err(|_| {
+            slug_vm::NativeError::new("native.range", "written byte count exceeds integer range")
+        })
+    });
+    match result {
+        Ok(Ok(written)) => call.return_value(NativeOwnedValue::integer(written)),
+        Ok(Err(error)) | Err(error) => call.raise(error),
+    }
+}
+
+fn native_close_file(call: &mut NativeCall<'_>) -> NativeStatus {
+    if let Err(error) = call.close_resource(0, &file_resource_type(call)) {
         return call.raise(error);
     }
     call.return_value(NativeOwnedValue::nil())
@@ -272,6 +409,34 @@ fn register_native_modules(vm: &mut Vm) {
             .expect("static foreign function is valid"),
     )
     .expect("static foreign binding is unique");
+
+    let file = Rc::new(RefCell::new(None));
+    let filesystem = NativeModule::new("slug.io.fs", FilesystemState { file: file.clone() })
+        .expect("static native module is valid");
+    *file.borrow_mut() = Some(
+        filesystem
+            .resource_type("file", release_file, destroy_file)
+            .expect("static file resource type is valid"),
+    );
+    for (name, arity, callback) in [
+        (
+            "openRead",
+            NativeArity::Exact(1),
+            native_open_read as for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
+        ),
+        ("openWrite", NativeArity::Exact(1), native_open_write),
+        ("openAppend", NativeArity::Exact(1), native_open_append),
+        ("readLine", NativeArity::Exact(1), native_read_line),
+        ("write", NativeArity::Exact(2), native_write_file),
+        ("close", NativeArity::Exact(1), native_close_file),
+    ] {
+        vm.define_foreign(
+            filesystem
+                .function(name, arity, callback)
+                .expect("static foreign function is valid"),
+        )
+        .expect("static foreign binding is unique");
+    }
 }
 
 fn main() -> ExitCode {

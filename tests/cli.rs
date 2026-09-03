@@ -25,6 +25,8 @@ mod basics;
 mod concurrency;
 #[path = "cli/diagnostics.rs"]
 mod diagnostics;
+#[path = "cli/filesystem.rs"]
+mod filesystem;
 #[path = "cli/language_core.rs"]
 mod language_core;
 #[path = "cli/modules.rs"]

@@ -1,0 +1,38 @@
+/**
+ * slug.io.fs — explicit-lifecycle file streams
+ *
+ * Open functions return opaque file resources. Register `close` with `defer`
+ * immediately after opening a file; resource destruction is fallback cleanup,
+ * not a replacement for explicit close.
+ */
+
+/**
+ * Opens a text file for line-by-line reading.
+ */
+export foreign openRead = fn(path:str)
+
+/**
+ * Creates or truncates a text file for writing.
+ */
+export foreign openWrite = fn(path:str)
+
+/**
+ * Opens or creates a text file and writes at its end.
+ */
+export foreign openAppend = fn(path:str)
+
+/**
+ * Reads the next line without its trailing newline, or nil at end of file.
+ */
+export foreign readLine = fn(file):str|nil
+
+/**
+ * Writes text to an open writable file and returns its byte length.
+ */
+export foreign write = fn(file, content:str):num
+
+/**
+ * Closes a file resource. Closing is idempotent; later operations on the
+ * handle report a checked resource-closed error.
+ */
+export foreign close = fn(file):nil

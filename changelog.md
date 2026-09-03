@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `slug.io.fs` text-file resources with explicit `close`, `defer`-based
+  lifecycle management, line reads, and write/append streams.
+
 - Added `slug.io.stdin`: a bounded shared stream of normalized standard-input
   lines, plus `readLine`, `prompt`, and `confirm` helpers.
 

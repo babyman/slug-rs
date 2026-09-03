@@ -39,7 +39,8 @@ contract is documented separately as `.cslug`.
   `select` receive/send/timer/task-await/default cases, and implicitly
   imported `slug.builtin.print`, `slug.builtin.println`, and
   `slug.builtin.len`, plus a shared process-standard-input line stream through
-  `slug.io.stdin`.
+  `slug.io.stdin`, and opaque explicit-lifecycle file streams through
+  `slug.io.fs`.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, cached isolated module initialization, and string-keyed exported-value maps.

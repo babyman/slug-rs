@@ -30,6 +30,7 @@ normative.
 | `automatic-semicolon-insertion.md` | Automatic statement termination rules. |
 | `errors.md` | Error categories and diagnostic behavior. |
 | `deferred-work.md` | Deferred-action execution and recovery behavior. |
+| `filesystem.md` | Opaque file resources and explicit lifecycle. |
 | `maps.md` | Map literals, keys, and operations. |
 | `match-and-destructuring.md` | Match expressions and destructuring patterns. |
 | `structs.md` | Schema identity, construction, defaults, field access, and equality. |
