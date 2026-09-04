@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Native channel producers now return ownership of a send value when a bounded
+  mailbox is full or closed, allowing integrations to retry without cloning.
+- Added a native-callback workload to the opt-in VM benchmark harness.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.

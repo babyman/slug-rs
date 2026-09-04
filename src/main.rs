@@ -333,14 +333,18 @@ fn read_stdin_lines(producer: &slug_vm::NativeChannelProducer) {
                         line.pop();
                     }
                 }
-                let value = std::mem::take(&mut line);
+                let mut value = std::mem::take(&mut line);
                 loop {
-                    match producer.try_send(slug_vm::NativeSendValue::string(value.clone())) {
+                    match producer.try_send(slug_vm::NativeSendValue::string(value)) {
                         slug_vm::NativeProducerStatus::Sent => break,
-                        slug_vm::NativeProducerStatus::Full => {
+                        slug_vm::NativeProducerStatus::Full(rejected) => {
+                            value = match rejected {
+                                slug_vm::NativeSendValue::String(value) => value,
+                                _ => unreachable!("stdin producer sends only strings"),
+                            };
                             thread::sleep(Duration::from_millis(1));
                         }
-                        slug_vm::NativeProducerStatus::Closed => return,
+                        slug_vm::NativeProducerStatus::Closed(_) => return,
                     }
                 }
             }

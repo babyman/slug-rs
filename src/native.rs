@@ -63,11 +63,14 @@ impl NativeSendValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NativeProducerStatus {
     Sent,
-    Full,
-    Closed,
+    /// The bounded mailbox was full. The caller retains the value and may
+    /// retry, coalesce, or discard it according to its own policy.
+    Full(NativeSendValue),
+    /// The receiver or runtime was closed. The caller retains the value.
+    Closed(NativeSendValue),
 }
 
 pub struct NativeChannelProducer {
@@ -103,22 +106,22 @@ impl NativeChannelProducer {
     pub fn try_send(&self, value: NativeSendValue) -> NativeProducerStatus {
         if !self.reserve_slot() {
             return if self.is_closed() {
-                NativeProducerStatus::Closed
+                NativeProducerStatus::Closed(value)
             } else {
-                NativeProducerStatus::Full
+                NativeProducerStatus::Full(value)
             };
         }
         if self.is_closed() {
             self.release_slot();
-            return NativeProducerStatus::Closed;
+            return NativeProducerStatus::Closed(value);
         }
         let Ok(mut queue) = self.state.queue.lock() else {
             self.release_slot();
-            return NativeProducerStatus::Closed;
+            return NativeProducerStatus::Closed(value);
         };
         if self.is_closed() {
             self.release_slot();
-            return NativeProducerStatus::Closed;
+            return NativeProducerStatus::Closed(value);
         }
         queue.push_back(value);
         drop(queue);
@@ -1257,13 +1260,13 @@ mod tests {
         assert_eq!(status, NativeProducerStatus::Sent);
         assert_eq!(
             producer.try_send(NativeSendValue::integer(8)),
-            NativeProducerStatus::Full
+            NativeProducerStatus::Full(NativeSendValue::integer(8))
         );
         producer.close();
         assert!(producer.is_closed());
         assert_eq!(
             producer.try_send(NativeSendValue::integer(9)),
-            NativeProducerStatus::Closed
+            NativeProducerStatus::Closed(NativeSendValue::integer(9))
         );
     }
 
@@ -1287,7 +1290,62 @@ mod tests {
         assert!(producer.is_closed());
         assert_eq!(
             producer.try_send(NativeSendValue::integer(7)),
-            NativeProducerStatus::Closed
+            NativeProducerStatus::Closed(NativeSendValue::integer(7))
         );
+    }
+
+    #[test]
+    fn rejected_producer_values_remain_owned_by_the_sender() {
+        let producer = NativeChannelProducer::bounded(1);
+        assert_eq!(
+            producer.try_send(NativeSendValue::string("first")),
+            NativeProducerStatus::Sent
+        );
+        assert_eq!(
+            producer.try_send(NativeSendValue::bytes(vec![1, 2, 3])),
+            NativeProducerStatus::Full(NativeSendValue::bytes(vec![1, 2, 3]))
+        );
+        producer.close();
+        assert_eq!(
+            producer.try_send(NativeSendValue::string("closed")),
+            NativeProducerStatus::Closed(NativeSendValue::string("closed"))
+        );
+    }
+
+    #[test]
+    fn concurrent_senders_observe_revocation_without_losing_rejected_values() {
+        use std::sync::{Arc, Barrier};
+
+        let producer = NativeChannelProducer::bounded(1);
+        let start = Arc::new(Barrier::new(9));
+        let senders = (0_i64..8)
+            .map(|index| {
+                let producer = producer.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    let mut value = NativeSendValue::integer(index);
+                    loop {
+                        match producer.try_send(value) {
+                            NativeProducerStatus::Sent => {
+                                value = NativeSendValue::integer(index);
+                            }
+                            NativeProducerStatus::Full(rejected) => value = rejected,
+                            NativeProducerStatus::Closed(rejected) => return rejected,
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        start.wait();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        producer.close();
+
+        for (index, sender) in (0_i64..).zip(senders) {
+            assert_eq!(
+                sender.join().expect("sender thread completes"),
+                NativeSendValue::integer(index)
+            );
+        }
     }
 }

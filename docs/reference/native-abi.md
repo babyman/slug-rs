@@ -72,6 +72,14 @@ is completed by the VM before the native callback begins. A callback therefore
 observes an ordered, already-bound argument list; it does not implement Slug's
 call-binding rules.
 
+The version 0 registry has one native descriptor for each `(module, local
+name)` pair. Repeated compatible source `foreign` declarations therefore share
+that implementation, even when static overload selection distinguishes their
+private callable identities. Version 1 needs an explicit, source-independent
+foreign-member selector before it can register distinct native implementations
+for same-name overloads; this selector is an ABI design gate, not an implicit
+registration order or a source-type string.
+
 The version 0 `Vm::define_native` API is a temporary adapter that installs one
 descriptor under its local name in a VM global environment. Descriptors retain
 their module-qualified identity, while the module-qualified registry used to
@@ -228,10 +236,11 @@ The thread-safe producer API provides:
 - producer cloning and release; and
 - a closed-state query suitable for cooperative cancellation.
 
-`try_send` is non-blocking and consumes the owned value only when accepted. It
-returns `sent`, `full`, or `closed`. The native module owns its policy for a
-`full` result: retry in its own event loop, coalesce, drop when its documented
-API permits that, or close with an error event. The ABI does not create an
+`try_send` is non-blocking and consumes the owned value only when accepted. A
+`full` or `closed` result returns ownership to the native module. It returns
+`sent`, `full`, or `closed`. The native module owns its policy for a `full`
+result: retry in its own event loop, coalesce, drop when its documented API
+permits that, or close with an error event. The ABI does not create an
 unbounded queue and does not block a foreign event-loop thread. Channel close
 remains idempotent; sending after close fails without waking or naming a task.
 For a paired receiver, native mailbox entries and ordinary Slug buffered

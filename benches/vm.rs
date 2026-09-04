@@ -4,7 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use slug_vm::{Program, Vm, VmMetrics, compile};
+use slug_vm::{
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, Program, Vm, VmMetrics,
+    compile,
+};
 
 const ITERATIONS: usize = 1_000;
 
@@ -12,6 +15,27 @@ struct Workload {
     name: &'static str,
     iterations: usize,
     source: fn() -> String,
+    install: fn(&mut Vm),
+}
+
+fn no_native_setup(_: &mut Vm) {}
+
+fn native_increment(call: &mut NativeCall<'_>) -> NativeStatus {
+    let value = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
+        Ok(value) => value,
+        Err(error) => return call.raise(error),
+    };
+    call.return_value(NativeOwnedValue::integer(value + 1))
+}
+
+fn install_native_increment(vm: &mut Vm) {
+    let module = NativeModule::new("benchmark.native", ()).expect("native module is valid");
+    vm.define_native(
+        module
+            .function("increment", NativeArity::Exact(1), native_increment)
+            .expect("native function is valid"),
+    )
+    .expect("native binding is unique");
 }
 
 fn main() {
@@ -37,7 +61,7 @@ fn main() {
         let source = (workload.source)();
         let program = compile(workload.name, &source)
             .unwrap_or_else(|error| panic!("compile {}: {error}", workload.name));
-        let (elapsed, metrics) = run(&program, workload.iterations);
+        let (elapsed, metrics) = run(&program, workload.iterations, workload.install);
         let layout = program.layout_metrics();
         println!(
             "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {scheduler_wait:?} scheduler wait); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups/{deadline_entries} entries; {wakeups} timer wakeups/{wakeup_entries} entries; {removals} wait-registration removals; removal entries channel/task/timer {channel_entries}/{task_entries}/{timer_entries}; peak timers/ready/channel/task {peak_timers}/{peak_ready}/{peak_channel}/{peak_task}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
@@ -85,11 +109,12 @@ fn main() {
     }
 }
 
-fn run(program: &Program, iterations: usize) -> (Duration, VmMetrics) {
+fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration, VmMetrics) {
     let started = Instant::now();
     let mut metrics = VmMetrics::default();
     for _ in 0..iterations {
         let mut vm = Vm::new();
+        install(&mut vm);
         black_box(
             vm.run_named(program, "main")
                 .expect("run benchmark program"),
@@ -133,6 +158,7 @@ const WORKLOADS: &[Workload] = &[
         source: || {
             "val sum = fn(n, total) { if (n == 0) { total } else { recur(n - 1, total + n) } }\nsum(200, 0)\n".into()
         },
+        install: no_native_setup,
     },
     Workload {
         name: "calls-and-closures",
@@ -140,6 +166,7 @@ const WORKLOADS: &[Workload] = &[
         source: || {
             "val makeAdder = fn(base) { fn(value) { base + value } }\nval add = makeAdder(1)\nadd(41)\n".into()
         },
+        install: no_native_setup,
     },
     Workload {
         name: "pattern-matching",
@@ -147,11 +174,13 @@ const WORKLOADS: &[Workload] = &[
         source: || {
             "val describe = fn(value) match { [head, second, ...] => head + second; _ => 0 }\ndescribe([1, 2, 3])\n".into()
         },
+        install: no_native_setup,
     },
     Workload {
         name: "deferred-cleanup",
         iterations: ITERATIONS,
         source: || "val work = fn(value) { defer { nil }; value + 1 }\nwork(41)\n".into(),
+        install: no_native_setup,
     },
     Workload {
         name: "lists-and-maps",
@@ -159,31 +188,45 @@ const WORKLOADS: &[Workload] = &[
         source: || {
             "val values = [1, 2, 3]\nval mapped = {first: values[0], last: values[2]}\nmapped[\"first\"] + mapped[\"last\"]\n".into()
         },
+        install: no_native_setup,
+    },
+    Workload {
+        name: "native-calls",
+        iterations: ITERATIONS,
+        source: || {
+            "val sum = fn(remaining, total) { if (remaining == 0) { total } else { recur(remaining - 1, increment(total)) } }\nsum(200, 0)\n".into()
+        },
+        install: install_native_increment,
     },
     Workload {
         name: "many-timers-8",
         iterations: 100,
         source: many_timers_8,
+        install: no_native_setup,
     },
     Workload {
         name: "many-timers-32",
         iterations: 100,
         source: many_timers_32,
+        install: no_native_setup,
     },
     Workload {
         name: "many-timers-128",
         iterations: 25,
         source: many_timers_128,
+        install: no_native_setup,
     },
     Workload {
         name: "many-select-cases",
         iterations: 100,
         source: many_select_cases,
+        install: no_native_setup,
     },
     Workload {
         name: "cancel-suspended-waits",
         iterations: 10,
         source: cancel_suspended_waits,
+        install: no_native_setup,
     },
 ];
 
