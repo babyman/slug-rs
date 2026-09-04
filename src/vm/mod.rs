@@ -529,6 +529,24 @@ impl Vm {
         loader.define_foreign(function)
     }
 
+    /// Registers native descriptors atomically for matching source `foreign`
+    /// declarations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the VM has no module loader or when any descriptor
+    /// conflicts with an existing or sibling descriptor. No descriptor is
+    /// registered on failure.
+    pub fn define_foreign_batch(
+        &mut self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        let loader = self.module_loader.as_ref().ok_or_else(|| {
+            NativeDescriptorError::new("foreign bindings require a module loader")
+        })?;
+        loader.define_foreign_batch(functions)
+    }
+
     /// Registers a host function in the implicitly available foundation module.
     ///
     /// # Errors

@@ -13,6 +13,26 @@ fn returns_native(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::string("native"))
 }
 
+#[test]
+fn foreign_batch_registration_does_not_partially_install_descriptors() {
+    let loader = ModuleLoader::new(".", None);
+    let mut vm = Vm::with_module_loader(loader);
+    let module = NativeModule::new("atomic", ()).expect("native module is valid");
+    let first = module
+        .function("call", NativeArity::Exact(0), returns_nil)
+        .expect("first native function is valid");
+    let duplicate = module
+        .function("call", NativeArity::Exact(1), returns_nil)
+        .expect("second native function is valid");
+
+    assert!(
+        vm.define_foreign_batch(vec![first.clone(), duplicate])
+            .is_err()
+    );
+    vm.define_foreign(first)
+        .expect("failed batch must not register its first descriptor");
+}
+
 fn root(kind: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("slug-module-{kind}-{}", std::process::id()))
 }

@@ -310,21 +310,33 @@ impl ModuleLoader {
         &self,
         function: NativeFunction,
     ) -> Result<(), NativeDescriptorError> {
-        let key = (
-            function.module_name().to_string(),
-            function.name().to_string(),
-        );
-        if self
-            .state
-            .foreign_functions
-            .borrow_mut()
-            .insert(key.clone(), function)
-            .is_some()
-        {
-            return Err(NativeDescriptorError::new(format!(
-                "foreign binding `{}.{}` is already defined",
-                key.0, key.1
-            )));
+        self.define_foreign_batch(vec![function])
+    }
+
+    pub(crate) fn define_foreign_batch(
+        &self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        let keys = functions
+            .iter()
+            .map(|function| {
+                (
+                    function.module_name().to_string(),
+                    function.name().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut registry = self.state.foreign_functions.borrow_mut();
+        for (index, key) in keys.iter().enumerate() {
+            if registry.contains_key(key) || keys[..index].contains(key) {
+                return Err(NativeDescriptorError::new(format!(
+                    "foreign binding `{}.{}` is already defined",
+                    key.0, key.1
+                )));
+            }
+        }
+        for (key, function) in keys.into_iter().zip(functions) {
+            registry.insert(key, function);
         }
         Ok(())
     }

@@ -440,6 +440,7 @@ The `ffi-prototype` Cargo feature contains a test-only C module experiment with
 scalar `add` and `sqrt` functions. Its header, loader, and fixtures exist to
 exercise opaque calls, version rejection, and structured errors; they are not
 version 1 declarations and accept no third-party compatibility promise. The
-prototype deliberately supports only exact, non-overlapping arities, keeps
-loaded code resident for the process lifetime, and does not bridge arbitrary C
-libraries.
+prototype deliberately supports only exact arities, fixed-width and
+length-delimited descriptor fields, opaque member-key dispatch, and integer
+callback statuses. It keeps loaded code resident for the process lifetime and
+does not bridge arbitrary C libraries.

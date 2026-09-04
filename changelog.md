@@ -9,6 +9,9 @@
 - Added a feature-gated, test-only C math-module FFI prototype with `add`,
   `sqrt`, ABI-major validation, and checked native error propagation.
 
+- The C FFI prototype now validates fixed-width, length-delimited descriptors,
+  dispatches callbacks by opaque member key, and atomically registers modules.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.

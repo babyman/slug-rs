@@ -695,7 +695,45 @@ impl NativeModule {
                 self.inner.name
             )));
         }
-        Ok(NativeFunction::new(self.clone(), name, arity, callback))
+        Ok(NativeFunction::new(
+            self.clone(),
+            name,
+            arity,
+            None,
+            callback,
+        ))
+    }
+
+    /// Describes a synchronous function with an opaque module-defined member key.
+    ///
+    /// The key is available only to its callback. It does not participate in
+    /// Slug source overload selection or expose source type annotations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the binding or member key is empty, or when the
+    /// module already contains the same binding and arity.
+    pub fn function_with_member_key(
+        &self,
+        name: impl Into<Rc<str>>,
+        arity: NativeArity,
+        member_key: impl Into<Rc<str>>,
+        callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
+    ) -> Result<NativeFunction, NativeDescriptorError> {
+        let member_key = member_key.into();
+        if member_key.trim().is_empty() {
+            return Err(NativeDescriptorError::new(
+                "native function member key cannot be empty",
+            ));
+        }
+        let function = self.function(name, arity, callback)?;
+        Ok(NativeFunction::new(
+            self.clone(),
+            function.0.name.clone(),
+            arity,
+            Some(member_key),
+            callback,
+        ))
     }
 
     /// Registers an identity-bearing resource type and its lifecycle callbacks.
@@ -754,6 +792,7 @@ struct NativeFunctionInner {
     module: NativeModule,
     name: Rc<str>,
     arity: NativeArity,
+    member_key: Option<Rc<str>>,
     callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
 }
 
@@ -762,12 +801,14 @@ impl NativeFunction {
         module: NativeModule,
         name: Rc<str>,
         arity: NativeArity,
+        member_key: Option<Rc<str>>,
         callback: for<'call> fn(&mut NativeCall<'call>) -> NativeStatus,
     ) -> Self {
         Self(Rc::new(NativeFunctionInner {
             module,
             name,
             arity,
+            member_key,
             callback,
         }))
     }
@@ -785,6 +826,11 @@ impl NativeFunction {
     #[must_use]
     pub fn qualified_name(&self) -> String {
         format!("{}.{}", self.module_name(), self.name())
+    }
+
+    #[must_use]
+    pub fn member_key(&self) -> Option<&str> {
+        self.0.member_key.as_deref()
     }
 
     pub(crate) fn same_function(&self, other: &Self) -> bool {
@@ -826,6 +872,7 @@ impl NativeFunction {
         let mut call = NativeCall {
             arguments,
             module: &self.0.module,
+            member_key: self.0.member_key.clone(),
             outcome: None,
             violation: None,
             resources: Vec::new(),
@@ -992,6 +1039,7 @@ enum NativeOutcome {
 pub struct NativeCall<'call> {
     arguments: &'call [Value],
     module: &'call NativeModule,
+    member_key: Option<Rc<str>>,
     outcome: Option<NativeOutcome>,
     violation: Option<String>,
     resources: Vec<Weak<NativeResource>>,
@@ -1022,6 +1070,12 @@ impl NativeCall<'_> {
         self.module.inner.state.downcast_ref()
     }
 
+    /// Returns this callback's opaque module-defined member key, when present.
+    #[must_use]
+    pub fn member_key(&self) -> Option<&str> {
+        self.member_key.as_deref()
+    }
+
     pub fn set_result(&mut self, value: NativeOwnedValue) {
         self.set_outcome(NativeOutcome::Result(value));
     }
@@ -1041,6 +1095,16 @@ impl NativeCall<'_> {
 
     pub fn raise(&mut self, error: NativeError) -> NativeStatus {
         self.set_error(error);
+        NativeStatus::Error
+    }
+
+    /// Reports a host-side callback contract violation.
+    ///
+    /// Native callbacks ordinarily report Slug-visible failures with
+    /// [`NativeCall::raise`]. This operation is for adapter code that detects
+    /// malformed foreign behavior such as an unknown ABI status.
+    pub fn report_contract_violation(&mut self, message: impl Into<String>) -> NativeStatus {
+        self.violation = Some(message.into());
         NativeStatus::Error
     }
 

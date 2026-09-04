@@ -105,3 +105,77 @@ fn rejects_a_c_module_with_an_incompatible_abi_major() {
     };
     assert!(error.to_string().contains("ABI major 99"));
 }
+
+#[test]
+fn rejects_an_undersized_c_function_descriptor() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/undersized_function_module.c",
+        "undersized",
+    );
+    let Err(error) = FfiPrototypeModule::load(library) else {
+        panic!("undersized descriptor must fail");
+    };
+    assert!(error.to_string().contains("undersized function descriptor"));
+}
+
+#[test]
+fn turns_an_unknown_c_status_into_a_checked_contract_error() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/unknown_status_module.c",
+        "unknown_status",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/status.slug"),
+        "export foreign status = fn():nil\n",
+    )
+    .expect("write status module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val status = import(\"slug.status\")\nstatus.status()\n",
+            false,
+        )
+        .expect("compile program using status module");
+    let module = FfiPrototypeModule::load(library).expect("load status module");
+    let mut vm = Vm::with_module_loader(loader);
+    module.register(&mut vm).expect("register status module");
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("unknown C status must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(error.message.contains("unknown status 99"));
+}
+
+#[test]
+fn dispatches_same_arity_c_functions_by_opaque_member_key() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/same_arity_module.c", "same_arity");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/same.slug"),
+        "export foreign first = fn():num\nexport foreign second = fn():num\n",
+    )
+    .expect("write same-arity module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val same = import(\"slug.same\")\nsame.first() + same.second()\n",
+            false,
+        )
+        .expect("compile program using same-arity module");
+    let module = FfiPrototypeModule::load(library).expect("load same-arity module");
+    let mut vm = Vm::with_module_loader(loader);
+    module
+        .register(&mut vm)
+        .expect("register same-arity module");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "3");
+}
