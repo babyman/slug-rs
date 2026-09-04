@@ -445,6 +445,7 @@ fn matches_type(
         MatchType::Num => Ok(matches!(value, Value::Int(_) | Value::Float(_))),
         MatchType::Str => Ok(matches!(value, Value::Str(_))),
         MatchType::Bytes => Ok(matches!(value, Value::Bytes(_))),
+        MatchType::Resource => Ok(matches!(value, Value::NativeResource(_))),
         MatchType::List(element) => {
             let Value::List(values) = value else {
                 return Ok(false);

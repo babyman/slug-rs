@@ -109,7 +109,7 @@ Consequently, `val value: str = "Slug"` remains a declaration annotation and
 `{name: pattern}` remains a map-pattern entry.
 
 The runtime-checkable annotations are the direct value categories `nil`,
-`bool`, `num`, `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, `schema`,
+`bool`, `num`, `str`, `bytes`, `resource`, `list`, `map`, `fn`, `task`, `chan`, `schema`,
 and `struct`; `struct<Name>` schema identity; unions of runtime-checkable types;
 and recursively checked `list<T>` and `map<K, V>` forms. `any` matches every
 non-nil value, and `any|nil` matches every value. A collection constraint

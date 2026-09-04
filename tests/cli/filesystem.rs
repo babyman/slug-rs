@@ -12,8 +12,9 @@ fn reads_writes_appends_and_explicitly_closes_opaque_file_resources() {
         &program,
         format!(
             "val fs = import(\"slug.io.fs\")\n\
-             val input = fs.openRead(\"{}\")\n\
+             val input:resource = fs.openRead(\"{}\")\n\
              defer fs.close(input)\n\
+             println(match input {{ _:resource => \"resource\" }})\n\
              println(fs.readLine(input))\n\
              println(fs.readLine(input))\n\
              println(fs.readLine(input))\n\
@@ -45,10 +46,41 @@ fn reads_writes_appends_and_explicitly_closes_opaque_file_resources() {
     );
     assert_eq!(
         String::from_utf8(process.stdout).unwrap(),
-        "first\n\nlast\nnil\n3\n4\n"
+        "resource\nfirst\n\nlast\nnil\n3\n4\n"
     );
     assert_eq!(output_contents, "one two");
     assert!(process.stderr.is_empty());
+}
+
+#[test]
+fn resource_annotations_check_foreign_results_and_arguments() {
+    let root = std::env::temp_dir().join(format!("slug-cli-resource-type-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create resource-type fixture root");
+    let input = root.join("input.txt");
+    let program = root.join("program.slug");
+    fs::write(&input, "line\n").expect("write input fixture");
+    fs::write(
+        &program,
+        format!(
+            "val fs = import(\"slug.io.fs\")\nval file:resource = fs.openRead(\"{}\")\nfs.readLine(\"not a file\")\n",
+            input.display()
+        ),
+    )
+    .expect("write resource-type source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&program)
+        .output()
+        .expect("type-check resource source");
+    fs::remove_dir_all(root).expect("remove resource-type fixture root");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("expected resource, got str")
+    );
 }
 
 #[test]

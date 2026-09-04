@@ -1257,6 +1257,7 @@ fn is_closed_coverage_type(value_type: &Type) -> bool {
         | Type::Num
         | Type::Str
         | Type::Bytes
+        | Type::Resource
         | Type::Schema
         | Type::Struct(Some(_))
         | Type::Function(None)
@@ -2152,7 +2153,7 @@ fn value_type(value: &Value) -> Type {
         | Value::Builtin(_)
         | Value::Overloads(_) => Type::Function(None),
         Value::Task(_) => Type::Task(None),
-        Value::NativeResource(_) => Type::Any,
+        Value::NativeResource(_) => Type::Resource,
         Value::Uninitialized | Value::Binding { .. } => Type::Unknown,
     }
 }

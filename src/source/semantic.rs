@@ -36,6 +36,7 @@ pub(super) enum Type {
     Num,
     Str,
     Bytes,
+    Resource,
     List(Option<Box<Type>>),
     Map(Option<(Box<Type>, Box<Type>)>),
     Function(Option<Vec<Type>>),
@@ -57,6 +58,7 @@ impl Type {
             | Self::Num
             | Self::Str
             | Self::Bytes
+            | Self::Resource
             | Self::Function(None)
             | Self::Task(None)
             | Self::Channel(None)
@@ -193,6 +195,7 @@ impl Type {
                 }
                 _ => false,
             },
+            Self::Resource => matches!(self, Self::Resource),
             Self::Schema => matches!(self, Self::Schema),
             Self::Struct(expected) => match self {
                 Self::Struct(actual) => expected.is_none() || actual == expected,
@@ -247,6 +250,7 @@ impl fmt::Display for Type {
             Self::Num => formatter.write_str("num"),
             Self::Str => formatter.write_str("str"),
             Self::Bytes => formatter.write_str("bytes"),
+            Self::Resource => formatter.write_str("resource"),
             Self::List(argument) => display_application(formatter, "list", argument.as_deref()),
             Self::Map(arguments) => {
                 if let Some((key, value)) = arguments {
@@ -446,6 +450,7 @@ fn resolve_name(
         "num" => Type::Num,
         "str" => Type::Str,
         "bytes" => Type::Bytes,
+        "resource" => Type::Resource,
         "list" => Type::List(None),
         "map" => Type::Map(None),
         "fn" => Type::Function(None),

@@ -5,7 +5,7 @@ The `slug.io.fs` module provides explicit-lifecycle text-file streams:
 ```slug
 val fs = import("slug.io.fs")
 
-val file = fs.openRead("records.csv")
+val file:resource = fs.openRead("records.csv")
 defer fs.close(file)
 
 match fs.readLine(file) {
@@ -15,7 +15,8 @@ match fs.readLine(file) {
 ```
 
 `openRead(path)`, `openWrite(path)`, and `openAppend(path)` return opaque file
-resources. `openWrite` creates or truncates its file; `openAppend` creates it
+resources, represented by the broad source type `resource`. `openWrite` creates
+or truncates its file; `openAppend` creates it
 when missing and writes at its end. File resources are not numbers, structs,
 maps, or source-level constructors. Their module ownership, resource kind, and
 open state are validated by the native boundary.
@@ -32,6 +33,7 @@ immediately after a successful open. Runtime destruction and shutdown may
 release forgotten resources, but do not provide prompt release, flushing, or
 observable cleanup-error semantics.
 
-The current source type system does not expose a `resource` annotation. File
-resources are nevertheless opaque and checked at runtime; source-level nominal
-resource types remain deliberately deferred by the resource lifecycle decision.
+`resource` distinguishes opaque native handles from ordinary Slug values, but
+does not reveal a resource's module or native kind. Native operations still
+validate that a handle is the correct kind and is open. Nominal resource types,
+including `resource<T>`, remain deliberately deferred.

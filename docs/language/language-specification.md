@@ -451,7 +451,8 @@ match value {
 
 Direct value-category annotations, `struct<Name>`, unions composed from
 runtime-checkable annotations, and recursively checked `list<T>` and
-`map<K, V>` annotations are runtime-checkable. `any` matches non-nil values;
+`map<K, V>` annotations are runtime-checkable. `resource` matches opaque native
+resource handles only. `any` matches non-nil values;
 `any|nil` matches every value. `schema` matches schema values only. A
 `struct<Name>` constraint requires the exact
 schema identity named by `Name`; the schema binding must resolve, and a
@@ -852,7 +853,7 @@ variadic status, so named and spread calls retain ordinary dynamic call
 behavior.
 
 The checker recognizes the built-in value categories `nil`, `any`, `bool`,
-`num`, `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, and `struct`, plus
+`num`, `str`, `bytes`, `resource`, `list`, `map`, `fn`, `task`, `chan`, `schema`, and `struct`, plus
 unions and generic parameters. Its diagnostic precision is an implementation
 feature and does not add runtime coercions or change the language's dynamic
 value model.
@@ -915,6 +916,11 @@ fixed-length tuple type. A function type is written `fn<R, P1, P2, ...>`,
 where the first argument is the return type and the remaining arguments are
 the parameter types. For example, `fn<num, num, num>` denotes a function that
 returns `num` and accepts two `num` parameters.
+
+`resource` is a non-parameterized broad type for opaque native resource
+handles. It exposes neither a handle constructor nor the native resource kind;
+for example, it does not make a file handle valid for a future database
+operation. Individual native operations retain that validation.
 
 A function or foreign declaration introduces generic parameters immediately
 after `fn`. A parameter name is a type variable scoped to that declaration and

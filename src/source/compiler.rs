@@ -1426,6 +1426,7 @@ fn lower_match_type(
             "num" => Ok(MatchType::Num),
             "str" => Ok(MatchType::Str),
             "bytes" => Ok(MatchType::Bytes),
+            "resource" => Ok(MatchType::Resource),
             "list" => Ok(MatchType::List(None)),
             "map" => Ok(MatchType::Map(None)),
             "fn" => Ok(MatchType::Function),

@@ -9,30 +9,30 @@
 /**
  * Opens a text file for line-by-line reading.
  */
-export foreign openRead = fn(path:str)
+export foreign openRead = fn(path:str):resource
 
 /**
  * Creates or truncates a text file for writing.
  */
-export foreign openWrite = fn(path:str)
+export foreign openWrite = fn(path:str):resource
 
 /**
  * Opens or creates a text file and writes at its end.
  */
-export foreign openAppend = fn(path:str)
+export foreign openAppend = fn(path:str):resource
 
 /**
  * Reads the next line without its trailing newline, or nil at end of file.
  */
-export foreign readLine = fn(file):str|nil
+export foreign readLine = fn(file:resource):str|nil
 
 /**
  * Writes text to an open writable file and returns its byte length.
  */
-export foreign write = fn(file, content:str):num
+export foreign write = fn(file:resource, content:str):num
 
 /**
  * Closes a file resource. Closing is idempotent; later operations on the
  * handle report a checked resource-closed error.
  */
-export foreign close = fn(file):nil
+export foreign close = fn(file:resource):nil

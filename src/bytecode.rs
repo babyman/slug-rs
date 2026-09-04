@@ -176,6 +176,7 @@ pub enum MatchType {
     Num,
     Str,
     Bytes,
+    Resource,
     List(Option<Box<MatchType>>),
     Map(Option<(Box<MatchType>, Box<MatchType>)>),
     Function,
