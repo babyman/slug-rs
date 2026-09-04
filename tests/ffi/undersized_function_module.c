@@ -9,10 +9,14 @@ static const slug_ffi_module_descriptor MODULE = {
   SLUG_FFI_PROTOTYPE_ABI_MINOR,
   sizeof(slug_ffi_module_descriptor),
   {"slug.broken", 11},
+  NULL,
   FUNCTIONS,
   1,
 };
 
-const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host) {
-  return host == NULL ? NULL : &MODULE;
+const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host,
+                                                        void **module_state) {
+  if (host == NULL || module_state == NULL) return NULL;
+  *module_state = NULL;
+  return &MODULE;
 }

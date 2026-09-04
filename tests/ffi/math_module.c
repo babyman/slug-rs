@@ -2,7 +2,8 @@
 #include <limits.h>
 #include <math.h>
 
-static int32_t add(const slug_ffi_host_api *host, slug_ffi_call *call) {
+static int32_t add(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
+  (void)state;
   int64_t left;
   int64_t right;
   if (!host->argument_i64(call, 0, &left) || !host->argument_i64(call, 1, &right)) {
@@ -18,7 +19,8 @@ static int32_t add(const slug_ffi_host_api *host, slug_ffi_call *call) {
   return SLUG_FFI_OK;
 }
 
-static int32_t square_root(const slug_ffi_host_api *host, slug_ffi_call *call) {
+static int32_t square_root(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
+  (void)state;
   double value;
   if (!host->argument_f64(call, 0, &value)) {
     return SLUG_FFI_ERROR;
@@ -42,14 +44,17 @@ static const slug_ffi_module_descriptor MODULE = {
   SLUG_FFI_PROTOTYPE_ABI_MINOR,
   sizeof(slug_ffi_module_descriptor),
   {"slug.math", 9},
+  NULL,
   FUNCTIONS,
   2,
 };
 
-const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host) {
+const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host,
+                                                        void **module_state) {
   if (host == NULL || host->abi_major != SLUG_FFI_PROTOTYPE_ABI_MAJOR ||
-      host->table_size < sizeof(slug_ffi_host_api)) {
+      host->table_size < sizeof(slug_ffi_host_api) || module_state == NULL) {
     return NULL;
   }
+  *module_state = NULL;
   return &MODULE;
 }

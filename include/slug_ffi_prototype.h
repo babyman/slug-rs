@@ -38,7 +38,8 @@ struct slug_ffi_host_api {
   slug_ffi_set_error_fn set_error;
 };
 
-typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *);
+typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);
+typedef void (*slug_ffi_module_destroy_fn)(void *);
 
 typedef struct {
   uint32_t descriptor_size;
@@ -54,12 +55,15 @@ typedef struct {
   uint32_t abi_minor;
   uint32_t descriptor_size;
   slug_ffi_text module_name;
+  slug_ffi_module_destroy_fn destroy_module;
   const slug_ffi_function_descriptor *functions;
   uint64_t function_count;
 } slug_ffi_module_descriptor;
 
-typedef const slug_ffi_module_descriptor *(*slug_ffi_module_init_fn)(const slug_ffi_host_api *);
+typedef const slug_ffi_module_descriptor *(*slug_ffi_module_init_fn)(
+    const slug_ffi_host_api *, void **module_state);
 
-const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host);
+const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host,
+                                                        void **module_state);
 
 #endif

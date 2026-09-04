@@ -179,3 +179,34 @@ fn dispatches_same_arity_c_functions_by_opaque_member_key() {
         .expect("register same-arity module");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "3");
 }
+
+#[test]
+fn keeps_libraries_resident_while_destroying_each_module_state() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/stateful_module.c", "stateful");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/stateful.slug"),
+        "export foreign stateInfo = fn():num\n",
+    )
+    .expect("write stateful module source");
+
+    for expected in [100, 201] {
+        let main = directory.path().join("main.slug");
+        let loader = ModuleLoader::new(directory.path(), None);
+        let program = loader
+            .compile_source(
+                &main.to_string_lossy(),
+                "val stateful = import(\"slug.stateful\")\nstateful.stateInfo()\n",
+                false,
+            )
+            .expect("compile program using stateful module");
+        let module = FfiPrototypeModule::load(&library).expect("load stateful module");
+        let mut vm = Vm::with_module_loader(loader);
+        module.register(&mut vm).expect("register stateful module");
+        assert_eq!(
+            vm.run_named(&program, "main").unwrap().to_string(),
+            expected.to_string()
+        );
+    }
+}

@@ -443,4 +443,7 @@ version 1 declarations and accept no third-party compatibility promise. The
 prototype deliberately supports only exact arities, fixed-width and
 length-delimited descriptor fields, opaque member-key dispatch, and integer
 callback statuses. It keeps loaded code resident for the process lifetime and
-does not bridge arbitrary C libraries.
+does not bridge arbitrary C libraries. Prototype modules may allocate one
+opaque module-state pointer during initialization; callbacks receive it and the
+runtime calls the descriptor's teardown callback after the final module owner
+releases it.

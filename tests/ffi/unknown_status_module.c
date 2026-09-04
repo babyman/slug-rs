@@ -1,8 +1,9 @@
 #include "slug_ffi_prototype.h"
 
-static int32_t unknown_status(const slug_ffi_host_api *host, slug_ffi_call *call) {
+static int32_t unknown_status(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)host;
   (void)call;
+  (void)state;
   return 99;
 }
 
@@ -15,10 +16,14 @@ static const slug_ffi_module_descriptor MODULE = {
   SLUG_FFI_PROTOTYPE_ABI_MINOR,
   sizeof(slug_ffi_module_descriptor),
   {"slug.status", 11},
+  NULL,
   FUNCTIONS,
   1,
 };
 
-const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host) {
-  return host == NULL ? NULL : &MODULE;
+const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host,
+                                                        void **module_state) {
+  if (host == NULL || module_state == NULL) return NULL;
+  *module_state = NULL;
+  return &MODULE;
 }

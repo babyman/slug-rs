@@ -11,8 +11,8 @@ use std::{
     fmt,
     mem::size_of,
     os::unix::ffi::OsStrExt,
-    path::Path,
-    sync::LazyLock,
+    path::{Path, PathBuf},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use crate::{
@@ -36,8 +36,9 @@ struct HostApi {
     set_error: unsafe extern "C" fn(*mut c_void, FfiText, FfiText),
 }
 
-type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void) -> i32;
-type ModuleInit = unsafe extern "C" fn(*const HostApi) -> *const ModuleDescriptor;
+type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
+type ModuleDestroy = unsafe extern "C" fn(*mut c_void);
+type ModuleInit = unsafe extern "C" fn(*const HostApi, *mut *mut c_void) -> *const ModuleDescriptor;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -62,6 +63,7 @@ struct ModuleDescriptor {
     abi_minor: u32,
     descriptor_size: u32,
     module_name: FfiText,
+    destroy_module: Option<ModuleDestroy>,
     functions: *const FunctionDescriptor,
     function_count: u64,
 }
@@ -71,6 +73,9 @@ struct CallBridge<'call> {
 }
 
 struct LoadedLibrary(*mut c_void);
+
+unsafe impl Send for LoadedLibrary {}
+unsafe impl Sync for LoadedLibrary {}
 
 impl LoadedLibrary {
     unsafe fn open(path: &Path) -> Result<Self, FfiPrototypeError> {
@@ -111,6 +116,48 @@ impl fmt::Debug for LoadedLibrary {
     }
 }
 
+trait PlatformLoader {
+    unsafe fn open(path: &Path) -> Result<LoadedLibrary, FfiPrototypeError>;
+
+    unsafe fn symbol<T>(library: &LoadedLibrary, name: &CStr) -> Result<T, FfiPrototypeError>
+    where
+        T: Copy;
+}
+
+struct MacOsLoader;
+
+impl PlatformLoader for MacOsLoader {
+    unsafe fn open(path: &Path) -> Result<LoadedLibrary, FfiPrototypeError> {
+        unsafe { LoadedLibrary::open(path) }
+    }
+
+    unsafe fn symbol<T>(library: &LoadedLibrary, name: &CStr) -> Result<T, FfiPrototypeError>
+    where
+        T: Copy,
+    {
+        unsafe { library.symbol(name) }
+    }
+}
+
+static LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, Arc<LoadedLibrary>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn resident_library(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError> {
+    let path = std::fs::canonicalize(path).map_err(|error| {
+        FfiPrototypeError::new(format!("cannot resolve FFI module path: {error}"))
+    })?;
+    let mut libraries = LIBRARIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(library) = libraries.get(&path) {
+        return Ok(library.clone());
+    }
+    // SAFETY: platform loading is contained in this feature-gated module.
+    let library = Arc::new(unsafe { MacOsLoader::open(&path) }?);
+    libraries.insert(path, library.clone());
+    Ok(library)
+}
+
 // Prototype modules intentionally remain loaded for process lifetime, matching
 // the planned native ABI's no-unload rule. Keeping the handle in module state
 // also makes the callback pointers valid for as long as the state is live.
@@ -122,10 +169,29 @@ struct RegisteredFunction {
     callback: Callback,
 }
 
+type ValidatedDescriptor = (
+    String,
+    Option<ModuleDestroy>,
+    HashMap<String, RegisteredFunction>,
+);
+
 #[derive(Debug)]
 struct FfiModuleState {
-    _library: LoadedLibrary,
+    _library: Arc<LoadedLibrary>,
+    module_state: *mut c_void,
+    destroy_module: Option<ModuleDestroy>,
     functions: HashMap<String, RegisteredFunction>,
+}
+
+impl Drop for FfiModuleState {
+    fn drop(&mut self) {
+        if !self.module_state.is_null()
+            && let Some(destroy_module) = self.destroy_module
+        {
+            // SAFETY: the module owns this state and its library remains resident.
+            unsafe { destroy_module(self.module_state) };
+        }
+    }
 }
 
 /// A loaded, deliberately unstable Slug-aware C module.
@@ -171,11 +237,17 @@ impl FfiPrototypeModule {
         // SAFETY: all dynamic-loader interactions and C descriptor reads are
         // validated within this feature-gated boundary.
         unsafe {
-            let library = LoadedLibrary::open(path.as_ref())?;
+            let library = resident_library(path.as_ref())?;
             let init_name = c"slug_ffi_module_init";
-            let init: ModuleInit = library.symbol(init_name)?;
-            let descriptor = init(host_api());
-            let (module_name, functions) = validate_descriptor(descriptor)?;
+            let init: ModuleInit = MacOsLoader::symbol(&library, init_name)?;
+            let mut module_state = std::ptr::null_mut();
+            let descriptor = init(host_api(), &raw mut module_state);
+            let (module_name, destroy_module, functions) = validate_descriptor(descriptor)?;
+            if !module_state.is_null() && destroy_module.is_none() {
+                return Err(FfiPrototypeError::new(
+                    "FFI module returned state without a destroy callback",
+                ));
+            }
             let registered = functions
                 .iter()
                 .map(|(member_key, function)| {
@@ -186,6 +258,8 @@ impl FfiPrototypeModule {
                 module_name,
                 FfiModuleState {
                     _library: library,
+                    module_state,
+                    destroy_module,
                     functions,
                 },
             )
@@ -330,8 +404,13 @@ unsafe fn c_string(value: *const c_char) -> Option<String> {
 
 fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
     let function = call.member_key().and_then(|member_key| {
-        call.state::<FfiModuleState>()
-            .and_then(|state| state.functions.get(member_key).cloned())
+        call.state::<FfiModuleState>().and_then(|state| {
+            state
+                .functions
+                .get(member_key)
+                .cloned()
+                .map(|function| (function, state.module_state))
+        })
     });
     let Some(function) = function else {
         return call.raise(NativeError::new(
@@ -342,7 +421,7 @@ fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
     let mut bridge = CallBridge { call };
     // SAFETY: the callback, host table, and call bridge follow the prototype
     // header and remain valid for the synchronous dynamic extent of this call.
-    match unsafe { (function.callback)(host_api(), (&raw mut bridge).cast()) } {
+    match unsafe { (function.0.callback)(host_api(), (&raw mut bridge).cast(), function.1) } {
         0 => NativeStatus::Ok,
         1 => NativeStatus::Error,
         status => {
@@ -353,7 +432,7 @@ fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
 
 unsafe fn validate_descriptor(
     descriptor: *const ModuleDescriptor,
-) -> Result<(String, HashMap<String, RegisteredFunction>), FfiPrototypeError> {
+) -> Result<ValidatedDescriptor, FfiPrototypeError> {
     let descriptor = unsafe { descriptor.as_ref() }
         .ok_or_else(|| FfiPrototypeError::new("FFI module returned a null descriptor"))?;
     if descriptor.abi_major != ABI_MAJOR {
@@ -434,7 +513,7 @@ unsafe fn validate_descriptor(
             )));
         }
     }
-    Ok((module_name, functions))
+    Ok((module_name, descriptor.destroy_module, functions))
 }
 
 #[cfg(target_os = "macos")]
