@@ -121,6 +121,20 @@ fn rejects_an_undersized_c_function_descriptor() {
 }
 
 #[test]
+fn rejects_a_c_resource_type_without_a_destroy_callback() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/missing_resource_destroy_module.c",
+        "missing_resource_destroy",
+    );
+    let Err(error) = FfiPrototypeModule::load(library) else {
+        panic!("resource descriptor without a destructor must fail");
+    };
+    assert!(error.to_string().contains("has no destroy callback"));
+}
+
+#[test]
 fn turns_an_unknown_c_status_into_a_checked_contract_error() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
@@ -209,4 +223,56 @@ fn keeps_libraries_resident_while_destroying_each_module_state() {
             expected.to_string()
         );
     }
+}
+
+#[test]
+fn owns_c_resources_with_checked_borrow_and_close_semantics() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/resources.slug"),
+        "export foreign create = fn(value:num):resource\n\
+         export foreign read = fn(handle:resource):num\n\
+         export foreign close = fn(handle:resource):num\n\
+         export foreign destroyed = fn():num\n",
+    )
+    .expect("write resource module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C resource module");
+
+    let success = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\n\
+             val counter = resources.create(41)\n\
+             resources.read(counter) + resources.close(counter) + resources.destroyed()\n",
+            false,
+        )
+        .expect("compile resource ownership program");
+    assert_eq!(vm.run_named(&success, "main").unwrap().to_string(), "43");
+
+    let closed = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\n\
+             val counter = resources.create(7)\n\
+             resources.close(counter)\n\
+             resources.read(counter)\n",
+            false,
+        )
+        .expect("compile closed-resource program");
+    let error = vm
+        .run_named(&closed, "main")
+        .expect_err("C callbacks cannot borrow closed resources");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.resource_closed")
+    );
 }

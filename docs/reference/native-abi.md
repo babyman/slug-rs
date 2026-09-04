@@ -446,4 +446,8 @@ callback statuses. It keeps loaded code resident for the process lifetime and
 does not bridge arbitrary C libraries. Prototype modules may allocate one
 opaque module-state pointer during initialization; callbacks receive it and the
 runtime calls the descriptor's teardown callback after the final module owner
-releases it.
+releases it. Modules may also declare named opaque C resource types with one
+destructor each. A callback can transfer a non-null C pointer into a Slug
+`resource`, borrow that pointer only for a synchronous callback, or close the
+resource by argument index. The host checks module/type identity and closed
+state, and invokes the C destructor exactly once on close or final release.

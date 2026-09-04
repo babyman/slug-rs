@@ -5,6 +5,7 @@
 //! of the runtime continues to prohibit unsafe code.
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     error::Error,
     ffi::{CStr, CString, c_char, c_void},
@@ -12,6 +13,7 @@ use std::{
     mem::size_of,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -21,8 +23,9 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 1;
+const ABI_MINOR: u32 = 2;
 const MAX_FUNCTIONS: usize = 64;
+const MAX_RESOURCES: usize = 64;
 
 #[repr(C)]
 struct HostApi {
@@ -31,13 +34,17 @@ struct HostApi {
     table_size: u32,
     argument_i64: unsafe extern "C" fn(*mut c_void, usize, *mut i64) -> bool,
     argument_f64: unsafe extern "C" fn(*mut c_void, usize, *mut f64) -> bool,
+    argument_resource: unsafe extern "C" fn(*mut c_void, usize, FfiText, *mut *mut c_void) -> bool,
     set_i64: unsafe extern "C" fn(*mut c_void, i64),
     set_f64: unsafe extern "C" fn(*mut c_void, f64),
     set_error: unsafe extern "C" fn(*mut c_void, FfiText, FfiText),
+    set_resource: unsafe extern "C" fn(*mut c_void, FfiText, *mut c_void) -> bool,
+    close_resource: unsafe extern "C" fn(*mut c_void, usize, FfiText) -> bool,
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
 type ModuleDestroy = unsafe extern "C" fn(*mut c_void);
+type ResourceDestroy = unsafe extern "C" fn(*mut c_void);
 type ModuleInit = unsafe extern "C" fn(*const HostApi, *mut *mut c_void) -> *const ModuleDescriptor;
 
 #[repr(C)]
@@ -58,6 +65,13 @@ struct FunctionDescriptor {
 }
 
 #[repr(C)]
+struct ResourceDescriptor {
+    descriptor_size: u32,
+    name: FfiText,
+    destroy_resource: Option<ResourceDestroy>,
+}
+
+#[repr(C)]
 struct ModuleDescriptor {
     abi_major: u32,
     abi_minor: u32,
@@ -66,6 +80,8 @@ struct ModuleDescriptor {
     destroy_module: Option<ModuleDestroy>,
     functions: *const FunctionDescriptor,
     function_count: u64,
+    resources: *const ResourceDescriptor,
+    resource_count: u64,
 }
 
 struct CallBridge<'call> {
@@ -173,14 +189,31 @@ type ValidatedDescriptor = (
     String,
     Option<ModuleDestroy>,
     HashMap<String, RegisteredFunction>,
+    Vec<RegisteredResource>,
 );
 
-#[derive(Debug)]
+struct RegisteredResource {
+    name: String,
+    destroy: ResourceDestroy,
+}
+
+struct CResource {
+    pointer: *mut c_void,
+    destroy: ResourceDestroy,
+}
+
+#[derive(Clone)]
+struct CResourceType {
+    resource_type: crate::NativeResourceType<CResource>,
+    destroy: ResourceDestroy,
+}
+
 struct FfiModuleState {
     _library: Arc<LoadedLibrary>,
     module_state: *mut c_void,
     destroy_module: Option<ModuleDestroy>,
     functions: HashMap<String, RegisteredFunction>,
+    resources: Rc<RefCell<HashMap<String, CResourceType>>>,
 }
 
 impl Drop for FfiModuleState {
@@ -242,7 +275,8 @@ impl FfiPrototypeModule {
             let init: ModuleInit = MacOsLoader::symbol(&library, init_name)?;
             let mut module_state = std::ptr::null_mut();
             let descriptor = init(host_api(), &raw mut module_state);
-            let (module_name, destroy_module, functions) = validate_descriptor(descriptor)?;
+            let (module_name, destroy_module, functions, resources) =
+                validate_descriptor(descriptor)?;
             if !module_state.is_null() && destroy_module.is_none() {
                 return Err(FfiPrototypeError::new(
                     "FFI module returned state without a destroy callback",
@@ -254,6 +288,7 @@ impl FfiPrototypeModule {
                     (function.name.clone(), function.arity, member_key.clone())
                 })
                 .collect();
+            let resource_types = Rc::new(RefCell::new(HashMap::new()));
             let module = NativeModule::new(
                 module_name,
                 FfiModuleState {
@@ -261,9 +296,32 @@ impl FfiPrototypeModule {
                     module_state,
                     destroy_module,
                     functions,
+                    resources: resource_types.clone(),
                 },
             )
             .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
+            let resource_types_to_register = resources
+                .into_iter()
+                .map(|resource| {
+                    let resource_type = module
+                        .resource_type(resource.name.clone(), close_c_resource, destroy_c_resource)
+                        .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
+                    Ok((resource.name, resource_type, resource.destroy))
+                })
+                .collect::<Result<Vec<_>, FfiPrototypeError>>()?;
+            resource_types
+                .borrow_mut()
+                .extend(resource_types_to_register.into_iter().map(
+                    |(name, resource_type, destroy)| {
+                        (
+                            name,
+                            CResourceType {
+                                resource_type,
+                                destroy,
+                            },
+                        )
+                    },
+                ));
             Ok(Self {
                 module,
                 functions: registered,
@@ -299,9 +357,12 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     table_size: u32::try_from(size_of::<HostApi>()).expect("prototype host table fits u32"),
     argument_i64,
     argument_f64,
+    argument_resource,
     set_i64,
     set_f64,
     set_error,
+    set_resource,
+    close_resource,
 });
 
 fn host_api() -> *const HostApi {
@@ -356,6 +417,40 @@ unsafe extern "C" fn argument_f64(context: *mut c_void, index: usize, output: *m
     }
 }
 
+unsafe extern "C" fn argument_resource(
+    context: *mut c_void,
+    index: usize,
+    resource_name: FfiText,
+    output: *mut *mut c_void,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if output.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI resource output is null",
+        ));
+        return false;
+    }
+    let Some(resource_type) = resource_type(call, resource_name) else {
+        return false;
+    };
+    match call.with_resource(index, &resource_type.resource_type, |resource| {
+        resource.pointer
+    }) {
+        Ok(pointer) => {
+            // SAFETY: checked non-null above; the borrowed pointer is valid only during this callback.
+            unsafe { *output = pointer };
+            true
+        }
+        Err(error) => {
+            call.set_error(error);
+            false
+        }
+    }
+}
+
 unsafe extern "C" fn set_i64(context: *mut c_void, value: i64) {
     if let Some(call) = unsafe { call_from_context(context) } {
         call.set_result(NativeOwnedValue::integer(value));
@@ -376,6 +471,95 @@ unsafe extern "C" fn set_error(context: *mut c_void, code: FfiText, message: Ffi
     let message = unsafe { text_from_ffi(message) }
         .unwrap_or_else(|| "FFI module returned invalid error text".into());
     call.set_error(NativeError::new(code, message));
+}
+
+unsafe extern "C" fn set_resource(
+    context: *mut c_void,
+    resource_name: FfiText,
+    pointer: *mut c_void,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if pointer.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI resource pointer is null",
+        ));
+        return false;
+    }
+    let Some(resource_type) = resource_type(call, resource_name) else {
+        return false;
+    };
+    match call.resource(
+        &resource_type.resource_type,
+        CResource {
+            pointer,
+            destroy: resource_type.destroy,
+        },
+    ) {
+        Ok(value) => {
+            call.set_result(value);
+            true
+        }
+        Err(error) => {
+            call.set_error(error);
+            false
+        }
+    }
+}
+
+unsafe extern "C" fn close_resource(
+    context: *mut c_void,
+    index: usize,
+    resource_name: FfiText,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    let Some(resource_type) = resource_type(call, resource_name) else {
+        return false;
+    };
+    match call.close_resource(index, &resource_type.resource_type) {
+        Ok(()) => true,
+        Err(error) => {
+            call.set_error(error);
+            false
+        }
+    }
+}
+
+fn resource_type(call: &mut NativeCall<'_>, resource_name: FfiText) -> Option<CResourceType> {
+    let name = unsafe { text_from_ffi(resource_name) }.filter(|name| !name.trim().is_empty());
+    let Some(name) = name else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI resource type is invalid",
+        ));
+        return None;
+    };
+    let resource_type = call
+        .state::<FfiModuleState>()
+        .and_then(|state| state.resources.borrow().get(&name).cloned());
+    if resource_type.is_none() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            format!("FFI module has no resource type `{name}`"),
+        ));
+    }
+    resource_type
+}
+
+fn close_c_resource(resource: &mut CResource) {
+    if !resource.pointer.is_null() {
+        // SAFETY: the resource descriptor owns this pointer until its one teardown call.
+        unsafe { (resource.destroy)(resource.pointer) };
+        resource.pointer = std::ptr::null_mut();
+    }
+}
+
+fn destroy_c_resource(mut resource: CResource) {
+    close_c_resource(&mut resource);
 }
 
 unsafe fn call_from_context<'call>(context: *mut c_void) -> Option<&'call mut NativeCall<'call>> {
@@ -464,7 +648,12 @@ unsafe fn validate_descriptor(
             "FFI module has a null function table",
         ));
     }
-    let descriptors = unsafe { std::slice::from_raw_parts(descriptor.functions, function_count) };
+    let descriptors = if function_count == 0 {
+        &[]
+    } else {
+        // SAFETY: a non-empty table is checked non-null immediately above.
+        unsafe { std::slice::from_raw_parts(descriptor.functions, function_count) }
+    };
     let mut functions = HashMap::new();
     for function in descriptors {
         if function.descriptor_size
@@ -513,7 +702,60 @@ unsafe fn validate_descriptor(
             )));
         }
     }
-    Ok((module_name, descriptor.destroy_module, functions))
+    let resources = unsafe { validate_resources(descriptor.resources, descriptor.resource_count) }?;
+    Ok((module_name, descriptor.destroy_module, functions, resources))
+}
+
+unsafe fn validate_resources(
+    descriptors: *const ResourceDescriptor,
+    declared_count: u64,
+) -> Result<Vec<RegisteredResource>, FfiPrototypeError> {
+    let resource_count = usize::try_from(declared_count)
+        .map_err(|_| FfiPrototypeError::new("FFI module resource count exceeds host limits"))?;
+    if resource_count > MAX_RESOURCES {
+        return Err(FfiPrototypeError::new(
+            "FFI module declares too many resource types",
+        ));
+    }
+    if resource_count > 0 && descriptors.is_null() {
+        return Err(FfiPrototypeError::new(
+            "FFI module has a null resource table",
+        ));
+    }
+    let descriptors = if resource_count == 0 {
+        &[]
+    } else {
+        // SAFETY: a non-empty table is checked non-null immediately above.
+        unsafe { std::slice::from_raw_parts(descriptors, resource_count) }
+    };
+    let mut resource_names = std::collections::HashSet::new();
+    let mut resources = Vec::with_capacity(resource_count);
+    for resource in descriptors {
+        if resource.descriptor_size
+            < u32::try_from(size_of::<ResourceDescriptor>()).expect("resource descriptor fits u32")
+        {
+            return Err(FfiPrototypeError::new(
+                "FFI module has an undersized resource descriptor",
+            ));
+        }
+        let name = unsafe { text_from_ffi(resource.name) }
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| {
+                FfiPrototypeError::new("FFI module has an invalid resource type name")
+            })?;
+        let destroy = resource.destroy_resource.ok_or_else(|| {
+            FfiPrototypeError::new(format!(
+                "FFI resource type `{name}` has no destroy callback"
+            ))
+        })?;
+        if !resource_names.insert(name.clone()) {
+            return Err(FfiPrototypeError::new(format!(
+                "FFI module declares resource type `{name}` more than once"
+            )));
+        }
+        resources.push(RegisteredResource { name, destroy });
+    }
+    Ok(resources)
 }
 
 #[cfg(target_os = "macos")]

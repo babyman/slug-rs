@@ -15,6 +15,9 @@
 - The C FFI prototype now supports module-owned state, teardown callbacks, and
   a resident shared-library registry behind a platform-loader boundary.
 
+- The C FFI prototype now validates declared opaque resource types and maps
+  C-owned pointers through Slug's checked resource lifecycle.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.
