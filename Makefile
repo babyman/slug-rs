@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test test-vm test-cli bench-vm docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test test-vm test-cli test-ffi-prototype bench-vm docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -17,6 +17,9 @@ test-vm:
 
 test-cli:
 	cargo test --features metrics --test cli
+
+test-ffi-prototype:
+	cargo test --features ffi-prototype --test ffi_prototype
 
 bench-vm:
 	cargo bench --bench vm --features metrics

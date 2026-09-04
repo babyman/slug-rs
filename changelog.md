@@ -6,6 +6,9 @@
   mailbox is full or closed, allowing integrations to retry without cloning.
 - Added a native-callback workload to the opt-in VM benchmark harness.
 
+- Added a feature-gated, test-only C math-module FFI prototype with `add`,
+  `sqrt`, ABI-major validation, and checked native error propagation.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.

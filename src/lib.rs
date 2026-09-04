@@ -9,6 +9,9 @@
 mod bytecode;
 mod configuration;
 mod conformance;
+#[cfg(feature = "ffi-prototype")]
+#[allow(unsafe_code)]
+mod ffi_prototype;
 mod fixture;
 mod module;
 mod native;
@@ -31,6 +34,8 @@ pub use bytecode::{
 };
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
+#[cfg(feature = "ffi-prototype")]
+pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeModule};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use native::{

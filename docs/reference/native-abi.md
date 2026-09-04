@@ -433,3 +433,13 @@ flowchart LR
 The ABI is not stable merely because these concepts are documented. Stability
 begins when the version 1 binary declarations, loader validation, and tests are
 released together.
+
+## Experimental C math module
+
+The `ffi-prototype` Cargo feature contains a test-only C module experiment with
+scalar `add` and `sqrt` functions. Its header, loader, and fixtures exist to
+exercise opaque calls, version rejection, and structured errors; they are not
+version 1 declarations and accept no third-party compatibility promise. The
+prototype deliberately supports only exact, non-overlapping arities, keeps
+loaded code resident for the process lifetime, and does not bridge arbitrary C
+libraries.
