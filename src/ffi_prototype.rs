@@ -19,11 +19,11 @@ use std::{
 
 use crate::{
     NativeArity, NativeCall, NativeDescriptorError, NativeError, NativeModule, NativeOwnedValue,
-    NativeStatus, Vm,
+    NativeProducerStatus, NativeSendValue, NativeStatus, Vm,
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 2;
+const ABI_MINOR: u32 = 3;
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 
@@ -40,6 +40,12 @@ struct HostApi {
     set_error: unsafe extern "C" fn(*mut c_void, FfiText, FfiText),
     set_resource: unsafe extern "C" fn(*mut c_void, FfiText, *mut c_void) -> bool,
     close_resource: unsafe extern "C" fn(*mut c_void, usize, FfiText) -> bool,
+    channel_create:
+        unsafe extern "C" fn(*mut c_void, u64, *mut *mut FfiProducer) -> *mut FfiChannel,
+    set_channel: unsafe extern "C" fn(*mut c_void, *mut FfiChannel) -> bool,
+    channel_destroy: unsafe extern "C" fn(*mut FfiChannel),
+    producer_send_i64: unsafe extern "C" fn(*mut FfiProducer, i64) -> i32,
+    producer_destroy: unsafe extern "C" fn(*mut FfiProducer),
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
@@ -200,6 +206,14 @@ struct RegisteredResource {
 struct CResource {
     pointer: *mut c_void,
     destroy: ResourceDestroy,
+}
+
+struct FfiChannel {
+    value: NativeOwnedValue,
+}
+
+struct FfiProducer {
+    producer: crate::NativeChannelProducer,
 }
 
 #[derive(Clone)]
@@ -363,6 +377,11 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     set_error,
     set_resource,
     close_resource,
+    channel_create,
+    set_channel,
+    channel_destroy,
+    producer_send_i64,
+    producer_destroy,
 });
 
 fn host_api() -> *const HostApi {
@@ -526,6 +545,77 @@ unsafe extern "C" fn close_resource(
             call.set_error(error);
             false
         }
+    }
+}
+
+unsafe extern "C" fn channel_create(
+    context: *mut c_void,
+    capacity: u64,
+    producer_output: *mut *mut FfiProducer,
+) -> *mut FfiChannel {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return std::ptr::null_mut();
+    };
+    if producer_output.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI channel producer output is null",
+        ));
+        return std::ptr::null_mut();
+    }
+    let Ok(capacity) = usize::try_from(capacity) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI channel capacity is too large",
+        ));
+        return std::ptr::null_mut();
+    };
+    let (value, producer) = call.channel(capacity);
+    let producer = Box::into_raw(Box::new(FfiProducer { producer }));
+    // SAFETY: checked non-null above; the C callback owns the returned producer.
+    unsafe { *producer_output = producer };
+    Box::into_raw(Box::new(FfiChannel { value }))
+}
+
+unsafe extern "C" fn set_channel(context: *mut c_void, channel: *mut FfiChannel) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if channel.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI channel handle is null",
+        ));
+        return false;
+    }
+    // SAFETY: a non-null channel handle is transferred once from the C callback.
+    let channel = unsafe { Box::from_raw(channel) };
+    call.set_result(channel.value);
+    true
+}
+
+unsafe extern "C" fn channel_destroy(channel: *mut FfiChannel) {
+    if !channel.is_null() {
+        // SAFETY: C destroys only a channel handle it still owns.
+        drop(unsafe { Box::from_raw(channel) });
+    }
+}
+
+unsafe extern "C" fn producer_send_i64(producer: *mut FfiProducer, value: i64) -> i32 {
+    let Some(producer) = (unsafe { producer.as_ref() }) else {
+        return 2;
+    };
+    match producer.producer.try_send(NativeSendValue::integer(value)) {
+        NativeProducerStatus::Sent => 0,
+        NativeProducerStatus::Full(_) => 1,
+        NativeProducerStatus::Closed(_) => 2,
+    }
+}
+
+unsafe extern "C" fn producer_destroy(producer: *mut FfiProducer) {
+    if !producer.is_null() {
+        // SAFETY: C destroys only a producer capability it still owns.
+        drop(unsafe { Box::from_raw(producer) });
     }
 }
 

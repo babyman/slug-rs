@@ -240,7 +240,7 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
     .expect("write resource module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let module = FfiPrototypeModule::load(&library).expect("load C resource module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -275,4 +275,110 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
         error.native.as_ref().map(|error| error.code.as_str()),
         Some("native.resource_closed")
     );
+}
+
+#[test]
+fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/resource_module.c",
+        "cleanup_resources",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/resources.slug"),
+        "export foreign create = fn(value:num):resource\n\
+         export foreign destroyed = fn():num\n",
+    )
+    .expect("write resource module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(&library).expect("load C resource module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C resource module");
+
+    let unwinding = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\n\
+             val attempt = fn() { val counter = resources.create(1); throw \"stop\" }\n\
+             attempt()\n",
+            false,
+        )
+        .expect("compile unwinding program");
+    vm.run_named(&unwinding, "main")
+        .expect_err("throw must unwind the C resource");
+
+    let destroyed = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\nresources.destroyed()\n",
+            false,
+        )
+        .expect("compile destruction counter program");
+    assert_eq!(vm.run_named(&destroyed, "main").unwrap().to_string(), "1");
+
+    let create = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\nresources.create(2)\n",
+            false,
+        )
+        .expect("compile escaping resource program");
+    let escaped = vm
+        .run_named(&create, "main")
+        .expect("create resource that outlives the VM");
+    drop(vm);
+    drop(loader);
+
+    let replacement_loader = ModuleLoader::new(directory.path(), None);
+    let mut replacement = Vm::with_module_loader(replacement_loader.clone());
+    let replacement_module = FfiPrototypeModule::load(&library).expect("reload C resource module");
+    replacement_module
+        .register(&mut replacement)
+        .expect("register module in replacement VM");
+    let destroyed = replacement_loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\nresources.destroyed()\n",
+            false,
+        )
+        .expect("compile replacement destruction counter program");
+    assert_eq!(
+        replacement
+            .run_named(&destroyed, "main")
+            .unwrap()
+            .to_string(),
+        "2"
+    );
+    drop(escaped);
+}
+
+#[test]
+fn lets_a_c_thread_send_through_an_owned_producer_capability() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/async_module.c", "async");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/async.slug"),
+        "export foreign delayed = fn():chan<num>\n",
+    )
+    .expect("write async module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C async module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module.register(&mut vm).expect("register C async module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val async = import(\"slug.async\")\n\
+             select { recv async.delayed() }\n",
+            false,
+        )
+        .expect("compile C async producer program");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "73");
 }

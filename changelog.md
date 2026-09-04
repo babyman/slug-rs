@@ -18,6 +18,10 @@
 - The C FFI prototype now validates declared opaque resource types and maps
   C-owned pointers through Slug's checked resource lifecycle.
 
+- The C FFI prototype now proves C-resource cleanup across error unwinding and
+  final shared-loader teardown, and supports C-owned cross-thread integer
+  producer capabilities.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.

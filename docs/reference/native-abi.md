@@ -451,3 +451,9 @@ destructor each. A callback can transfer a non-null C pointer into a Slug
 `resource`, borrow that pointer only for a synchronous callback, or close the
 resource by argument index. The host checks module/type identity and closed
 state, and invokes the C destructor exactly once on close or final release.
+
+The prototype also exposes an explicitly owned, thread-safe producer capability
+for integer messages. C may create a channel during a callback, transfer its
+receiver result to Slug, and retain the paired producer for a background thread.
+The producer can send or be destroyed from that thread, but it cannot inspect
+or enter the VM, retain a Slug value, or invoke Slug code.

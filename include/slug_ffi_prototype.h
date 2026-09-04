@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 2u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 3u
 
 typedef enum {
   SLUG_FFI_OK = 0,
@@ -15,6 +15,8 @@ typedef enum {
 
 typedef struct slug_ffi_host_api slug_ffi_host_api;
 typedef struct slug_ffi_call slug_ffi_call;
+typedef struct slug_ffi_channel slug_ffi_channel;
+typedef struct slug_ffi_producer slug_ffi_producer;
 
 typedef struct {
   const char *data;
@@ -29,6 +31,12 @@ typedef void (*slug_ffi_set_f64_fn)(slug_ffi_call *, double);
 typedef void (*slug_ffi_set_error_fn)(slug_ffi_call *, slug_ffi_text, slug_ffi_text);
 typedef bool (*slug_ffi_set_resource_fn)(slug_ffi_call *, slug_ffi_text, void *);
 typedef bool (*slug_ffi_close_resource_fn)(slug_ffi_call *, size_t, slug_ffi_text);
+typedef slug_ffi_channel *(*slug_ffi_channel_create_fn)(slug_ffi_call *, uint64_t,
+                                                         slug_ffi_producer **);
+typedef bool (*slug_ffi_set_channel_fn)(slug_ffi_call *, slug_ffi_channel *);
+typedef void (*slug_ffi_channel_destroy_fn)(slug_ffi_channel *);
+typedef int32_t (*slug_ffi_producer_send_i64_fn)(slug_ffi_producer *, int64_t);
+typedef void (*slug_ffi_producer_destroy_fn)(slug_ffi_producer *);
 
 struct slug_ffi_host_api {
   uint32_t abi_major;
@@ -42,6 +50,11 @@ struct slug_ffi_host_api {
   slug_ffi_set_error_fn set_error;
   slug_ffi_set_resource_fn set_resource;
   slug_ffi_close_resource_fn close_resource;
+  slug_ffi_channel_create_fn channel_create;
+  slug_ffi_set_channel_fn set_channel;
+  slug_ffi_channel_destroy_fn channel_destroy;
+  slug_ffi_producer_send_i64_fn producer_send_i64;
+  slug_ffi_producer_destroy_fn producer_destroy;
 };
 
 typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);
