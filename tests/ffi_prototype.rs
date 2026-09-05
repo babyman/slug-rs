@@ -518,3 +518,74 @@ fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
         .expect("compile C backpressure program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "13");
 }
+
+#[test]
+fn reports_closed_when_slug_revokes_a_c_producer_receiver() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/revocation_module.c", "revocation");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/revocation.slug"),
+        "export foreign delayed = fn():chan<num>;\n\
+         export foreign waitStatus = fn():num\n",
+    )
+    .expect("write revocation module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C revocation module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C revocation module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val revocation = import(\"slug.revocation\")\n\
+             val discard = fn() { val inbox = revocation.delayed(); nil }\n\
+             discard()\n\
+             revocation.waitStatus()\n",
+            false,
+        )
+        .expect("compile C producer revocation program");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "2");
+}
+
+#[test]
+fn transfers_owned_c_text_only_after_a_backpressured_retry_succeeds() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/text_backpressure_module.c",
+        "text_backpressure",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/textbackpressure.slug"),
+        "export foreign backpressuredText = fn():chan<str>;\n\
+         export foreign sawFull = fn():num\n\
+         export foreign freed = fn():num\n",
+    )
+    .expect("write text backpressure module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C text backpressure module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C text backpressure module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val text = import(\"slug.textbackpressure\")\n\
+             val inbox = text.backpressuredText()\n\
+             val first = select { recv inbox }\n\
+             val second = select { recv inbox }\n\
+             first + \":\" + second + \":\" + text.sawFull() + \":\" + text.freed()\n",
+            false,
+        )
+        .expect("compile C text backpressure program");
+    assert_eq!(
+        vm.run_named(&program, "main").unwrap().to_string(),
+        "first:second:1:2"
+    );
+}

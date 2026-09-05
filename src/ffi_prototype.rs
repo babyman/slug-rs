@@ -23,7 +23,7 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 5;
+const ABI_MINOR: u32 = 6;
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 
@@ -47,11 +47,14 @@ struct HostApi {
     channel_destroy: unsafe extern "C" fn(*mut FfiChannel),
     producer_send_i64: unsafe extern "C" fn(*mut FfiProducer, i64) -> i32,
     producer_destroy: unsafe extern "C" fn(*mut FfiProducer),
+    producer_send_text:
+        unsafe extern "C" fn(*mut FfiProducer, FfiText, Option<ProducerTextDestroy>) -> i32,
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
 type ModuleDestroy = unsafe extern "C" fn(*mut c_void);
 type ResourceDestroy = unsafe extern "C" fn(*mut c_void);
+type ProducerTextDestroy = unsafe extern "C" fn(*mut c_void);
 type ModuleInit = unsafe extern "C" fn(*const HostApi, *mut *mut c_void) -> *const ModuleDescriptor;
 
 #[repr(C)]
@@ -384,6 +387,7 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     channel_destroy,
     producer_send_i64,
     producer_destroy,
+    producer_send_text,
 });
 
 fn host_api() -> *const HostApi {
@@ -658,6 +662,29 @@ unsafe extern "C" fn producer_destroy(producer: *mut FfiProducer) {
     if !producer.is_null() {
         // SAFETY: C destroys only a producer capability it still owns.
         drop(unsafe { Box::from_raw(producer) });
+    }
+}
+
+unsafe extern "C" fn producer_send_text(
+    producer: *mut FfiProducer,
+    text: FfiText,
+    destroy: Option<ProducerTextDestroy>,
+) -> i32 {
+    let (Some(producer), Some(destroy)) = (unsafe { producer.as_ref() }, destroy) else {
+        return 3;
+    };
+    let data = text.data;
+    let Some(text) = (unsafe { text_from_ffi(text) }) else {
+        return 3;
+    };
+    match producer.producer.try_send(NativeSendValue::string(text)) {
+        NativeProducerStatus::Sent => {
+            // SAFETY: C transfers ownership of the buffer only after a successful send.
+            unsafe { destroy(data.cast_mut().cast()) };
+            0
+        }
+        NativeProducerStatus::Full(_) => 1,
+        NativeProducerStatus::Closed(_) => 2,
     }
 }
 

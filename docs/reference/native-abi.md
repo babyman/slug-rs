@@ -461,8 +461,13 @@ or enter the VM, retain a Slug value, or invoke Slug code.
 Integer producer sends report `sent`, `full`, or `closed`. A `full` result
 leaves the C caller responsible for retaining and retrying its integer; a
 `closed` result ends that producer's useful lifetime and the caller destroys
-the capability. The prototype does not yet generalize this ownership rule to
-non-scalar payloads.
+the capability.
+
+The text experiment now makes that transfer rule explicit for C-owned buffers:
+the producer receives a buffer, length, and C destructor. On `sent`, the host
+copies the text into its owned message and invokes the destructor. On `full`,
+`closed`, or invalid UTF-8, C retains the buffer and is responsible for retry
+or release. A dropped Slug receiver makes later producer sends return `closed`.
 
 The fixtures also include a deliberately small SQLite adapter: an in-memory
 database resource with execute, scalar-integer query, and close operations. It
