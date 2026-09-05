@@ -571,7 +571,7 @@ impl Vm {
             .iter()
             .filter_map(|declaration| declaration.resource_type.as_deref())
             .collect::<std::collections::HashSet<_>>();
-        let Some(loader) = &self.module_loader else {
+        let Some(loader) = self.module_loader.clone() else {
             return if program
                 .declarations()
                 .iter()
@@ -593,75 +593,106 @@ impl Vm {
             .iter()
             .filter(|declaration| declaration.foreign)
         {
-            for name in &declaration.bindings {
-                let function = loader.foreign(program.module_name(), name).ok_or_else(|| {
-                    self.error(
-                        RuntimeErrorKind::Module,
-                        format!(
-                            "foreign function `{}.{name}` is not registered",
-                            program.module_name()
-                        ),
-                        None,
-                    )
-                })?;
-                let (minimum, maximum) = declaration.foreign_arity.ok_or_else(|| {
-                    self.error(
-                        RuntimeErrorKind::InvalidBytecode,
-                        format!("foreign declaration `{name}` has no arity metadata"),
-                        None,
-                    )
-                })?;
-                if !function.matches_declared_arity(minimum, maximum) {
-                    return Err(self.error(
-                        RuntimeErrorKind::Module,
-                        format!(
-                            "foreign function `{}.{name}` does not accept its declared arity",
-                            program.module_name()
-                        ),
-                        None,
-                    ));
-                }
-                registered_resource_types.extend(function.resource_type_names());
-                let identity = declaration
-                    .foreign_callable_identity
-                    .clone()
-                    .ok_or_else(|| {
-                        self.error(
-                            RuntimeErrorKind::InvalidBytecode,
-                            format!("foreign declaration `{name}` has no callable identity"),
-                            None,
-                        )
-                    })?;
-                let value = Value::DeclaredNative {
-                    function,
-                    callable_identity: identity,
-                };
-                let binding = self.globals.borrow().get(name).cloned();
-                let value = binding
-                    .as_ref()
-                    .and_then(|binding| binding.resolve().ok())
-                    .and_then(|existing| Self::callable_signature(&existing).map(|_| existing))
-                    .map_or_else(
-                        || value.clone(),
-                        |existing| match existing {
-                            Value::Overloads(overloads) => {
-                                let mut overloads = overloads.as_ref().clone();
-                                overloads.push(value.clone());
-                                Value::Overloads(Rc::new(overloads))
-                            }
-                            existing => Value::Overloads(Rc::new(vec![existing, value.clone()])),
-                        },
-                    );
-                if !binding.is_some_and(|binding| binding.replace_binding(value.clone())) {
-                    self.globals.borrow_mut().insert(name.clone(), value);
-                }
-            }
+            registered_resource_types.extend(self.bind_foreign_declaration(
+                &loader,
+                program,
+                declaration,
+            )?);
         }
         self.validate_resource_type_registrations(
             program,
             &declared_resource_types,
             registered_resource_types,
         )
+    }
+
+    fn bind_foreign_declaration(
+        &mut self,
+        loader: &ModuleLoader,
+        program: &Program,
+        declaration: &ModuleDeclaration,
+    ) -> VmResult<std::collections::HashSet<String>> {
+        let mut resource_types = std::collections::HashSet::new();
+        for name in &declaration.bindings {
+            let function = loader.foreign(program.module_name(), name).ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::Module,
+                    format!(
+                        "foreign function `{}.{name}` is not registered",
+                        program.module_name()
+                    ),
+                    None,
+                )
+            })?;
+            let (minimum, maximum) = declaration.foreign_arity.ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!("foreign declaration `{name}` has no arity metadata"),
+                    None,
+                )
+            })?;
+            if !function.matches_declared_arity(minimum, maximum) {
+                return Err(self.error(
+                    RuntimeErrorKind::Module,
+                    format!(
+                        "foreign function `{}.{name}` does not accept its declared arity",
+                        program.module_name()
+                    ),
+                    None,
+                ));
+            }
+            resource_types.extend(function.resource_type_names());
+            let identity = declaration
+                .foreign_callable_identity
+                .clone()
+                .ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!("foreign declaration `{name}` has no callable identity"),
+                        None,
+                    )
+                })?;
+            let resource_signature =
+                declaration
+                    .foreign_resource_signature
+                    .clone()
+                    .ok_or_else(|| {
+                        self.error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("foreign declaration `{name}` has no resource signature"),
+                            None,
+                        )
+                    })?;
+            let value = Value::DeclaredNative {
+                function,
+                callable_identity: identity,
+                resource_signature: Box::new(resource_signature),
+            };
+            self.install_foreign_value(name, &value);
+        }
+        Ok(resource_types)
+    }
+
+    fn install_foreign_value(&mut self, name: &str, value: &Value) {
+        let binding = self.globals.borrow().get(name).cloned();
+        let value = binding
+            .as_ref()
+            .and_then(|binding| binding.resolve().ok())
+            .and_then(|existing| Self::callable_signature(&existing).map(|_| existing))
+            .map_or_else(
+                || value.clone(),
+                |existing| match existing {
+                    Value::Overloads(overloads) => {
+                        let mut overloads = overloads.as_ref().clone();
+                        overloads.push(value.clone());
+                        Value::Overloads(Rc::new(overloads))
+                    }
+                    existing => Value::Overloads(Rc::new(vec![existing, value.clone()])),
+                },
+            );
+        if !binding.is_some_and(|binding| binding.replace_binding(value.clone())) {
+            self.globals.borrow_mut().insert(name.into(), value);
+        }
     }
 
     fn validate_resource_type_registrations(
@@ -1909,7 +1940,7 @@ impl Vm {
                     cleanup_recovers: false,
                 });
             }
-            Value::Native(function) | Value::DeclaredNative { function, .. } => {
+            Value::Native(function) => {
                 let arguments = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
@@ -1918,7 +1949,29 @@ impl Vm {
                         })
                     })
                     .collect::<VmResult<Vec<_>>>()?;
-                let result = self.invoke_native(&function, &arguments, span)?;
+                let result = self.invoke_native(&function, &arguments, None, span.as_ref())?;
+                self.stack.truncate(base);
+                self.stack.push(result);
+            }
+            Value::DeclaredNative {
+                function,
+                resource_signature,
+                ..
+            } => {
+                let arguments = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value.resolve().map_err(|message| {
+                            self.error(RuntimeErrorKind::Name, message, span.clone())
+                        })
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                let result = self.invoke_native(
+                    &function,
+                    &arguments,
+                    Some(&resource_signature),
+                    span.as_ref(),
+                )?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -2077,7 +2130,7 @@ impl Vm {
                     cleanup_recovers: false,
                 });
             }
-            Value::Native(function) | Value::DeclaredNative { function, .. } => {
+            Value::Native(function) => {
                 let arguments = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
@@ -2086,7 +2139,25 @@ impl Vm {
                             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
-                let result = self.invoke_native_at(&function, &arguments, span)?;
+                let result = self.invoke_native(&function, &arguments, None, span)?;
+                self.stack.truncate(base);
+                self.stack.push(result);
+            }
+            Value::DeclaredNative {
+                function,
+                resource_signature,
+                ..
+            } => {
+                let arguments = self.stack[base + 1..]
+                    .iter()
+                    .map(|value| {
+                        value
+                            .resolve()
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                    })
+                    .collect::<VmResult<Vec<_>>>()?;
+                let result =
+                    self.invoke_native(&function, &arguments, Some(&resource_signature), span)?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -3058,44 +3129,18 @@ impl Vm {
         &mut self,
         function: &NativeFunction,
         arguments: &[Value],
-        span: Option<SourceSpan>,
-    ) -> VmResult<Value> {
-        match function.invoke(arguments) {
-            NativeInvocation::Result(value, resources) => {
-                self.native_resources.register(resources);
-                if let Value::Channel(channel) = &value
-                    && channel.has_native_producer()
-                {
-                    self.nursery.track_native_channel(channel);
-                }
-                Ok(value)
-            }
-            NativeInvocation::Error(error, resources) => {
-                self.native_resources.register(resources);
-                let (code, message, data) = error.into_parts();
-                let mut error = self.error(
-                    RuntimeErrorKind::Native,
-                    format!("native `{}`: {message}", function.qualified_name()),
-                    span,
-                );
-                error.native = Some(Box::new(NativeErrorDetails { code, data }));
-                Err(error)
-            }
-            NativeInvocation::ContractViolation(message) => {
-                Err(self.error(RuntimeErrorKind::NativeContract, message, span))
-            }
-        }
-    }
-
-    fn invoke_native_at(
-        &mut self,
-        function: &NativeFunction,
-        arguments: &[Value],
+        resource_signature: Option<&crate::source::environment::ForeignResourceSignature>,
         span: Option<&SourceSpan>,
     ) -> VmResult<Value> {
+        if let Some(signature) = resource_signature {
+            self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
+        }
         match function.invoke(arguments) {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);
+                if let Some(signature) = resource_signature {
+                    self.validate_foreign_resource_result(function, signature, &value, span)?;
+                }
                 if let Value::Channel(channel) = &value
                     && channel.has_native_producer()
                 {
@@ -3118,6 +3163,66 @@ impl Vm {
                 Err(self.error_at(RuntimeErrorKind::NativeContract, message, span))
             }
         }
+    }
+
+    fn validate_foreign_resource_arguments(
+        &self,
+        function: &NativeFunction,
+        signature: &crate::source::environment::ForeignResourceSignature,
+        arguments: &[Value],
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        for (index, value) in arguments.iter().enumerate() {
+            let Some(expected) = signature.parameter_name(index) else {
+                continue;
+            };
+            self.validate_foreign_resource_value(function, expected, value, "argument", span)?;
+        }
+        Ok(())
+    }
+
+    fn validate_foreign_resource_result(
+        &self,
+        function: &NativeFunction,
+        signature: &crate::source::environment::ForeignResourceSignature,
+        value: &Value,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let Some(expected) = signature.result_name() else {
+            return Ok(());
+        };
+        self.validate_foreign_resource_value(function, expected, value, "result", span)
+    }
+
+    fn validate_foreign_resource_value(
+        &self,
+        function: &NativeFunction,
+        expected: &str,
+        value: &Value,
+        position: &str,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let Value::NativeResource(resource) = value else {
+            return Err(self.error_at(
+                RuntimeErrorKind::NativeContract,
+                format!(
+                    "native `{}` returned a non-resource {position} where `{expected}` is declared",
+                    function.qualified_name()
+                ),
+                span,
+            ));
+        };
+        if resource.has_type(function.module_name(), expected) {
+            return Ok(());
+        }
+        Err(self.error_at(
+            RuntimeErrorKind::NativeContract,
+            format!(
+                "native `{}` returned the wrong resource type for its {position}; expected `{expected}`",
+                function.qualified_name()
+            ),
+            span,
+        ))
     }
 
     fn bind_call_arguments(

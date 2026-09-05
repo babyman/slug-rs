@@ -353,7 +353,7 @@ impl Vm {
                 });
                 Ok(None)
             }
-            Value::Native(function) | Value::DeclaredNative { function, .. } => {
+            Value::Native(function) => {
                 let arguments = if recovers_error {
                     let error = self
                         .active_error()
@@ -362,7 +362,28 @@ impl Vm {
                 } else {
                     Vec::new()
                 };
-                let value = self.invoke_native(&function, &arguments, None)?;
+                let value = self.invoke_native(&function, &arguments, None, None)?;
+                if recovers_error {
+                    self.recover_from_error(program, value)
+                } else {
+                    self.drive_cleanup(program)
+                }
+            }
+            Value::DeclaredNative {
+                function,
+                resource_signature,
+                ..
+            } => {
+                let arguments = if recovers_error {
+                    let error = self
+                        .active_error()
+                        .expect("error cleanup has an active error");
+                    vec![Self::error_value(error)]
+                } else {
+                    Vec::new()
+                };
+                let value =
+                    self.invoke_native(&function, &arguments, Some(&resource_signature), None)?;
                 if recovers_error {
                     self.recover_from_error(program, value)
                 } else {

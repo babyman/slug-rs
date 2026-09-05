@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     Value,
-    source::environment::{CallableIdentity, ModuleSnapshot},
+    source::environment::{CallableIdentity, ForeignResourceSignature, ModuleSnapshot},
 };
 
 /// A source position attached to an instruction for language diagnostics.
@@ -141,6 +141,8 @@ pub struct ModuleDeclaration {
     pub resource_type: Option<String>,
     /// Private canonical callable identity for a resolved foreign binding.
     pub(crate) foreign_callable_identity: Option<CallableIdentity>,
+    /// Resource positions that require validation when invoking this foreign binding.
+    pub(crate) foreign_resource_signature: Option<ForeignResourceSignature>,
     pub documentation: Option<String>,
     pub tags: Vec<ModuleTag>,
 }

@@ -12,6 +12,7 @@ use crate::{
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::SchedulerSignal,
     source::environment::CallableIdentity,
+    source::environment::ForeignResourceSignature,
 };
 
 /// VM-owned builtins that require host-service context at call time.
@@ -872,6 +873,7 @@ pub enum Value {
     DeclaredNative {
         function: NativeFunction,
         callable_identity: CallableIdentity,
+        resource_signature: Box<ForeignResourceSignature>,
     },
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),

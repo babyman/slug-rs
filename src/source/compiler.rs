@@ -28,6 +28,7 @@ pub(super) struct Compiler {
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
+    foreign_resource_signatures: HashMap<SourceSpan, super::environment::ForeignResourceSignature>,
     callable_identities: Vec<CallableIdentity>,
     guard_comparisons: bool,
 }
@@ -43,6 +44,7 @@ impl Compiler {
             selected_calls: analysis.selected_calls.clone(),
             function_identities: analysis.function_identities.clone(),
             foreign_identities: analysis.foreign_identities.clone(),
+            foreign_resource_signatures: analysis.foreign_resource_signatures.clone(),
             callable_identities: Vec::new(),
             guard_comparisons: false,
         }
@@ -69,6 +71,7 @@ impl Compiler {
                     foreign_arity: None,
                     resource_type: None,
                     foreign_callable_identity: None,
+                    foreign_resource_signature: None,
                     documentation: match &expression.kind {
                         ExprKind::Declare { documentation, .. } => documentation.clone(),
                         _ => unreachable!("declaration pattern was matched"),
@@ -102,6 +105,10 @@ impl Compiler {
             {
                 let foreign_callable_identity =
                     self.foreign_identities.get(&expression.span).cloned();
+                let foreign_resource_signature = self
+                    .foreign_resource_signatures
+                    .get(&expression.span)
+                    .cloned();
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
@@ -110,6 +117,7 @@ impl Compiler {
                     foreign_arity: Some(foreign_arity(signature)),
                     resource_type: None,
                     foreign_callable_identity,
+                    foreign_resource_signature,
                     documentation: documentation.clone(),
                     tags: tags
                         .iter()
@@ -135,6 +143,7 @@ impl Compiler {
                     foreign_arity: None,
                     resource_type: Some(name.clone()),
                     foreign_callable_identity: None,
+                    foreign_resource_signature: None,
                     documentation: None,
                     tags: Vec::new(),
                 });

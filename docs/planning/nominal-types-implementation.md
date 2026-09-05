@@ -38,7 +38,7 @@ the language specification remain authoritative.
 - [x] Require each `resource Name` declaration to match exactly one native
   resource registration owned by that module; reject missing, extra, or
   differently named registrations before module execution.
-- [ ] Validate declared foreign resource arguments and results at the native
+- [x] Validate declared foreign resource arguments and results at the native
   boundary, including dynamic call paths and callbacks returning the wrong
   resource kind.
 - [ ] Add typed whole-case resource constraints and lower them to checked

@@ -36,6 +36,45 @@ impl CallableSignature {
     }
 }
 
+/// Resource positions retained for mandatory runtime validation of a `foreign`
+/// declaration. Other source types remain compile-time-only in this subset.
+#[derive(Clone, Debug, Default)]
+#[doc(hidden)]
+pub struct ForeignResourceSignature {
+    parameters: Vec<Option<ResourceIdentity>>,
+    result: Option<ResourceIdentity>,
+}
+
+impl ForeignResourceSignature {
+    pub(super) fn from_callable(signature: &CallableSignature) -> Self {
+        Self {
+            parameters: signature
+                .parameters
+                .iter()
+                .map(|parameter| match &parameter.value_type {
+                    Type::Resource(identity) => Some(identity.clone()),
+                    _ => None,
+                })
+                .collect(),
+            result: match &signature.result {
+                Type::Resource(identity) => Some(identity.clone()),
+                _ => None,
+            },
+        }
+    }
+
+    pub(crate) fn parameter_name(&self, index: usize) -> Option<&str> {
+        self.parameters
+            .get(index)
+            .and_then(Option::as_ref)
+            .map(|identity| identity.name.as_str())
+    }
+
+    pub(crate) fn result_name(&self) -> Option<&str> {
+        self.result.as_ref().map(|identity| identity.name.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// Opaque canonical input identity used by private callable dispatch metadata.
 pub struct CallableIdentity {
@@ -114,6 +153,7 @@ pub(super) struct SemanticAnalysis {
     pub(super) selected_calls: HashMap<SourceSpan, CallableIdentity>,
     pub(super) function_identities: HashMap<SourceSpan, CallableIdentity>,
     pub(super) foreign_identities: HashMap<SourceSpan, CallableIdentity>,
+    pub(crate) foreign_resource_signatures: HashMap<SourceSpan, ForeignResourceSignature>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -121,6 +161,7 @@ struct SemanticRecords {
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
+    foreign_resource_signatures: HashMap<SourceSpan, ForeignResourceSignature>,
 }
 
 #[derive(Clone, Debug)]
@@ -284,11 +325,17 @@ impl Environment {
             .insert(span, identity);
     }
 
-    pub(super) fn record_foreign(&self, span: SourceSpan, identity: CallableIdentity) {
-        self.records
-            .borrow_mut()
-            .foreign_identities
-            .insert(span, identity);
+    pub(super) fn record_foreign(
+        &self,
+        span: SourceSpan,
+        identity: CallableIdentity,
+        resource_signature: ForeignResourceSignature,
+    ) {
+        let mut records = self.records.borrow_mut();
+        records.foreign_identities.insert(span.clone(), identity);
+        records
+            .foreign_resource_signatures
+            .insert(span, resource_signature);
     }
 
     pub(super) fn analysis(&self, snapshot: ModuleSnapshot) -> SemanticAnalysis {
@@ -298,6 +345,7 @@ impl Environment {
             selected_calls: records.selected_calls.clone(),
             function_identities: records.function_identities.clone(),
             foreign_identities: records.foreign_identities.clone(),
+            foreign_resource_signatures: records.foreign_resource_signatures.clone(),
         }
     }
 }

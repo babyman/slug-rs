@@ -9,6 +9,8 @@
 - Native resource registrations use the source-declared name directly, and
   source modules reject missing or extra registrations before their foreign
   bindings execute.
+- Declared foreign resource parameters and results now validate at the native
+  boundary, including dynamically selected foreign callables.
 
 - Native channel producers now return ownership of a send value when a bounded
   mailbox is full or closed, allowing integrations to retry without cloning.

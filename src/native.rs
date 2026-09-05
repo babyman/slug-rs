@@ -994,6 +994,10 @@ impl fmt::Debug for NativeResource {
 }
 
 impl NativeResource {
+    pub(crate) fn has_type(&self, module_name: &str, type_name: &str) -> bool {
+        self.module.name.as_ref() == module_name && self.registration.name.as_ref() == type_name
+    }
+
     pub(crate) fn close(&self) -> Result<(), String> {
         match self.state.get() {
             NativeResourceState::Closed => return Ok(()),

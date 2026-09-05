@@ -454,6 +454,87 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
 }
 
 #[test]
+fn validates_resource_arguments_through_dynamic_foreign_calls() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/resources.slug"),
+        "export resource Counter\n\
+         export foreign read = fn(handle:Counter):num\n",
+    )
+    .expect("write resource module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C resource module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\n\
+             val invoke = fn(callback, value) { callback(value) }\n\
+             invoke(resources.read, 1)\n",
+            false,
+        )
+        .expect("compile dynamically dispatched foreign call");
+
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("dynamic foreign calls must validate declared resource arguments");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(
+        error
+            .message
+            .contains("non-resource argument where `Counter` is declared")
+    );
+}
+
+#[test]
+fn rejects_foreign_resource_results_with_the_wrong_declared_type() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/wrong_resource_result_module.c",
+        "wrong_resource_result",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/resource_result.slug"),
+        "export resource Counter\n\
+         export resource Other\n\
+         export foreign create = fn():Other\n",
+    )
+    .expect("write resource result module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C resource module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resource_result\")\nresources.create()\n",
+            false,
+        )
+        .expect("compile resource result program");
+
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("foreign results must match their declared resource type");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(
+        error
+            .message
+            .contains("wrong resource type for its result; expected `Other`")
+    );
+}
+
+#[test]
 fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(

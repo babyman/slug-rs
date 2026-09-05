@@ -462,7 +462,11 @@ fn check_expression(
                 &expression.span,
                 environment,
             )?;
-            environment.record_foreign(expression.span.clone(), callable.identity());
+            environment.record_foreign(
+                expression.span.clone(),
+                callable.identity(),
+                super::environment::ForeignResourceSignature::from_callable(&callable),
+            );
             let value_type = function_value_type(&callable);
             environment.declare_callable(name.clone(), callable, &expression.span)?;
             for parameter in &signature.parameters {
