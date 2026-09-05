@@ -33,6 +33,10 @@ that registration.
 The validation applies even when a call is dynamically reached or optional
 static checking is disabled.
 
+Hosts may inspect a module's declared resource names through its loaded module
+metadata. This does not expose a Slug value, constructor, or reflection API for
+the resource type.
+
 Resource handles may occur in every ordinary type position, including unions,
 collections, channels, function signatures, and whole-case type constraints:
 

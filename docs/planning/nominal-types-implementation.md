@@ -43,9 +43,9 @@ the language specification remain authoritative.
   resource kind.
 - [x] Add typed whole-case resource constraints and lower them to checked
   private match metadata.
-- [ ] Decide and implement resource metadata visibility without adding a
+- [x] Decide and implement resource metadata visibility without adding a
   runtime value or constructor for a resource type.
-- [ ] Add focused negative tests for duplicate declarations, unknown imported
+- [x] Add focused negative tests for duplicate declarations, unknown imported
   types, wrong native result kinds, wrong dynamic arguments, and closed handles.
 
 ## 2. Shared nominal identity infrastructure

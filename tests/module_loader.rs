@@ -847,6 +847,47 @@ fn retains_top_level_declaration_documentation_and_evaluated_tags() {
 }
 
 #[test]
+fn exposes_resource_declarations_only_through_host_module_metadata() {
+    let root = root("resource-metadata");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("resources.slug"),
+        "export resource Handle\nexport foreign noop = fn()\n",
+    )
+    .expect("write resource module");
+    let loader = ModuleLoader::new(&root, None);
+    let module = NativeModule::new("resources", ()).expect("native module is valid");
+    module
+        .resource_type("Handle", |_payload: &mut ()| {}, |_payload: ()| {})
+        .expect("native resource type is valid");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.define_foreign(
+        module
+            .function("noop", NativeArity::Exact(0), returns_nil)
+            .expect("native function is valid"),
+    )
+    .expect("foreign binding is unique");
+
+    let instance = loader
+        .initialize(None, "resources")
+        .expect("initialize resource module");
+
+    assert_eq!(instance.metadata.len(), 2);
+    assert_eq!(
+        instance.metadata[0].resource_type.as_deref(),
+        Some("Handle")
+    );
+    assert_eq!(instance.metadata[0].bindings, ["Handle"]);
+    assert!(instance.metadata[0].exported);
+    assert!(!instance.metadata[0].foreign);
+    assert_eq!(
+        instance.exports.to_string(),
+        "{\"noop\": <native resources.noop>}"
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn rejects_foreign_bindings_that_cannot_accept_the_declared_arity() {
     let root = root("foreign-arity");
     fs::create_dir_all(&root).expect("create module directory");
