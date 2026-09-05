@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{SourceSpan, Value};
 
@@ -243,8 +243,15 @@ fn analyze(
 ) -> Result<SemanticAnalysis, SourceError> {
     let mut environment = Environment::with_imports(imports);
     let mut exports = HashMap::new();
+    let mut resource_names = HashSet::new();
     for expression in expressions {
         if let ExprKind::Resource { exported, name } = &expression.kind {
+            if !resource_names.insert(name.clone()) {
+                return Err(SourceError::semantic(
+                    format!("duplicate resource type `{name}`"),
+                    expression.span.clone(),
+                ));
+            }
             let _ = exported;
             let mut binding = SemanticBinding::value(Type::Unknown);
             binding.resource_identity = Some(ResourceIdentity {

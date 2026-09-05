@@ -21,6 +21,24 @@ fn distinguishes_nominal_resource_types_during_call_resolution() {
 }
 
 #[test]
+fn rejects_duplicate_resource_declarations() {
+    let path = fixture_path("duplicate-resource-type");
+    fs::write(&path, "resource File\nresource File\n").expect("write duplicate resources");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run duplicate resources");
+    fs::remove_file(&path).expect("remove duplicate resources");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .contains("duplicate resource type `File`")
+    );
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     let path = fixture_path("type-annotations");
