@@ -137,6 +137,8 @@ pub struct ModuleDeclaration {
     /// The inclusive declared call-arity range for a foreign binding. `None`
     /// denotes a variadic declaration.
     pub foreign_arity: Option<(usize, Option<usize>)>,
+    /// The source-level nominal resource type declared by this metadata entry.
+    pub resource_type: Option<String>,
     /// Private canonical callable identity for a resolved foreign binding.
     pub(crate) foreign_callable_identity: Option<CallableIdentity>,
     pub documentation: Option<String>,

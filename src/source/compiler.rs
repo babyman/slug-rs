@@ -67,6 +67,7 @@ impl Compiler {
                     exported: *exported,
                     foreign: false,
                     foreign_arity: None,
+                    resource_type: None,
                     foreign_callable_identity: None,
                     documentation: match &expression.kind {
                         ExprKind::Declare { documentation, .. } => documentation.clone(),
@@ -107,6 +108,7 @@ impl Compiler {
                     exported: *exported,
                     foreign: true,
                     foreign_arity: Some(foreign_arity(signature)),
+                    resource_type: None,
                     foreign_callable_identity,
                     documentation: documentation.clone(),
                     tags: tags
@@ -123,6 +125,19 @@ impl Compiler {
                 bindings.push(name.clone());
                 self.globals.insert(name.clone(), false);
                 self.callable_globals.insert(name.clone());
+            }
+            if let ExprKind::Resource { exported, name } = &expression.kind {
+                self.declarations.push(ModuleDeclaration {
+                    bindings: vec![name.clone()],
+                    mutable: false,
+                    exported: *exported,
+                    foreign: false,
+                    foreign_arity: None,
+                    resource_type: Some(name.clone()),
+                    foreign_callable_identity: None,
+                    documentation: None,
+                    tags: Vec::new(),
+                });
             }
         }
         bindings.sort();
