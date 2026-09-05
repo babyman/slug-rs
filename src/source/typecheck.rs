@@ -876,8 +876,15 @@ fn check_expression(
                 .map(|subject| check_expression(subject, environment, type_parameters, strict))
                 .transpose()?
                 .unwrap_or_else(Type::universal);
-            let coverage_enabled = strict && is_closed_coverage_type(&subject_type);
+            let mut enum_remaining = strict
+                .then(|| enum_cases(&subject_type, environment))
+                .flatten();
+            let coverage_enabled =
+                strict && (enum_remaining.is_some() || is_closed_coverage_type(&subject_type));
             let mut remaining = coverage_enabled.then_some(subject_type.clone());
+            if enum_remaining.is_some() {
+                remaining = None;
+            }
             let mut results = Vec::new();
             for case in cases {
                 let mut scoped = environment.clone();
@@ -903,7 +910,48 @@ fn check_expression(
                     );
                 }
                 environment.record_match_constraints(case.span.clone(), constraints.clone());
-                if coverage_enabled && remaining.is_none() {
+                if let Some(remaining_cases) = &mut enum_remaining {
+                    if remaining_cases.is_empty() {
+                        return Err(SourceError::semantic(
+                            "match case is unreachable",
+                            case.span.clone(),
+                        ));
+                    }
+                    let mut covered = Vec::new();
+                    for (pattern, constraint) in case.patterns.iter().zip(&constraints) {
+                        match &pattern.pattern {
+                            Pattern::EnumCase {
+                                path,
+                                case: case_name,
+                            } => covered.push(enum_case(path, case_name, environment, &case.span)?),
+                            pattern if is_irrefutable_pattern(pattern) => {
+                                covered.extend(enum_cases_for_constraint(
+                                    constraint.as_ref(),
+                                    &subject_type,
+                                    environment,
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    covered.sort_by(|left, right| left.1.cmp(&right.1));
+                    covered.dedup();
+                    let matching = covered
+                        .iter()
+                        .filter(|candidate| remaining_cases.contains(candidate))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if matching.is_empty() {
+                        return Err(SourceError::semantic(
+                            "match case cannot match remaining enum cases",
+                            case.span.clone(),
+                        ));
+                    }
+                    if case.guard.is_none() {
+                        remaining_cases.retain(|candidate| !matching.contains(candidate));
+                    }
+                }
+                if enum_remaining.is_none() && coverage_enabled && remaining.is_none() {
                     return Err(SourceError::semantic(
                         "match case is unreachable",
                         case.span.clone(),
@@ -953,6 +1001,19 @@ fn check_expression(
             if coverage_enabled && let Some(remaining) = remaining {
                 return Err(SourceError::semantic(
                     format!("non-exhaustive match; missing {remaining}"),
+                    expression.span.clone(),
+                ));
+            }
+            if let Some(remaining) = enum_remaining
+                && !remaining.is_empty()
+            {
+                let missing = remaining
+                    .iter()
+                    .map(|(identity, case)| format!("{}.{}", identity.name, case))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(SourceError::semantic(
+                    format!("non-exhaustive match; missing {missing}"),
                     expression.span.clone(),
                 ));
             }
@@ -1389,6 +1450,69 @@ fn is_closed_coverage_type(value_type: &Type) -> bool {
         | Type::Struct(None)
         | Type::Tuple(_)
         | Type::Generic(_) => false,
+    }
+}
+
+type EnumCase = (super::semantic::EnumIdentity, String);
+
+fn enum_cases(value_type: &Type, environment: &Environment) -> Option<Vec<EnumCase>> {
+    match value_type {
+        Type::Enum(identity) => environment.enum_cases(identity).map(|cases| {
+            cases
+                .into_iter()
+                .map(|case| (identity.clone(), case))
+                .collect()
+        }),
+        Type::Union(members) => members
+            .iter()
+            .map(|member| enum_cases(member, environment))
+            .collect::<Option<Vec<_>>>()
+            .map(|groups| groups.into_iter().flatten().collect()),
+        _ => None,
+    }
+}
+
+fn enum_case(
+    path: &str,
+    case: &str,
+    environment: &Environment,
+    span: &SourceSpan,
+) -> Result<EnumCase, SourceError> {
+    let Some(super::environment::TypeMember::Enum { identity, cases }) =
+        environment.type_member(path)
+    else {
+        return Err(SourceError::semantic(
+            format!("unknown enum `{path}`"),
+            span.clone(),
+        ));
+    };
+    if !cases.iter().any(|candidate| candidate == case) {
+        return Err(SourceError::semantic(
+            format!("enum `{path}` has no case `{case}`"),
+            span.clone(),
+        ));
+    }
+    Ok((identity.clone(), case.into()))
+}
+
+fn enum_cases_for_constraint(
+    constraint: Option<&Type>,
+    subject: &Type,
+    environment: &Environment,
+) -> Vec<EnumCase> {
+    match constraint {
+        None => enum_cases(subject, environment).unwrap_or_default(),
+        Some(Type::Enum(identity)) => environment
+            .enum_cases(identity)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|case| (identity.clone(), case))
+            .collect(),
+        Some(Type::Union(members)) => members
+            .iter()
+            .flat_map(|member| enum_cases_for_constraint(Some(member), subject, environment))
+            .collect(),
+        Some(_) => Vec::new(),
     }
 }
 

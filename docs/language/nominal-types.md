@@ -138,5 +138,5 @@ The current Rust subset implements nominal resource declarations, exported
 resource type paths such as `fs.File`, the `File` signatures in `slug.io.fs`,
 checked source/native resource-registration agreement, mandatory foreign
 resource argument/result validation, and fieldless enum declarations with
-qualified local values and patterns. Imported enum namespaces, exhaustive enum
-coverage, and aliases remain implementation work.
+qualified local/imported values and patterns, type paths, and exhaustive
+closed-match coverage. Aliases remain implementation work.

@@ -78,7 +78,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Shared standard-input line stream and interactive helpers through `slug.io.stdin` | implemented | `tests/cli.rs` |
 | Broad `resource` source type | removed | `language/nominal-types.md` |
 | Nominal `resource Name` declarations, separate exported type paths, strongly typed source signatures, and whole-case match constraints | partial | `tests/cli.rs`, `tests/module_loader.rs`, and `language/nominal-types.md` |
-| Fieldless nominal enums with required qualified cases | partial | `tests/cli.rs` and `language/nominal-types.md` |
+| Fieldless nominal enums with required qualified cases | implemented | `tests/cli.rs`, `tests/module_loader.rs`, and `language/nominal-types.md` |
 | Transparent `type Name = Annotation` aliases | specified only | `language/nominal-types.md` |
 | Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `tests/cli.rs` |
 | Foreign declaration syntax, metadata retention, and module-qualified host resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |

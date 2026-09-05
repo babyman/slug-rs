@@ -369,6 +369,27 @@ impl Environment {
             .find_map(|scope| scope.get(name))
     }
 
+    pub(super) fn enum_cases(&self, identity: &EnumIdentity) -> Option<Vec<String>> {
+        self.type_scopes
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.values())
+            .chain(
+                self.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| scope.values())
+                    .flat_map(|binding| binding.type_members.values()),
+            )
+            .find_map(|member| match member {
+                TypeMember::Enum {
+                    identity: candidate,
+                    cases,
+                } if candidate == identity => Some(cases.clone()),
+                TypeMember::Resource(_) | TypeMember::Enum { .. } => None,
+            })
+    }
+
     pub(super) fn resolve_resource_type(
         &self,
         name: &str,

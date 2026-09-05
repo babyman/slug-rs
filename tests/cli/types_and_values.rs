@@ -16,7 +16,6 @@ fn fieldless_enum_values_are_qualified_nominal_values() {
            SeekFrom.Start => \"start\"\n\
            SeekFrom.Current => \"current\"\n\
            SeekFrom.End => \"end\"\n\
-           _ => \"other\"\n\
          })\n",
     )
     .expect("write enum source");
@@ -34,6 +33,93 @@ fn fieldless_enum_values_are_qualified_nominal_values() {
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         "true false\nstart\n"
+    );
+}
+
+#[test]
+fn type_check_requires_unguarded_coverage_of_each_enum_case() {
+    let path = fixture_path("enum-coverage");
+    fs::write(
+        &path,
+        "enum SeekFrom { Start, End }\n\
+         val from:SeekFrom = SeekFrom.Start\n\
+         match from {\n\
+           SeekFrom.Start => 0\n\
+           SeekFrom.End => 1\n\
+         }\n",
+    )
+    .expect("write exhaustive enum source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run exhaustive enum source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::write(
+        &path,
+        "enum SeekFrom { Start, End }\n\
+         val from:SeekFrom = SeekFrom.Start\n\
+         match from { SeekFrom.Start => 0 }\n",
+    )
+    .expect("write non-exhaustive enum source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run non-exhaustive enum source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("missing SeekFrom.End")
+    );
+
+    fs::write(
+        &path,
+        "enum SeekFrom { Start }\n\
+         enum Origin { Start }\n\
+         val from:SeekFrom = SeekFrom.Start\n\
+         match from { Origin.Start => 0 }\n",
+    )
+    .expect("write mismatched enum source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run mismatched enum source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("cannot match remaining enum cases")
+    );
+
+    fs::write(
+        &path,
+        "enum SeekFrom { Start, End }\n\
+         val from:SeekFrom = SeekFrom.Start\n\
+         match from {\n\
+           SeekFrom.Start if true => 0\n\
+           SeekFrom.End => 1\n\
+         }\n",
+    )
+    .expect("write guarded enum source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run guarded enum source");
+    fs::remove_file(path).expect("remove enum source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("missing SeekFrom.Start")
     );
 }
 

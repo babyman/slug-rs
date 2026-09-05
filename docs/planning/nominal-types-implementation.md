@@ -96,9 +96,9 @@ the language specification remain authoritative.
 - [x] Parse qualified enum case patterns without treating the first name as a
   binding; lower them to private match patterns with no accidental capture.
 - [x] Make enum types runtime-checkable in whole-case constraints.
-- [ ] Extend closed-match coverage to enumerate all enum cases, respecting
+- [x] Extend closed-match coverage to enumerate all enum cases, respecting
   guards and existing unreachable/disjoint diagnostics.
-- [ ] Prove local/imported equality, mismatch, qualification, exhaustive and
+- [x] Prove local/imported equality, mismatch, qualification, exhaustive and
   non-exhaustive matches, guarded cases, and dynamically unknown fallbacks.
 
 ## 4. Transparent aliases

@@ -41,8 +41,8 @@ contract is documented separately as `.cslug`.
   `slug.builtin.len`, plus a shared process-standard-input line stream through
   `slug.io.stdin`, and opaque explicit-lifecycle file streams through
   `slug.io.fs`, represented in source by the nominal `fs.File` handle type
-  and checked whole-case match constraints, plus local fieldless nominal enum
-  declarations with qualified values and match patterns.
+  and checked whole-case match constraints, plus fieldless nominal enum
+  declarations with qualified values, match patterns, and exhaustive coverage.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, cached isolated module initialization, and string-keyed exported-value maps.
