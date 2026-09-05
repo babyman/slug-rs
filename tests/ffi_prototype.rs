@@ -73,7 +73,11 @@ fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
         "export foreign openMemory = fn():resource\n\
          export foreign exec = fn(database:resource, sql:str):num\n\
          export foreign queryInt = fn(database:resource, sql:str):num\n\
-         export foreign close = fn(database:resource):num\n",
+         export foreign close = fn(database:resource):num\n\
+         export foreign prepare = fn(database:resource, sql:str):resource\n\
+         export foreign bindInt = fn(statement:resource, index:num, value:num):num\n\
+         export foreign stepInt = fn(statement:resource):num\n\
+         export foreign closeStatement = fn(statement:resource):num\n",
     )
     .expect("write sqlite module source");
     let main = directory.path().join("main.slug");
@@ -94,6 +98,42 @@ fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
         )
         .expect("compile sqlite resource program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
+
+    let statement = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val sqlite = import(\"slug.sqlite\")\n\
+             val database = sqlite.openMemory()\n\
+             val query = sqlite.prepare(database, \"select ?1 + ?2\")\n\
+             sqlite.bindInt(query, 1, 20)\n\
+             sqlite.bindInt(query, 2, 22)\n\
+             sqlite.stepInt(query) + sqlite.closeStatement(query) + sqlite.close(database)\n",
+            false,
+        )
+        .expect("compile SQLite statement program");
+    assert_eq!(vm.run_named(&statement, "main").unwrap().to_string(), "42");
+
+    let close_with_statement = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val sqlite = import(\"slug.sqlite\")\n\
+             val attempt = fn() {\n\
+               val database = sqlite.openMemory()\n\
+               val query = sqlite.prepare(database, \"select 1\")\n\
+               sqlite.close(database)\n\
+             }\n\
+             attempt()\n",
+            false,
+        )
+        .expect("compile parent-close rejection program");
+    let error = vm
+        .run_named(&close_with_statement, "main")
+        .expect_err("database close must reject active statements");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("sqlite.error")
+    );
 
     let invalid = loader
         .compile_source(

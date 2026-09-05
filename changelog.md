@@ -25,6 +25,9 @@
 - Added a test-only SQLite C fixture proving callback-scoped text borrowing,
   opaque database handles, explicit close, and structured SQLite errors.
 
+- The SQLite FFI fixture now includes prepared-statement resources, integer
+  binding and stepping, explicit finalization, and checked parent-close errors.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.

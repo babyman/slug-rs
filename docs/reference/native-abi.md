@@ -461,5 +461,10 @@ or enter the VM, retain a Slug value, or invoke Slug code.
 The fixtures also include a deliberately small SQLite adapter: an in-memory
 database resource with execute, scalar-integer query, and close operations. It
 uses callback-scoped length-delimited SQL text and maps SQLite failures to
-structured native errors. Statements, bindings, rows, transactions, and file
-database policy remain outside the prototype.
+structured native errors. Rows, transactions, and file database policy remain
+outside the prototype.
+
+The fixture also uses SQLite statements as a parent/child resource experiment:
+an explicit database close is rejected while a statement is active, whereas
+final resource teardown uses SQLite's deferred-close behavior so cleanup stays
+safe regardless of resource drop order.
