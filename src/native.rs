@@ -748,9 +748,31 @@ impl NativeModule {
         destroy: fn(T),
     ) -> Result<NativeResourceType<T>, NativeDescriptorError> {
         let name = name.into();
+        self.resource_type_with_slug_name(name.clone(), name, close, destroy)
+    }
+
+    /// Registers a native resource with a distinct Slug-visible type name.
+    ///
+    /// The native name remains available for host diagnostics and internal
+    /// dispatch, while `slug_name` is the contract checked against source
+    /// `resource` declarations.
+    pub fn resource_type_with_slug_name<T: Any>(
+        &self,
+        name: impl Into<Rc<str>>,
+        slug_name: impl Into<Rc<str>>,
+        close: fn(&mut T),
+        destroy: fn(T),
+    ) -> Result<NativeResourceType<T>, NativeDescriptorError> {
+        let name = name.into();
+        let slug_name = slug_name.into();
         if name.trim().is_empty() {
             return Err(NativeDescriptorError::new(
                 "native resource type name cannot be empty",
+            ));
+        }
+        if slug_name.trim().is_empty() {
+            return Err(NativeDescriptorError::new(
+                "Slug resource type name cannot be empty",
             ));
         }
         if !self
@@ -769,6 +791,7 @@ impl NativeModule {
                 id: NEXT_RESOURCE_TYPE_ID.fetch_add(1, Ordering::Relaxed),
                 module_id: self.inner.id,
                 name,
+                slug_name,
                 close: Box::new(move |payload| {
                     if let Some(payload) = payload.downcast_mut::<T>() {
                         close(payload);
@@ -956,6 +979,7 @@ struct ResourceTypeRegistration {
     id: usize,
     module_id: usize,
     name: Rc<str>,
+    slug_name: Rc<str>,
     close: Box<ResourceClose>,
     destroy: Box<ResourceDestroy>,
 }
@@ -980,6 +1004,7 @@ impl fmt::Debug for NativeResource {
         f.debug_struct("NativeResource")
             .field("module", &self.module.name)
             .field("resource_type", &self.registration.name)
+            .field("slug_resource_type", &self.registration.slug_name)
             .field("state", &self.state.get())
             .finish_non_exhaustive()
     }
