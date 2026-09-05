@@ -486,7 +486,7 @@ impl<'call> NativeValueRef<'call> {
             Value::Str(_) => NativeValueKind::String,
             Value::Bytes(_) => NativeValueKind::Bytes,
             Value::List(_) => NativeValueKind::List,
-            Value::Map(_) => NativeValueKind::Map,
+            Value::Map(_) | Value::Enum(_) => NativeValueKind::Map,
             Value::StructSchema(_) => NativeValueKind::StructSchema,
             Value::Struct(_) => NativeValueKind::Struct,
             Value::Channel(_) => NativeValueKind::Channel,

@@ -32,6 +32,11 @@ pub(super) enum ExprKind {
         exported: bool,
         name: String,
     },
+    Enum {
+        exported: bool,
+        name: String,
+        cases: Vec<String>,
+    },
     Assign {
         name: String,
         value: Box<Expr>,
@@ -217,6 +222,10 @@ pub(super) enum Pattern {
     },
     /// Binds every string key of a map into a top-level declaration scope.
     MapAll,
+    EnumCase {
+        path: String,
+        case: String,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Binary {
@@ -265,6 +274,7 @@ pub(super) enum TokenKind {
     Export,
     Foreign,
     Resource,
+    Enum,
     Val,
     Var,
     Fn,

@@ -229,6 +229,7 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
             }
         }
         ExprKind::Resource { .. }
+        | ExprKind::Enum { .. }
         | ExprKind::Value(_)
         | ExprKind::Interpolate(_)
         | ExprKind::Documentation(_)
@@ -246,6 +247,7 @@ fn analyze(
     let mut exports = HashMap::new();
     let mut types = HashMap::new();
     let mut resource_names = HashSet::new();
+    let mut enum_names = HashSet::new();
     for expression in expressions {
         if let ExprKind::Resource { exported, name } = &expression.kind {
             if !resource_names.insert(name.clone()) {
@@ -260,6 +262,35 @@ fn analyze(
                 super::environment::TypeMember::Resource(identity),
             );
             let _ = exported;
+        }
+    }
+    for expression in expressions {
+        if let ExprKind::Enum { name, cases, .. } = &expression.kind {
+            if !enum_names.insert(name.clone()) || resource_names.contains(name) {
+                return Err(SourceError::semantic(
+                    format!("duplicate type `{name}`"),
+                    expression.span.clone(),
+                ));
+            }
+            let identity = super::semantic::EnumIdentity::declared(
+                expression.span.path.as_ref(),
+                name.clone(),
+            );
+            environment.declare_type(
+                name.clone(),
+                super::environment::TypeMember::Enum {
+                    identity: identity.clone(),
+                    cases: cases.clone(),
+                },
+            );
+            let mut binding = SemanticBinding::value(Type::Map(None));
+            for case in cases {
+                binding.members.insert(
+                    case.clone(),
+                    SemanticBinding::value(Type::Enum(identity.clone())),
+                );
+            }
+            environment.declare(name.clone(), binding);
         }
     }
     for expression in expressions {
@@ -374,6 +405,26 @@ fn record_exports(
                 );
             }
         }
+        ExprKind::Enum {
+            exported: true,
+            name,
+            cases,
+        } => {
+            if let Some(binding) = environment.lookup(name) {
+                exports.insert(name.clone(), binding.clone());
+            }
+            if let Some(super::environment::TypeMember::Enum { identity, .. }) =
+                environment.type_member(name)
+            {
+                types.insert(
+                    name.clone(),
+                    super::environment::TypeMember::Enum {
+                        identity: identity.clone(),
+                        cases: cases.clone(),
+                    },
+                );
+            }
+        }
         _ => {}
     }
 }
@@ -391,7 +442,11 @@ fn pattern_binding_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a String>) 
                 pattern_binding_names(value, names);
             }
         }
-        Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) | Pattern::MapAll => {}
+        Pattern::Literal(_)
+        | Pattern::Wildcard
+        | Pattern::Pinned(_)
+        | Pattern::MapAll
+        | Pattern::EnumCase { .. } => {}
     }
 }
 
@@ -992,7 +1047,9 @@ fn check_expression(
             slice_result(&collection, strict, &expression.span)
         }
         ExprKind::Interpolate(_) => Ok(Type::Str),
-        ExprKind::Resource { .. } | ExprKind::Documentation(_) => Ok(Type::Nil),
+        ExprKind::Resource { .. } | ExprKind::Enum { .. } | ExprKind::Documentation(_) => {
+            Ok(Type::Nil)
+        }
         ExprKind::NotImplemented => Ok(Type::Unknown),
     }
 }
@@ -1297,6 +1354,7 @@ fn is_closed_coverage_type(value_type: &Type) -> bool {
         | Type::Str
         | Type::Bytes
         | Type::Resource(_)
+        | Type::Enum(_)
         | Type::Schema
         | Type::Struct(Some(_))
         | Type::Function(None)
@@ -1324,7 +1382,8 @@ fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
         | Pattern::Map { .. }
         | Pattern::Literal(_)
         | Pattern::Pinned(_)
-        | Pattern::MapAll => false,
+        | Pattern::MapAll
+        | Pattern::EnumCase { .. } => false,
     }
 }
 
@@ -1641,7 +1700,11 @@ fn bind_semantic_pattern(
                 environment.declare_type(name.clone(), member.clone());
             }
         }
-        Pattern::List { .. } | Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}
+        Pattern::List { .. }
+        | Pattern::Literal(_)
+        | Pattern::Wildcard
+        | Pattern::Pinned(_)
+        | Pattern::EnumCase { .. } => {}
     }
 }
 
@@ -1672,7 +1735,8 @@ fn check_pattern(
         | Pattern::Wildcard
         | Pattern::Binding(_)
         | Pattern::Pinned(_)
-        | Pattern::MapAll => Ok(()),
+        | Pattern::MapAll
+        | Pattern::EnumCase { .. } => Ok(()),
     }
 }
 
@@ -1762,7 +1826,11 @@ fn bind_case_pattern(pattern: &Pattern, value_type: &Type, environment: &mut Env
                 );
             }
         }
-        Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) | Pattern::MapAll => {}
+        Pattern::Literal(_)
+        | Pattern::Wildcard
+        | Pattern::Pinned(_)
+        | Pattern::MapAll
+        | Pattern::EnumCase { .. } => {}
     }
 }
 
@@ -2200,6 +2268,10 @@ fn value_type(value: &Value) -> Type {
         Value::Map(_) => Type::Map(None),
         Value::StructSchema(_) => Type::Schema,
         Value::Struct(_) => Type::Struct(None),
+        Value::Enum(value) => Type::Enum(super::semantic::EnumIdentity::declared(
+            value.module.as_ref(),
+            value.name.as_ref(),
+        )),
         Value::Channel(_) => Type::Channel(None),
         Value::Closure(_)
         | Value::Native(_)
@@ -2402,6 +2474,7 @@ fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<
             Ok(())
         }
         ExprKind::Resource { .. }
+        | ExprKind::Enum { .. }
         | ExprKind::Value(_)
         | ExprKind::Interpolate(_)
         | ExprKind::Documentation(_)
@@ -2488,7 +2561,8 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
         | Pattern::Wildcard
         | Pattern::Binding(_)
         | Pattern::Pinned(_)
-        | Pattern::MapAll => Ok(()),
+        | Pattern::MapAll
+        | Pattern::EnumCase { .. } => Ok(()),
     }
 }
 

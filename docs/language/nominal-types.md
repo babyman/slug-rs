@@ -136,6 +136,7 @@ Importing an enum does not inject its case names into the importing module.
 
 The current Rust subset implements nominal resource declarations, exported
 resource type paths such as `fs.File`, the `File` signatures in `slug.io.fs`,
-checked source/native resource-registration agreement, and mandatory foreign
-resource argument/result validation. Typed resource match constraints, enums,
-and aliases remain unimplemented.
+checked source/native resource-registration agreement, mandatory foreign
+resource argument/result validation, and fieldless enum declarations with
+qualified local values and patterns. Imported enum namespaces, exhaustive enum
+coverage, and aliases remain implementation work.

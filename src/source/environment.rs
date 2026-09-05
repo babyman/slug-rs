@@ -6,7 +6,7 @@ use std::{
 
 use crate::SourceSpan;
 
-use super::semantic::{ResourceIdentity, SchemaIdentity, Type};
+use super::semantic::{EnumIdentity, ResourceIdentity, SchemaIdentity, Type};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CallableParameter {
@@ -97,6 +97,10 @@ pub(super) struct SemanticBinding {
 #[derive(Clone, Debug)]
 pub(super) enum TypeMember {
     Resource(ResourceIdentity),
+    Enum {
+        identity: EnumIdentity,
+        cases: Vec<String>,
+    },
 }
 
 impl TypeMember {
@@ -106,6 +110,14 @@ impl TypeMember {
                 let mut identity = identity.clone();
                 identity.set_runtime_module(module.into());
                 Self::Resource(identity)
+            }
+            Self::Enum { identity, cases } => {
+                let mut identity = identity.clone();
+                identity.set_runtime_module(module.into());
+                Self::Enum {
+                    identity,
+                    cases: cases.clone(),
+                }
             }
         }
     }
@@ -329,17 +341,32 @@ impl Environment {
                 .lookup(module)
                 .filter(|binding| binding.module_binding)
                 .and_then(|binding| binding.type_members.get(type_name))
-                .map(|member| match member {
-                    TypeMember::Resource(identity) => identity.clone(),
+                .and_then(|member| match member {
+                    TypeMember::Resource(identity) => Some(identity.clone()),
+                    TypeMember::Enum { .. } => None,
                 });
         }
         self.type_scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
-            .map(|member| match member {
-                TypeMember::Resource(identity) => identity.clone(),
+            .and_then(|member| match member {
+                TypeMember::Resource(identity) => Some(identity.clone()),
+                TypeMember::Enum { .. } => None,
             })
+    }
+
+    pub(super) fn type_member(&self, name: &str) -> Option<&TypeMember> {
+        if let Some((module, type_name)) = name.split_once('.') {
+            return self
+                .lookup(module)
+                .filter(|binding| binding.module_binding)
+                .and_then(|binding| binding.type_members.get(type_name));
+        }
+        self.type_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
     }
 
     pub(super) fn resolve_resource_type(
@@ -363,8 +390,9 @@ impl Environment {
             return binding
                 .type_members
                 .get(type_name)
-                .map(|member| match member {
-                    TypeMember::Resource(identity) => identity.clone(),
+                .and_then(|member| match member {
+                    TypeMember::Resource(identity) => Some(identity.clone()),
+                    TypeMember::Enum { .. } => None,
                 })
                 .ok_or_else(|| {
                     super::SourceError::semantic(format!("unknown type `{name}`"), span.clone())

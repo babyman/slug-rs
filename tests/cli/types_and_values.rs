@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn fieldless_enum_values_are_qualified_nominal_values() {
+    let path = fixture_path("fieldless-enums");
+    fs::write(
+        &path,
+        "enum SeekFrom { Start, Current, End }\n\
+         val from:SeekFrom = SeekFrom.Start\n\
+         println(from == SeekFrom.Start, from == SeekFrom.End)\n\
+         println(match from {\n\
+           SeekFrom.Start => \"start\"\n\
+           SeekFrom.Current => \"current\"\n\
+           SeekFrom.End => \"end\"\n\
+           _ => \"other\"\n\
+         })\n",
+    )
+    .expect("write enum source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run enum source");
+    fs::remove_file(&path).expect("remove enum source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "true false\nstart\n"
+    );
+}
+
+#[test]
 fn pipes_values_into_calls_and_subjectless_matches() {
     let path = fixture_path("pipeline");
     fs::write(

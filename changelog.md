@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added fieldless nominal enum declarations, qualified enum values, and
+  qualified enum match patterns.
+
 - Adopted nominal native resource handles, fieldless enums with required
   qualified cases, and transparent type aliases as the target language design.
   The broad `resource` source type has been removed; `slug.io.fs` and the C

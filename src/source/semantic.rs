@@ -74,6 +74,7 @@ impl Hash for NominalIdentity {
 
 pub(super) type SchemaIdentity = NominalIdentity;
 pub(super) type ResourceIdentity = NominalIdentity;
+pub(super) type EnumIdentity = NominalIdentity;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Type {
@@ -85,6 +86,7 @@ pub(super) enum Type {
     Str,
     Bytes,
     Resource(ResourceIdentity),
+    Enum(EnumIdentity),
     List(Option<Box<Type>>),
     Map(Option<(Box<Type>, Box<Type>)>),
     Function(Option<Vec<Type>>),
@@ -107,6 +109,7 @@ impl Type {
             | Self::Str
             | Self::Bytes
             | Self::Resource(_)
+            | Self::Enum(_)
             | Self::Function(None)
             | Self::Task(None)
             | Self::Channel(None)
@@ -300,7 +303,7 @@ impl fmt::Display for Type {
             Self::Num => formatter.write_str("num"),
             Self::Str => formatter.write_str("str"),
             Self::Bytes => formatter.write_str("bytes"),
-            Self::Resource(identity) => formatter.write_str(&identity.name),
+            Self::Resource(identity) | Self::Enum(identity) => formatter.write_str(&identity.name),
             Self::List(argument) => display_application(formatter, "list", argument.as_deref()),
             Self::Map(arguments) => {
                 if let Some((key, value)) = arguments {
@@ -420,9 +423,16 @@ pub(super) fn resolve_resource_references(
     environment: &Environment,
 ) -> Result<Type, SourceError> {
     match value_type {
-        Type::Resource(identity) if identity.is_unresolved() => environment
-            .resolve_resource_type(&identity.name, span)
-            .map(Type::Resource),
+        Type::Resource(identity) if identity.is_unresolved() => {
+            match environment.type_member(&identity.name) {
+                Some(super::environment::TypeMember::Enum { identity, .. }) => {
+                    Ok(Type::Enum(identity.clone()))
+                }
+                _ => environment
+                    .resolve_resource_type(&identity.name, span)
+                    .map(Type::Resource),
+            }
+        }
         Type::List(element) => element
             .map(|element| resolve_resource_references(*element, span, environment).map(Box::new))
             .transpose()
@@ -451,9 +461,16 @@ fn resolve_schema_references(
     environment: &Environment,
 ) -> Result<Type, SourceError> {
     match value_type {
-        Type::Resource(identity) if identity.is_unresolved() => environment
-            .resolve_resource_type(&identity.name, span)
-            .map(Type::Resource),
+        Type::Resource(identity) if identity.is_unresolved() => {
+            match environment.type_member(&identity.name) {
+                Some(super::environment::TypeMember::Enum { identity, .. }) => {
+                    Ok(Type::Enum(identity.clone()))
+                }
+                _ => environment
+                    .resolve_resource_type(&identity.name, span)
+                    .map(Type::Resource),
+            }
+        }
         Type::Struct(Some(identity)) if identity.is_unresolved() => {
             let name = identity.name;
             let binding = environment.lookup(&name).ok_or_else(|| {

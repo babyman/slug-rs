@@ -151,6 +151,10 @@ pub struct ModuleDeclaration {
 #[derive(Clone, Debug)]
 pub enum MatchPattern {
     Literal(Value),
+    Enum {
+        name: String,
+        case: String,
+    },
     Wildcard,
     Binding,
     Pinned(usize),
@@ -181,6 +185,7 @@ pub enum MatchType {
     Str,
     Bytes,
     Resource { module: String, name: String },
+    Enum { module: String, name: String },
     List(Option<Box<MatchType>>),
     Map(Option<(Box<MatchType>, Box<MatchType>)>),
     Function,
@@ -1122,7 +1127,10 @@ impl Program {
                 .ok_or_else(|| format!("match pattern operand {index} does not exist"))
         };
         match pattern {
-            MatchPattern::Literal(_) | MatchPattern::Wildcard | MatchPattern::Binding => Ok(()),
+            MatchPattern::Literal(_)
+            | MatchPattern::Enum { .. }
+            | MatchPattern::Wildcard
+            | MatchPattern::Binding => Ok(()),
             MatchPattern::Pinned(index) => operand(*index),
             MatchPattern::At(pattern) => Self::validate_pattern(pattern, operands),
             MatchPattern::Alternatives(patterns) => patterns
@@ -1166,7 +1174,10 @@ impl Program {
 
     fn pattern_bindings(pattern: &MatchPattern) -> Option<usize> {
         match pattern {
-            MatchPattern::Literal(_) | MatchPattern::Wildcard | MatchPattern::Pinned(_) => Some(0),
+            MatchPattern::Literal(_)
+            | MatchPattern::Enum { .. }
+            | MatchPattern::Wildcard
+            | MatchPattern::Pinned(_) => Some(0),
             MatchPattern::Binding => Some(1),
             MatchPattern::At(pattern) => Self::pattern_bindings(pattern)?.checked_add(1),
             MatchPattern::Alternatives(patterns) => {

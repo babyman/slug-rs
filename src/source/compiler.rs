@@ -1,10 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crate::bytecode::{Entrypoint, EntrypointArguments};
 use crate::{
     CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, MatchType,
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SelectCase,
-    SourceSpan,
+    SourceSpan, Value,
 };
 
 use super::{
@@ -149,6 +152,25 @@ impl Compiler {
                     documentation: None,
                     tags: Vec::new(),
                 });
+            }
+            if let ExprKind::Enum { exported, name, .. } = &expression.kind {
+                self.declarations.push(ModuleDeclaration {
+                    bindings: vec![name.clone()],
+                    mutable: false,
+                    exported: *exported,
+                    foreign: false,
+                    foreign_arity: None,
+                    resource_type: None,
+                    foreign_callable_identity: None,
+                    foreign_resource_signature: None,
+                    documentation: None,
+                    tags: Vec::new(),
+                });
+                if *exported {
+                    exports.push(name.clone());
+                }
+                bindings.push(name.clone());
+                self.globals.insert(name.clone(), false);
             }
         }
         bindings.sort();
@@ -736,6 +758,21 @@ impl Compiler {
             }
             ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
             ExprKind::Resource { .. } => state.emit(Op::Nil, &expression.span),
+            ExprKind::Enum { name, cases, .. } => {
+                for case in cases {
+                    let key = state.constant(Value::string(case.clone()));
+                    state.emit(Op::Constant(key), &expression.span);
+                    let value = state.constant(Value::Enum(Rc::new(crate::EnumValue {
+                        module: self.path.clone().into(),
+                        name: name.clone().into(),
+                        case: case.clone().into(),
+                    })));
+                    state.emit(Op::Constant(value), &expression.span);
+                }
+                state.emit(Op::Map(cases.len()), &expression.span);
+                state.emit(Op::DefineGlobal(name.clone()), &expression.span);
+                state.emit(Op::GetGlobal(name.clone()), &expression.span);
+            }
             ExprKind::List(values) => {
                 let mut spreads = Vec::with_capacity(values.len());
                 for value in values {
@@ -1386,6 +1423,10 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
             exact: *exact,
         },
         Pattern::MapAll => unreachable!("{{*}} declarations do not lower to match bytecode"),
+        Pattern::EnumCase { path, case } => MatchPattern::Enum {
+            name: path.clone(),
+            case: case.clone(),
+        },
     }
 }
 
@@ -1473,6 +1514,10 @@ fn lower_match_type(
             module: identity.runtime_module().into(),
             name: identity.name.clone(),
         }),
+        Type::Enum(identity) => Ok(MatchType::Enum {
+            module: identity.runtime_module().into(),
+            name: identity.name.clone(),
+        }),
         Type::List(element) => element
             .as_deref()
             .map(|element| lower_match_type(element, operands).map(Box::new))
@@ -1539,7 +1584,11 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
                     names.push(name.clone());
                 }
             }
-            Pattern::MapAll | Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}
+            Pattern::MapAll
+            | Pattern::Literal(_)
+            | Pattern::Wildcard
+            | Pattern::Pinned(_)
+            | Pattern::EnumCase { .. } => {}
         }
     }
 

@@ -125,7 +125,11 @@ impl Parser {
         if (documentation.is_some() || !tags.is_empty())
             && !matches!(
                 self.kind(),
-                TokenKind::Val | TokenKind::Var | TokenKind::Foreign | TokenKind::Resource
+                TokenKind::Val
+                    | TokenKind::Var
+                    | TokenKind::Foreign
+                    | TokenKind::Resource
+                    | TokenKind::Enum
             )
         {
             return Err(SourceError::at(
@@ -241,6 +245,59 @@ impl Parser {
             return Ok(Expr {
                 span,
                 kind: ExprKind::Resource { exported, name },
+            });
+        }
+        if self.matches(&TokenKind::Enum) {
+            let span = self.next().span;
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "enum declarations are only valid at top level",
+                    span,
+                ));
+            }
+            if documentation.is_some() || !tags.is_empty() {
+                return Err(SourceError::at(
+                    "documentation blocks and tags cannot prefix an enum declaration",
+                    self.peek().span.clone(),
+                ));
+            }
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected enum type name", token.span));
+            };
+            self.consume(&TokenKind::LBrace, "expected { after enum name")?;
+            let mut cases = Vec::new();
+            while !self.matches(&TokenKind::RBrace) {
+                let token = self.next();
+                let TokenKind::Name(case) = token.kind else {
+                    return Err(SourceError::at("expected enum case name", token.span));
+                };
+                if cases.contains(&case) {
+                    return Err(SourceError::at(
+                        format!("duplicate enum case `{case}`"),
+                        token.span,
+                    ));
+                }
+                cases.push(case);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                if self.matches(&TokenKind::RBrace) {
+                    break;
+                }
+            }
+            self.consume(&TokenKind::RBrace, "expected } after enum cases")?;
+            if cases.is_empty() {
+                return Err(SourceError::at("enum must declare at least one case", span));
+            }
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Enum {
+                    exported,
+                    name,
+                    cases,
+                },
             });
         }
         self.expression()
@@ -1384,6 +1441,23 @@ impl Parser {
                     name,
                     pattern: Box::new(pattern?),
                 })
+            }
+            TokenKind::Name(name) if self.matches(&TokenKind::Dot) => {
+                let mut path = name;
+                while self.matches(&TokenKind::Dot) {
+                    self.next();
+                    let token = self.next();
+                    let TokenKind::Name(part) = token.kind else {
+                        return Err(SourceError::at("expected enum case name", token.span));
+                    };
+                    if self.matches(&TokenKind::Dot) {
+                        path.push('.');
+                        path.push_str(&part);
+                    } else {
+                        return Ok(Pattern::EnumCase { path, case: part });
+                    }
+                }
+                unreachable!()
             }
             TokenKind::Name(name) => Ok(Pattern::Binding(name)),
             TokenKind::Select => Ok(Pattern::Binding("select".into())),

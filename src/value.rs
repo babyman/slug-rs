@@ -847,6 +847,13 @@ pub struct StructValue {
     pub(crate) values: Vec<Value>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnumValue {
+    pub(crate) module: Rc<str>,
+    pub(crate) name: Rc<str>,
+    pub(crate) case: Rc<str>,
+}
+
 /// The dynamic values used by the initial Slug VM core.
 ///
 /// Collections are reference-counted so closures and later concurrency support
@@ -865,6 +872,7 @@ pub enum Value {
     Map(Rc<Vec<(Value, Value)>>),
     StructSchema(Rc<StructSchema>),
     Struct(Rc<StructValue>),
+    Enum(Rc<EnumValue>),
     Channel(Rc<Channel>),
     Closure(Rc<Closure>),
     Task(Rc<Task>),
@@ -910,6 +918,7 @@ impl Value {
             Self::Map(_) => "map",
             Self::StructSchema(_) => "struct schema",
             Self::Struct(_) => "struct",
+            Self::Enum(_) => "enum",
             Self::Channel(_) => "chan",
             Self::Closure(_)
             | Self::Native(_)
@@ -966,6 +975,7 @@ impl PartialEq for Value {
             (Self::Struct(a), Self::Struct(b)) => {
                 Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
             }
+            (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
             (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
             (Self::Task(a), Self::Task(b)) => Rc::ptr_eq(a, b),
@@ -1012,6 +1022,7 @@ impl fmt::Debug for Value {
                     )
                     .finish()
             }
+            Self::Enum(value) => write!(f, "{}.{}", value.name, value.case),
             Self::Channel(_) => write!(f, "<chan>"),
             Self::Closure(_) => write!(f, "<fn>"),
             Self::Task(_) => write!(f, "<task>"),

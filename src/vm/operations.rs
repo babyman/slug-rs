@@ -272,6 +272,9 @@ pub(super) fn matches_pattern(
 ) -> Result<bool, (RuntimeErrorKind, String)> {
     match pattern {
         MatchPattern::Literal(expected) => Ok(value == expected),
+        MatchPattern::Enum { name, case } => Ok(
+            matches!(value, Value::Enum(value) if value.name.as_ref() == name && value.case.as_ref() == case),
+        ),
         MatchPattern::Wildcard => Ok(true),
         MatchPattern::Binding => {
             bindings.push(value.clone());
@@ -448,6 +451,9 @@ fn matches_type(
         MatchType::Resource { module, name } => {
             Ok(matches!(value, Value::NativeResource(resource) if resource.has_type(module, name)))
         }
+        MatchType::Enum { module, name } => Ok(
+            matches!(value, Value::Enum(value) if value.module.as_ref() == module && value.name.as_ref() == name),
+        ),
         MatchType::List(element) => {
             let Value::List(values) = value else {
                 return Ok(false);

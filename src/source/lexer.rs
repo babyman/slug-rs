@@ -676,6 +676,7 @@ impl Lexer {
                         "export" => TokenKind::Export,
                         "foreign" => TokenKind::Foreign,
                         "resource" => TokenKind::Resource,
+                        "enum" => TokenKind::Enum,
                         "var" => TokenKind::Var,
                         "fn" => TokenKind::Fn,
                         "if" => TokenKind::If,
