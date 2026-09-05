@@ -1637,6 +1637,9 @@ fn bind_semantic_pattern(
             for (name, member) in members {
                 environment.declare(name, member);
             }
+            for (name, member) in &binding.type_members {
+                environment.declare_type(name.clone(), member.clone());
+            }
         }
         Pattern::List { .. } | Pattern::Literal(_) | Pattern::Wildcard | Pattern::Pinned(_) => {}
     }

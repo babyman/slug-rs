@@ -118,6 +118,10 @@ from that module. A type path preserves its declaring module and declaration
 name as nominal identity; importing, renaming, or aliasing a type MUST NOT make
 two independently declared resource or enum types equal.
 
+The top-level import selector `val {*} = import("module")` additionally brings
+that module's exported type names into the local type namespace, alongside its
+ordinary value exports. It does not create runtime values for resource types.
+
 Enum declarations also expose their enum namespace as an ordinary immutable
 value. Importing an enum therefore preserves qualified case access:
 

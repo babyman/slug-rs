@@ -69,6 +69,28 @@ fn resolves_resource_types_only_through_imported_module_type_namespaces() {
 }
 
 #[test]
+fn map_all_imports_exported_resource_types_into_the_local_type_namespace() {
+    let path = fixture_path("map-all-resource-types");
+    fs::write(
+        &path,
+        "val {*} = import(\"slug.io.fs\")\nval file:File = nil\nprintln(file)\n",
+    )
+    .expect("write map-all resource type source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run map-all resource type source");
+    fs::remove_file(path).expect("remove map-all resource type source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "nil\n");
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     let path = fixture_path("type-annotations");

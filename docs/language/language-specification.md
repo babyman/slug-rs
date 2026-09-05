@@ -132,7 +132,10 @@ the final expression of a function body or appear inside another expression.
 
 At module top level, `{*}` may be used as a declaration pattern. It requires a
 map with string keys and creates one top-level binding per entry. This is the
-module-import selection form: `val {*} = import("slug.std")`.
+module-import selection form: `val {*} = import("slug.std")`. When its right
+side is an import result, it also introduces that module's exported names into
+the local compile-time type namespace; this never creates a runtime value for a
+type-only export.
 
 ```slug
 var count = 0

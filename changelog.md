@@ -26,6 +26,9 @@
 - Exported resource types now travel in a distinct compile-time module type
   namespace, with checked diagnostics for invalid qualified type paths.
 
+- Top-level `{*}` module imports now bring exported type names into the local
+  type namespace as well as selecting runtime value exports.
+
 - Native channel producers now return ownership of a send value when a bounded
   mailbox is full or closed, allowing integrations to retry without cloning.
 - Added a native-callback workload to the opt-in VM benchmark harness.

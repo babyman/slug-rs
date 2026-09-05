@@ -82,8 +82,9 @@ only empty bytes, while `[...]` matches every non-empty byte value.
 `{*}` is a declaration-only form and is valid only at module top level. Its
 right-hand side must be a map whose keys are strings. Each entry defines a
 top-level binding with its key as the name and its value as the binding value.
-It is intended for selecting a module's exported values, for example
-`val {*} = import("slug.std")`; it is not a rest pattern and cannot be mixed
+It is intended for selecting a module's exported values and types, for example
+`val {*} = import("slug.std")`; type-only exports become available only in the
+local compile-time type namespace. It is not a rest pattern and cannot be mixed
 with ordinary map-pattern entries.
 
 ### Type constraints
