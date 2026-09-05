@@ -457,3 +457,9 @@ for integer messages. C may create a channel during a callback, transfer its
 receiver result to Slug, and retain the paired producer for a background thread.
 The producer can send or be destroyed from that thread, but it cannot inspect
 or enter the VM, retain a Slug value, or invoke Slug code.
+
+The fixtures also include a deliberately small SQLite adapter: an in-memory
+database resource with execute, scalar-integer query, and close operations. It
+uses callback-scoped length-delimited SQL text and maps SQLite failures to
+structured native errors. Statements, bindings, rows, transactions, and file
+database policy remain outside the prototype.

@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 3u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 4u
 
 typedef enum {
   SLUG_FFI_OK = 0,
@@ -25,6 +25,7 @@ typedef struct {
 
 typedef bool (*slug_ffi_argument_i64_fn)(slug_ffi_call *, size_t, int64_t *);
 typedef bool (*slug_ffi_argument_f64_fn)(slug_ffi_call *, size_t, double *);
+typedef bool (*slug_ffi_argument_text_fn)(slug_ffi_call *, size_t, slug_ffi_text *);
 typedef bool (*slug_ffi_argument_resource_fn)(slug_ffi_call *, size_t, slug_ffi_text, void **);
 typedef void (*slug_ffi_set_i64_fn)(slug_ffi_call *, int64_t);
 typedef void (*slug_ffi_set_f64_fn)(slug_ffi_call *, double);
@@ -44,6 +45,7 @@ struct slug_ffi_host_api {
   uint32_t table_size;
   slug_ffi_argument_i64_fn argument_i64;
   slug_ffi_argument_f64_fn argument_f64;
+  slug_ffi_argument_text_fn argument_text;
   slug_ffi_argument_resource_fn argument_resource;
   slug_ffi_set_i64_fn set_i64;
   slug_ffi_set_f64_fn set_f64;

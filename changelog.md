@@ -22,6 +22,9 @@
   final shared-loader teardown, and supports C-owned cross-thread integer
   producer capabilities.
 
+- Added a test-only SQLite C fixture proving callback-scoped text borrowing,
+  opaque database handles, explicit close, and structured SQLite errors.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.

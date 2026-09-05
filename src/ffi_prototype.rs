@@ -23,7 +23,7 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 3;
+const ABI_MINOR: u32 = 4;
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 
@@ -34,6 +34,7 @@ struct HostApi {
     table_size: u32,
     argument_i64: unsafe extern "C" fn(*mut c_void, usize, *mut i64) -> bool,
     argument_f64: unsafe extern "C" fn(*mut c_void, usize, *mut f64) -> bool,
+    argument_text: unsafe extern "C" fn(*mut c_void, usize, *mut FfiText) -> bool,
     argument_resource: unsafe extern "C" fn(*mut c_void, usize, FfiText, *mut *mut c_void) -> bool,
     set_i64: unsafe extern "C" fn(*mut c_void, i64),
     set_f64: unsafe extern "C" fn(*mut c_void, f64),
@@ -371,6 +372,7 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     table_size: u32::try_from(size_of::<HostApi>()).expect("prototype host table fits u32"),
     argument_i64,
     argument_f64,
+    argument_text,
     argument_resource,
     set_i64,
     set_f64,
@@ -427,6 +429,46 @@ unsafe extern "C" fn argument_f64(context: *mut c_void, index: usize, output: *m
         Ok(value) => {
             // SAFETY: checked non-null above; C owns the pointed-to output slot.
             unsafe { *output = value };
+            true
+        }
+        Err(error) => {
+            call.set_error(error);
+            false
+        }
+    }
+}
+
+unsafe extern "C" fn argument_text(
+    context: *mut c_void,
+    index: usize,
+    output: *mut FfiText,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if output.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI text output is null",
+        ));
+        return false;
+    }
+    match call.argument(index).and_then(crate::NativeValueRef::as_str) {
+        Ok(value) => {
+            let Ok(length) = u64::try_from(value.len()) else {
+                call.set_error(NativeError::new(
+                    "native.contract",
+                    "FFI text length is too large",
+                ));
+                return false;
+            };
+            // SAFETY: checked non-null above; the text borrow is valid for this callback only.
+            unsafe {
+                *output = FfiText {
+                    data: value.as_ptr().cast(),
+                    length,
+                };
+            }
             true
         }
         Err(error) => {

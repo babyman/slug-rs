@@ -36,22 +36,82 @@ impl Drop for TemporaryDirectory {
 }
 
 fn compile_fixture(directory: &TemporaryDirectory, source: &str, name: &str) -> PathBuf {
+    compile_fixture_with_libraries(directory, source, name, &[])
+}
+
+fn compile_fixture_with_libraries(
+    directory: &TemporaryDirectory,
+    source: &str,
+    name: &str,
+    libraries: &[&str],
+) -> PathBuf {
     let output = directory.path().join(format!("lib{name}.dylib"));
-    let status = Command::new("cc")
-        .args([
-            "-dynamiclib",
-            "-I",
-            "include",
-            source,
-            "-o",
-            output.to_str().expect("temporary library path is UTF-8"),
-            "-lm",
-        ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .status()
-        .expect("start C compiler");
+    let mut command = Command::new("cc");
+    command
+        .args(["-dynamiclib", "-I", "include", source, "-o"])
+        .arg(output.to_str().expect("temporary library path is UTF-8"))
+        .arg("-lm")
+        .args(libraries)
+        .current_dir(env!("CARGO_MANIFEST_DIR"));
+    let status = command.status().expect("start C compiler");
     assert!(status.success(), "compile C fixture");
     output
+}
+
+#[test]
+fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture_with_libraries(
+        &directory,
+        "tests/ffi/sqlite_module.c",
+        "sqlite",
+        &["-lsqlite3"],
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/sqlite.slug"),
+        "export foreign openMemory = fn():resource\n\
+         export foreign exec = fn(database:resource, sql:str):num\n\
+         export foreign queryInt = fn(database:resource, sql:str):num\n\
+         export foreign close = fn(database:resource):num\n",
+    )
+    .expect("write sqlite module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C sqlite module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module.register(&mut vm).expect("register C sqlite module");
+
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val sqlite = import(\"slug.sqlite\")\n\
+             val database = sqlite.openMemory()\n\
+             sqlite.exec(database, \"create table answers(value integer)\")\n\
+             sqlite.exec(database, \"insert into answers values (42)\")\n\
+             sqlite.queryInt(database, \"select value from answers\") + sqlite.close(database)\n",
+            false,
+        )
+        .expect("compile sqlite resource program");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
+
+    let invalid = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val sqlite = import(\"slug.sqlite\")\n\
+             val database = sqlite.openMemory()\n\
+             sqlite.exec(database, \"definitely not SQL\")\n",
+            false,
+        )
+        .expect("compile failing sqlite program");
+    let error = vm
+        .run_named(&invalid, "main")
+        .expect_err("SQLite errors must remain checked");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("sqlite.error")
+    );
 }
 
 #[test]
