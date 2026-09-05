@@ -5,7 +5,7 @@ The `slug.io.fs` module provides explicit-lifecycle text-file streams:
 ```slug
 val fs = import("slug.io.fs")
 
-val file:resource = fs.openRead("records.csv")
+val file:fs.File = fs.openRead("records.csv")
 defer fs.close(file)
 
 match fs.readLine(file) {
@@ -15,7 +15,7 @@ match fs.readLine(file) {
 ```
 
 `openRead(path)`, `openWrite(path)`, and `openAppend(path)` return opaque file
-resources, represented by the broad source type `resource`. `openWrite` creates
+resources, represented by the nominal source type `File`. `openWrite` creates
 or truncates its file; `openAppend` creates it
 when missing and writes at its end. File resources are not numbers, structs,
 maps, or source-level constructors. Their module ownership, resource kind, and
@@ -33,7 +33,9 @@ immediately after a successful open. Runtime destruction and shutdown may
 release forgotten resources, but do not provide prompt release, flushing, or
 observable cleanup-error semantics.
 
-`resource` distinguishes opaque native handles from ordinary Slug values, but
-does not reveal a resource's module or native kind. Native operations still
-validate that a handle is the correct kind and is open. Nominal resource types,
-including `resource<T>`, remain deliberately deferred.
+`File` distinguishes this opaque native handle from ordinary Slug values and
+from every other resource type. Native operations still validate that a handle
+is open. See [Nominal types](nominal-types.md) for the general resource rule.
+
+The current Rust subset has not yet implemented nominal declarations; its
+checked library source temporarily uses the retired broad `resource` spelling.

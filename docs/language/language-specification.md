@@ -449,10 +449,10 @@ match value {
 }
 ```
 
-Direct value-category annotations, `struct<Name>`, unions composed from
-runtime-checkable annotations, and recursively checked `list<T>` and
-`map<K, V>` annotations are runtime-checkable. `resource` matches opaque native
-resource handles only. `any` matches non-nil values;
+Direct value-category annotations, named resource and enum annotations,
+`struct<Name>`, unions composed from runtime-checkable annotations, and
+recursively checked `list<T>` and `map<K, V>` annotations are runtime-checkable.
+`any` matches non-nil values;
 `any|nil` matches every value. `schema` matches schema values only. A
 `struct<Name>` constraint requires the exact
 schema identity named by `Name`; the schema binding must resolve, and a
@@ -566,9 +566,11 @@ var {*} = import(
 ```
 
 Only a top-level declaration prefixed with the `export` keyword is exported.
-The keyword may modify a `val`, `var`, or `foreign` declaration and is invalid
-in a nested scope. Exported bindings may be selected from the module map or
-destructured with an ordinary binding pattern:
+The keyword may modify a `val`, `var`, `foreign`, `resource`, `enum`, or `type`
+declaration and is invalid in a nested scope. Exported value bindings may be
+selected from the module map or destructured with an ordinary binding pattern;
+exported type names use the compile-time type namespace defined in
+[Nominal types](nominal-types.md):
 
 ```slug
 export val increment = fn(n) { n + 1 }
@@ -853,10 +855,10 @@ variadic status, so named and spread calls retain ordinary dynamic call
 behavior.
 
 The checker recognizes the built-in value categories `nil`, `any`, `bool`,
-`num`, `str`, `bytes`, `resource`, `list`, `map`, `fn`, `task`, `chan`, `schema`, and `struct`, plus
-unions and generic parameters. Its diagnostic precision is an implementation
-feature and does not add runtime coercions or change the language's dynamic
-value model.
+`num`, `str`, `bytes`, `list`, `map`, `fn`, `task`, `chan`, `schema`, and
+`struct`, plus declared resource and enum types, transparent aliases, unions,
+and generic parameters. Its diagnostic precision is an implementation feature
+and does not add runtime coercions or change the language's dynamic value model.
 
 ### Type annotations, unions, and generic parameters
 
@@ -869,7 +871,8 @@ type_annotation = union_member , { "|" , union_member } ;
 union_member    = named_type , [ "<" , type_annotation ,
                   { "," , type_annotation } , ">" ]
                 | tuple_type ;
-named_type      = identifier | "fn" ;
+named_type      = type_path | "fn" ;
+type_path       = identifier , { "." , identifier } ;
 tuple_type      = "[" , [ type_annotation , { "," , type_annotation } ] , "]" ;
 ```
 
@@ -917,10 +920,9 @@ where the first argument is the return type and the remaining arguments are
 the parameter types. For example, `fn<num, num, num>` denotes a function that
 returns `num` and accepts two `num` parameters.
 
-`resource` is a non-parameterized broad type for opaque native resource
-handles. It exposes neither a handle constructor nor the native resource kind;
-for example, it does not make a file handle valid for a future database
-operation. Individual native operations retain that validation.
+Resource types, enums, and aliases are declared as specified in
+[Nominal types](nominal-types.md). There is no built-in broad `resource` type.
+An imported module binding may qualify an exported type, as in `fs.File`.
 
 A function or foreign declaration introduces generic parameters immediately
 after `fn`. A parameter name is a type variable scoped to that declaration and
@@ -947,7 +949,7 @@ example `identity<str>("Slug")`. An explicit application must name a generic
 function, provide exactly one type argument per declared parameter, and be
 immediately followed by its call. Type arguments are checked against the
 ordinary call arguments. Slug has no bounded generic parameters, variance
-annotations, type aliases, or user-declared nominal generic types.
+annotations, generic aliases, or user-declared nominal generic types.
 
 ## Concurrency, channels, and `select`
 

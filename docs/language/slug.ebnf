@@ -14,6 +14,9 @@ statement = tag_prefixed_decl
           | documented_decl
           | export_decl
           | foreign_decl
+          | resource_decl
+          | enum_decl
+          | type_alias_decl
           | return_stmt
           | throw_stmt
           | defer_stmt
@@ -26,8 +29,8 @@ tag_prefix = tag , { { statement_sep } , tag } , { statement_sep } ;
 documented_decl = DOC_COMMENT , { statement_sep } ,
                    ( tag_prefixed_decl | export_decl | var_expr | val_expr | foreign_decl ) ;
 
-(* export declarations are valid only at module top level. *)
-export_decl = "export" , ( var_expr | val_expr | foreign_decl ) ;
+(* export declarations and nominal-type declarations are valid only at module top level. *)
+export_decl = "export" , ( var_expr | val_expr | foreign_decl | resource_decl | enum_decl | type_alias_decl ) ;
 
 return_stmt = "return" , expression ;
 throw_stmt = "throw" , expression ;
@@ -39,6 +42,9 @@ defer_stmt = "defer" , [ "onsuccess" | ( "onerror" , "(" , identifier , ")" ) ] 
 
 foreign_decl = "foreign" , identifier , "=" , "fn" , [ type_parameters ] ,
                "(" , [ parameters ] , ")" , [ ":" , type_annotation ] , [ ";" ] ;
+resource_decl = "resource" , identifier ;
+enum_decl = "enum" , identifier , "{" , [ identifier , { "," , identifier } , [ "," ] ] , "}" ;
+type_alias_decl = "type" , identifier , "=" , type_annotation ;
 
 expression_stmt = expression ;
 
@@ -177,6 +183,7 @@ case_pattern_list = case_pattern
 case_pattern = match_pattern , [ ":" , type_annotation ] ;
 
 match_pattern = "_"
+              | enum_case
               | binding_pattern
               | spread_pattern
               | pinned_identifier
@@ -185,6 +192,8 @@ match_pattern = "_"
               | literal
               | identifier
               ;
+enum_case = enum_path , "." , identifier ;
+enum_path = identifier , { "." , identifier } ;
 
 (* The identifier binds the whole value before bindings from the nested pattern. *)
 binding_pattern = identifier , "@" , match_pattern ;
@@ -222,7 +231,8 @@ nil = "nil" ;
 (* Type annotations are parsed as type text. These are the supported structural forms. *)
 type_annotation = type_term , { "|" , type_term } ;
 type_term = type_constructor , [ "<" , type_annotation , { "," , type_annotation } , ">" ] ;
-type_constructor = identifier | "fn" | "[" , [ type_annotation , { "," , type_annotation } ] , "]" ;
+type_constructor = type_path | "fn" | "[" , [ type_annotation , { "," , type_annotation } ] , "]" ;
+type_path = identifier , { "." , identifier } ;
 
 (* Lexical forms (simplified): *)
 (* Reserved keywords, including export, cannot be identifiers or tag names. *)

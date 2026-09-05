@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Adopted nominal native resource handles, fieldless enums with required
+  qualified cases, and transparent type aliases as the target language design.
+  The existing broad `resource` source type is retired and will be removed when
+  the implementation migrates `slug.io.fs` and other foreign APIs to exact
+  resource types.
+
 - Native channel producers now return ownership of a send value when a bounded
   mailbox is full or closed, allowing integrations to retry without cloning.
 - Added a native-callback workload to the opt-in VM benchmark harness.

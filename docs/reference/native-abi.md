@@ -201,6 +201,13 @@ Handle access validates all three identities. A module cannot cast a handle
 created by another module or by another registered type. Pointer values and
 integer addresses are never exposed as Slug values.
 
+When a module declares a source-level nominal resource type, its name MUST map
+to exactly one registration owned by that module. Calls through a matching
+`foreign` declaration validate resource arguments and results against that
+registration, including dynamically reached calls. The source language has no
+broad resource supertype; a callback accepting multiple kinds declares their
+explicit union.
+
 A resource type registers an explicit close operation and a destructor. Close
 MUST be idempotent and is the reliable way for Slug code or a library wrapper
 to release external resources. Destruction is a fallback: its timing is not
