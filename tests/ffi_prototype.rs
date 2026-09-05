@@ -70,14 +70,16 @@ fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/sqlite.slug"),
-        "export foreign openMemory = fn():resource\n\
-         export foreign exec = fn(database:resource, sql:str):num\n\
-         export foreign queryInt = fn(database:resource, sql:str):num\n\
-         export foreign close = fn(database:resource):num\n\
-         export foreign prepare = fn(database:resource, sql:str):resource\n\
-         export foreign bindInt = fn(statement:resource, index:num, value:num):num\n\
-         export foreign stepInt = fn(statement:resource):num\n\
-         export foreign closeStatement = fn(statement:resource):num\n",
+        "export resource Database\n\
+         export resource Statement\n\
+         export foreign openMemory = fn():Database\n\
+         export foreign exec = fn(database:Database, sql:str):num\n\
+         export foreign queryInt = fn(database:Database, sql:str):num\n\
+         export foreign close = fn(database:Database):num\n\
+         export foreign prepare = fn(database:Database, sql:str):Statement\n\
+         export foreign bindInt = fn(statement:Statement, index:num, value:num):num\n\
+         export foreign stepInt = fn(statement:Statement):num\n\
+         export foreign closeStatement = fn(statement:Statement):num\n",
     )
     .expect("write sqlite module source");
     let main = directory.path().join("main.slug");
@@ -332,9 +334,10 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/resources.slug"),
-        "export foreign create = fn(value:num):resource\n\
-         export foreign read = fn(handle:resource):num\n\
-         export foreign close = fn(handle:resource):num\n\
+        "export resource Counter\n\
+         export foreign create = fn(value:num):Counter\n\
+         export foreign read = fn(handle:Counter):num\n\
+         export foreign close = fn(handle:Counter):num\n\
          export foreign destroyed = fn():num\n",
     )
     .expect("write resource module source");
@@ -388,7 +391,8 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/resources.slug"),
-        "export foreign create = fn(value:num):resource\n\
+        "export resource Counter\n\
+         export foreign create = fn(value:num):Counter\n\
          export foreign destroyed = fn():num\n",
     )
     .expect("write resource module source");

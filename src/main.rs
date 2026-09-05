@@ -419,7 +419,7 @@ fn register_native_modules(vm: &mut Vm) {
         .expect("static native module is valid");
     *file.borrow_mut() = Some(
         filesystem
-            .resource_type("file", release_file, destroy_file)
+            .resource_type("File", release_file, destroy_file)
             .expect("static file resource type is valid"),
     );
     for (name, arity, callback) in [

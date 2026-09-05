@@ -125,7 +125,7 @@ impl Parser {
         if (documentation.is_some() || !tags.is_empty())
             && !matches!(
                 self.kind(),
-                TokenKind::Val | TokenKind::Var | TokenKind::Foreign
+                TokenKind::Val | TokenKind::Var | TokenKind::Foreign | TokenKind::Resource
             )
         {
             return Err(SourceError::at(
@@ -219,6 +219,29 @@ impl Parser {
         }
         if self.matches(&TokenKind::Foreign) {
             return self.foreign_declaration(exported, documentation, tags);
+        }
+        if self.matches(&TokenKind::Resource) {
+            let span = self.next().span;
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "resource declarations are only valid at top level",
+                    span,
+                ));
+            }
+            if documentation.is_some() || !tags.is_empty() {
+                return Err(SourceError::at(
+                    "documentation blocks and tags cannot prefix a resource declaration",
+                    self.peek().span.clone(),
+                ));
+            }
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected resource type name", token.span));
+            };
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Resource { exported, name },
+            });
         }
         self.expression()
     }

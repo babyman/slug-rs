@@ -709,6 +709,7 @@ impl Compiler {
                 state.emit(op, &expression.span);
             }
             ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
+            ExprKind::Resource { .. } => state.emit(Op::Nil, &expression.span),
             ExprKind::List(values) => {
                 let mut spreads = Vec::with_capacity(values.len());
                 for value in values {

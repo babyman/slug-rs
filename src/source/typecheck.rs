@@ -12,7 +12,9 @@ use super::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
         SemanticAnalysis, SemanticBinding, function_value_type,
     },
-    semantic::{SchemaIdentity, Type, resolve_annotation, resolve_static_annotation},
+    semantic::{
+        ResourceIdentity, SchemaIdentity, Type, resolve_annotation, resolve_static_annotation,
+    },
 };
 
 pub(super) fn validate(expressions: &[Expr]) -> Result<SemanticAnalysis, SourceError> {
@@ -225,7 +227,8 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
                 collect_import_names(bound, names);
             }
         }
-        ExprKind::Value(_)
+        ExprKind::Resource { .. }
+        | ExprKind::Value(_)
         | ExprKind::Interpolate(_)
         | ExprKind::Documentation(_)
         | ExprKind::NotImplemented
@@ -240,6 +243,17 @@ fn analyze(
 ) -> Result<SemanticAnalysis, SourceError> {
     let mut environment = Environment::with_imports(imports);
     let mut exports = HashMap::new();
+    for expression in expressions {
+        if let ExprKind::Resource { exported, name } = &expression.kind {
+            let _ = exported;
+            let mut binding = SemanticBinding::value(Type::Unknown);
+            binding.resource_identity = Some(ResourceIdentity {
+                id: format!("{}::{name}", expression.span.path),
+                name: name.clone(),
+            });
+            environment.declare(format!("<resource:{name}>"), binding);
+        }
+    }
     for expression in expressions {
         check_expression(expression, &mut environment, &[], strict)?;
         record_exports(expression, &environment, &mut exports);
@@ -953,7 +967,7 @@ fn check_expression(
             slice_result(&collection, strict, &expression.span)
         }
         ExprKind::Interpolate(_) => Ok(Type::Str),
-        ExprKind::Documentation(_) => Ok(Type::Nil),
+        ExprKind::Resource { .. } | ExprKind::Documentation(_) => Ok(Type::Nil),
         ExprKind::NotImplemented => Ok(Type::Unknown),
     }
 }
@@ -1257,7 +1271,7 @@ fn is_closed_coverage_type(value_type: &Type) -> bool {
         | Type::Num
         | Type::Str
         | Type::Bytes
-        | Type::Resource
+        | Type::Resource(_)
         | Type::Schema
         | Type::Struct(Some(_))
         | Type::Function(None)
@@ -2153,8 +2167,7 @@ fn value_type(value: &Value) -> Type {
         | Value::Builtin(_)
         | Value::Overloads(_) => Type::Function(None),
         Value::Task(_) => Type::Task(None),
-        Value::NativeResource(_) => Type::Resource,
-        Value::Uninitialized | Value::Binding { .. } => Type::Unknown,
+        Value::NativeResource(_) | Value::Uninitialized | Value::Binding { .. } => Type::Unknown,
     }
 }
 
@@ -2348,7 +2361,8 @@ fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<
             }
             Ok(())
         }
-        ExprKind::Value(_)
+        ExprKind::Resource { .. }
+        | ExprKind::Value(_)
         | ExprKind::Interpolate(_)
         | ExprKind::Documentation(_)
         | ExprKind::NotImplemented

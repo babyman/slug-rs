@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn distinguishes_nominal_resource_types_during_call_resolution() {
+    let path = fixture_path("nominal-resource-types");
+    fs::write(
+        &path,
+        "resource File\nresource Socket\nval read = fn(file:File):num { 1 }\nval invalid = fn(socket:Socket) { read(socket) }\n",
+    )
+    .expect("write nominal resource source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nominal resource source");
+    fs::remove_file(&path).expect("remove nominal resource source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.contains("expected File, got Socket"), "{stderr}");
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     let path = fixture_path("type-annotations");

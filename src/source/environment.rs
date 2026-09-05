@@ -6,7 +6,7 @@ use std::{
 
 use crate::SourceSpan;
 
-use super::semantic::{SchemaIdentity, Type};
+use super::semantic::{ResourceIdentity, SchemaIdentity, Type};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CallableParameter {
@@ -50,6 +50,7 @@ pub(super) struct SemanticBinding {
     pub(super) members: HashMap<String, SemanticBinding>,
     pub(super) required_fields: HashSet<String>,
     pub(super) schema_identity: Option<SchemaIdentity>,
+    pub(super) resource_identity: Option<ResourceIdentity>,
 }
 
 impl SemanticBinding {
@@ -60,6 +61,7 @@ impl SemanticBinding {
             members: HashMap::new(),
             required_fields: HashSet::new(),
             schema_identity: None,
+            resource_identity: None,
         }
     }
 
@@ -70,6 +72,7 @@ impl SemanticBinding {
             members: HashMap::new(),
             required_fields: HashSet::new(),
             schema_identity: None,
+            resource_identity: None,
         }
     }
 
@@ -80,6 +83,7 @@ impl SemanticBinding {
             members,
             required_fields: HashSet::new(),
             schema_identity: None,
+            resource_identity: None,
         }
     }
 }
@@ -225,6 +229,16 @@ impl Environment {
             .rev()
             .flat_map(|scope| scope.values())
             .find_map(|binding| find_schema_binding(binding, identity))
+    }
+
+    pub(super) fn resource_type(&self, name: &str) -> Option<ResourceIdentity> {
+        self.scopes
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.values())
+            .filter_map(|binding| binding.resource_identity.as_ref())
+            .find(|identity| identity.name == name)
+            .cloned()
     }
 
     pub(super) fn merge_compatible_types(&mut self, left: &Self, right: &Self) {

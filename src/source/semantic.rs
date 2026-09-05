@@ -13,6 +13,26 @@ pub(super) struct SchemaIdentity {
     pub(super) name: String,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct ResourceIdentity {
+    pub(super) id: String,
+    pub(super) name: String,
+}
+
+impl PartialEq for ResourceIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ResourceIdentity {}
+
+impl Hash for ResourceIdentity {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
 impl PartialEq for SchemaIdentity {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -36,7 +56,7 @@ pub(super) enum Type {
     Num,
     Str,
     Bytes,
-    Resource,
+    Resource(ResourceIdentity),
     List(Option<Box<Type>>),
     Map(Option<(Box<Type>, Box<Type>)>),
     Function(Option<Vec<Type>>),
@@ -58,7 +78,7 @@ impl Type {
             | Self::Num
             | Self::Str
             | Self::Bytes
-            | Self::Resource
+            | Self::Resource(_)
             | Self::Function(None)
             | Self::Task(None)
             | Self::Channel(None)
@@ -195,7 +215,9 @@ impl Type {
                 }
                 _ => false,
             },
-            Self::Resource => matches!(self, Self::Resource),
+            Self::Resource(expected) => {
+                matches!(self, Self::Resource(actual) if actual == expected)
+            }
             Self::Schema => matches!(self, Self::Schema),
             Self::Struct(expected) => match self {
                 Self::Struct(actual) => expected.is_none() || actual == expected,
@@ -250,7 +272,7 @@ impl fmt::Display for Type {
             Self::Num => formatter.write_str("num"),
             Self::Str => formatter.write_str("str"),
             Self::Bytes => formatter.write_str("bytes"),
-            Self::Resource => formatter.write_str("resource"),
+            Self::Resource(identity) => formatter.write_str(&identity.name),
             Self::List(argument) => display_application(formatter, "list", argument.as_deref()),
             Self::Map(arguments) => {
                 if let Some((key, value)) = arguments {
@@ -329,7 +351,7 @@ pub(super) fn resolve_annotation(
     span: &SourceSpan,
 ) -> Result<Type, SourceError> {
     match annotation {
-        TypeAnnotation::Name(name) => resolve_name(name, type_parameters, span),
+        TypeAnnotation::Name(name) => Ok(resolve_name(name, type_parameters)),
         TypeAnnotation::Apply { name, arguments } => {
             resolve_application(name, arguments, type_parameters, span)
         }
@@ -367,6 +389,12 @@ fn resolve_schema_references(
     environment: &Environment,
 ) -> Result<Type, SourceError> {
     match value_type {
+        Type::Resource(identity) if identity.id == identity.name => environment
+            .resource_type(&identity.name)
+            .map(Type::Resource)
+            .ok_or_else(|| {
+                SourceError::semantic(format!("unknown type `{}`", identity.name), span.clone())
+            }),
         Type::Struct(Some(identity)) if identity.id == identity.name => {
             let name = identity.name;
             let binding = environment.lookup(&name).ok_or_else(|| {
@@ -432,25 +460,20 @@ fn resolve_schema_references(
     }
 }
 
-fn resolve_name(
-    name: &str,
-    type_parameters: &[String],
-    span: &SourceSpan,
-) -> Result<Type, SourceError> {
+fn resolve_name(name: &str, type_parameters: &[String]) -> Type {
     if let Some(index) = type_parameters
         .iter()
         .position(|parameter| parameter == name)
     {
-        return Ok(Type::Generic(index));
+        return Type::Generic(index);
     }
-    let resolved = match name {
+    match name {
         "any" => Type::Any,
         "nil" => Type::Nil,
         "bool" => Type::Bool,
         "num" => Type::Num,
         "str" => Type::Str,
         "bytes" => Type::Bytes,
-        "resource" => Type::Resource,
         "list" => Type::List(None),
         "map" => Type::Map(None),
         "fn" => Type::Function(None),
@@ -458,14 +481,11 @@ fn resolve_name(
         "chan" => Type::Channel(None),
         "schema" => Type::Schema,
         "struct" => Type::Struct(None),
-        _ => {
-            return Err(SourceError::semantic(
-                format!("unknown type `{name}`"),
-                span.clone(),
-            ));
-        }
-    };
-    Ok(resolved)
+        _ => Type::Resource(ResourceIdentity {
+            id: name.into(),
+            name: name.into(),
+        }),
+    }
 }
 
 fn resolve_application(

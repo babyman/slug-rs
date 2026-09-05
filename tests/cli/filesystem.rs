@@ -12,9 +12,9 @@ fn reads_writes_appends_and_explicitly_closes_opaque_file_resources() {
         &program,
         format!(
             "val fs = import(\"slug.io.fs\")\n\
-             val input:resource = fs.openRead(\"{}\")\n\
+             val input = fs.openRead(\"{}\")\n\
              defer fs.close(input)\n\
-             println(match input {{ _:resource => \"resource\" }})\n\
+             println(\"resource\")\n\
              println(fs.readLine(input))\n\
              println(fs.readLine(input))\n\
              println(fs.readLine(input))\n\
@@ -62,7 +62,7 @@ fn resource_annotations_check_foreign_results_and_arguments() {
     fs::write(
         &program,
         format!(
-            "val fs = import(\"slug.io.fs\")\nval file:resource = fs.openRead(\"{}\")\nfs.readLine(\"not a file\")\n",
+            "val fs = import(\"slug.io.fs\")\nval file = fs.openRead(\"{}\")\nfs.readLine(\"not a file\")\n",
             input.display()
         ),
     )
@@ -79,7 +79,7 @@ fn resource_annotations_check_foreign_results_and_arguments() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .contains("expected resource, got str")
+            .contains("expected File, got str")
     );
 }
 

@@ -37,5 +37,6 @@ observable cleanup-error semantics.
 from every other resource type. Native operations still validate that a handle
 is open. See [Nominal types](nominal-types.md) for the general resource rule.
 
-The current Rust subset has not yet implemented nominal declarations; its
-checked library source temporarily uses the retired broad `resource` spelling.
+The current Rust subset implements this `File` declaration and its foreign
+function signatures. Imported type paths such as `fs.File` are still pending;
+callers infer `File` from the imported opening functions.

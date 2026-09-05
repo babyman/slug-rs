@@ -124,7 +124,6 @@ Importing an enum does not inject its case names into the importing module.
 
 ## Implementation status
 
-This is the target-language contract. The current Rust subset still implements
-the retired broad `resource` annotation and has not yet implemented these
-declarations or their imported type namespace. Until that implementation lands,
-the checked `slug.io.fs` library source continues to use `resource`.
+The current Rust subset implements local `resource Name` declarations and uses
+the nominal `File` type in `slug.io.fs`. Imported type paths, typed resource
+match constraints, enums, and aliases remain unimplemented.

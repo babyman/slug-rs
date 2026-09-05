@@ -28,6 +28,10 @@ pub(super) enum ExprKind {
         tags: Vec<Tag>,
         signature: Box<ForeignSignature>,
     },
+    Resource {
+        exported: bool,
+        name: String,
+    },
     Assign {
         name: String,
         value: Box<Expr>,
@@ -260,6 +264,7 @@ pub(super) enum TokenKind {
     Name(String),
     Export,
     Foreign,
+    Resource,
     Val,
     Var,
     Fn,

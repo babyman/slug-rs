@@ -76,8 +76,8 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `tests/cli.rs` |
 | Bounded FIFO channels through the `slug.channel` module, plus bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Shared standard-input line stream and interactive helpers through `slug.io.stdin` | implemented | `tests/cli.rs` |
-| Broad `resource` type and opaque file resources with explicit close through `slug.io.fs` | implemented (retired) | `tests/cli.rs` |
-| Nominal `resource Name` declarations and strongly typed native handles | specified only | `language/nominal-types.md` |
+| Broad `resource` source type | removed | `language/nominal-types.md` |
+| Nominal `resource Name` declarations and strongly typed source signatures | partial | `tests/cli.rs` and `language/nominal-types.md` |
 | Fieldless nominal enums with required qualified cases | specified only | `language/nominal-types.md` |
 | Transparent `type Name = Annotation` aliases | specified only | `language/nominal-types.md` |
 | Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `tests/cli.rs` |
