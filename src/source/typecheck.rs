@@ -354,6 +354,16 @@ fn record_exports(
                 exports.insert(name.clone(), binding.clone());
             }
         }
+        ExprKind::Resource {
+            exported: true,
+            name,
+        } => {
+            if let Some(identity) = environment.resource_type(name) {
+                let mut binding = SemanticBinding::value(Type::Unknown);
+                binding.resource_identity = Some(identity);
+                exports.insert(name.clone(), binding);
+            }
+        }
         _ => {}
     }
 }

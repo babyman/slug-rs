@@ -12,7 +12,7 @@ fn reads_writes_appends_and_explicitly_closes_opaque_file_resources() {
         &program,
         format!(
             "val fs = import(\"slug.io.fs\")\n\
-             val input = fs.openRead(\"{}\")\n\
+             val input:fs.File = fs.openRead(\"{}\")\n\
              defer fs.close(input)\n\
              println(\"resource\")\n\
              println(fs.readLine(input))\n\

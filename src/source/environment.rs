@@ -232,6 +232,12 @@ impl Environment {
     }
 
     pub(super) fn resource_type(&self, name: &str) -> Option<ResourceIdentity> {
+        if let Some((module, type_name)) = name.split_once('.') {
+            return self
+                .lookup(module)
+                .and_then(|binding| binding.members.get(type_name))
+                .and_then(|binding| binding.resource_identity.clone());
+        }
         self.scopes
             .iter()
             .rev()

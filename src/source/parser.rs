@@ -1569,7 +1569,18 @@ impl Parser {
     fn type_term(&mut self) -> Result<TypeAnnotation, SourceError> {
         let token = self.next();
         let mut annotation = match token.kind {
-            TokenKind::Name(name) => TypeAnnotation::Name(name),
+            TokenKind::Name(mut name) => {
+                while self.matches(&TokenKind::Dot) {
+                    self.next();
+                    let segment = self.next();
+                    let TokenKind::Name(segment) = segment.kind else {
+                        return Err(SourceError::at("expected type name after .", segment.span));
+                    };
+                    name.push('.');
+                    name.push_str(&segment);
+                }
+                TypeAnnotation::Name(name)
+            }
             TokenKind::Fn => TypeAnnotation::Name("fn".into()),
             TokenKind::Struct => TypeAnnotation::Name("struct".into()),
             TokenKind::LBracket => {
