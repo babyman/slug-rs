@@ -227,8 +227,8 @@ static const slug_ffi_function_descriptor FUNCTIONS[] = {
 };
 
 static const slug_ffi_resource_descriptor RESOURCES[] = {
-  {sizeof(slug_ffi_resource_descriptor), {"sqlite.db", 9}, destroy_database},
-  {sizeof(slug_ffi_resource_descriptor), {"sqlite.statement", 16}, destroy_statement},
+  {sizeof(slug_ffi_resource_descriptor), {"sqlite.db", 9}, {"Database", 8}, destroy_database},
+  {sizeof(slug_ffi_resource_descriptor), {"sqlite.statement", 16}, {"Statement", 9}, destroy_statement},
 };
 
 static const slug_ffi_module_descriptor MODULE = {

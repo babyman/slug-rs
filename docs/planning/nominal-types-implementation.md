@@ -33,9 +33,9 @@ the language specification remain authoritative.
 
 ### Remaining
 
-- [ ] Reject duplicate resource declarations and conflicts between exported
+- [x] Reject duplicate resource declarations and conflicts between exported
   type names and other exported type declarations.
-- [ ] Require each `resource Name` declaration to match exactly one native
+- [x] Require each `resource Name` declaration to match exactly one native
   resource registration owned by that module; reject missing, extra, or
   differently named registrations before module execution.
 - [ ] Validate declared foreign resource arguments and results at the native

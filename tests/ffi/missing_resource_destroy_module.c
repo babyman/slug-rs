@@ -1,7 +1,7 @@
 #include "slug_ffi_prototype.h"
 
 static const slug_ffi_resource_descriptor RESOURCES[] = {
-  {sizeof(slug_ffi_resource_descriptor), {"counter", 7}, NULL},
+  {sizeof(slug_ffi_resource_descriptor), {"counter", 7}, {"Counter", 7}, NULL},
 };
 
 static const slug_ffi_module_descriptor MODULE = {

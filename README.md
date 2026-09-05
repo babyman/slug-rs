@@ -40,8 +40,7 @@ contract is documented separately as `.cslug`.
   imported `slug.builtin.print`, `slug.builtin.println`, and
   `slug.builtin.len`, plus a shared process-standard-input line stream through
   `slug.io.stdin`, and opaque explicit-lifecycle file streams through
-  `slug.io.fs`, currently represented in source by the broad `resource` type
-  pending its migration to nominal resource handles.
+  `slug.io.fs`, represented in source by the nominal `fs.File` handle type.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, cached isolated module initialization, and string-keyed exported-value maps.

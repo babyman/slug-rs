@@ -566,21 +566,28 @@ impl Vm {
     }
 
     fn bind_foreign_declarations(&mut self, program: &Program) -> VmResult<()> {
+        let declared_resource_types = program
+            .declarations()
+            .iter()
+            .filter_map(|declaration| declaration.resource_type.as_deref())
+            .collect::<std::collections::HashSet<_>>();
         let Some(loader) = &self.module_loader else {
             return if program
                 .declarations()
                 .iter()
                 .any(|declaration| declaration.foreign)
+                || !declared_resource_types.is_empty()
             {
                 Err(self.error(
                     RuntimeErrorKind::Module,
-                    "foreign declarations require a module loader".into(),
+                    "foreign declarations and resource types require a module loader".into(),
                     None,
                 ))
             } else {
                 Ok(())
             };
         };
+        let mut registered_resource_types = std::collections::HashSet::new();
         for declaration in program
             .declarations()
             .iter()
@@ -614,6 +621,7 @@ impl Vm {
                         None,
                     ));
                 }
+                registered_resource_types.extend(function.slug_resource_type_names());
                 let identity = declaration
                     .foreign_callable_identity
                     .clone()
@@ -647,6 +655,43 @@ impl Vm {
                 if !binding.is_some_and(|binding| binding.replace_binding(value.clone())) {
                     self.globals.borrow_mut().insert(name.clone(), value);
                 }
+            }
+        }
+        self.validate_resource_type_registrations(
+            program,
+            &declared_resource_types,
+            registered_resource_types,
+        )
+    }
+
+    fn validate_resource_type_registrations(
+        &self,
+        program: &Program,
+        declared: &std::collections::HashSet<&str>,
+        registered: std::collections::HashSet<String>,
+    ) -> VmResult<()> {
+        for name in declared {
+            if !registered.contains(*name) {
+                return Err(self.error(
+                    RuntimeErrorKind::Module,
+                    format!(
+                        "native module `{}` does not register declared resource type `{name}`",
+                        program.module_name()
+                    ),
+                    None,
+                ));
+            }
+        }
+        for name in registered {
+            if !declared.contains(name.as_str()) {
+                return Err(self.error(
+                    RuntimeErrorKind::Module,
+                    format!(
+                        "native module `{}` registers resource type `{name}` without a matching source declaration",
+                        program.module_name()
+                    ),
+                    None,
+                ));
             }
         }
         Ok(())

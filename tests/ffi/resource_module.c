@@ -68,7 +68,7 @@ static const slug_ffi_function_descriptor FUNCTIONS[] = {
 };
 
 static const slug_ffi_resource_descriptor RESOURCES[] = {
-  {sizeof(slug_ffi_resource_descriptor), {"counter", 7}, destroy_counter},
+  {sizeof(slug_ffi_resource_descriptor), {"counter", 7}, {"Counter", 7}, destroy_counter},
 };
 
 static const slug_ffi_module_descriptor MODULE = {

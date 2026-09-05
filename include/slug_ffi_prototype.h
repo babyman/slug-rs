@@ -86,6 +86,7 @@ typedef struct {
 typedef struct {
   uint32_t descriptor_size;
   slug_ffi_text name;
+  slug_ffi_text slug_name;
   slug_ffi_resource_destroy_fn destroy_resource;
 } slug_ffi_resource_descriptor;
 

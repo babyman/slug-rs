@@ -4,9 +4,11 @@
 
 - Adopted nominal native resource handles, fieldless enums with required
   qualified cases, and transparent type aliases as the target language design.
-  The existing broad `resource` source type is retired and will be removed when
-  the implementation migrates `slug.io.fs` and other foreign APIs to exact
-  resource types.
+  The broad `resource` source type has been removed; `slug.io.fs` and the C
+  prototype fixtures now use exact resource types.
+- Native resource registrations now distinguish internal host names from
+  Slug-visible names, and source modules reject missing or extra registrations
+  before their foreign bindings execute.
 
 - Native channel producers now return ownership of a send value when a bounded
   mailbox is full or closed, allowing integrations to retry without cloning.

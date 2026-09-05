@@ -237,6 +237,79 @@ fn rejects_a_c_resource_type_without_a_destroy_callback() {
 }
 
 #[test]
+fn rejects_source_resource_types_missing_from_the_native_module() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/resources.slug"),
+        "export resource Missing\n\
+         export foreign create = fn(value:num):Missing\n",
+    )
+    .expect("write mismatched resource module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C resource module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\nresources.create(1)\n",
+            false,
+        )
+        .expect("compile program using mismatched resource module");
+
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("the missing public resource registration must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert!(
+        error
+            .to_string()
+            .contains("does not register declared resource type `Missing`")
+    );
+}
+
+#[test]
+fn rejects_native_resource_types_missing_from_the_source_module() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/resources.slug"),
+        "export foreign destroyed = fn():num\n",
+    )
+    .expect("write mismatched resource module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C resource module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val resources = import(\"slug.resources\")\nresources.destroyed()\n",
+            false,
+        )
+        .expect("compile program using mismatched resource module");
+
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("the extra native resource registration must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert!(
+        error
+            .to_string()
+            .contains("registers resource type `Counter` without a matching source declaration")
+    );
+}
+
+#[test]
 fn turns_an_unknown_c_status_into_a_checked_contract_error() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(

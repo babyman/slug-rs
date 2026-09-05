@@ -641,6 +641,7 @@ struct NativeModuleInner {
     state: Box<dyn Any>,
     function_signatures: RefCell<HashSet<(String, NativeArity)>>,
     resource_types: RefCell<HashSet<String>>,
+    slug_resource_types: RefCell<HashSet<String>>,
 }
 
 impl NativeModule {
@@ -663,6 +664,7 @@ impl NativeModule {
                 state: Box::new(state),
                 function_signatures: RefCell::new(HashSet::new()),
                 resource_types: RefCell::new(HashSet::new()),
+                slug_resource_types: RefCell::new(HashSet::new()),
             }),
         })
     }
@@ -756,6 +758,11 @@ impl NativeModule {
     /// The native name remains available for host diagnostics and internal
     /// dispatch, while `slug_name` is the contract checked against source
     /// `resource` declarations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when either name is empty or either name is already
+    /// registered by this module.
     pub fn resource_type_with_slug_name<T: Any>(
         &self,
         name: impl Into<Rc<str>>,
@@ -775,17 +782,31 @@ impl NativeModule {
                 "Slug resource type name cannot be empty",
             ));
         }
-        if !self
-            .inner
-            .resource_types
-            .borrow_mut()
-            .insert(name.to_string())
-        {
+        if self.inner.resource_types.borrow().contains(name.as_ref()) {
             return Err(NativeDescriptorError::new(format!(
                 "native resource type `{}` is already registered in module `{}`",
                 name, self.inner.name
             )));
         }
+        if self
+            .inner
+            .slug_resource_types
+            .borrow()
+            .contains(slug_name.as_ref())
+        {
+            return Err(NativeDescriptorError::new(format!(
+                "Slug resource type `{}` is already registered in module `{}`",
+                slug_name, self.inner.name
+            )));
+        }
+        self.inner
+            .resource_types
+            .borrow_mut()
+            .insert(name.to_string());
+        self.inner
+            .slug_resource_types
+            .borrow_mut()
+            .insert(slug_name.to_string());
         Ok(NativeResourceType {
             registration: Rc::new(ResourceTypeRegistration {
                 id: NEXT_RESOURCE_TYPE_ID.fetch_add(1, Ordering::Relaxed),
@@ -805,6 +826,10 @@ impl NativeModule {
             }),
             marker: PhantomData,
         })
+    }
+
+    fn slug_resource_type_names(&self) -> HashSet<String> {
+        self.inner.slug_resource_types.borrow().clone()
     }
 }
 
@@ -875,6 +900,10 @@ impl NativeFunction {
             (NativeArity::Variadic { minimum: expected }, None) => expected == minimum,
             _ => false,
         }
+    }
+
+    pub(crate) fn slug_resource_type_names(&self) -> HashSet<String> {
+        self.0.module.slug_resource_type_names()
     }
 
     pub(crate) fn invoke(&self, arguments: &[Value]) -> NativeInvocation {
@@ -1317,6 +1346,38 @@ impl NativeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_registration_keeps_native_and_slug_names_distinct() {
+        let module = NativeModule::new("test.resources", ()).unwrap();
+        module
+            .resource_type_with_slug_name(
+                "test.resource",
+                "Resource",
+                |_payload: &mut ()| {},
+                |_payload: ()| {},
+            )
+            .unwrap();
+
+        assert_eq!(
+            module.slug_resource_type_names(),
+            HashSet::from(["Resource".to_owned()])
+        );
+        let result = module.resource_type_with_slug_name(
+            "test.other_resource",
+            "Resource",
+            |_payload: &mut ()| {},
+            |_payload: ()| {},
+        );
+        let Err(error) = result else {
+            panic!("public Slug resource names must be unique per module");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("Slug resource type `Resource` is already registered")
+        );
+    }
 
     #[test]
     fn native_resource_registry_compacts_dead_weak_entries() {
