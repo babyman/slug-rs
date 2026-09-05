@@ -2,7 +2,7 @@
 
 This is the dependency-ordered implementation checklist for the adopted
 nominal-resource, fieldless-enum, and transparent-alias design. It does not
-define language semantics; [Nominal types](../language/nominal-types.md) and
+define language semantics; [Nominal types](../../language/nominal-types.md) and
 the language specification remain authoritative.
 
 ## Cross-cutting rules
