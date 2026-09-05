@@ -223,7 +223,7 @@ impl Environment {
             .find_map(|scope| scope.get_mut(name))
     }
 
-    pub(super) fn schema_by_identity(&self, identity: &str) -> Option<SemanticBinding> {
+    pub(super) fn schema_by_identity(&self, identity: &SchemaIdentity) -> Option<SemanticBinding> {
         self.scopes
             .iter()
             .rev()
@@ -302,11 +302,14 @@ impl Environment {
     }
 }
 
-fn find_schema_binding(binding: &SemanticBinding, identity: &str) -> Option<SemanticBinding> {
+fn find_schema_binding(
+    binding: &SemanticBinding,
+    identity: &SchemaIdentity,
+) -> Option<SemanticBinding> {
     if binding
         .schema_identity
         .as_ref()
-        .is_some_and(|schema| schema.id == identity)
+        .is_some_and(|schema| schema == identity)
     {
         return Some(binding.clone());
     }

@@ -7,45 +7,60 @@ use crate::SourceSpan;
 
 use super::{SourceError, ast::TypeAnnotation, environment::Environment};
 
+/// Private identity shared by nominal source declarations.
+///
+/// `declaration_path` and `declaration_name` identify the declaration; `name`
+/// is the spelling visible at the current use site and may therefore differ
+/// after an import.
 #[derive(Clone, Debug)]
-pub(super) struct SchemaIdentity {
-    pub(super) id: String,
+pub(super) struct NominalIdentity {
+    declaration_path: String,
+    declaration_name: String,
     pub(super) name: String,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct ResourceIdentity {
-    pub(super) id: String,
-    pub(super) name: String,
+impl NominalIdentity {
+    pub(super) fn declared(path: impl Into<String>, name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            declaration_path: path.into(),
+            declaration_name: name.clone(),
+            name,
+        }
+    }
+
+    fn unresolved(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            declaration_path: String::new(),
+            declaration_name: name.clone(),
+            name,
+        }
+    }
+
+    fn is_unresolved(&self) -> bool {
+        self.declaration_path.is_empty()
+    }
 }
 
-impl PartialEq for ResourceIdentity {
+impl PartialEq for NominalIdentity {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.declaration_path == other.declaration_path
+            && self.declaration_name == other.declaration_name
     }
 }
 
-impl Eq for ResourceIdentity {}
+impl Eq for NominalIdentity {}
 
-impl Hash for ResourceIdentity {
+impl Hash for NominalIdentity {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.declaration_path.hash(state);
+        self.declaration_name.hash(state);
     }
 }
 
-impl PartialEq for SchemaIdentity {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for SchemaIdentity {}
-
-impl Hash for SchemaIdentity {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
+pub(super) type SchemaIdentity = NominalIdentity;
+pub(super) type ResourceIdentity = NominalIdentity;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Type {
@@ -389,13 +404,13 @@ fn resolve_schema_references(
     environment: &Environment,
 ) -> Result<Type, SourceError> {
     match value_type {
-        Type::Resource(identity) if identity.id == identity.name => environment
+        Type::Resource(identity) if identity.is_unresolved() => environment
             .resource_type(&identity.name)
             .map(Type::Resource)
             .ok_or_else(|| {
                 SourceError::semantic(format!("unknown type `{}`", identity.name), span.clone())
             }),
-        Type::Struct(Some(identity)) if identity.id == identity.name => {
+        Type::Struct(Some(identity)) if identity.is_unresolved() => {
             let name = identity.name;
             let binding = environment.lookup(&name).ok_or_else(|| {
                 SourceError::semantic(
@@ -481,10 +496,7 @@ fn resolve_name(name: &str, type_parameters: &[String]) -> Type {
         "chan" => Type::Channel(None),
         "schema" => Type::Schema,
         "struct" => Type::Struct(None),
-        _ => Type::Resource(ResourceIdentity {
-            id: name.into(),
-            name: name.into(),
-        }),
+        _ => Type::Resource(ResourceIdentity::unresolved(name)),
     }
 }
 
@@ -504,10 +516,7 @@ fn resolve_application(
                 span.clone(),
             ));
         };
-        return Ok(Type::Struct(Some(SchemaIdentity {
-            id: name.clone(),
-            name: name.clone(),
-        })));
+        return Ok(Type::Struct(Some(SchemaIdentity::unresolved(name))));
     }
     let resolved = arguments
         .iter()

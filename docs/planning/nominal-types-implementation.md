@@ -50,7 +50,7 @@ the language specification remain authoritative.
 
 ## 2. Shared nominal identity infrastructure
 
-- [ ] Extract the duplicated schema/resource identity mechanics into one
+- [x] Extract the duplicated schema/resource identity mechanics into one
   private nominal-identity representation with stable declaring-module and
   declaration-name components.
 - [ ] Represent exported types separately from runtime value exports in module

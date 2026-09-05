@@ -254,10 +254,10 @@ fn analyze(
             }
             let _ = exported;
             let mut binding = SemanticBinding::value(Type::Unknown);
-            binding.resource_identity = Some(ResourceIdentity {
-                id: format!("{}::{name}", expression.span.path),
-                name: name.clone(),
-            });
+            binding.resource_identity = Some(ResourceIdentity::declared(
+                expression.span.path.as_ref(),
+                name.clone(),
+            ));
             environment.declare(format!("<resource:{name}>"), binding);
         }
     }
@@ -1494,10 +1494,10 @@ fn schema_binding(
     span: &SourceSpan,
 ) -> Result<SemanticBinding, SourceError> {
     let mut binding = SemanticBinding::value(Type::Schema);
-    binding.schema_identity = Some(SchemaIdentity {
-        id: format!("{}:{}:{}", span.path, span.line, span.column),
-        name: "<schema>".into(),
-    });
+    binding.schema_identity = Some(SchemaIdentity::declared(
+        format!("{}:{}:{}", span.path, span.line, span.column),
+        "<schema>",
+    ));
     for field in fields {
         let value_type = if let Some(annotation) = &field.annotation {
             resolve_static_annotation(
@@ -1528,7 +1528,7 @@ fn known_struct_schema(value_type: &Type, environment: &Environment) -> Option<S
     let Type::Struct(Some(identity)) = value_type else {
         return None;
     };
-    environment.schema_by_identity(&identity.id)
+    environment.schema_by_identity(identity)
 }
 
 fn known_struct_field_type(
