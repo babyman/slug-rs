@@ -11,6 +11,8 @@
   bindings execute.
 - Declared foreign resource parameters and results now validate at the native
   boundary, including dynamically selected foreign callables.
+- Whole-case resource match constraints now use exact nominal identities,
+  including imported handle types such as `fs.File`.
 
 - Native channel producers now return ownership of a send value when a bounded
   mailbox is full or closed, allowing integrations to retry without cloning.

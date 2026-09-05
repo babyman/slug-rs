@@ -41,7 +41,7 @@ the language specification remain authoritative.
 - [x] Validate declared foreign resource arguments and results at the native
   boundary, including dynamic call paths and callbacks returning the wrong
   resource kind.
-- [ ] Add typed whole-case resource constraints and lower them to checked
+- [x] Add typed whole-case resource constraints and lower them to checked
   private match metadata.
 - [ ] Decide and implement resource metadata visibility without adding a
   runtime value or constructor for a resource type.

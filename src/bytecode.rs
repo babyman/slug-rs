@@ -180,7 +180,7 @@ pub enum MatchType {
     Num,
     Str,
     Bytes,
-    Resource,
+    Resource { module: String, name: String },
     List(Option<Box<MatchType>>),
     Map(Option<(Box<MatchType>, Box<MatchType>)>),
     Function,

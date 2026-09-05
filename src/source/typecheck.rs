@@ -13,7 +13,8 @@ use super::{
         SemanticAnalysis, SemanticBinding, function_value_type,
     },
     semantic::{
-        ResourceIdentity, SchemaIdentity, Type, resolve_annotation, resolve_static_annotation,
+        ResourceIdentity, SchemaIdentity, Type, resolve_annotation, resolve_resource_references,
+        resolve_static_annotation,
     },
 };
 
@@ -826,6 +827,7 @@ fn check_expression(
                         &mut scoped,
                     );
                 }
+                environment.record_match_constraints(case.span.clone(), constraints.clone());
                 if coverage_enabled && remaining.is_none() {
                     return Err(SourceError::semantic(
                         "match case is unreachable",
@@ -1558,16 +1560,18 @@ fn imported_modules(
     let mut result: HashMap<String, SemanticBinding> = HashMap::new();
     for argument in arguments {
         let CallArgument::Positional(Expr {
-            kind: ExprKind::Value(Value::Str(name)),
+            kind: ExprKind::Value(Value::Str(module_name)),
             ..
         }) = argument
         else {
             return None;
         };
-        let snapshot = environment.import(name.as_ref())?;
+        let snapshot = environment.import(module_name.as_ref())?;
         for (name, incoming) in &snapshot.exports {
+            let mut incoming = incoming.clone();
+            incoming.set_resource_runtime_module(module_name.as_ref());
             let Some(existing) = result.get_mut(name) else {
-                result.insert(name.clone(), incoming.clone());
+                result.insert(name.clone(), incoming);
                 continue;
             };
             if existing.callables.is_empty() || incoming.callables.is_empty() {
@@ -1672,7 +1676,11 @@ fn check_case_pattern(
         let constraint = if strict {
             resolve_static_annotation(constraint, type_parameters, span, environment)?
         } else {
-            resolve_annotation(constraint, type_parameters, span)?
+            resolve_resource_references(
+                resolve_annotation(constraint, type_parameters, span)?,
+                span,
+                environment,
+            )?
         };
         if !constraint.is_reifiable_match_constraint() {
             return Err(SourceError::semantic(

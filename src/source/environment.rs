@@ -125,6 +125,15 @@ impl SemanticBinding {
             resource_identity: None,
         }
     }
+
+    pub(super) fn set_resource_runtime_module(&mut self, module: &str) {
+        if let Some(identity) = &mut self.resource_identity {
+            identity.set_runtime_module(module.into());
+        }
+        for member in self.members.values_mut() {
+            member.set_resource_runtime_module(module);
+        }
+    }
 }
 
 pub(super) fn function_value_type(signature: &CallableSignature) -> Type {
@@ -154,6 +163,7 @@ pub(super) struct SemanticAnalysis {
     pub(super) function_identities: HashMap<SourceSpan, CallableIdentity>,
     pub(super) foreign_identities: HashMap<SourceSpan, CallableIdentity>,
     pub(crate) foreign_resource_signatures: HashMap<SourceSpan, ForeignResourceSignature>,
+    pub(super) match_constraints: HashMap<SourceSpan, Vec<Option<Type>>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -162,6 +172,7 @@ struct SemanticRecords {
     function_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_resource_signatures: HashMap<SourceSpan, ForeignResourceSignature>,
+    match_constraints: HashMap<SourceSpan, Vec<Option<Type>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -338,6 +349,17 @@ impl Environment {
             .insert(span, resource_signature);
     }
 
+    pub(super) fn record_match_constraints(
+        &self,
+        span: SourceSpan,
+        constraints: Vec<Option<Type>>,
+    ) {
+        self.records
+            .borrow_mut()
+            .match_constraints
+            .insert(span, constraints);
+    }
+
     pub(super) fn analysis(&self, snapshot: ModuleSnapshot) -> SemanticAnalysis {
         let records = self.records.borrow();
         SemanticAnalysis {
@@ -346,6 +368,7 @@ impl Environment {
             function_identities: records.function_identities.clone(),
             foreign_identities: records.foreign_identities.clone(),
             foreign_resource_signatures: records.foreign_resource_signatures.clone(),
+            match_constraints: records.match_constraints.clone(),
         }
     }
 }

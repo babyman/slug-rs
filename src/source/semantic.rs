@@ -17,6 +17,7 @@ pub(super) struct NominalIdentity {
     declaration_path: String,
     declaration_name: String,
     pub(super) name: String,
+    runtime_module: Option<String>,
 }
 
 impl NominalIdentity {
@@ -26,6 +27,7 @@ impl NominalIdentity {
             declaration_path: path.into(),
             declaration_name: name.clone(),
             name,
+            runtime_module: None,
         }
     }
 
@@ -35,11 +37,22 @@ impl NominalIdentity {
             declaration_path: String::new(),
             declaration_name: name.clone(),
             name,
+            runtime_module: None,
         }
     }
 
     fn is_unresolved(&self) -> bool {
         self.declaration_path.is_empty()
+    }
+
+    pub(super) fn runtime_module(&self) -> &str {
+        self.runtime_module
+            .as_deref()
+            .unwrap_or(&self.declaration_path)
+    }
+
+    pub(super) fn set_runtime_module(&mut self, module: String) {
+        self.runtime_module = Some(module);
     }
 }
 
@@ -396,6 +409,43 @@ pub(super) fn resolve_static_annotation(
         span,
         environment,
     )
+}
+
+/// Resolves only resource names for constraints that must carry their nominal
+/// identity into private match metadata. Other constraint forms retain their
+/// existing dynamic behavior when optional type checking is disabled.
+pub(super) fn resolve_resource_references(
+    value_type: Type,
+    span: &SourceSpan,
+    environment: &Environment,
+) -> Result<Type, SourceError> {
+    match value_type {
+        Type::Resource(identity) if identity.is_unresolved() => environment
+            .resource_type(&identity.name)
+            .map(Type::Resource)
+            .ok_or_else(|| {
+                SourceError::semantic(format!("unknown type `{}`", identity.name), span.clone())
+            }),
+        Type::List(element) => element
+            .map(|element| resolve_resource_references(*element, span, environment).map(Box::new))
+            .transpose()
+            .map(Type::List),
+        Type::Map(entries) => entries
+            .map(|(key, value)| {
+                Ok::<_, SourceError>((
+                    Box::new(resolve_resource_references(*key, span, environment)?),
+                    Box::new(resolve_resource_references(*value, span, environment)?),
+                ))
+            })
+            .transpose()
+            .map(Type::Map),
+        Type::Union(values) => values
+            .into_iter()
+            .map(|value| resolve_resource_references(value, span, environment))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Type::union),
+        other => Ok(other),
+    }
 }
 
 fn resolve_schema_references(

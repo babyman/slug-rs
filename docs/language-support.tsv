@@ -72,7 +72,7 @@ Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement,
 Bounded FIFO channels through the `slug.channel` module, plus bounded thread-safe native producers|implemented|`tests/cli.rs` and `tests/vm.rs`
 Shared standard-input line stream and interactive helpers through `slug.io.stdin`|implemented|`tests/cli.rs`
 Broad `resource` source type|removed|`language/nominal-types.md`
-Nominal `resource Name` declarations, exported type paths, and strongly typed source signatures|partial|`tests/cli.rs` and `language/nominal-types.md`
+Nominal `resource Name` declarations, exported type paths, strongly typed source signatures, and whole-case match constraints|partial|`tests/cli.rs` and `language/nominal-types.md`
 Fieldless nominal enums with required qualified cases|specified only|`language/nominal-types.md`
 Transparent `type Name = Annotation` aliases|specified only|`language/nominal-types.md`
 Nursery ownership and `select` receive/send/timer/task-await/default cases|partial|`tests/cli.rs`

@@ -84,6 +84,62 @@ fn resource_annotations_check_foreign_results_and_arguments() {
 }
 
 #[test]
+fn match_constraints_check_exact_nominal_file_handles() {
+    let root = std::env::temp_dir().join(format!("slug-cli-resource-match-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create resource-match fixture root");
+    let input = root.join("input.txt");
+    let program = root.join("program.slug");
+    fs::write(&input, "line\n").expect("write resource-match input");
+    fs::write(
+        &program,
+        format!(
+            "val fs = import(\"slug.io.fs\")\n\
+             val file = fs.openRead(\"{}\")\n\
+             defer fs.close(file)\n\
+             val classify = fn(value) match {{ _:fs.File => \"file\"; _ => \"other\" }}\n\
+             println(classify(file), classify(\"not a file\"))\n",
+            input.display(),
+        ),
+    )
+    .expect("write resource-match source");
+    let output = slug()
+        .arg(&program)
+        .output()
+        .expect("run resource-match source");
+    fs::remove_dir_all(root).expect("remove resource-match fixture root");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "file other\n");
+}
+
+#[test]
+fn rejects_unknown_imported_resource_match_constraints() {
+    let path = fixture_path("unknown-resource-match-type");
+    fs::write(
+        &path,
+        "val fs = import(\"slug.io.fs\")\nmatch nil { _:fs.Missing => true }\n",
+    )
+    .expect("write unknown resource-match source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run unknown resource-match source");
+    fs::remove_file(path).expect("remove unknown resource-match source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unknown type `fs.Missing`")
+    );
+}
+
+#[test]
 fn rejects_file_operations_after_explicit_close() {
     let root = std::env::temp_dir().join(format!("slug-cli-closed-file-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create closed-file fixture root");

@@ -29,6 +29,7 @@ pub(super) struct Compiler {
     function_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_resource_signatures: HashMap<SourceSpan, super::environment::ForeignResourceSignature>,
+    match_constraints: HashMap<SourceSpan, Vec<Option<super::semantic::Type>>>,
     callable_identities: Vec<CallableIdentity>,
     guard_comparisons: bool,
 }
@@ -45,6 +46,7 @@ impl Compiler {
             function_identities: analysis.function_identities.clone(),
             foreign_identities: analysis.foreign_identities.clone(),
             foreign_resource_signatures: analysis.foreign_resource_signatures.clone(),
+            match_constraints: analysis.match_constraints.clone(),
             callable_identities: Vec::new(),
             guard_comparisons: false,
         }
@@ -947,7 +949,11 @@ impl Compiler {
         self.expression(state, subject)?;
         let mut ends = Vec::new();
         for case in cases {
-            let (pattern, names, operands) = lower_case_patterns(&case.patterns, &case.span)?;
+            let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
+                SourceError::semantic("missing resolved match constraints", case.span.clone())
+            })?;
+            let (pattern, names, operands) =
+                lower_case_patterns(&case.patterns, constraints, &case.span)?;
             state.emit(Op::Duplicate, &case.span);
             for operand in &operands {
                 self.emit_pattern_operand(state, operand, &case.span)?;
@@ -1385,8 +1391,15 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
 
 fn lower_case_patterns(
     patterns: &[CasePattern],
+    constraints: &[Option<super::semantic::Type>],
     span: &SourceSpan,
 ) -> Result<(MatchPattern, Vec<String>, Vec<PatternOperand>), SourceError> {
+    if patterns.len() != constraints.len() {
+        return Err(SourceError::semantic(
+            "missing resolved match constraint",
+            span.clone(),
+        ));
+    }
     if patterns
         .iter()
         .any(|pattern| matches!(pattern.pattern, Pattern::MapAll))
@@ -1399,7 +1412,7 @@ fn lower_case_patterns(
     let mut operands = Vec::new();
     if let [pattern] = patterns {
         return Ok((
-            lower_case_pattern(pattern, &mut operands)?,
+            lower_case_pattern(pattern, constraints[0].as_ref(), &mut operands)?,
             pattern_bindings(&pattern.pattern, span)?,
             operands,
         ));
@@ -1417,7 +1430,10 @@ fn lower_case_patterns(
         MatchPattern::Alternatives(
             patterns
                 .iter()
-                .map(|pattern| lower_case_pattern(pattern, &mut operands))
+                .zip(constraints)
+                .map(|(pattern, constraint)| {
+                    lower_case_pattern(pattern, constraint.as_ref(), &mut operands)
+                })
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         Vec::new(),
@@ -1427,10 +1443,11 @@ fn lower_case_patterns(
 
 fn lower_case_pattern(
     case_pattern: &CasePattern,
+    constraint: Option<&super::semantic::Type>,
     operands: &mut Vec<PatternOperand>,
 ) -> Result<MatchPattern, SourceError> {
     let pattern = lower_pattern(&case_pattern.pattern, operands);
-    let Some(constraint) = &case_pattern.constraint else {
+    let Some(constraint) = constraint else {
         return Ok(pattern);
     };
     Ok(MatchPattern::Constrained {
@@ -1440,54 +1457,58 @@ fn lower_case_pattern(
 }
 
 fn lower_match_type(
-    annotation: &TypeAnnotation,
+    value_type: &super::semantic::Type,
     operands: &mut Vec<PatternOperand>,
 ) -> Result<MatchType, SourceError> {
-    match annotation {
-        TypeAnnotation::Name(name) => match name.as_str() {
-            "any" => Ok(MatchType::Any),
-            "nil" => Ok(MatchType::Nil),
-            "bool" => Ok(MatchType::Bool),
-            "num" => Ok(MatchType::Num),
-            "str" => Ok(MatchType::Str),
-            "bytes" => Ok(MatchType::Bytes),
-            "resource" => Ok(MatchType::Resource),
-            "list" => Ok(MatchType::List(None)),
-            "map" => Ok(MatchType::Map(None)),
-            "fn" => Ok(MatchType::Function),
-            "task" => Ok(MatchType::Task),
-            "chan" => Ok(MatchType::Channel),
-            "schema" => Ok(MatchType::Schema),
-            "struct" => Ok(MatchType::Struct(None)),
-            _ => Err(SourceError::semantic(
-                format!("unknown type `{name}`"),
-                SourceSpan::new("<internal>", 1, 1),
-            )),
-        },
-        TypeAnnotation::Apply { name, arguments } => match (name.as_str(), arguments.as_slice()) {
-            ("list", [element]) => Ok(MatchType::List(Some(Box::new(lower_match_type(
-                element, operands,
-            )?)))),
-            ("map", [key, value]) => Ok(MatchType::Map(Some((
-                Box::new(lower_match_type(key, operands)?),
-                Box::new(lower_match_type(value, operands)?),
-            )))),
-            ("struct", [TypeAnnotation::Name(name)]) => {
-                let index = operands.len();
-                operands.push(PatternOperand::StructSchema(name.clone()));
-                Ok(MatchType::Struct(Some(index)))
-            }
-            _ => Err(SourceError::semantic(
-                "match type constraint is not runtime-checkable",
-                SourceSpan::new("<internal>", 1, 1),
-            )),
-        },
-        TypeAnnotation::Union(members) => members
+    use super::semantic::Type;
+
+    match value_type {
+        Type::Any => Ok(MatchType::Any),
+        Type::Nil => Ok(MatchType::Nil),
+        Type::Bool => Ok(MatchType::Bool),
+        Type::Num => Ok(MatchType::Num),
+        Type::Str => Ok(MatchType::Str),
+        Type::Bytes => Ok(MatchType::Bytes),
+        Type::Resource(identity) => Ok(MatchType::Resource {
+            module: identity.runtime_module().into(),
+            name: identity.name.clone(),
+        }),
+        Type::List(element) => element
+            .as_deref()
+            .map(|element| lower_match_type(element, operands).map(Box::new))
+            .transpose()
+            .map(MatchType::List),
+        Type::Map(entries) => entries
+            .as_ref()
+            .map(|(key, value)| {
+                Ok((
+                    Box::new(lower_match_type(key, operands)?),
+                    Box::new(lower_match_type(value, operands)?),
+                ))
+            })
+            .transpose()
+            .map(MatchType::Map),
+        Type::Function(None) => Ok(MatchType::Function),
+        Type::Task(None) => Ok(MatchType::Task),
+        Type::Channel(None) => Ok(MatchType::Channel),
+        Type::Schema => Ok(MatchType::Schema),
+        Type::Struct(None) => Ok(MatchType::Struct(None)),
+        Type::Struct(Some(identity)) => {
+            let index = operands.len();
+            operands.push(PatternOperand::StructSchema(identity.name.clone()));
+            Ok(MatchType::Struct(Some(index)))
+        }
+        Type::Union(members) => members
             .iter()
             .map(|member| lower_match_type(member, operands))
             .collect::<Result<Vec<_>, _>>()
             .map(MatchType::Union),
-        TypeAnnotation::Tuple(_) => Err(SourceError::semantic(
+        Type::Unknown
+        | Type::Function(Some(_))
+        | Type::Task(Some(_))
+        | Type::Channel(Some(_))
+        | Type::Tuple(_)
+        | Type::Generic(_) => Err(SourceError::semantic(
             "match type constraint is not runtime-checkable",
             SourceSpan::new("<internal>", 1, 1),
         )),
