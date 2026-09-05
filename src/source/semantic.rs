@@ -407,11 +407,42 @@ pub(super) fn resolve_static_annotation(
     span: &SourceSpan,
     environment: &Environment,
 ) -> Result<Type, SourceError> {
+    reject_alias_applications(annotation, span, environment)?;
     resolve_schema_references(
         resolve_annotation(annotation, type_parameters, span)?,
         span,
         environment,
     )
+}
+
+fn reject_alias_applications(
+    annotation: &TypeAnnotation,
+    span: &SourceSpan,
+    environment: &Environment,
+) -> Result<(), SourceError> {
+    match annotation {
+        TypeAnnotation::Apply { name, arguments } => {
+            if matches!(
+                environment.type_member(name),
+                Some(super::environment::TypeMember::Alias(_))
+            ) {
+                return Err(SourceError::semantic(
+                    format!("type alias `{name}` cannot accept type arguments"),
+                    span.clone(),
+                ));
+            }
+            for argument in arguments {
+                reject_alias_applications(argument, span, environment)?;
+            }
+        }
+        TypeAnnotation::Tuple(elements) | TypeAnnotation::Union(elements) => {
+            for element in elements {
+                reject_alias_applications(element, span, environment)?;
+            }
+        }
+        TypeAnnotation::Name(_) => {}
+    }
+    Ok(())
 }
 
 /// Resolves only resource names for constraints that must carry their nominal
@@ -427,6 +458,9 @@ pub(super) fn resolve_resource_references(
             match environment.type_member(&identity.name) {
                 Some(super::environment::TypeMember::Enum { identity, .. }) => {
                     Ok(Type::Enum(identity.clone()))
+                }
+                Some(super::environment::TypeMember::Alias(value_type)) => {
+                    resolve_resource_references(value_type.clone(), span, environment)
                 }
                 _ => environment
                     .resolve_resource_type(&identity.name, span)
@@ -465,6 +499,9 @@ fn resolve_schema_references(
             match environment.type_member(&identity.name) {
                 Some(super::environment::TypeMember::Enum { identity, .. }) => {
                     Ok(Type::Enum(identity.clone()))
+                }
+                Some(super::environment::TypeMember::Alias(value_type)) => {
+                    resolve_schema_references(value_type.clone(), span, environment)
                 }
                 _ => environment
                     .resolve_resource_type(&identity.name, span)

@@ -348,6 +348,36 @@ fn imports_enum_namespaces_and_nominal_type_metadata() {
 }
 
 #[test]
+fn imports_transparent_type_aliases_through_module_type_paths() {
+    let root = root("alias-imports");
+    fs::create_dir_all(&root).expect("create alias module directory");
+    fs::write(
+        root.join("paths.slug"),
+        "export type Path = str\nexport type Paths = list<Path>\n",
+    )
+    .expect("write alias module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val paths = import(\"paths\")\n\
+             val values:paths.Paths = [\"Slug\"]\n\
+             export val value:paths.Path = values[0]\n",
+            true,
+        )
+        .expect("compile importer using aliases");
+    let mut vm = Vm::with_module_loader(loader);
+    vm.run_named(&program, "main")
+        .expect("run importer using aliases");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"value\": \"Slug\"}"
+    );
+    fs::remove_dir_all(root).expect("remove alias module directory");
+}
+
+#[test]
 fn local_bindings_shadow_all_imports_with_a_warning() {
     let root = root("import-shadowing");
     fs::create_dir_all(&root).expect("create module directory");

@@ -101,6 +101,7 @@ pub(super) enum TypeMember {
         identity: EnumIdentity,
         cases: Vec<String>,
     },
+    Alias(Type),
 }
 
 impl TypeMember {
@@ -119,6 +120,7 @@ impl TypeMember {
                     cases: cases.clone(),
                 }
             }
+            Self::Alias(value_type) => Self::Alias(value_type.clone()),
         }
     }
 }
@@ -343,7 +345,7 @@ impl Environment {
                 .and_then(|binding| binding.type_members.get(type_name))
                 .and_then(|member| match member {
                     TypeMember::Resource(identity) => Some(identity.clone()),
-                    TypeMember::Enum { .. } => None,
+                    TypeMember::Enum { .. } | TypeMember::Alias(_) => None,
                 });
         }
         self.type_scopes
@@ -352,7 +354,7 @@ impl Environment {
             .find_map(|scope| scope.get(name))
             .and_then(|member| match member {
                 TypeMember::Resource(identity) => Some(identity.clone()),
-                TypeMember::Enum { .. } => None,
+                TypeMember::Enum { .. } | TypeMember::Alias(_) => None,
             })
     }
 
@@ -386,7 +388,7 @@ impl Environment {
                     identity: candidate,
                     cases,
                 } if candidate == identity => Some(cases.clone()),
-                TypeMember::Resource(_) | TypeMember::Enum { .. } => None,
+                TypeMember::Resource(_) | TypeMember::Enum { .. } | TypeMember::Alias(_) => None,
             })
     }
 
@@ -413,7 +415,7 @@ impl Environment {
                 .get(type_name)
                 .and_then(|member| match member {
                     TypeMember::Resource(identity) => Some(identity.clone()),
-                    TypeMember::Enum { .. } => None,
+                    TypeMember::Enum { .. } | TypeMember::Alias(_) => None,
                 })
                 .ok_or_else(|| {
                     super::SourceError::semantic(format!("unknown type `{name}`"), span.clone())

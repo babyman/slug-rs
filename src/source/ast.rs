@@ -37,6 +37,11 @@ pub(super) enum ExprKind {
         name: String,
         cases: Vec<String>,
     },
+    TypeAlias {
+        exported: bool,
+        name: String,
+        annotation: TypeAnnotation,
+    },
     Assign {
         name: String,
         value: Box<Expr>,

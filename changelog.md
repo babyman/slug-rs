@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added transparent top-level `type Name = Annotation` aliases, including
+  cycle diagnostics and exported/imported compile-time type paths.
+
 - Added fieldless nominal enum declarations, qualified enum values, and
   qualified enum match patterns.
 

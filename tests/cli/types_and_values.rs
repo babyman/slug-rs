@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn transparent_type_aliases_preserve_underlying_types() {
+    let path = fixture_path("transparent-aliases");
+    fs::write(
+        &path,
+        "type Path = str;\n\
+         type Paths = list<Path>;\n\
+         type MaybePath = Path|nil;\n\
+         val echo = fn(value:Path):str { value }\n\
+         val classify = fn(value) match { _:Path => \"path\"; _ => \"other\" }\n\
+         val S = struct { name:str }\n\
+         type User = struct<S>;\n\
+         val paths:Paths = [\"Slug\"]\n\
+         val user:User = S {name: \"Nominal\"}\n\
+         val missing:MaybePath = nil\n\
+         println(echo(paths[0]), classify(paths[0]), user.name, missing == nil)\n",
+    )
+    .expect("write alias source");
+    let output = slug()
+        .arg("-type-check")
+        .arg(&path)
+        .output()
+        .expect("run alias source");
+    fs::remove_file(&path).expect("remove alias source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug path Nominal true\n"
+    );
+}
+
+#[test]
+fn type_aliases_reject_cycles_and_generic_use() {
+    let path = fixture_path("type-alias-errors");
+    fs::write(&path, "type First = Second\ntype Second = First\n").expect("write cyclic aliases");
+    let output = slug().arg(&path).output().expect("run cyclic aliases");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("recursive type alias: First -> Second -> First"),
+        "{stderr}"
+    );
+
+    fs::write(&path, "type Path = str\nval path:Path<str> = \"Slug\"\n")
+        .expect("write generic alias use");
+    let output = slug().arg(&path).output().expect("run generic alias use");
+    fs::remove_file(&path).expect("remove alias source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unknown type constructor `Path`")
+    );
+}
+
+#[test]
 fn fieldless_enum_values_are_qualified_nominal_values() {
     let path = fixture_path("fieldless-enums");
     fs::write(

@@ -757,7 +757,9 @@ impl Compiler {
                 state.emit(op, &expression.span);
             }
             ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
-            ExprKind::Resource { .. } => state.emit(Op::Nil, &expression.span),
+            ExprKind::Resource { .. } | ExprKind::TypeAlias { .. } => {
+                state.emit(Op::Nil, &expression.span);
+            }
             ExprKind::Enum { name, cases, .. } => {
                 for case in cases {
                     let key = state.constant(Value::string(case.clone()));

@@ -105,24 +105,24 @@ the language specification remain authoritative.
 
 ### Declaration and resolution
 
-- [ ] Lex and parse top-level `type Name = Annotation` declarations.
-- [ ] Build a separate alias table in the compile-time type namespace; aliases
+- [x] Lex and parse top-level `type Name = Annotation` declarations.
+- [x] Build a separate alias table in the compile-time type namespace; aliases
   create neither a runtime value nor a nominal identity.
-- [ ] Resolve aliases transitively before type assignability, union
+- [x] Resolve aliases transitively before type assignability, union
   normalization, overload identity, and runtime-match lowering.
-- [ ] Detect direct and indirect cycles with a source-located cycle chain.
-- [ ] Reject generic aliases and aliases that require unsupported forward or
+- [x] Detect direct and indirect cycles with a source-located cycle chain.
+- [x] Reject generic aliases and aliases that require unsupported forward or
   cross-module recursive resolution until separately designed.
 
 ### Modules and semantics
 
-- [ ] Export/import aliases through qualified paths such as `paths.Path`.
-- [ ] Preserve the underlying resource, enum, schema, and collection identity
+- [x] Export/import aliases through qualified paths such as `paths.Path`.
+- [x] Preserve the underlying resource, enum, schema, and collection identity
   when an alias crosses a module boundary or is locally renamed.
-- [ ] Prove aliases are transparent in declarations, calls, overload selection,
+- [x] Prove aliases are transparent in declarations, calls, overload selection,
   collections, union deduplication, typed matches, and schema `struct<S>`
   references.
-- [ ] Prove aliases do not act as constructors or strong typedefs and do not
+- [x] Prove aliases do not act as constructors or strong typedefs and do not
   change runtime display or equality.
 
 ## 5. Final integration audit

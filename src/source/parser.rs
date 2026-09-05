@@ -123,14 +123,14 @@ impl Parser {
             false
         };
         if (documentation.is_some() || !tags.is_empty())
-            && !matches!(
+            && !(matches!(
                 self.kind(),
                 TokenKind::Val
                     | TokenKind::Var
                     | TokenKind::Foreign
                     | TokenKind::Resource
                     | TokenKind::Enum
-            )
+            ) || matches!(self.kind(), TokenKind::Name(name) if name == "type"))
         {
             return Err(SourceError::at(
                 "documentation blocks and tags must prefix a val, var, or foreign declaration",
@@ -299,6 +299,35 @@ impl Parser {
                     exported,
                     name,
                     cases,
+                },
+            });
+        }
+        if matches!(self.kind(), TokenKind::Name(name) if name == "type") {
+            let span = self.next().span;
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "type aliases are only valid at top level",
+                    span,
+                ));
+            }
+            if documentation.is_some() || !tags.is_empty() {
+                return Err(SourceError::at(
+                    "documentation blocks and tags cannot prefix a type alias",
+                    self.peek().span.clone(),
+                ));
+            }
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected type alias name", token.span));
+            };
+            self.consume(&TokenKind::Eq, "expected = after type alias name")?;
+            let annotation = self.type_annotation()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::TypeAlias {
+                    exported,
+                    name,
+                    annotation,
                 },
             });
         }

@@ -230,6 +230,7 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
         }
         ExprKind::Resource { .. }
         | ExprKind::Enum { .. }
+        | ExprKind::TypeAlias { .. }
         | ExprKind::Value(_)
         | ExprKind::Interpolate(_)
         | ExprKind::Documentation(_)
@@ -293,6 +294,7 @@ fn analyze(
             environment.declare(name.clone(), binding);
         }
     }
+    resolve_type_aliases(expressions, &mut environment, &resource_names, &enum_names)?;
     for expression in expressions {
         let name = match &expression.kind {
             ExprKind::Declare {
@@ -303,7 +305,7 @@ fn analyze(
             _ => None,
         };
         if let Some(name) = name
-            && enum_names.contains(name)
+            && (enum_names.contains(name) || resource_names.contains(name))
         {
             return Err(SourceError::semantic(
                 format!("enum type `{name}` conflicts with a value declaration"),
@@ -316,6 +318,125 @@ fn analyze(
         record_exports(expression, &environment, &mut exports, &mut types);
     }
     Ok(environment.analysis(ModuleSnapshot { exports, types }))
+}
+
+fn resolve_type_aliases(
+    expressions: &[Expr],
+    environment: &mut Environment,
+    resource_names: &HashSet<String>,
+    enum_names: &HashSet<String>,
+) -> Result<(), SourceError> {
+    let mut aliases = HashMap::new();
+    for expression in expressions {
+        let ExprKind::TypeAlias {
+            name, annotation, ..
+        } = &expression.kind
+        else {
+            continue;
+        };
+        if aliases
+            .insert(name.clone(), (annotation, expression.span.clone()))
+            .is_some()
+        {
+            return Err(SourceError::semantic(
+                format!("duplicate type `{name}`"),
+                expression.span.clone(),
+            ));
+        }
+    }
+    for (name, (_, span)) in &aliases {
+        if resource_names.contains(name) || enum_names.contains(name) {
+            return Err(SourceError::semantic(
+                format!("duplicate type `{name}`"),
+                span.clone(),
+            ));
+        }
+    }
+    let mut visiting = Vec::new();
+    let mut resolved = HashSet::new();
+    for expression in expressions {
+        let ExprKind::TypeAlias { name, .. } = &expression.kind else {
+            continue;
+        };
+        resolve_type_alias(name, &aliases, environment, &mut visiting, &mut resolved)?;
+    }
+    Ok(())
+}
+
+fn resolve_type_alias(
+    name: &str,
+    aliases: &HashMap<String, (&TypeAnnotation, crate::SourceSpan)>,
+    environment: &mut Environment,
+    visiting: &mut Vec<String>,
+    resolved: &mut HashSet<String>,
+) -> Result<(), SourceError> {
+    if resolved.contains(name) {
+        return Ok(());
+    }
+    let (annotation, span) = aliases
+        .get(name)
+        .expect("alias name came from the alias declaration table");
+    if let Some(start) = visiting.iter().position(|entry| entry == name) {
+        let mut chain = visiting[start..].to_vec();
+        chain.push(name.into());
+        return Err(SourceError::semantic(
+            format!("recursive type alias: {}", chain.join(" -> ")),
+            span.clone(),
+        ));
+    }
+    visiting.push(name.into());
+    let mut dependencies = Vec::new();
+    alias_dependencies(annotation, aliases, &mut dependencies)?;
+    for dependency in dependencies {
+        resolve_type_alias(&dependency, aliases, environment, visiting, resolved)?;
+    }
+    // Schema bindings are value declarations, so `struct<S>` must keep its
+    // unresolved schema reference until the alias is used after `S` exists.
+    // Resource and enum identities, by contrast, belong to the type namespace
+    // and are available while aliases are collected.
+    let value_type = resolve_resource_references(
+        resolve_annotation(annotation, &[], span)?,
+        span,
+        environment,
+    )?;
+    environment.declare_type(
+        name.into(),
+        super::environment::TypeMember::Alias(value_type),
+    );
+    visiting.pop();
+    resolved.insert(name.into());
+    Ok(())
+}
+
+fn alias_dependencies(
+    annotation: &TypeAnnotation,
+    aliases: &HashMap<String, (&TypeAnnotation, crate::SourceSpan)>,
+    dependencies: &mut Vec<String>,
+) -> Result<(), SourceError> {
+    match annotation {
+        TypeAnnotation::Name(name) => {
+            if aliases.contains_key(name) {
+                dependencies.push(name.clone());
+            }
+        }
+        TypeAnnotation::Apply { name, arguments } => {
+            if aliases.contains_key(name) {
+                return Err(SourceError::semantic(
+                    format!("type alias `{name}` cannot accept type arguments"),
+                    aliases[name].1.clone(),
+                ));
+            }
+            for argument in arguments {
+                alias_dependencies(argument, aliases, dependencies)?;
+            }
+        }
+        TypeAnnotation::Tuple(elements) | TypeAnnotation::Union(elements) => {
+            for element in elements {
+                alias_dependencies(element, aliases, dependencies)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn function_type(
@@ -441,6 +562,15 @@ fn record_exports(
                         cases: cases.clone(),
                     },
                 );
+            }
+        }
+        ExprKind::TypeAlias {
+            exported: true,
+            name,
+            ..
+        } => {
+            if let Some(member) = environment.type_member(name) {
+                types.insert(name.clone(), member.clone());
             }
         }
         _ => {}
@@ -1126,9 +1256,10 @@ fn check_expression(
             slice_result(&collection, strict, &expression.span)
         }
         ExprKind::Interpolate(_) => Ok(Type::Str),
-        ExprKind::Resource { .. } | ExprKind::Enum { .. } | ExprKind::Documentation(_) => {
-            Ok(Type::Nil)
-        }
+        ExprKind::Resource { .. }
+        | ExprKind::Enum { .. }
+        | ExprKind::TypeAlias { .. }
+        | ExprKind::Documentation(_) => Ok(Type::Nil),
         ExprKind::NotImplemented => Ok(Type::Unknown),
     }
 }
@@ -2617,6 +2748,7 @@ fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<
         }
         ExprKind::Resource { .. }
         | ExprKind::Enum { .. }
+        | ExprKind::TypeAlias { .. }
         | ExprKind::Value(_)
         | ExprKind::Interpolate(_)
         | ExprKind::Documentation(_)

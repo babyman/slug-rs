@@ -139,4 +139,6 @@ resource type paths such as `fs.File`, the `File` signatures in `slug.io.fs`,
 checked source/native resource-registration agreement, mandatory foreign
 resource argument/result validation, and fieldless enum declarations with
 qualified local/imported values and patterns, type paths, and exhaustive
-closed-match coverage. Aliases remain implementation work.
+closed-match coverage, and transparent aliases including exported/imported
+aliases. Aliases are compile-time-only names: they have no value, constructor,
+display form, or equality behavior of their own.
