@@ -28,6 +28,9 @@
 - The SQLite FFI fixture now includes prepared-statement resources, integer
   binding and stepping, explicit finalization, and checked parent-close errors.
 
+- C producer capabilities now expose named sent/full/closed statuses, with a
+  backpressure fixture that retains and retries an integer after a full send.
+
 - Added the broad `resource` source type and `slug.io.fs` text-file resources
   with explicit `close`, `defer`-based lifecycle management, line reads, and
   write/append streams.

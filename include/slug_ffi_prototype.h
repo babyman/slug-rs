@@ -6,12 +6,18 @@
 #include <stdint.h>
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 4u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 5u
 
 typedef enum {
   SLUG_FFI_OK = 0,
   SLUG_FFI_ERROR = 1,
 } slug_ffi_status;
+
+typedef enum {
+  SLUG_FFI_PRODUCER_SENT = 0,
+  SLUG_FFI_PRODUCER_FULL = 1,
+  SLUG_FFI_PRODUCER_CLOSED = 2,
+} slug_ffi_producer_status;
 
 typedef struct slug_ffi_host_api slug_ffi_host_api;
 typedef struct slug_ffi_call slug_ffi_call;

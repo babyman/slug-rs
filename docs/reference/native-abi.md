@@ -458,6 +458,12 @@ receiver result to Slug, and retain the paired producer for a background thread.
 The producer can send or be destroyed from that thread, but it cannot inspect
 or enter the VM, retain a Slug value, or invoke Slug code.
 
+Integer producer sends report `sent`, `full`, or `closed`. A `full` result
+leaves the C caller responsible for retaining and retrying its integer; a
+`closed` result ends that producer's useful lifetime and the caller destroys
+the capability. The prototype does not yet generalize this ownership rule to
+non-scalar payloads.
+
 The fixtures also include a deliberately small SQLite adapter: an in-memory
 database resource with execute, scalar-integer query, and close operations. It
 uses callback-scoped length-delimited SQL text and maps SQLite failures to

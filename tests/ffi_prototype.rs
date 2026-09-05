@@ -482,3 +482,39 @@ fn lets_a_c_thread_send_through_an_owned_producer_capability() {
         .expect("compile C async producer program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "73");
 }
+
+#[test]
+fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/backpressure_module.c",
+        "backpressure",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/backpressure.slug"),
+        "export foreign backpressured = fn():chan<num>;\n\
+         export foreign sawFull = fn():num\n",
+    )
+    .expect("write backpressure module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeModule::load(library).expect("load C backpressure module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C backpressure module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val backpressure = import(\"slug.backpressure\")\n\
+             val inbox = backpressure.backpressured()\n\
+             val first = select { recv inbox }\n\
+             val second = select { recv inbox }\n\
+             first * 10 + second + backpressure.sawFull()\n",
+            false,
+        )
+        .expect("compile C backpressure program");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "13");
+}
