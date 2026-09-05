@@ -56,6 +56,7 @@ a specified feature is implemented.
 | [language-foundation-roadmap.md](planning/language-foundation-roadmap.md) | Dependency-ordered implementation tasks for source compatibility. |
 | [expression-foundation-inventory.md](planning/expression-foundation-inventory.md) | Current expression-support boundary and dependency-ordered implementation slices. |
 | [type-system-plan.md](planning/type-system-plan.md) | Dependency-ordered plan for the next static-checking milestones. |
+| [nominal-types-implementation.md](planning/nominal-types-implementation.md) | Checklist for nominal resources, enums, and aliases. |
 | [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |
 | [ai-assisted-development.md](planning/completed/ai-assisted-development.md) | Plan for trustworthy agent guidance, bounded working sets, and reproducible validation. |
 | [completed/](planning/completed/) | Retained plans for completed implementation work. |
