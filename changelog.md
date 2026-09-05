@@ -5,6 +5,9 @@
 - Added transparent top-level `type Name = Annotation` aliases, including
   cycle diagnostics and exported/imported compile-time type paths.
 
+- Native callbacks can now inspect a borrowed fieldless enum declaration and
+  case through the checked `NativeValueRef::as_enum_case` API.
+
 - Added fieldless nominal enum declarations, qualified enum values, and
   qualified enum match patterns.
 

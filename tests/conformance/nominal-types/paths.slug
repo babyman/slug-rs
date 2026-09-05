@@ -1,0 +1,2 @@
+export type Path = str
+export type Paths = list<Path>

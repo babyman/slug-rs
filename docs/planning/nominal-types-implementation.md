@@ -127,11 +127,11 @@ the language specification remain authoritative.
 
 ## 5. Final integration audit
 
-- [ ] Update native ABI documentation and registration APIs to name declared
+- [x] Update native ABI documentation and registration APIs to name declared
   resource types and expose checked enum-case access where foreign APIs need it.
-- [ ] Audit public library declarations and C fixtures for retired broad
+- [x] Audit public library declarations and C fixtures for retired broad
   `resource` usage.
-- [ ] Add conformance fixtures for public syntax, module imports, diagnostics,
+- [x] Add conformance fixtures for public syntax, module imports, diagnostics,
   and observable enum behavior.
-- [ ] Regenerate documentation output and run `make check`; run the
+- [x] Regenerate documentation output and run `make check`; run the
   feature-gated FFI prototype suite when native-resource validation changes.

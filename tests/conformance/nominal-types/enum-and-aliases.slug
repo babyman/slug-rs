@@ -1,0 +1,11 @@
+enum SeekFrom { Start, End }
+type Label = str
+
+val label:Label = "start"
+val from:SeekFrom = SeekFrom.Start
+println(label)
+println(from == SeekFrom.Start)
+println(match from {
+  SeekFrom.Start => "start"
+  SeekFrom.End => "end"
+})

@@ -372,6 +372,7 @@ pub enum NativeValueKind {
     Bytes,
     List,
     Map,
+    Enum,
     StructSchema,
     Struct,
     Channel,
@@ -475,6 +476,28 @@ pub struct NativeValueRef<'call> {
     value: &'call Value,
 }
 
+/// A borrowed fieldless enum case visible during one native call.
+///
+/// The declaration and case names are descriptive only; native code cannot
+/// construct an enum value or obtain the compiler's private nominal identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeEnumCase<'call> {
+    enum_name: &'call str,
+    case_name: &'call str,
+}
+
+impl<'call> NativeEnumCase<'call> {
+    #[must_use]
+    pub fn enum_name(self) -> &'call str {
+        self.enum_name
+    }
+
+    #[must_use]
+    pub fn case_name(self) -> &'call str {
+        self.case_name
+    }
+}
+
 impl<'call> NativeValueRef<'call> {
     #[must_use]
     pub fn kind(self) -> NativeValueKind {
@@ -486,7 +509,8 @@ impl<'call> NativeValueRef<'call> {
             Value::Str(_) => NativeValueKind::String,
             Value::Bytes(_) => NativeValueKind::Bytes,
             Value::List(_) => NativeValueKind::List,
-            Value::Map(_) | Value::Enum(_) => NativeValueKind::Map,
+            Value::Map(_) => NativeValueKind::Map,
+            Value::Enum(_) => NativeValueKind::Enum,
             Value::StructSchema(_) => NativeValueKind::StructSchema,
             Value::Struct(_) => NativeValueKind::Struct,
             Value::Channel(_) => NativeValueKind::Channel,
@@ -561,6 +585,21 @@ impl<'call> NativeValueRef<'call> {
             return Err(self.type_error("bytes"));
         };
         Ok(value)
+    }
+
+    /// Borrows the declaration and case names of a fieldless enum value.
+    ///
+    /// # Errors
+    ///
+    /// Returns `native.type` when the value is not an enum case.
+    pub fn as_enum_case(self) -> Result<NativeEnumCase<'call>, NativeError> {
+        let Value::Enum(value) = self.value else {
+            return Err(self.type_error("enum"));
+        };
+        Ok(NativeEnumCase {
+            enum_name: value.name.as_ref(),
+            case_name: value.case.as_ref(),
+        })
     }
 
     #[must_use]

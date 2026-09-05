@@ -53,5 +53,8 @@ slug-fixtures path/to/fixtures --slug path/to/slug
 `tests/conformance/legacy-syntax/` is the minimal syntax-focused suite derived
 from the legacy Go Slug test corpus. Its sources intentionally omit the legacy
 test-library imports and assertion calls: each fixture isolates a language form
-that the Rust implementation currently supports. `tests/legacy_syntax_conformance.rs`
-runs the directory through `slug-fixtures` as part of `make test`.
+that the Rust implementation currently supports. `tests/conformance/nominal-types/`
+covers public nominal declarations, transparent aliases, imported type paths,
+alias-cycle diagnostics, and observable enum behavior.
+`tests/legacy_syntax_conformance.rs` runs the complete `tests/conformance/`
+tree through `slug-fixtures` as part of `make test`.

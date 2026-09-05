@@ -1,0 +1,4 @@
+val paths = import("paths")
+val values:paths.Paths = ["Slug"]
+val value:paths.Path = values[0]
+println(value)

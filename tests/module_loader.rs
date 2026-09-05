@@ -13,6 +13,21 @@ fn returns_native(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::string("native"))
 }
 
+fn describes_enum_case(call: &mut NativeCall<'_>) -> NativeStatus {
+    let value = match call
+        .argument(0)
+        .and_then(slug_vm::NativeValueRef::as_enum_case)
+    {
+        Ok(value) => value,
+        Err(error) => return call.raise(error),
+    };
+    call.return_value(NativeOwnedValue::string(format!(
+        "{}.{}",
+        value.enum_name(),
+        value.case_name()
+    )))
+}
+
 #[test]
 fn foreign_batch_registration_does_not_partially_install_descriptors() {
     let loader = ModuleLoader::new(".", None);
@@ -345,6 +360,42 @@ fn imports_enum_namespaces_and_nominal_type_metadata() {
         "{\"result\": \"start\"}"
     );
     fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn foreign_callbacks_can_inspect_checked_enum_cases() {
+    let root = root("native-enum-cases");
+    fs::create_dir_all(&root).expect("create enum module directory");
+    fs::write(
+        root.join("options.slug"),
+        "export enum SeekFrom { Start, End }\n\
+         export foreign describe = fn(value:SeekFrom):str\n",
+    )
+    .expect("write enum module");
+    let loader = ModuleLoader::new(&root, None);
+    let module = NativeModule::new("options", ()).expect("create native enum module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.define_foreign(
+        module
+            .function("describe", NativeArity::Exact(1), describes_enum_case)
+            .expect("register enum callback"),
+    )
+    .expect("install enum callback");
+    let program = loader
+        .compile_source(
+            &root.join("main.slug").to_string_lossy(),
+            "val options = import(\"options\")\n\
+             export val description = options.describe(options.SeekFrom.Start)\n",
+            true,
+        )
+        .expect("compile enum callback program");
+    vm.run_named(&program, "main")
+        .expect("run enum callback program");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"description\": \"SeekFrom.Start\"}"
+    );
+    fs::remove_dir_all(root).expect("remove enum module directory");
 }
 
 #[test]

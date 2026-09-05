@@ -158,8 +158,10 @@ operations. It never exposes Rust enums, reference counts, collection storage,
 strings owned by the VM, or raw object pointers.
 
 Within a call, native code may read `nil`, booleans, integers, floats, strings,
-bytes, lists, maps, structs, functions, channels, and native resources through
-kind-specific operations. A conversion either succeeds or reports a checked
+bytes, lists, maps, fieldless enum cases, structs, functions, channels, and
+native resources through kind-specific operations. `NativeValueRef::as_enum_case`
+borrows an enum declaration name and case name for the callback lifetime; it
+does not expose a constructor or the compiler's nominal identity. A conversion either succeeds or reports a checked
 type/range error; numeric narrowing is never implicit. UTF-8 strings and byte
 slices borrowed from a value have the same lifetime as the call unless copied.
 A callback may return a value it constructs during that call; the runtime takes
@@ -202,7 +204,8 @@ created by another module or by another registered type. Pointer values and
 integer addresses are never exposed as Slug values.
 
 When a module declares a source-level nominal resource type, its name MUST map
-to exactly one registration owned by that module. Calls through a matching
+to exactly one `NativeModule::resource_type(name, ...)` registration owned by
+that module. Calls through a matching
 `foreign` declaration validate resource arguments and results against that
 registration, including dynamically reached calls. The source language has no
 broad resource supertype; a callback accepting multiple kinds declares their

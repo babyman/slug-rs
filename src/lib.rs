@@ -39,9 +39,9 @@ pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeModule};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use native::{
-    NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeError,
-    NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus, NativeResourceType,
-    NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
+    NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeEnumCase,
+    NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,
+    NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
 };
 pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
 pub use value::{
