@@ -421,11 +421,8 @@ pub(super) fn resolve_resource_references(
 ) -> Result<Type, SourceError> {
     match value_type {
         Type::Resource(identity) if identity.is_unresolved() => environment
-            .resource_type(&identity.name)
-            .map(Type::Resource)
-            .ok_or_else(|| {
-                SourceError::semantic(format!("unknown type `{}`", identity.name), span.clone())
-            }),
+            .resolve_resource_type(&identity.name, span)
+            .map(Type::Resource),
         Type::List(element) => element
             .map(|element| resolve_resource_references(*element, span, environment).map(Box::new))
             .transpose()
@@ -455,11 +452,8 @@ fn resolve_schema_references(
 ) -> Result<Type, SourceError> {
     match value_type {
         Type::Resource(identity) if identity.is_unresolved() => environment
-            .resource_type(&identity.name)
-            .map(Type::Resource)
-            .ok_or_else(|| {
-                SourceError::semantic(format!("unknown type `{}`", identity.name), span.clone())
-            }),
+            .resolve_resource_type(&identity.name, span)
+            .map(Type::Resource),
         Type::Struct(Some(identity)) if identity.is_unresolved() => {
             let name = identity.name;
             let binding = environment.lookup(&name).ok_or_else(|| {

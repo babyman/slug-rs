@@ -53,14 +53,14 @@ the language specification remain authoritative.
 - [x] Extract the duplicated schema/resource identity mechanics into one
   private nominal-identity representation with stable declaring-module and
   declaration-name components.
-- [ ] Represent exported types separately from runtime value exports in module
+- [x] Represent exported types separately from runtime value exports in module
   snapshots and loader metadata.
-- [ ] Support qualified type paths through imported module bindings, including
+- [x] Support qualified type paths through imported module bindings, including
   deterministic diagnostics for unknown module bindings, unknown type members,
   and non-module prefixes.
-- [ ] Preserve nominal identity through aliases, collection inference, unions,
+- [x] Preserve nominal identity through aliases, collection inference, unions,
   callable signatures, imported overload snapshots, and module caching.
-- [ ] Audit union normalization, type display, overload specificity, and match
+- [x] Audit union normalization, type display, overload specificity, and match
   coverage so nominal identity is compared by identity rather than spelling.
 
 ## 3. Fieldless enums

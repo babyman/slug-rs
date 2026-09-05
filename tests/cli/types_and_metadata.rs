@@ -36,6 +36,39 @@ fn rejects_duplicate_resource_declarations() {
 }
 
 #[test]
+fn resolves_resource_types_only_through_imported_module_type_namespaces() {
+    let path = fixture_path("qualified-resource-type-paths");
+    for (source, expected) in [
+        (
+            "val file:missing.File = nil\n",
+            "unknown module binding `missing`",
+        ),
+        (
+            "val fs = 1\nval file:fs.File = nil\n",
+            "type prefix `fs` is not a module binding",
+        ),
+        (
+            "val fs = import(\"slug.io.fs\")\nval file:fs.Missing = nil\n",
+            "unknown type `fs.Missing`",
+        ),
+    ] {
+        fs::write(&path, source).expect("write invalid qualified resource type");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid qualified resource type");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .contains(expected)
+        );
+    }
+    fs::remove_file(path).expect("remove qualified resource type fixture");
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     let path = fixture_path("type-annotations");

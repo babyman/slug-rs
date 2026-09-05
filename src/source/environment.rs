@@ -90,6 +90,25 @@ pub(super) struct SemanticBinding {
     pub(super) required_fields: HashSet<String>,
     pub(super) schema_identity: Option<SchemaIdentity>,
     pub(super) resource_identity: Option<ResourceIdentity>,
+    pub(super) type_members: HashMap<String, TypeMember>,
+    pub(super) module_binding: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum TypeMember {
+    Resource(ResourceIdentity),
+}
+
+impl TypeMember {
+    pub(super) fn with_resource_runtime_module(&self, module: &str) -> Self {
+        match self {
+            Self::Resource(identity) => {
+                let mut identity = identity.clone();
+                identity.set_runtime_module(module.into());
+                Self::Resource(identity)
+            }
+        }
+    }
 }
 
 impl SemanticBinding {
@@ -101,6 +120,8 @@ impl SemanticBinding {
             required_fields: HashSet::new(),
             schema_identity: None,
             resource_identity: None,
+            type_members: HashMap::new(),
+            module_binding: false,
         }
     }
 
@@ -112,10 +133,15 @@ impl SemanticBinding {
             required_fields: HashSet::new(),
             schema_identity: None,
             resource_identity: None,
+            type_members: HashMap::new(),
+            module_binding: false,
         }
     }
 
-    pub(super) fn module(members: HashMap<String, SemanticBinding>) -> Self {
+    pub(super) fn module(
+        members: HashMap<String, SemanticBinding>,
+        type_members: HashMap<String, TypeMember>,
+    ) -> Self {
         Self {
             value_type: Type::Map(None),
             callables: Vec::new(),
@@ -123,6 +149,8 @@ impl SemanticBinding {
             required_fields: HashSet::new(),
             schema_identity: None,
             resource_identity: None,
+            type_members,
+            module_binding: true,
         }
     }
 
@@ -152,6 +180,7 @@ pub(super) fn function_value_type(signature: &CallableSignature) -> Type {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ModuleSnapshot {
     pub(super) exports: HashMap<String, SemanticBinding>,
+    pub(super) types: HashMap<String, TypeMember>,
 }
 
 pub(super) type ImportSnapshots = HashMap<String, ModuleSnapshot>;
@@ -178,6 +207,7 @@ struct SemanticRecords {
 #[derive(Clone, Debug)]
 pub(super) struct Environment {
     scopes: Vec<HashMap<String, SemanticBinding>>,
+    type_scopes: Vec<HashMap<String, TypeMember>>,
     imports: Rc<ImportSnapshots>,
     records: Rc<RefCell<SemanticRecords>>,
 }
@@ -191,6 +221,7 @@ impl Environment {
     pub(super) fn with_imports(imports: ImportSnapshots) -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            type_scopes: vec![HashMap::new()],
             imports: Rc::new(imports),
             records: Rc::new(RefCell::new(SemanticRecords::default())),
         }
@@ -198,12 +229,14 @@ impl Environment {
 
     pub(super) fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.type_scopes.push(HashMap::new());
     }
 
     #[cfg(test)]
     pub(super) fn leave_scope(&mut self) {
         debug_assert!(self.scopes.len() > 1);
         self.scopes.pop();
+        self.type_scopes.pop();
     }
 
     pub(super) fn declare(&mut self, name: String, binding: SemanticBinding) {
@@ -211,6 +244,13 @@ impl Environment {
             .last_mut()
             .expect("a semantic environment always has a scope")
             .insert(name, binding);
+    }
+
+    pub(super) fn declare_type(&mut self, name: String, member: TypeMember) {
+        self.type_scopes
+            .last_mut()
+            .expect("a semantic environment always has a type scope")
+            .insert(name, member);
     }
 
     pub(super) fn declare_callable(
@@ -287,16 +327,52 @@ impl Environment {
         if let Some((module, type_name)) = name.split_once('.') {
             return self
                 .lookup(module)
-                .and_then(|binding| binding.members.get(type_name))
-                .and_then(|binding| binding.resource_identity.clone());
+                .filter(|binding| binding.module_binding)
+                .and_then(|binding| binding.type_members.get(type_name))
+                .map(|member| match member {
+                    TypeMember::Resource(identity) => identity.clone(),
+                });
         }
-        self.scopes
+        self.type_scopes
             .iter()
             .rev()
-            .flat_map(|scope| scope.values())
-            .filter_map(|binding| binding.resource_identity.as_ref())
-            .find(|identity| identity.name == name)
-            .cloned()
+            .find_map(|scope| scope.get(name))
+            .map(|member| match member {
+                TypeMember::Resource(identity) => identity.clone(),
+            })
+    }
+
+    pub(super) fn resolve_resource_type(
+        &self,
+        name: &str,
+        span: &SourceSpan,
+    ) -> Result<ResourceIdentity, super::SourceError> {
+        if let Some((module, type_name)) = name.split_once('.') {
+            let binding = self.lookup(module).ok_or_else(|| {
+                super::SourceError::semantic(
+                    format!("unknown module binding `{module}`"),
+                    span.clone(),
+                )
+            })?;
+            if !binding.module_binding {
+                return Err(super::SourceError::semantic(
+                    format!("type prefix `{module}` is not a module binding"),
+                    span.clone(),
+                ));
+            }
+            return binding
+                .type_members
+                .get(type_name)
+                .map(|member| match member {
+                    TypeMember::Resource(identity) => identity.clone(),
+                })
+                .ok_or_else(|| {
+                    super::SourceError::semantic(format!("unknown type `{name}`"), span.clone())
+                });
+        }
+        self.resource_type(name).ok_or_else(|| {
+            super::SourceError::semantic(format!("unknown type `{name}`"), span.clone())
+        })
     }
 
     pub(super) fn merge_compatible_types(&mut self, left: &Self, right: &Self) {

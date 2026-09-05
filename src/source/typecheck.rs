@@ -244,6 +244,7 @@ fn analyze(
 ) -> Result<SemanticAnalysis, SourceError> {
     let mut environment = Environment::with_imports(imports);
     let mut exports = HashMap::new();
+    let mut types = HashMap::new();
     let mut resource_names = HashSet::new();
     for expression in expressions {
         if let ExprKind::Resource { exported, name } = &expression.kind {
@@ -253,20 +254,19 @@ fn analyze(
                     expression.span.clone(),
                 ));
             }
-            let _ = exported;
-            let mut binding = SemanticBinding::value(Type::Unknown);
-            binding.resource_identity = Some(ResourceIdentity::declared(
-                expression.span.path.as_ref(),
+            let identity = ResourceIdentity::declared(expression.span.path.as_ref(), name.clone());
+            environment.declare_type(
                 name.clone(),
-            ));
-            environment.declare(format!("<resource:{name}>"), binding);
+                super::environment::TypeMember::Resource(identity),
+            );
+            let _ = exported;
         }
     }
     for expression in expressions {
         check_expression(expression, &mut environment, &[], strict)?;
-        record_exports(expression, &environment, &mut exports);
+        record_exports(expression, &environment, &mut exports, &mut types);
     }
-    Ok(environment.analysis(ModuleSnapshot { exports }))
+    Ok(environment.analysis(ModuleSnapshot { exports, types }))
 }
 
 fn function_type(
@@ -338,6 +338,7 @@ fn record_exports(
     expression: &Expr,
     environment: &Environment,
     exports: &mut HashMap<String, SemanticBinding>,
+    types: &mut HashMap<String, super::environment::TypeMember>,
 ) {
     match &expression.kind {
         ExprKind::Declare {
@@ -367,9 +368,10 @@ fn record_exports(
             name,
         } => {
             if let Some(identity) = environment.resource_type(name) {
-                let mut binding = SemanticBinding::value(Type::Unknown);
-                binding.resource_identity = Some(identity);
-                exports.insert(name.clone(), binding);
+                types.insert(
+                    name.clone(),
+                    super::environment::TypeMember::Resource(identity),
+                );
             }
         }
         _ => {}
@@ -1425,7 +1427,7 @@ fn expression_binding(expression: &Expr, environment: &Environment) -> Option<Se
             collection.members.get(name.as_ref()).cloned()
         }
         ExprKind::Call { callee, arguments } if matches!(&callee.kind, ExprKind::Name(name) if name == "import") => {
-            imported_modules(arguments, environment).map(SemanticBinding::module)
+            imported_modules(arguments, environment)
         }
         _ => None,
     }
@@ -1556,8 +1558,9 @@ fn known_struct_field_type(
 fn imported_modules(
     arguments: &[CallArgument],
     environment: &Environment,
-) -> Option<HashMap<String, SemanticBinding>> {
+) -> Option<SemanticBinding> {
     let mut result: HashMap<String, SemanticBinding> = HashMap::new();
+    let mut type_members = HashMap::new();
     for argument in arguments {
         let CallArgument::Positional(Expr {
             kind: ExprKind::Value(Value::Str(module_name)),
@@ -1587,8 +1590,13 @@ fn imported_modules(
                 }
             }
         }
+        for (name, member) in &snapshot.types {
+            type_members
+                .entry(name.clone())
+                .or_insert_with(|| member.with_resource_runtime_module(module_name.as_ref()));
+        }
     }
-    Some(result)
+    Some(SemanticBinding::module(result, type_members))
 }
 
 fn bind_semantic_pattern(

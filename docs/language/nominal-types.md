@@ -17,7 +17,8 @@ export type Path = str
 `resource` and `enum` introduce nominal types. `type` introduces a transparent
 alias. These declarations are valid only at module top level. `export` makes a
 type name available to importers in the module's compile-time type namespace;
-ordinary values and type names remain separate namespaces.
+ordinary values and type names remain separate namespaces. An exported resource
+name is absent from an imported module's runtime value map.
 
 ## Resource handles
 
