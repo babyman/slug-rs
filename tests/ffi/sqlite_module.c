@@ -49,7 +49,7 @@ static int32_t open_memory(const slug_ffi_host_api *host, slug_ffi_call *call, v
     return SLUG_FFI_ERROR;
   }
   database->database = raw_database;
-  if (!host->set_resource(call, (slug_ffi_text){"sqlite.db", 9}, database)) {
+  if (!host->set_resource(call, (slug_ffi_text){"Database", 8}, database)) {
     destroy_database(database);
     return SLUG_FFI_ERROR;
   }
@@ -60,7 +60,7 @@ static int32_t exec_sql(const slug_ffi_host_api *host, slug_ffi_call *call, void
   (void)state;
   void *raw_database = NULL;
   slug_ffi_text sql;
-  if (!host->argument_resource(call, 0, (slug_ffi_text){"sqlite.db", 9}, &raw_database) ||
+  if (!host->argument_resource(call, 0, (slug_ffi_text){"Database", 8}, &raw_database) ||
       !host->argument_text(call, 1, &sql)) return SLUG_FFI_ERROR;
   if (sql.length > INT_MAX) {
     host->set_error(call, (slug_ffi_text){"sqlite.error", 12},
@@ -88,7 +88,7 @@ static int32_t query_int(const slug_ffi_host_api *host, slug_ffi_call *call, voi
   (void)state;
   void *raw_database = NULL;
   slug_ffi_text sql;
-  if (!host->argument_resource(call, 0, (slug_ffi_text){"sqlite.db", 9}, &raw_database) ||
+  if (!host->argument_resource(call, 0, (slug_ffi_text){"Database", 8}, &raw_database) ||
       !host->argument_text(call, 1, &sql)) return SLUG_FFI_ERROR;
   if (sql.length > INT_MAX) {
     host->set_error(call, (slug_ffi_text){"sqlite.error", 12},
@@ -119,7 +119,7 @@ static int32_t query_int(const slug_ffi_host_api *host, slug_ffi_call *call, voi
 static int32_t close_database(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
   void *raw_database = NULL;
-  if (!host->argument_resource(call, 0, (slug_ffi_text){"sqlite.db", 9}, &raw_database)) {
+  if (!host->argument_resource(call, 0, (slug_ffi_text){"Database", 8}, &raw_database)) {
     return SLUG_FFI_ERROR;
   }
   sqlite_database *database = raw_database;
@@ -128,7 +128,7 @@ static int32_t close_database(const slug_ffi_host_api *host, slug_ffi_call *call
     return SLUG_FFI_ERROR;
   }
   database->database = NULL;
-  if (!host->close_resource(call, 0, (slug_ffi_text){"sqlite.db", 9})) {
+  if (!host->close_resource(call, 0, (slug_ffi_text){"Database", 8})) {
     return SLUG_FFI_ERROR;
   }
   host->set_i64(call, 0);
@@ -139,7 +139,7 @@ static int32_t prepare_statement(const slug_ffi_host_api *host, slug_ffi_call *c
   (void)state;
   void *raw_database = NULL;
   slug_ffi_text sql;
-  if (!host->argument_resource(call, 0, (slug_ffi_text){"sqlite.db", 9}, &raw_database) ||
+  if (!host->argument_resource(call, 0, (slug_ffi_text){"Database", 8}, &raw_database) ||
       !host->argument_text(call, 1, &sql)) return SLUG_FFI_ERROR;
   if (sql.length > INT_MAX) {
     host->set_error(call, (slug_ffi_text){"sqlite.error", 12},
@@ -160,7 +160,7 @@ static int32_t prepare_statement(const slug_ffi_host_api *host, slug_ffi_call *c
     destroy_statement(statement);
     return SLUG_FFI_ERROR;
   }
-  if (!host->set_resource(call, (slug_ffi_text){"sqlite.statement", 16}, statement)) {
+  if (!host->set_resource(call, (slug_ffi_text){"Statement", 9}, statement)) {
     destroy_statement(statement);
     return SLUG_FFI_ERROR;
   }
@@ -172,7 +172,7 @@ static int32_t bind_int(const slug_ffi_host_api *host, slug_ffi_call *call, void
   void *raw_statement = NULL;
   int64_t index = 0;
   int64_t value = 0;
-  if (!host->argument_resource(call, 0, (slug_ffi_text){"sqlite.statement", 16}, &raw_statement) ||
+  if (!host->argument_resource(call, 0, (slug_ffi_text){"Statement", 9}, &raw_statement) ||
       !host->argument_i64(call, 1, &index) || !host->argument_i64(call, 2, &value)) {
     return SLUG_FFI_ERROR;
   }
@@ -193,7 +193,7 @@ static int32_t bind_int(const slug_ffi_host_api *host, slug_ffi_call *call, void
 static int32_t step_int(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
   void *raw_statement = NULL;
-  if (!host->argument_resource(call, 0, (slug_ffi_text){"sqlite.statement", 16}, &raw_statement)) {
+  if (!host->argument_resource(call, 0, (slug_ffi_text){"Statement", 9}, &raw_statement)) {
     return SLUG_FFI_ERROR;
   }
   sqlite_statement *statement = raw_statement;
@@ -208,7 +208,7 @@ static int32_t step_int(const slug_ffi_host_api *host, slug_ffi_call *call, void
 
 static int32_t close_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
-  if (!host->close_resource(call, 0, (slug_ffi_text){"sqlite.statement", 16})) {
+  if (!host->close_resource(call, 0, (slug_ffi_text){"Statement", 9})) {
     return SLUG_FFI_ERROR;
   }
   host->set_i64(call, 0);
@@ -227,8 +227,8 @@ static const slug_ffi_function_descriptor FUNCTIONS[] = {
 };
 
 static const slug_ffi_resource_descriptor RESOURCES[] = {
-  {sizeof(slug_ffi_resource_descriptor), {"sqlite.db", 9}, {"Database", 8}, destroy_database},
-  {sizeof(slug_ffi_resource_descriptor), {"sqlite.statement", 16}, {"Statement", 9}, destroy_statement},
+  {sizeof(slug_ffi_resource_descriptor), {"Database", 8}, destroy_database},
+  {sizeof(slug_ffi_resource_descriptor), {"Statement", 9}, destroy_statement},
 };
 
 static const slug_ffi_module_descriptor MODULE = {

@@ -78,7 +78,6 @@ struct FunctionDescriptor {
 struct ResourceDescriptor {
     descriptor_size: u32,
     name: FfiText,
-    slug_name: FfiText,
     destroy_resource: Option<ResourceDestroy>,
 }
 
@@ -205,7 +204,6 @@ type ValidatedDescriptor = (
 
 struct RegisteredResource {
     name: String,
-    slug_name: String,
     destroy: ResourceDestroy,
 }
 
@@ -324,12 +322,7 @@ impl FfiPrototypeModule {
                 .into_iter()
                 .map(|resource| {
                     let resource_type = module
-                        .resource_type_with_slug_name(
-                            resource.name.clone(),
-                            resource.slug_name.clone(),
-                            close_c_resource,
-                            destroy_c_resource,
-                        )
+                        .resource_type(resource.name.clone(), close_c_resource, destroy_c_resource)
                         .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
                     Ok((resource.name, resource_type, resource.destroy))
                 })
@@ -895,7 +888,6 @@ unsafe fn validate_resources(
         unsafe { std::slice::from_raw_parts(descriptors, resource_count) }
     };
     let mut resource_names = std::collections::HashSet::new();
-    let mut slug_resource_names = std::collections::HashSet::new();
     let mut resources = Vec::with_capacity(resource_count);
     for resource in descriptors {
         if resource.descriptor_size
@@ -910,13 +902,6 @@ unsafe fn validate_resources(
             .ok_or_else(|| {
                 FfiPrototypeError::new("FFI module has an invalid resource type name")
             })?;
-        let slug_name = unsafe { text_from_ffi(resource.slug_name) }
-            .filter(|name| !name.trim().is_empty())
-            .ok_or_else(|| {
-                FfiPrototypeError::new(format!(
-                    "FFI resource type `{name}` has an invalid Slug type name"
-                ))
-            })?;
         let destroy = resource.destroy_resource.ok_or_else(|| {
             FfiPrototypeError::new(format!(
                 "FFI resource type `{name}` has no destroy callback"
@@ -927,16 +912,7 @@ unsafe fn validate_resources(
                 "FFI module declares resource type `{name}` more than once"
             )));
         }
-        if !slug_resource_names.insert(slug_name.clone()) {
-            return Err(FfiPrototypeError::new(format!(
-                "FFI module declares Slug resource type `{slug_name}` more than once"
-            )));
-        }
-        resources.push(RegisteredResource {
-            name,
-            slug_name,
-            destroy,
-        });
+        resources.push(RegisteredResource { name, destroy });
     }
     Ok(resources)
 }

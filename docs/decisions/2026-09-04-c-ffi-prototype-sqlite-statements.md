@@ -9,7 +9,7 @@ drop order.
 
 ## Decision
 
-The SQLite fixture declares `sqlite.statement` as a second opaque resource.
+The SQLite fixture declares `Statement` as a second opaque resource.
 It exposes prepare, integer binding, single-row integer stepping, and explicit
 statement close. An explicit `close(database)` first calls `sqlite3_close` and
 returns `sqlite.error` when active statements make the close busy. Final
@@ -26,5 +26,6 @@ without adding parent-child edges to the general host resource API.
 
 ## Migration
 
-None. The prototype header is unchanged; the SQLite fixture adds descriptors
-within the existing resource-table contract.
+The resource-table names are the exact public names declared by the companion
+Slug module: `Database` and `Statement`. There is no separate internal-to-Slug
+resource-name mapping.

@@ -27,10 +27,9 @@ destructuring operation for a resource handle. Only a native callback owned by
 the declaring module can create one.
 
 Each declared resource name corresponds to exactly one native resource type
-registered by the same module. A native registration has an internal host name
-and a Slug-visible name; the latter must match the source declaration exactly.
-A foreign call crossing that boundary MUST validate declared resource arguments
-and results against that registration.
+registered by the same module under that exact name. A foreign call crossing
+that boundary MUST validate declared resource arguments and results against
+that registration.
 The validation applies even when a call is dynamically reached or optional
 static checking is disabled.
 

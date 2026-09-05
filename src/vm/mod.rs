@@ -621,7 +621,7 @@ impl Vm {
                         None,
                     ));
                 }
-                registered_resource_types.extend(function.slug_resource_type_names());
+                registered_resource_types.extend(function.resource_type_names());
                 let identity = declaration
                     .foreign_callable_identity
                     .clone()

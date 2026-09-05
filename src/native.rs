@@ -641,7 +641,6 @@ struct NativeModuleInner {
     state: Box<dyn Any>,
     function_signatures: RefCell<HashSet<(String, NativeArity)>>,
     resource_types: RefCell<HashSet<String>>,
-    slug_resource_types: RefCell<HashSet<String>>,
 }
 
 impl NativeModule {
@@ -664,7 +663,6 @@ impl NativeModule {
                 state: Box::new(state),
                 function_signatures: RefCell::new(HashSet::new()),
                 resource_types: RefCell::new(HashSet::new()),
-                slug_resource_types: RefCell::new(HashSet::new()),
             }),
         })
     }
@@ -750,69 +748,27 @@ impl NativeModule {
         destroy: fn(T),
     ) -> Result<NativeResourceType<T>, NativeDescriptorError> {
         let name = name.into();
-        self.resource_type_with_slug_name(name.clone(), name, close, destroy)
-    }
-
-    /// Registers a native resource with a distinct Slug-visible type name.
-    ///
-    /// The native name remains available for host diagnostics and internal
-    /// dispatch, while `slug_name` is the contract checked against source
-    /// `resource` declarations.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when either name is empty or either name is already
-    /// registered by this module.
-    pub fn resource_type_with_slug_name<T: Any>(
-        &self,
-        name: impl Into<Rc<str>>,
-        slug_name: impl Into<Rc<str>>,
-        close: fn(&mut T),
-        destroy: fn(T),
-    ) -> Result<NativeResourceType<T>, NativeDescriptorError> {
-        let name = name.into();
-        let slug_name = slug_name.into();
         if name.trim().is_empty() {
             return Err(NativeDescriptorError::new(
                 "native resource type name cannot be empty",
             ));
         }
-        if slug_name.trim().is_empty() {
-            return Err(NativeDescriptorError::new(
-                "Slug resource type name cannot be empty",
-            ));
-        }
-        if self.inner.resource_types.borrow().contains(name.as_ref()) {
+        if !self
+            .inner
+            .resource_types
+            .borrow_mut()
+            .insert(name.to_string())
+        {
             return Err(NativeDescriptorError::new(format!(
                 "native resource type `{}` is already registered in module `{}`",
                 name, self.inner.name
             )));
         }
-        if self
-            .inner
-            .slug_resource_types
-            .borrow()
-            .contains(slug_name.as_ref())
-        {
-            return Err(NativeDescriptorError::new(format!(
-                "Slug resource type `{}` is already registered in module `{}`",
-                slug_name, self.inner.name
-            )));
-        }
-        self.inner
-            .resource_types
-            .borrow_mut()
-            .insert(name.to_string());
-        self.inner
-            .slug_resource_types
-            .borrow_mut()
-            .insert(slug_name.to_string());
         Ok(NativeResourceType {
             registration: Rc::new(ResourceTypeRegistration {
                 id: NEXT_RESOURCE_TYPE_ID.fetch_add(1, Ordering::Relaxed),
                 module_id: self.inner.id,
                 name,
-                slug_name,
                 close: Box::new(move |payload| {
                     if let Some(payload) = payload.downcast_mut::<T>() {
                         close(payload);
@@ -828,8 +784,8 @@ impl NativeModule {
         })
     }
 
-    fn slug_resource_type_names(&self) -> HashSet<String> {
-        self.inner.slug_resource_types.borrow().clone()
+    fn resource_type_names(&self) -> HashSet<String> {
+        self.inner.resource_types.borrow().clone()
     }
 }
 
@@ -902,8 +858,8 @@ impl NativeFunction {
         }
     }
 
-    pub(crate) fn slug_resource_type_names(&self) -> HashSet<String> {
-        self.0.module.slug_resource_type_names()
+    pub(crate) fn resource_type_names(&self) -> HashSet<String> {
+        self.0.module.resource_type_names()
     }
 
     pub(crate) fn invoke(&self, arguments: &[Value]) -> NativeInvocation {
@@ -1008,7 +964,6 @@ struct ResourceTypeRegistration {
     id: usize,
     module_id: usize,
     name: Rc<str>,
-    slug_name: Rc<str>,
     close: Box<ResourceClose>,
     destroy: Box<ResourceDestroy>,
 }
@@ -1033,7 +988,6 @@ impl fmt::Debug for NativeResource {
         f.debug_struct("NativeResource")
             .field("module", &self.module.name)
             .field("resource_type", &self.registration.name)
-            .field("slug_resource_type", &self.registration.slug_name)
             .field("state", &self.state.get())
             .finish_non_exhaustive()
     }
@@ -1348,34 +1302,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resource_registration_keeps_native_and_slug_names_distinct() {
+    fn resource_registration_names_are_unique_per_module() {
         let module = NativeModule::new("test.resources", ()).unwrap();
         module
-            .resource_type_with_slug_name(
-                "test.resource",
-                "Resource",
-                |_payload: &mut ()| {},
-                |_payload: ()| {},
-            )
+            .resource_type("Resource", |_payload: &mut ()| {}, |_payload: ()| {})
             .unwrap();
 
         assert_eq!(
-            module.slug_resource_type_names(),
+            module.resource_type_names(),
             HashSet::from(["Resource".to_owned()])
         );
-        let result = module.resource_type_with_slug_name(
-            "test.other_resource",
-            "Resource",
-            |_payload: &mut ()| {},
-            |_payload: ()| {},
-        );
+        let result = module.resource_type("Resource", |_payload: &mut ()| {}, |_payload: ()| {});
         let Err(error) = result else {
-            panic!("public Slug resource names must be unique per module");
+            panic!("resource names must be unique per module");
         };
         assert!(
             error
                 .to_string()
-                .contains("Slug resource type `Resource` is already registered")
+                .contains("native resource type `Resource` is already registered")
         );
     }
 
