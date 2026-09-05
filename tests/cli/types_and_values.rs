@@ -5,7 +5,11 @@ fn fieldless_enum_values_are_qualified_nominal_values() {
     let path = fixture_path("fieldless-enums");
     fs::write(
         &path,
-        "enum SeekFrom { Start, Current, End }\n\
+        "enum SeekFrom {\n\
+           Start,\n\
+           Current,\n\
+           End,\n\
+         }\n\
          val from:SeekFrom = SeekFrom.Start\n\
          println(from == SeekFrom.Start, from == SeekFrom.End)\n\
          println(match from {\n\

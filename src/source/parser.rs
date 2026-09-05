@@ -266,6 +266,7 @@ impl Parser {
                 return Err(SourceError::at("expected enum type name", token.span));
             };
             self.consume(&TokenKind::LBrace, "expected { after enum name")?;
+            self.separators();
             let mut cases = Vec::new();
             while !self.matches(&TokenKind::RBrace) {
                 let token = self.next();
@@ -283,6 +284,7 @@ impl Parser {
                     break;
                 }
                 self.next();
+                self.separators();
                 if self.matches(&TokenKind::RBrace) {
                     break;
                 }
