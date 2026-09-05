@@ -151,10 +151,8 @@ pub struct ModuleDeclaration {
 #[derive(Clone, Debug)]
 pub enum MatchPattern {
     Literal(Value),
-    Enum {
-        name: String,
-        case: String,
-    },
+    /// A qualified enum case evaluated before attempting the pattern.
+    Enum(usize),
     Wildcard,
     Binding,
     Pinned(usize),
@@ -1127,11 +1125,8 @@ impl Program {
                 .ok_or_else(|| format!("match pattern operand {index} does not exist"))
         };
         match pattern {
-            MatchPattern::Literal(_)
-            | MatchPattern::Enum { .. }
-            | MatchPattern::Wildcard
-            | MatchPattern::Binding => Ok(()),
-            MatchPattern::Pinned(index) => operand(*index),
+            MatchPattern::Literal(_) | MatchPattern::Wildcard | MatchPattern::Binding => Ok(()),
+            MatchPattern::Enum(index) | MatchPattern::Pinned(index) => operand(*index),
             MatchPattern::At(pattern) => Self::validate_pattern(pattern, operands),
             MatchPattern::Alternatives(patterns) => patterns
                 .iter()
@@ -1175,7 +1170,7 @@ impl Program {
     fn pattern_bindings(pattern: &MatchPattern) -> Option<usize> {
         match pattern {
             MatchPattern::Literal(_)
-            | MatchPattern::Enum { .. }
+            | MatchPattern::Enum(_)
             | MatchPattern::Wildcard
             | MatchPattern::Pinned(_) => Some(0),
             MatchPattern::Binding => Some(1),

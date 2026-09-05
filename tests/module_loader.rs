@@ -318,6 +318,36 @@ fn import_conflicts_keep_the_first_binding_and_report_a_warning() {
 }
 
 #[test]
+fn imports_enum_namespaces_and_nominal_type_metadata() {
+    let root = root("enum-imports");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("options.slug"),
+        "export enum SeekFrom { Start, End }\n",
+    )
+    .expect("write enum module");
+    fs::write(
+        root.join("main.slug"),
+        "val options = import(\"options\")\n\
+         val from:options.SeekFrom = options.SeekFrom.Start\n\
+         export val result = match from {\n\
+           options.SeekFrom.Start => \"start\"\n\
+           _ => \"other\"\n\
+         }\n",
+    )
+    .expect("write importer");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader.compile(None, "main").expect("compile enum importer");
+    let mut vm = Vm::with_module_loader(loader);
+    vm.run_named(&program, "main").expect("run enum importer");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": \"start\"}"
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn local_bindings_shadow_all_imports_with_a_warning() {
     let root = root("import-shadowing");
     fs::create_dir_all(&root).expect("create module directory");

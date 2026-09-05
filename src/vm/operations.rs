@@ -272,9 +272,15 @@ pub(super) fn matches_pattern(
 ) -> Result<bool, (RuntimeErrorKind, String)> {
     match pattern {
         MatchPattern::Literal(expected) => Ok(value == expected),
-        MatchPattern::Enum { name, case } => Ok(
-            matches!(value, Value::Enum(value) if value.name.as_ref() == name && value.case.as_ref() == case),
-        ),
+        MatchPattern::Enum(index) => operands
+            .get(*index)
+            .map(|expected| value == expected)
+            .ok_or_else(|| {
+                (
+                    RuntimeErrorKind::InvalidBytecode,
+                    "enum match operand is missing".into(),
+                )
+            }),
         MatchPattern::Wildcard => Ok(true),
         MatchPattern::Binding => {
             bindings.push(value.clone());

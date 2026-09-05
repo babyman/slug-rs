@@ -294,6 +294,24 @@ fn analyze(
         }
     }
     for expression in expressions {
+        let name = match &expression.kind {
+            ExprKind::Declare {
+                pattern: Pattern::Binding(name),
+                ..
+            }
+            | ExprKind::Foreign { name, .. } => Some(name),
+            _ => None,
+        };
+        if let Some(name) = name
+            && enum_names.contains(name)
+        {
+            return Err(SourceError::semantic(
+                format!("enum type `{name}` conflicts with a value declaration"),
+                expression.span.clone(),
+            ));
+        }
+    }
+    for expression in expressions {
         check_expression(expression, &mut environment, &[], strict)?;
         record_exports(expression, &environment, &mut exports, &mut types);
     }

@@ -1423,10 +1423,31 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
             exact: *exact,
         },
         Pattern::MapAll => unreachable!("{{*}} declarations do not lower to match bytecode"),
-        Pattern::EnumCase { path, case } => MatchPattern::Enum {
-            name: path.clone(),
-            case: case.clone(),
-        },
+        Pattern::EnumCase { path, case } => {
+            let mut value = Expr {
+                kind: ExprKind::Name(path.split('.').next().expect("enum path has a name").into()),
+                span: SourceSpan::new("<internal>", 1, 1),
+            };
+            for member in path
+                .split('.')
+                .skip(1)
+                .chain(std::iter::once(case.as_str()))
+            {
+                value = Expr {
+                    kind: ExprKind::Index {
+                        collection: Box::new(value),
+                        index: Box::new(Expr {
+                            kind: ExprKind::Value(Value::string(member)),
+                            span: SourceSpan::new("<internal>", 1, 1),
+                        }),
+                    },
+                    span: SourceSpan::new("<internal>", 1, 1),
+                };
+            }
+            let index = operands.len();
+            operands.push(PatternOperand::Computed(value));
+            MatchPattern::Enum(index)
+        }
     }
 }
 

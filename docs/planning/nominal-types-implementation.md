@@ -67,35 +67,35 @@ the language specification remain authoritative.
 
 ### Declaration and namespace
 
-- [ ] Lex and parse top-level `enum Name { Case, ... }` declarations.
-- [ ] Reject nested declarations, duplicate enum names, duplicate cases, empty
+- [x] Lex and parse top-level `enum Name { Case, ... }` declarations.
+- [x] Reject nested declarations, duplicate enum names, duplicate cases, empty
   or malformed case lists according to the normative grammar, and collisions
   with enum value namespaces.
-- [ ] Introduce a nominal `Enum` type with identity and its closed ordered case
+- [x] Introduce a nominal `Enum` type with identity and its closed ordered case
   set in semantic/module metadata.
-- [ ] Compile an enum declaration to an immutable enum namespace value while
+- [x] Compile an enum declaration to an immutable enum namespace value while
   retaining its type only in the type namespace.
-- [ ] Export enum type metadata and its namespace value; preserve both across
+- [x] Export enum type metadata and its namespace value; preserve both across
   normal imports and module caching.
 
 ### Values and expressions
 
-- [ ] Add a private runtime enum value carrying enum identity and case identity.
-- [ ] Resolve `SeekFrom.Start` and imported `options.SeekFrom.Start` as enum
+- [x] Add a private runtime enum value carrying enum identity and case identity.
+- [x] Resolve `SeekFrom.Start` and imported `options.SeekFrom.Start` as enum
   values; reject bare `Start`, missing cases, and selection from non-enum
   values with checked source errors.
-- [ ] Define enum display/debug output and equality: only the same enum
+- [x] Define enum display/debug output and equality: only the same enum
   identity and case compare equal.
-- [ ] Keep enums distinct from strings, numbers, structs, maps, and resources;
+- [x] Keep enums distinct from strings, numbers, structs, maps, and resources;
   add no casts, integer discriminants, flags, payloads, or constructors.
 
 ### Types and matching
 
-- [ ] Resolve local and imported enum types in annotations, unions,
+- [x] Resolve local and imported enum types in annotations, unions,
   collections, channels, parameters, and returns.
-- [ ] Parse qualified enum case patterns without treating the first name as a
+- [x] Parse qualified enum case patterns without treating the first name as a
   binding; lower them to private match patterns with no accidental capture.
-- [ ] Make enum types runtime-checkable in whole-case constraints.
+- [x] Make enum types runtime-checkable in whole-case constraints.
 - [ ] Extend closed-match coverage to enumerate all enum cases, respecting
   guards and existing unreachable/disjoint diagnostics.
 - [ ] Prove local/imported equality, mismatch, qualification, exhaustive and
