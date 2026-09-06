@@ -253,6 +253,44 @@ fn infers_and_checks_binary_operator_results() {
 }
 
 #[test]
+fn infers_block_results_without_leaking_block_bindings() {
+    let path = fixture_path("block-result-inference");
+    fs::write(
+        &path,
+        "val doubled:num = { val value = 10\nvalue * 2 }\n\
+         val empty:nil = if (true) {}\n\
+         println(doubled, empty)\n",
+    )
+    .expect("write block result inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run block result inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "20 nil\n");
+
+    fs::write(&path, "val result = { val local = 1\nlocal }\nlocal\n")
+        .expect("write escaped block binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run escaped block binding source");
+    fs::remove_file(path).expect("remove block result inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: runtime error: unknown name `local`"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(

@@ -251,6 +251,10 @@ Also test empty and non-value-producing blocks according to Slug semantics.
 
 **Check:** local scope ends correctly while the block result type survives.
 
+**Status:** complete — CLI coverage proves a final numeric block result, an
+empty branch block as `nil`, and that the block-local binding is unavailable
+outside the block.
+
 ---
 
 ### Task 9 — Complete `if` result inference
