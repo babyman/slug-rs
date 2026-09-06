@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added CLI regression coverage for normalized `select` handler result types.
+
 - Added CLI regression coverage that preserves scalar literal types through
   bindings and rejects incompatible later uses.
 

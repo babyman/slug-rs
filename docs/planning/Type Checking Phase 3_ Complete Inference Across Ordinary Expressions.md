@@ -692,6 +692,9 @@ Infer the normalized union of value-producing case branches.
 
 **Check:** case result types compose correctly, including same-type normalization.
 
+**Status:** complete — CLI coverage proves same-type handler normalization and
+rejects a heterogeneous handler union when assigned to an overly narrow type.
+
 ---
 
 ### Task 27 — Complete `match` result inference

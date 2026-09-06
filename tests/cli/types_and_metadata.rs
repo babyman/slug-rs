@@ -520,6 +520,50 @@ fn preserves_explicit_and_contextual_channel_element_types() {
 }
 
 #[test]
+fn infers_normalized_select_handler_results() {
+    let path = fixture_path("select-result-inference");
+    fs::write(
+        &path,
+        "val same:num = select { _ /> fn(_) { 1 } }\n\
+         val different:num|str = select {\n\
+           _ /> fn(_) { 1 }\n\
+           after 1 /> fn(_) { \"one\" }\n\
+         }\n\
+         println(same, different)\n",
+    )
+    .expect("write select result inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run select result inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1 1\n");
+
+    fs::write(
+        &path,
+        "val invalid:num = select { _ /> fn(_) { 1 }; after 1 /> fn(_) { \"one\" } }\n",
+    )
+    .expect("write incompatible select result source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible select result source");
+    fs::remove_file(path).expect("remove select result inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got num|str"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn infers_known_index_result_types() {
     let path = fixture_path("index-inference");
     fs::write(
