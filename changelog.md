@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added normalization regression coverage for nested, nominal, and
+  non-returning inferred union members.
+
 - Static inference now excludes non-returning `throw` and tail `recur` branches
   from composed expression result types.
 

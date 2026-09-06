@@ -766,6 +766,10 @@ Also lock down the interaction between unions, nil, `any`, `Unknown`, and the in
 
 **Check:** repeatedly composing expressions does not continuously inflate equivalent union types.
 
+**Status:** complete — focused type-algebra coverage normalizes duplicate,
+nested, nominal, and non-returning union members and locks down `nil`, `any`,
+and `unknown` interactions.
+
 ---
 
 ### Task 30 — Preserve inferred types across imports

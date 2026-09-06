@@ -654,7 +654,7 @@ fn wrong_type_arity(name: &str, expected: &str, span: &SourceSpan) -> SourceErro
 
 #[cfg(test)]
 mod tests {
-    use super::Type;
+    use super::{NominalIdentity, Type};
 
     #[test]
     fn any_excludes_nil_and_any_nil_is_universal() {
@@ -678,6 +678,29 @@ mod tests {
             Type::Union(vec![Type::Str, Type::Nil])
         );
         assert_eq!(Type::union([Type::Unknown, Type::Any]), Type::Unknown);
+    }
+
+    #[test]
+    fn unions_normalize_nested_nominal_and_non_returning_members() {
+        assert_eq!(Type::union([Type::Str, Type::Str]), Type::Str);
+        assert_eq!(
+            Type::union([Type::Str, Type::union([Type::Num, Type::Str])]),
+            Type::Union(vec![Type::Num, Type::Str])
+        );
+
+        let file = Type::Resource(NominalIdentity::declared("slug.io.fs", "File"));
+        assert_eq!(Type::union([file.clone(), file.clone()]), file);
+
+        assert_eq!(Type::union([Type::Never, Type::Str]), Type::Str);
+        assert_eq!(Type::union(Vec::new()), Type::Never);
+        assert_eq!(Type::union([Type::Never, Type::Unknown]), Type::Unknown);
+        assert_eq!(
+            Type::union([Type::Never, Type::Any, Type::Nil]),
+            Type::universal()
+        );
+
+        let repeated = (0..8).fold(Type::Never, |value, _| Type::union([value, Type::Str]));
+        assert_eq!(repeated, Type::Str);
     }
 
     #[test]
