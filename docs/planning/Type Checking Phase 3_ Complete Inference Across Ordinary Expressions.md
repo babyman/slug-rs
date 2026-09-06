@@ -438,6 +438,10 @@ Test:
 
 **Check:** crossing a member-access boundary does not discard semantic type information.
 
+**Status:** complete — `tests/cli/types_and_values.rs` covers typed struct
+fields and chained map members; `tests/module_loader.rs` covers imported
+callable/export snapshots and their retained signatures.
+
 ---
 
 ### Task 16 — Preserve nominal struct inference
