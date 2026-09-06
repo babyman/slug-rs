@@ -1,8 +1,12 @@
-use std::fs;
+use std::{
+    fs,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use slug_vm::{
-    ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader, NativeArity,
-    NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind, Value, Vm, compile,
+    ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader,
+    NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue, NativeStatus,
+    RuntimeErrorKind, Value, Vm, compile,
 };
 
 fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -11,6 +15,75 @@ fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
 
 fn returns_native(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::string("native"))
+}
+
+fn returns_seven(call: &mut NativeCall<'_>) -> NativeStatus {
+    call.return_value(NativeOwnedValue::integer(7))
+}
+
+static ANSWER_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+static INVALID_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+static RETRY_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+static RESOURCE_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+
+fn record_answer_plugin_cleanup() {
+    ANSWER_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn record_invalid_plugin_cleanup() {
+    INVALID_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn record_retry_plugin_cleanup() {
+    RETRY_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn record_resource_plugin_cleanup() {
+    RESOURCE_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn answer_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    let module = NativeModule::new(registrar.module_name(), ())?;
+    registrar.define_foreign(module.function("answer", NativeArity::Exact(0), returns_seven)?)?;
+    registrar.set_cleanup(record_answer_plugin_cleanup)
+}
+
+fn missing_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    registrar.set_cleanup(record_invalid_plugin_cleanup)
+}
+
+fn failing_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    registrar.set_cleanup(record_invalid_plugin_cleanup)?;
+    NativeModule::new("", ()).map(|_| ())
+}
+
+fn wrong_module_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    let module = NativeModule::new("example.unrelated", ())?;
+    registrar.define_foreign(module.function("answer", NativeArity::Exact(0), returns_seven)?)
+}
+
+static RETRY_PLUGIN_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn retry_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    let module = NativeModule::new(registrar.module_name(), ())?;
+    let arity = if RETRY_PLUGIN_CALLS.fetch_add(1, Ordering::SeqCst) == 0 {
+        NativeArity::Exact(1)
+    } else {
+        NativeArity::Exact(0)
+    };
+    registrar.define_foreign(module.function("answer", arity, returns_seven)?)?;
+    registrar.set_cleanup(record_retry_plugin_cleanup)
+}
+
+fn close_unit(_: &mut ()) {}
+
+fn destroy_unit(_: ()) {}
+
+fn resource_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    let module = NativeModule::new(registrar.module_name(), ())?;
+    let _file = module.resource_type("File", close_unit, destroy_unit)?;
+    registrar.define_foreign(module.function("open", NativeArity::Exact(0), returns_nil)?)?;
+    registrar.set_cleanup(record_resource_plugin_cleanup)
 }
 
 fn describes_enum_case(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -84,6 +157,36 @@ fn write_source_clutch(
         ),
     )
     .expect("write clutch manifest");
+    clutch
+}
+
+fn write_plugin_clutch(
+    root: &std::path::Path,
+    module_name: &str,
+    source: &str,
+    plugin_entry: &str,
+) -> std::path::PathBuf {
+    let clutch = root.join("plugin.clutch");
+    fs::create_dir_all(clutch.join("modules")).expect("create plugin clutch module directory");
+    fs::write(clutch.join("modules/module.slug"), source).expect("write plugin clutch module");
+    fs::write(
+        clutch.join("clutch.toml"),
+        format!(
+            "format = 0\n\
+             [clutch]\n\
+             publisher = \"example\"\n\
+             name = \"plugin\"\n\
+             version = \"0.1.0\"\n\
+             [requires]\n\
+             runtime = \">=0.1.0, <0.2.0\"\n\
+             plugin_api = \"rust-facade-0\"\n\
+             [modules]\n\
+             \"{module_name}\" = {{ source = \"modules/module.slug\", plugin = \"native\" }}\n\
+             [plugins.native]\n\
+             entry = \"{plugin_entry}\"\n"
+        ),
+    )
+    .expect("write plugin clutch manifest");
     clutch
 }
 
@@ -305,6 +408,160 @@ fn clutch_modules_preserve_cyclic_import_initialization() {
     assert_eq!(loader.initialized_module_count(), 2);
     assert_eq!(vm.exported_values(&program).to_string(), "{\"value\": 7}");
     fs::remove_dir_all(root).expect("remove clutch cycle root");
+}
+
+#[test]
+fn clutch_plugins_bind_only_their_declared_module_foreign_functions() {
+    ANSWER_PLUGIN_CLEANUPS.store(0, Ordering::SeqCst);
+    let root = root("clutch-plugin-success");
+    fs::create_dir_all(&root).expect("create plugin test root");
+    let clutch = write_plugin_clutch(
+        &root,
+        "example.plugin",
+        "export foreign answer = fn():num\n",
+        "test.answer",
+    );
+    {
+        let mut repository =
+            ClutchRepository::new(vec![("example.plugin".into(), clutch)]).expect("repository");
+        repository
+            .define_plugin("test.answer", answer_plugin)
+            .expect("configure plugin");
+        let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+        let program = loader
+            .compile_source(
+                &root.join("main.slug").to_string_lossy(),
+                "val plugin = import(\"example.plugin\")\nexport val answer = plugin.answer()\n",
+            )
+            .expect("compile plugin consumer");
+        let mut vm = Vm::with_module_loader(loader);
+
+        vm.run_named(&program, "main").expect("run plugin consumer");
+
+        assert_eq!(vm.exported_values(&program).to_string(), "{\"answer\": 7}");
+        assert_eq!(ANSWER_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 0);
+    }
+    assert_eq!(ANSWER_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+    fs::remove_dir_all(root).expect("remove plugin test root");
+}
+
+#[test]
+fn clutch_plugins_reject_unavailable_or_unrelated_registrations() {
+    INVALID_PLUGIN_CLEANUPS.store(0, Ordering::SeqCst);
+    let root = root("clutch-plugin-invalid");
+    fs::create_dir_all(&root).expect("create plugin invalid root");
+    let clutch = write_plugin_clutch(
+        &root,
+        "example.plugin",
+        "export foreign answer = fn():num\n",
+        "test.plugin",
+    );
+    let unavailable = ModuleLoader::with_clutch_repository(
+        &root,
+        None,
+        ClutchRepository::new(vec![("example.plugin".into(), clutch.clone())]).expect("repository"),
+    );
+    assert!(matches!(
+        unavailable.initialize(None, "example.plugin"),
+        Err(ModuleLoadError::Clutch { .. })
+    ));
+
+    let mut repository =
+        ClutchRepository::new(vec![("example.plugin".into(), clutch.clone())]).expect("repository");
+    repository
+        .define_plugin("test.plugin", failing_plugin)
+        .expect("configure failing plugin");
+    let failing = ModuleLoader::with_clutch_repository(&root, None, repository);
+    assert!(matches!(
+        failing.initialize(None, "example.plugin"),
+        Err(ModuleLoadError::Clutch { .. })
+    ));
+    assert_eq!(INVALID_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+
+    let mut repository =
+        ClutchRepository::new(vec![("example.plugin".into(), clutch.clone())]).expect("repository");
+    repository
+        .define_plugin("test.plugin", missing_plugin)
+        .expect("configure missing plugin");
+    let missing = ModuleLoader::with_clutch_repository(&root, None, repository);
+    assert!(matches!(
+        missing.initialize(None, "example.plugin"),
+        Err(ModuleLoadError::Source { .. })
+    ));
+    assert_eq!(INVALID_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 2);
+
+    let mut repository =
+        ClutchRepository::new(vec![("example.plugin".into(), clutch)]).expect("repository");
+    repository
+        .define_plugin("test.plugin", wrong_module_plugin)
+        .expect("configure plugin");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+    assert!(matches!(
+        loader.initialize(None, "example.plugin"),
+        Err(ModuleLoadError::Clutch { .. })
+    ));
+    assert_eq!(loader.initialized_module_count(), 0);
+    fs::remove_dir_all(root).expect("remove plugin invalid root");
+}
+
+#[test]
+fn clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations() {
+    RETRY_PLUGIN_CLEANUPS.store(0, Ordering::SeqCst);
+    RETRY_PLUGIN_CALLS.store(0, Ordering::SeqCst);
+    let root = root("clutch-plugin-cleanup");
+    fs::create_dir_all(&root).expect("create plugin cleanup root");
+    let clutch = write_plugin_clutch(
+        &root,
+        "example.plugin",
+        "export foreign answer = fn():num\n",
+        "test.retry",
+    );
+    let mut repository =
+        ClutchRepository::new(vec![("example.plugin".into(), clutch)]).expect("repository");
+    repository
+        .define_plugin("test.retry", retry_plugin)
+        .expect("configure retry plugin");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+
+    assert!(matches!(
+        loader.initialize(None, "example.plugin"),
+        Err(ModuleLoadError::Source { .. })
+    ));
+    assert_eq!(loader.initialized_module_count(), 0);
+    assert_eq!(RETRY_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+    loader
+        .initialize(None, "example.plugin")
+        .expect("clean retry after arity validation failure");
+    assert_eq!(RETRY_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+    drop(loader);
+    assert_eq!(RETRY_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 2);
+    fs::remove_dir_all(root).expect("remove plugin cleanup root");
+}
+
+#[test]
+fn clutch_plugins_validate_declared_resource_type_ownership() {
+    RESOURCE_PLUGIN_CLEANUPS.store(0, Ordering::SeqCst);
+    let root = root("clutch-plugin-resource");
+    fs::create_dir_all(&root).expect("create plugin resource root");
+    let clutch = write_plugin_clutch(
+        &root,
+        "example.resource",
+        "export resource File\nexport foreign open = fn():File\n",
+        "test.resource",
+    );
+    {
+        let mut repository =
+            ClutchRepository::new(vec![("example.resource".into(), clutch)]).expect("repository");
+        repository
+            .define_plugin("test.resource", resource_plugin)
+            .expect("configure resource plugin");
+        let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+        loader
+            .initialize(None, "example.resource")
+            .expect("resource registration matches declaration");
+    }
+    assert_eq!(RESOURCE_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+    fs::remove_dir_all(root).expect("remove plugin resource root");
 }
 
 #[test]

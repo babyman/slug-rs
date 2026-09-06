@@ -1,3 +1,4 @@
+use crate::{NativeDescriptorError, NativeFunction};
 use std::{
     collections::{HashMap, HashSet},
     fmt, fs,
@@ -14,12 +15,14 @@ const EXPERIMENTAL_PLUGIN_API: &str = "rust-facade-0";
 #[derive(Clone, Debug, Default)]
 pub struct ClutchRepository {
     providers: HashMap<String, PathBuf>,
+    plugin_initializers: HashMap<String, ClutchPluginInitializer>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClutchRepositoryError {
     InvalidModuleName(String),
     DuplicateProvider { name: String },
+    DuplicatePlugin { entry: String },
 }
 
 impl fmt::Display for ClutchRepositoryError {
@@ -28,6 +31,9 @@ impl fmt::Display for ClutchRepositoryError {
             Self::InvalidModuleName(name) => write!(f, "invalid module name `{name}`"),
             Self::DuplicateProvider { name } => {
                 write!(f, "module `{name}` has more than one clutch provider")
+            }
+            Self::DuplicatePlugin { entry } => {
+                write!(f, "clutch plugin entry `{entry}` is already defined")
             }
         }
     }
@@ -53,18 +59,143 @@ impl ClutchRepository {
                 return Err(ClutchRepositoryError::DuplicateProvider { name });
             }
         }
-        Ok(Self { providers: indexed })
+        Ok(Self {
+            providers: indexed,
+            plugin_initializers: HashMap::new(),
+        })
+    }
+
+    /// Registers one host-provided initializer for a manifest plugin entry.
+    ///
+    /// The entry is an opaque host configuration key. It is never interpreted
+    /// as a native-library path by the clutch loader.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the entry is empty or already configured.
+    pub fn define_plugin(
+        &mut self,
+        entry: impl Into<String>,
+        initializer: ClutchPluginInitializer,
+    ) -> Result<(), ClutchRepositoryError> {
+        let entry = entry.into();
+        if entry.trim().is_empty() || self.plugin_initializers.contains_key(&entry) {
+            return Err(ClutchRepositoryError::DuplicatePlugin { entry });
+        }
+        self.plugin_initializers.insert(entry, initializer);
+        Ok(())
     }
 
     #[must_use]
     pub(crate) fn provider(&self, name: &str) -> Option<&PathBuf> {
         self.providers.get(name)
     }
+
+    #[must_use]
+    pub(crate) fn plugin(&self, entry: &str) -> Option<ClutchPluginInitializer> {
+        self.plugin_initializers.get(entry).copied()
+    }
+}
+
+/// Initializes one manifest-selected plugin within one module-bound scope.
+pub type ClutchPluginInitializer =
+    fn(&mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError>;
+
+/// A module-bound, staged registrar exposed to experimental Rust clutch plugins.
+pub struct ClutchPluginRegistrar {
+    module_name: String,
+    functions: Vec<NativeFunction>,
+    cleanup: Option<fn()>,
+}
+
+impl ClutchPluginRegistrar {
+    pub(crate) fn new(module_name: impl Into<String>) -> Self {
+        Self {
+            module_name: module_name.into(),
+            functions: Vec::new(),
+            cleanup: None,
+        }
+    }
+
+    /// Returns the only source module this plugin invocation may serve.
+    #[must_use]
+    pub fn module_name(&self) -> &str {
+        &self.module_name
+    }
+
+    /// Stages a module-qualified foreign function for publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the function belongs to another module or
+    /// duplicates an already staged function name.
+    pub fn define_foreign(
+        &mut self,
+        function: NativeFunction,
+    ) -> Result<(), NativeDescriptorError> {
+        if function.module_name() != self.module_name {
+            return Err(NativeDescriptorError::new(format!(
+                "clutch plugin for module `{}` cannot register foreign function `{}`",
+                self.module_name,
+                function.qualified_name()
+            )));
+        }
+        if self
+            .functions
+            .iter()
+            .any(|existing| existing.name() == function.name())
+        {
+            return Err(NativeDescriptorError::new(format!(
+                "clutch plugin foreign function `{}.{}` is already staged",
+                self.module_name,
+                function.name()
+            )));
+        }
+        self.functions.push(function);
+        Ok(())
+    }
+
+    /// Sets the one cleanup hook run when a staged plugin fails or its loader drops.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a cleanup hook is already registered.
+    pub fn set_cleanup(&mut self, cleanup: fn()) -> Result<(), NativeDescriptorError> {
+        if self.cleanup.replace(cleanup).is_some() {
+            return Err(NativeDescriptorError::new(
+                "clutch plugin cleanup hook is already registered",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> StagedClutchPlugin {
+        StagedClutchPlugin {
+            functions: self.functions,
+            cleanup: self.cleanup,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct StagedClutchPlugin {
+    pub functions: Vec<NativeFunction>,
+    cleanup: Option<fn()>,
+}
+
+impl StagedClutchPlugin {
+    pub(crate) fn cleanup(&mut self) {
+        if let Some(cleanup) = self.cleanup.take() {
+            cleanup();
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct ClutchModule {
+    pub root: PathBuf,
     pub path: PathBuf,
+    pub plugin_entry: Option<String>,
 }
 
 pub(crate) fn load_module(root: &Path, name: &str) -> Result<ClutchModule, String> {
@@ -80,17 +211,27 @@ pub(crate) fn load_module(root: &Path, name: &str) -> Result<ClutchModule, Strin
     let manifest = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
     let manifest = parse_manifest(&manifest)?;
-    let source = manifest
+    let module = manifest
         .modules
         .get(name)
         .ok_or_else(|| format!("clutch does not provide indexed module `{name}`"))?;
-    let source_path = source_path(&root, source)?;
-    Ok(ClutchModule { path: source_path })
+    let source_path = source_path(&root, &module.source)?;
+    Ok(ClutchModule {
+        root,
+        path: source_path,
+        plugin_entry: module.plugin_entry.clone(),
+    })
 }
 
 #[derive(Debug)]
 struct ClutchManifest {
-    modules: HashMap<String, String>,
+    modules: HashMap<String, ClutchModuleEntry>,
+}
+
+#[derive(Debug)]
+struct ClutchModuleEntry {
+    source: String,
+    plugin_entry: Option<String>,
 }
 
 fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
@@ -111,16 +252,14 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
     }
     validate_clutch(table)?;
     validate_requirements(table)?;
-    if let Some(plugins) = table.get("plugins") {
+    let plugins = if let Some(plugins) = table.get("plugins") {
         let plugins = plugins
             .as_table()
             .ok_or_else(|| "`plugins` must be a table".to_string())?;
-        if !plugins.is_empty() {
-            return Err(
-                "native clutch plugins are not supported by the source-only experiment".into(),
-            );
-        }
-    }
+        parse_plugins(plugins)?
+    } else {
+        HashMap::new()
+    };
     let modules = table_value(table, "modules", "manifest")?;
     let modules = modules
         .as_table()
@@ -137,15 +276,49 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
             .as_table()
             .ok_or_else(|| format!("module `{name}` must be a table"))?;
         require_keys(entry, &["source", "plugin"], &format!("module `{name}`"))?;
-        if entry.contains_key("plugin") {
-            return Err(format!(
-                "module `{name}` requires a native plugin, which is not supported by the source-only experiment"
-            ));
-        }
         let path = string(entry, "source", &format!("module `{name}`"))?;
-        result.insert(name.clone(), path.to_owned());
+        let plugin_entry = entry
+            .get("plugin")
+            .map(|plugin| {
+                let plugin = plugin
+                    .as_str()
+                    .ok_or_else(|| format!("`plugin` in module `{name}` must be a string"))?;
+                plugins
+                    .get(plugin)
+                    .cloned()
+                    .ok_or_else(|| format!("module `{name}` references unknown plugin `{plugin}`"))
+            })
+            .transpose()?;
+        result.insert(
+            name.clone(),
+            ClutchModuleEntry {
+                source: path.to_owned(),
+                plugin_entry,
+            },
+        );
     }
     Ok(ClutchManifest { modules: result })
+}
+
+fn parse_plugins(
+    plugins: &toml::map::Map<String, toml::Value>,
+) -> Result<HashMap<String, String>, String> {
+    let mut result = HashMap::new();
+    for (name, entry) in plugins {
+        if name.trim().is_empty() {
+            return Err("plugin name must not be empty".into());
+        }
+        let entry = entry
+            .as_table()
+            .ok_or_else(|| format!("plugin `{name}` must be a table"))?;
+        require_keys(entry, &["entry"], &format!("plugin `{name}`"))?;
+        let host_entry = string(entry, "entry", &format!("plugin `{name}`"))?;
+        if host_entry.trim().is_empty() {
+            return Err(format!("plugin `{name}` entry must not be empty"));
+        }
+        result.insert(name.clone(), host_entry.to_owned());
+    }
+    Ok(result)
 }
 
 fn validate_clutch(table: &toml::map::Map<String, toml::Value>) -> Result<(), String> {

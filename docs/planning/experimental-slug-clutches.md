@@ -1399,24 +1399,24 @@ module, without ambient registrations or partial state.
 
 ### Todo
 
-- [ ] Model a loader-private plugin registration scope with its clutch and
+- [x] Model a loader-private plugin registration scope with its clutch and
   module identities, registered foreign functions, resource types, cleanup
   hook, and active/failed state.
-- [ ] Extend the existing foreign registry in `src/module.rs` so a scope can
+- [x] Extend the existing foreign registry in `src/module.rs` so a scope can
   stage a batch of registrations, validate uniqueness, and atomically publish
   or discard the batch. Preserve ordinary host registrations for builtins and
   non-clutch use.
-- [ ] Define a narrow Rust-only v0 plugin initializer that receives the scoped
+- [x] Define a narrow Rust-only v0 plugin initializer that receives the scoped
   registrar; it must not receive VM internals, globals, scheduler access, or
   arbitrary source values.
-- [ ] Resolve the manifest's plugin entry through host-controlled test
+- [x] Resolve the manifest's plugin entry through host-controlled test
   configuration. Do not teach the clutch manifest how to search arbitrary
   dynamic libraries.
-- [ ] Make module loading follow the contract order: manifest validation,
+- [x] Make module loading follow the contract order: manifest validation,
   scoped initialization, compile/foreign validation, then publication.
-- [ ] Ensure every failure path invokes cleanup once, removes staged
+- [x] Ensure every failure path invokes cleanup once, removes staged
   registrations, and permits a later clean retry.
-- [ ] Add VM and module-loader tests for matching foreign functions, resource
+- [x] Add VM and module-loader tests for matching foreign functions, resource
   type ownership, initializer failure, missing registration, arity/signature
   mismatch, and no-registration-leak retry behavior.
 

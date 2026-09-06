@@ -8,7 +8,8 @@ use std::{
 
 use crate::{
     ClutchRepository, Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction,
-    Program, SourceError, Value, Vm, clutch,
+    Program, SourceError, Value, Vm,
+    clutch::{self, StagedClutchPlugin},
     native::{NativeResourceRegistry, native_resource_registry},
     source::{compile_with_resolver, environment::ModuleSnapshot, semantic_snapshot},
 };
@@ -30,6 +31,7 @@ struct ModuleLoaderState {
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
+    active_clutch_plugins: RefCell<HashMap<PathBuf, StagedClutchPlugin>>,
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
 }
@@ -38,6 +40,13 @@ struct ModuleLoaderState {
 pub struct ModuleSource {
     pub path: PathBuf,
     pub text: String,
+    clutch_plugin: Option<ClutchPluginSource>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ClutchPluginSource {
+    root: PathBuf,
+    entry: String,
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +152,7 @@ impl ModuleLoader {
                 instances: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
                 foreign_functions: RefCell::new(HashMap::new()),
+                active_clutch_plugins: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
                 warnings: RefCell::new(Vec::new()),
             }),
@@ -180,6 +190,7 @@ impl ModuleLoader {
                     return Ok(ModuleSource {
                         path: path.clone(),
                         text,
+                        clutch_plugin: None,
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -204,6 +215,10 @@ impl ModuleLoader {
             return Ok(ModuleSource {
                 path: module.path,
                 text,
+                clutch_plugin: module.plugin_entry.map(|entry| ClutchPluginSource {
+                    root: module.root,
+                    entry,
+                }),
             });
         }
         Err(ModuleLoadError::NotFound {
@@ -291,7 +306,23 @@ impl ModuleLoader {
         if let Some(instance) = self.state.instances.borrow().get(&source.path) {
             return Ok(instance.clone());
         }
-        let program = Rc::new(self.compile(importer, name)?);
+        let mut plugin = self.stage_clutch_plugin(name, &source)?;
+        let program = match self.compile(importer, name) {
+            Ok(program) => Rc::new(program),
+            Err(error) => {
+                Self::cleanup_plugin(&mut plugin);
+                return Err(error);
+            }
+        };
+        if let Some(staged) = plugin.as_ref()
+            && let Err(error) = self.define_foreign_batch(staged.functions.clone())
+        {
+            Self::cleanup_plugin(&mut plugin);
+            return Err(ModuleLoadError::Clutch {
+                path: source.path.clone(),
+                message: error.to_string(),
+            });
+        }
         let mut vm = Vm::with_module_bindings(self, program.bindings());
         let instance = ModuleInstance {
             path: source.path.clone(),
@@ -306,6 +337,10 @@ impl ModuleLoader {
             .insert(source.path.clone(), instance.clone());
         if let Err(error) = vm.run_module(&program) {
             self.state.instances.borrow_mut().remove(&source.path);
+            if let Some(staged) = plugin.as_ref() {
+                self.remove_foreign_batch(&staged.functions);
+            }
+            Self::cleanup_plugin(&mut plugin);
             return Err(ModuleLoadError::Source {
                 path: source.path.clone(),
                 message: error.to_string(),
@@ -320,6 +355,12 @@ impl ModuleLoader {
             .instances
             .borrow_mut()
             .insert(source.path, instance.clone());
+        if let Some(plugin) = plugin {
+            self.state
+                .active_clutch_plugins
+                .borrow_mut()
+                .insert(instance.path.clone(), plugin);
+        }
         Ok(instance)
     }
 
@@ -391,6 +432,22 @@ impl ModuleLoader {
         Ok(())
     }
 
+    fn remove_foreign_batch(&self, functions: &[NativeFunction]) {
+        let mut registry = self.state.foreign_functions.borrow_mut();
+        for function in functions {
+            let key = (
+                function.module_name().to_string(),
+                function.name().to_string(),
+            );
+            if registry
+                .get(&key)
+                .is_some_and(|registered| registered.same_function(function))
+            {
+                registry.remove(&key);
+            }
+        }
+    }
+
     pub(crate) fn foreign(&self, module: &str, name: &str) -> Option<NativeFunction> {
         self.state
             .foreign_functions
@@ -428,6 +485,51 @@ impl ModuleLoader {
             .borrow_mut()
             .insert(path, instance.clone());
         instance
+    }
+
+    fn stage_clutch_plugin(
+        &self,
+        module_name: &str,
+        source: &ModuleSource,
+    ) -> Result<Option<StagedClutchPlugin>, ModuleLoadError> {
+        let Some(plugin) = &source.clutch_plugin else {
+            return Ok(None);
+        };
+        let initializer = self
+            .state
+            .clutch_repository
+            .plugin(&plugin.entry)
+            .ok_or_else(|| ModuleLoadError::Clutch {
+                path: plugin.root.clone(),
+                message: format!(
+                    "plugin entry `{}` is not configured by the host",
+                    plugin.entry
+                ),
+            })?;
+        let mut registrar = clutch::ClutchPluginRegistrar::new(module_name);
+        if let Err(error) = initializer(&mut registrar) {
+            let mut staged = registrar.finish();
+            staged.cleanup();
+            return Err(ModuleLoadError::Clutch {
+                path: plugin.root.clone(),
+                message: format!("plugin initialization failed: {error}"),
+            });
+        }
+        Ok(Some(registrar.finish()))
+    }
+
+    fn cleanup_plugin(plugin: &mut Option<StagedClutchPlugin>) {
+        if let Some(plugin) = plugin {
+            plugin.cleanup();
+        }
+    }
+}
+
+impl Drop for ModuleLoaderState {
+    fn drop(&mut self) {
+        for plugin in self.active_clutch_plugins.get_mut().values_mut() {
+            plugin.cleanup();
+        }
     }
 }
 

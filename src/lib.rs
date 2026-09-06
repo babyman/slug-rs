@@ -33,7 +33,9 @@ pub use bytecode::{
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SchemaFieldsId,
     SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };
-pub use clutch::{ClutchRepository, ClutchRepositoryError};
+pub use clutch::{
+    ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
+};
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
 #[cfg(feature = "ffi-prototype")]

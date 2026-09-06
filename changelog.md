@@ -16,6 +16,10 @@
   host repository index, validated exploded manifests, existing-provider
   precedence, and cached ordinary module initialization.
 
+- Implemented Phase 4 Rust-only clutch plugins with host-configured manifest
+  entries, module-scoped staged foreign registrations, cleanup hooks, and
+  rollback after initialization or declaration-validation failures.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

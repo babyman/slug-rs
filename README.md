@@ -49,8 +49,9 @@ contract is documented separately as `.cslug`.
   fallback, cached isolated module initialization, and string-keyed exported-value maps.
 - Experimental host-configured exploded clutches may provide additional
   source modules after those existing import providers. Their local manifest
-  validation and module identities are documented separately; native plugins
-  remain future experiment work.
+  validation and module identities are documented separately. A host may also
+  configure a Rust-only, module-scoped native plugin; dynamic loading and CLI
+  configuration remain future experiment work.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation

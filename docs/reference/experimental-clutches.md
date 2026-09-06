@@ -8,9 +8,10 @@ promise. It defines the smallest composition boundary that implementation work
 may rely on. A later released clutch format requires a new decision record,
 versioned schema, and regression coverage.
 
-The source-only resolver is implemented for explicit Rust-host configuration.
-Native plugin initialization, archive loading, installation, and CLI
-configuration remain unimplemented.
+The source resolver and Rust-host-configured, module-scoped plugin initializer
+are implemented. Plugin cleanup currently runs when the final loader owner is
+dropped. VM-shutdown coordination, archive loading, installation, dynamic
+native loading, and CLI configuration remain unimplemented.
 
 ## Purpose and terms
 
@@ -115,6 +116,10 @@ equivalent. In-flight native work or leaked foreign references must keep native
 code resident rather than permit use-after-unload. This follows the current
 native ABI's process-lifetime code-residency rule; deterministic cleanup refers
 to module state and registrations, not forced library-code unloading.
+
+The current Rust experiment runs the cleanup hook when the final
+`ModuleLoader` owner drops. A later lifecycle phase must connect that cleanup
+to VM shutdown, call rejection, resource closure, and producer revocation.
 
 ## Required diagnostics and proof
 
