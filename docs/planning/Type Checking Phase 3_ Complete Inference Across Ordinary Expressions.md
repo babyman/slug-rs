@@ -185,6 +185,10 @@ It must not depend accidentally on analysis order.
 
 **Check:** behaviour is explicit and covered by tests.
 
+**Status:** complete — inferred `var` bindings use the fixed-initializer rule
+in `docs/language/language-specification.md`; the CLI regression covers both
+compatible reassignment and a rejected heterogeneous reassignment.
+
 ---
 
 ### Task 6 — Centralize unary operator inference

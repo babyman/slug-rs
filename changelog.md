@@ -11,6 +11,9 @@
 - Added CLI regression coverage that annotated bindings expose their declared
   type after accepting a compatible inferred initializer.
 
+- Documented fixed static types for inferred mutable bindings and added
+  reassignment regression coverage.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

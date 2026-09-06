@@ -134,6 +134,39 @@ fn exposes_annotated_bindings_at_their_declared_type() {
 }
 
 #[test]
+fn fixes_inferred_mutable_binding_types_at_initialization() {
+    let path = fixture_path("mutable-binding-inference");
+    fs::write(&path, "var value = 1\nvalue = 2\nprintln(value)\n")
+        .expect("write compatible mutable binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run compatible mutable binding source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2\n");
+
+    fs::write(&path, "var value = 1\nvalue = \"slug\"\n")
+        .expect("write incompatible mutable binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible mutable binding source");
+    fs::remove_file(path).expect("remove mutable binding source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got str"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(

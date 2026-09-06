@@ -914,6 +914,17 @@ val widened = fn():any|nil { 1 }      // fn():any|nil
 val nonNil = fn():any { "ready" }     // cannot return nil
 ```
 
+An inferred `var` binding fixes its static type from its initializer; later
+known assignments must conform to that type and do not widen it. A dynamically
+unknown assignment remains valid and preserves the retained static fact. An
+annotated `var` uses its annotation as the fixed type instead.
+
+```slug
+var count = 1
+count = 2        // valid: num
+count = "two"    // semantic error: expected num, got str
+```
+
 The built-in `schema` type describes schema values and does not accept type
 arguments. The common parameterized forms are `list<T>`, `map<K, V>`,
 `chan<T>`, `task<T>`, and `struct<Name>`. A bracketed type such as `[str, num]` is a
