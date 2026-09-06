@@ -901,6 +901,10 @@ rather than internal runtime representations.
 
 **Check:** new inference failures surface as normal Slug source diagnostics.
 
+**Status:** complete — CLI coverage verifies inferred `str` arithmetic and an
+inferred nominal `Socket` argument both produce normal source diagnostics with
+the meaningful expected and actual types.
+
 ---
 
 ### Task 34 — Run full regression and conformance suites

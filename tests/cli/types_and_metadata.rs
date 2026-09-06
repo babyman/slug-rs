@@ -734,11 +734,23 @@ fn preserves_collection_types_through_slices() {
 }
 
 #[test]
-fn distinguishes_nominal_resource_types_during_call_resolution() {
+fn reports_diagnostics_from_inferred_scalar_and_nominal_types() {
     let path = fixture_path("nominal-resource-types");
+    fs::write(&path, "val value = \"hello\"\nvalue - 1\n")
+        .expect("write inferred scalar diagnostic source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred scalar diagnostic source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.starts_with("slug: semantic error: expected num, got str"));
+
     fs::write(
         &path,
-        "resource File\nresource Socket\nval read = fn(file:File):num { 1 }\nval invalid = fn(socket:Socket) { read(socket) }\n",
+        "resource File\nresource Socket\nval read = fn(file:File):num { 1 }\nval invalid = fn(socket:Socket) { val inferred = socket; read(inferred) }\n",
     )
     .expect("write nominal resource source");
     let output = slug()
