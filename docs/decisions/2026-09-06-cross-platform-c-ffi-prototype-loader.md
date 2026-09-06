@@ -11,8 +11,9 @@ boundary from building or running in Linux and Windows workflows.
 Keep dynamic loading inside the feature-gated prototype module, with platform
 adapters for `dlopen`/`dlsym` on Unix and `LoadLibraryW`/`GetProcAddress` on
 Windows. Build C fixtures as native shared libraries using the target's DLL
-prefix and suffix. Windows runs the portable loader tests; fixtures requiring
-SQLite or POSIX threads remain Unix-only test coverage.
+prefix and suffix. Windows runs the portable loader tests through Clang,
+because the fixtures use C99 syntax. Fixtures requiring SQLite remain
+Linux-only and POSIX-thread fixtures remain Unix-only test coverage.
 
 ## Consequences
 

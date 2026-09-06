@@ -70,17 +70,10 @@ fn compile_fixture_with_libraries(
     #[cfg(windows)]
     let mut command = {
         let _ = libraries;
-        let mut command = Command::new("cl");
-        command.args([
-            "/nologo",
-            "/LD",
-            "/Iinclude",
-            source,
-            &format!(
-                "/Fe:{}",
-                output.to_str().expect("temporary library path is UTF-8")
-            ),
-        ]);
+        let mut command = Command::new("clang");
+        command
+            .args(["-shared", "-I", "include", source, "-o"])
+            .arg(output.to_str().expect("temporary library path is UTF-8"));
         command
     };
     command.current_dir(env!("CARGO_MANIFEST_DIR"));
@@ -89,7 +82,7 @@ fn compile_fixture_with_libraries(
     output
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 #[test]
 fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
     let directory = TemporaryDirectory::new();
