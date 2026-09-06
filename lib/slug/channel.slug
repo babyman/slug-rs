@@ -38,7 +38,7 @@
  * is ready. A buffered channel allows up to `capacity` messages to be
  * queued before blocking.
  */
-export foreign chan = fn(capacity:num = 0):chan<any|nil>
+export foreign chan = fn<T>(capacity:num = 0):chan<T>
 
 /**
  * closes a channel, signalling that no more values will be sent.
@@ -46,7 +46,7 @@ export foreign chan = fn(capacity:num = 0):chan<any|nil>
  * Receivers on a closed channel return nil. Sending to a closed channel
  * is a runtime error.
  */
-export foreign close = fn(channel:chan<any|nil>):nil
+export foreign close = fn<T>(channel:chan<T>):nil
 
 /**
  * sends a value to a channel, blocking until a receiver is ready.
@@ -55,7 +55,7 @@ export foreign close = fn(channel:chan<any|nil>):nil
  *
  * Returns the channel, allowing chains: `ch /> send("a") /> send("b")`
  */
-export val send = fn(channel:chan<any|nil>, payload):chan<any|nil> {
+export val send = fn<T>(channel:chan<T>, payload:T):chan<T> {
 	select {
 		send channel, payload /> fn(_) { channel }
 	}
@@ -68,7 +68,7 @@ export val send = fn(channel:chan<any|nil>, payload):chan<any|nil> {
  *
  * Returns the channel if the send succeeded, nil if the channel was full.
  */
-export val trySend = fn(channel:chan<any|nil>, payload):chan<any|nil> {
+export val trySend = fn<T>(channel:chan<T>, payload:T):chan<T>|nil {
 	select {
 		send channel, payload /> fn(_) { channel }
 		_
@@ -81,7 +81,7 @@ export val trySend = fn(channel:chan<any|nil>, payload):chan<any|nil> {
  * If `timeout` is greater than 0 and no value arrives within that many
  * milliseconds, a `TimeoutError` is thrown.
  */
-export val recv = fn(channel:chan<any|nil>, timeout:num = 0):any {
+export val recv = fn<T>(channel:chan<T>, timeout:num = 0):T|nil {
 	if (timeout > 0) {
 		select {
 			recv channel
@@ -97,7 +97,7 @@ export val recv = fn(channel:chan<any|nil>, timeout:num = 0):any {
  *
  * Returns the next value if one is immediately available, nil otherwise.
  */
-export val tryRecv = fn(channel:chan<any|nil>):any {
+export val tryRecv = fn<T>(channel:chan<T>):T|nil {
 	select {
 		recv channel
 		_

@@ -1059,6 +1059,13 @@ can chain sends with pipelines; `close` returns `nil`. A blocked sender that is
 released because its channel closes fails as a normal `send on a closed channel`
 runtime error, so its active deferred cleanup still runs.
 
+`chan<T>()` constructs `chan<T>`. An unparameterized `chan()` has the private
+unknown element type; it may be assigned to an annotated `chan<T>` binding,
+which establishes that binding's contract, but later sends do not retroactively
+infer the constructor's type. `send(channel<T>, value)` requires `value` to
+conform to `T`, and `recv(channel<T>)` and `tryRecv(channel<T>)` return
+`T|nil`.
+
 ## Implementation-independent limits
 
 This specification deliberately leaves bytecode representation, host scheduling

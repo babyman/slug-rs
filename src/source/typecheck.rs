@@ -2331,7 +2331,7 @@ fn instantiate_candidate(
         return Ok(None);
     };
     for (parameter, actual) in &bound.values {
-        let actual = (*actual).clone().widen_unknown();
+        let actual = (*actual).clone();
         if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
             if report_mismatch {
                 return Err(error);
@@ -2352,7 +2352,7 @@ fn instantiate_candidate(
             .last()
             .is_some_and(|parameter| parameter.variadic),
         uses_empty_variadic: bound.uses_empty_variadic,
-        result: substitute(&signature.result, &substitutions).widen_unknown(),
+        result: substitute(&signature.result, &substitutions),
         identity: signature.identity(),
     }))
 }
@@ -2476,9 +2476,11 @@ fn infer(
         return Ok(());
     }
     match (expected, actual) {
-        (Type::List(Some(expected)), Type::List(Some(actual)))
-        | (Type::Channel(Some(expected)), Type::Channel(Some(actual))) => {
+        (Type::List(Some(expected)), Type::List(Some(actual))) => {
             infer(expected, actual, substitutions, span)
+        }
+        (Type::Channel(Some(expected)), Type::Channel(Some(actual))) => {
+            infer_channel_payload(expected, actual, substitutions, span)
         }
         (Type::Task(Some(expected)), Type::Task(Some(actual))) => {
             infer_task_payload(expected, actual, substitutions, span)
@@ -2513,6 +2515,26 @@ fn infer_task_payload(
         return infer(expected, actual, substitutions, span);
     };
     if matches!(actual, Type::Unknown) {
+        return Ok(());
+    }
+    if let Some(previous) = substitutions.get(index) {
+        return require(previous, actual, span);
+    }
+    substitutions.insert(*index, actual.clone());
+    Ok(())
+}
+
+fn infer_channel_payload(
+    expected: &Type,
+    actual: &Type,
+    substitutions: &mut HashMap<usize, Type>,
+    span: &crate::SourceSpan,
+) -> Result<(), SourceError> {
+    let Type::Generic(index) = expected else {
+        return infer(expected, actual, substitutions, span);
+    };
+    if matches!(actual, Type::Unknown) {
+        substitutions.entry(*index).or_insert(Type::Unknown);
         return Ok(());
     }
     if let Some(previous) = substitutions.get(index) {

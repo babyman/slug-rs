@@ -679,6 +679,11 @@ verify that existing send/receive operations preserve `T`.
 
 **Check:** known-invalid sends fail statically and receives do not collapse to `Unknown`.
 
+**Status:** complete — `chan<T>()`, `send`, `recv`, and their non-blocking
+counterparts preserve channel payload types. CLI coverage proves explicit and
+contextual channel contracts and rejects mismatched sends; untyped channels
+remain dynamic without backwards inference.
+
 ---
 
 ### Task 26 — Complete `select` result inference

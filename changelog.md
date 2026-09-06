@@ -47,6 +47,9 @@
 - `slug.channel.await` now preserves a spawned task's inferred payload type;
   generic inference now descends through structured parameter types.
 
+- `slug.channel` now supports explicit and contextual generic channel element
+  types, with typed send and receive operations.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

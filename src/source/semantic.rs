@@ -271,7 +271,7 @@ impl Type {
 
 fn optional_argument_assignable(actual: Option<&Type>, expected: Option<&Type>) -> bool {
     match (actual, expected) {
-        (_, None) | (None, Some(_)) => true,
+        (_, None) | (None | Some(Type::Unknown), Some(_)) => true,
         (Some(actual), Some(expected)) => actual == expected,
     }
 }

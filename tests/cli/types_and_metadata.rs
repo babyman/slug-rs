@@ -475,6 +475,51 @@ fn preserves_spawn_result_types_through_task_await() {
 }
 
 #[test]
+fn preserves_explicit_and_contextual_channel_element_types() {
+    let path = fixture_path("channel-element-inference");
+    fs::write(
+        &path,
+        "val { await, chan, recv, send } = import(\"slug.channel\")\n\
+         val inbox = chan<num>()\n\
+         val sender = spawn { send(inbox, 1) }\n\
+         val received:num|nil = recv(inbox)\n\
+         await(sender)\n\
+         val contextual:chan<num> = chan()\n\
+         println(received)\n",
+    )
+    .expect("write typed channel source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run typed channel source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+
+    for source in [
+        "val { chan, send } = import(\"slug.channel\")\nval inbox = chan<num>()\nsend(inbox, \"wrong\")\n",
+        "val { chan, send } = import(\"slug.channel\")\nval inbox:chan<num> = chan()\nsend(inbox, \"wrong\")\n",
+    ] {
+        fs::write(&path, source).expect("write invalid typed channel source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid typed channel source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr.starts_with("slug: semantic error: expected num, got str"),
+            "{stderr}"
+        );
+    }
+    fs::remove_file(path).expect("remove typed channel source");
+}
+
+#[test]
 fn infers_known_index_result_types() {
     let path = fixture_path("index-inference");
     fs::write(
