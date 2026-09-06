@@ -617,6 +617,10 @@ and branching result unions where already supported.
 
 **Check:** simple functions no longer default to `Unknown` when the result is obvious.
 
+**Status:** complete — `tests/cli/types_and_metadata.rs` proves an
+unannotated numeric function is retained as a precise function value and its
+inferred result rejects an incompatible later annotation.
+
 ---
 
 ### Task 23 — Preserve explicit function return contracts
