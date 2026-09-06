@@ -213,6 +213,46 @@ fn infers_and_checks_prefix_operator_results() {
 }
 
 #[test]
+fn infers_and_checks_binary_operator_results() {
+    let path = fixture_path("binary-inference");
+    fs::write(
+        &path,
+        "val subtract = fn(left, right) { left - right }\n\
+         println(3 + 4, 3 < 4, 3 == 4, \"Slug\" + 1, true && false, subtract(5, 2))\n",
+    )
+    .expect("write binary inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run binary inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "7 true false Slug1 false 3\n"
+    );
+
+    fs::write(&path, "val value = \"slug\"\nvalue - 1\n")
+        .expect("write invalid binary inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid binary inference source");
+    fs::remove_file(path).expect("remove binary inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got str"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(

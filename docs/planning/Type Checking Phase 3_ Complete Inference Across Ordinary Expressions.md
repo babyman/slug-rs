@@ -226,6 +226,10 @@ Cover arithmetic, comparison, equality, concatenation, and logical operators acc
 
 **Check:** operator inference is not duplicated inconsistently across checker code paths.
 
+**Status:** complete — the existing `binary_result` dispatch is covered by CLI
+cases for arithmetic, comparison, equality, concatenation, logic, dynamic
+operands, and known-incompatible operands.
+
 ---
 
 ### Task 8 — Complete block result inference

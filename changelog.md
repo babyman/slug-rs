@@ -17,6 +17,9 @@
 - Added CLI regression coverage for inferred prefix-operator results, checked
   invalid operands, and dynamic operands.
 
+- Added CLI regression coverage for binary-operator inference, dynamic
+  operands, and checked incompatible operands.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.
