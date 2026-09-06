@@ -23,6 +23,9 @@
 - Added CLI regression coverage for inferred block results and lexical scope
   boundaries.
 
+- Added CLI regression coverage for normalized `if` result types, including
+  implicit `nil` branches.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

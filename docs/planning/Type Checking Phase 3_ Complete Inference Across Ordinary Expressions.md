@@ -289,6 +289,9 @@ Also test `if` without `else`.
 
 **Check:** branch results normalize rather than producing duplicate or unnecessarily broad unions.
 
+**Status:** complete — CLI coverage proves same-type normalization,
+heterogeneous branch unions, and the implicit `nil` result without `else`.
+
 ---
 
 ### Task 10 — Complete list literal inference

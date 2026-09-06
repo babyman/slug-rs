@@ -291,6 +291,48 @@ fn infers_block_results_without_leaking_block_bindings() {
 }
 
 #[test]
+fn infers_normalized_if_result_types() {
+    let path = fixture_path("if-result-inference");
+    fs::write(
+        &path,
+        "val same:num = if (true) { 1 } else { 2 }\n\
+         val different:num|str = if (false) { 1 } else { \"one\" }\n\
+         val optional:num|nil = if (false) { 1 }\n\
+         println(same, different, optional)\n",
+    )
+    .expect("write if result inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run if result inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1 one nil\n");
+
+    fs::write(
+        &path,
+        "val invalid:num = if (false) { 1 } else { \"one\" }\n",
+    )
+    .expect("write incompatible if result source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible if result source");
+    fs::remove_file(path).expect("remove if result inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got num|str"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(
