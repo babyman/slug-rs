@@ -637,6 +637,10 @@ verify that all known value-producing returns are assignable to `num`.
 
 **Check:** inferred body information is used to validate the declared contract.
 
+**Status:** complete — `tests/cli/types_and_metadata.rs` includes an annotated
+function returning a known incompatible value and asserts the source-level
+return-type diagnostic.
+
 ---
 
 ### Task 24 — Preserve `Task<T>` result inference
