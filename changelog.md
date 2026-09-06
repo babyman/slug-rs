@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a README quick start for writing and running a Slug program.
+
 - Completed the Phase 3 expression-inference regression and conformance gate.
 
 - Added diagnostic regressions for inferred scalar and nominal resource types.

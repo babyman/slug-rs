@@ -103,11 +103,40 @@ separate from the public-but-unstable in-process `Program`, `Chunk`, and `Op`
 types, which may change freely. See [compiled artifacts](docs/reference/compiled-artifacts.md)
 for the adopted contract and the requirements before version 1 is implemented.
 
+## Quick start
+
+Install [Rustup](https://rustup.rs/) if it is not already available, then clone
+this repository and enter it. The pinned Rust toolchain is selected
+automatically.
+
+Create `hello.slug`:
+
+```slug
+val greeting = fn(name) { "Hello, " + name + "!" }
+
+val main = fn() {
+    println(greeting("Slug"))
+}
+```
+
+Run it from the repository root:
+
+```sh
+cargo run --bin slug -- hello.slug
+```
+
+The CLI executes the source file and automatically invokes a local `main()`.
+Pass additional arguments after the source path; use `cargo run --bin slug --
+--help` to see the current command interface. Start with the
+[language support matrix](docs/generated/language-support.md) for the
+implemented subset, and use the [language documents](docs/language/README.md)
+as the source-language reference.
+
 ## Development
 
 ```sh
 make check
-cargo run -- --help
+cargo run --bin slug -- --help
 ```
 
 `make check` runs formatting validation, Clippy with warnings denied, and all
