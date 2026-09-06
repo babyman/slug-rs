@@ -333,6 +333,49 @@ fn infers_normalized_if_result_types() {
 }
 
 #[test]
+fn infers_list_literal_element_types() {
+    let path = fixture_path("list-literal-inference");
+    fs::write(
+        &path,
+        "val numbers:list<num> = [1, 2, 3]\n\
+         val mixed:list<num|str> = [1, \"two\"]\n\
+         val nested:list<list<num> > = [[1], [2]]\n\
+         val empty:list = []\n\
+         println(numbers, mixed, nested, empty)\n",
+    )
+    .expect("write list literal inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run list literal inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[1, 2, 3] [1, \"two\"] [[1], [2]] []\n"
+    );
+
+    fs::write(&path, "val invalid:list<num> = [1, \"two\"]\n")
+        .expect("write incompatible list literal source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible list literal source");
+    fs::remove_file(path).expect("remove list literal inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected list<num>, got list<num|str>"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(

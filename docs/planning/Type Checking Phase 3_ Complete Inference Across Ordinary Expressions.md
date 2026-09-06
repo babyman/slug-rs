@@ -326,6 +326,9 @@ Define and test the empty-list representation.
 
 **Check:** nested lists preserve their contained types.
 
+**Status:** complete — CLI coverage proves homogeneous, heterogeneous, nested,
+and empty list representations, plus a rejected incompatible element union.
+
 ---
 
 ### Task 11 — Complete list spread inference
