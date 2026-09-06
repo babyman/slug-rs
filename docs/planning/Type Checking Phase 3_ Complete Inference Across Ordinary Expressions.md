@@ -857,6 +857,20 @@ Document future-phase limitations as concrete follow-up items.
 
 **Check:** no unexplained `Unknown` remains in ordinary-expression inference.
 
+**Status:** complete — remaining `Unknown` paths are intentional or recorded
+below; none are an unexplained ordinary-expression inference fallback.
+
+| Classification | Remaining sites |
+| --- | --- |
+| Genuinely unknowable | Unknown names and dynamic bindings; unparameterized list/map elements; unconstrained struct fields and destructuring patterns; runtime values without source semantic metadata. |
+| Intentional dynamic boundary | Untyped function declarations and generic substitutions; missing `select` handlers; `notImplemented`; operators, indexing, and slicing with a dynamic operand; calls through an unknown callee or incomplete structural-function metadata. |
+| Future-phase limitation | Path reachability is not yet modeled: removing `nil` from a statically `nil` value yields `unknown` rather than proving the branch unreachable. Structural function types also intentionally omit labels, defaults, and variadic shape, so named, spread, and arity-mismatched calls remain dynamic. |
+| Bug | None found. |
+
+The future work is therefore concrete: add reachability-aware facts for
+impossible nil tests, and extend structural callable metadata only if those
+dynamic call forms need static checking.
+
 ---
 
 ### Task 33 — Verify diagnostic quality from inferred types

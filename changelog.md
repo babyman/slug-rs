@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented the remaining intentional and future-phase `unknown` inference
+  boundaries.
+
 - Added nested inference regressions for conditional file results in lists and
   known call results flowing through another call.
 
