@@ -14,6 +14,9 @@
 - Documented fixed static types for inferred mutable bindings and added
   reassignment regression coverage.
 
+- Added CLI regression coverage for inferred prefix-operator results, checked
+  invalid operands, and dynamic operands.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

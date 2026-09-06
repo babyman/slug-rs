@@ -205,6 +205,10 @@ and boolean/logical forms according to Slug semantics.
 
 **Check:** known-invalid operands fail during compilation; unknown operands remain dynamic where permitted.
 
+**Status:** complete — the existing centralized `prefix_result` rule is covered
+by CLI cases for numeric, logical, and bytewise prefix results, known-invalid
+operands, and an unannotated dynamic operand.
+
 ---
 
 ### Task 7 — Centralize binary operator inference

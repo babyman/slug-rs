@@ -167,6 +167,52 @@ fn fixes_inferred_mutable_binding_types_at_initialization() {
 }
 
 #[test]
+fn infers_and_checks_prefix_operator_results() {
+    let path = fixture_path("prefix-inference");
+    fs::write(
+        &path,
+        "val negate = fn(value) { -value }\n\
+         println(-2, !nil, ~0x\"00\", negate(3))\n",
+    )
+    .expect("write prefix inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run prefix inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "-2 true 0x\"ff\" -3\n"
+    );
+
+    for (source, expected) in [
+        ("val value = \"slug\"\n-value\n", "expected num, got str"),
+        (
+            "val value = true\n~value\n",
+            "operator `~` does not accept bool",
+        ),
+    ] {
+        fs::write(&path, source).expect("write invalid prefix inference source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid prefix inference source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr.starts_with(&format!("slug: semantic error: {expected}")),
+            "{stderr}"
+        );
+    }
+    fs::remove_file(path).expect("remove prefix inference source");
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(
