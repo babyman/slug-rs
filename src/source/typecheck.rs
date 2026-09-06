@@ -2475,7 +2475,51 @@ fn infer(
         substitutions.insert(*index, actual.clone());
         return Ok(());
     }
-    require(&substitute(expected, substitutions), actual, span)
+    match (expected, actual) {
+        (Type::List(Some(expected)), Type::List(Some(actual)))
+        | (Type::Channel(Some(expected)), Type::Channel(Some(actual))) => {
+            infer(expected, actual, substitutions, span)
+        }
+        (Type::Task(Some(expected)), Type::Task(Some(actual))) => {
+            infer_task_payload(expected, actual, substitutions, span)
+        }
+        (
+            Type::Map(Some((expected_key, expected_value))),
+            Type::Map(Some((actual_key, actual_value))),
+        ) => {
+            infer(expected_key, actual_key, substitutions, span)?;
+            infer(expected_value, actual_value, substitutions, span)
+        }
+        (Type::Tuple(expected), Type::Tuple(actual))
+        | (Type::Function(Some(expected)), Type::Function(Some(actual)))
+            if expected.len() == actual.len() =>
+        {
+            for (expected, actual) in expected.iter().zip(actual) {
+                infer(expected, actual, substitutions, span)?;
+            }
+            Ok(())
+        }
+        _ => require(&substitute(expected, substitutions), actual, span),
+    }
+}
+
+fn infer_task_payload(
+    expected: &Type,
+    actual: &Type,
+    substitutions: &mut HashMap<usize, Type>,
+    span: &crate::SourceSpan,
+) -> Result<(), SourceError> {
+    let Type::Generic(index) = expected else {
+        return infer(expected, actual, substitutions, span);
+    };
+    if matches!(actual, Type::Unknown) {
+        return Ok(());
+    }
+    if let Some(previous) = substitutions.get(index) {
+        return require(previous, actual, span);
+    }
+    substitutions.insert(*index, actual.clone());
+    Ok(())
 }
 
 fn substitute(value_type: &Type, substitutions: &HashMap<usize, Type>) -> Type {

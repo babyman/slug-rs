@@ -110,7 +110,7 @@ export val tryRecv = fn(channel:chan<any|nil>):any {
  * If `timeout` is greater than 0 and the task does not complete within
  * that many milliseconds, a `TimeoutError` is thrown.
  */
-export val await = fn(handle:task, timeout:num = 0):any {
+export val await = fn<T>(handle:task<T>, timeout:num = 0):T {
 	if (timeout > 0) {
 		select {
 			await handle

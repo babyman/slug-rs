@@ -450,6 +450,31 @@ fn infers_map_literal_key_and_value_types_independently() {
 }
 
 #[test]
+fn preserves_spawn_result_types_through_task_await() {
+    let path = fixture_path("task-result-inference");
+    fs::write(
+        &path,
+        "val channel = import(\"slug.channel\")\n\
+         val task:task<num> = spawn { 42 }\n\
+         val result:num = channel.await(task)\n\
+         println(result)\n",
+    )
+    .expect("write task result inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run task result inference source");
+    fs::remove_file(path).expect("remove task result inference source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
+}
+
+#[test]
 fn infers_known_index_result_types() {
     let path = fixture_path("index-inference");
     fs::write(

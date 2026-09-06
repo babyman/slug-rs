@@ -44,6 +44,9 @@
 - Added CLI regression coverage that foreign file results retain their nominal
   resource type through bindings and list literals.
 
+- `slug.channel.await` now preserves a spawned task's inferred payload type;
+  generic inference now descends through structured parameter types.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

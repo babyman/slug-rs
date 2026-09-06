@@ -661,6 +661,10 @@ task<num>
 
 **Check:** awaiting or otherwise consuming the task preserves `num` according to existing task semantics.
 
+**Status:** complete — `slug.channel.await` is generic over `task<T>` and the
+CLI regression proves `spawn { 42 }` is retained as `task<num>` and awaits as
+`num`.
+
 ---
 
 ### Task 25 — Preserve channel element types

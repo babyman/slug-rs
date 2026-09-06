@@ -963,6 +963,10 @@ wherever a nilable argument or result is intended. Nil by itself does not infer
 `T` through a `T|nil` position, so the call must provide another inference
 position or an explicit non-nil type argument.
 
+Inference descends through parameterized list, map, task, channel, tuple, and
+function types. For example, passing `task<num>` to a `task<T>` parameter
+infers `T` as `num`.
+
 Callers may provide type arguments explicitly with `name<Type>(...)`, for
 example `identity<str>("Slug")`. An explicit application must name a generic
 function, provide exactly one type argument per declared parameter, and be
@@ -990,7 +994,8 @@ its error. An await marks the task's failure as observed by its owning nursery;
 repeated awaits return the same cached completion. The ordinary task-await API
 is the `slug.channel.await` library callable. It is implemented with the
 `await` `select` case form; `await` is not an independently reserved
-expression keyword or a builtin.
+expression keyword or a builtin. `await` is generic over the task payload:
+`await(task<T>)` returns `T`.
 
 Root evaluation, explicit nursery bodies, and spawned tasks suspend
 cooperatively on task, channel, timer, and `select` operations. Owner
