@@ -35,6 +35,9 @@
 - Added CLI regression coverage for independently inferred map key and value
   types, including empty maps.
 
+- Added CLI regression coverage for inferred list, map, string, and bytes
+  index result types.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

@@ -401,6 +401,9 @@ bytes[...] → defined byte index result
 
 **Check:** known-invalid index operations fail statically.
 
+**Status:** complete — CLI coverage proves list, map, string, and bytes index
+results, including the nilable map lookup contract and a static index mismatch.
+
 ---
 
 ### Task 14 — Complete slice inference

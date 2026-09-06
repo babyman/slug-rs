@@ -450,6 +450,45 @@ fn infers_map_literal_key_and_value_types_independently() {
 }
 
 #[test]
+fn infers_known_index_result_types() {
+    let path = fixture_path("index-inference");
+    fs::write(
+        &path,
+        "val list_value:num = [1][0]\n\
+         val map_value:num|nil = {\"one\": 1}[\"one\"]\n\
+         val character:str = \"Slug\"[0]\n\
+         val byte:num = 0x\"53\"[0]\n\
+         println(list_value, map_value, character, byte)\n",
+    )
+    .expect("write index inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run index inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1 1 S 83\n");
+
+    fs::write(&path, "val invalid = [1][\"one\"]\n").expect("write invalid index inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid index inference source");
+    fs::remove_file(path).expect("remove index inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got str"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(
