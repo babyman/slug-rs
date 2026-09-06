@@ -98,7 +98,7 @@ bytes      → bytes
 
 **Check:** bindings initialized from each literal retain that inferred type through later references.
 
-**Status:** complete — `tests/cli/types_and_metadata.rs` proves both compatible
+**Status:** complete — `../../../tests/cli/types_and_metadata.rs` proves both compatible
 calls and incompatible annotated uses for every scalar literal family.
 
 ---
@@ -125,7 +125,7 @@ All three must be known as `str`.
 
 **Check:** a later incompatible operation on `c` fails at compile time.
 
-**Status:** complete — `tests/cli/types_and_metadata.rs` proves `a -> b -> c`
+**Status:** complete — `../../../tests/cli/types_and_metadata.rs` proves `a -> b -> c`
 retains `str` and reports the resulting incompatible numeric operation.
 
 ---
@@ -152,7 +152,7 @@ val x:num|nil = 10
 
 **Check:** initializer is accepted as `num`; binding is subsequently treated as `num|nil`.
 
-**Status:** complete — `tests/cli/types_and_metadata.rs` proves an inferred
+**Status:** complete — `../../../tests/cli/types_and_metadata.rs` proves an inferred
 `num` initializer is accepted by `num|nil` and that later reads retain the
 declared nullable type.
 
@@ -186,7 +186,7 @@ It must not depend accidentally on analysis order.
 **Check:** behaviour is explicit and covered by tests.
 
 **Status:** complete — inferred `var` bindings use the fixed-initializer rule
-in `docs/language/language-specification.md`; the CLI regression covers both
+in `../../language/language-specification.md`; the CLI regression covers both
 compatible reassignment and a rejected heterogeneous reassignment.
 
 ---
@@ -352,7 +352,7 @@ Test known mixed and genuinely unknown spread operands.
 unknown spread produces an unparameterized list without converting `Unknown`
 into `any`.
 
-**Status:** complete — `docs/language/language-specification.md` now defines
+**Status:** complete — `../../language/language-specification.md` now defines
 the distinction, and CLI coverage proves known typed spreads, `list<any>`, and
 an unparameterized list from a genuinely unknown spread.
 
@@ -438,7 +438,7 @@ Test:
 
 **Check:** crossing a member-access boundary does not discard semantic type information.
 
-**Status:** complete — `tests/cli/types_and_values.rs` covers typed struct
+**Status:** complete — `../../../tests/cli/types_and_values.rs` covers typed struct
 fields and chained map members; `tests/module_loader.rs` covers imported
 callable/export snapshots and their retained signatures.
 
@@ -464,7 +464,7 @@ Verify that field access and passing the value through bindings retain `Person`.
 
 **Check:** two structurally similar but nominally distinct structs remain distinct where Slug requires nominal identity.
 
-**Status:** complete — `tests/cli/types_and_values.rs` proves schema aliases
+**Status:** complete — `../../../tests/cli/types_and_values.rs` proves schema aliases
 retain nominal construction identity and rejects assignment between distinct
 otherwise empty schemas.
 
@@ -500,7 +500,7 @@ list<Direction>
 
 **Check:** cases from distinct enum types are not conflated.
 
-**Status:** complete — `tests/cli/types_and_values.rs` proves qualified enum
+**Status:** complete — `../../../tests/cli/types_and_values.rs` proves qualified enum
 values satisfy their owning nominal type and enum coverage rejects a distinct
 enum's identically named case.
 
@@ -556,7 +556,7 @@ verify that inferred `str` values satisfy `Path` parameters and vice versa.
 
 **Check:** aliases improve naming without changing assignability.
 
-**Status:** complete — `tests/cli/types_and_values.rs` proves transparent
+**Status:** complete — `../../../tests/cli/types_and_values.rs` proves transparent
 aliases work in bindings, collection elements, function parameters, unions,
 and runtime-checkable constraints without introducing nominal identity.
 
@@ -576,7 +576,7 @@ Cover:
 
 **Check:** selected result types survive through subsequent expressions.
 
-**Status:** complete — `tests/cli/types_and_metadata.rs` covers ordinary and
+**Status:** complete — `../../../tests/cli/types_and_metadata.rs` covers ordinary and
 structural callable values; `tests/module_loader.rs` covers imported and
 overload-selected callables; `tests/cli/filesystem.rs` covers typed foreign
 results.
@@ -589,7 +589,7 @@ For every pipeline form, verify that its result type matches the equivalent expl
 
 **Check:** pipelines contain no separate degraded inference path.
 
-**Status:** complete — `tests/cli/types_and_values.rs` covers chained pipeline
+**Status:** complete — `../../../tests/cli/types_and_values.rs` covers chained pipeline
 execution, and `tests/module_loader.rs` covers a pipeline through a selected
 typed imported overload.
 
@@ -617,7 +617,7 @@ and branching result unions where already supported.
 
 **Check:** simple functions no longer default to `Unknown` when the result is obvious.
 
-**Status:** complete — `tests/cli/types_and_metadata.rs` proves an
+**Status:** complete — `../../../tests/cli/types_and_metadata.rs` proves an
 unannotated numeric function is retained as a precise function value and its
 inferred result rejects an incompatible later annotation.
 
@@ -637,7 +637,7 @@ verify that all known value-producing returns are assignable to `num`.
 
 **Check:** inferred body information is used to validate the declared contract.
 
-**Status:** complete — `tests/cli/types_and_metadata.rs` includes an annotated
+**Status:** complete — `../../../tests/cli/types_and_metadata.rs` includes an annotated
 function returning a known incompatible value and asserts the source-level
 return-type diagnostic.
 
@@ -962,12 +962,12 @@ completion gate has passed.
 
 The 34 tasks above are the acceptance criteria.  Execute them through the
 following bounded work packages so that each change has one clear owner,
-minimal overlap in `src/source/typecheck.rs`, and a focused test boundary.
+minimal overlap in `../../../src/source/typecheck.rs`, and a focused test boundary.
 Later packages must not begin until their listed dependency gates pass.
 
 | Package | Includes | Deliverable and dependency gate | Primary proof |
 | --- | --- | --- | --- |
-| P0 — Inference inventory | 1 | Add the `ExprKind` inference matrix, classify every existing `Type::Unknown`, and turn each accidental fallback into a later tracked item. This is documentation and tests only; do not alter semantics. | Focused `tests/cli/types_and_metadata.rs` coverage plus `git diff --check` |
+| P0 — Inference inventory | 1 | Add the `ExprKind` inference matrix, classify every existing `Type::Unknown`, and turn each accidental fallback into a later tracked item. This is documentation and tests only; do not alter semantics. | Focused `../../../tests/cli/types_and_metadata.rs` coverage plus `git diff --check` |
 | P1 — Binding and result lattice | 2–5, 8–9, 28–29 | Define the binding update policy and implement the shared result-composition helpers: normalized union and internal non-returning result. Blocks and conditionals must use those helpers. **Gate:** all primitive values, bindings, `if`, and terminating branches retain deliberate types. | `make test-cli` |
 | P2 — Operators and collections | 6–7, 10–14 | Make unary/binary rules single-source, then complete list/map, spread, index, and slice inference using the P1 lattice. **Gate:** every supported ordinary collection operation either has a precise result or a checked static error. | `make test-cli` and `make test-vm` |
 | P3 — Nominal values and member paths | 15–19 | Preserve member, struct, enum, resource, and alias information across binding and static member access. Keep nominal and transparent-alias semantics distinct. **Gate:** known member paths never degrade a known type. | `make test-cli`; `cargo test --features metrics --test module_loader` |
