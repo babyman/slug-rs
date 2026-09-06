@@ -381,6 +381,9 @@ Test heterogeneous keys and values and define the empty-map representation.
 
 **Check:** uncertainty in values does not unnecessarily erase known key types, and vice versa.
 
+**Status:** complete — CLI coverage proves independently inferred key/value
+unions, the empty-map representation, and a rejected value-only mismatch.
+
 ---
 
 ### Task 13 — Complete index inference

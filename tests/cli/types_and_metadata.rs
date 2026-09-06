@@ -408,6 +408,48 @@ fn infers_list_spread_element_types_without_conflating_unknown_and_any() {
 }
 
 #[test]
+fn infers_map_literal_key_and_value_types_independently() {
+    let path = fixture_path("map-literal-inference");
+    fs::write(
+        &path,
+        "val scores:map<str, num> = {\"one\": 1, \"two\": 2}\n\
+         val mixed:map<num|str, num|str> = {[1]: \"one\", \"two\": 2}\n\
+         val empty:map = {}\n\
+         println(scores, mixed, empty)\n",
+    )
+    .expect("write map literal inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run map literal inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"one\": 1, \"two\": 2} {1: \"one\", \"two\": 2} {}\n"
+    );
+
+    fs::write(&path, "val invalid:map<str, num> = {\"one\": \"one\"}\n")
+        .expect("write incompatible map literal source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible map literal source");
+    fs::remove_file(path).expect("remove map literal inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected map<str, num>, got map<str, str>"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(
