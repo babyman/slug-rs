@@ -9,6 +9,16 @@ permissions:
 
 jobs:
   check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          components: clippy, rustfmt
+      - run: make ci
+
+  ffi-prototype:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,6 +29,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.1
-          components: clippy, rustfmt
-      - run: make ci
-      - run: make test-ffi-prototype
+      - run: cargo test --features ffi-prototype --test ffi_prototype
