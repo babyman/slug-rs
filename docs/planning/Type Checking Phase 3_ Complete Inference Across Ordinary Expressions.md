@@ -922,6 +922,9 @@ Once Phase 3 inference work is complete:
 
 **Check:** stronger inference introduces no unintended runtime or language regressions.
 
+**Status:** complete — formatting, lint, VM, CLI, module-loader, conformance,
+legacy-syntax, and documentation checks all pass.
+
 ---
 
 ## Phase completion gate
@@ -951,6 +954,9 @@ A useful final audit question is:
 > **For any ordinary Slug expression, can we explain exactly why the compiler knows its result type—or exactly why it cannot?**
 
 If the answer is yes throughout the checker, Phase 3 has achieved its purpose.
+
+**Status:** complete — all 34 acceptance tasks are complete and the Phase 3
+completion gate has passed.
 
 ## Execution roadmap
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Completed the Phase 3 expression-inference regression and conformance gate.
+
 - Added diagnostic regressions for inferred scalar and nominal resource types.
 
 - Documented the remaining intentional and future-phase `unknown` inference
