@@ -116,6 +116,42 @@ fn preserves_nominal_file_types_from_foreign_results() {
 }
 
 #[test]
+fn infers_conditional_file_results_inside_lists() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-conditional-file-inference-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create conditional file fixture root");
+    let input = root.join("input.txt");
+    let program = root.join("program.slug");
+    fs::write(&input, "line\n").expect("write conditional file input");
+    fs::write(
+        &program,
+        format!(
+            "val fs = import(\"slug.io.fs\")\n\
+             val files:list<fs.File> = [if (true) {{ fs.openRead(\"{}\") }} else {{ fs.openRead(\"{}\") }}]\n\
+             defer fs.close(files[0])\n\
+             println(len(files))\n",
+            input.display(),
+            input.display(),
+        ),
+    )
+    .expect("write conditional file inference source");
+    let output = slug()
+        .arg(&program)
+        .output()
+        .expect("run conditional file inference source");
+    fs::remove_dir_all(root).expect("remove conditional file fixture root");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+}
+
+#[test]
 fn match_constraints_check_exact_nominal_file_handles() {
     let root = std::env::temp_dir().join(format!("slug-cli-resource-match-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create resource-match fixture root");

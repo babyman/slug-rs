@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added nested inference regressions for conditional file results in lists and
+  known call results flowing through another call.
+
 - Added module-loader coverage that preserves inferred exported value and
   function-result types through imports.
 

@@ -629,6 +629,31 @@ fn excludes_non_returning_branches_from_inferred_results() {
 }
 
 #[test]
+fn preserves_nested_known_call_results() {
+    let path = fixture_path("nested-call-inference");
+    fs::write(
+        &path,
+        "val source = fn() { 10 }\n\
+         val transform = fn(value:num) { value + 1 }\n\
+         val result:num = transform(source())\n\
+         println(result)\n",
+    )
+    .expect("write nested call inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nested call inference source");
+    fs::remove_file(path).expect("remove nested call inference source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "11\n");
+}
+
+#[test]
 fn infers_known_index_result_types() {
     let path = fixture_path("index-inference");
     fs::write(

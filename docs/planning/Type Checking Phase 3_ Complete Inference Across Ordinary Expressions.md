@@ -834,6 +834,10 @@ where known call results flow through multiple bindings/calls.
 
 **Check:** inference works compositionally rather than only in isolated unit cases.
 
+**Status:** complete — CLI coverage combines conditional nominal resource
+results with list inference and preserves a known source result through a
+nested transform call.
+
 ---
 
 ### Task 32 — Audit remaining `Unknown` production
