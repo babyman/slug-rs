@@ -500,6 +500,10 @@ list<Direction>
 
 **Check:** cases from distinct enum types are not conflated.
 
+**Status:** complete — `tests/cli/types_and_values.rs` proves qualified enum
+values satisfy their owning nominal type and enum coverage rejects a distinct
+enum's identically named case.
+
 ---
 
 ### Task 18 — Preserve nominal resource inference
