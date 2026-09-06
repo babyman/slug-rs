@@ -556,6 +556,10 @@ verify that inferred `str` values satisfy `Path` parameters and vice versa.
 
 **Check:** aliases improve naming without changing assignability.
 
+**Status:** complete — `tests/cli/types_and_values.rs` proves transparent
+aliases work in bindings, collection elements, function parameters, unions,
+and runtime-checkable constraints without introducing nominal identity.
+
 ---
 
 ### Task 20 — Complete known-call result inference
