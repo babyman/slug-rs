@@ -576,6 +576,11 @@ Cover:
 
 **Check:** selected result types survive through subsequent expressions.
 
+**Status:** complete — `tests/cli/types_and_metadata.rs` covers ordinary and
+structural callable values; `tests/module_loader.rs` covers imported and
+overload-selected callables; `tests/cli/filesystem.rs` covers typed foreign
+results.
+
 ---
 
 ### Task 21 — Make pipeline inference identical to call inference
