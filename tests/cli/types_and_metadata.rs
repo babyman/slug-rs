@@ -605,6 +605,30 @@ fn infers_normalized_match_case_results() {
 }
 
 #[test]
+fn excludes_non_returning_branches_from_inferred_results() {
+    let path = fixture_path("non-returning-inference");
+    fs::write(
+        &path,
+        "val thrown:num = if (true) { 10 } else { throw \"failed\" }\n\
+         val retry = fn(flag:bool):num { if (flag) { 20 } else { recur(true) } }\n\
+         println(thrown, retry(false))\n",
+    )
+    .expect("write non-returning inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run non-returning inference source");
+    fs::remove_file(path).expect("remove non-returning inference source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "10 20\n");
+}
+
+#[test]
 fn infers_known_index_result_types() {
     let path = fixture_path("index-inference");
     fs::write(

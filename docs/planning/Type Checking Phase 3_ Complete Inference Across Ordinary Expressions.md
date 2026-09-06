@@ -744,6 +744,10 @@ num
 
 rather than `num|unknown`.
 
+**Status:** complete — an internal non-returning type models `throw` and valid
+tail-position `recur`; union composition excludes it from value-producing
+branches.
+
 ---
 
 ### Task 29 — Normalize unions consistently

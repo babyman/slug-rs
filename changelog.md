@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Static inference now excludes non-returning `throw` and tail `recur` branches
+  from composed expression result types.
+
 - Added CLI regression coverage for normalized `match` case result types.
 
 - Added CLI regression coverage for normalized `select` handler result types.

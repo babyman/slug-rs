@@ -1571,7 +1571,8 @@ fn lower_match_type(
             .map(|member| lower_match_type(member, operands))
             .collect::<Result<Vec<_>, _>>()
             .map(MatchType::Union),
-        Type::Unknown
+        Type::Never
+        | Type::Unknown
         | Type::Function(Some(_))
         | Type::Task(Some(_))
         | Type::Channel(Some(_))

@@ -951,7 +951,7 @@ fn check_expression(
         ExprKind::Return { value } => check_expression(value, environment, type_parameters, strict),
         ExprKind::Throw { value } => {
             check_expression(value, environment, type_parameters, strict)?;
-            Ok(Type::Unknown)
+            Ok(Type::Never)
         }
         ExprKind::Defer { value, .. } => {
             check_expression(value, environment, type_parameters, strict)?;
@@ -971,7 +971,7 @@ fn check_expression(
             for argument in arguments {
                 check_argument(argument, environment, type_parameters, strict)?;
             }
-            Ok(Type::Unknown)
+            Ok(Type::Never)
         }
         ExprKind::Select(cases) => {
             let mut results = Vec::new();
@@ -1280,6 +1280,9 @@ fn binary_result(
     strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
+    if matches!(left, Type::Never) || matches!(right, Type::Never) {
+        return Ok(Type::Never);
+    }
     match operator {
         Binary::Or | Binary::And | Binary::Equal | Binary::NotEqual => Ok(Type::Bool),
         Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual => {
@@ -1324,6 +1327,9 @@ fn prefix_result(
     strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
+    if matches!(value, Type::Never) {
+        return Ok(Type::Never);
+    }
     match operator {
         Prefix::Not => Ok(Type::Bool),
         Prefix::Negate => {
@@ -1580,7 +1586,8 @@ fn is_closed_coverage_type(value_type: &Type) -> bool {
         | Type::Task(None)
         | Type::Channel(None) => true,
         Type::Union(members) => members.iter().all(is_closed_coverage_type),
-        Type::Unknown
+        Type::Never
+        | Type::Unknown
         | Type::Any
         | Type::List(_)
         | Type::Map(_)

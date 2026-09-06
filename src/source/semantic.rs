@@ -78,6 +78,8 @@ pub(super) type EnumIdentity = NominalIdentity;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Type {
+    /// Internal bottom type for expressions that cannot produce a value.
+    Never,
     Unknown,
     Any,
     Nil,
@@ -122,7 +124,8 @@ impl Type {
                 key.is_reifiable_match_constraint() && value.is_reifiable_match_constraint()
             }),
             Self::Union(members) => members.iter().all(Self::is_reifiable_match_constraint),
-            Self::Unknown
+            Self::Never
+            | Self::Unknown
             | Self::Function(Some(_))
             | Self::Task(Some(_))
             | Self::Channel(Some(_))
@@ -142,6 +145,7 @@ impl Type {
                 member => flattened.push(member),
             }
         }
+        flattened.retain(|member| !matches!(member, Self::Never));
         if flattened.iter().any(|member| member == &Self::Unknown) {
             return Self::Unknown;
         }
@@ -151,7 +155,7 @@ impl Type {
         flattened.sort_by_key(sort_key);
         flattened.dedup();
         match flattened.len() {
-            0 => Self::Unknown,
+            0 => Self::Never,
             1 => flattened.pop().expect("one normalized union member"),
             _ => Self::Union(flattened),
         }
@@ -206,7 +210,7 @@ impl Type {
     }
 
     pub(super) fn is_assignable_to(&self, expected: &Self) -> bool {
-        if self == expected || matches!(self, Self::Unknown) {
+        if self == expected || matches!(self, Self::Never | Self::Unknown) {
             return true;
         }
         if let Self::Union(members) = self {
@@ -296,6 +300,7 @@ fn optional_signature_assignable(actual: Option<&[Type]>, expected: Option<&[Typ
 impl fmt::Display for Type {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Never => formatter.write_str("never"),
             Self::Unknown => formatter.write_str("unknown"),
             Self::Any => formatter.write_str("any"),
             Self::Nil => formatter.write_str("nil"),

@@ -491,6 +491,11 @@ val headOrZero = fn(xs) {
 language-level error propagation. `recur(...)` is a function-level tail-call
 operation and is valid only in tail position.
 
+For static inference, `throw` and valid tail-position `recur` have an internal
+non-returning result. This is not source-level `never` syntax: it simply means
+those expressions contribute no value type when composing the result of an
+`if`, `match`, or `select` expression.
+
 An uncaught `throw` terminates the current program with a runtime error that
 retains the thrown Slug value, the `throw` source location, and available Slug
 call frames.
