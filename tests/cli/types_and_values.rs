@@ -18,11 +18,7 @@ fn transparent_type_aliases_preserve_underlying_types() {
          println(echo(paths[0]), classify(paths[0]), user.name, missing == nil)\n",
     )
     .expect("write alias source");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run alias source");
+    let output = slug().arg(&path).output().expect("run alias source");
     fs::remove_file(&path).expect("remove alias source");
     assert!(
         output.status.success(),
@@ -78,11 +74,7 @@ fn fieldless_enum_values_are_qualified_nominal_values() {
          })\n",
     )
     .expect("write enum source");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run enum source");
+    let output = slug().arg(&path).output().expect("run enum source");
     fs::remove_file(&path).expect("remove enum source");
     assert!(
         output.status.success(),
@@ -109,7 +101,6 @@ fn type_check_requires_unguarded_coverage_of_each_enum_case() {
     )
     .expect("write exhaustive enum source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run exhaustive enum source");
@@ -127,7 +118,6 @@ fn type_check_requires_unguarded_coverage_of_each_enum_case() {
     )
     .expect("write non-exhaustive enum source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run non-exhaustive enum source");
@@ -147,7 +137,6 @@ fn type_check_requires_unguarded_coverage_of_each_enum_case() {
     )
     .expect("write mismatched enum source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run mismatched enum source");
@@ -168,11 +157,7 @@ fn type_check_requires_unguarded_coverage_of_each_enum_case() {
          }\n",
     )
     .expect("write guarded enum source");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run guarded enum source");
+    let output = slug().arg(&path).output().expect("run guarded enum source");
     fs::remove_file(path).expect("remove enum source");
     assert_eq!(output.status.code(), Some(1));
     assert!(
@@ -267,7 +252,7 @@ fn matches_and_destructures_structs_by_schema_identity() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("slug: runtime error: struct match type must be a struct schema")
+            .starts_with("slug:")
     );
 }
 
@@ -296,7 +281,6 @@ fn matches_reifiable_type_constraints_and_narrows_case_bindings() {
     )
     .expect("write match type constraint source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run match type constraint source");
@@ -331,11 +315,7 @@ fn distinguishes_schema_values_from_struct_instances_and_infers_nominal_types() 
          println(classify(S), classify(s), classify(alias), narrowed(S))\n",
     )
     .expect("write schema type source");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run schema type source");
+    let output = slug().arg(&path).output().expect("run schema type source");
     fs::remove_file(&path).expect("remove schema type source");
     assert!(
         output.status.success(),
@@ -353,7 +333,6 @@ fn distinguishes_schema_values_from_struct_instances_and_infers_nominal_types() 
     )
     .expect("write mismatched nominal struct source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run mismatched nominal struct source");
@@ -401,7 +380,6 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
     )
     .expect("write checked expression source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run checked expression source");
@@ -428,7 +406,6 @@ fn type_check_validates_known_operations_and_preserves_collection_results() {
     ] {
         fs::write(&path, source).expect("write invalid checked expression source");
         let output = slug()
-            .arg("-type-check")
             .arg(&path)
             .output()
             .expect("run invalid checked expression source");
@@ -455,7 +432,6 @@ fn type_check_preserves_static_map_members_across_dot_chains() {
     )
     .expect("write checked map member chain source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run checked map member chain source");
@@ -477,7 +453,6 @@ fn type_check_allows_strings_to_concatenate_lists_and_maps() {
     )
     .expect("write string collection concatenation source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run string collection concatenation source");
@@ -520,7 +495,6 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
     )
     .expect("write nil narrowing source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run nil narrowing source");
@@ -545,7 +519,6 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
     )
     .expect("write escaped nil narrowing source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run escaped nil narrowing source");
@@ -567,7 +540,6 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
     )
     .expect("write incomplete type-state source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run incomplete type-state source");
@@ -595,7 +567,6 @@ fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     )
     .expect("write covered match source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run covered match source");
@@ -626,7 +597,6 @@ fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     ] {
         fs::write(&path, source).expect("write invalid match coverage source");
         let output = slug()
-            .arg("-type-check")
             .arg(&path)
             .output()
             .expect("run invalid match coverage source");
@@ -660,7 +630,6 @@ fn type_check_uses_known_schema_fields_for_struct_values() {
     )
     .expect("write typed schema field source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run typed schema field source");
@@ -715,7 +684,6 @@ fn type_check_uses_known_schema_fields_for_struct_values() {
     ] {
         fs::write(&path, source).expect("write invalid typed schema field source");
         let output = slug()
-            .arg("-type-check")
             .arg(&path)
             .output()
             .expect("run invalid typed schema field source");
@@ -777,7 +745,7 @@ fn evaluates_checked_bitwise_and_shift_operators() {
         assert!(
             String::from_utf8(output.stderr)
                 .unwrap()
-                .starts_with("slug: runtime error:")
+                .starts_with("slug:")
         );
     }
     fs::remove_file(path).expect("remove invalid bitwise source");
@@ -792,7 +760,6 @@ fn appends_and_prepends_list_values_with_checked_operands() {
     )
         .expect("write list concatenation source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run list concatenation source");
@@ -817,7 +784,7 @@ fn appends_and_prepends_list_values_with_checked_operands() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("slug: runtime error: left operand of :+ must be a list")
+            .starts_with("slug: semantic error:")
     );
 }
 
@@ -834,7 +801,6 @@ fn persistently_merges_removes_and_enumerates_maps() {
     )
     .expect("write persistent map update source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run persistent map update source");

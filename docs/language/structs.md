@@ -23,7 +23,7 @@ values reuse the resulting default values; construction does not reevaluate
 default expressions.
 
 The current Rust subset accepts fields with optional annotations and defaults.
-Under `-type-check`, a statically known default must conform to its field
+During compilation, a statically known default must conform to its field
 annotation. Known local, aliased, and imported schema bindings retain their
 field metadata for construction, copy, and direct field-access checks;
 annotations do not coerce runtime values.
@@ -45,7 +45,7 @@ when the target is not a schema, a field is unknown, a field is provided more
 than once, or a required field is omitted. Omitted fields with defaults receive
 their schema's stored default values.
 
-Under `-type-check`, construction through a known schema also rejects duplicate
+During compilation, construction through a known schema also rejects duplicate
 or unknown fields, missing required fields, and supplied values that do not
 conform to declared or inferred field types. Dynamically selected schemas keep
 the ordinary runtime behavior.
@@ -75,7 +75,7 @@ the copy retain their original values. This form also copies maps; see
 [Maps](maps.md) for map-key behavior. Copying a value that is neither a struct
 nor a map, naming an unknown struct field, or naming a field more than once is
 a checked runtime type error.
-Under `-type-check`, a known `struct<S>` additionally checks replacement value
+During compilation, a known `struct<S>` additionally checks replacement value
 types and infers direct field reads from `S`'s field metadata.
 
 ## Patterns
@@ -87,7 +87,7 @@ match. Field requirements are partial: omitted fields are ignored, and a
 shorthand field such as `name` binds that field to `name`. Duplicate field names
 are invalid source.
 
-Under `-type-check`, a field bound from a known `struct<User>` has the type
+During compilation, a field bound from a known `struct<User>` has the type
 declared for that field by `User`, including in a destructuring declaration.
 
 `_: struct` matches every struct value. The `User` binding in `struct<User>`

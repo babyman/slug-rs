@@ -8,7 +8,7 @@ It does not prescribe a parser, bytecode format, object representation,
 scheduler, or host-language implementation.
 
 This edition specifies the source-language core, module system, metadata and
-foreign declarations, optional static checking, error behavior, and structured
+foreign declarations, semantic type checking, error behavior, and structured
 concurrency. Library APIs are specified in their individual reference pages.
 
 The developer's guide teaches the language and architectural decision records
@@ -371,7 +371,7 @@ otherwise it has the less precise type `struct`. Struct fields can have type
 annotations and defaults. `copy` creates a new struct or map value with
 replacement fields or string keys. Tags on struct fields are not syntax.
 
-With `-type-check`, a directly known schema binding also checks supplied and
+During compilation, a directly known schema binding also checks supplied and
 required fields and their values. Direct string field access and copies through
 a known `struct<S>` use the declared field types. Aliased and imported schema
 bindings retain this precision; dynamically selected schemas remain generic
@@ -465,7 +465,7 @@ runtime-checkable and are source errors in a case constraint. The focused
 The [Match and Destructuring](match-and-destructuring.md) supplement defines
 the complete rule.
 
-With `-type-check`, a match whose subject is a closed union of direct runtime
+During compilation, a match whose subject is a closed union of direct runtime
 categories or exact `struct<Name>` identities receives conservative coverage
 diagnostics. An unguarded irrefutable pattern (`_`, a binding, or an `@`
 pattern around one) covers its whole type constraint; without a constraint it
@@ -791,10 +791,9 @@ Slug always performs semantic validation, including `recur` tail-position
 validation, struct-schema checks, program-entrypoint signature validation,
 and resolution of statically known overloads. Type annotations do not introduce
 runtime validation or coercion. Parameter annotations participate in mandatory
-resolution of statically known overloads. Optional type checking uses
-annotations for additional diagnostics and is enabled by the CLI `-type-check`
-flag. When it is enabled, those additional type diagnostics prevent execution;
-it does not change overload selection for a program accepted in both modes.
+resolution of statically known overloads. Semantic analysis uses annotations
+for additional diagnostics during every compilation. Those diagnostics prevent
+execution; they do not change overload selection.
 
 Because a call spread has runtime-determined arity, a call to a statically known
 overload set with one or more `...spread` arguments is a semantic error. This
@@ -803,7 +802,7 @@ to one statically known callable remains valid and uses ordinary runtime spread
 binding.
 
 The current Rust subset parses and retains declaration, parameter, return, and
-struct-field annotations. Its optional checker rejects directly provable
+struct-field annotations. Its semantic analysis rejects directly provable
 annotation mismatches in declarations, parameter defaults, function returns,
 struct defaults, and calls to statically known annotated functions. Function
 expressions infer structural `fn<R, P...>` value types from their parameter
@@ -813,7 +812,7 @@ annotated call positions and supports explicit type applications. Successful
 match type constraints narrow case-local bindings. Flow-sensitive narrowing
 and inference for the remaining dynamic expression forms remain future work.
 
-When `-type-check` is enabled, operators, indexing, and slicing also check
+Operators, indexing, and slicing check
 statically known operand families. Numeric arithmetic, bitwise and shift
 operators, unary numeric operations, ordering comparisons, list append and
 prepend, string concatenation and repetition, list concatenation, indexing,
@@ -838,7 +837,7 @@ When either operand is bytes, an integer from `0` through `255` becomes a
 one-byte value and the shorter non-empty byte operand repeats to the longer
 length. Unary `~` complements either an integer or every byte in a bytes value.
 
-With `-type-check`, a direct binding comparison to `nil` refines that binding
+During semantic analysis, a direct binding comparison to `nil` refines that binding
 within the relevant control-flow path. `if (value != nil)` excludes `nil` in
 its then branch and gives `value` type `nil` in its else branch; `== nil`
 reverses the facts. The same facts apply to the evaluated right operand of
@@ -851,10 +850,10 @@ remain conservative.
 
 When a statically known value has a structural function type but no declaration
 callable metadata—for example, a function selected by an `if` expression—a
-positional, non-spread call has the function type's result type. With
-`-type-check`, its arity and argument types must match the structural parameter
-types. Structural function types do not encode parameter labels, defaults, or
-variadic status, so named and spread calls retain ordinary dynamic call
+positional, non-spread call has the function type's result type. Its argument
+types must match the structural parameter types when arity is known. Structural
+function types do not encode parameter labels, defaults, or variadic status, so
+arity mismatches, named calls, and spread calls retain ordinary dynamic call
 behavior.
 
 The checker recognizes the built-in value categories `nil`, `any`, `bool`,

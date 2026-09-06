@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Source compilation now always performs semantic type checking. The
+  `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
+  removed; dynamically uncertain operations retain checked runtime behavior.
+
 - Added transparent top-level `type Name = Annotation` aliases, including
   cycle diagnostics and exported/imported compile-time type paths.
 

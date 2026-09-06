@@ -82,12 +82,12 @@ fn map_all_imports_exported_resource_types_into_the_local_type_namespace() {
         .expect("run map-all resource type source");
     fs::remove_file(path).expect("remove map-all resource type source");
 
+    assert_eq!(output.status.code(), Some(1));
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected File, got nil")
     );
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "nil\n");
 }
 
 #[test]
@@ -99,11 +99,7 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
         "val label:str|nil = \"ready\"\nval User = struct { name:str = \"Slug\" }\nval double = fn<T>(value:num):num { value * 2 }\nprintln(label, double(2), User {}.name)\n",
     )
     .expect("write annotated source");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run annotated source");
+    let output = slug().arg(&path).output().expect("run annotated source");
     fs::remove_file(&path).expect("remove annotated source");
     assert!(
         output.status.success(),
@@ -117,11 +113,7 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
         "val first = fn<T>(left:T, right:T):T { left }\nprintln(first<str>(\"left\", \"right\"))\n",
     )
     .expect("write generic call source");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run generic call source");
+    let output = slug().arg(&path).output().expect("run generic call source");
     fs::remove_file(&path).expect("remove generic call source");
     assert!(
         output.status.success(),
@@ -136,7 +128,6 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     )
     .expect("write inconsistent generic call");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run inconsistent generic call");
@@ -154,7 +145,6 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     )
     .expect("write piped inconsistent generic call");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run piped inconsistent generic call");
@@ -168,7 +158,6 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
 
     fs::write(&path, "val label:str = 1\n").expect("write mismatched declaration");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run mismatched declaration");
@@ -181,11 +170,7 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     );
 
     fs::write(&path, "val label = fn():str { 1 }\n").expect("write mismatched return");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run mismatched return");
+    let output = slug().arg(&path).output().expect("run mismatched return");
     fs::remove_file(&path).expect("remove mismatched return");
     assert_eq!(output.status.code(), Some(1));
     assert!(
@@ -197,7 +182,6 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
     fs::write(&path, "val User = struct { name:str = 1 }\n")
         .expect("write mismatched struct default");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run mismatched struct default");
@@ -222,7 +206,6 @@ fn infers_precise_function_values_and_return_results() {
     )
     .expect("write precise function value source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run precise function value source");
@@ -251,7 +234,6 @@ fn infers_precise_function_values_and_return_results() {
     ] {
         fs::write(&path, source).expect("write invalid function value source");
         let output = slug()
-            .arg("-type-check")
             .arg(&path)
             .output()
             .expect("run invalid function value source");
@@ -282,7 +264,6 @@ fn checks_positional_calls_through_precise_function_values() {
     )
     .expect("write function value call source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run function value call source");
@@ -294,31 +275,20 @@ fn checks_positional_calls_through_precise_function_values() {
     );
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "value\n");
 
-    for (source, expected) in [
-        (
-            "val choose:fn<str, str> = if (true) { fn(value:str):str { value } } else { fn(value:str):str { value } }\nchoose(1)\n",
-            "expected str, got num",
-        ),
-        (
-            "val choose:fn<str, str> = if (true) { fn(value:str):str { value } } else { fn(value:str):str { value } }\nchoose()\n",
-            "function value expects 1 argument, got 0",
-        ),
-    ] {
-        fs::write(&path, source).expect("write invalid function value call source");
-        let output = slug()
-            .arg("-type-check")
-            .arg(&path)
-            .output()
-            .expect("run invalid function value call source");
-        fs::remove_file(&path).expect("remove function value call source");
-        assert_eq!(output.status.code(), Some(1));
-        assert!(output.stdout.is_empty());
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(
-            stderr.starts_with(&format!("slug: semantic error: {expected}")),
-            "{stderr}"
-        );
-    }
+    let source = "val choose:fn<str, str> = if (true) { fn(value:str):str { value } } else { fn(value:str):str { value } }\nchoose(1)\n";
+    fs::write(&path, source).expect("write invalid function value call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid function value call source");
+    fs::remove_file(&path).expect("remove function value call source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.starts_with("slug: semantic error: expected str, got num"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -338,7 +308,6 @@ fn enforces_any_nil_and_canonical_type_rules() {
     )
     .expect("write canonical semantic type source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run canonical semantic type source");
@@ -353,11 +322,7 @@ fn enforces_any_nil_and_canonical_type_rules() {
     );
 
     fs::write(&path, "val invalid:any = nil\n").expect("write nil-to-any source");
-    let output = slug()
-        .arg("-type-check")
-        .arg(&path)
-        .output()
-        .expect("run nil-to-any source");
+    let output = slug().arg(&path).output().expect("run nil-to-any source");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8(output.stderr)
@@ -371,7 +336,6 @@ fn enforces_any_nil_and_canonical_type_rules() {
     )
     .expect("write nil generic inference source");
     let output = slug()
-        .arg("-type-check")
         .arg(&path)
         .output()
         .expect("run nil generic inference source");

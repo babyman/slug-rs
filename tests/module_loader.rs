@@ -149,7 +149,6 @@ fn imported_schema_bindings_preserve_nominal_construction_types() {
         .compile_source(
             &main_path.to_string_lossy(),
             "val {S} = import(\"shapes\")\nval Alias = S\nexport val value: struct<S> = S {name: \"Slug\"}\nexport val alias:struct<Alias> = value\nexport val name:str = alias.name\nexport val updated:struct<S> = alias copy {age: 2}\nexport val age:num = updated.age\n",
-            true,
         )
         .expect("type-check importer using a schema binding");
     let mut vm = Vm::with_module_loader(loader);
@@ -386,7 +385,6 @@ fn foreign_callbacks_can_inspect_checked_enum_cases() {
             &root.join("main.slug").to_string_lossy(),
             "val options = import(\"options\")\n\
              export val description = options.describe(options.SeekFrom.Start)\n",
-            true,
         )
         .expect("compile enum callback program");
     vm.run_named(&program, "main")
@@ -415,7 +413,6 @@ fn imports_transparent_type_aliases_through_module_type_paths() {
             "val paths = import(\"paths\")\n\
              val values:paths.Paths = [\"Slug\"]\n\
              export val value:paths.Path = values[0]\n",
-            true,
         )
         .expect("compile importer using aliases");
     let mut vm = Vm::with_module_loader(loader);
@@ -473,7 +470,6 @@ fn imports_distinct_callable_signatures_as_an_overload_set() {
             &main_path.to_string_lossy(),
             "val values = import(\"zero\", \"increment\")\n\
          export val result = values.select() + values.select(4)\n",
-            false,
         )
         .expect("compile overloaded import");
     let mut vm = Vm::with_module_loader(loader.clone());
@@ -502,7 +498,6 @@ fn selected_foreign_and_local_overloads_dispatch_by_declared_identity() {
         .compile_source(
             &main_path.to_string_lossy(),
             "val api = import(\"api\")\nexport val result = [api.render(1), api.render(\"x\")]\n",
-            false,
         )
         .expect("compile foreign and local overloads");
     let mut vm = Vm::with_module_loader(loader.clone());
@@ -541,7 +536,6 @@ fn selected_foreign_overloads_retain_each_declaration_identity() {
         .compile_source(
             &main_path.to_string_lossy(),
             "val api = import(\"api\")\nexport val result = [api.render(1), api.render(\"x\")]\n",
-            false,
         )
         .expect("compile foreign overloads");
     let mut vm = Vm::with_module_loader(loader.clone());
@@ -580,7 +574,6 @@ fn exports_local_callable_overloads_as_one_live_binding() {
         .compile_source(
             &main_path.to_string_lossy(),
             "val api = import(\"api\")\nexport val result = [api.select(1), api.select(\"x\")]\n",
-            false,
         )
         .expect("compile local exported overloads");
     let mut vm = Vm::with_module_loader(loader.clone());
@@ -616,7 +609,7 @@ fn imported_callable_snapshots_preserve_access_paths_generics_and_cache_identity
         "val {*} = import(\"typed\")\nrender(1)\n",
     ] {
         let error = loader
-            .compile_source(&main_path.to_string_lossy(), source, false)
+            .compile_source(&main_path.to_string_lossy(), source)
             .expect_err("imported signature rejects number argument");
         assert!(error.to_string().starts_with("expected str, got num"));
     }
@@ -625,7 +618,6 @@ fn imported_callable_snapshots_preserve_access_paths_generics_and_cache_identity
         .compile_source(
             &main_path.to_string_lossy(),
             "val { identity } = import(\"typed\")\nidentity(nil)\n",
-            false,
         )
         .expect_err("imported generic rejects nil inference");
     assert!(
@@ -643,7 +635,6 @@ fn imported_callable_snapshots_preserve_access_paths_generics_and_cache_identity
         .compile_source(
             &main_path.to_string_lossy(),
             "val api = import(\"typed\")\napi.render(1)\n",
-            false,
         )
         .expect_err("cached snapshot remains immutable");
     assert!(error.to_string().starts_with("expected str, got num"));
@@ -678,7 +669,6 @@ fn selected_signatures_dispatch_same_shape_typed_overloads() {
              export val piped = 42 /> api.render\n\
              export val destructuredResult = destructured(43)\n\
              export val selectedResult = render(44)\n",
-            false,
         )
         .expect("compile typed same-shape overloads");
     let mut vm = Vm::with_module_loader(loader.clone());
@@ -714,7 +704,6 @@ fn concrete_overloads_take_priority_over_generic_fallbacks() {
             "val api = import(\"generic\", \"strings\")\n\
              export val text = api.choose(\"value\")\n\
              export val number = api.choose(1)\n",
-            false,
         )
         .expect("compile concrete and generic overloads");
     let mut vm = Vm::with_module_loader(loader.clone());
@@ -729,7 +718,7 @@ fn concrete_overloads_take_priority_over_generic_fallbacks() {
 }
 
 #[test]
-fn exported_overload_shapes_resolve_in_both_compiler_modes() {
+fn exported_overload_shapes_resolve_under_unified_compilation() {
     let root = root("overload-shape-conformance");
     fs::create_dir_all(&root).expect("create module directory");
     fs::write(
@@ -752,19 +741,17 @@ fn exported_overload_shapes_resolve_in_both_compiler_modes() {
                   export val variadic = api.join(1, 2, 3)\n\
                   export val piped = \"pipe\" /> api.join\n";
 
-    for type_check in [false, true] {
-        let loader = ModuleLoader::new(&root, None);
-        let program = loader
-            .compile_source(&main_path.to_string_lossy(), source, type_check)
-            .expect("compile overload shapes");
-        let mut vm = Vm::with_module_loader(loader.clone());
-        vm.run_named(&program, "main").expect("run overload shapes");
-        assert_eq!(
-            vm.exported_values(&program).to_string(),
-            "{\"explicit\": \"generic\", \"concrete\": \"concrete\", \"text\": \"text\", \"nilable\": \"nilable\", \"named\": \"named!\", \"variadic\": \"numbers\", \"piped\": \"pipe!\"}"
-        );
-        assert!(loader.take_warnings().is_empty());
-    }
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(&main_path.to_string_lossy(), source)
+        .expect("compile overload shapes");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main").expect("run overload shapes");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"explicit\": \"generic\", \"concrete\": \"concrete\", \"text\": \"text\", \"nilable\": \"nilable\", \"named\": \"named!\", \"variadic\": \"numbers\", \"piped\": \"pipe!\"}"
+    );
+    assert!(loader.take_warnings().is_empty());
     fs::remove_dir_all(root).expect("remove module test directory");
 }
 
@@ -782,7 +769,7 @@ fn equal_and_incomparable_overload_candidates_remain_ambiguous() {
          overlap(\"value\")\n",
     ] {
         let error = ModuleLoader::new(&root, None)
-            .compile_source(&main_path.to_string_lossy(), source, false)
+            .compile_source(&main_path.to_string_lossy(), source)
             .expect_err("ambiguous overloads are rejected");
         assert!(error.to_string().starts_with("ambiguous overload"));
     }
@@ -810,17 +797,16 @@ fn selected_defaulted_pipeline_rejects_a_replaced_live_binding() {
         .compile_source(
             &main_path.to_string_lossy(),
             "val api = import(\"mutable\", \"numbers\")\napi.replace()\n\"stale\" /> api.decorate\n",
-            false,
         )
         .expect("compile selected defaulted pipeline");
     let error = Vm::with_module_loader(loader)
         .run_named(&program, "main")
         .expect_err("replaced selected pipeline rejects stale identity");
-    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall, "{error:?}");
+    assert_eq!(error.kind, RuntimeErrorKind::Module, "{error:?}");
     assert!(
         error
             .message
-            .contains("selected callable signature is no longer present in the live binding")
+            .contains("expected fn<str, str, str>, got fn<num, num, num>")
     );
     fs::remove_dir_all(root).expect("remove module test directory");
 }
@@ -848,17 +834,16 @@ fn selected_signatures_guard_live_overload_bindings() {
             "val api = import(\"mutable\", \"numbers\")\n\
              api.replace()\n\
              api.render(\"stale\")\n",
-            false,
         )
         .expect("compile live-binding overload call");
     let error = Vm::with_module_loader(loader)
         .run_named(&program, "main")
         .expect_err("changed live binding rejects stale selection");
-    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.kind, RuntimeErrorKind::Module);
     assert!(
         error
             .message
-            .contains("selected callable signature is no longer present in the live binding")
+            .contains("expected fn<str, str>, got fn<num, num>")
     );
     fs::remove_dir_all(root).expect("remove module test directory");
 }

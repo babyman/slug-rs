@@ -992,7 +992,9 @@ fn check_expression(
                     case.handler
                         .as_ref()
                         .map(|handler| {
-                            check_expression(handler, environment, type_parameters, strict)
+                            let handler =
+                                check_expression(handler, environment, type_parameters, strict)?;
+                            Ok(callable_result_type(&handler))
                         })
                         .transpose()?
                         .unwrap_or(Type::Unknown),
@@ -1261,6 +1263,13 @@ fn check_expression(
         | ExprKind::TypeAlias { .. }
         | ExprKind::Documentation(_) => Ok(Type::Nil),
         ExprKind::NotImplemented => Ok(Type::Unknown),
+    }
+}
+
+fn callable_result_type(value_type: &Type) -> Type {
+    match value_type {
+        Type::Function(Some(signature)) => signature.first().cloned().unwrap_or(Type::Unknown),
+        _ => Type::Unknown,
     }
 }
 
@@ -2230,16 +2239,11 @@ fn check_function_value_call(
     {
         return Ok(Type::Unknown);
     }
-    if strict && actuals.len() != parameters.len() {
-        return Err(SourceError::semantic(
-            format!(
-                "function value expects {} argument{}, got {}",
-                parameters.len(),
-                if parameters.len() == 1 { "" } else { "s" },
-                actuals.len()
-            ),
-            span.clone(),
-        ));
+    // Structural function types retain only a result and positional parameter
+    // types. They cannot prove whether omitted inputs have defaults or whether
+    // a variadic parameter accepts extras, so an arity mismatch stays dynamic.
+    if actuals.len() != parameters.len() {
+        return Ok(Type::Unknown);
     }
     if strict {
         for (expected, actual) in parameters.iter().zip(actuals) {

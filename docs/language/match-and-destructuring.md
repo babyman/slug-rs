@@ -131,7 +131,7 @@ type declared by `S`. The same field precision applies to declaration
 destructuring of a known `struct<S>`.
 
 The current Rust subset implements type constraints, including recursive list
-and map checks, schema identity, and case-local narrowing under `-type-check`.
+and map checks, schema identity, and case-local narrowing during compilation.
 
 `var` and `val` accept these patterns on their left side. A non-matching
 destructuring declaration follows the language error path. See

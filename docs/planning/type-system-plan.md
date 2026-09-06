@@ -20,8 +20,9 @@ that capability over adding more annotation forms.
 
 ## Scope and invariants
 
-- Preserve `-type-check` as optional additional diagnostics; programs accepted
-  without it retain their current runtime behavior.
+- Semantic type checking is part of every source compilation. Programs that
+  formerly required `-type-check` retain its diagnostics under normal
+  compilation.
 - Report only contradictions the checker can prove. Incomplete information
   widens conservatively rather than rejecting valid dynamic programs.
 - Keep type facts lexical and flow-sensitive. Facts from one conditional

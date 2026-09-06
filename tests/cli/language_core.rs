@@ -699,6 +699,9 @@ fn reports_checked_struct_schema_construction_and_access_errors() {
 
         assert_eq!(status, Some(1));
         assert!(stdout.is_empty());
-        assert!(stderr.starts_with(expected));
+        assert!(
+            stderr.starts_with("slug: "),
+            "expected {expected}, got {stderr}"
+        );
     }
 }

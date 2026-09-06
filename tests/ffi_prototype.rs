@@ -96,7 +96,6 @@ fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
              sqlite.exec(database, \"create table answers(value integer)\")\n\
              sqlite.exec(database, \"insert into answers values (42)\")\n\
              sqlite.queryInt(database, \"select value from answers\") + sqlite.close(database)\n",
-            false,
         )
         .expect("compile sqlite resource program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
@@ -110,7 +109,6 @@ fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
              sqlite.bindInt(query, 1, 20)\n\
              sqlite.bindInt(query, 2, 22)\n\
              sqlite.stepInt(query) + sqlite.closeStatement(query) + sqlite.close(database)\n",
-            false,
         )
         .expect("compile SQLite statement program");
     assert_eq!(vm.run_named(&statement, "main").unwrap().to_string(), "42");
@@ -125,7 +123,6 @@ fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
                sqlite.close(database)\n\
              }\n\
              attempt()\n",
-            false,
         )
         .expect("compile parent-close rejection program");
     let error = vm
@@ -143,7 +140,6 @@ fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
             "val sqlite = import(\"slug.sqlite\")\n\
              val database = sqlite.openMemory()\n\
              sqlite.exec(database, \"definitely not SQL\")\n",
-            false,
         )
         .expect("compile failing sqlite program");
     let error = vm
@@ -173,7 +169,6 @@ fn loads_a_c_math_module_and_preserves_checked_native_errors() {
         .compile_source(
             &main.to_string_lossy(),
             "val math = import(\"slug.math\")\nmath.add(20, 22) + math.sqrt(9.0)\n",
-            false,
         )
         .expect("compile program using C module");
     let module = FfiPrototypeModule::load(library).expect("load C math module");
@@ -185,7 +180,6 @@ fn loads_a_c_math_module_and_preserves_checked_native_errors() {
         .compile_source(
             &main.to_string_lossy(),
             "val math = import(\"slug.math\")\nmath.sqrt(-1.0)\n",
-            false,
         )
         .expect("compile failing math call");
     let error = vm
@@ -258,7 +252,6 @@ fn rejects_source_resource_types_missing_from_the_native_module() {
         .compile_source(
             &main.to_string_lossy(),
             "val resources = import(\"slug.resources\")\nresources.create(1)\n",
-            false,
         )
         .expect("compile program using mismatched resource module");
 
@@ -294,7 +287,6 @@ fn rejects_native_resource_types_missing_from_the_source_module() {
         .compile_source(
             &main.to_string_lossy(),
             "val resources = import(\"slug.resources\")\nresources.destroyed()\n",
-            false,
         )
         .expect("compile program using mismatched resource module");
 
@@ -329,7 +321,6 @@ fn turns_an_unknown_c_status_into_a_checked_contract_error() {
         .compile_source(
             &main.to_string_lossy(),
             "val status = import(\"slug.status\")\nstatus.status()\n",
-            false,
         )
         .expect("compile program using status module");
     let module = FfiPrototypeModule::load(library).expect("load status module");
@@ -358,7 +349,6 @@ fn dispatches_same_arity_c_functions_by_opaque_member_key() {
         .compile_source(
             &main.to_string_lossy(),
             "val same = import(\"slug.same\")\nsame.first() + same.second()\n",
-            false,
         )
         .expect("compile program using same-arity module");
     let module = FfiPrototypeModule::load(library).expect("load same-arity module");
@@ -387,7 +377,6 @@ fn keeps_libraries_resident_while_destroying_each_module_state() {
             .compile_source(
                 &main.to_string_lossy(),
                 "val stateful = import(\"slug.stateful\")\nstateful.stateInfo()\n",
-                false,
             )
             .expect("compile program using stateful module");
         let module = FfiPrototypeModule::load(&library).expect("load stateful module");
@@ -428,7 +417,6 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
             "val resources = import(\"slug.resources\")\n\
              val counter = resources.create(41)\n\
              resources.read(counter) + resources.close(counter) + resources.destroyed()\n",
-            false,
         )
         .expect("compile resource ownership program");
     assert_eq!(vm.run_named(&success, "main").unwrap().to_string(), "43");
@@ -440,7 +428,6 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
              val counter = resources.create(7)\n\
              resources.close(counter)\n\
              resources.read(counter)\n",
-            false,
         )
         .expect("compile closed-resource program");
     let error = vm
@@ -477,7 +464,6 @@ fn validates_resource_arguments_through_dynamic_foreign_calls() {
             "val resources = import(\"slug.resources\")\n\
              val invoke = fn(callback, value) { callback(value) }\n\
              invoke(resources.read, 1)\n",
-            false,
         )
         .expect("compile dynamically dispatched foreign call");
 
@@ -519,7 +505,6 @@ fn rejects_foreign_resource_results_with_the_wrong_declared_type() {
         .compile_source(
             &main.to_string_lossy(),
             "val resources = import(\"slug.resource_result\")\nresources.create()\n",
-            false,
         )
         .expect("compile resource result program");
 
@@ -564,7 +549,6 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
             "val resources = import(\"slug.resources\")\n\
              val attempt = fn() { val counter = resources.create(1); throw \"stop\" }\n\
              attempt()\n",
-            false,
         )
         .expect("compile unwinding program");
     vm.run_named(&unwinding, "main")
@@ -574,7 +558,6 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
         .compile_source(
             &main.to_string_lossy(),
             "val resources = import(\"slug.resources\")\nresources.destroyed()\n",
-            false,
         )
         .expect("compile destruction counter program");
     assert_eq!(vm.run_named(&destroyed, "main").unwrap().to_string(), "1");
@@ -583,7 +566,6 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
         .compile_source(
             &main.to_string_lossy(),
             "val resources = import(\"slug.resources\")\nresources.create(2)\n",
-            false,
         )
         .expect("compile escaping resource program");
     let escaped = vm
@@ -602,7 +584,6 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
         .compile_source(
             &main.to_string_lossy(),
             "val resources = import(\"slug.resources\")\nresources.destroyed()\n",
-            false,
         )
         .expect("compile replacement destruction counter program");
     assert_eq!(
@@ -635,7 +616,6 @@ fn lets_a_c_thread_send_through_an_owned_producer_capability() {
             &main.to_string_lossy(),
             "val async = import(\"slug.async\")\n\
              select { recv async.delayed() }\n",
-            false,
         )
         .expect("compile C async producer program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "73");
@@ -671,7 +651,6 @@ fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
              val first = select { recv inbox }\n\
              val second = select { recv inbox }\n\
              first * 10 + second + backpressure.sawFull()\n",
-            false,
         )
         .expect("compile C backpressure program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "13");
@@ -702,7 +681,6 @@ fn reports_closed_when_slug_revokes_a_c_producer_receiver() {
              val discard = fn() { val inbox = revocation.delayed(); nil }\n\
              discard()\n\
              revocation.waitStatus()\n",
-            false,
         )
         .expect("compile C producer revocation program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "2");
@@ -739,7 +717,6 @@ fn transfers_owned_c_text_only_after_a_backpressured_retry_succeeds() {
              val first = select { recv inbox }\n\
              val second = select { recv inbox }\n\
              first + \":\" + second + \":\" + text.sawFull() + \":\" + text.freed()\n",
-            false,
         )
         .expect("compile C text backpressure program");
     assert_eq!(

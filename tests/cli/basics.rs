@@ -13,6 +13,39 @@ fn help_describes_the_current_public_capability() {
 }
 
 #[test]
+fn compiles_with_semantic_type_checking_by_default() {
+    let path = fixture_path("default-semantic-checking");
+    fs::write(&path, "1 + true\n").expect("write invalid typed source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid typed source");
+    fs::remove_file(path).expect("remove invalid typed source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: operator `+` does not accept num and bool")
+    );
+}
+
+#[test]
+fn does_not_recognize_the_removed_type_check_mode() {
+    let output = slug()
+        .arg("-type-check")
+        .output()
+        .expect("run removed type-check mode");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: cannot read")
+    );
+}
+
+#[test]
 fn version_is_available_without_loading_source() {
     let output = slug()
         .arg("--version")

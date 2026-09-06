@@ -457,23 +457,14 @@ fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
-        Some("-type-check") => {
-            if let Some(path) = args.next() {
-                let program_arguments = args.collect::<Vec<_>>();
-                run(&path, true, &program_arguments)
-            } else {
-                eprintln!("Usage: {executable} -type-check program.slug");
-                ExitCode::from(1)
-            }
-        }
         Some(path) => {
             let program_arguments = args.collect::<Vec<_>>();
-            run(path, false, &program_arguments)
+            run(path, &program_arguments)
         }
     }
 }
 
-fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
+fn run(path: &str, program_arguments: &[String]) -> ExitCode {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT")
@@ -509,7 +500,7 @@ fn run(path: &str, type_check: bool, program_arguments: &[String]) -> ExitCode {
     );
     let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
     let resolved_path = resolved_path.to_string_lossy();
-    let mut program = match loader.compile_source(&resolved_path, &source, type_check) {
+    let mut program = match loader.compile_source(&resolved_path, &source) {
         Ok(program) => program,
         Err(error) => {
             let category = match error.kind {

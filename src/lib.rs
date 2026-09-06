@@ -43,7 +43,7 @@ pub use native::{
     NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,
     NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
 };
-pub use source::{SourceError, SourceErrorKind, compile, compile_type_checked};
+pub use source::{SourceError, SourceErrorKind, compile};
 pub use value::{
     Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Task, Value,
 };

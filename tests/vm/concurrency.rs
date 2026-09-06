@@ -93,7 +93,7 @@ fn explicit_nursery_bodies_suspend_on_concurrency_operations() {
 fn a_failed_nursery_body_settles_its_owned_tasks() {
     let program = compile(
         "nursery-error-settlement.slug",
-        "var held = nil\n\
+        "var held:any|nil = nil\n\
          val attempt = fn() {\n\
            defer onerror(error) { nil }\n\
            nursery {\n\

@@ -49,8 +49,8 @@ contract is documented separately as `.cslug`.
   fallback, cached isolated module initialization, and string-keyed exported-value maps.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
-  `schema` values and nominal `struct<S>` construction. Optional `-type-check`
-  validation distinguishes non-nil `any` from universal `any|nil`, normalizes
+  `schema` values and nominal `struct<S>` construction. Semantic validation
+  distinguishes non-nil `any` from universal `any|nil`, normalizes
   unions, compares structured annotations reflexively, checks statically known
   operator and collection-access operands, narrows direct nil checks in
   control-flow paths, diagnoses closed typed-match coverage, preserves precise

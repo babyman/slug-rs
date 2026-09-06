@@ -68,7 +68,6 @@ fn resource_annotations_check_foreign_results_and_arguments() {
     )
     .expect("write resource-type source");
     let output = slug()
-        .arg("-type-check")
         .arg(&program)
         .output()
         .expect("type-check resource source");

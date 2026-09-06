@@ -168,7 +168,7 @@ impl ModuleLoader {
             return Ok(program.clone());
         }
         let mut program = self
-            .compile_source(&source.path.to_string_lossy(), &source.text, false)
+            .compile_source(&source.path.to_string_lossy(), &source.text)
             .map_err(|error| ModuleLoadError::Source {
                 path: source.path.clone(),
                 message: error.to_string(),
@@ -190,13 +190,8 @@ impl ModuleLoader {
     /// # Errors
     ///
     /// Returns a checked source error for invalid syntax or semantics.
-    pub fn compile_source(
-        &self,
-        path: &str,
-        source: &str,
-        type_check: bool,
-    ) -> Result<Program, SourceError> {
-        compile_with_resolver(path, source, type_check, |name| {
+    pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
+        compile_with_resolver(path, source, |name| {
             self.semantic_snapshot(Some(Path::new(path)), name)
         })
     }
