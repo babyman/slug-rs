@@ -8,6 +8,10 @@ promise. It defines the smallest composition boundary that implementation work
 may rely on. A later released clutch format requires a new decision record,
 versioned schema, and regression coverage.
 
+The source-only resolver is implemented for explicit Rust-host configuration.
+Native plugin initialization, archive loading, installation, and CLI
+configuration remain unimplemented.
+
 ## Purpose and terms
 
 A **module** is the Slug unit named by `import("name")`. A **clutch** is a

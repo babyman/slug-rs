@@ -7,6 +7,7 @@
 //! documented in `docs/reference/compiled-artifacts.md`.
 
 mod bytecode;
+mod clutch;
 mod configuration;
 mod conformance;
 #[cfg(feature = "ffi-prototype")]
@@ -32,6 +33,7 @@ pub use bytecode::{
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SchemaFieldsId,
     SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };
+pub use clutch::{ClutchRepository, ClutchRepositoryError};
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
 #[cfg(feature = "ffi-prototype")]

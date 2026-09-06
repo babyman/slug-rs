@@ -1358,29 +1358,29 @@ module, with no native loading.
 
 ### Todo
 
-- [ ] Keep the existing Cargo feature set unchanged. The dedicated experiment
+- [x] Keep the existing Cargo feature set unchanged. The dedicated experiment
   branch is the isolation boundary; preserve existing CLI and
   `ModuleLoader::new` behavior until a clutch repository is explicitly
   configured.
-- [ ] Add private clutch manifest types and parsing in a dedicated module (for
+- [x] Add private clutch manifest types and parsing in a dedicated module (for
   example `src/clutch.rs`) using the existing TOML dependency.
-- [ ] Validate `format = 0`, required clutch identity fields, runtime and
+- [x] Validate `format = 0`, required clutch identity fields, runtime and
   plugin-facade requirements, module names, and source paths before opening a
   module. Reject paths outside the clutch root, missing files, unknown keys
   that would change behavior, and duplicate module providers.
-- [ ] Add an explicit, test-configured clutch repository index from module
+- [x] Add an explicit, test-configured clutch repository index from module
   identity to exploded-clutch directory. Do not add installation commands,
   repository scanning, or CLI flags yet.
-- [ ] Refactor `src/module.rs` around a private module-provider result so the
+- [x] Extend `src/module.rs` module resolution so the
   existing importer-relative, project-root, and library-root lookup remains
   first and clutch lookup is the final provider.
-- [ ] Cache a clutch-provided module under the same module identity and
+- [x] Cache a clutch-provided module under the same module identity and
   initialization rules as an ordinary source module; do not create a second
   import namespace.
-- [ ] Add focused `tests/module_loader.rs` coverage for source-only success,
+- [x] Add focused `tests/module_loader.rs` coverage for source-only success,
   existing-provider precedence, a missing indexed clutch, malformed manifests,
   invalid paths, requirements failure, duplicate providers, and cyclic imports.
-- [ ] Update the reference contract only if implementation reveals an
+- [x] Update the reference contract only if implementation reveals an
   unspecified observable outcome; otherwise keep this phase implementation-only.
 
 ### Exit criteria

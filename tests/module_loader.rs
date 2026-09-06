@@ -1,8 +1,8 @@
 use std::fs;
 
 use slug_vm::{
-    ModuleLoadError, ModuleLoader, NativeArity, NativeCall, NativeModule, NativeOwnedValue,
-    NativeStatus, RuntimeErrorKind, Value, Vm, compile,
+    ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader, NativeArity,
+    NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind, Value, Vm, compile,
 };
 
 fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -50,6 +50,261 @@ fn foreign_batch_registration_does_not_partially_install_descriptors() {
 
 fn root(kind: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("slug-module-{kind}-{}", std::process::id()))
+}
+
+fn write_source_clutch(
+    root: &std::path::Path,
+    modules: &[(&str, &str, &str)],
+    runtime: &str,
+) -> std::path::PathBuf {
+    let clutch = root.join("example.clutch");
+    fs::create_dir_all(clutch.join("modules")).expect("create clutch module directory");
+    let entries = modules
+        .iter()
+        .map(|(name, path, source)| {
+            fs::write(clutch.join("modules").join(path), source)
+                .expect("write clutch source module");
+            format!("\"{name}\" = {{ source = \"modules/{path}\" }}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(
+        clutch.join("clutch.toml"),
+        format!(
+            "format = 0\n\
+             [clutch]\n\
+             publisher = \"example\"\n\
+             name = \"library\"\n\
+             version = \"0.1.0\"\n\
+             [requires]\n\
+             runtime = \"{runtime}\"\n\
+             plugin_api = \"rust-facade-0\"\n\
+             [modules]\n\
+             {entries}\n"
+        ),
+    )
+    .expect("write clutch manifest");
+    clutch
+}
+
+#[test]
+fn imports_source_modules_from_an_explicit_clutch_repository() {
+    let root = root("clutch-source");
+    fs::create_dir_all(&root).expect("create source root");
+    let clutch = write_source_clutch(
+        &root,
+        &[(
+            "example.library",
+            "library.slug",
+            "export val answer = 42\n",
+        )],
+        ">=0.1.0, <0.2.0",
+    );
+    let repository = ClutchRepository::new(vec![("example.library".into(), clutch)])
+        .expect("create clutch repository");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+    let main_path = root.join("main.slug");
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val library = import(\"example.library\")\nexport val answer = library.answer\n",
+        )
+        .expect("compile clutch importer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main").expect("run clutch importer");
+
+    assert_eq!(loader.cached_module_count(), 1);
+    assert_eq!(loader.initialized_module_count(), 1);
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"answer\": 42}");
+    fs::remove_dir_all(root).expect("remove clutch source root");
+}
+
+#[test]
+fn existing_source_providers_take_precedence_over_clutches() {
+    let root = root("clutch-precedence");
+    fs::create_dir_all(root.join("example")).expect("create source module directory");
+    fs::write(
+        root.join("example/library.slug"),
+        "export val source = \"local\"\n",
+    )
+    .expect("write local source module");
+    let clutch = write_source_clutch(
+        &root,
+        &[(
+            "example.library",
+            "library.slug",
+            "export val source = \"clutch\"\n",
+        )],
+        ">=0.1.0, <0.2.0",
+    );
+    let repository = ClutchRepository::new(vec![("example.library".into(), clutch)])
+        .expect("create clutch repository");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+
+    assert_eq!(
+        loader
+            .load(None, "example.library")
+            .expect("local module takes precedence")
+            .text,
+        "export val source = \"local\"\n"
+    );
+    fs::remove_dir_all(root).expect("remove clutch precedence root");
+}
+
+#[test]
+fn clutch_resolution_rejects_invalid_manifests_without_caching_modules() {
+    let root = root("clutch-invalid");
+    fs::create_dir_all(&root).expect("create clutch test root");
+
+    let loader = ModuleLoader::with_clutch_repository(
+        &root,
+        None,
+        ClutchRepository::new(vec![(
+            "example.missing".into(),
+            root.join("missing.clutch"),
+        )])
+        .expect("create missing repository"),
+    );
+    assert!(matches!(
+        loader.load(None, "example.missing"),
+        Err(ModuleLoadError::Clutch { .. })
+    ));
+    assert_eq!(loader.cached_module_count(), 0);
+
+    let malformed = root.join("malformed.clutch");
+    fs::create_dir_all(&malformed).expect("create malformed clutch root");
+    fs::write(malformed.join("clutch.toml"), "format = [\n").expect("write malformed manifest");
+    let loader = ModuleLoader::with_clutch_repository(
+        &root,
+        None,
+        ClutchRepository::new(vec![("example.malformed".into(), malformed)])
+            .expect("create malformed repository"),
+    );
+    assert!(matches!(
+        loader.load(None, "example.malformed"),
+        Err(ModuleLoadError::Clutch { .. })
+    ));
+    assert_eq!(loader.cached_module_count(), 0);
+
+    let escaping = write_source_clutch(
+        &root,
+        &[("example.escaping", "escape.slug", "export val value = 1\n")],
+        ">=0.1.0, <0.2.0",
+    );
+    fs::write(
+        escaping.join("clutch.toml"),
+        "format = 0\n\
+         [clutch]\n\
+         publisher = \"example\"\n\
+         name = \"escaping\"\n\
+         version = \"0.1.0\"\n\
+         [requires]\n\
+         runtime = \">=0.1.0, <0.2.0\"\n\
+         plugin_api = \"rust-facade-0\"\n\
+         [modules]\n\
+         \"example.escaping\" = { source = \"../escape.slug\" }\n",
+    )
+    .expect("write escaping manifest");
+    let loader = ModuleLoader::with_clutch_repository(
+        &root,
+        None,
+        ClutchRepository::new(vec![("example.escaping".into(), escaping)])
+            .expect("create escaping repository"),
+    );
+    assert!(matches!(
+        loader.load(None, "example.escaping"),
+        Err(ModuleLoadError::Clutch { .. })
+    ));
+
+    let incompatible = write_source_clutch(
+        &root,
+        &[(
+            "example.incompatible",
+            "incompatible.slug",
+            "export val value = 1\n",
+        )],
+        ">=0.2.0, <0.3.0",
+    );
+    let loader = ModuleLoader::with_clutch_repository(
+        &root,
+        None,
+        ClutchRepository::new(vec![("example.incompatible".into(), incompatible)])
+            .expect("create incompatible repository"),
+    );
+    assert!(matches!(
+        loader.load(None, "example.incompatible"),
+        Err(ModuleLoadError::Clutch { .. })
+    ));
+
+    fs::remove_dir_all(root).expect("remove invalid clutch root");
+}
+
+#[test]
+fn clutch_repository_rejects_duplicate_module_providers() {
+    let error = ClutchRepository::new(vec![
+        (
+            "example.library".into(),
+            std::path::PathBuf::from("first.clutch"),
+        ),
+        (
+            "example.library".into(),
+            std::path::PathBuf::from("second.clutch"),
+        ),
+    ])
+    .expect_err("duplicate providers must be rejected");
+    assert_eq!(
+        error,
+        ClutchRepositoryError::DuplicateProvider {
+            name: "example.library".into()
+        }
+    );
+}
+
+#[test]
+fn clutch_modules_preserve_cyclic_import_initialization() {
+    let root = root("clutch-cycle");
+    fs::create_dir_all(&root).expect("create clutch cycle root");
+    let clutch = write_source_clutch(
+        &root,
+        &[
+            (
+                "example.left",
+                "left.slug",
+                "val right = import(\"example.right\")\nexport val left = fn() { right.right() }\n",
+            ),
+            (
+                "example.right",
+                "right.slug",
+                "val left = import(\"example.left\")\nexport val right = fn() { 7 }\n",
+            ),
+        ],
+        ">=0.1.0, <0.2.0",
+    );
+    let repository = ClutchRepository::new(vec![
+        ("example.left".into(), clutch.clone()),
+        ("example.right".into(), clutch),
+    ])
+    .expect("create clutch repository");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+    let instance = loader
+        .initialize(None, "example.left")
+        .expect("initialize cyclic clutch module");
+    let program = loader
+        .compile_source(
+            &root.join("main.slug").to_string_lossy(),
+            "val left = import(\"example.left\")\nexport val value = left.left()\n",
+        )
+        .expect("compile cyclic clutch consumer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("run cyclic clutch consumer");
+
+    assert_eq!(instance.exports.to_string(), "{\"left\": <fn>}");
+    assert_eq!(loader.initialized_module_count(), 2);
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"value\": 7}");
+    fs::remove_dir_all(root).expect("remove clutch cycle root");
 }
 
 #[test]

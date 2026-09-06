@@ -12,6 +12,10 @@
 - Kept the clutch experiment out of Cargo feature configuration; the dedicated
   experiment branch provides the required isolation.
 
+- Implemented Phase 3 source-only clutch resolution through an explicit Rust
+  host repository index, validated exploded manifests, existing-provider
+  precedence, and cached ordinary module initialization.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

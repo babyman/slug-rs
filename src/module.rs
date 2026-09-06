@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceError,
-    Value, Vm,
+    ClutchRepository, Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction,
+    Program, SourceError, Value, Vm, clutch,
     native::{NativeResourceRegistry, native_resource_registry},
     source::{compile_with_resolver, environment::ModuleSnapshot, semantic_snapshot},
 };
@@ -23,6 +23,7 @@ pub struct ModuleLoader {
 struct ModuleLoaderState {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
+    clutch_repository: ClutchRepository,
     configuration: Configuration,
     compiled: RefCell<HashMap<PathBuf, Program>>,
     semantic_snapshots: RefCell<HashMap<PathBuf, ModuleSnapshot>>,
@@ -63,6 +64,10 @@ pub enum ModuleLoadError {
         path: PathBuf,
         message: String,
     },
+    Clutch {
+        path: PathBuf,
+        message: String,
+    },
 }
 
 impl fmt::Display for ModuleLoadError {
@@ -73,6 +78,9 @@ impl fmt::Display for ModuleLoadError {
             Self::Read { path, message } => write!(f, "cannot read {}: {message}", path.display()),
             Self::Source { path, message } => {
                 write!(f, "cannot compile {}: {message}", path.display())
+            }
+            Self::Clutch { path, message } => {
+                write!(f, "cannot load clutch {}: {message}", path.display())
             }
         }
     }
@@ -93,10 +101,42 @@ impl ModuleLoader {
         library_root: Option<PathBuf>,
         configuration: Configuration,
     ) -> Self {
+        Self::with_configuration_and_clutch_repository(
+            source_root,
+            library_root,
+            configuration,
+            ClutchRepository::default(),
+        )
+    }
+
+    /// Creates a loader with an explicit local clutch repository.
+    #[must_use]
+    pub fn with_clutch_repository(
+        source_root: impl Into<PathBuf>,
+        library_root: Option<PathBuf>,
+        clutch_repository: ClutchRepository,
+    ) -> Self {
+        Self::with_configuration_and_clutch_repository(
+            source_root,
+            library_root,
+            Configuration::default(),
+            clutch_repository,
+        )
+    }
+
+    /// Creates a loader with shared configuration and an explicit clutch repository.
+    #[must_use]
+    pub fn with_configuration_and_clutch_repository(
+        source_root: impl Into<PathBuf>,
+        library_root: Option<PathBuf>,
+        configuration: Configuration,
+        clutch_repository: ClutchRepository,
+    ) -> Self {
         Self {
             state: Rc::new(ModuleLoaderState {
                 source_root: source_root.into(),
                 library_root,
+                clutch_repository,
                 configuration,
                 compiled: RefCell::new(HashMap::new()),
                 semantic_snapshots: RefCell::new(HashMap::new()),
@@ -150,6 +190,21 @@ impl ModuleLoader {
                     });
                 }
             }
+        }
+        if let Some(root) = self.state.clutch_repository.provider(name) {
+            let module =
+                clutch::load_module(root, name).map_err(|message| ModuleLoadError::Clutch {
+                    path: root.clone(),
+                    message,
+                })?;
+            let text = fs::read_to_string(&module.path).map_err(|error| ModuleLoadError::Read {
+                path: module.path.clone(),
+                message: error.to_string(),
+            })?;
+            return Ok(ModuleSource {
+                path: module.path,
+                text,
+            });
         }
         Err(ModuleLoadError::NotFound {
             name: name.into(),
