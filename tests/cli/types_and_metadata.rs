@@ -60,6 +60,42 @@ fn infers_scalar_literal_types_through_bindings() {
 }
 
 #[test]
+fn preserves_inferred_types_across_transitive_bindings() {
+    let path = fixture_path("transitive-binding-inference");
+    fs::write(
+        &path,
+        "val a = \"slug\"\nval b = a\nval c = b\nprintln(c)\n",
+    )
+    .expect("write transitive binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run transitive binding source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "slug\n");
+
+    fs::write(&path, "val a = \"slug\"\nval b = a\nval c = b\nc - 1\n")
+        .expect("write invalid transitive binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid transitive binding source");
+    fs::remove_file(path).expect("remove transitive binding source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got str"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(

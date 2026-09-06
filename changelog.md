@@ -5,6 +5,9 @@
 - Added CLI regression coverage that preserves scalar literal types through
   bindings and rejects incompatible later uses.
 
+- Added CLI regression coverage for transitive inferred binding types and
+  their source-level diagnostics.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

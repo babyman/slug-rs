@@ -125,6 +125,9 @@ All three must be known as `str`.
 
 **Check:** a later incompatible operation on `c` fails at compile time.
 
+**Status:** complete — `tests/cli/types_and_metadata.rs` proves `a -> b -> c`
+retains `str` and reports the resulting incompatible numeric operation.
+
 ---
 
 ### Task 4 — Enforce annotated bindings without losing initializer facts
