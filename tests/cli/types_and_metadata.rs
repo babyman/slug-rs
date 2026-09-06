@@ -376,6 +376,38 @@ fn infers_list_literal_element_types() {
 }
 
 #[test]
+fn infers_list_spread_element_types_without_conflating_unknown_and_any() {
+    let path = fixture_path("list-spread-inference");
+    fs::write(
+        &path,
+        "val words:list<str> = [\"two\"]\n\
+         val mixed:list<num|str> = [1, ...words]\n\
+         val make_any = fn(value:any) { [value] }\n\
+         val values:list<any> = make_any(\"value\")\n\
+         val dynamic:list<any> = [1, ...values]\n\
+         val collect = fn(value) { [1, ...value] }\n\
+         val unknown:list = collect([2])\n\
+         val first:num = unknown[0]\n\
+         println(mixed, dynamic, unknown, first)\n",
+    )
+    .expect("write list spread inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run list spread inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[1, \"two\"] [1, \"value\"] [1, 2] 1\n"
+    );
+    fs::remove_file(path).expect("remove list spread inference source");
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(

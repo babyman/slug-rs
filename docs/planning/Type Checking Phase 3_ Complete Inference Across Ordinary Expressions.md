@@ -346,9 +346,15 @@ must infer:
 list<num>
 ```
 
-Test mixed and unknown spread operands.
+Test known mixed and genuinely unknown spread operands.
 
-**Check:** one uncertain spread does not erase unrelated known information more than necessary.
+**Check:** a known spread element type contributes to the list union; a genuinely
+unknown spread produces an unparameterized list without converting `Unknown`
+into `any`.
+
+**Status:** complete — `docs/language/language-specification.md` now defines
+the distinction, and CLI coverage proves known typed spreads, `list<any>`, and
+an unparameterized list from a genuinely unknown spread.
 
 ---
 

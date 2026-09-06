@@ -29,6 +29,9 @@
 - Added CLI regression coverage for inferred homogeneous, heterogeneous,
   nested, and empty list literal types.
 
+- Documented list-spread inference and added coverage that keeps deliberate
+  `any` distinct from genuinely unknown spread element types.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

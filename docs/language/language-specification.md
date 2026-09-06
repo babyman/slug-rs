@@ -925,6 +925,12 @@ count = 2        // valid: num
 count = "two"    // semantic error: expected num, got str
 ```
 
+List-literal inference unions explicit element types with the element types of
+known list spreads. Thus `[1, ...names]` is `list<num|str>` when `names` is
+`list<str>`, and it is `list<any>` when `names` is `list<any>`. A spread whose
+value or element type is unknown produces an unparameterized `list`; compiler
+uncertainty must not be converted into the deliberate source-level `any` type.
+
 The built-in `schema` type describes schema values and does not accept type
 arguments. The common parameterized forms are `list<T>`, `map<K, V>`,
 `chan<T>`, `task<T>`, and `struct<Name>`. A bracketed type such as `[str, num]` is a
