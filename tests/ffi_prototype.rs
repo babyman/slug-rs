@@ -45,19 +45,51 @@ fn compile_fixture_with_libraries(
     name: &str,
     libraries: &[&str],
 ) -> PathBuf {
-    let output = directory.path().join(format!("lib{name}.dylib"));
-    let mut command = Command::new("cc");
-    command
-        .args(["-dynamiclib", "-I", "include", source, "-o"])
-        .arg(output.to_str().expect("temporary library path is UTF-8"))
-        .arg("-lm")
-        .args(libraries)
-        .current_dir(env!("CARGO_MANIFEST_DIR"));
+    let output = directory.path().join(format!(
+        "{}{}{}",
+        std::env::consts::DLL_PREFIX,
+        name,
+        std::env::consts::DLL_SUFFIX
+    ));
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = Command::new("cc");
+        command.args(["-I", "include", source]);
+        if cfg!(target_os = "macos") {
+            command.arg("-dynamiclib");
+        } else {
+            command.args(["-shared", "-fPIC"]);
+        }
+        command
+            .arg("-o")
+            .arg(output.to_str().expect("temporary library path is UTF-8"))
+            .arg("-lm")
+            .args(libraries);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let _ = libraries;
+        let mut command = Command::new("cl");
+        command.args([
+            "/nologo",
+            "/LD",
+            "/Iinclude",
+            source,
+            &format!(
+                "/Fe:{}",
+                output.to_str().expect("temporary library path is UTF-8")
+            ),
+        ]);
+        command
+    };
+    command.current_dir(env!("CARGO_MANIFEST_DIR"));
     let status = command.status().expect("start C compiler");
     assert!(status.success(), "compile C fixture");
     output
 }
 
+#[cfg(not(windows))]
 #[test]
 fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
     let directory = TemporaryDirectory::new();
@@ -596,6 +628,7 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
     drop(escaped);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn lets_a_c_thread_send_through_an_owned_producer_capability() {
     let directory = TemporaryDirectory::new();
@@ -621,6 +654,7 @@ fn lets_a_c_thread_send_through_an_owned_producer_capability() {
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "73");
 }
 
+#[cfg(not(windows))]
 #[test]
 fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
     let directory = TemporaryDirectory::new();
@@ -656,6 +690,7 @@ fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "13");
 }
 
+#[cfg(not(windows))]
 #[test]
 fn reports_closed_when_slug_revokes_a_c_producer_receiver() {
     let directory = TemporaryDirectory::new();
@@ -686,6 +721,7 @@ fn reports_closed_when_slug_revokes_a_c_producer_receiver() {
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "2");
 }
 
+#[cfg(not(windows))]
 #[test]
 fn transfers_owned_c_text_only_after_a_backpressured_retry_succeeds() {
     let directory = TemporaryDirectory::new();

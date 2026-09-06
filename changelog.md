@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Support loading test-only native FFI prototype modules on Linux and Windows,
+  alongside macOS.
+
 - Added a README quick start for writing and running a Slug program.
 
 - Completed the Phase 3 expression-inference regression and conformance gate.

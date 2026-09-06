@@ -5,6 +5,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(_WIN32)
+#define SLUG_FFI_PROTOTYPE_EXPORT __declspec(dllexport)
+#else
+#define SLUG_FFI_PROTOTYPE_EXPORT
+#endif
+
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
 #define SLUG_FFI_PROTOTYPE_ABI_MINOR 6u
 
@@ -104,7 +110,7 @@ typedef struct {
 typedef const slug_ffi_module_descriptor *(*slug_ffi_module_init_fn)(
     const slug_ffi_host_api *, void **module_state);
 
-const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host,
-                                                        void **module_state);
+SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_module_descriptor *slug_ffi_module_init(
+    const slug_ffi_host_api *host, void **module_state);
 
 #endif

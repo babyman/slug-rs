@@ -8,14 +8,16 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     error::Error,
-    ffi::{CStr, CString, c_char, c_void},
+    ffi::{CStr, c_char, c_void},
     fmt,
     mem::size_of,
-    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, LazyLock, Mutex},
 };
+
+#[cfg(unix)]
+use std::ffi::CString;
 
 use crate::{
     NativeArity, NativeCall, NativeDescriptorError, NativeError, NativeModule, NativeOwnedValue,
@@ -104,11 +106,34 @@ unsafe impl Send for LoadedLibrary {}
 unsafe impl Sync for LoadedLibrary {}
 
 impl LoadedLibrary {
+    #[cfg(unix)]
     unsafe fn open(path: &Path) -> Result<Self, FfiPrototypeError> {
+        use std::os::unix::ffi::OsStrExt;
+
         let path = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| FfiPrototypeError::new("FFI module path contains an interior NUL byte"))?;
         // SAFETY: `path` is a NUL-terminated byte string that remains live for the call.
         let handle = unsafe { dlopen(path.as_ptr(), RTLD_NOW) };
+        if handle.is_null() {
+            return Err(FfiPrototypeError::new(format!(
+                "cannot load FFI module: {}",
+                unsafe { loader_error() }
+            )));
+        }
+        Ok(Self(handle))
+    }
+
+    #[cfg(windows)]
+    unsafe fn open(path: &Path) -> Result<Self, FfiPrototypeError> {
+        use std::os::windows::ffi::OsStrExt;
+
+        let path = path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        // SAFETY: `path` is a NUL-terminated UTF-16 string that remains live for the call.
+        let handle = unsafe { LoadLibraryW(path.as_ptr()) };
         if handle.is_null() {
             return Err(FfiPrototypeError::new(format!(
                 "cannot load FFI module: {}",
@@ -123,7 +148,7 @@ impl LoadedLibrary {
         T: Copy,
     {
         // SAFETY: `self.0` is an open library handle and `name` is NUL-terminated.
-        let symbol = unsafe { dlsym(self.0, name.as_ptr()) };
+        let symbol = unsafe { lookup_symbol(self.0, name.as_ptr()) };
         if symbol.is_null() {
             return Err(FfiPrototypeError::new(format!(
                 "FFI module is missing `{}`: {}",
@@ -142,29 +167,6 @@ impl fmt::Debug for LoadedLibrary {
     }
 }
 
-trait PlatformLoader {
-    unsafe fn open(path: &Path) -> Result<LoadedLibrary, FfiPrototypeError>;
-
-    unsafe fn symbol<T>(library: &LoadedLibrary, name: &CStr) -> Result<T, FfiPrototypeError>
-    where
-        T: Copy;
-}
-
-struct MacOsLoader;
-
-impl PlatformLoader for MacOsLoader {
-    unsafe fn open(path: &Path) -> Result<LoadedLibrary, FfiPrototypeError> {
-        unsafe { LoadedLibrary::open(path) }
-    }
-
-    unsafe fn symbol<T>(library: &LoadedLibrary, name: &CStr) -> Result<T, FfiPrototypeError>
-    where
-        T: Copy,
-    {
-        unsafe { library.symbol(name) }
-    }
-}
-
 static LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, Arc<LoadedLibrary>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -179,7 +181,7 @@ fn resident_library(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError
         return Ok(library.clone());
     }
     // SAFETY: platform loading is contained in this feature-gated module.
-    let library = Arc::new(unsafe { MacOsLoader::open(&path) }?);
+    let library = Arc::new(unsafe { LoadedLibrary::open(&path) }?);
     libraries.insert(path, library.clone());
     Ok(library)
 }
@@ -290,7 +292,7 @@ impl FfiPrototypeModule {
         unsafe {
             let library = resident_library(path.as_ref())?;
             let init_name = c"slug_ffi_module_init";
-            let init: ModuleInit = MacOsLoader::symbol(&library, init_name)?;
+            let init: ModuleInit = library.symbol(init_name)?;
             let mut module_state = std::ptr::null_mut();
             let descriptor = init(host_api(), &raw mut module_state);
             let (module_name, destroy_module, functions, resources) =
@@ -738,6 +740,7 @@ unsafe fn text_from_ffi(value: FfiText) -> Option<String> {
     std::str::from_utf8(bytes).ok().map(str::to_owned)
 }
 
+#[cfg(unix)]
 unsafe fn c_string(value: *const c_char) -> Option<String> {
     if value.is_null() {
         return None;
@@ -917,7 +920,7 @@ unsafe fn validate_resources(
     Ok(resources)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 const RTLD_NOW: i32 = 2;
 
 #[cfg(target_os = "macos")]
@@ -928,7 +931,40 @@ unsafe extern "C" {
     fn dlerror() -> *const c_char;
 }
 
+#[cfg(target_os = "linux")]
+#[link(name = "dl")]
+unsafe extern "C" {
+    fn dlopen(path: *const c_char, mode: i32) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    fn dlerror() -> *const c_char;
+}
+
+#[cfg(unix)]
+unsafe fn lookup_symbol(handle: *mut c_void, name: *const c_char) -> *mut c_void {
+    unsafe { dlsym(handle, name) }
+}
+
+#[cfg(windows)]
+unsafe fn lookup_symbol(handle: *mut c_void, name: *const c_char) -> *mut c_void {
+    unsafe { GetProcAddress(handle, name.cast()) }
+}
+
+#[cfg(unix)]
 unsafe fn loader_error() -> String {
     let error = unsafe { dlerror() };
     unsafe { c_string(error) }.unwrap_or_else(|| "unknown dynamic loader error".into())
+}
+
+#[cfg(windows)]
+unsafe fn loader_error() -> String {
+    let error = unsafe { GetLastError() };
+    format!("Windows error {error}")
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn LoadLibraryW(path: *const u16) -> *mut c_void;
+    fn GetProcAddress(handle: *mut c_void, name: *const u8) -> *mut c_void;
+    fn GetLastError() -> u32;
 }
