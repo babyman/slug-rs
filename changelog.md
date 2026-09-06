@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Defined the version-0 experimental clutch boundary: local exploded-clutch
+  manifests, module-provider resolution, transactional native-plugin binding,
+  and safe shutdown cleanup without native code unloading.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

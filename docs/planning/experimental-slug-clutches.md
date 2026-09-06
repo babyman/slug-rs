@@ -20,6 +20,13 @@ module, FFI, and runtime architecture without introducing dependency-management 
 
 Existing module and import behaviour remains authoritative until the experiment proves otherwise.
 
+The first experiment's selected local manifest, resolver, and plugin-lifecycle
+rules are recorded in
+[`../reference/experimental-clutches.md`](../reference/experimental-clutches.md).
+That version-0 contract narrows this exploration where they differ, notably by
+retaining native library code for the process lifetime rather than requiring
+`dlclose` during VM shutdown.
+
 ---
 
 ## Terminology
@@ -392,7 +399,8 @@ The initial plugin model does **not** require live unloading while the VM is run
 
 A plugin may remain loaded for the full active lifetime of the VM.
 
-However, plugin unloading at VM shutdown **is required behaviour**.
+However, deterministic plugin-state cleanup at VM shutdown **is required
+behaviour**. Native library-code unloading is not.
 
 The minimum lifecycle is:
 
@@ -411,7 +419,7 @@ run plugin shutdown hook
     ↓
 unregister plugin-owned capabilities
     ↓
-unload native library
+retain native library code for process lifetime
 ```
 
 This distinction is important:
@@ -420,13 +428,14 @@ This distinction is important:
 live unloading
     optional / future
 
-shutdown unloading
+shutdown state cleanup
     required
 ```
 
 A VM-lifetime plugin therefore means:
 
-> **The plugin remains loaded while the VM is active, but is deterministically unloaded when the VM shuts down.**
+> **The plugin remains active while the VM is active; shutdown deterministically
+> cleans its state and registrations without unloading code still potentially in use.**
 
 Shutdown must not rely solely on process termination to reclaim plugin state.
 

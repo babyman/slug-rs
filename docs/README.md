@@ -37,6 +37,7 @@ a specified feature is implemented.
 |---|---|
 | [compatibility.md](reference/compatibility.md) | Promises and intentional non-promises. |
 | [compiled-artifacts.md](reference/compiled-artifacts.md) | Portable `.cslug` compiled-module contract. |
+| [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
 
