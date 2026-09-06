@@ -589,6 +589,10 @@ For every pipeline form, verify that its result type matches the equivalent expl
 
 **Check:** pipelines contain no separate degraded inference path.
 
+**Status:** complete — `tests/cli/types_and_values.rs` covers chained pipeline
+execution, and `tests/module_loader.rs` covers a pipeline through a selected
+typed imported overload.
+
 ---
 
 ### Task 22 — Complete obvious function-result inference
