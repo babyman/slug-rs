@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added module-loader coverage that preserves inferred exported value and
+  function-result types through imports.
+
 - Added normalization regression coverage for nested, nominal, and
   non-returning inferred union members.
 

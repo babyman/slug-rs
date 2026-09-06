@@ -162,6 +162,38 @@ fn imported_schema_bindings_preserve_nominal_construction_types() {
 }
 
 #[test]
+fn imported_bindings_preserve_inferred_value_and_function_results() {
+    let root = root("imported-inferred-types");
+    fs::create_dir_all(&root).expect("create inferred module directory");
+    fs::write(
+        root.join("values.slug"),
+        "export val name = \"Slug\"\nexport val count = fn() { 10 }\n",
+    )
+    .expect("write inferred export module");
+
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val values = import(\"values\")\n\
+             val name:str = values.name\n\
+             val count:num = values.count()\n\
+             export val result = [name, count]\n",
+        )
+        .expect("type-check importer using inferred exports");
+    let mut vm = Vm::with_module_loader(loader);
+    vm.run_named(&program, "main")
+        .expect("run importer using inferred exports");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": [\"Slug\", 10]}"
+    );
+
+    fs::remove_dir_all(root).expect("remove inferred module directory");
+}
+
+#[test]
 fn source_imports_return_cached_export_maps_in_module_order() {
     let root = root("source-import");
     fs::create_dir_all(root.join("local")).expect("create module directory");

@@ -795,6 +795,9 @@ without requiring explicit annotations solely for export.
 
 **Check:** module semantic snapshots retain inferred exported types.
 
+**Status:** complete — module-loader coverage proves inferred exported scalar
+and function-result types survive import snapshots without export annotations.
+
 ---
 
 ### Task 31 — Add nested composition tests
