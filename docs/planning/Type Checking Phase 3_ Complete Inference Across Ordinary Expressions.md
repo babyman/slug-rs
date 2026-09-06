@@ -536,6 +536,10 @@ list<File>
 
 **Check:** passing a known wrong resource type to a foreign or Slug function fails statically.
 
+**Status:** complete — CLI coverage proves `fs.openRead` retains `fs.File`
+through a binding and `list<fs.File>`; existing resource call tests reject
+known wrong resource arguments.
+
 ---
 
 ### Task 19 — Verify transparent alias behaviour

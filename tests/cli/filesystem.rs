@@ -83,6 +83,39 @@ fn resource_annotations_check_foreign_results_and_arguments() {
 }
 
 #[test]
+fn preserves_nominal_file_types_from_foreign_results() {
+    let root = std::env::temp_dir().join(format!("slug-cli-file-inference-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create file-inference fixture root");
+    let input = root.join("input.txt");
+    let program = root.join("program.slug");
+    fs::write(&input, "line\n").expect("write file-inference input");
+    fs::write(
+        &program,
+        format!(
+            "val fs = import(\"slug.io.fs\")\n\
+             val file:fs.File = fs.openRead(\"{}\")\n\
+             defer fs.close(file)\n\
+             val files:list<fs.File> = [file, file]\n\
+             println(len(files))\n",
+            input.display()
+        ),
+    )
+    .expect("write file-inference source");
+    let output = slug()
+        .arg(&program)
+        .output()
+        .expect("run file-inference source");
+    fs::remove_dir_all(root).expect("remove file-inference fixture root");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2\n");
+}
+
+#[test]
 fn match_constraints_check_exact_nominal_file_handles() {
     let root = std::env::temp_dir().join(format!("slug-cli-resource-match-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create resource-match fixture root");
