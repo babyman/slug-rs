@@ -96,6 +96,44 @@ fn preserves_inferred_types_across_transitive_bindings() {
 }
 
 #[test]
+fn exposes_annotated_bindings_at_their_declared_type() {
+    let path = fixture_path("annotated-binding-inference");
+    fs::write(
+        &path,
+        "val value:num|nil = 10\n\
+         val display = fn(item:num|nil) { item }\n\
+         println(display(value))\n",
+    )
+    .expect("write annotated binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run annotated binding source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "10\n");
+
+    fs::write(&path, "val value:num|nil = 10\nval invalid:num = value\n")
+        .expect("write narrowed annotated binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run narrowed annotated binding source");
+    fs::remove_file(path).expect("remove annotated binding source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got num|nil"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(

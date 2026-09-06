@@ -8,6 +8,9 @@
 - Added CLI regression coverage for transitive inferred binding types and
   their source-level diagnostics.
 
+- Added CLI regression coverage that annotated bindings expose their declared
+  type after accepting a compatible inferred initializer.
+
 - Source compilation now always performs semantic type checking. The
   `-type-check` CLI mode and checked-versus-unchecked compiler APIs were
   removed; dynamically uncertain operations retain checked runtime behavior.

@@ -152,6 +152,10 @@ val x:num|nil = 10
 
 **Check:** initializer is accepted as `num`; binding is subsequently treated as `num|nil`.
 
+**Status:** complete — `tests/cli/types_and_metadata.rs` proves an inferred
+`num` initializer is accepted by `num|nil` and that later reads retain the
+declared nullable type.
+
 ---
 
 ### Task 5 — Define mutable binding inference behaviour
