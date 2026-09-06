@@ -464,6 +464,10 @@ Verify that field access and passing the value through bindings retain `Person`.
 
 **Check:** two structurally similar but nominally distinct structs remain distinct where Slug requires nominal identity.
 
+**Status:** complete — `tests/cli/types_and_values.rs` proves schema aliases
+retain nominal construction identity and rejects assignment between distinct
+otherwise empty schemas.
+
 ---
 
 ### Task 17 — Preserve enum inference
