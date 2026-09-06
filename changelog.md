@@ -6,6 +6,12 @@
   manifests, module-provider resolution, transactional native-plugin binding,
   and safe shutdown cleanup without native code unloading.
 
+- Added a phased implementation plan for the experimental clutch resolver,
+  scoped native plugins, `slug.io.fs` lifecycle slice, and future release gates.
+
+- Kept the clutch experiment out of Cargo feature configuration; the dedicated
+  experiment branch provides the required isolation.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

@@ -1341,3 +1341,180 @@ And more succinctly:
 For now, **clutch** remains an experimental architectural concept.
 
 The next step is to make `slug.io.fs` prove it.
+
+---
+
+# Actionable execution plan
+
+The version-0 contract in
+[`../reference/experimental-clutches.md`](../reference/experimental-clutches.md)
+defines the work below. Each phase is independently reviewable. Do not begin a
+later phase until the prior phase's exit criteria hold.
+
+## Phase 3 — Source-only clutch resolution
+
+**Goal:** make an exploded clutch another provider of an ordinary `.slug`
+module, with no native loading.
+
+### Todo
+
+- [ ] Keep the existing Cargo feature set unchanged. The dedicated experiment
+  branch is the isolation boundary; preserve existing CLI and
+  `ModuleLoader::new` behavior until a clutch repository is explicitly
+  configured.
+- [ ] Add private clutch manifest types and parsing in a dedicated module (for
+  example `src/clutch.rs`) using the existing TOML dependency.
+- [ ] Validate `format = 0`, required clutch identity fields, runtime and
+  plugin-facade requirements, module names, and source paths before opening a
+  module. Reject paths outside the clutch root, missing files, unknown keys
+  that would change behavior, and duplicate module providers.
+- [ ] Add an explicit, test-configured clutch repository index from module
+  identity to exploded-clutch directory. Do not add installation commands,
+  repository scanning, or CLI flags yet.
+- [ ] Refactor `src/module.rs` around a private module-provider result so the
+  existing importer-relative, project-root, and library-root lookup remains
+  first and clutch lookup is the final provider.
+- [ ] Cache a clutch-provided module under the same module identity and
+  initialization rules as an ordinary source module; do not create a second
+  import namespace.
+- [ ] Add focused `tests/module_loader.rs` coverage for source-only success,
+  existing-provider precedence, a missing indexed clutch, malformed manifests,
+  invalid paths, requirements failure, duplicate providers, and cyclic imports.
+- [ ] Update the reference contract only if implementation reveals an
+  unspecified observable outcome; otherwise keep this phase implementation-only.
+
+### Exit criteria
+
+- `import("example.library")` loads a source module from an indexed exploded
+  clutch with the same exports, isolation, live bindings, and error category as
+  an ordinary module.
+- All invalid inputs return checked module-load errors and leave the loader
+  cache unchanged.
+- `cargo test --features metrics --test module_loader` and `make check` pass.
+
+## Phase 4 — Plugin-owned foreign registration
+
+**Goal:** let a clutch plugin supply only the native declarations of its own
+module, without ambient registrations or partial state.
+
+### Todo
+
+- [ ] Model a loader-private plugin registration scope with its clutch and
+  module identities, registered foreign functions, resource types, cleanup
+  hook, and active/failed state.
+- [ ] Extend the existing foreign registry in `src/module.rs` so a scope can
+  stage a batch of registrations, validate uniqueness, and atomically publish
+  or discard the batch. Preserve ordinary host registrations for builtins and
+  non-clutch use.
+- [ ] Define a narrow Rust-only v0 plugin initializer that receives the scoped
+  registrar; it must not receive VM internals, globals, scheduler access, or
+  arbitrary source values.
+- [ ] Resolve the manifest's plugin entry through host-controlled test
+  configuration. Do not teach the clutch manifest how to search arbitrary
+  dynamic libraries.
+- [ ] Make module loading follow the contract order: manifest validation,
+  scoped initialization, compile/foreign validation, then publication.
+- [ ] Ensure every failure path invokes cleanup once, removes staged
+  registrations, and permits a later clean retry.
+- [ ] Add VM and module-loader tests for matching foreign functions, resource
+  type ownership, initializer failure, missing registration, arity/signature
+  mismatch, and no-registration-leak retry behavior.
+
+### Exit criteria
+
+- A plugin can satisfy `foreign` declarations only for the module selected
+  from its clutch; it cannot register an unrelated capability.
+- Failed initialization and failed declaration validation are observationally
+  equivalent to never having loaded the plugin.
+- `make test-vm`, `cargo test --features metrics --test module_loader`, and
+  `make check` pass.
+
+## Phase 5 — `slug.io.fs` vertical slice and lifecycle proof
+
+**Goal:** prove the complete source-module, plugin, foreign-resource, and
+shutdown flow with one small filesystem capability.
+
+### Todo
+
+- [ ] Move or recreate the minimal `slug.io.fs` declaration module inside an
+  exploded test clutch: `File`, `open`, `read`, and idempotent `close`.
+- [ ] Implement a test-only Rust v0 filesystem plugin first. Reuse existing
+  nominal resource and foreign-call validation rather than creating a clutch
+  resource representation.
+- [ ] Use a consumer fixture that imports only `slug.io.fs`; it must not know
+  the clutch path, plugin name, or native implementation.
+- [ ] Prove resource cleanup through explicit close, error unwinding, and VM
+  shutdown. Confirm shutdown rejects new calls and releases registrations and
+  plugin-owned state.
+- [ ] Prove that code residency is not mistaken for state residency: cleanup
+  runs deterministically, but no test expects `dlclose`.
+- [ ] Add diagnostic assertions for bad manifest data, unsupported platform,
+  plugin initialization failure, foreign mismatch, and an unavailable module.
+- [ ] Add the relevant support-matrix/README wording only if the feature
+  becomes user-invokable; otherwise retain its test-only experimental status.
+
+### Exit criteria
+
+- The vertical slice works through `import("slug.io.fs")` alone and preserves
+  nominal `fs.File` checks across module boundaries.
+- Cleanup and every failure mode are covered by checked-error regressions.
+- Module-loader and VM tests, then `make check`, pass on the supported host
+  platforms.
+
+## Phase 6 — Separate artifact and dynamic-loader decisions
+
+**Goal:** decide whether the proven local model justifies portable artifacts or
+dynamic native loading; do not implement either by implication.
+
+### Todo
+
+- [ ] Review Phase 5 evidence against the `.cslug` implementation gate in
+  [`../reference/compiled-artifacts.md`](../reference/compiled-artifacts.md).
+  If it is not met, retain `.slug`-only clutches.
+- [ ] If compiled modules proceed, write the complete `.cslug` version-1
+  schema, verifier rules, compatibility negotiation, malformed-input fixtures,
+  and loader tests before adding a manifest representation entry.
+- [ ] Review dynamic plugin loading against the native-ABI implementation gate
+  in [`../reference/native-abi.md`](../reference/native-abi.md). Publish C
+  declarations and ABI conformance tests before any released loader support.
+- [ ] Keep the existing `ffi-prototype` feature isolated until that review
+  succeeds; it may supply test evidence but is not a clutch plugin ABI.
+- [ ] Make a separate decision record for any ZIP archive format, manifest
+  stability promise, signing, installation workflow, or external registry.
+
+### Exit criteria
+
+- The project explicitly records one of: remain local/source-only, begin a
+  `.cslug` design, begin an ABI-v1 design, or stop the experiment.
+- No experimental manifest field becomes a public compatibility promise by
+  accident.
+
+## Phase 7 — Reuse assessment and release decision
+
+**Goal:** determine whether clutches simplify more than one capability before
+stabilizing any interface.
+
+### Todo
+
+- [ ] Build a second, materially different clutch (the planned candidate is
+  `slug.sqlite`) using the same resolver and scoped-registration boundaries.
+- [ ] Build or simulate a third capability that does not primarily exercise
+  filesystem or database resource lifetimes.
+- [ ] Compare the three implementations for duplicated loader code, missing
+  lifecycle hooks, diagnostic gaps, and manifest fields that vary per
+  capability.
+- [ ] Record whether a stable local manifest, packaged archive, installation
+  workflow, or published plugin ABI is justified. If not, retain or remove the
+  experimental feature rather than freezing an under-tested design.
+- [ ] Before a release commitment, add conformance-style fixtures for all
+  promised resolver and lifecycle behavior, update compatibility policy, and
+  write the required decision records.
+
+### Exit criteria
+
+- At least three distinct providers demonstrate that module resolution,
+  plugin ownership, and failure cleanup are reusable rather than tailored to
+  `slug.io.fs`.
+- A release proposal names the exact stable surface, migrations, compatibility
+  version, security model, and validation suite—or explicitly concludes that
+  clutches remain experimental.
