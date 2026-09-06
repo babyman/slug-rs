@@ -420,6 +420,9 @@ bytes[slice]      → bytes
 
 **Check:** slicing does not collapse a known collection to `Unknown`.
 
+**Status:** complete — CLI coverage proves list element precision and string/
+bytes family preservation through slices, plus a static non-sliceable error.
+
 ---
 
 ### Task 15 — Complete member-access inference

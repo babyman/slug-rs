@@ -489,6 +489,47 @@ fn infers_known_index_result_types() {
 }
 
 #[test]
+fn preserves_collection_types_through_slices() {
+    let path = fixture_path("slice-inference");
+    fs::write(
+        &path,
+        "val numbers:list<num> = [1, 2, 3][1:]\n\
+         val text:str = \"Slug\"[1:3]\n\
+         val data:bytes = 0x\"534c5547\"[1:3]\n\
+         println(numbers, text, data)\n",
+    )
+    .expect("write slice inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run slice inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[2, 3] lu 0x\"4c55\"\n"
+    );
+
+    fs::write(&path, "val invalid = 1[0:1]\n").expect("write invalid slice inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid slice inference source");
+    fs::remove_file(path).expect("remove slice inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected list, got num"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(
