@@ -26,7 +26,7 @@ Existing module and import behaviour remains authoritative until the experiment 
 
 This experiment separates three concepts:
 
-```text id="p4qax0"
+```text
 module
     A Slug language/compilation unit.
 
@@ -40,13 +40,16 @@ plugin
 
 The corresponding artifacts are:
 
-```text id="jmwv2s"
+```text
 .slug       source representation of a Slug module
-.cslug      compiled representation of a Slug module
+.cslug      future compiled representation of a Slug module
 .clutch     composed Slug library/application package
 ```
 
-A `.slug` and corresponding `.cslug` represent the same conceptual module at different stages.
+At present, `.cslug` bytecode is **conceptual rather than implemented**.
+
+The clutch design should accommodate compiled modules in the future, but the initial experiment must not depend upon
+them.
 
 A module belongs to the language.
 
@@ -66,7 +69,7 @@ A module remains the unit visible to Slug source code.
 
 For example:
 
-```slug id="99vrzy"
+```slug
 val json = import("slug.json")
 val fs = import("slug.io.fs")
 ```
@@ -75,7 +78,7 @@ An import asks for a module by identity.
 
 It should not fundamentally mean:
 
-```text id="u8s2kx"
+```text
 load the file named slug/io/fs.slug
 ```
 
@@ -89,83 +92,60 @@ How that module is provided is a runtime concern.
 
 ## Module representations
 
-A module may have a source representation:
+Today, a module is represented by Slug source:
 
-```text id="ppl1bf"
+```text
 fs.slug
 ```
 
-and a compiled representation:
+A future compiled representation may be:
 
-```text id="pzkjmh"
+```text
 fs.cslug
 ```
 
-These represent the same conceptual module:
+Conceptually these would represent the same module:
 
-```text id="u2f7vn"
+```text
               slug.io.fs
                   │
           ┌───────┴───────┐
           │               │
        fs.slug          fs.cslug
        source           compiled
+                         future
 ```
 
 The distinction matters to the compiler and runtime but should generally not matter to importing Slug code.
 
 This gives us an important principle:
 
-> **Module identity does not depend upon its physical representation.**
+> **Module identity should not depend upon its physical representation.**
+
+For the initial clutch experiment, however, modules should remain `.slug` source modules.
 
 ---
 
-## Compiled-module compatibility
+## Future compiled-module compatibility
 
-A distributed `.cslug` must identify the bytecode/runtime contract against which it was compiled.
+If `.cslug` is implemented later and distributed inside clutches, a compiled module will need to identify the
+bytecode/runtime contract against which it was compiled.
 
-The exact compatibility mechanism belongs to the `.cslug` design rather than the clutch design, but conceptually a
-compiled module may identify something like:
+The exact compatibility mechanism belongs to the `.cslug` design rather than the clutch design.
 
-```text id="n3o4mp"
+Conceptually, a future compiled module may carry information such as:
+
+```text
 module: slug.io.fs
 format: cslug
 bytecode: 3
 ```
 
-When both representations are available, the runtime could prefer compatible compiled code:
+A future loader could then prefer compatible compiled code and fall back to source when available.
 
-```text id="m6rdc8"
-compatible .cslug?
-       │
-      yes
-       │
-       ▼
-load compiled module
+This behaviour is **not part of the initial clutch experiment** because `.cslug` bytecode does not yet exist.
 
-       no
-       │
-       ▼
-.slug available?
-       │
-      yes
-       │
-       ▼
-compile and load
-```
-
-If only an incompatible `.cslug` exists, loading should fail explicitly.
-
-For example:
-
-```json id="n7a2fi"
-{
-  "error": "incompatible_compiled_module",
-  "module": "slug.io.fs",
-  "requiredBytecode": 3,
-  "runtimeBytecode": 4
-}
-```
+The clutch abstraction should simply avoid making future compiled-module support difficult.
 
 ---
 
@@ -177,12 +157,12 @@ A clutch provides one or more Slug modules and may carry everything required to 
 
 Conceptually:
 
-```text id="v1ww8q"
+```text
 Clutch
   │
   ├── Slug modules
   │     ├── .slug
-  │     └── .cslug
+  │     └── future .cslug
   │
   ├── native runtime plugins
   ├── resources
@@ -191,25 +171,23 @@ Clutch
 
 A clutch therefore distributes modules rather than source files.
 
-For example, a source-oriented clutch could contain:
+For the initial experiment, a clutch may simply contain:
 
-```text id="3e8h9p"
-slug.uri.clutch
+```text
+slug.io.fs.clutch/
     modules/
-        uri.slug
+        fs.slug
 ```
 
-A release clutch could contain:
+The design should remain compatible with a future release clutch containing:
 
-```text id="w6r3ko"
-slug.uri.clutch
+```text
+slug.io.fs.clutch
     modules/
-        uri.cslug
+        fs.cslug
 ```
 
-A development clutch could contain both.
-
-The clutch abstraction remains the same.
+without making compiled modules a prerequisite today.
 
 ---
 
@@ -219,17 +197,17 @@ A clutch may naturally provide several related modules.
 
 For example:
 
-```text id="rdem2v"
+```text
 sqlite.clutch
     modules/
-        sqlite.cslug
-        query.cslug
-        migration.cslug
+        sqlite.slug
+        query.slug
+        migration.slug
 ```
 
 might advertise:
 
-```text id="n6oq4j"
+```text
 slug.sqlite
 slug.sqlite.query
 slug.sqlite.migration
@@ -237,7 +215,7 @@ slug.sqlite.migration
 
 Slug programs still import the individual modules:
 
-```slug id="5gy7sz"
+```slug
 val sqlite = import("slug.sqlite")
 val migration = import("slug.sqlite.migration")
 ```
@@ -259,7 +237,7 @@ A plugin is a native component extending VM/runtime capability.
 
 For example:
 
-```text id="ykx6vh"
+```text
 slug.io.fs.clutch
        │
        ├── slug.io.fs module
@@ -269,7 +247,7 @@ slug.io.fs.clutch
 
 The three layers are:
 
-```text id="v0kj6n"
+```text
 slug.io.fs.clutch          distribution/composition
         │
         ▼
@@ -283,18 +261,277 @@ Most clutches should require no plugin.
 
 A completely Slug-implemented library might simply be:
 
-```text id="by1td8"
+```text
 slug.template.clutch
-    parser.cslug
-    template.cslug
-    renderer.cslug
+    parser.slug
+    template.slug
+    renderer.slug
 ```
 
 Native functionality is optional rather than intrinsic to clutches.
 
 ---
 
-## The VM boundary
+# Plugin ownership and lifecycle
+
+Plugin lifecycle is part of the architecture and should be tested explicitly.
+
+A plugin should not be treated as a loose collection of globally registered native functions with no owner.
+
+Loading a clutch should establish an ownership relationship between the clutch and everything its plugin registers.
+
+Conceptually:
+
+```text
+LoadedClutch
+    │
+    └── PluginHandle
+          ├── foreign functions
+          ├── runtime resource types
+          ├── capability registrations
+          ├── plugin-owned state
+          ├── native resources
+          └── cleanup actions
+```
+
+The exact Rust representation is an implementation detail.
+
+The important property is:
+
+> **Everything introduced by a plugin should have a defined owner and lifetime.**
+
+This applies even if Slug ultimately decides not to support arbitrary runtime plugin unloading.
+
+---
+
+## Loading
+
+When a clutch requiring a plugin is first resolved, the runtime may perform a sequence such as:
+
+```text
+resolve module
+    ↓
+open clutch
+    ↓
+load native plugin
+    ↓
+create PluginHandle
+    ↓
+register plugin-owned capabilities
+    ↓
+validate Slug foreign declarations
+    ↓
+load module
+    ↓
+make module available
+```
+
+If any step fails, the partially established plugin should be unwound cleanly.
+
+For example, a failed declaration validation should not leave half-registered filesystem functions in the VM.
+
+Loading therefore needs transactional behaviour at the plugin boundary even if the internal implementation is simple.
+
+---
+
+## Runtime ownership
+
+While a plugin is active, registrations should remain associated with the plugin that created them.
+
+For example:
+
+```text
+filesystem plugin
+    owns:
+        File resource implementation
+        open
+        read
+        close
+        filesystem state
+```
+
+This gives the runtime a concrete answer to questions such as:
+
+* who registered this foreign function?
+* who owns this runtime resource implementation?
+* which clutch caused this capability to exist?
+* what must be cleaned up when the runtime shuts down?
+
+This ownership information is also useful for diagnostics and inspection.
+
+---
+
+## Resource lifetime
+
+Typed resources make plugin lifecycle especially important.
+
+For example:
+
+```slug
+export resource File
+```
+
+may correspond to live native file handles owned by the filesystem plugin.
+
+The plugin cannot safely disappear while instances of that resource remain alive.
+
+A minimum invariant should therefore be:
+
+> **A plugin must remain valid for at least as long as any runtime value whose implementation depends upon it.**
+
+This suggests that plugin-owned resource types and resource instances must contribute to plugin lifetime or otherwise
+prevent unsafe teardown.
+
+The experiment should make this relationship explicit.
+
+---
+
+## Plugin unloading and shutdown
+
+The initial plugin model does **not** require live unloading while the VM is running.
+
+A plugin may remain loaded for the full active lifetime of the VM.
+
+However, plugin unloading at VM shutdown **is required behaviour**.
+
+The minimum lifecycle is:
+
+```text
+plugin load
+    ↓
+plugin active
+    ↓
+VM shutdown begins
+    ↓
+quiesce plugin
+    ↓
+release plugin-owned resources
+    ↓
+run plugin shutdown hook
+    ↓
+unregister plugin-owned capabilities
+    ↓
+unload native library
+```
+
+This distinction is important:
+
+```text
+live unloading
+    optional / future
+
+shutdown unloading
+    required
+```
+
+A VM-lifetime plugin therefore means:
+
+> **The plugin remains loaded while the VM is active, but is deterministically unloaded when the VM shuts down.**
+
+Shutdown must not rely solely on process termination to reclaim plugin state.
+
+### Shutdown ordering
+
+VM shutdown should proceed in an order that preserves plugin safety.
+
+At minimum:
+
+1. prevent new work from being started through the plugin;
+2. complete or cancel runtime work that depends upon the plugin;
+3. finalize or release plugin-owned resource instances;
+4. invoke the plugin's shutdown/cleanup hook;
+5. unregister functions, resource implementations, and capabilities owned by the plugin;
+6. unload the native library.
+
+For `slug.io.fs`, this means live `File` resources must not outlive the filesystem plugin implementation they depend upon.
+
+Conceptually:
+
+```text
+File resources
+      │
+      ▼
+filesystem plugin
+      │
+      ▼
+native library
+```
+
+Teardown therefore occurs in the reverse direction:
+
+```text
+release File resources
+        ↓
+shutdown filesystem plugin
+        ↓
+unregister filesystem capability
+        ↓
+unload native library
+```
+
+### Shutdown guarantees
+
+The first experiment should require the following guarantees:
+
+* every loaded plugin receives exactly one shutdown opportunity;
+* plugin shutdown occurs before its native library is unloaded;
+* plugin-owned resources are finalized before the plugin implementation becomes invalid;
+* plugin registrations are removed during shutdown;
+* partial plugin initialization is unwound if loading fails;
+* plugin shutdown is deterministic and testable;
+* plugin teardown does not depend on the operating system reclaiming process memory.
+
+A plugin shutdown failure should be reported, but should not prevent the VM from attempting to clean up other loaded plugins.
+
+### Live unloading
+
+Live unloading remains explicitly out of scope.
+
+The ownership model should avoid making it impossible later, but the first implementation does not need to support:
+
+```text
+slug.io.fs active
+      ↓
+unload plugin
+      ↓
+continue VM execution
+```
+
+That introduces substantially harder questions around live resources, callbacks, dependencies, outstanding work, and module references.
+
+Those questions should only be addressed if a concrete use case appears.
+
+For the current experiment, the lifecycle contract is simpler:
+
+> **Plugins load on demand, remain active for the VM lifetime, and unload deterministically during VM shutdown.**
+
+---
+
+## Plugin failure and cleanup
+
+Plugin cleanup should be deterministic at least in these cases:
+
+```text
+plugin initialization failure
+clutch loading failure
+VM shutdown
+```
+
+A plugin should have an opportunity to release plugin-global state and native resources.
+
+The experiment should specifically verify that:
+
+1. failed initialization leaves no registrations behind;
+2. failed module validation leaves no registrations behind;
+3. VM shutdown releases plugin-global state;
+4. live `File` resources are safely finalized before or during plugin teardown;
+5. plugin teardown cannot invalidate still-live resource values.
+
+These lifecycle behaviours are more important to the first experiment than hot unloading.
+
+---
+
+# The VM boundary
 
 This experiment does **not** imply that Slug itself should become a collection of interchangeable plugins.
 
@@ -302,7 +539,7 @@ The VM continues to define fundamental Slug semantics.
 
 Likely VM responsibilities include:
 
-```text id="4mj4u1"
+```text
 value representation
 bytecode execution
 functions and call frames
@@ -312,13 +549,14 @@ module loading
 native call boundary
 runtime type/resource support
 plugin/capability machinery
+plugin ownership/lifecycle tracking
 ```
 
 Plugins may extend what the VM can **do**, but should not redefine what Slug **means**.
 
 Reasonable plugin-provided capabilities might include:
 
-```text id="35iccs"
+```text
 filesystem
 networking
 databases
@@ -329,7 +567,7 @@ channels
 
 Plugins should not redefine:
 
-```text id="37ncdl"
+```text
 +
 function calls
 match
@@ -351,7 +589,7 @@ A plugin architecture potentially allows Slug to become both **larger and smalle
 
 The ecosystem can grow:
 
-```text id="rzdtmr"
+```text
 Slug
 ├── filesystem
 ├── networking
@@ -366,7 +604,7 @@ while an individual runtime only needs the capabilities actually reachable by it
 
 For example, if a program never imports:
 
-```slug id="0k8kxr"
+```slug
 import("slug.channel")
 ```
 
@@ -394,7 +632,7 @@ FFI remains an implementation mechanism behind the module interface.
 
 For example, `slug.io.fs` might declare:
 
-```slug id="hax8jm"
+```slug
 export resource File
 
 export foreign open(path:str):File
@@ -406,7 +644,7 @@ A filesystem plugin supplies those implementations.
 
 The consuming program only sees:
 
-```slug id="t8wx82"
+```slug
 val fs = import("slug.io.fs")
 ```
 
@@ -427,7 +665,7 @@ Clutches suggest a simple installed-library repository.
 
 Conceptually:
 
-```text id="p4jdri"
+```text
 Slug repository
     │
     ├── clutches/
@@ -440,7 +678,7 @@ Slug repository
 
 The repository manifest maintains a mapping such as:
 
-```text id="e41n9j"
+```text
 slug.sqlite          → sqlite.clutch
 slug.io.fs           → io-fs.clutch
 slug.arcade          → arcade.clutch
@@ -449,7 +687,7 @@ slug.arcade.audio    → arcade.clutch
 
 Fundamentally, this is:
 
-```text id="nd2q0v"
+```text
 module identity → provider
 ```
 
@@ -462,7 +700,7 @@ occurs.
 
 Conceptually:
 
-```text id="u6xmg1"
+```text
 INSTALL TIME
 
 io-fs.clutch
@@ -481,7 +719,7 @@ inspect clutch
 
 Runtime resolution then becomes:
 
-```text id="5oqts4"
+```text
 import("slug.io.fs")
         │
         ▼
@@ -493,10 +731,9 @@ repository lookup
         ▼
 io-fs.clutch
         │
-        ├── select module representation
-        ├── establish required capabilities
-        ├── load plugin
+        ├── establish plugin
         ├── validate foreign declarations
+        ├── load module source
         └── expose module
 ```
 
@@ -510,7 +747,7 @@ The repository already knows.
 
 Today import can approximately be thought of as:
 
-```text id="9n8r9x"
+```text
 import("foo")
       │
       ▼
@@ -522,7 +759,7 @@ load module
 
 The generalized model becomes:
 
-```text id="vpbq0e"
+```text
 import("foo")
       │
       ▼
@@ -538,7 +775,6 @@ resolve module foo
                     ├── establish capabilities
                     ├── load native plugin if required
                     ├── validate foreign declarations
-                    ├── choose .cslug/.slug representation
                     └── expose module
 ```
 
@@ -554,7 +790,7 @@ Clutch support may eventually justify making module providers explicit internall
 
 Conceptually:
 
-```rust id="rh4r9q"
+```rust
 trait ModuleResolver {
     fn resolve(&self, name: &ModuleName) -> Option<ModuleProvider>;
 }
@@ -562,11 +798,13 @@ trait ModuleResolver {
 
 with possible providers such as:
 
-```rust id="z47ac3"
+```rust
 enum ModuleProvider {
     Source(PathBuf),
-    Compiled(PathBuf),
     Clutch(ClutchId),
+
+    // Future:
+    Compiled(PathBuf),
 }
 ```
 
@@ -584,15 +822,15 @@ layout.
 
 ZIP is deliberately conventional. Slug does not need a custom archive format.
 
-For example:
+A future packaged clutch may look like:
 
-```text id="4ih5zm"
+```text
 slug.io.fs.clutch
 │
 ├── clutch.toml
 │
 ├── modules/
-│   └── slug.io.fs.cslug
+│   └── fs.slug
 │
 ├── native/
 │   ├── macos-aarch64/
@@ -604,6 +842,8 @@ slug.io.fs.clutch
 │
 └── resources/
 ```
+
+Once `.cslug` exists, compiled modules may also be carried under `modules/`.
 
 `clutch.toml` lives at the root of the archive and acts as the well-known entry point describing its contents.
 
@@ -619,25 +859,25 @@ Slug-owned configuration and manifest files should use **TOML**, consistent with
 
 This includes clutch metadata:
 
-```text id="on9agf"
+```text
 clutch.toml
 ```
 
 and repository metadata:
 
-```text id="itkvn1"
+```text
 manifest.toml
 ```
 
 A future clutch manifest might conceptually contain information such as:
 
-```toml id="gqoz09"
+```toml
 [clutch]
 name = "slug.io.fs"
 version = "0.1.0"
 
 [modules]
-"slug.io.fs" = "modules/slug.io.fs.cslug"
+"slug.io.fs" = "modules/fs.slug"
 
 [native]
 plugin = "slug_io_fs"
@@ -658,14 +898,14 @@ layout as the future ZIP artifact.
 
 For example:
 
-```text id="ijvtpd"
+```text
 slug.io.fs.clutch/
 ├── clutch.toml
 ├── modules/
-│   └── slug.io.fs.cslug
+│   └── fs.slug
 └── native/
-    └── macos-aarch64/
-        └── slug_io_fs.dylib
+    └── <current-platform>/
+        └── filesystem plugin
 ```
 
 The important rule is:
@@ -674,11 +914,11 @@ The important rule is:
 representation differs.**
 
 This allows the first experiment to concentrate on module resolution, plugin loading, resource types, FFI validation,
-and lifecycle rather than ZIP implementation.
+ownership, and lifecycle rather than ZIP implementation.
 
 A future packaging step becomes conceptually:
 
-```text id="pp88qd"
+```text
 slug.io.fs.clutch/
         │
         │ ZIP
@@ -696,7 +936,7 @@ The implementation should avoid coupling clutch loading directly to directories.
 
 Conceptually, a small internal abstraction could allow the loader to consume different representations:
 
-```text id="gaf6sg"
+```text
 ClutchSource
     │
     ├── DirectoryClutch
@@ -717,16 +957,16 @@ This also leaves a natural path toward clutches embedded in standalone executabl
 
 Although not required for the initial experiment, the clutch abstraction naturally extends to applications.
 
-An executable clutch could contain:
+A future executable clutch could contain:
 
-```text id="o9exgw"
+```text
 myapp.clutch
 ├── clutch.toml
 ├── app/
-│   └── main.cslug
+│   └── main.slug or future main.cslug
 ├── modules/
-│   ├── slug.json.cslug
-│   └── slug.sqlite.cslug
+│   ├── slug.json.slug
+│   └── slug.sqlite.slug
 ├── native/
 │   └── ...
 └── resources/
@@ -734,30 +974,16 @@ myapp.clutch
 
 Its manifest could identify an entry module.
 
-Conceptually:
-
-```text id="bc4qtp"
-type: executable
-entry: app.main
-```
-
 Then:
 
-```text id="bhct7w"
+```text
 slug run myapp.clutch
 ```
 
 could establish the clutch's embedded module repository, load its required capabilities, resolve the entry module, and
 invoke `main`.
 
-The important property is that imports inside the application remain ordinary Slug imports:
-
-```slug id="kb26u5"
-val json = import("slug.json")
-val sqlite = import("slug.sqlite")
-```
-
-The executable clutch simply contains a closed set of providers capable of satisfying those imports.
+The important property is that imports inside the application remain ordinary Slug imports.
 
 ---
 
@@ -768,7 +994,7 @@ resulting dependency closure into an executable clutch.
 
 Conceptually:
 
-```text id="rhqt56"
+```text
 application modules
        │
        ▼
@@ -787,20 +1013,9 @@ closed dependency graph
 application.clutch
 ```
 
-This gives the executable clutch an important property:
+Once `.cslug` exists, that closed graph may naturally contain compiled modules.
 
-> **An executable clutch can represent a closed snapshot of the Slug modules and runtime capabilities required by a
-program.**
-
-That could make deployment extremely simple:
-
-```text id="91kpkc"
-application.clutch
-+
-compatible Slug runtime
-=
-runnable application
-```
+This is a future deployment direction rather than something the first filesystem experiment needs to prove.
 
 ---
 
@@ -808,7 +1023,7 @@ runnable application
 
 A closed executable clutch also creates a possible path toward standalone applications:
 
-```text id="51qyrl"
+```text
 Slug VM
 +
 embedded application.clutch
@@ -820,60 +1035,11 @@ The `.clutch` remains the deployment/composition artifact.
 
 The standalone executable merely embeds it with an appropriate runtime.
 
-This distinction keeps packaging separate from runtime implementation.
+The same mechanism could eventually be useful for constrained targets such as ESP32.
 
----
+A target build would include only the modules and capabilities reachable from the application.
 
-## Constrained targets
-
-The same mechanism could be especially useful for embedded targets such as ESP32.
-
-For example, an embedded application might import only:
-
-```slug id="k3t0fn"
-val gpio = import("slug.gpio")
-val time = import("slug.time")
-```
-
-Its closed dependency graph might therefore be:
-
-```text id="6r6dau"
-Slug VM core
-+
-application modules
-+
-slug.gpio
-+
-slug.time
-+
-ESP32 implementations
-```
-
-If nothing imports `slug.channel`, then the build need not include the channel module or its plugin.
-
-If that also makes other capabilities unreachable, those may disappear as well.
-
-The result is not a reduced version of the Slug language.
-
-It is the same Slug VM running a smaller runtime world.
-
-This suggests a future target build model:
-
-```text id="gjmbz2"
-application.clutch
-        │
-        +
-target capability providers
-        │
-        ▼
-closed target runtime
-        │
-        ▼
-firmware / executable
-```
-
-This is a future direction rather than part of the initial clutch implementation, but it is an important architectural
-consequence worth preserving.
+That is a future consequence of the architecture, not part of the initial plugin test.
 
 ---
 
@@ -883,36 +1049,34 @@ Clutches also create an opportunity for tooling and AI agents to inspect softwar
 
 For example:
 
-```text id="kplv4q"
-slug clutch describe sqlite --json
+```text
+slug clutch describe io-fs --json
 ```
 
 might report:
 
-```json id="jsi1vq"
+```json
 {
-  "name": "sqlite",
+  "name": "slug.io.fs",
   "modules": [
-    "slug.sqlite"
+    "slug.io.fs"
   ],
-  "representations": [
-    "cslug"
-  ],
-  "native": true
+  "native": true,
+  "lifecycle": "vm"
 }
 ```
 
 while:
 
-```text id="y28qvf"
-slug module describe slug.sqlite --json
+```text
+slug module describe slug.io.fs --json
 ```
 
 could describe the actual Slug interface.
 
 This creates a useful distinction:
 
-```text id="rw5n4a"
+```text
 clutch.toml
     describes composition
 
@@ -921,19 +1085,22 @@ module/type information
 
 repository manifest
     describes installed providers
+
+plugin ownership state
+    describes active runtime capability
 ```
 
 Native-containing clutches should be clearly identifiable without executing their native code.
 
 ---
 
-# Structured resolution errors
+# Structured resolution and lifecycle errors
 
-Because resolution is explicit, failures can also be explicit and machine-readable.
+Because resolution and lifecycle are explicit, failures can also be explicit and machine-readable.
 
 For example:
 
-```json id="egc1f4"
+```json
 {
   "error": "module_not_found",
   "module": "slug.io.fs",
@@ -946,14 +1113,26 @@ For example:
 
 or:
 
-```json id="7v4mr8"
+```json
 {
-  "error": "clutch_unavailable",
+  "error": "plugin_initialization_failed",
   "module": "slug.io.fs",
   "clutch": "slug.io.fs",
-  "reason": "no native artifact for esp32"
+  "plugin": "slug_io_fs"
 }
 ```
+
+A future unload attempt might produce:
+
+```json
+{
+  "error": "plugin_in_use",
+  "plugin": "slug_io_fs",
+  "liveResources": 3
+}
+```
+
+even if explicit unloading is not initially exposed.
 
 This fits naturally with Slug's broader direction toward structured runtime diagnostics suitable for both humans and
 agents.
@@ -964,18 +1143,20 @@ agents.
 
 The clutch experiment does **not** currently propose:
 
-- a public package registry;
-- remote dependency resolution;
-- a dependency version solver;
-- lock files;
-- signing infrastructure;
-- automatic updates;
-- a finalized `clutch.toml` schema;
-- ZIP reading/writing;
-- standalone executable generation;
-- ESP32 tooling;
-- arbitrary plugin hot unloading;
-- the final concurrency/runtime boundary.
+* a public package registry;
+* remote dependency resolution;
+* a dependency version solver;
+* lock files;
+* signing infrastructure;
+* automatic updates;
+* a finalized `clutch.toml` schema;
+* ZIP reading/writing;
+* implemented `.cslug` bytecode;
+* compiled-module compatibility rules;
+* standalone executable generation;
+* ESP32 tooling;
+* arbitrary plugin hot unloading;
+* the final concurrency/runtime boundary.
 
 These are possible consequences of the architecture, not prerequisites for proving it.
 
@@ -991,7 +1172,7 @@ It exercises the important architectural boundaries without introducing the unre
 
 A deliberately small Slug API could be sufficient:
 
-```slug id="prr6ux"
+```slug
 export resource File
 
 export foreign open(path:str):File
@@ -999,13 +1180,13 @@ export foreign read(file:File):bytes
 export foreign close(file:File):nil
 ```
 
-The experimental exploded clutch could be:
+The experimental exploded clutch should use source modules because `.cslug` is not yet implemented:
 
-```text id="n0l9h6"
+```text
 slug.io.fs.clutch/
 ├── clutch.toml
 ├── modules/
-│   └── slug.io.fs.cslug
+│   └── fs.slug
 └── native/
     └── <current-platform>/
         └── filesystem plugin
@@ -1013,7 +1194,7 @@ slug.io.fs.clutch/
 
 The complete experimental path is:
 
-```text id="xlhudv"
+```text
 import("slug.io.fs")
        │
        ▼
@@ -1026,7 +1207,7 @@ repository manifest
 slug.io.fs.clutch/
        │
        ├── clutch.toml
-       ├── slug.io.fs.cslug
+       ├── fs.slug
        └── filesystem plugin
                   │
                   ▼
@@ -1037,23 +1218,32 @@ The experiment should answer:
 
 1. Can `import("slug.io.fs")` treat a clutch-provided module exactly like an ordinary Slug module?
 2. Can the repository map the module identity to its clutch provider?
-3. Can the clutch provide `.cslug` without changing source-level import semantics?
-4. Can the clutch establish a native plugin?
-5. Can the plugin provide a typed `File` resource?
-6. Can the runtime validate foreign declarations against the plugin implementation?
-7. Can native errors cross the boundary cleanly?
-8. Can plugin lifecycle and resource ownership be deterministic?
-9. Does removing the clutch completely remove filesystem capability without changing Slug language semantics?
-10. Does the design simplify the VM and FFI rather than merely moving their complexity elsewhere?
+3. Can the clutch establish a native plugin?
+4. Can the plugin provide a typed `File` resource?
+5. Can the runtime validate foreign declarations against the plugin implementation?
+6. Can native errors cross the boundary cleanly?
+7. Does every plugin registration have a clear owning `PluginHandle` or equivalent?
+8. Does failed plugin initialization leave the VM unchanged?
+9. Does failed foreign-declaration validation unwind plugin registrations cleanly?
+10. Can live `File` resources safely keep their plugin implementation valid?
+11. Can VM shutdown deterministically clean up plugin-owned resources and plugin-global state?
+12. Can the implementation support VM-lifetime plugins without baking in assumptions that make future unloading
+    impossible?
+13. Does removing the clutch completely remove filesystem capability without changing Slug language semantics?
+14. Does the design simplify the VM and FFI rather than merely moving their complexity elsewhere?
 
-The key success criterion is:
+The key success criteria are:
 
 > **After extracting `slug.io.fs`, removing its clutch should make filesystem capability cease to exist without
 requiring changes to the Slug VM or language.**
 
-The initial implementation should use an exploded `.clutch` directory.
+and:
 
-ZIP packaging comes only after the architecture has been proven.
+> **Loading, failure, resource lifetime, and shutdown must all have explicit plugin ownership semantics.**
+
+The initial implementation should use an exploded `.clutch` directory and `.slug` modules.
+
+ZIP packaging and `.cslug` support come later.
 
 ---
 
@@ -1063,10 +1253,10 @@ The filesystem experiment proves the mechanism once.
 
 A useful later sequence would be:
 
-```text id="e3mvpc"
+```text
 slug.io.fs
-    proves native runtime capability
-    and typed resources
+    proves native runtime capability,
+    typed resources, and lifecycle ownership
 
 slug.sqlite
     proves external native dependencies
@@ -1088,11 +1278,15 @@ The hypothesis behind this experiment is:
 > **A Slug module remains the unit of Slug code and API, while a clutch becomes the unit that composes and distributes
 modules and their supporting capabilities.**
 
-A module may have source (`.slug`) or compiled (`.cslug`) representations.
+Today, modules are represented by `.slug` source.
 
-A clutch may distribute either representation together with native plugins and resources.
+A future `.cslug` representation should fit the same model without changing module identity or clutch semantics.
+
+A clutch may distribute modules together with native plugins and resources.
 
 An installed clutch repository maps module identities to their providers.
+
+Plugins have explicit ownership and lifecycle even if they initially remain loaded for the lifetime of the VM.
 
 An executable clutch may eventually close the complete dependency graph of an application into a shippable artifact.
 
@@ -1100,7 +1294,7 @@ A target build may eventually combine that closed graph with only the runtime ca
 
 The architecture can therefore be summarized as:
 
-```text id="l7sffj"
+```text
                     Slug program
                          │
                  import("slug.io.fs")
@@ -1117,23 +1311,24 @@ The architecture can therefore be summarized as:
                                     │
                        ┌────────────┴────────────┐
                        │                         │
-                 slug.io.fs                 fs plugin
-                .slug/.cslug                    │
-                                                ▼
-                                             VM core
+                   fs.slug                  fs plugin
+                                              │
+                                      explicit ownership
+                                      and lifecycle
+                                              │
+                                              ▼
+                                           VM core
 ```
 
 And more succinctly:
 
-> **The VM implements computation.**  
-> **Plugins implement capability.**  
-> **Modules expose capability.**  
-> **Clutches distribute capability.**  
-> **The repository resolves capability.**  
-> **Executable clutches can close capability into a deployable world.**
+> **The VM implements computation.**
+> **Plugins implement capability.**
+> **Modules expose capability.**
+> **Clutches distribute capability.**
+> **The repository resolves capability.**
+> **Plugin ownership governs capability lifetime.**
 
 For now, **clutch** remains an experimental architectural concept.
-
-The next step is not more architecture.
 
 The next step is to make `slug.io.fs` prove it.
