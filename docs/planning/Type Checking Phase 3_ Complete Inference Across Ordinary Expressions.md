@@ -98,6 +98,9 @@ bytes      → bytes
 
 **Check:** bindings initialized from each literal retain that inferred type through later references.
 
+**Status:** complete — `tests/cli/types_and_metadata.rs` proves both compatible
+calls and incompatible annotated uses for every scalar literal family.
+
 ---
 
 ### Task 3 — Preserve inferred binding types

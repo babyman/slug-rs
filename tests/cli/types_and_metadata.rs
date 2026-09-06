@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn infers_scalar_literal_types_through_bindings() {
+    let path = fixture_path("scalar-literal-inference");
+    fs::write(
+        &path,
+        "val absent = nil\n\
+         val enabled = true\n\
+         val count = 42\n\
+         val label = \"Slug\"\n\
+         val data = 0x\"534c5547\"\n\
+         val accept_nil = fn(value:nil) { value }\n\
+         val accept_bool = fn(value:bool) { value }\n\
+         val accept_num = fn(value:num) { value }\n\
+         val accept_str = fn(value:str) { value }\n\
+         val accept_bytes = fn(value:bytes) { value }\n\
+         println(accept_nil(absent), accept_bool(enabled), accept_num(count), accept_str(label), accept_bytes(data))\n",
+    )
+    .expect("write scalar literal inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run scalar literal inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "nil true 42 Slug 0x\"534c5547\"\n"
+    );
+
+    for (literal, annotation, expected) in [
+        ("nil", "str", "expected str, got nil"),
+        ("true", "num", "expected num, got bool"),
+        ("42", "str", "expected str, got num"),
+        ("\"Slug\"", "num", "expected num, got str"),
+        ("0x\"534c5547\"", "str", "expected str, got bytes"),
+    ] {
+        fs::write(
+            &path,
+            format!("val value = {literal}\nval invalid:{annotation} = value\n"),
+        )
+        .expect("write incompatible scalar binding source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run incompatible scalar binding source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr.starts_with(&format!("slug: semantic error: {expected}")),
+            "{stderr}"
+        );
+    }
+    fs::remove_file(path).expect("remove scalar literal inference source");
+}
+
+#[test]
 fn distinguishes_nominal_resource_types_during_call_resolution() {
     let path = fixture_path("nominal-resource-types");
     fs::write(
