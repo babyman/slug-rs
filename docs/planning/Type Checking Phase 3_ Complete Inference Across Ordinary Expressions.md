@@ -705,6 +705,10 @@ Test same-type and heterogeneous cases.
 
 **Check:** known pattern-bound types are preserved inside case bodies wherever existing pattern semantics provide them.
 
+**Status:** complete — CLI coverage proves same-type case normalization,
+heterogeneous result unions, and preservation of known pattern-bound element
+types inside case bodies.
+
 ---
 
 ### Task 28 — Introduce an internal non-returning type

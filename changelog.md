@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added CLI regression coverage for normalized `match` case result types.
+
 - Added CLI regression coverage for normalized `select` handler result types.
 
 - Added CLI regression coverage that preserves scalar literal types through

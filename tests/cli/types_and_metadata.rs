@@ -564,6 +564,47 @@ fn infers_normalized_select_handler_results() {
 }
 
 #[test]
+fn infers_normalized_match_case_results() {
+    let path = fixture_path("match-result-inference");
+    fs::write(
+        &path,
+        "val same:num = match [1] { [item] => item; _ => 2 }\n\
+         val different:num|str = match 1 { 1 => 1; _ => \"other\" }\n\
+         println(same, different)\n",
+    )
+    .expect("write match result inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run match result inference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1 1\n");
+
+    fs::write(
+        &path,
+        "val invalid:num = match 1 { 1 => 1; _ => \"other\" }\n",
+    )
+    .expect("write incompatible match result source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible match result source");
+    fs::remove_file(path).expect("remove match result inference source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected num, got num|str"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn infers_known_index_result_types() {
     let path = fixture_path("index-inference");
     fs::write(
