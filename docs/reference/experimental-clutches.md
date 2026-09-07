@@ -168,7 +168,7 @@ The first implementation must prove:
 ## Relationship to other contracts
 
 This document narrows the exploratory material in
-[`../planning/experimental-slug-clutches.md`](../planning/experimental-slug-clutches.md).
+[`../planning/completed/experimental-slug-clutches.md`](../planning/completed/experimental-slug-clutches.md).
 It preserves the source module rules in
 [`../language/language-specification.md`](../language/language-specification.md),
 the native boundary in [`native-abi.md`](native-abi.md), and the future

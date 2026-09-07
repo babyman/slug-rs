@@ -17,6 +17,9 @@
   added `make stage-native-clutches` to stage current-platform native adapters,
   including Windows POSIX-shell hosts.
 
+- Completed the clutch experiment with three distinct native providers and
+  adopted local, mutable clutches as the active experimental composition model.
+
 - Fixed deferred blocks that call a user-defined function so cleanup resumes
   the deferred action instead of falling through from the enclosing function.
 

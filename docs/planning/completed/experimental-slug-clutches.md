@@ -2,7 +2,7 @@
 
 ## Status
 
-**Experimental architectural exploration.**
+**Completed experimental architectural exploration.**
 
 This document explores a possible evolution of Slug's module and distribution model through a new concept: the
 **clutch**.
@@ -13,12 +13,27 @@ provide them.
 The name is intentionally Slug-specific: slugs lay eggs in clutches, while the ordinary meaning of *clutch* also
 describes a related group held together as a unit.
 
-This is not a language specification or implementation commitment.
+This is not a language specification or compatibility commitment.
 
 The immediate goal is deliberately smaller: determine whether the clutch and runtime-plugin abstractions simplify Slug's
 module, FFI, and runtime architecture without introducing dependency-management ceremony into Slug programs.
 
 Existing module and import behaviour remains authoritative until the experiment proves otherwise.
+
+## Conclusion
+
+The experiment succeeded as a local, mutable composition model. Source-only
+providers, scoped native registration, resource-owning filesystem and SQLite
+providers, and a stateless math provider all use the same resolver and
+lifecycle boundaries without VM-specific extensions. The repository now treats
+clutches as an active experimental development facility, staged with
+`make stage-native-clutches`.
+
+The project intentionally concludes this experiment without adopting a stable
+package format or third-party ABI. The version-0 manifest and native prototype
+remain private and may change incompatibly. Archive packaging, installation,
+signing, dependency solving, lock files, and ABI-v1 are separate future
+designs, not unfinished requirements of this experiment.
 
 The first experiment's selected local manifest, resolver, and plugin-lifecycle
 rules are recorded in
@@ -1460,27 +1475,22 @@ shutdown flow with one small filesystem capability.
 - Module-loader and VM tests, then `make check`, pass on the supported host
   platforms.
 
-## Phase 6 — Separate artifact and dynamic-loader decisions
+## Phase 6 — Artifact and dynamic-loader conclusion
 
-**Goal:** decide whether the proven local model justifies portable artifacts or
-dynamic native loading; do not implement either by implication.
+**Conclusion:** retain source modules and the private version-0 native loader;
+do not begin portable artifacts or a public ABI.
 
 ### Todo
 
-- [ ] Review Phase 5 evidence against the `.cslug` implementation gate in
-  [`../reference/compiled-artifacts.md`](../reference/compiled-artifacts.md).
-  If it is not met, retain `.slug`-only clutches.
-- [ ] If compiled modules proceed, write the complete `.cslug` version-1
-  schema, verifier rules, compatibility negotiation, malformed-input fixtures,
-  and loader tests before adding a manifest representation entry.
+- [x] Reviewed the Phase 5 and three-provider evidence and retained
+  `.slug`-only clutch modules; `.cslug` does not proceed from this experiment.
 - [x] Keep the version-0 native loader enabled for local experimental
   clutches. Its manifest-selected prototype remains private and mutable; it is
   not an ABI-v1 compatibility promise.
-- [ ] Before releasing third-party loader support, publish C declarations and
-  ABI conformance tests under the native-ABI implementation gate in
-  [`../reference/native-abi.md`](../reference/native-abi.md).
-- [ ] Make a separate decision record for any ZIP archive format, manifest
-  stability promise, signing, installation workflow, or external registry.
+- [x] Deferred third-party loader support until C declarations and ABI
+  conformance tests satisfy the native-ABI implementation gate.
+- [x] Deferred ZIP archives, manifest stability, signing, installation, and
+  external registries to separate decisions.
 
 ### Exit criteria
 
@@ -1489,7 +1499,7 @@ dynamic native loading; do not implement either by implication.
 - No experimental manifest field becomes a public compatibility promise by
   accident.
 
-## Phase 7 — Reuse assessment and release decision
+## Phase 7 — Reuse assessment and closure decision
 
 **Goal:** determine whether clutches simplify more than one capability before
 stabilizing any interface.
@@ -1503,21 +1513,20 @@ stabilizing any interface.
 - [x] Build a third capability (`slug.math`) that does not exercise filesystem
   or database resource lifetimes. Its stateless numeric adapter is built and
   resolved through the same temporary clutch layout.
-- [ ] Compare the three implementations for duplicated loader code, missing
-  lifecycle hooks, diagnostic gaps, and manifest fields that vary per
-  capability.
-- [ ] Record whether a stable local manifest, packaged archive, installation
-  workflow, or published plugin ABI is justified. If not, retain or remove the
-  experimental feature rather than freezing an under-tested design.
-- [ ] Before a release commitment, add conformance-style fixtures for all
-  promised resolver and lifecycle behavior, update compatibility policy, and
-  write the required decision records.
+- [x] Compared the three implementations. Their shared runtime core is the
+  module/source mapping, ABI selector, platform library map, scoped staging,
+  and transactional cleanup. The test fixture now shares its temporary-clutch
+  builder; capability-specific C link flags remain host-owned staging data.
+- [x] Concluded that the local manifest and development staging workflow are
+  justified, while a packaged archive and published ABI are not.
+- [x] Added public-CLI smoke coverage for all three native clutch shapes and
+  retained checked loader, lifecycle, and shutdown regressions.
 
 ### Exit criteria
 
 - At least three distinct providers demonstrate that module resolution,
   plugin ownership, and failure cleanup are reusable rather than tailored to
   `slug.io.fs`.
-- A release proposal names the exact stable surface, migrations, compatibility
-  version, security model, and validation suite—or explicitly concludes that
-  clutches remain experimental.
+- The project explicitly concludes that clutches remain experimental and
+  local; any release proposal must name its own stable surface, migrations,
+  compatibility version, security model, and validation suite.
