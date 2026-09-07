@@ -89,7 +89,7 @@ pub(crate) fn compile_with_resolver(
 pub(crate) fn semantic_snapshot(path: &str, source: &str) -> Result<ModuleSnapshot, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    typecheck::validate(&expressions).map(|analysis| analysis.snapshot)
+    typecheck::analyze(&expressions).map(|analysis| analysis.snapshot)
 }
 
 fn compile_expressions(
@@ -97,7 +97,7 @@ fn compile_expressions(
     expressions: Vec<ast::Expr>,
     imports: ImportSnapshots,
 ) -> Result<Program, SourceError> {
-    let analysis = typecheck::check_with_imports(&expressions, imports)?;
+    let analysis = typecheck::analyze_with_imports(&expressions, imports)?;
     let mut program = Compiler::new(path, expressions, &analysis).compile()?;
     program.set_semantic_snapshot(analysis.snapshot);
     Ok(program)

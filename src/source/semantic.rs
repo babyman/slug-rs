@@ -452,7 +452,7 @@ fn reject_alias_applications(
 
 /// Resolves only resource names for constraints that must carry their nominal
 /// identity into private match metadata. Other constraint forms retain their
-/// existing dynamic behavior when optional type checking is disabled.
+/// ordinary annotation resolution behavior.
 pub(super) fn resolve_resource_references(
     value_type: Type,
     span: &SourceSpan,

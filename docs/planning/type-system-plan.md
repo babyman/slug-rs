@@ -42,7 +42,7 @@ Make inferred types useful at the expression boundaries Slug already has.
 - [x] Specify operand and result rules for prefix operators, arithmetic,
   bitwise operations, comparisons, equality, directional list operations,
   indexing, slicing, and interpolation. Field-level rules belong to stage 4.
-- [x] In strict mode, reject provably invalid operand combinations with a
+- [x] Reject provably invalid operand combinations with a
   source diagnostic at the offending expression; preserve dynamic behavior for
   `unknown` and sufficiently broad union operands.
 - [x] Derive precise result types where the operation proves them: for example

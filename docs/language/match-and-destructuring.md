@@ -122,9 +122,9 @@ is a source error. A `struct<Name>` constraint resolves `Name` as a schema
 binding; an unknown name is a source error, while a resolved value that is not
 a schema follows the checked runtime type-error path.
 
-When optional type checking is enabled, a successful constraint narrows the
-case bindings. For example, `b` has type `bool` in `b: bool`, and `name` has
-type `str` in `{name}: map<str, str>`.
+A successful constraint narrows the case bindings during semantic analysis.
+For example, `b` has type `bool` in `b: bool`, and `name` has type `str` in
+`{name}: map<str, str>`.
 
 For a known `struct<S>` constraint, a named map-pattern field uses the field
 type declared by `S`. The same field precision applies to declaration

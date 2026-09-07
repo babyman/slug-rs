@@ -18,28 +18,18 @@ use super::{
     },
 };
 
-pub(super) fn validate(expressions: &[Expr]) -> Result<SemanticAnalysis, SourceError> {
-    validate_with_imports(expressions, ImportSnapshots::new())
+pub(super) fn analyze(expressions: &[Expr]) -> Result<SemanticAnalysis, SourceError> {
+    analyze_with_imports(expressions, ImportSnapshots::new())
 }
 
-pub(super) fn validate_with_imports(
+pub(super) fn analyze_with_imports(
     expressions: &[Expr],
     imports: ImportSnapshots,
 ) -> Result<SemanticAnalysis, SourceError> {
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
-    analyze(expressions, false, imports)
-}
-
-pub(super) fn check_with_imports(
-    expressions: &[Expr],
-    imports: ImportSnapshots,
-) -> Result<SemanticAnalysis, SourceError> {
-    for expression in expressions {
-        validate_expression(expression, &[])?;
-    }
-    analyze(expressions, true, imports)
+    analyze_expressions(expressions, imports)
 }
 
 pub(super) fn static_import_names(expressions: &[Expr]) -> Vec<String> {
@@ -239,9 +229,8 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
     }
 }
 
-fn analyze(
+fn analyze_expressions(
     expressions: &[Expr],
-    strict: bool,
     imports: ImportSnapshots,
 ) -> Result<SemanticAnalysis, SourceError> {
     let mut environment = Environment::with_imports(imports);
@@ -314,7 +303,7 @@ fn analyze(
         }
     }
     for expression in expressions {
-        check_expression(expression, &mut environment, &[], strict)?;
+        check_expression(expression, &mut environment, &[])?;
         record_exports(expression, &environment, &mut exports, &mut types);
     }
     Ok(environment.analysis(ModuleSnapshot { exports, types }))
@@ -603,7 +592,6 @@ fn check_expression(
     expression: &Expr,
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
 ) -> Result<Type, SourceError> {
     match &expression.kind {
         ExprKind::Declare {
@@ -621,7 +609,7 @@ fn check_expression(
             if let Some((name, signature)) = &callable {
                 environment.declare_callable(name.clone(), signature.clone(), &expression.span)?;
             }
-            let actual = check_expression(value, environment, type_parameters, strict)?;
+            let actual = check_expression(value, environment, type_parameters)?;
             if let Some((name, signature)) = &callable
                 && let Type::Function(Some(types)) = &actual
                 && let Some(result) = types.first()
@@ -639,12 +627,11 @@ fn check_expression(
                     )
                 })
                 .transpose()?;
-            if strict && let Some(expected) = &declared {
+            if let Some(expected) = &declared {
                 require(expected, &actual, &expression.span)?;
             }
             if callable.is_none() {
-                let mut binding =
-                    value_binding(value, &actual, environment, type_parameters, strict)?;
+                let mut binding = value_binding(value, &actual, environment, type_parameters)?;
                 if matches!(value.kind, ExprKind::StructSchema(_))
                     && let Pattern::Binding(name) = pattern
                     && let Some(identity) = &mut binding.schema_identity
@@ -678,8 +665,8 @@ fn check_expression(
             for parameter in &signature.parameters {
                 if let Some(default) = &parameter.default {
                     let actual =
-                        check_expression(default, environment, &signature.type_parameters, strict)?;
-                    if strict && let Some(annotation) = &parameter.annotation {
+                        check_expression(default, environment, &signature.type_parameters)?;
+                    if let Some(annotation) = &parameter.annotation {
                         let expected = resolve_static_annotation(
                             annotation,
                             &signature.type_parameters,
@@ -729,15 +716,12 @@ fn check_expression(
                     );
                 }
                 if let Some(default) = &parameter.default {
-                    let actual =
-                        check_expression(default, &mut scoped, function_type_parameters, strict)?;
-                    if strict {
-                        require(&parameter_type, &actual, &default.span)?;
-                    }
+                    let actual = check_expression(default, &mut scoped, function_type_parameters)?;
+                    require(&parameter_type, &actual, &default.span)?;
                 }
             }
-            let actual = check_expression(body, &mut scoped, function_type_parameters, strict)?;
-            if strict && let Some(return_annotation) = return_annotation {
+            let actual = check_expression(body, &mut scoped, function_type_parameters)?;
+            if let Some(return_annotation) = return_annotation {
                 let expected = resolve_static_annotation(
                     return_annotation,
                     function_type_parameters,
@@ -766,17 +750,16 @@ fn check_expression(
             expression,
             environment,
             type_parameters,
-            strict,
             None,
         ),
         ExprKind::TypeApply { callee, .. } => {
-            check_expression(callee, environment, type_parameters, strict)
+            check_expression(callee, environment, type_parameters)
         }
         ExprKind::StructSchema(fields) => {
             for field in fields {
                 if let Some(default) = &field.default {
-                    let actual = check_expression(default, environment, type_parameters, strict)?;
-                    if strict && let Some(annotation) = &field.annotation {
+                    let actual = check_expression(default, environment, type_parameters)?;
+                    if let Some(annotation) = &field.annotation {
                         let expected = resolve_static_annotation(
                             annotation,
                             type_parameters,
@@ -795,14 +778,11 @@ fn check_expression(
             let mut lost_precision = false;
             for value in values {
                 match value {
-                    ListElement::Value(value) => elements.push(check_expression(
-                        value,
-                        environment,
-                        type_parameters,
-                        strict,
-                    )?),
+                    ListElement::Value(value) => {
+                        elements.push(check_expression(value, environment, type_parameters)?);
+                    }
                     ListElement::Spread(value) => {
-                        let spread = check_expression(value, environment, type_parameters, strict)?;
+                        let spread = check_expression(value, environment, type_parameters)?;
                         if let Type::List(Some(element)) = spread {
                             elements.push(*element);
                         } else {
@@ -819,13 +799,8 @@ fn check_expression(
             let mut keys = Vec::new();
             let mut values = Vec::new();
             for (key, value) in entries {
-                keys.push(check_expression(key, environment, type_parameters, strict)?);
-                values.push(check_expression(
-                    value,
-                    environment,
-                    type_parameters,
-                    strict,
-                )?);
+                keys.push(check_expression(key, environment, type_parameters)?);
+                values.push(check_expression(value, environment, type_parameters)?);
             }
             Ok(Type::Map((!entries.is_empty()).then(|| {
                 (Box::new(Type::union(keys)), Box::new(Type::union(values)))
@@ -836,11 +811,9 @@ fn check_expression(
             scoped.enter_scope();
             let mut result = Type::Nil;
             for value in values {
-                result = check_expression(value, &mut scoped, type_parameters, strict)?;
+                result = check_expression(value, &mut scoped, type_parameters)?;
             }
-            if strict {
-                environment.merge_compatible_types(&scoped, &scoped);
-            }
+            environment.merge_compatible_types(&scoped, &scoped);
             Ok(result)
         }
         ExprKind::If {
@@ -848,28 +821,19 @@ fn check_expression(
             then_branch,
             else_branch,
         } => {
-            check_expression(condition, environment, type_parameters, strict)?;
-            let (then_facts, else_facts) = if strict {
-                nil_condition_facts(condition, environment)
-            } else {
-                Default::default()
-            };
+            check_expression(condition, environment, type_parameters)?;
+            let (then_facts, else_facts) = nil_condition_facts(condition, environment);
             let mut then_environment = environment.clone();
             apply_type_facts(&mut then_environment, then_facts);
-            let left =
-                check_expression(then_branch, &mut then_environment, type_parameters, strict)?;
+            let left = check_expression(then_branch, &mut then_environment, type_parameters)?;
             let mut else_environment = environment.clone();
             apply_type_facts(&mut else_environment, else_facts);
             let right = else_branch
                 .as_ref()
-                .map(|branch| {
-                    check_expression(branch, &mut else_environment, type_parameters, strict)
-                })
+                .map(|branch| check_expression(branch, &mut else_environment, type_parameters))
                 .transpose()?
                 .unwrap_or(Type::Nil);
-            if strict {
-                environment.merge_compatible_types(&then_environment, &else_environment);
-            }
+            environment.merge_compatible_types(&then_environment, &else_environment);
             Ok(Type::union([left, right]))
         }
         ExprKind::Binary {
@@ -877,7 +841,7 @@ fn check_expression(
             operator,
             right,
         } => {
-            let left_type = check_expression(left, environment, type_parameters, strict)?;
+            let left_type = check_expression(left, environment, type_parameters)?;
             if matches!(operator, Binary::Pipeline) {
                 return match &right.kind {
                     ExprKind::Call { callee, arguments } => check_call(
@@ -886,7 +850,6 @@ fn check_expression(
                         right,
                         environment,
                         type_parameters,
-                        strict,
                         Some(left_type),
                     ),
                     ExprKind::Name(_) | ExprKind::TypeApply { .. } | ExprKind::Index { .. } => {
@@ -896,20 +859,15 @@ fn check_expression(
                             right,
                             environment,
                             type_parameters,
-                            strict,
                             Some(left_type),
                         )
                     }
-                    _ => check_expression(right, environment, type_parameters, strict),
+                    _ => check_expression(right, environment, type_parameters),
                 };
             }
             if matches!(operator, Binary::And | Binary::Or) {
                 let mut right_environment = environment.clone();
-                let (then_facts, else_facts) = if strict {
-                    nil_condition_facts(left, environment)
-                } else {
-                    Default::default()
-                };
+                let (then_facts, else_facts) = nil_condition_facts(left, environment);
                 apply_type_facts(
                     &mut right_environment,
                     if matches!(operator, Binary::And) {
@@ -918,17 +876,16 @@ fn check_expression(
                         else_facts
                     },
                 );
-                let right =
-                    check_expression(right, &mut right_environment, type_parameters, strict)?;
+                let right = check_expression(right, &mut right_environment, type_parameters)?;
                 return Ok(Type::union([left_type, right]));
             }
-            let right = check_expression(right, environment, type_parameters, strict)?;
-            binary_result(*operator, &left_type, &right, strict, &expression.span)
+            let right = check_expression(right, environment, type_parameters)?;
+            binary_result(*operator, &left_type, &right, &expression.span)
         }
         ExprKind::Prefix { operators, value } => {
-            let mut result = check_expression(value, environment, type_parameters, strict)?;
+            let mut result = check_expression(value, environment, type_parameters)?;
             for (operator, span) in operators.iter().rev() {
-                result = prefix_result(*operator, &result, strict, span)?;
+                result = prefix_result(*operator, &result, span)?;
             }
             Ok(result)
         }
@@ -936,40 +893,40 @@ fn check_expression(
             .lookup(name)
             .map_or(Type::Unknown, |binding| binding.value_type.clone())),
         ExprKind::Assign { name, value } => {
-            let actual = check_expression(value, environment, type_parameters, strict)?;
-            if strict && let Some(expected) = environment.lookup(name) {
+            let actual = check_expression(value, environment, type_parameters)?;
+            if let Some(expected) = environment.lookup(name) {
                 require(&expected.value_type, &actual, &value.span)?;
             }
             if let Some(binding) = environment.lookup_mut(name) {
                 binding.callables.clear();
-                if strict && !matches!(actual, Type::Unknown) {
+                if !matches!(actual, Type::Unknown) {
                     binding.value_type = actual.clone();
                 }
             }
             Ok(actual)
         }
-        ExprKind::Return { value } => check_expression(value, environment, type_parameters, strict),
+        ExprKind::Return { value } => check_expression(value, environment, type_parameters),
         ExprKind::Throw { value } => {
-            check_expression(value, environment, type_parameters, strict)?;
+            check_expression(value, environment, type_parameters)?;
             Ok(Type::Never)
         }
         ExprKind::Defer { value, .. } => {
-            check_expression(value, environment, type_parameters, strict)?;
+            check_expression(value, environment, type_parameters)?;
             Ok(Type::Nil)
         }
         ExprKind::Spawn(value) => {
-            let result = check_expression(value, environment, type_parameters, strict)?;
+            let result = check_expression(value, environment, type_parameters)?;
             Ok(Type::Task(Some(Box::new(result.widen_unknown()))))
         }
         ExprKind::Nursery { limit, body } => {
             if let Some(limit) = limit {
-                check_expression(limit, environment, type_parameters, strict)?;
+                check_expression(limit, environment, type_parameters)?;
             }
-            check_expression(body, environment, type_parameters, strict)
+            check_expression(body, environment, type_parameters)
         }
         ExprKind::Recur(arguments) => {
             for argument in arguments {
-                check_argument(argument, environment, type_parameters, strict)?;
+                check_argument(argument, environment, type_parameters)?;
             }
             Ok(Type::Never)
         }
@@ -980,11 +937,11 @@ fn check_expression(
                     SelectCaseKind::Receive(value)
                     | SelectCaseKind::After(value)
                     | SelectCaseKind::Await(value) => {
-                        check_expression(value, environment, type_parameters, strict)?;
+                        check_expression(value, environment, type_parameters)?;
                     }
                     SelectCaseKind::Send { channel, value } => {
-                        check_expression(channel, environment, type_parameters, strict)?;
-                        check_expression(value, environment, type_parameters, strict)?;
+                        check_expression(channel, environment, type_parameters)?;
+                        check_expression(value, environment, type_parameters)?;
                     }
                     SelectCaseKind::Default => {}
                 }
@@ -992,8 +949,7 @@ fn check_expression(
                     case.handler
                         .as_ref()
                         .map(|handler| {
-                            let handler =
-                                check_expression(handler, environment, type_parameters, strict)?;
+                            let handler = check_expression(handler, environment, type_parameters)?;
                             Ok(callable_result_type(&handler))
                         })
                         .transpose()?
@@ -1005,14 +961,12 @@ fn check_expression(
         ExprKind::Match { subject, cases } => {
             let subject_type = subject
                 .as_ref()
-                .map(|subject| check_expression(subject, environment, type_parameters, strict))
+                .map(|subject| check_expression(subject, environment, type_parameters))
                 .transpose()?
                 .unwrap_or_else(Type::universal);
-            let mut enum_remaining = strict
-                .then(|| enum_cases(&subject_type, environment))
-                .flatten();
+            let mut enum_remaining = enum_cases(&subject_type, environment);
             let coverage_enabled =
-                strict && (enum_remaining.is_some() || is_closed_coverage_type(&subject_type));
+                enum_remaining.is_some() || is_closed_coverage_type(&subject_type);
             let mut remaining = coverage_enabled.then_some(subject_type.clone());
             if enum_remaining.is_some() {
                 remaining = None;
@@ -1024,13 +978,8 @@ fn check_expression(
                 let mut constraints = Vec::new();
                 let mut irrefutable_constraints = Vec::new();
                 for pattern in &case.patterns {
-                    let constraint = check_case_pattern(
-                        pattern,
-                        &mut scoped,
-                        type_parameters,
-                        strict,
-                        &case.span,
-                    )?;
+                    let constraint =
+                        check_case_pattern(pattern, &mut scoped, type_parameters, &case.span)?;
                     constraints.push(constraint.clone());
                     if is_irrefutable_pattern(&pattern.pattern) {
                         irrefutable_constraints.push(constraint.clone());
@@ -1117,18 +1066,13 @@ fn check_expression(
                     }
                 }
                 if let Some(guard) = &case.guard {
-                    check_expression(guard, &mut scoped, type_parameters, strict)?;
-                    if strict {
+                    check_expression(guard, &mut scoped, type_parameters)?;
+                    {
                         let (facts, _) = nil_condition_facts(guard, &scoped);
                         apply_type_facts(&mut scoped, facts);
                     }
                 }
-                results.push(check_expression(
-                    &case.value,
-                    &mut scoped,
-                    type_parameters,
-                    strict,
-                )?);
+                results.push(check_expression(&case.value, &mut scoped, type_parameters)?);
             }
             if coverage_enabled && let Some(remaining) = remaining {
                 return Err(SourceError::semantic(
@@ -1152,20 +1096,20 @@ fn check_expression(
             Ok(Type::union(results))
         }
         ExprKind::StructInit { schema, fields } => {
-            let schema_type = check_expression(schema, environment, type_parameters, strict)?;
-            require_operation_operand(&Type::Schema, &schema_type, strict, &expression.span)?;
+            let schema_type = check_expression(schema, environment, type_parameters)?;
+            require_operation_operand(&Type::Schema, &schema_type, &expression.span)?;
             let schema_binding = expression_binding(schema, environment)
                 .filter(|binding| binding.value_type == Type::Schema);
             let mut provided = std::collections::HashSet::new();
             for (name, value) in fields {
-                if strict && !provided.insert(name) {
+                if !provided.insert(name) {
                     return Err(SourceError::semantic(
                         format!("duplicate struct field `{name}`"),
                         value.span.clone(),
                     ));
                 }
-                let actual = check_expression(value, environment, type_parameters, strict)?;
-                if strict && let Some(schema) = &schema_binding {
+                let actual = check_expression(value, environment, type_parameters)?;
+                if let Some(schema) = &schema_binding {
                     let expected = schema.members.get(name).ok_or_else(|| {
                         SourceError::semantic(
                             format!("struct schema has no field `{name}`"),
@@ -1175,8 +1119,7 @@ fn check_expression(
                     require(&expected.value_type, &actual, &value.span)?;
                 }
             }
-            if strict
-                && let Some(schema) = &schema_binding
+            if let Some(schema) = &schema_binding
                 && let Some(name) = schema
                     .required_fields
                     .iter()
@@ -1191,20 +1134,20 @@ fn check_expression(
                 .map_or(Type::Struct(None), |identity| Type::Struct(Some(identity))))
         }
         ExprKind::StructCopy { value, fields } => {
-            let result = check_expression(value, environment, type_parameters, strict)?;
+            let result = check_expression(value, environment, type_parameters)?;
             let schema = known_struct_schema(&result, environment);
             let mut replaced = std::collections::HashSet::new();
             let mut map_replacements = Vec::new();
             for (name, replacement) in fields {
-                if strict && !replaced.insert(name) {
+                if !replaced.insert(name) {
                     return Err(SourceError::semantic(
                         format!("duplicate struct field `{name}`"),
                         replacement.span.clone(),
                     ));
                 }
-                let actual = check_expression(replacement, environment, type_parameters, strict)?;
+                let actual = check_expression(replacement, environment, type_parameters)?;
                 map_replacements.push(actual.clone());
-                if strict && let Some(schema) = &schema {
+                if let Some(schema) = &schema {
                     let expected = schema.members.get(name).ok_or_else(|| {
                         SourceError::semantic(
                             format!("struct has no field `{name}`"),
@@ -1226,11 +1169,10 @@ fn check_expression(
             }
         }
         ExprKind::Index { collection, index } => {
-            let collection = check_expression(collection, environment, type_parameters, strict)?;
-            let index_type = check_expression(index, environment, type_parameters, strict)?;
-            let result = index_result(&collection, &index_type, strict, &expression.span)?;
-            if strict
-                && let Some(schema) = known_struct_schema(&collection, environment)
+            let collection = check_expression(collection, environment, type_parameters)?;
+            let index_type = check_expression(index, environment, type_parameters)?;
+            let result = index_result(&collection, &index_type, &expression.span)?;
+            if let Some(schema) = known_struct_schema(&collection, environment)
                 && let ExprKind::Value(Value::Str(name)) = &index.kind
                 && !schema.members.contains_key(name.as_ref())
             {
@@ -1250,12 +1192,12 @@ fn check_expression(
             end,
             step,
         } => {
-            let collection = check_expression(collection, environment, type_parameters, strict)?;
+            let collection = check_expression(collection, environment, type_parameters)?;
             for bound in [start, end, step].into_iter().flatten() {
-                let bound = check_expression(bound, environment, type_parameters, strict)?;
-                require_operation_operand(&Type::Num, &bound, strict, &expression.span)?;
+                let bound = check_expression(bound, environment, type_parameters)?;
+                require_operation_operand(&Type::Num, &bound, &expression.span)?;
             }
-            slice_result(&collection, strict, &expression.span)
+            slice_result(&collection, &expression.span)
         }
         ExprKind::Interpolate(_) => Ok(Type::Str),
         ExprKind::Resource { .. }
@@ -1277,7 +1219,6 @@ fn binary_result(
     operator: Binary,
     left: &Type,
     right: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     if matches!(left, Type::Never) || matches!(right, Type::Never) {
@@ -1286,21 +1227,19 @@ fn binary_result(
     match operator {
         Binary::Or | Binary::And | Binary::Equal | Binary::NotEqual => Ok(Type::Bool),
         Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual => {
-            numeric_operands(left, right, strict, span)?;
+            numeric_operands(left, right, span)?;
             Ok(Type::Bool)
         }
-        Binary::BitOr | Binary::BitXor | Binary::BitAnd => {
-            bitwise_result(left, right, strict, span)
-        }
-        Binary::Subtract => subtract_result(left, right, strict, span),
+        Binary::BitOr | Binary::BitXor | Binary::BitAnd => bitwise_result(left, right, span),
+        Binary::Subtract => subtract_result(left, right, span),
         Binary::ShiftLeft | Binary::ShiftRight | Binary::Divide | Binary::Modulo => {
-            numeric_operands(left, right, strict, span)?;
+            numeric_operands(left, right, span)?;
             Ok(Type::Num)
         }
-        Binary::Append => list_append_result(left, right, strict, span),
-        Binary::Prepend => list_append_result(right, left, strict, span),
-        Binary::Add => add_result(left, right, strict, span),
-        Binary::Multiply => multiply_result(left, right, strict, span),
+        Binary::Append => list_append_result(left, right, span),
+        Binary::Prepend => list_append_result(right, left, span),
+        Binary::Add => add_result(left, right, span),
+        Binary::Multiply => multiply_result(left, right, span),
         Binary::Pipeline => Ok(right.clone()),
     }
 }
@@ -1308,7 +1247,6 @@ fn binary_result(
 fn bitwise_result(
     left: &Type,
     right: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
@@ -1317,14 +1255,13 @@ fn bitwise_result(
     match (left, right) {
         (Type::Num, Type::Num) => Ok(Type::Num),
         (Type::Bytes, Type::Bytes | Type::Num) | (Type::Num, Type::Bytes) => Ok(Type::Bytes),
-        _ => invalid_operation("bitwise operator", left, right, strict, span),
+        _ => invalid_operation("bitwise operator", left, right, span),
     }
 }
 
 fn prefix_result(
     operator: Prefix,
     value: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     if matches!(value, Type::Never) {
@@ -1333,48 +1270,37 @@ fn prefix_result(
     match operator {
         Prefix::Not => Ok(Type::Bool),
         Prefix::Negate => {
-            require_operation_operand(&Type::Num, value, strict, span)?;
+            require_operation_operand(&Type::Num, value, span)?;
             Ok(Type::Num)
         }
-        Prefix::BitNot => bit_not_result(value, strict, span),
+        Prefix::BitNot => bit_not_result(value, span),
     }
 }
 
-fn bit_not_result(
-    value: &Type,
-    strict: bool,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn bit_not_result(value: &Type, span: &crate::SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(value) {
         return Ok(Type::Unknown);
     }
     match value {
         Type::Num => Ok(Type::Num),
         Type::Bytes => Ok(Type::Bytes),
-        _ if strict => Err(SourceError::semantic(
+        _ => Err(SourceError::semantic(
             format!("operator `~` does not accept {value}"),
             span.clone(),
         )),
-        _ => Ok(Type::Unknown),
     }
 }
 
 fn numeric_operands(
     left: &Type,
     right: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<(), SourceError> {
-    require_operation_operand(&Type::Num, left, strict, span)?;
-    require_operation_operand(&Type::Num, right, strict, span)
+    require_operation_operand(&Type::Num, left, span)?;
+    require_operation_operand(&Type::Num, right, span)
 }
 
-fn add_result(
-    left: &Type,
-    right: &Type,
-    strict: bool,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn add_result(left: &Type, right: &Type, span: &crate::SourceSpan) -> Result<Type, SourceError> {
     if matches!(left, Type::Str) {
         return Ok(Type::Str);
     }
@@ -1404,23 +1330,22 @@ fn add_result(
             ]))),
             _ => None,
         })),
-        _ => invalid_operation("+", left, right, strict, span),
+        _ => invalid_operation("+", left, right, span),
     }
 }
 
 fn subtract_result(
     left: &Type,
     right: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     if matches!(left, Type::Map(_)) {
-        if !strict || is_dynamic_operation_type(right) || is_map_key_type(right) {
+        if is_dynamic_operation_type(right) || is_map_key_type(right) {
             return Ok(left.clone());
         }
-        return invalid_operation("-", left, right, strict, span);
+        return invalid_operation("-", left, right, span);
     }
-    numeric_operands(left, right, strict, span)?;
+    numeric_operands(left, right, span)?;
     Ok(Type::Num)
 }
 
@@ -1435,7 +1360,6 @@ fn is_map_key_type(value: &Type) -> bool {
 fn multiply_result(
     left: &Type,
     right: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
@@ -1444,21 +1368,20 @@ fn multiply_result(
     match (left, right) {
         (Type::Num, Type::Num) => Ok(Type::Num),
         (Type::Str, Type::Num) => Ok(Type::Str),
-        _ => invalid_operation("*", left, right, strict, span),
+        _ => invalid_operation("*", left, right, span),
     }
 }
 
 fn list_append_result(
     list: &Type,
     value: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     if matches!(list, Type::Bytes) {
-        if !strict || is_dynamic_operation_type(value) || matches!(value, Type::Num | Type::Bytes) {
+        if is_dynamic_operation_type(value) || matches!(value, Type::Num | Type::Bytes) {
             return Ok(Type::Bytes);
         }
-        return invalid_operation(":+", list, value, strict, span);
+        return invalid_operation(":+", list, value, span);
     }
     if is_dynamic_operation_type(list) || is_dynamic_operation_type(value) {
         return Ok(Type::List(None));
@@ -1469,14 +1392,13 @@ fn list_append_result(
                 Box::new(Type::union([element.as_ref().clone(), value.clone()]))
             })))
         }
-        other => invalid_operation(":+", other, value, strict, span),
+        other => invalid_operation(":+", other, value, span),
     }
 }
 
 fn index_result(
     collection: &Type,
     index: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(collection) || is_dynamic_operation_type(index) {
@@ -1484,37 +1406,33 @@ fn index_result(
     }
     match collection {
         Type::List(element) => {
-            require_operation_operand(&Type::Num, index, strict, span)?;
+            require_operation_operand(&Type::Num, index, span)?;
             Ok(element.as_deref().cloned().unwrap_or(Type::Unknown))
         }
         Type::Bytes => {
-            require_operation_operand(&Type::Num, index, strict, span)?;
+            require_operation_operand(&Type::Num, index, span)?;
             Ok(Type::Num)
         }
         Type::Str => {
-            require_operation_operand(&Type::Num, index, strict, span)?;
+            require_operation_operand(&Type::Num, index, span)?;
             Ok(Type::Str)
         }
         Type::Map(entries) => match entries {
             Some((key, value)) => {
-                require_operation_operand(key, index, strict, span)?;
+                require_operation_operand(key, index, span)?;
                 Ok(Type::union([value.as_ref().clone(), Type::Nil]))
             }
             None => Ok(Type::Unknown),
         },
         Type::Struct(_) => {
-            require_operation_operand(&Type::Str, index, strict, span)?;
+            require_operation_operand(&Type::Str, index, span)?;
             Ok(Type::Unknown)
         }
-        other => invalid_operation("[]", other, index, strict, span),
+        other => invalid_operation("[]", other, index, span),
     }
 }
 
-fn slice_result(
-    collection: &Type,
-    strict: bool,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn slice_result(collection: &Type, span: &crate::SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(collection) {
         return Ok(Type::Unknown);
     }
@@ -1522,25 +1440,19 @@ fn slice_result(
         Type::List(element) => Ok(Type::List(element.clone())),
         Type::Bytes => Ok(Type::Bytes),
         Type::Str => Ok(Type::Str),
-        other => {
-            if strict {
-                return Err(SourceError::semantic(
-                    format!("expected list, got {other}"),
-                    span.clone(),
-                ));
-            }
-            Ok(Type::Unknown)
-        }
+        other => Err(SourceError::semantic(
+            format!("expected list, got {other}"),
+            span.clone(),
+        )),
     }
 }
 
 fn require_operation_operand(
     expected: &Type,
     actual: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<(), SourceError> {
-    if !strict || is_dynamic_operation_type(actual) || actual.is_assignable_to(expected) {
+    if is_dynamic_operation_type(actual) || actual.is_assignable_to(expected) {
         return Ok(());
     }
     require(expected, actual, span)
@@ -1550,17 +1462,12 @@ fn invalid_operation(
     operator: &str,
     left: &Type,
     right: &Type,
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
-    if strict {
-        Err(SourceError::semantic(
-            format!("operator `{operator}` does not accept {left} and {right}"),
-            span.clone(),
-        ))
-    } else {
-        Ok(Type::Unknown)
-    }
+    Err(SourceError::semantic(
+        format!("operator `{operator}` does not accept {left} and {right}"),
+        span.clone(),
+    ))
 }
 
 fn is_dynamic_operation_type(value_type: &Type) -> bool {
@@ -1786,16 +1693,9 @@ fn value_binding(
     value_type: &Type,
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
 ) -> Result<SemanticBinding, SourceError> {
     if let ExprKind::StructSchema(fields) = &expression.kind {
-        return schema_binding(
-            fields,
-            environment,
-            type_parameters,
-            strict,
-            &expression.span,
-        );
+        return schema_binding(fields, environment, type_parameters, &expression.span);
     }
     if let Some(binding) = expression_binding(expression, environment) {
         return Ok(binding);
@@ -1806,7 +1706,7 @@ fn value_binding(
             if let ExprKind::Value(Value::Str(name)) = &key.kind {
                 binding.members.insert(
                     name.to_string(),
-                    static_map_member_binding(value, environment, type_parameters, strict)?,
+                    static_map_member_binding(value, environment, type_parameters)?,
                 );
             }
         }
@@ -1824,20 +1724,15 @@ fn static_map_member_binding(
     expression: &Expr,
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
 ) -> Result<SemanticBinding, SourceError> {
     if let Some(binding) = expression_binding(expression, environment) {
         return Ok(binding);
     }
     match &expression.kind {
         ExprKind::Value(value) => Ok(SemanticBinding::value(value_type(value))),
-        ExprKind::Map(_) => value_binding(
-            expression,
-            &Type::Map(None),
-            environment,
-            type_parameters,
-            strict,
-        ),
+        ExprKind::Map(_) => {
+            value_binding(expression, &Type::Map(None), environment, type_parameters)
+        }
         _ => Ok(SemanticBinding::value(Type::Unknown)),
     }
 }
@@ -1846,7 +1741,6 @@ fn schema_binding(
     fields: &[super::ast::StructSchemaField],
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
     span: &SourceSpan,
 ) -> Result<SemanticBinding, SourceError> {
     let mut binding = SemanticBinding::value(Type::Schema);
@@ -1866,7 +1760,7 @@ fn schema_binding(
                 environment,
             )?
         } else if let Some(default) = &field.default {
-            check_expression(default, environment, type_parameters, strict)?.widen_unknown()
+            check_expression(default, environment, type_parameters)?.widen_unknown()
         } else {
             Type::Unknown
         };
@@ -2001,22 +1895,21 @@ fn check_pattern(
     pattern: &Pattern,
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
 ) -> Result<(), SourceError> {
     match pattern {
-        Pattern::At { pattern, .. } => check_pattern(pattern, environment, type_parameters, strict),
+        Pattern::At { pattern, .. } => check_pattern(pattern, environment, type_parameters),
         Pattern::List { items, .. } => {
             for item in items {
-                check_pattern(item, environment, type_parameters, strict)?;
+                check_pattern(item, environment, type_parameters)?;
             }
             Ok(())
         }
         Pattern::Map { entries, .. } => {
             for (key, value) in entries {
                 if let MapPatternKey::Computed(key) = key {
-                    check_expression(key, environment, type_parameters, strict)?;
+                    check_expression(key, environment, type_parameters)?;
                 }
-                check_pattern(value, environment, type_parameters, strict)?;
+                check_pattern(value, environment, type_parameters)?;
             }
             Ok(())
         }
@@ -2033,19 +1926,10 @@ fn check_case_pattern(
     pattern: &CasePattern,
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
     span: &SourceSpan,
 ) -> Result<Option<Type>, SourceError> {
     let constraint = if let Some(constraint) = &pattern.constraint {
-        let constraint = if strict {
-            resolve_static_annotation(constraint, type_parameters, span, environment)?
-        } else {
-            resolve_resource_references(
-                resolve_annotation(constraint, type_parameters, span)?,
-                span,
-                environment,
-            )?
-        };
+        let constraint = resolve_static_annotation(constraint, type_parameters, span, environment)?;
         if !constraint.is_reifiable_match_constraint() {
             return Err(SourceError::semantic(
                 "match type constraint is not runtime-checkable",
@@ -2056,7 +1940,7 @@ fn check_case_pattern(
     } else {
         None
     };
-    check_pattern(&pattern.pattern, environment, type_parameters, strict)?;
+    check_pattern(&pattern.pattern, environment, type_parameters)?;
     Ok(constraint)
 }
 
@@ -2129,15 +2013,14 @@ fn check_call(
     expression: &Expr,
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
     piped: Option<Type>,
 ) -> Result<Type, SourceError> {
-    check_expression(callee, environment, type_parameters, strict)?;
+    check_expression(callee, environment, type_parameters)?;
     let mut actuals = piped.into_iter().collect::<Vec<_>>();
     actuals.extend(
         arguments
             .iter()
-            .map(|argument| check_argument(argument, environment, type_parameters, strict))
+            .map(|argument| check_argument(argument, environment, type_parameters))
             .collect::<Result<Vec<_>, _>>()?,
     );
     let mut shapes = vec![ArgumentShape::Positional; actuals.len() - arguments.len()];
@@ -2164,13 +2047,7 @@ fn check_call(
         return Ok(Type::Unknown);
     };
     if binding.callables.is_empty() {
-        return check_function_value_call(
-            &binding.value_type,
-            &shapes,
-            &actuals,
-            strict,
-            &expression.span,
-        );
+        return check_function_value_call(&binding.value_type, &shapes, &actuals, &expression.span);
     }
     let callables = binding.callables.clone();
     if callables.len() > 1
@@ -2231,7 +2108,6 @@ fn check_function_value_call(
     value_type: &Type,
     shapes: &[ArgumentShape<'_>],
     actuals: &[Type],
-    strict: bool,
     span: &crate::SourceSpan,
 ) -> Result<Type, SourceError> {
     let Type::Function(Some(signature)) = value_type else {
@@ -2252,10 +2128,8 @@ fn check_function_value_call(
     if actuals.len() != parameters.len() {
         return Ok(Type::Unknown);
     }
-    if strict {
-        for (expected, actual) in parameters.iter().zip(actuals) {
-            require(expected, &actual.clone().widen_unknown(), span)?;
-        }
+    for (expected, actual) in parameters.iter().zip(actuals) {
+        require(expected, &actual.clone().widen_unknown(), span)?;
     }
     Ok(result.clone().widen_unknown())
 }
@@ -2275,14 +2149,13 @@ fn check_argument(
     argument: &CallArgument,
     environment: &mut Environment,
     type_parameters: &[String],
-    strict: bool,
 ) -> Result<Type, SourceError> {
     let value = match argument {
         CallArgument::Positional(value)
         | CallArgument::Named { value, .. }
         | CallArgument::Spread(value) => value,
     };
-    check_expression(value, environment, type_parameters, strict)
+    check_expression(value, environment, type_parameters)
 }
 
 struct InstantiatedCandidate {
