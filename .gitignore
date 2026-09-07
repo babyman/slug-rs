@@ -10,3 +10,7 @@
 
 # macOS Finder metadata
 .DS_Store
+
+# Development-native clutch staging outputs
+/clutch/*/native/macos-*/
+/clutch/*/native/linux-*/

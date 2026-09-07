@@ -56,6 +56,10 @@ contract is documented separately as `.cslug`.
   `slug.sqlite` clutch provides the second native-provider check by building
   its adapter into a temporary installed layout during integration tests. The
   stateless `slug.math` clutch provides the third check through the same path.
+  This checkout is a development clutch repository: run
+  `make stage-native-clutches` before executing a program that imports one of
+  its native modules. Staged platform libraries are local build outputs, not
+  release artifacts.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation

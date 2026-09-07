@@ -13,6 +13,9 @@
 - Promoted the stateless math C fixture into `slug.math` and added its
   repository-resolved native-clutch regression.
 
+- Defined this checkout's clutch directory as a development repository and
+  added `make stage-native-clutches` to stage current-platform native adapters.
+
 - Fixed deferred blocks that call a user-defined function so cleanup resumes
   the deferred action instead of falling through from the enclosing function.
 
