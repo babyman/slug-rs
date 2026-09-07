@@ -36,6 +36,10 @@
   `$SLUG_HOME/clutch/manifest.toml`, an explicit import-to-clutch repository
   index that verifies every selected clutch's own module declaration.
 
+- Defined the version-0 exploded-clutch native-library layout: manifest-owned
+  platform selection, exact prototype ABI selection, transactional loading,
+  and process-resident library code.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 
