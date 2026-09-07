@@ -104,7 +104,7 @@ fn build_native_clutch(
              \"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n\
              [native]\n\
              source = \"native/source\"\n\
-             abi = \"slug-ffi-prototype/0.7\"\n\n\
+             abi = \"slug-ffi-prototype/0.8\"\n\n\
              [native.libraries]\n\
              \"{target}\" = \"native/{target}/{}\"\n",
             module_file.to_string_lossy(),
@@ -376,6 +376,42 @@ fn loads_sqlite_through_an_exploded_native_clutch() {
         error.native.as_ref().map(|error| error.code.as_str()),
         Some("sqlite.error")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {
+    let directory = TemporaryDirectory::new();
+    let repository = build_native_clutch(
+        &directory,
+        "slug.db.sqlite",
+        "slug.db.sqlite.clutch",
+        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
+        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "slug_db_sqlite",
+        &["-lsqlite3"],
+    );
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let program = loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            "val { open, close, exec, query } = import(\"slug.db.sqlite\")\n\
+             val db = open(\":memory:\")\n\
+             defer { close(db) }\n\
+             exec(db, \"create table person(id integer primary key, name text, score real, note text, payload blob)\")\n\
+             exec(db, \"insert into person(name, score, note, payload) values (?, ?, ?, ?)\", \"Alice\", 1.5, nil, 0x\"41\")\n\
+             exec(db, \"insert into person(name, score, note, payload) values (?, ?, ?, ?)\", \"Bob\", 2.0, \"ok\", 0x\"42\")\n\
+             export val rows = query(db, \"select * from person order by id\")\n",
+        )
+        .expect("compile SQLite clutch consumer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run SQLite clutch consumer");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"rows\": [{\"id\": 1, \"name\": \"Alice\", \"score\": 1.5, \"note\": nil, \"payload\": 0x\"41\"}, {\"id\": 2, \"name\": \"Bob\", \"score\": 2, \"note\": \"ok\", \"payload\": 0x\"42\"}]}"
+    );
+    vm.shutdown();
 }
 
 #[test]

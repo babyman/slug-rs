@@ -484,19 +484,27 @@ copies the text into its owned message and invokes the destructor. On `full`,
 `closed`, or invalid UTF-8, C retains the buffer and is responsible for retry
 or release. A dropped Slug receiver makes later producer sends return `closed`.
 
-The fixtures also include a deliberately small SQLite adapter: an in-memory
-database resource with execute, scalar-integer query, and close operations. It
-uses callback-scoped length-delimited SQL text and maps SQLite failures to
-structured native errors. Rows, transactions, and file database policy remain
-outside the prototype.
+The `slug.db.sqlite` clutch is the compound-value SQLite experiment. It owns a
+typed `Database` resource, opens an ordinary SQLite path (including
+`:memory:`), and exposes variadic `exec` and `query` functions. The adapter
+receives already-bound Slug values directly from each variadic argument and
+binds `nil`, integer, float, text, and bytes as SQLite NULL, integer, real,
+text, and blob parameters. Query rows are built only through the public
+prototype table: native code creates a list, creates a map per row, fills map
+entries, and transfers each map into the list. SQLite NULL, integer, real,
+text, and blob columns return as Slug `nil`, `num`, `str`, and `bytes` values.
+Prepared statements, transactions, pooling, and migrations remain outside the
+experiment.
 
 The fixture also uses SQLite statements as a parent/child resource experiment:
 an explicit database close is rejected while a statement is active, whereas
 final resource teardown uses SQLite's deferred-close behavior so cleanup stays
 safe regardless of resource drop order.
 
-The filesystem clutch fixture extends prototype ABI minor 7 with `set_nil` and
-copying `set_text` callback operations. Its test compiles
+Prototype ABI minor 8 adds argument-kind and byte borrowing plus temporary
+list/map builders. The builders are call-scoped opaque handles: C transfers a
+map into a list and transfers the final list to the call, or destroys any
+untransferred handle before return. Its test compiles
 `clutch/slug.io.fs.clutch/native/source/fs.c` into a temporary installed
 clutch layout and loads it through the ordinary clutch manifest and CLI. This
 proves descriptor-backed text-file resources without establishing a packaged

@@ -26,8 +26,8 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 7;
-pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.7";
+const ABI_MINOR: u32 = 8;
+pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.8";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 
@@ -55,6 +55,20 @@ struct HostApi {
         unsafe extern "C" fn(*mut FfiProducer, FfiText, Option<ProducerTextDestroy>) -> i32,
     set_nil: unsafe extern "C" fn(*mut c_void),
     set_text: unsafe extern "C" fn(*mut c_void, FfiText) -> bool,
+    argument_bytes: unsafe extern "C" fn(*mut c_void, usize, *mut FfiText) -> bool,
+    argument_kind: unsafe extern "C" fn(*mut c_void, usize, *mut FfiValueKind) -> bool,
+    list_create: unsafe extern "C" fn(*mut c_void, u64) -> *mut FfiList,
+    list_destroy: unsafe extern "C" fn(*mut FfiList),
+    map_create: unsafe extern "C" fn(*mut c_void, u64) -> *mut FfiMap,
+    map_destroy: unsafe extern "C" fn(*mut FfiMap),
+    map_set_nil: unsafe extern "C" fn(*mut c_void, *mut FfiMap, FfiText) -> bool,
+    map_set_i64: unsafe extern "C" fn(*mut c_void, *mut FfiMap, FfiText, i64) -> bool,
+    map_set_f64: unsafe extern "C" fn(*mut c_void, *mut FfiMap, FfiText, f64) -> bool,
+    map_set_text: unsafe extern "C" fn(*mut c_void, *mut FfiMap, FfiText, FfiText) -> bool,
+    map_set_bytes: unsafe extern "C" fn(*mut c_void, *mut FfiMap, FfiText, FfiText) -> bool,
+    list_append_map: unsafe extern "C" fn(*mut c_void, *mut FfiList, *mut FfiMap) -> bool,
+    set_list: unsafe extern "C" fn(*mut c_void, *mut FfiList) -> bool,
+    argument_count: unsafe extern "C" fn(*mut c_void) -> u64,
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
@@ -216,6 +230,22 @@ struct FfiChannel {
 
 struct FfiProducer {
     producer: crate::NativeChannelProducer,
+}
+
+#[repr(C)]
+enum FfiValueKind {
+    Nil = 0,
+    Int = 1,
+    Float = 2,
+    Text = 3,
+    Bytes = 4,
+}
+
+struct FfiList {
+    values: Vec<NativeOwnedValue>,
+}
+struct FfiMap {
+    entries: Vec<(NativeOwnedValue, NativeOwnedValue)>,
 }
 
 #[derive(Clone)]
@@ -428,10 +458,31 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     producer_send_text,
     set_nil,
     set_text,
+    argument_bytes,
+    argument_kind,
+    list_create,
+    list_destroy,
+    map_create,
+    map_destroy,
+    map_set_nil,
+    map_set_i64,
+    map_set_f64,
+    map_set_text,
+    map_set_bytes,
+    list_append_map,
+    set_list,
+    argument_count,
 });
 
 fn host_api() -> *const HostApi {
     &raw const *HOST_API
+}
+
+unsafe extern "C" fn argument_count(context: *mut c_void) -> u64 {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return 0;
+    };
+    u64::try_from(call.argument_count()).unwrap_or(u64::MAX)
 }
 
 unsafe extern "C" fn argument_i64(context: *mut c_void, index: usize, output: *mut i64) -> bool {
@@ -522,6 +573,88 @@ unsafe extern "C" fn argument_text(
     }
 }
 
+unsafe extern "C" fn argument_bytes(
+    context: *mut c_void,
+    index: usize,
+    output: *mut FfiText,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if output.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI bytes output is null",
+        ));
+        return false;
+    }
+    match call
+        .argument(index)
+        .and_then(crate::NativeValueRef::as_bytes)
+    {
+        Ok(value) => {
+            if let Ok(length) = u64::try_from(value.len()) {
+                unsafe {
+                    *output = FfiText {
+                        data: value.as_ptr().cast(),
+                        length,
+                    };
+                }
+                true
+            } else {
+                call.set_error(NativeError::new(
+                    "native.contract",
+                    "FFI bytes length is too large",
+                ));
+                false
+            }
+        }
+        Err(error) => {
+            call.set_error(error);
+            false
+        }
+    }
+}
+
+unsafe extern "C" fn argument_kind(
+    context: *mut c_void,
+    index: usize,
+    output: *mut FfiValueKind,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if output.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value-kind output is null",
+        ));
+        return false;
+    }
+    let kind = match call.argument(index).map(crate::NativeValueRef::kind) {
+        Ok(crate::NativeValueKind::Nil) => FfiValueKind::Nil,
+        Ok(crate::NativeValueKind::Int) => FfiValueKind::Int,
+        Ok(crate::NativeValueKind::Float) => FfiValueKind::Float,
+        Ok(crate::NativeValueKind::String) => FfiValueKind::Text,
+        Ok(crate::NativeValueKind::Bytes) => FfiValueKind::Bytes,
+        Ok(_) => {
+            call.set_error(NativeError::new(
+                "native.type",
+                "expected nil, num, str, or bytes",
+            ));
+            return false;
+        }
+        Err(error) => {
+            call.set_error(error);
+            return false;
+        }
+    };
+    unsafe {
+        *output = kind;
+    }
+    true
+}
+
 unsafe extern "C" fn argument_resource(
     context: *mut c_void,
     index: usize,
@@ -586,6 +719,195 @@ unsafe extern "C" fn set_text(context: *mut c_void, value: FfiText) -> bool {
         return false;
     };
     call.set_result(NativeOwnedValue::string(value));
+    true
+}
+
+unsafe extern "C" fn list_create(context: *mut c_void, capacity: u64) -> *mut FfiList {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(capacity) = usize::try_from(capacity) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI list capacity is too large",
+        ));
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(FfiList {
+        values: Vec::with_capacity(capacity),
+    }))
+}
+
+unsafe extern "C" fn list_destroy(list: *mut FfiList) {
+    if !list.is_null() {
+        drop(unsafe { Box::from_raw(list) });
+    }
+}
+
+unsafe extern "C" fn map_create(context: *mut c_void, capacity: u64) -> *mut FfiMap {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(capacity) = usize::try_from(capacity) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map capacity is too large",
+        ));
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(FfiMap {
+        entries: Vec::with_capacity(capacity),
+    }))
+}
+
+unsafe extern "C" fn map_destroy(map: *mut FfiMap) {
+    if !map.is_null() {
+        drop(unsafe { Box::from_raw(map) });
+    }
+}
+
+fn map_set(
+    call: &mut NativeCall<'_>,
+    map: *mut FfiMap,
+    key: FfiText,
+    value: NativeOwnedValue,
+) -> bool {
+    let Some(map) = (unsafe { map.as_mut() }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map handle is null",
+        ));
+        return false;
+    };
+    let Some(key) = (unsafe { text_from_ffi(key) }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map key is invalid",
+        ));
+        return false;
+    };
+    map.entries.push((NativeOwnedValue::string(key), value));
+    true
+}
+
+unsafe extern "C" fn map_set_nil(context: *mut c_void, map: *mut FfiMap, key: FfiText) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    map_set(call, map, key, NativeOwnedValue::nil())
+}
+unsafe extern "C" fn map_set_i64(
+    context: *mut c_void,
+    map: *mut FfiMap,
+    key: FfiText,
+    value: i64,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    map_set(call, map, key, NativeOwnedValue::integer(value))
+}
+unsafe extern "C" fn map_set_f64(
+    context: *mut c_void,
+    map: *mut FfiMap,
+    key: FfiText,
+    value: f64,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    map_set(call, map, key, NativeOwnedValue::float(value))
+}
+unsafe extern "C" fn map_set_text(
+    context: *mut c_void,
+    map: *mut FfiMap,
+    key: FfiText,
+    value: FfiText,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    let Some(value) = (unsafe { text_from_ffi(value) }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map text is invalid",
+        ));
+        return false;
+    };
+    map_set(call, map, key, NativeOwnedValue::string(value))
+}
+unsafe extern "C" fn map_set_bytes(
+    context: *mut c_void,
+    map: *mut FfiMap,
+    key: FfiText,
+    value: FfiText,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if value.data.is_null() && value.length != 0 {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map bytes are invalid",
+        ));
+        return false;
+    }
+    let Ok(length) = usize::try_from(value.length) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map bytes are too large",
+        ));
+        return false;
+    };
+    let bytes = if length == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(value.data.cast(), length).to_vec() }
+    };
+    map_set(call, map, key, NativeOwnedValue::bytes(bytes))
+}
+unsafe extern "C" fn list_append_map(
+    context: *mut c_void,
+    list: *mut FfiList,
+    map: *mut FfiMap,
+) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    let Some(list) = (unsafe { list.as_mut() }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI list handle is null",
+        ));
+        return false;
+    };
+    let Some(map) = (unsafe { map.as_mut() }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map handle is null",
+        ));
+        return false;
+    };
+    let entries = std::mem::take(&mut map.entries);
+    list.values.push(NativeOwnedValue::map(entries));
+    unsafe {
+        drop(Box::from_raw(map));
+    }
+    true
+}
+unsafe extern "C" fn set_list(context: *mut c_void, list: *mut FfiList) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    if list.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI list handle is null",
+        ));
+        return false;
+    }
+    let list = unsafe { Box::from_raw(list) };
+    call.set_result(NativeOwnedValue::list(list.values));
     true
 }
 
@@ -909,9 +1231,9 @@ unsafe fn validate_descriptor(
         let maximum_arity = usize::try_from(function.maximum_arity).map_err(|_| {
             FfiPrototypeError::new(format!("FFI function `{name}` maximum arity is too large"))
         })?;
-        if minimum_arity != maximum_arity {
+        if maximum_arity < minimum_arity {
             return Err(FfiPrototypeError::new(format!(
-                "FFI prototype function `{name}` must have exact arity"
+                "FFI prototype function `{name}` has an invalid arity range"
             )));
         }
         let member_key = unsafe { text_from_ffi(function.member_key) }
@@ -919,7 +1241,18 @@ unsafe fn validate_descriptor(
             .ok_or_else(|| {
                 FfiPrototypeError::new(format!("FFI function `{name}` has an invalid member key"))
             })?;
-        let arity = NativeArity::Exact(minimum_arity);
+        let arity = if function.maximum_arity == u64::MAX {
+            NativeArity::Variadic {
+                minimum: minimum_arity,
+            }
+        } else if minimum_arity == maximum_arity {
+            NativeArity::Exact(minimum_arity)
+        } else {
+            NativeArity::Range {
+                minimum: minimum_arity,
+                maximum: maximum_arity,
+            }
+        };
         if functions
             .insert(
                 member_key.clone(),

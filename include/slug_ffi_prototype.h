@@ -12,7 +12,7 @@
 #endif
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 7u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 8u
 
 typedef enum {
   SLUG_FFI_OK = 0,
@@ -30,20 +30,44 @@ typedef struct slug_ffi_host_api slug_ffi_host_api;
 typedef struct slug_ffi_call slug_ffi_call;
 typedef struct slug_ffi_channel slug_ffi_channel;
 typedef struct slug_ffi_producer slug_ffi_producer;
+typedef struct slug_ffi_list slug_ffi_list;
+typedef struct slug_ffi_map slug_ffi_map;
 
 typedef struct {
   const char *data;
   uint64_t length;
 } slug_ffi_text;
 
+typedef enum {
+  SLUG_FFI_VALUE_NIL = 0,
+  SLUG_FFI_VALUE_INT = 1,
+  SLUG_FFI_VALUE_FLOAT = 2,
+  SLUG_FFI_VALUE_TEXT = 3,
+  SLUG_FFI_VALUE_BYTES = 4,
+} slug_ffi_value_kind;
+
 typedef bool (*slug_ffi_argument_i64_fn)(slug_ffi_call *, size_t, int64_t *);
+typedef uint64_t (*slug_ffi_argument_count_fn)(slug_ffi_call *);
 typedef bool (*slug_ffi_argument_f64_fn)(slug_ffi_call *, size_t, double *);
 typedef bool (*slug_ffi_argument_text_fn)(slug_ffi_call *, size_t, slug_ffi_text *);
+typedef bool (*slug_ffi_argument_bytes_fn)(slug_ffi_call *, size_t, slug_ffi_text *);
+typedef bool (*slug_ffi_argument_kind_fn)(slug_ffi_call *, size_t, slug_ffi_value_kind *);
 typedef bool (*slug_ffi_argument_resource_fn)(slug_ffi_call *, size_t, slug_ffi_text, void **);
 typedef void (*slug_ffi_set_i64_fn)(slug_ffi_call *, int64_t);
 typedef void (*slug_ffi_set_f64_fn)(slug_ffi_call *, double);
 typedef void (*slug_ffi_set_nil_fn)(slug_ffi_call *);
 typedef bool (*slug_ffi_set_text_fn)(slug_ffi_call *, slug_ffi_text);
+typedef slug_ffi_list *(*slug_ffi_list_create_fn)(slug_ffi_call *, uint64_t);
+typedef void (*slug_ffi_list_destroy_fn)(slug_ffi_list *);
+typedef slug_ffi_map *(*slug_ffi_map_create_fn)(slug_ffi_call *, uint64_t);
+typedef void (*slug_ffi_map_destroy_fn)(slug_ffi_map *);
+typedef bool (*slug_ffi_map_set_nil_fn)(slug_ffi_call *, slug_ffi_map *, slug_ffi_text);
+typedef bool (*slug_ffi_map_set_i64_fn)(slug_ffi_call *, slug_ffi_map *, slug_ffi_text, int64_t);
+typedef bool (*slug_ffi_map_set_f64_fn)(slug_ffi_call *, slug_ffi_map *, slug_ffi_text, double);
+typedef bool (*slug_ffi_map_set_text_fn)(slug_ffi_call *, slug_ffi_map *, slug_ffi_text, slug_ffi_text);
+typedef bool (*slug_ffi_map_set_bytes_fn)(slug_ffi_call *, slug_ffi_map *, slug_ffi_text, slug_ffi_text);
+typedef bool (*slug_ffi_list_append_map_fn)(slug_ffi_call *, slug_ffi_list *, slug_ffi_map *);
+typedef bool (*slug_ffi_set_list_fn)(slug_ffi_call *, slug_ffi_list *);
 typedef void (*slug_ffi_set_error_fn)(slug_ffi_call *, slug_ffi_text, slug_ffi_text);
 typedef bool (*slug_ffi_set_resource_fn)(slug_ffi_call *, slug_ffi_text, void *);
 typedef bool (*slug_ffi_close_resource_fn)(slug_ffi_call *, size_t, slug_ffi_text);
@@ -78,6 +102,20 @@ struct slug_ffi_host_api {
   slug_ffi_producer_send_text_fn producer_send_text;
   slug_ffi_set_nil_fn set_nil;
   slug_ffi_set_text_fn set_text;
+  slug_ffi_argument_bytes_fn argument_bytes;
+  slug_ffi_argument_kind_fn argument_kind;
+  slug_ffi_list_create_fn list_create;
+  slug_ffi_list_destroy_fn list_destroy;
+  slug_ffi_map_create_fn map_create;
+  slug_ffi_map_destroy_fn map_destroy;
+  slug_ffi_map_set_nil_fn map_set_nil;
+  slug_ffi_map_set_i64_fn map_set_i64;
+  slug_ffi_map_set_f64_fn map_set_f64;
+  slug_ffi_map_set_text_fn map_set_text;
+  slug_ffi_map_set_bytes_fn map_set_bytes;
+  slug_ffi_list_append_map_fn list_append_map;
+  slug_ffi_set_list_fn set_list;
+  slug_ffi_argument_count_fn argument_count;
 };
 
 typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);

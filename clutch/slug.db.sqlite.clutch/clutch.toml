@@ -1,0 +1,12 @@
+[modules]
+"slug.db.sqlite" = { source = "modules/sqlite.slug" }
+
+[native]
+source = "native/source"
+abi = "slug-ffi-prototype/0.8"
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_db_sqlite.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_db_sqlite.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_db_sqlite.so"
+"windows-x86_64" = "native/windows-x86_64/slug_db_sqlite.dll"

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the `slug.db.sqlite` exploded Clutch experiment: variadic SQL bindings
+  accept ordinary Slug scalar values and query results return native-built
+  `list<map>` rows with NULL, number, text, and blob conversion.
+
 - Made native implementation support clutch-owned rather than module-owned:
   one optional native library now initializes once and may support any subset
   of a clutch's modules, while pure-Slug modules need no marker.

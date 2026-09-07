@@ -53,9 +53,10 @@ contract is documented separately as `.cslug`.
   configure a clutch-scoped Rust plugin or a manifest-selected experimental
   native library that supports any subset of the clutch's modules. The local `slug.io.fs` clutch commits a macOS ARM native
   library and reports a checked unavailable-platform error elsewhere. The
-  `slug.sqlite` clutch provides the second native-provider check by building
-  its adapter into a temporary installed layout during integration tests. The
-  stateless `slug.math` clutch provides the third check through the same path.
+  `slug.db.sqlite` clutch proves variadic SQL binding and native-built
+  `list<map>` query rows by building its adapter into a temporary installed
+  layout during integration tests. The stateless `slug.math` clutch provides
+  the corresponding provider check through the same path.
   This checkout is a development clutch repository: run
   `make stage-native-clutches` before executing a program that imports one of
   its native modules. Staged platform libraries are local build outputs, not
