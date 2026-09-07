@@ -8,12 +8,12 @@ promise. It defines the smallest composition boundary that implementation work
 may rely on. A later released clutch format requires a new decision record,
 versioned schema, and regression coverage.
 
-The source resolver, `$SLUG_HOME/clutch` CLI discovery, and Rust-host-configured,
-module-scoped plugin initializer are implemented. `Vm::shutdown` and final
-loader drop clean plugin state. Archive loading, package installation, and
-packaged dynamic native loading remain unimplemented. The feature-gated FFI
-prototype additionally test-builds the filesystem clutch's C implementation;
-it is not available to normal CLI installations.
+The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery, and
+Rust-host-configured, module-scoped plugin initializer are implemented.
+`Vm::shutdown` and final loader drop clean plugin state. Archive loading,
+package installation, and packaged dynamic native loading remain unimplemented.
+The feature-gated FFI prototype additionally test-builds the filesystem
+clutch's C implementation; it is not available to normal CLI installations.
 
 ## Purpose and terms
 
@@ -45,22 +45,32 @@ source-visible path or arbitrary native-library search instruction.
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
 
-## Resolution
+## Repository index and resolution
 
-The CLI discovers direct `.clutch` directories under `$SLUG_HOME/clutch` and
-indexes every module identity in their manifests. Rust hosts and tests may also
-configure an explicit repository. Directory scanning is local discovery, not
-installation or dependency solving. The loader resolves imports in this order:
+`$SLUG_HOME/clutch/manifest.toml` is the explicit local repository index. Its
+`[modules]` table maps each exact import identity to a direct relative clutch
+directory:
+
+```toml
+[modules]
+"slug.io.fs" = "slug.io.fs.clutch"
+```
+
+Only clutches named by this file are importable. A target must remain inside
+the repository, end in `.clutch`, and declare the same module identity in its
+own `clutch.toml`. Rust hosts and tests may instead configure an explicit
+repository index. This is local selection, not installation or dependency
+solving. The loader resolves imports in this order:
 
 1. the existing importer-relative, project-root, and library-root source
    providers, preserving current behavior;
 2. a clutch-repository provider for the requested identity.
 
-The index must have at most one clutch entry per module identity. A manifest
-must repeat that identity in `[modules]`; disagreement, an absent file, an
-invalid manifest, or a duplicate manifest provider is a checked module-load
-error. The loader caches by module identity and the selected provider, so a
-cyclic import still observes the existing shared module-instance rules.
+The index has one clutch entry per module identity. The clutch manifest must
+repeat that identity in `[modules]`; disagreement, an absent file, or an
+invalid manifest is a checked module-load error. The loader caches by module
+identity and the selected provider, so a cyclic import still observes the
+existing shared module-instance rules.
 
 The initial experiment loads only source modules. A future artifact loader may
 choose a compatible `.cslug` representation only under the independent

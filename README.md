@@ -48,9 +48,10 @@ contract is documented separately as `.cslug`.
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, then `$SLUG_HOME/clutch` experimental clutch providers, cached
   isolated module initialization, and string-keyed exported-value maps.
-- Experimental exploded clutches in `$SLUG_HOME/clutch/*.clutch` may provide
-  additional source modules after existing providers. A host may configure a
-  Rust-only, module-scoped native plugin; dynamic loading remains future work.
+- Experimental exploded clutches named by `$SLUG_HOME/clutch/manifest.toml`
+  may provide additional source modules after existing providers. A host may
+  configure a Rust-only, module-scoped native plugin; a dynamic implementation
+  is currently exercised only by the feature-gated test build.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation

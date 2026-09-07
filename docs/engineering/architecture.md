@@ -11,7 +11,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | In-process bytecode | `src/bytecode.rs` | Public but unstable Rust instruction and program representation. |
 | Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
 | Experimental clutches | `src/clutch.rs`, `src/module.rs` | Explicit local source-module providers, scoped Rust plugins, and shutdown ownership. |
-| Filesystem capability | `src/filesystem.rs`, `clutch/slug.io.fs.clutch/` | Native registrations and the installed experimental `slug.io.fs` clutch declaration. |
+| Filesystem capability | `src/filesystem.rs`, `clutch/manifest.toml`, `clutch/slug.io.fs.clutch/` | Native registrations and the installed experimental `slug.io.fs` clutch declaration. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
 | Runtime values | `src/value.rs` | Dynamic language values and operations. |
 | Execution | `src/vm/` | VM dispatch, checked errors, cleanup unwinding, and value operations. |

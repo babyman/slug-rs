@@ -8,8 +8,8 @@ use std::{
 
 /// An explicit host-owned mapping from module names to exploded clutch roots.
 ///
-/// Hosts may construct this mapping directly or discover its providers from
-/// one local exploded-clutch directory.
+/// Hosts may construct this mapping directly or load it from a local clutch
+/// repository manifest.
 #[derive(Clone, Default)]
 pub struct ClutchRepository {
     providers: HashMap<String, PathBuf>,
@@ -85,37 +85,49 @@ impl ClutchRepository {
         })
     }
 
-    /// Discovers exploded clutch directories immediately inside `root`.
+    /// Loads providers explicitly selected by `root/manifest.toml`.
     ///
-    /// Each directory ending in `.clutch` contributes every module named in
-    /// its manifest. Duplicate module providers are rejected.
+    /// The repository manifest maps each module identity to a direct relative
+    /// `.clutch` directory. The selected clutch must in turn declare that
+    /// identity in its own manifest.
     ///
     /// # Errors
     ///
-    /// Returns an error when the repository cannot be read, a clutch manifest
-    /// is invalid, or two clutches provide the same module.
-    pub fn from_directory(root: impl AsRef<Path>) -> Result<Self, ClutchRepositoryError> {
-        let root = root.as_ref();
-        let entries = fs::read_dir(root).map_err(|error| ClutchRepositoryError::Read {
-            path: root.into(),
-            message: error.to_string(),
-        })?;
-        let mut providers = HashMap::new();
-        for entry in entries {
-            let entry = entry.map_err(|error| ClutchRepositoryError::Read {
-                path: root.into(),
+    /// Returns an error when either manifest cannot be read or is invalid, or
+    /// an indexed clutch is absent or disagrees with the repository index.
+    pub fn from_manifest(root: impl AsRef<Path>) -> Result<Self, ClutchRepositoryError> {
+        let root =
+            fs::canonicalize(root.as_ref()).map_err(|error| ClutchRepositoryError::Read {
+                path: root.as_ref().into(),
                 message: error.to_string(),
             })?;
-            let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("clutch") {
-                continue;
+        if !root.is_dir() {
+            return Err(ClutchRepositoryError::Read {
+                path: root,
+                message: "clutch repository must be a directory".into(),
+            });
+        }
+        let repository_manifest_path = root.join("manifest.toml");
+        let repository_source = fs::read_to_string(&repository_manifest_path).map_err(|error| {
+            ClutchRepositoryError::Read {
+                path: repository_manifest_path.clone(),
+                message: error.to_string(),
             }
-            if !path.is_dir() {
-                return Err(ClutchRepositoryError::Read {
-                    path,
-                    message: "clutch provider must be a directory".into(),
-                });
+        })?;
+        let indexed = parse_repository_manifest(&repository_source).map_err(|message| {
+            ClutchRepositoryError::Manifest {
+                path: repository_manifest_path,
+                message,
             }
+        })?;
+        let mut providers = HashMap::new();
+        for (name, directory) in indexed {
+            let path = clutch_directory(&root, &directory).map_err(|message| {
+                ClutchRepositoryError::Manifest {
+                    path: root.join("manifest.toml"),
+                    message,
+                }
+            })?;
             let manifest_path = path.join("clutch.toml");
             let source = fs::read_to_string(&manifest_path).map_err(|error| {
                 ClutchRepositoryError::Read {
@@ -128,10 +140,14 @@ impl ClutchRepository {
                     path: manifest_path,
                     message,
                 })?;
-            for name in manifest.modules.into_keys() {
-                if providers.insert(name.clone(), path.clone()).is_some() {
-                    return Err(ClutchRepositoryError::DuplicateProvider { name });
-                }
+            if !manifest.modules.contains_key(&name) {
+                return Err(ClutchRepositoryError::Manifest {
+                    path: path.join("clutch.toml"),
+                    message: format!("clutch does not provide indexed module `{name}`"),
+                });
+            }
+            if providers.insert(name.clone(), path).is_some() {
+                return Err(ClutchRepositoryError::DuplicateProvider { name });
             }
         }
         Ok(Self {
@@ -170,6 +186,68 @@ impl ClutchRepository {
     pub(crate) fn plugin(&self, entry: &str) -> Option<ClutchPluginInitializer> {
         self.plugin_initializers.get(entry).cloned()
     }
+}
+
+fn parse_repository_manifest(source: &str) -> Result<HashMap<String, String>, String> {
+    let value = source
+        .parse::<toml::Value>()
+        .map_err(|error| format!("invalid TOML: {error}"))?;
+    let table = value
+        .as_table()
+        .ok_or_else(|| "repository manifest root must be a table".to_string())?;
+    require_keys(table, &["modules"], "repository manifest")?;
+    let modules = table_value(table, "modules", "repository manifest")?;
+    let modules = modules
+        .as_table()
+        .ok_or_else(|| "`modules` in repository manifest must be a table".to_string())?;
+    if modules.is_empty() {
+        return Err("`modules` in repository manifest must provide at least one module".into());
+    }
+    let mut indexed = HashMap::new();
+    for (name, directory) in modules {
+        if !valid_module_name(name) {
+            return Err(format!("invalid module name `{name}`"));
+        }
+        let directory = directory.as_str().ok_or_else(|| {
+            format!("repository module `{name}` must name a clutch directory string")
+        })?;
+        validate_clutch_directory(directory)?;
+        indexed.insert(name.clone(), directory.to_owned());
+    }
+    Ok(indexed)
+}
+
+fn clutch_directory(root: &Path, directory: &str) -> Result<PathBuf, String> {
+    validate_clutch_directory(directory)?;
+    let path = root.join(directory);
+    let canonical = fs::canonicalize(&path)
+        .map_err(|error| format!("cannot access clutch directory {}: {error}", path.display()))?;
+    if !canonical.starts_with(root) {
+        return Err(format!(
+            "clutch directory `{directory}` escapes the repository root"
+        ));
+    }
+    if !canonical.is_dir() {
+        return Err(format!("clutch directory `{directory}` is not a directory"));
+    }
+    Ok(canonical)
+}
+
+fn validate_clutch_directory(directory: &str) -> Result<(), String> {
+    let path = Path::new(directory);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path.components().count() != 1
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || path.extension().and_then(|extension| extension.to_str()) != Some("clutch")
+    {
+        return Err(format!(
+            "repository clutch directory `{directory}` must be a direct relative `.clutch` directory"
+        ));
+    }
+    Ok(())
 }
 
 /// Initializes one manifest-selected plugin within one module-bound scope.

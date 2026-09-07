@@ -43,6 +43,12 @@ fn compile_fixture(directory: &TemporaryDirectory, source: &str, name: &str) -> 
 fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
     let directory = TemporaryDirectory::new();
     let clutch_root = directory.path().join("clutch/slug.io.fs.clutch");
+    fs::create_dir_all(directory.path().join("clutch")).expect("create clutch repository");
+    fs::copy(
+        "clutch/manifest.toml",
+        directory.path().join("clutch/manifest.toml"),
+    )
+    .expect("copy clutch repository manifest");
     fs::create_dir_all(clutch_root.join("modules")).expect("create filesystem clutch modules");
     fs::create_dir_all(clutch_root.join("native")).expect("create filesystem clutch native dir");
     fs::copy(
@@ -67,8 +73,8 @@ fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
     );
     fs::copy(built, &library).expect("place dynamic module in filesystem clutch");
     let ffi = FfiPrototypeModule::load(&library).expect("load filesystem dynamic module");
-    let mut repository = ClutchRepository::from_directory(directory.path().join("clutch"))
-        .expect("discover filesystem clutch");
+    let mut repository = ClutchRepository::from_manifest(directory.path().join("clutch"))
+        .expect("load filesystem clutch manifest");
     repository
         .define_plugin("slug.io.fs.rust", move |registrar| ffi.stage(registrar))
         .expect("configure filesystem dynamic plugin");

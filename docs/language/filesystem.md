@@ -38,5 +38,6 @@ from every other resource type. Native operations still validate that a handle
 is open. See [Nominal types](nominal-types.md) for the general resource rule.
 
 The experimental CLI installation provides this module through the
+`slug.io.fs` entry in `$SLUG_HOME/clutch/manifest.toml`, which selects the
 `$SLUG_HOME/clutch/slug.io.fs.clutch` clutch. The current Rust subset implements
 its foreign function signatures and imported type paths such as `fs.File`.

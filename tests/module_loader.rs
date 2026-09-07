@@ -204,6 +204,91 @@ fn imports_source_modules_from_an_explicit_clutch_repository() {
 }
 
 #[test]
+fn repository_manifest_selects_importable_clutches() {
+    let root = root("clutch-repository-manifest");
+    let repository_root = root.join("clutch");
+    fs::create_dir_all(&repository_root).expect("create clutch repository root");
+    let clutch = write_source_clutch(
+        &repository_root,
+        &[(
+            "example.indexed",
+            "indexed.slug",
+            "export val answer = 42\n",
+        )],
+    );
+    let hidden = repository_root.join("hidden.clutch");
+    fs::create_dir_all(hidden.join("modules")).expect("create hidden clutch directory");
+    fs::write(
+        hidden.join("clutch.toml"),
+        "[modules]\n\"example.hidden\" = { source = \"modules/hidden.slug\" }\n",
+    )
+    .expect("write hidden clutch manifest");
+    fs::write(
+        hidden.join("modules/hidden.slug"),
+        "export val answer = 7\n",
+    )
+    .expect("write hidden clutch source");
+    fs::write(
+        repository_root.join("manifest.toml"),
+        "[modules]\n\"example.indexed\" = \"example.clutch\"\n",
+    )
+    .expect("write repository manifest");
+
+    let repository =
+        ClutchRepository::from_manifest(&repository_root).expect("load repository manifest");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+    let main_path = root.join("main.slug");
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val indexed = import(\"example.indexed\")\nexport val answer = indexed.answer\n",
+        )
+        .expect("compile indexed clutch importer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run indexed clutch importer");
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"answer\": 42}");
+    assert!(matches!(
+        loader.load(None, "example.hidden"),
+        Err(ModuleLoadError::NotFound { .. })
+    ));
+    drop(vm);
+    fs::remove_dir_all(root).expect("remove clutch repository root");
+    drop(clutch);
+}
+
+#[test]
+fn repository_manifest_rejects_escaping_and_mismatched_clutch_entries() {
+    let root = root("clutch-repository-manifest-invalid");
+    fs::create_dir_all(root.join("clutch")).expect("create clutch repository root");
+    fs::write(
+        root.join("clutch/manifest.toml"),
+        "[modules]\n\"example.invalid\" = \"../outside.clutch\"\n",
+    )
+    .expect("write escaping repository manifest");
+    assert!(matches!(
+        ClutchRepository::from_manifest(root.join("clutch")),
+        Err(ClutchRepositoryError::Manifest { .. })
+    ));
+
+    let clutch = write_source_clutch(
+        &root.join("clutch"),
+        &[("example.actual", "actual.slug", "export val answer = 42\n")],
+    );
+    fs::write(
+        root.join("clutch/manifest.toml"),
+        "[modules]\n\"example.expected\" = \"example.clutch\"\n",
+    )
+    .expect("write mismatched repository manifest");
+    assert!(matches!(
+        ClutchRepository::from_manifest(root.join("clutch")),
+        Err(ClutchRepositoryError::Manifest { .. })
+    ));
+    drop(clutch);
+    fs::remove_dir_all(root).expect("remove invalid clutch repository root");
+}
+
+#[test]
 fn existing_source_providers_take_precedence_over_clutches() {
     let root = root("clutch-precedence");
     fs::create_dir_all(root.join("example")).expect("create source module directory");
@@ -543,10 +628,10 @@ fn clutch_plugins_validate_declared_resource_type_ownership() {
 fn filesystem_clutch_provides_nominal_files_and_cleans_up_after_error_unwinding() {
     let root = root("clutch-filesystem");
     fs::create_dir_all(&root).expect("create filesystem clutch root");
-    let mut repository = ClutchRepository::from_directory(
+    let mut repository = ClutchRepository::from_manifest(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("clutch"),
     )
-    .expect("discover filesystem clutch repository");
+    .expect("load filesystem clutch repository manifest");
     repository
         .define_plugin("slug.io.fs.rust", initialize_filesystem_plugin)
         .expect("configure filesystem plugin");

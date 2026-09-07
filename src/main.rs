@@ -335,8 +335,8 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
         entry_module,
     );
     let mut clutches = match slug_home.as_ref() {
-        Some(home) if home.join("clutch").exists() => {
-            match ClutchRepository::from_directory(home.join("clutch")) {
+        Some(home) if home.join("clutch/manifest.toml").exists() => {
+            match ClutchRepository::from_manifest(home.join("clutch")) {
                 Ok(repository) => repository,
                 Err(error) => {
                     eprintln!("slug: {error}");

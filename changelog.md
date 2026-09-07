@@ -32,6 +32,10 @@
   including checked `nil` and text result transfer, resource cleanup, and
   resident-code dynamic loading without a packaged binary layout.
 
+- Replaced implicit clutch-directory scanning with
+  `$SLUG_HOME/clutch/manifest.toml`, an explicit import-to-clutch repository
+  index that verifies every selected clutch's own module declaration.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 
