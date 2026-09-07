@@ -8,10 +8,10 @@ promise. It defines the smallest composition boundary that implementation work
 may rely on. A later released clutch format requires a new decision record,
 versioned schema, and regression coverage.
 
-The source resolver and Rust-host-configured, module-scoped plugin initializer
-are implemented. Plugin cleanup currently runs when the final loader owner is
-dropped. VM-shutdown coordination, archive loading, installation, dynamic
-native loading, and CLI configuration remain unimplemented.
+The source resolver, `$SLUG_HOME/clutch` CLI discovery, and Rust-host-configured,
+module-scoped plugin initializer are implemented. `Vm::shutdown` and final
+loader drop clean plugin state. Archive loading, package installation, and
+dynamic native loading remain unimplemented.
 
 ## Purpose and terms
 
@@ -30,54 +30,33 @@ An exploded clutch is a directory ending in `.clutch` with a root
 `clutch.toml`. Its version-0 manifest has this minimum shape:
 
 ```toml
-format = 0
-
-[clutch]
-publisher = "slug"
-name = "io-fs"
-version = "0.1.0"
-
-[requires]
-runtime = ">=0.1.0, <0.2.0"
-plugin_api = "rust-facade-0"
-
 [modules]
-"slug.io.fs" = { source = "modules/fs.slug", plugin = "filesystem" }
-
-[plugins.filesystem]
-entry = "native/<platform>/slug_io_fs"
+"slug.io.fs" = { source = "modules/fs.slug", plugin = "slug.io.fs.rust" }
 ```
-
-`publisher`, `name`, and `version` identify the clutch for diagnostics and
-inspection. They do not create a source-level module name, perform dependency
-selection, or imply registry ownership. `runtime` is a SemVer requirement on
-the host's advertised experimental clutch capability. `plugin_api` identifies
-the unstable static Rust facade; no C ABI version is claimed.
 
 Each key in `[modules]` is the exact module identity the clutch provides. The
 source path is relative to the clutch root, must remain within it, and must
 name a `.slug` file in version 0. A module without a plugin omits `plugin`.
-Each referenced plugin must exist exactly once. The `entry` value is
-platform-selected host configuration, not a source-visible path or arbitrary
-native-library search instruction.
+The optional `plugin` value is an opaque host configuration key, not a
+source-visible path or arbitrary native-library search instruction.
 
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
 
 ## Resolution
 
-The host supplies a clutch repository index mapping module identities to clutch
-directories. Installation and index maintenance are outside this experiment;
-tests may configure the mapping directly. The loader resolves imports in this
-order:
+The CLI discovers direct `.clutch` directories under `$SLUG_HOME/clutch` and
+indexes every module identity in their manifests. Rust hosts and tests may also
+configure an explicit repository. Directory scanning is local discovery, not
+installation or dependency solving. The loader resolves imports in this order:
 
 1. the existing importer-relative, project-root, and library-root source
    providers, preserving current behavior;
-2. an explicit clutch-repository provider for the requested identity.
+2. a clutch-repository provider for the requested identity.
 
 The index must have at most one clutch entry per module identity. A manifest
 must repeat that identity in `[modules]`; disagreement, an absent file, an
-invalid requirement, or a duplicate manifest provider is a checked module-load
+invalid manifest, or a duplicate manifest provider is a checked module-load
 error. The loader caches by module identity and the selected provider, so a
 cyclic import still observes the existing shared module-instance rules.
 
@@ -95,7 +74,7 @@ nominal-resource validation remain the native-ABI boundary.
 
 For a module that names a plugin, loading is transactional:
 
-1. validate the selected clutch manifest, runtime requirement, and paths;
+1. validate the selected clutch manifest and paths;
 2. initialize the plugin under a clutch-owned registration scope;
 3. compile the source module and validate its `foreign` declarations against
    that scope; and
@@ -127,9 +106,9 @@ producer revocation and coordinated task cancellation remain future work.
 ## Required diagnostics and proof
 
 Implementations must report checked module or native diagnostics, never host
-panics, for: an unknown module, invalid manifest, incompatible runtime
-requirement, absent or unsupported plugin, failed plugin initialization,
-foreign mismatch, and duplicate provider. The first implementation must prove:
+panics, for: an unknown module, invalid manifest, an absent or unsupported
+plugin, failed plugin initialization, foreign mismatch, and duplicate provider.
+The first implementation must prove:
 
 - a source-only clutch imports as an ordinary module;
 - a native-backed clutch binds only its declared module-qualified foreign

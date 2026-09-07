@@ -24,6 +24,10 @@
   nominal imported `File` handles, error-unwinding cleanup, and explicit VM
   shutdown that closes resources before releasing clutch registrations.
 
+- Made experimental clutches discoverable from `$SLUG_HOME/clutch` and moved
+  the canonical `slug.io.fs` declaration there, with a minimal direct
+  module-to-plugin manifest and no dynamic native loading.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

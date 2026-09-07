@@ -5,13 +5,10 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-const EXPERIMENTAL_RUNTIME_VERSION: Version = Version::new(0, 1, 0);
-const EXPERIMENTAL_PLUGIN_API: &str = "rust-facade-0";
-
 /// An explicit host-owned mapping from module names to exploded clutch roots.
 ///
-/// The local clutch experiment does not scan directories or install packages.
-/// Hosts and tests supply this mapping directly.
+/// Hosts may construct this mapping directly or discover its providers from
+/// one local exploded-clutch directory.
 #[derive(Clone, Debug, Default)]
 pub struct ClutchRepository {
     providers: HashMap<String, PathBuf>,
@@ -23,6 +20,8 @@ pub enum ClutchRepositoryError {
     InvalidModuleName(String),
     DuplicateProvider { name: String },
     DuplicatePlugin { entry: String },
+    Read { path: PathBuf, message: String },
+    Manifest { path: PathBuf, message: String },
 }
 
 impl fmt::Display for ClutchRepositoryError {
@@ -34,6 +33,16 @@ impl fmt::Display for ClutchRepositoryError {
             }
             Self::DuplicatePlugin { entry } => {
                 write!(f, "clutch plugin entry `{entry}` is already defined")
+            }
+            Self::Read { path, message } => {
+                write!(
+                    f,
+                    "cannot read clutch repository {}: {message}",
+                    path.display()
+                )
+            }
+            Self::Manifest { path, message } => {
+                write!(f, "invalid clutch manifest {}: {message}", path.display())
             }
         }
     }
@@ -61,6 +70,61 @@ impl ClutchRepository {
         }
         Ok(Self {
             providers: indexed,
+            plugin_initializers: HashMap::new(),
+        })
+    }
+
+    /// Discovers exploded clutch directories immediately inside `root`.
+    ///
+    /// Each directory ending in `.clutch` contributes every module named in
+    /// its manifest. Duplicate module providers are rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the repository cannot be read, a clutch manifest
+    /// is invalid, or two clutches provide the same module.
+    pub fn from_directory(root: impl AsRef<Path>) -> Result<Self, ClutchRepositoryError> {
+        let root = root.as_ref();
+        let entries = fs::read_dir(root).map_err(|error| ClutchRepositoryError::Read {
+            path: root.into(),
+            message: error.to_string(),
+        })?;
+        let mut providers = HashMap::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| ClutchRepositoryError::Read {
+                path: root.into(),
+                message: error.to_string(),
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("clutch") {
+                continue;
+            }
+            if !path.is_dir() {
+                return Err(ClutchRepositoryError::Read {
+                    path,
+                    message: "clutch provider must be a directory".into(),
+                });
+            }
+            let manifest_path = path.join("clutch.toml");
+            let source = fs::read_to_string(&manifest_path).map_err(|error| {
+                ClutchRepositoryError::Read {
+                    path: manifest_path.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+            let manifest =
+                parse_manifest(&source).map_err(|message| ClutchRepositoryError::Manifest {
+                    path: manifest_path,
+                    message,
+                })?;
+            for name in manifest.modules.into_keys() {
+                if providers.insert(name.clone(), path.clone()).is_some() {
+                    return Err(ClutchRepositoryError::DuplicateProvider { name });
+                }
+            }
+        }
+        Ok(Self {
+            providers,
             plugin_initializers: HashMap::new(),
         })
     }
@@ -241,25 +305,7 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "manifest root must be a table".to_string())?;
-    require_keys(
-        table,
-        &["format", "clutch", "requires", "modules", "plugins"],
-        "manifest",
-    )?;
-    let format = integer(table, "format", "manifest")?;
-    if format != 0 {
-        return Err(format!("unsupported clutch manifest format `{format}`"));
-    }
-    validate_clutch(table)?;
-    validate_requirements(table)?;
-    let plugins = if let Some(plugins) = table.get("plugins") {
-        let plugins = plugins
-            .as_table()
-            .ok_or_else(|| "`plugins` must be a table".to_string())?;
-        parse_plugins(plugins)?
-    } else {
-        HashMap::new()
-    };
+    require_keys(table, &["modules"], "manifest")?;
     let modules = table_value(table, "modules", "manifest")?;
     let modules = modules
         .as_table()
@@ -283,10 +329,10 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
                 let plugin = plugin
                     .as_str()
                     .ok_or_else(|| format!("`plugin` in module `{name}` must be a string"))?;
-                plugins
-                    .get(plugin)
-                    .cloned()
-                    .ok_or_else(|| format!("module `{name}` references unknown plugin `{plugin}`"))
+                if plugin.trim().is_empty() {
+                    return Err(format!("`plugin` in module `{name}` must not be empty"));
+                }
+                Ok(plugin.to_owned())
             })
             .transpose()?;
         result.insert(
@@ -298,60 +344,6 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
         );
     }
     Ok(ClutchManifest { modules: result })
-}
-
-fn parse_plugins(
-    plugins: &toml::map::Map<String, toml::Value>,
-) -> Result<HashMap<String, String>, String> {
-    let mut result = HashMap::new();
-    for (name, entry) in plugins {
-        if name.trim().is_empty() {
-            return Err("plugin name must not be empty".into());
-        }
-        let entry = entry
-            .as_table()
-            .ok_or_else(|| format!("plugin `{name}` must be a table"))?;
-        require_keys(entry, &["entry"], &format!("plugin `{name}`"))?;
-        let host_entry = string(entry, "entry", &format!("plugin `{name}`"))?;
-        if host_entry.trim().is_empty() {
-            return Err(format!("plugin `{name}` entry must not be empty"));
-        }
-        result.insert(name.clone(), host_entry.to_owned());
-    }
-    Ok(result)
-}
-
-fn validate_clutch(table: &toml::map::Map<String, toml::Value>) -> Result<(), String> {
-    let clutch = table_value(table, "clutch", "manifest")?
-        .as_table()
-        .ok_or_else(|| "`clutch` must be a table".to_string())?;
-    require_keys(clutch, &["publisher", "name", "version"], "clutch")?;
-    for key in ["publisher", "name", "version"] {
-        if string(clutch, key, "clutch")?.is_empty() {
-            return Err(format!("`clutch.{key}` must not be empty"));
-        }
-    }
-    Ok(())
-}
-
-fn validate_requirements(table: &toml::map::Map<String, toml::Value>) -> Result<(), String> {
-    let requires = table_value(table, "requires", "manifest")?
-        .as_table()
-        .ok_or_else(|| "`requires` must be a table".to_string())?;
-    require_keys(requires, &["runtime", "plugin_api"], "requires")?;
-    let runtime = string(requires, "runtime", "requires")?;
-    if !runtime_matches(runtime, EXPERIMENTAL_RUNTIME_VERSION)? {
-        return Err(format!(
-            "runtime requirement `{runtime}` is incompatible with experimental runtime {EXPERIMENTAL_RUNTIME_VERSION}"
-        ));
-    }
-    let plugin_api = string(requires, "plugin_api", "requires")?;
-    if plugin_api != EXPERIMENTAL_PLUGIN_API {
-        return Err(format!(
-            "plugin API requirement `{plugin_api}` is incompatible with `{EXPERIMENTAL_PLUGIN_API}`"
-        ));
-    }
-    Ok(())
 }
 
 fn source_path(root: &Path, source: &str) -> Result<PathBuf, String> {
@@ -424,16 +416,6 @@ fn string<'a>(
         .ok_or_else(|| format!("`{key}` in {context} must be a string"))
 }
 
-fn integer(
-    table: &toml::map::Map<String, toml::Value>,
-    key: &str,
-    context: &str,
-) -> Result<i64, String> {
-    table_value(table, key, context)?
-        .as_integer()
-        .ok_or_else(|| format!("`{key}` in {context} must be an integer"))
-}
-
 fn valid_module_name(name: &str) -> bool {
     name.split('.').all(|part| {
         !part.is_empty()
@@ -441,68 +423,4 @@ fn valid_module_name(name: &str) -> bool {
                 .chars()
                 .all(|value| value == '_' || value.is_ascii_alphanumeric())
     })
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct Version {
-    major: u64,
-    minor: u64,
-    patch: u64,
-}
-
-impl Version {
-    const fn new(major: u64, minor: u64, patch: u64) -> Self {
-        Self {
-            major,
-            minor,
-            patch,
-        }
-    }
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
-    }
-}
-
-fn runtime_matches(requirement: &str, runtime: Version) -> Result<bool, String> {
-    let clauses = requirement.split(',').map(str::trim).collect::<Vec<_>>();
-    if clauses.is_empty() || clauses.iter().any(|clause| clause.is_empty()) {
-        return Err("runtime requirement must contain one or more version clauses".into());
-    }
-    clauses.into_iter().try_fold(true, |matches, clause| {
-        let (operator, version) = [">=", "<=", ">", "<", "="]
-            .into_iter()
-            .find_map(|operator| {
-                clause
-                    .strip_prefix(operator)
-                    .map(|version| (operator, version))
-            })
-            .ok_or_else(|| format!("invalid runtime requirement clause `{clause}`"))?;
-        let version = parse_version(version.trim())?;
-        Ok(matches
-            && match operator {
-                ">=" => runtime >= version,
-                "<=" => runtime <= version,
-                ">" => runtime > version,
-                "<" => runtime < version,
-                "=" => runtime == version,
-                _ => unreachable!("operators are selected from a fixed list"),
-            })
-    })
-}
-
-fn parse_version(value: &str) -> Result<Version, String> {
-    let values = value
-        .split('.')
-        .map(str::parse::<u64>)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| format!("invalid runtime version `{value}`"))?;
-    let [major, minor, patch] = values.as_slice() else {
-        return Err(format!(
-            "runtime version `{value}` must have major, minor, and patch"
-        ));
-    };
-    Ok(Version::new(*major, *minor, *patch))
 }

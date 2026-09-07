@@ -128,7 +128,6 @@ fn root(kind: &str) -> std::path::PathBuf {
 fn write_source_clutch(
     root: &std::path::Path,
     modules: &[(&str, &str, &str)],
-    runtime: &str,
 ) -> std::path::PathBuf {
     let clutch = root.join("example.clutch");
     fs::create_dir_all(clutch.join("modules")).expect("create clutch module directory");
@@ -144,15 +143,7 @@ fn write_source_clutch(
     fs::write(
         clutch.join("clutch.toml"),
         format!(
-            "format = 0\n\
-             [clutch]\n\
-             publisher = \"example\"\n\
-             name = \"library\"\n\
-             version = \"0.1.0\"\n\
-             [requires]\n\
-             runtime = \"{runtime}\"\n\
-             plugin_api = \"rust-facade-0\"\n\
-             [modules]\n\
+            "[modules]\n\
              {entries}\n"
         ),
     )
@@ -172,18 +163,8 @@ fn write_plugin_clutch(
     fs::write(
         clutch.join("clutch.toml"),
         format!(
-            "format = 0\n\
-             [clutch]\n\
-             publisher = \"example\"\n\
-             name = \"plugin\"\n\
-             version = \"0.1.0\"\n\
-             [requires]\n\
-             runtime = \">=0.1.0, <0.2.0\"\n\
-             plugin_api = \"rust-facade-0\"\n\
-             [modules]\n\
-             \"{module_name}\" = {{ source = \"modules/module.slug\", plugin = \"native\" }}\n\
-             [plugins.native]\n\
-             entry = \"{plugin_entry}\"\n"
+            "[modules]\n\
+             \"{module_name}\" = {{ source = \"modules/module.slug\", plugin = \"{plugin_entry}\" }}\n"
         ),
     )
     .expect("write plugin clutch manifest");
@@ -201,7 +182,6 @@ fn imports_source_modules_from_an_explicit_clutch_repository() {
             "library.slug",
             "export val answer = 42\n",
         )],
-        ">=0.1.0, <0.2.0",
     );
     let repository = ClutchRepository::new(vec![("example.library".into(), clutch)])
         .expect("create clutch repository");
@@ -239,7 +219,6 @@ fn existing_source_providers_take_precedence_over_clutches() {
             "library.slug",
             "export val source = \"clutch\"\n",
         )],
-        ">=0.1.0, <0.2.0",
     );
     let repository = ClutchRepository::new(vec![("example.library".into(), clutch)])
         .expect("create clutch repository");
@@ -293,19 +272,10 @@ fn clutch_resolution_rejects_invalid_manifests_without_caching_modules() {
     let escaping = write_source_clutch(
         &root,
         &[("example.escaping", "escape.slug", "export val value = 1\n")],
-        ">=0.1.0, <0.2.0",
     );
     fs::write(
         escaping.join("clutch.toml"),
-        "format = 0\n\
-         [clutch]\n\
-         publisher = \"example\"\n\
-         name = \"escaping\"\n\
-         version = \"0.1.0\"\n\
-         [requires]\n\
-         runtime = \">=0.1.0, <0.2.0\"\n\
-         plugin_api = \"rust-facade-0\"\n\
-         [modules]\n\
+        "[modules]\n\
          \"example.escaping\" = { source = \"../escape.slug\" }\n",
     )
     .expect("write escaping manifest");
@@ -327,8 +297,14 @@ fn clutch_resolution_rejects_invalid_manifests_without_caching_modules() {
             "incompatible.slug",
             "export val value = 1\n",
         )],
-        ">=0.2.0, <0.3.0",
     );
+    fs::write(
+        incompatible.join("clutch.toml"),
+        "[modules]\n\
+         \"example.incompatible\" = { source = \"modules/incompatible.slug\" }\n\
+         unsupported = true\n",
+    )
+    .expect("write unsupported manifest field");
     let loader = ModuleLoader::with_clutch_repository(
         &root,
         None,
@@ -382,7 +358,6 @@ fn clutch_modules_preserve_cyclic_import_initialization() {
                 "val left = import(\"example.left\")\nexport val right = fn() { 7 }\n",
             ),
         ],
-        ">=0.1.0, <0.2.0",
     );
     let repository = ClutchRepository::new(vec![
         ("example.left".into(), clutch.clone()),
@@ -568,10 +543,10 @@ fn clutch_plugins_validate_declared_resource_type_ownership() {
 fn filesystem_clutch_provides_nominal_files_and_cleans_up_after_error_unwinding() {
     let root = root("clutch-filesystem");
     fs::create_dir_all(&root).expect("create filesystem clutch root");
-    let clutch = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/clutches/slug.io.fs.clutch");
-    let mut repository =
-        ClutchRepository::new(vec![("slug.io.fs".into(), clutch)]).expect("repository");
+    let mut repository = ClutchRepository::from_directory(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("clutch"),
+    )
+    .expect("discover filesystem clutch repository");
     repository
         .define_plugin("slug.io.fs.rust", initialize_filesystem_plugin)
         .expect("configure filesystem plugin");

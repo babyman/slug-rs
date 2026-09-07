@@ -1359,18 +1359,16 @@ module, with no native loading.
 ### Todo
 
 - [x] Keep the existing Cargo feature set unchanged. The dedicated experiment
-  branch is the isolation boundary; preserve existing CLI and
-  `ModuleLoader::new` behavior until a clutch repository is explicitly
-  configured.
+  branch is the isolation boundary; preserve existing `ModuleLoader::new`
+  behavior while the CLI discovers an optional `$SLUG_HOME/clutch` repository.
 - [x] Add private clutch manifest types and parsing in a dedicated module (for
   example `src/clutch.rs`) using the existing TOML dependency.
-- [x] Validate `format = 0`, required clutch identity fields, runtime and
-  plugin-facade requirements, module names, and source paths before opening a
-  module. Reject paths outside the clutch root, missing files, unknown keys
-  that would change behavior, and duplicate module providers.
+- [x] Validate module names and source paths before opening a module. Reject
+  paths outside the clutch root, missing files, unknown keys that would change
+  behavior, and duplicate module providers.
 - [x] Add an explicit, test-configured clutch repository index from module
-  identity to exploded-clutch directory. Do not add installation commands,
-  repository scanning, or CLI flags yet.
+  identity to exploded-clutch directory, plus optional CLI discovery from
+  `$SLUG_HOME/clutch`. Do not add installation commands or CLI flags.
 - [x] Extend `src/module.rs` module resolution so the
   existing importer-relative, project-root, and library-root lookup remains
   first and clutch lookup is the final provider.
@@ -1436,8 +1434,9 @@ shutdown flow with one small filesystem capability.
 
 ### Todo
 
-- [x] Move or recreate the minimal `slug.io.fs` declaration module inside an
-  exploded test clutch: `File`, `open`, `read`, and idempotent `close`.
+- [x] Move the minimal `slug.io.fs` declaration module into the installed
+  `$SLUG_HOME/clutch` experiment: `File`, `open`, `read`, and idempotent
+  `close`.
 - [x] Implement a test-only Rust v0 filesystem plugin first. Reuse existing
   nominal resource and foreign-call validation rather than creating a clutch
   resource representation.

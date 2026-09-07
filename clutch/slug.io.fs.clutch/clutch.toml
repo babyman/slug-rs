@@ -1,0 +1,2 @@
+[modules]
+"slug.io.fs" = { source = "modules/fs.slug", plugin = "slug.io.fs.rust" }

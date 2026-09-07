@@ -92,16 +92,17 @@ modules and builtins available with the behavior exercised by their source:
 - `slug.io.stdin` for the shared standard-input line stream when a fixture or
   library program imports it;
 - `slug.io.fs` for explicit-lifecycle file resources when a fixture or library
-  program imports it;
+  program imports it and the host installs the experimental filesystem clutch;
 - `slug.builtin` for host-provided foundational bindings when the fixture or
   host environment registers them;
 - `slug.time` for timer-oriented fixtures;
 - `slug.io.stderr` for standard-error output.
 
 The normative signatures and behavior belong to the source modules in
-`../../lib/slug` and their library-reference pages. A clean-room implementation may
-write them in another implementation language, but it MUST expose the same
-Slug-visible module names, exports, results, errors, and stream behavior.
+`../../lib/slug` or installed experimental clutches and their library-reference
+pages. A clean-room implementation may write them in another implementation
+language, but it MUST expose the same Slug-visible module names, exports,
+results, errors, and stream behavior.
 
 ### Error observability
 

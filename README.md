@@ -46,12 +46,11 @@ contract is documented separately as `.cslug`.
   transparent compile-time `type Name = Annotation` aliases.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
-  fallback, cached isolated module initialization, and string-keyed exported-value maps.
-- Experimental host-configured exploded clutches may provide additional
-  source modules after those existing import providers. Their local manifest
-  validation and module identities are documented separately. A host may also
-  configure a Rust-only, module-scoped native plugin; dynamic loading and CLI
-  configuration remain future experiment work.
+  fallback, then `$SLUG_HOME/clutch` experimental clutch providers, cached
+  isolated module initialization, and string-keyed exported-value maps.
+- Experimental exploded clutches in `$SLUG_HOME/clutch/*.clutch` may provide
+  additional source modules after existing providers. A host may configure a
+  Rust-only, module-scoped native plugin; dynamic loading remains future work.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation

@@ -558,8 +558,9 @@ map of their exported bindings. Modules are loaded in argument order.
 Module names use dot-separated paths such as `slug.std` and `slug.channel`.
 An implementation resolves a module relative to the importing source, then the
 project module root, before searching its configured library root. The command
-line runtime uses `$SLUG_HOME/lib` as that root when `SLUG_HOME` is set. A
-missing or malformed module is a language error.
+line runtime uses `$SLUG_HOME/lib` as that root when `SLUG_HOME` is set. Its
+experimental clutch provider is searched last through `$SLUG_HOME/clutch`.
+A missing or malformed module is a language error.
 
 ```slug
 val math = import("mod.simple")

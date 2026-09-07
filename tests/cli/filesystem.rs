@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn requires_an_installed_filesystem_clutch() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-filesystem-unavailable-{}",
+        std::process::id()
+    ));
+    let home = root.join("home");
+    let program = root.join("program.slug");
+    fs::create_dir_all(&home).expect("create empty SLUG_HOME");
+    fs::write(&program, "val fs = import(\"slug.io.fs\")\n")
+        .expect("write filesystem-importing source");
+
+    let output = slug()
+        .arg(&program)
+        .env("SLUG_HOME", &home)
+        .env_remove("SLUG_FIXTURE_LIBRARY_ROOT")
+        .output()
+        .expect("run source without filesystem clutch");
+    fs::remove_dir_all(root).expect("remove unavailable filesystem fixture root");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("module `slug.io.fs` was not found")
+    );
+}
+
+#[test]
 fn reads_writes_appends_and_explicitly_closes_opaque_file_resources() {
     let root = std::env::temp_dir().join(format!("slug-cli-filesystem-{}", std::process::id()));
     fs::create_dir_all(&root).expect("create filesystem fixture root");

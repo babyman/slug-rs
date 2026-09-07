@@ -11,9 +11,9 @@ use std::{
 };
 
 use slug_vm::{
-    Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule, NativeOwnedValue,
-    NativeStatus, RuntimeError, SourceError, SourceErrorKind, SourceSpan, Vm,
-    register_filesystem_foreign,
+    ClutchRepository, Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule,
+    NativeOwnedValue, NativeStatus, RuntimeError, SourceError, SourceErrorKind, SourceSpan, Vm,
+    initialize_filesystem_plugin,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -277,8 +277,6 @@ fn register_native_modules(vm: &mut Vm) {
             .expect("static foreign function is valid"),
     )
     .expect("static foreign binding is unique");
-
-    register_filesystem_foreign(vm).expect("static filesystem bindings are valid");
 }
 
 fn main() -> ExitCode {
@@ -336,7 +334,27 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
         program_arguments,
         entry_module,
     );
-    let loader = ModuleLoader::with_configuration(source_root, library_root, configuration);
+    let mut clutches = match slug_home.as_ref() {
+        Some(home) if home.join("clutch").exists() => {
+            match ClutchRepository::from_directory(home.join("clutch")) {
+                Ok(repository) => repository,
+                Err(error) => {
+                    eprintln!("slug: {error}");
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        _ => ClutchRepository::default(),
+    };
+    clutches
+        .define_plugin("slug.io.fs.rust", initialize_filesystem_plugin)
+        .expect("filesystem clutch plugin entry is unique");
+    let loader = ModuleLoader::with_configuration_and_clutch_repository(
+        source_root,
+        library_root,
+        configuration,
+        clutches,
+    );
     let resolved_path = resolved_path.to_string_lossy();
     let mut program = match loader.compile_source(&resolved_path, &source) {
         Ok(program) => program,
