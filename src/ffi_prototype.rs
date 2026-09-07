@@ -20,12 +20,12 @@ use std::{
 use std::ffi::CString;
 
 use crate::{
-    NativeArity, NativeCall, NativeDescriptorError, NativeError, NativeModule, NativeOwnedValue,
-    NativeProducerStatus, NativeSendValue, NativeStatus, Vm,
+    ClutchPluginRegistrar, NativeArity, NativeCall, NativeDescriptorError, NativeError,
+    NativeModule, NativeOwnedValue, NativeProducerStatus, NativeSendValue, NativeStatus, Vm,
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 6;
+const ABI_MINOR: u32 = 7;
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 
@@ -51,6 +51,8 @@ struct HostApi {
     producer_destroy: unsafe extern "C" fn(*mut FfiProducer),
     producer_send_text:
         unsafe extern "C" fn(*mut FfiProducer, FfiText, Option<ProducerTextDestroy>) -> i32,
+    set_nil: unsafe extern "C" fn(*mut c_void),
+    set_text: unsafe extern "C" fn(*mut c_void, FfiText) -> bool,
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
@@ -355,6 +357,26 @@ impl FfiPrototypeModule {
     ///
     /// Returns an error when the VM cannot register a descriptor.
     pub fn register(&self, vm: &mut Vm) -> Result<(), NativeDescriptorError> {
+        vm.define_foreign_batch(self.foreign_functions()?)
+    }
+
+    /// Stages this module's descriptors under a clutch-owned registration scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the scope does not match the module or a native
+    /// descriptor is invalid.
+    pub fn stage(
+        &self,
+        registrar: &mut ClutchPluginRegistrar,
+    ) -> Result<(), NativeDescriptorError> {
+        for function in self.foreign_functions()? {
+            registrar.define_foreign(function)?;
+        }
+        Ok(())
+    }
+
+    fn foreign_functions(&self) -> Result<Vec<crate::NativeFunction>, NativeDescriptorError> {
         let functions = self
             .functions
             .iter()
@@ -367,7 +389,7 @@ impl FfiPrototypeModule {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        vm.define_foreign_batch(functions)
+        Ok(functions)
     }
 }
 
@@ -390,6 +412,8 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     producer_send_i64,
     producer_destroy,
     producer_send_text,
+    set_nil,
+    set_text,
 });
 
 fn host_api() -> *const HostApi {
@@ -528,6 +552,27 @@ unsafe extern "C" fn set_f64(context: *mut c_void, value: f64) {
     if let Some(call) = unsafe { call_from_context(context) } {
         call.set_result(NativeOwnedValue::float(value));
     }
+}
+
+unsafe extern "C" fn set_nil(context: *mut c_void) {
+    if let Some(call) = unsafe { call_from_context(context) } {
+        call.set_result(NativeOwnedValue::nil());
+    }
+}
+
+unsafe extern "C" fn set_text(context: *mut c_void, value: FfiText) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    let Some(value) = (unsafe { text_from_ffi(value) }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI module returned invalid text",
+        ));
+        return false;
+    };
+    call.set_result(NativeOwnedValue::string(value));
+    true
 }
 
 unsafe extern "C" fn set_error(context: *mut c_void, code: FfiText, message: FfiText) {

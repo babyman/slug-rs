@@ -3,16 +3,27 @@ use std::{
     collections::{HashMap, HashSet},
     fmt, fs,
     path::{Component, Path, PathBuf},
+    rc::Rc,
 };
 
 /// An explicit host-owned mapping from module names to exploded clutch roots.
 ///
 /// Hosts may construct this mapping directly or discover its providers from
 /// one local exploded-clutch directory.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ClutchRepository {
     providers: HashMap<String, PathBuf>,
     plugin_initializers: HashMap<String, ClutchPluginInitializer>,
+}
+
+impl fmt::Debug for ClutchRepository {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ClutchRepository")
+            .field("providers", &self.providers)
+            .field("plugin_initializer_count", &self.plugin_initializers.len())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,13 +151,13 @@ impl ClutchRepository {
     pub fn define_plugin(
         &mut self,
         entry: impl Into<String>,
-        initializer: ClutchPluginInitializer,
+        initializer: impl Fn(&mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> + 'static,
     ) -> Result<(), ClutchRepositoryError> {
         let entry = entry.into();
         if entry.trim().is_empty() || self.plugin_initializers.contains_key(&entry) {
             return Err(ClutchRepositoryError::DuplicatePlugin { entry });
         }
-        self.plugin_initializers.insert(entry, initializer);
+        self.plugin_initializers.insert(entry, Rc::new(initializer));
         Ok(())
     }
 
@@ -157,13 +168,13 @@ impl ClutchRepository {
 
     #[must_use]
     pub(crate) fn plugin(&self, entry: &str) -> Option<ClutchPluginInitializer> {
-        self.plugin_initializers.get(entry).copied()
+        self.plugin_initializers.get(entry).cloned()
     }
 }
 
 /// Initializes one manifest-selected plugin within one module-bound scope.
 pub type ClutchPluginInitializer =
-    fn(&mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError>;
+    Rc<dyn Fn(&mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError>>;
 
 /// A module-bound, staged registrar exposed to experimental Rust clutch plugins.
 pub struct ClutchPluginRegistrar {

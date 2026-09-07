@@ -490,3 +490,9 @@ The fixture also uses SQLite statements as a parent/child resource experiment:
 an explicit database close is rejected while a statement is active, whereas
 final resource teardown uses SQLite's deferred-close behavior so cleanup stays
 safe regardless of resource drop order.
+
+The filesystem clutch fixture extends prototype ABI minor 7 with `set_nil` and
+copying `set_text` callback operations. Its test compiles
+`clutch/slug.io.fs.clutch/native/fs.c` into a temporary shared library and
+loads it through the clutch registrar. This proves descriptor-backed text-file
+resources without establishing a packaged dynamic-loader contract.

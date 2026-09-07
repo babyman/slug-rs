@@ -11,7 +11,9 @@ versioned schema, and regression coverage.
 The source resolver, `$SLUG_HOME/clutch` CLI discovery, and Rust-host-configured,
 module-scoped plugin initializer are implemented. `Vm::shutdown` and final
 loader drop clean plugin state. Archive loading, package installation, and
-dynamic native loading remain unimplemented.
+packaged dynamic native loading remain unimplemented. The feature-gated FFI
+prototype additionally test-builds the filesystem clutch's C implementation;
+it is not available to normal CLI installations.
 
 ## Purpose and terms
 

@@ -12,7 +12,7 @@
 #endif
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 6u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 7u
 
 typedef enum {
   SLUG_FFI_OK = 0,
@@ -42,6 +42,8 @@ typedef bool (*slug_ffi_argument_text_fn)(slug_ffi_call *, size_t, slug_ffi_text
 typedef bool (*slug_ffi_argument_resource_fn)(slug_ffi_call *, size_t, slug_ffi_text, void **);
 typedef void (*slug_ffi_set_i64_fn)(slug_ffi_call *, int64_t);
 typedef void (*slug_ffi_set_f64_fn)(slug_ffi_call *, double);
+typedef void (*slug_ffi_set_nil_fn)(slug_ffi_call *);
+typedef bool (*slug_ffi_set_text_fn)(slug_ffi_call *, slug_ffi_text);
 typedef void (*slug_ffi_set_error_fn)(slug_ffi_call *, slug_ffi_text, slug_ffi_text);
 typedef bool (*slug_ffi_set_resource_fn)(slug_ffi_call *, slug_ffi_text, void *);
 typedef bool (*slug_ffi_close_resource_fn)(slug_ffi_call *, size_t, slug_ffi_text);
@@ -74,6 +76,8 @@ struct slug_ffi_host_api {
   slug_ffi_producer_send_i64_fn producer_send_i64;
   slug_ffi_producer_destroy_fn producer_destroy;
   slug_ffi_producer_send_text_fn producer_send_text;
+  slug_ffi_set_nil_fn set_nil;
+  slug_ffi_set_text_fn set_text;
 };
 
 typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);

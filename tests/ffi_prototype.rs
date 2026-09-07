@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use slug_vm::{FfiPrototypeModule, ModuleLoader, RuntimeErrorKind, Vm};
+use slug_vm::{ClutchRepository, FfiPrototypeModule, ModuleLoader, RuntimeErrorKind, Vm};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -37,6 +37,79 @@ impl Drop for TemporaryDirectory {
 
 fn compile_fixture(directory: &TemporaryDirectory, source: &str, name: &str) -> PathBuf {
     compile_fixture_with_libraries(directory, source, name, &[])
+}
+
+#[test]
+fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
+    let directory = TemporaryDirectory::new();
+    let clutch_root = directory.path().join("clutch/slug.io.fs.clutch");
+    fs::create_dir_all(clutch_root.join("modules")).expect("create filesystem clutch modules");
+    fs::create_dir_all(clutch_root.join("native")).expect("create filesystem clutch native dir");
+    fs::copy(
+        "clutch/slug.io.fs.clutch/clutch.toml",
+        clutch_root.join("clutch.toml"),
+    )
+    .expect("copy filesystem clutch manifest");
+    fs::copy(
+        "clutch/slug.io.fs.clutch/modules/fs.slug",
+        clutch_root.join("modules/fs.slug"),
+    )
+    .expect("copy filesystem declaration");
+    let built = compile_fixture(
+        &directory,
+        "clutch/slug.io.fs.clutch/native/fs.c",
+        "slug_io_fs",
+    );
+    let library = clutch_root.join("native").join(
+        built
+            .file_name()
+            .expect("test-built library has a file name"),
+    );
+    fs::copy(built, &library).expect("place dynamic module in filesystem clutch");
+    let ffi = FfiPrototypeModule::load(&library).expect("load filesystem dynamic module");
+    let mut repository = ClutchRepository::from_directory(directory.path().join("clutch"))
+        .expect("discover filesystem clutch");
+    repository
+        .define_plugin("slug.io.fs.rust", move |registrar| ffi.stage(registrar))
+        .expect("configure filesystem dynamic plugin");
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let file = directory.path().join("written.txt");
+    let program = loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            &format!(
+                "val fs = import(\"slug.io.fs\")\n\
+                 val output:fs.File = fs.openWrite(\"{}\")\n\
+                 defer fs.close(output)\n\
+                 fs.write(output, \"hello\")\n\
+                 fs.close(output)\n\
+                 val input:fs.File = fs.openRead(\"{}\")\n\
+                 defer fs.close(input)\n\
+                 export val line:str|nil = fs.readLine(input)\n\
+                 export val eof:str|nil = fs.readLine(input)\n",
+                file.display(),
+                file.display()
+            ),
+        )
+        .expect("compile filesystem clutch consumer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run dynamic filesystem clutch consumer");
+    assert_eq!(
+        fs::read_to_string(&file).expect("read dynamic output"),
+        "hello"
+    );
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"line\": \"hello\", \"eof\": nil}"
+    );
+    vm.shutdown();
+    assert_eq!(
+        vm.run_named(&program, "main")
+            .expect_err("shutdown VM rejects new work")
+            .kind,
+        RuntimeErrorKind::InvalidCall
+    );
 }
 
 fn compile_fixture_with_libraries(

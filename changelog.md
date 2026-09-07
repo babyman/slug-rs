@@ -26,7 +26,11 @@
 
 - Made experimental clutches discoverable from `$SLUG_HOME/clutch` and moved
   the canonical `slug.io.fs` declaration there, with a minimal direct
-  module-to-plugin manifest and no dynamic native loading.
+  module-to-plugin manifest.
+
+- Added a feature-gated test build of the filesystem clutch's C FFI module,
+  including checked `nil` and text result transfer, resource cleanup, and
+  resident-code dynamic loading without a packaged binary layout.
 
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
