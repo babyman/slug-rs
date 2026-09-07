@@ -1,3 +1,4 @@
 [modules]
 "slug.io.fs" = "slug.io.fs.clutch"
 "slug.sqlite" = "slug.sqlite.clutch"
+"slug.math" = "slug.math.clutch"

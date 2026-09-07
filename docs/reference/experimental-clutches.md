@@ -16,6 +16,8 @@ distribution remain unimplemented. The local `slug.io.fs` clutch commits its
 macOS ARM library as the first installed native-package experiment. The
 `slug.sqlite` source clutch is built into a temporary installed layout by the
 integration suite, proving a second provider with an external C dependency.
+The stateless `slug.math` source clutch provides the corresponding third
+provider check without native resources or an external library.
 
 ## Purpose and terms
 

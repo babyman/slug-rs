@@ -1,0 +1,2 @@
+export foreign add = fn(left:num, right:num):num
+export foreign sqrt = fn(value:num):num

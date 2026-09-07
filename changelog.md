@@ -10,6 +10,9 @@
   a repository-resolved native-clutch regression for its database and prepared
   statement resources.
 
+- Promoted the stateless math C fixture into `slug.math` and added its
+  repository-resolved native-clutch regression.
+
 - Fixed deferred blocks that call a user-defined function so cleanup resumes
   the deferred action instead of falling through from the enclosing function.
 

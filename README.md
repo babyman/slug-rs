@@ -54,7 +54,8 @@ contract is documented separately as `.cslug`.
   native library. The local `slug.io.fs` clutch commits a macOS ARM native
   library and reports a checked unavailable-platform error elsewhere. The
   `slug.sqlite` clutch provides the second native-provider check by building
-  its adapter into a temporary installed layout during integration tests.
+  its adapter into a temporary installed layout during integration tests. The
+  stateless `slug.math` clutch provides the third check through the same path.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation

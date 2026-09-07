@@ -159,6 +159,60 @@ fn build_native_sqlite_clutch(directory: &TemporaryDirectory) -> ClutchRepositor
         .expect("load SQLite clutch manifest")
 }
 
+fn build_native_math_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
+    let clutch_root = directory.path().join("clutch/slug.math.clutch");
+    let target = current_native_platform();
+    fs::create_dir_all(clutch_root.join("modules")).expect("create math clutch modules");
+    fs::create_dir_all(clutch_root.join("native/source")).expect("create math clutch source");
+    fs::create_dir_all(clutch_root.join("native").join(target))
+        .expect("create math clutch library directory");
+    fs::write(
+        directory.path().join("clutch/manifest.toml"),
+        "[modules]\n\"slug.math\" = \"slug.math.clutch\"\n",
+    )
+    .expect("write math clutch repository manifest");
+    fs::copy(
+        "clutch/slug.math.clutch/modules/math.slug",
+        clutch_root.join("modules/math.slug"),
+    )
+    .expect("copy math declaration");
+    fs::copy(
+        "clutch/slug.math.clutch/native/source/math.c",
+        clutch_root.join("native/source/math.c"),
+    )
+    .expect("copy math source");
+    let built = compile_fixture(
+        directory,
+        "clutch/slug.math.clutch/native/source/math.c",
+        "slug_math",
+    );
+    let library = clutch_root.join("native").join(target).join(
+        built
+            .file_name()
+            .expect("test-built library has a file name"),
+    );
+    fs::copy(built, &library).expect("place math module in clutch");
+    fs::write(
+        clutch_root.join("clutch.toml"),
+        format!(
+            "[modules]\n\
+             \"slug.math\" = {{ source = \"modules/math.slug\", native = true }}\n\n\
+             [native]\n\
+             source = \"native/source\"\n\
+             abi = \"slug-ffi-prototype/0.7\"\n\n\
+             [native.libraries]\n\
+             \"{target}\" = \"native/{target}/{}\"\n",
+            library
+                .file_name()
+                .expect("native library name")
+                .to_string_lossy(),
+        ),
+    )
+    .expect("write math clutch manifest");
+    ClutchRepository::from_manifest(directory.path().join("clutch"))
+        .expect("load math clutch manifest")
+}
+
 #[test]
 fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
     let directory = TemporaryDirectory::new();
@@ -344,27 +398,19 @@ fn loads_sqlite_through_an_exploded_native_clutch() {
 }
 
 #[test]
-fn loads_a_c_math_module_and_preserves_checked_native_errors() {
+fn loads_math_through_an_exploded_native_clutch() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/math_module.c", "slug_math");
-    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
-    fs::write(
-        directory.path().join("slug/math.slug"),
-        "export foreign add = fn(left:num, right:num):num\n\
-         export foreign sqrt = fn(value:num):num\n",
-    )
-    .expect("write math module source");
+    fs::create_dir_all(directory.path().join("clutch")).expect("create clutch repository");
     let main = directory.path().join("main.slug");
-    let loader = ModuleLoader::new(directory.path(), None);
+    let repository = build_native_math_clutch(&directory);
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
     let program = loader
         .compile_source(
             &main.to_string_lossy(),
             "val math = import(\"slug.math\")\nmath.add(20, 22) + math.sqrt(9.0)\n",
         )
-        .expect("compile program using C module");
-    let module = FfiPrototypeModule::load(library).expect("load C math module");
+        .expect("compile program using math clutch");
     let mut vm = Vm::with_module_loader(loader.clone());
-    module.register(&mut vm).expect("register C math module");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "45");
 
     let failing = loader

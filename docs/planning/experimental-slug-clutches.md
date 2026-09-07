@@ -1500,8 +1500,9 @@ stabilizing any interface.
   same resolver and scoped-registration boundaries. Its integration check
   builds the adapter against the local SQLite development library into a
   temporary installed clutch layout.
-- [ ] Build or simulate a third capability that does not primarily exercise
-  filesystem or database resource lifetimes.
+- [x] Build a third capability (`slug.math`) that does not exercise filesystem
+  or database resource lifetimes. Its stateless numeric adapter is built and
+  resolved through the same temporary clutch layout.
 - [ ] Compare the three implementations for duplicated loader code, missing
   lifecycle hooks, diagnostic gaps, and manifest fields that vary per
   capability.
