@@ -496,11 +496,6 @@ text, and blob columns return as Slug `nil`, `num`, `str`, and `bytes` values.
 Prepared statements, transactions, pooling, and migrations remain outside the
 experiment.
 
-The fixture also uses SQLite statements as a parent/child resource experiment:
-an explicit database close is rejected while a statement is active, whereas
-final resource teardown uses SQLite's deferred-close behavior so cleanup stays
-safe regardless of resource drop order.
-
 Prototype ABI minor 8 adds argument-kind and byte borrowing plus temporary
 list/map builders. The builders are call-scoped opaque handles: C transfers a
 map into a list and transfers the final list to the call, or destroys any
