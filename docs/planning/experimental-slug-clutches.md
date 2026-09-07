@@ -1437,7 +1437,7 @@ shutdown flow with one small filesystem capability.
 - [x] Move the minimal `slug.io.fs` declaration module into the installed
   `$SLUG_HOME/clutch` experiment: `File`, `open`, `read`, and idempotent
   `close`.
-- [x] Implement a test-only Rust v0 filesystem plugin first. Reuse existing
+- [x] Implement a Rust v0 filesystem plugin first. Reuse existing
   nominal resource and foreign-call validation rather than creating a clutch
   resource representation.
 - [x] Use a consumer fixture that imports only `slug.io.fs`; it must not know
@@ -1449,8 +1449,8 @@ shutdown flow with one small filesystem capability.
   runs deterministically, but no test expects `dlclose`.
 - [x] Add diagnostic assertions for bad manifest data, unsupported platform,
   plugin initialization failure, foreign mismatch, and an unavailable module.
-- [x] Add the relevant support-matrix/README wording only if the feature
-  becomes user-invokable; otherwise retain its test-only experimental status.
+- [x] Add the relevant support-matrix/README wording for the user-invokable,
+  unstable local experiment.
 
 ### Exit criteria
 
@@ -1473,11 +1473,12 @@ dynamic native loading; do not implement either by implication.
 - [ ] If compiled modules proceed, write the complete `.cslug` version-1
   schema, verifier rules, compatibility negotiation, malformed-input fixtures,
   and loader tests before adding a manifest representation entry.
-- [ ] Review dynamic plugin loading against the native-ABI implementation gate
-  in [`../reference/native-abi.md`](../reference/native-abi.md). Publish C
-  declarations and ABI conformance tests before any released loader support.
-- [ ] Keep the existing `ffi-prototype` feature isolated until that review
-  succeeds; it may supply test evidence but is not a clutch plugin ABI.
+- [x] Keep the version-0 native loader enabled for local experimental
+  clutches. Its manifest-selected prototype remains private and mutable; it is
+  not an ABI-v1 compatibility promise.
+- [ ] Before releasing third-party loader support, publish C declarations and
+  ABI conformance tests under the native-ABI implementation gate in
+  [`../reference/native-abi.md`](../reference/native-abi.md).
 - [ ] Make a separate decision record for any ZIP archive format, manifest
   stability promise, signing, installation workflow, or external registry.
 

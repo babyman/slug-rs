@@ -1,5 +1,3 @@
-#![cfg(feature = "ffi-prototype")]
-
 use std::{
     env, fs,
     path::{Path, PathBuf},

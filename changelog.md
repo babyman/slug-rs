@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Made the version-0 native clutch loader and its dynamic-module regressions
+  part of the default build and test surface. They remain experimental and
+  intentionally incompatible across pre-release revisions.
+
 - Fixed deferred blocks that call a user-defined function so cleanup resumes
   the deferred action instead of falling through from the enclosing function.
 
@@ -31,7 +35,7 @@
   the canonical `slug.io.fs` declaration there, with a minimal direct
   module-to-plugin manifest.
 
-- Added a feature-gated test build of the filesystem clutch's C FFI module,
+- Added a test build of the filesystem clutch's C FFI module,
   including checked `nil` and text result transfer, resource cleanup, and
   resident-code dynamic loading without a packaged binary layout.
 
@@ -171,7 +175,7 @@
   mailbox is full or closed, allowing integrations to retry without cloning.
 - Added a native-callback workload to the opt-in VM benchmark harness.
 
-- Added a feature-gated, test-only C math-module FFI prototype with `add`,
+- Added a test-only C math-module FFI prototype with `add`,
   `sqrt`, ABI-major validation, and checked native error propagation.
 
 - The C FFI prototype now validates fixed-width, length-delimited descriptors,

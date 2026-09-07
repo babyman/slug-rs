@@ -19,7 +19,7 @@ test-cli:
 	cargo test --features metrics --test cli
 
 test-ffi-prototype:
-	cargo test --features ffi-prototype --test ffi_prototype
+	cargo test --test ffi_prototype
 
 bench-vm:
 	cargo bench --bench vm --features metrics

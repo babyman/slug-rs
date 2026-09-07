@@ -183,7 +183,7 @@ fn resident_library(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError
     if let Some(library) = libraries.get(&path) {
         return Ok(library.clone());
     }
-    // SAFETY: platform loading is contained in this feature-gated module.
+    // SAFETY: platform loading is contained in this private prototype module.
     let library = Arc::new(unsafe { LoadedLibrary::open(&path) }?);
     libraries.insert(path, library.clone());
     Ok(library)
@@ -291,7 +291,7 @@ impl FfiPrototypeModule {
     /// symbol, or provides a malformed or incompatible descriptor.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, FfiPrototypeError> {
         // SAFETY: all dynamic-loader interactions and C descriptor reads are
-        // validated within this feature-gated boundary.
+        // validated within this private prototype boundary.
         unsafe {
             let library = resident_library(path.as_ref())?;
             let init_name = c"slug_ffi_module_init";
