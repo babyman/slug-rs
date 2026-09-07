@@ -11,10 +11,9 @@ versioned schema, and regression coverage.
 The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
 module-scoped Rust plugin initializer, and manifest-selected version-0 native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
-state. Archive loading, package installation, and packaged binary distribution
-remain unimplemented. The installed-layout regression test builds the
-filesystem clutch's C implementation for the running platform; no platform
-library binary is committed to this repository.
+state. Archive loading, package installation, and cross-platform binary
+distribution remain unimplemented. The local `slug.io.fs` clutch commits its
+macOS ARM library as the first installed native-package experiment.
 
 ## Purpose and terms
 

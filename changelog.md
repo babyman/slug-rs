@@ -44,6 +44,10 @@
   `native.source` and platform-library validation, descriptor staging, and an
   installed-layout filesystem C module test that runs through the public CLI.
 
+- Made `slug.io.fs` the first fully native local clutch: committed its macOS
+  ARM library, removed the Rust facade and CLI fallback, and retained checked
+  unavailable-platform behavior for other hosts.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

@@ -40,8 +40,7 @@ is open. See [Nominal types](nominal-types.md) for the general resource rule.
 The experimental CLI installation provides this module through the
 `slug.io.fs` entry in `$SLUG_HOME/clutch/manifest.toml`, which selects the
 `$SLUG_HOME/clutch/slug.io.fs.clutch` clutch. The current Rust subset implements
-its default foreign function facade and imported type paths such as `fs.File`.
-The clutch also keeps its experimental C implementation under `native/source/`;
-the native-layout integration test builds that source into a target-specific
-library and exercises it through the ordinary CLI loader. No platform library
-is committed by the repository.
+its native foreign function implementation and imported type paths such as
+`fs.File`. The clutch contains its C source under `native/source/` and its
+local macOS ARM library under `native/macos-aarch64/`. Other platforms receive
+a checked clutch-load error until a matching native library is installed.

@@ -1,2 +1,9 @@
 [modules]
-"slug.io.fs" = { source = "modules/fs.slug", plugin = "slug.io.fs.rust" }
+"slug.io.fs" = { source = "modules/fs.slug", native = true }
+
+[native]
+source = "native/source"
+abi = "slug-ffi-prototype/0.7"
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"

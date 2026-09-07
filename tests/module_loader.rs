@@ -6,7 +6,7 @@ use std::{
 use slug_vm::{
     ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader,
     NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue, NativeStatus,
-    RuntimeErrorKind, Value, Vm, compile, initialize_filesystem_plugin,
+    RuntimeErrorKind, Value, Vm, compile,
 };
 
 fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -628,13 +628,10 @@ fn clutch_plugins_validate_declared_resource_type_ownership() {
 fn filesystem_clutch_provides_nominal_files_and_cleans_up_after_error_unwinding() {
     let root = root("clutch-filesystem");
     fs::create_dir_all(&root).expect("create filesystem clutch root");
-    let mut repository = ClutchRepository::from_manifest(
+    let repository = ClutchRepository::from_manifest(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("clutch"),
     )
     .expect("load filesystem clutch repository manifest");
-    repository
-        .define_plugin("slug.io.fs.rust", initialize_filesystem_plugin)
-        .expect("configure filesystem plugin");
     let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
     let file = root.join("written.txt");
     let path = file.to_string_lossy();

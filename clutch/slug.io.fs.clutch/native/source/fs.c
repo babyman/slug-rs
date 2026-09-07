@@ -103,6 +103,10 @@ static int32_t write_file(const slug_ffi_host_api *host, slug_ffi_call *call, vo
     host->set_error(call, TEXT("native.io"), TEXT("cannot write file"));
     return SLUG_FFI_ERROR;
   }
+  if (fflush((FILE *)resource) != 0) {
+    host->set_error(call, TEXT("native.io"), TEXT("cannot flush file"));
+    return SLUG_FFI_ERROR;
+  }
   host->set_i64(call, (int64_t)text.length);
   return SLUG_FFI_OK;
 }

@@ -51,8 +51,8 @@ contract is documented separately as `.cslug`.
 - Experimental exploded clutches named by `$SLUG_HOME/clutch/manifest.toml`
   may provide additional source modules after existing providers. A host may
   configure a module-scoped Rust plugin or a manifest-selected experimental
-  native library. The repository does not commit platform library binaries;
-  the installed-layout regression test builds the filesystem library locally.
+  native library. The local `slug.io.fs` clutch commits a macOS ARM native
+  library and reports a checked unavailable-platform error elsewhere.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation

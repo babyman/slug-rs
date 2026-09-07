@@ -13,7 +13,6 @@ use std::{
 use slug_vm::{
     ClutchRepository, Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule,
     NativeOwnedValue, NativeStatus, RuntimeError, SourceError, SourceErrorKind, SourceSpan, Vm,
-    initialize_filesystem_plugin,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -334,7 +333,7 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
         program_arguments,
         entry_module,
     );
-    let mut clutches = match slug_home.as_ref() {
+    let clutches = match slug_home.as_ref() {
         Some(home) if home.join("clutch/manifest.toml").exists() => {
             match ClutchRepository::from_manifest(home.join("clutch")) {
                 Ok(repository) => repository,
@@ -346,9 +345,6 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
         }
         _ => ClutchRepository::default(),
     };
-    clutches
-        .define_plugin("slug.io.fs.rust", initialize_filesystem_plugin)
-        .expect("filesystem clutch plugin entry is unique");
     let loader = ModuleLoader::with_configuration_and_clutch_repository(
         source_root,
         library_root,

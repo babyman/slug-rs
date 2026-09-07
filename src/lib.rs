@@ -12,7 +12,6 @@ mod configuration;
 mod conformance;
 #[allow(unsafe_code)]
 mod ffi_prototype;
-mod filesystem;
 mod fixture;
 mod module;
 mod native;
@@ -39,7 +38,6 @@ pub use clutch::{
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
 pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeModule};
-pub use filesystem::{initialize_filesystem_plugin, register_filesystem_foreign};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use native::{
