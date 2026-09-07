@@ -6,7 +6,7 @@
   every source and module snapshot now uses the same mandatory type checker.
 
 - Fixed CI's native-prototype job to use the default test surface, and made
-  its backpressure regression deterministic across runner scheduling.
+  its backpressure regressions deterministic across runner scheduling.
 
 - Stage the checkout's platform-native clutches before CI runs its CLI
   filesystem regressions.
