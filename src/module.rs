@@ -460,6 +460,18 @@ impl ModuleLoader {
         self.state.native_resources.clone()
     }
 
+    /// Closes native resources and releases clutch-owned registrations.
+    ///
+    /// A host must not execute additional work through a loader after shutdown.
+    pub fn shutdown(&self) {
+        self.state.native_resources.close_all();
+        let plugins = std::mem::take(&mut *self.state.active_clutch_plugins.borrow_mut());
+        for (_, mut plugin) in plugins {
+            self.remove_foreign_batch(&plugin.functions);
+            plugin.cleanup();
+        }
+    }
+
     fn virtual_builtin_module(&self) -> ModuleInstance {
         let path = PathBuf::from("<slug.builtin>");
         if let Some(instance) = self.state.instances.borrow().get(&path) {
@@ -527,6 +539,7 @@ impl ModuleLoader {
 
 impl Drop for ModuleLoaderState {
     fn drop(&mut self) {
+        self.native_resources.close_all();
         for plugin in self.active_clutch_plugins.get_mut().values_mut() {
             plugin.cleanup();
         }

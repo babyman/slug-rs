@@ -117,9 +117,12 @@ code resident rather than permit use-after-unload. This follows the current
 native ABI's process-lifetime code-residency rule; deterministic cleanup refers
 to module state and registrations, not forced library-code unloading.
 
-The current Rust experiment runs the cleanup hook when the final
-`ModuleLoader` owner drops. A later lifecycle phase must connect that cleanup
-to VM shutdown, call rejection, resource closure, and producer revocation.
+`Vm::shutdown` closes loader-tracked native resources before removing active
+clutch registrations and running their cleanup hooks; subsequent execution on
+that VM receives a checked `InvalidCall` error. Dropping the final
+`ModuleLoader` remains a fallback that performs the same resource-first
+cleanup. The host must quiesce other VMs sharing that loader before shutdown;
+producer revocation and coordinated task cancellation remain future work.
 
 ## Required diagnostics and proof
 

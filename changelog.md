@@ -20,6 +20,10 @@
   entries, module-scoped staged foreign registrations, cleanup hooks, and
   rollback after initialization or declaration-validation failures.
 
+- Implemented the test-only Phase 5 `slug.io.fs` clutch slice, including
+  nominal imported `File` handles, error-unwinding cleanup, and explicit VM
+  shutdown that closes resources before releasing clutch registrations.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

@@ -278,6 +278,7 @@ pub struct Vm {
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
     active_span: Option<SpanId>,
+    shutdown: bool,
     #[cfg(feature = "metrics")]
     metrics: Rc<RefCell<VmMetrics>>,
 }
@@ -307,6 +308,7 @@ impl Default for Vm {
             resume: None,
             wait_registration: None,
             active_span: None,
+            shutdown: false,
             #[cfg(feature = "metrics")]
             metrics,
         }
@@ -355,6 +357,21 @@ impl Vm {
         };
         vm.install_configuration_builtins();
         vm
+    }
+
+    /// Stops this VM and releases clutch-owned runtime state.
+    ///
+    /// Further execution attempts return a checked runtime error. Hosts sharing
+    /// a module loader must shut down all dependent VMs before this call.
+    pub fn shutdown(&mut self) {
+        if self.shutdown {
+            return;
+        }
+        self.shutdown = true;
+        self.native_resources.close_all();
+        if let Some(loader) = &self.module_loader {
+            loader.shutdown();
+        }
     }
 
     pub(crate) fn with_module_bindings(module_loader: &ModuleLoader, names: &[String]) -> Self {
@@ -797,6 +814,13 @@ impl Vm {
     }
 
     fn run_installed_execution(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<Value> {
+        if self.shutdown {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "VM has shut down".into(),
+                None,
+            ));
+        }
         self.module_program = Some(program.clone());
         #[cfg(feature = "metrics")]
         let verification_started = Instant::now();
@@ -2252,6 +2276,7 @@ impl Vm {
             resume: None,
             wait_registration: None,
             active_span: None,
+            shutdown: false,
             #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
         };

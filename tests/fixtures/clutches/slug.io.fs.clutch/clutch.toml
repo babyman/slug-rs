@@ -1,0 +1,16 @@
+format = 0
+
+[clutch]
+publisher = "slug"
+name = "io-fs"
+version = "0.1.0"
+
+[requires]
+runtime = ">=0.1.0, <0.2.0"
+plugin_api = "rust-facade-0"
+
+[modules]
+"slug.io.fs" = { source = "modules/fs.slug", plugin = "filesystem" }
+
+[plugins.filesystem]
+entry = "slug.io.fs.rust"

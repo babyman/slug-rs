@@ -6,7 +6,7 @@ use std::{
 use slug_vm::{
     ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader,
     NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue, NativeStatus,
-    RuntimeErrorKind, Value, Vm, compile,
+    RuntimeErrorKind, Value, Vm, compile, initialize_filesystem_plugin,
 };
 
 fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -562,6 +562,88 @@ fn clutch_plugins_validate_declared_resource_type_ownership() {
     }
     assert_eq!(RESOURCE_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
     fs::remove_dir_all(root).expect("remove plugin resource root");
+}
+
+#[test]
+fn filesystem_clutch_provides_nominal_files_and_cleans_up_after_error_unwinding() {
+    let root = root("clutch-filesystem");
+    fs::create_dir_all(&root).expect("create filesystem clutch root");
+    let clutch = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/clutches/slug.io.fs.clutch");
+    let mut repository =
+        ClutchRepository::new(vec![("slug.io.fs".into(), clutch)]).expect("repository");
+    repository
+        .define_plugin("slug.io.fs.rust", initialize_filesystem_plugin)
+        .expect("configure filesystem plugin");
+    let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+    let file = root.join("written.txt");
+    let path = file.to_string_lossy();
+    let program = loader
+        .compile_source(
+            &root.join("main.slug").to_string_lossy(),
+            &format!(
+                "val fs = import(\"slug.io.fs\")\n\
+                 val output:fs.File = fs.openWrite(\"{path}\")\n\
+                 defer fs.close(output)\n\
+                 val written:num = fs.write(output, \"hello\")\n\
+                 val input:fs.File = fs.openRead(\"{path}\")\n\
+                 defer fs.close(input)\n\
+                 export val line:str|nil = fs.readLine(input)\n\
+                 export val count:num = written\n"
+            ),
+        )
+        .expect("compile filesystem clutch consumer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("run filesystem clutch consumer");
+
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"line\": \"hello\", \"count\": 5}"
+    );
+    drop(vm);
+
+    let failing = loader
+        .compile_source(
+            &root.join("failing.slug").to_string_lossy(),
+            &format!(
+                "val fs = import(\"slug.io.fs\")\n\
+                 val output:fs.File = fs.openAppend(\"{path}\")\n\
+                 defer fs.close(output)\n\
+                 fs.write(output, \"!\")\n\
+                 throw \"expected\"\n"
+            ),
+        )
+        .expect("compile error-unwinding filesystem consumer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    assert!(vm.run_named(&failing, "main").is_err());
+    drop(vm);
+
+    let shutdown_program = loader
+        .compile_source(
+            &root.join("shutdown.slug").to_string_lossy(),
+            &format!(
+                "val fs = import(\"slug.io.fs\")\n\
+                 export val output:fs.File = fs.openAppend(\"{path}\")\n"
+            ),
+        )
+        .expect("compile shutdown filesystem consumer");
+    let mut vm = Vm::with_module_loader(loader);
+    vm.run_named(&shutdown_program, "main")
+        .expect("open file before shutdown");
+    vm.shutdown();
+    let error = vm
+        .run_named(&shutdown_program, "main")
+        .expect_err("shutdown VM rejects new execution");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert!(error.message.contains("has shut down"));
+
+    assert_eq!(
+        fs::read_to_string(&file).expect("read closed file"),
+        "hello!"
+    );
+    fs::remove_dir_all(root).expect("remove filesystem clutch root");
 }
 
 #[test]

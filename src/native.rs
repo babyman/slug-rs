@@ -260,6 +260,15 @@ impl NativeResourceRegistry {
         );
     }
 
+    pub(crate) fn close_all(&self) {
+        let resources = self.0.resources.borrow().clone();
+        for resource in resources {
+            if let Some(resource) = resource.upgrade() {
+                let _ = resource.close();
+            }
+        }
+    }
+
     #[cfg(test)]
     fn tracked_count(&self) -> usize {
         self.0.resources.borrow().len()

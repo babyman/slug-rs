@@ -1,0 +1,8 @@
+export resource File
+
+export foreign openRead = fn(path:str):File
+export foreign openWrite = fn(path:str):File
+export foreign openAppend = fn(path:str):File
+export foreign readLine = fn(file:File):str|nil
+export foreign write = fn(file:File, content:str):num
+export foreign close = fn(file:File):nil

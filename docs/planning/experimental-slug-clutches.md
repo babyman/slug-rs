@@ -1436,21 +1436,21 @@ shutdown flow with one small filesystem capability.
 
 ### Todo
 
-- [ ] Move or recreate the minimal `slug.io.fs` declaration module inside an
+- [x] Move or recreate the minimal `slug.io.fs` declaration module inside an
   exploded test clutch: `File`, `open`, `read`, and idempotent `close`.
-- [ ] Implement a test-only Rust v0 filesystem plugin first. Reuse existing
+- [x] Implement a test-only Rust v0 filesystem plugin first. Reuse existing
   nominal resource and foreign-call validation rather than creating a clutch
   resource representation.
-- [ ] Use a consumer fixture that imports only `slug.io.fs`; it must not know
+- [x] Use a consumer fixture that imports only `slug.io.fs`; it must not know
   the clutch path, plugin name, or native implementation.
-- [ ] Prove resource cleanup through explicit close, error unwinding, and VM
+- [x] Prove resource cleanup through explicit close, error unwinding, and VM
   shutdown. Confirm shutdown rejects new calls and releases registrations and
   plugin-owned state.
-- [ ] Prove that code residency is not mistaken for state residency: cleanup
+- [x] Prove that code residency is not mistaken for state residency: cleanup
   runs deterministically, but no test expects `dlclose`.
-- [ ] Add diagnostic assertions for bad manifest data, unsupported platform,
+- [x] Add diagnostic assertions for bad manifest data, unsupported platform,
   plugin initialization failure, foreign mismatch, and an unavailable module.
-- [ ] Add the relevant support-matrix/README wording only if the feature
+- [x] Add the relevant support-matrix/README wording only if the feature
   becomes user-invokable; otherwise retain its test-only experimental status.
 
 ### Exit criteria
