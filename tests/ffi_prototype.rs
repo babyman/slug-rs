@@ -57,10 +57,13 @@ fn build_native_clutch(
     libraries: &[&str],
 ) -> ClutchRepository {
     let clutch_root = directory.path().join("clutch").join(clutch_name);
+    let support_module_name = format!("{module_name}.support");
     fs::create_dir_all(directory.path().join("clutch")).expect("create clutch repository");
     fs::write(
         directory.path().join("clutch/manifest.toml"),
-        format!("[modules]\n\"{module_name}\" = \"{clutch_name}\"\n"),
+        format!(
+            "[modules]\n\"{module_name}\" = \"{clutch_name}\"\n\"{support_module_name}\" = \"{clutch_name}\"\n"
+        ),
     )
     .expect("write clutch repository manifest");
     fs::create_dir_all(clutch_root.join("modules")).expect("create clutch modules");
@@ -76,6 +79,11 @@ fn build_native_clutch(
         .expect("native source has a file name");
     fs::copy(module_source, clutch_root.join("modules").join(module_file))
         .expect("copy clutch declaration");
+    fs::write(
+        clutch_root.join("modules/support.slug"),
+        "export val kind = \"pure Slug\"\n",
+    )
+    .expect("write pure Slug companion module");
     fs::copy(
         native_source,
         clutch_root.join("native/source").join(native_file),
@@ -92,7 +100,8 @@ fn build_native_clutch(
         clutch_root.join("clutch.toml"),
         format!(
             "[modules]\n\
-             \"{module_name}\" = {{ source = \"modules/{}\", native = true }}\n\n\
+             \"{module_name}\" = {{ source = \"modules/{}\" }}\n\
+             \"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n\
              [native]\n\
              source = \"native/source\"\n\
              abi = \"slug-ffi-prototype/0.7\"\n\n\
@@ -191,6 +200,42 @@ fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
             .expect_err("shutdown VM rejects new work")
             .kind,
         RuntimeErrorKind::InvalidCall
+    );
+}
+
+#[test]
+fn one_native_clutch_supports_pure_and_native_backed_modules() {
+    let directory = TemporaryDirectory::new();
+    let repository = build_native_clutch(
+        &directory,
+        "slug.io.fs",
+        "slug.io.fs.clutch",
+        "clutch/slug.io.fs.clutch/modules/fs.slug",
+        "clutch/slug.io.fs.clutch/native/source/fs.c",
+        "shared_slug_io_fs",
+        &[],
+    );
+    let file = directory.path().join("shared.txt");
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let program = loader
+        .compile_source(
+            &directory.path().join("shared.slug").to_string_lossy(),
+            &format!(
+                "val support = import(\"slug.io.fs.support\")\n\
+                 val fs = import(\"slug.io.fs\")\n\
+                 val output:fs.File = fs.openWrite(\"{}\")\n\
+                 fs.write(output, support.kind)\n\
+                 fs.close(output)\n",
+                file.display()
+            ),
+        )
+        .expect("compile mixed clutch consumer");
+    let mut vm = Vm::with_module_loader(loader);
+    vm.run_named(&program, "main")
+        .expect("load pure and native-backed modules from one clutch");
+    assert_eq!(
+        fs::read_to_string(file).expect("read mixed clutch output"),
+        "pure Slug"
     );
 }
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Made native implementation support clutch-owned rather than module-owned:
+  one optional native library now initializes once and may support any subset
+  of a clutch's modules, while pure-Slug modules need no marker.
+
 - Made experimental native clutch shutdown deterministic: resource payloads are
   closed and destroyed into tombstones, module state and registrations are
   finalized, stale callbacks report `native.plugin_inactive`, and final

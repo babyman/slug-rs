@@ -250,30 +250,44 @@ fn validate_clutch_directory(directory: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Initializes one manifest-selected plugin within one module-bound scope.
+/// Initializes one manifest-selected plugin within one clutch-owned scope.
 pub type ClutchPluginInitializer =
     Rc<dyn Fn(&mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError>>;
 
-/// A module-bound, staged registrar exposed to experimental Rust clutch plugins.
+/// A clutch-bound, staged registrar exposed to experimental Rust clutch plugins.
 pub struct ClutchPluginRegistrar {
-    module_name: String,
+    module_names: HashSet<String>,
+    primary_module_name: String,
     functions: Vec<NativeFunction>,
     cleanup: Option<Box<dyn FnOnce() -> Result<(), String>>>,
 }
 
 impl ClutchPluginRegistrar {
-    pub(crate) fn new(module_name: impl Into<String>) -> Self {
+    pub(crate) fn new(module_names: impl IntoIterator<Item = String>) -> Self {
+        let module_names = module_names.into_iter().collect::<HashSet<_>>();
+        let primary_module_name = module_names
+            .iter()
+            .next()
+            .cloned()
+            .expect("clutch plugin registrar requires at least one module");
         Self {
-            module_name: module_name.into(),
+            module_names,
+            primary_module_name,
             functions: Vec::new(),
             cleanup: None,
         }
     }
 
-    /// Returns the only source module this plugin invocation may serve.
+    /// Returns whether this clutch owns a module identity.
+    #[must_use]
+    pub fn serves_module(&self, module_name: &str) -> bool {
+        self.module_names.contains(module_name)
+    }
+
+    /// Returns this registrar's primary module for legacy single-module host plugins.
     #[must_use]
     pub fn module_name(&self) -> &str {
-        &self.module_name
+        &self.primary_module_name
     }
 
     /// Stages a module-qualified foreign function for publication.
@@ -286,10 +300,9 @@ impl ClutchPluginRegistrar {
         &mut self,
         function: NativeFunction,
     ) -> Result<(), NativeDescriptorError> {
-        if function.module_name() != self.module_name {
+        if !self.serves_module(function.module_name()) {
             return Err(NativeDescriptorError::new(format!(
-                "clutch plugin for module `{}` cannot register foreign function `{}`",
-                self.module_name,
+                "clutch plugin cannot register foreign function `{}` outside its modules",
                 function.qualified_name()
             )));
         }
@@ -300,7 +313,7 @@ impl ClutchPluginRegistrar {
         {
             return Err(NativeDescriptorError::new(format!(
                 "clutch plugin foreign function `{}.{}` is already staged",
-                self.module_name,
+                function.module_name(),
                 function.name()
             )));
         }
@@ -379,6 +392,7 @@ pub(crate) struct ClutchModule {
     pub path: PathBuf,
     pub plugin_entry: Option<String>,
     pub native_plugin: Option<NativeClutchPlugin>,
+    pub module_names: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -405,26 +419,25 @@ pub(crate) fn load_module(root: &Path, name: &str) -> Result<ClutchModule, Strin
         .get(name)
         .ok_or_else(|| format!("clutch does not provide indexed module `{name}`"))?;
     let source_path = source_path(&root, &module.source)?;
-    let native_plugin = if module.native {
-        let native = manifest
-            .native
-            .as_ref()
-            .ok_or_else(|| format!("module `{name}` enables native support without `[native]`"))?;
-        if let Some(source) = &native.source {
-            directory_path(&root, source, "native source")?;
-        }
-        Some(NativeClutchPlugin {
-            library: native_library_path(&root, native)?,
-            abi: native.abi.clone(),
+    let native_plugin = manifest
+        .native
+        .as_ref()
+        .map(|native| {
+            if let Some(source) = &native.source {
+                directory_path(&root, source, "native source")?;
+            }
+            Ok::<NativeClutchPlugin, String>(NativeClutchPlugin {
+                library: native_library_path(&root, native)?,
+                abi: native.abi.clone(),
+            })
         })
-    } else {
-        None
-    };
+        .transpose()?;
     Ok(ClutchModule {
         root,
         path: source_path,
         plugin_entry: module.plugin_entry.clone(),
         native_plugin,
+        module_names: manifest.modules.into_keys().collect(),
     })
 }
 
@@ -438,7 +451,6 @@ struct ClutchManifest {
 struct ClutchModuleEntry {
     source: String,
     plugin_entry: Option<String>,
-    native: bool,
 }
 
 #[derive(Debug)]
@@ -464,10 +476,6 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
         return Err("`modules` must provide at least one module".into());
     }
     let native = table.get("native").map(parse_native).transpose()?;
-    // Experimental layout limitation, not a clutch invariant: one native
-    // descriptor is currently staged per clutch. A future loader may let one
-    // plugin serve several declared modules through shared ownership.
-    let mut native_module_count = 0;
     let mut result = HashMap::new();
     for (name, entry) in modules {
         if !valid_module_name(name) {
@@ -476,11 +484,7 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
         let entry = entry
             .as_table()
             .ok_or_else(|| format!("module `{name}` must be a table"))?;
-        require_keys(
-            entry,
-            &["source", "plugin", "native"],
-            &format!("module `{name}`"),
-        )?;
+        require_keys(entry, &["source", "plugin"], &format!("module `{name}`"))?;
         let path = string(entry, "source", &format!("module `{name}`"))?;
         let plugin_entry = entry
             .get("plugin")
@@ -494,41 +498,13 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
                 Ok(plugin.to_owned())
             })
             .transpose()?;
-        let native = entry
-            .get("native")
-            .map(|native| {
-                native
-                    .as_bool()
-                    .ok_or_else(|| format!("`native` in module `{name}` must be a boolean"))
-            })
-            .transpose()?
-            .unwrap_or(false);
-        if native && plugin_entry.is_some() {
-            return Err(format!(
-                "module `{name}` cannot declare both `native` and `plugin`"
-            ));
-        }
-        native_module_count += usize::from(native);
         result.insert(
             name.clone(),
             ClutchModuleEntry {
                 source: path.to_owned(),
                 plugin_entry,
-                native,
             },
         );
-    }
-    if native_module_count > 1 {
-        return Err(
-            "the experimental loader supports native backing for at most one module per clutch"
-                .into(),
-        );
-    }
-    if native_module_count > 0 && native.is_none() {
-        return Err("a native module requires a `[native]` section".into());
-    }
-    if native_module_count == 0 && native.is_some() {
-        return Err("`[native]` requires one module with `native = true`".into());
     }
     Ok(ClutchManifest {
         modules: result,

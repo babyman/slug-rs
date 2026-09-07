@@ -1,5 +1,5 @@
 [modules]
-"slug.sqlite" = { source = "modules/sqlite.slug", native = true }
+"slug.sqlite" = { source = "modules/sqlite.slug" }
 
 [native]
 source = "native/source"

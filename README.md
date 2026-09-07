@@ -50,8 +50,8 @@ contract is documented separately as `.cslug`.
   isolated module initialization, and string-keyed exported-value maps.
 - Experimental exploded clutches named by `$SLUG_HOME/clutch/manifest.toml`
   may provide additional source modules after existing providers. A host may
-  configure a module-scoped Rust plugin or a manifest-selected experimental
-  native library. The local `slug.io.fs` clutch commits a macOS ARM native
+  configure a clutch-scoped Rust plugin or a manifest-selected experimental
+  native library that supports any subset of the clutch's modules. The local `slug.io.fs` clutch commits a macOS ARM native
   library and reports a checked unavailable-platform error elsewhere. The
   `slug.sqlite` clutch provides the second native-provider check by building
   its adapter into a temporary installed layout during integration tests. The

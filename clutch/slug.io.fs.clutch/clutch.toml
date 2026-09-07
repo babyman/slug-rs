@@ -1,5 +1,5 @@
 [modules]
-"slug.io.fs" = { source = "modules/fs.slug", native = true }
+"slug.io.fs" = { source = "modules/fs.slug" }
 
 [native]
 source = "native/source"

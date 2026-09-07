@@ -52,11 +52,14 @@ name a `.slug` file in version 0. A module without a plugin omits `plugin`.
 The optional `plugin` value is an opaque host configuration key, not a
 source-visible path or arbitrary native-library search instruction.
 
-Alternatively, one module may opt into the clutch's optional native section:
+Optionally, a clutch may provide one native implementation library for any
+subset of its modules:
 
 ```toml
 [modules]
-"slug.io.fs" = { source = "modules/fs.slug", native = true }
+"slug.arcade" = { source = "modules/arcade.slug" }
+"slug.arcade.audio" = { source = "modules/audio.slug" }
+"slug.arcade.input" = { source = "modules/input.slug" }
 
 [native]
 source = "native/source"
@@ -66,14 +69,14 @@ abi = "slug-ffi-prototype/0.7"
 "macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
 ```
 
-`native` and `plugin` are mutually exclusive. The optional `native.source`
-directory contains FFI source or build inputs and is never compiled by Slug at
-runtime. `native.libraries` selects one checked library for the current
-supported OS/architecture; all paths must remain inside the clutch. The
-current loader provisionally allows only one `native = true` module per clutch;
-this is an experimental descriptor-layout limitation, not a clutch invariant.
-The loader accepts only `slug-ffi-prototype/0.7`, validates
-its descriptor, and does not search system paths or fall back to a host plugin.
+The optional `native.source` directory contains FFI source or build inputs and
+is never compiled by Slug at runtime. `native.libraries` selects one checked
+library for the current supported OS/architecture; all paths must remain inside
+the clutch. The library is initialized once for the clutch and may register
+implementations for any of its module identities. A module remains pure Slug
+unless its own `foreign` declarations require one of those registrations. The
+loader accepts only `slug-ffi-prototype/0.7`, validates its descriptor, and
+does not search system paths or fall back to a host plugin.
 
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
@@ -117,14 +120,13 @@ the clutch's source `foreign` declarations. It cannot create ambient globals,
 bind arbitrary C symbols, or alter Slug semantics. Foreign signature and
 nominal-resource validation remain the native-ABI boundary.
 
-For a module that names a host plugin or enables the clutch-native module,
-loading is transactional:
+For a clutch with a host plugin or native library, loading is transactional:
 
 1. validate the selected clutch manifest and paths;
-2. initialize the host plugin, or load and validate the selected native
+2. initialize the plugin once, or load and validate the selected native
    descriptor, under a clutch-owned registration scope;
-3. compile the source module and validate its `foreign` declarations against
-   that scope; and
+3. load requested source modules and validate each module's `foreign`
+   declarations against that scope; and
 4. publish the module and registrations only after all preceding steps pass.
 
 On failure, the loader removes every registration from that scope and invokes
@@ -154,12 +156,13 @@ duplicate provider.
 The first implementation must prove:
 
 - a source-only clutch imports as an ordinary module;
-- a native-backed clutch binds only its declared module-qualified foreign
-  functions and nominal resources;
+- a native-backed clutch may serve a pure-Slug module and a module with
+  declared foreign functions from the same clutch-owned plugin;
 - cached and cyclic imports preserve existing module isolation and live
   bindings;
 - failed initialization and foreign validation leave no registrations behind;
-- shutdown cleans plugin state without unloading code still potentially in use.
+- shutdown deterministically finalizes plugin state and releases its library
+  lease after its resources are destroyed.
 
 ## Relationship to other contracts
 

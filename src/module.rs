@@ -49,11 +49,13 @@ enum ClutchPluginSource {
     Host {
         root: PathBuf,
         entry: String,
+        module_names: Vec<String>,
     },
     Native {
         root: PathBuf,
         library: PathBuf,
         abi: String,
+        module_names: Vec<String>,
     },
 }
 
@@ -228,11 +230,13 @@ impl ModuleLoader {
                     (Some(entry), None) => Some(ClutchPluginSource::Host {
                         root: module.root,
                         entry,
+                        module_names: vec![name.into()],
                     }),
                     (None, Some(native)) => Some(ClutchPluginSource::Native {
                         root: module.root,
                         library: native.library,
                         abi: native.abi,
+                        module_names: module.module_names,
                     }),
                     (None, None) => None,
                     (Some(_), Some(_)) => {
@@ -326,7 +330,7 @@ impl ModuleLoader {
         if let Some(instance) = self.state.instances.borrow().get(&source.path) {
             return Ok(instance.clone());
         }
-        let mut plugin = self.stage_clutch_plugin(name, &source)?;
+        let mut plugin = self.stage_clutch_plugin(&source)?;
         let program = match self.compile(importer, name) {
             Ok(program) => Rc::new(program),
             Err(error) => {
@@ -376,10 +380,14 @@ impl ModuleLoader {
             .borrow_mut()
             .insert(source.path, instance.clone());
         if let Some(plugin) = plugin {
+            let root = source.clutch_plugin.as_ref().map_or_else(
+                || instance.path.clone(),
+                |plugin| plugin.root().to_path_buf(),
+            );
             self.state
                 .active_clutch_plugins
                 .borrow_mut()
-                .insert(instance.path.clone(), plugin);
+                .insert(root, plugin);
         }
         Ok(instance)
     }
@@ -532,15 +540,22 @@ impl ModuleLoader {
 
     fn stage_clutch_plugin(
         &self,
-        module_name: &str,
         source: &ModuleSource,
     ) -> Result<Option<StagedClutchPlugin>, ModuleLoadError> {
         let Some(plugin) = &source.clutch_plugin else {
             return Ok(None);
         };
-        let mut registrar = clutch::ClutchPluginRegistrar::new(module_name);
+        if self
+            .state
+            .active_clutch_plugins
+            .borrow()
+            .contains_key(plugin.root())
+        {
+            return Ok(None);
+        }
+        let mut registrar = clutch::ClutchPluginRegistrar::new(plugin.module_names().to_vec());
         let result = match plugin {
-            ClutchPluginSource::Host { root, entry } => {
+            ClutchPluginSource::Host { root, entry, .. } => {
                 let initializer = self.state.clutch_repository.plugin(entry).ok_or_else(|| {
                     ModuleLoadError::Clutch {
                         path: root.clone(),
@@ -552,7 +567,9 @@ impl ModuleLoader {
                     message: format!("plugin initialization failed: {error}"),
                 })
             }
-            ClutchPluginSource::Native { root, library, abi } => {
+            ClutchPluginSource::Native {
+                root, library, abi, ..
+            } => {
                 if abi == crate::ffi_prototype::ABI_PROFILE {
                     let module = FfiPrototypeModule::load(library).map_err(|error| {
                         ModuleLoadError::Clutch {
@@ -594,6 +611,20 @@ impl ModuleLoader {
     fn cleanup_plugin(plugin: &mut Option<StagedClutchPlugin>) {
         if let Some(plugin) = plugin {
             let _ = plugin.cleanup();
+        }
+    }
+}
+
+impl ClutchPluginSource {
+    fn root(&self) -> &Path {
+        match self {
+            Self::Host { root, .. } | Self::Native { root, .. } => root,
+        }
+    }
+
+    fn module_names(&self) -> &[String] {
+        match self {
+            Self::Host { module_names, .. } | Self::Native { module_names, .. } => module_names,
         }
     }
 }
