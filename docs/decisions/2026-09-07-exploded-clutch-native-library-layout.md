@@ -17,21 +17,34 @@ experiment unable to prove its installed path.
 
 ## Decision
 
-An exploded clutch declares an optional native plugin in its own manifest.
-The module's existing `plugin` value names that declaration:
+An exploded clutch has one optional clutch-level `[native]` section. It owns
+the native source tree and the platform-specific library selection. A module
+that uses the clutch's native implementation says only `native = true`:
 
 ```toml
 [modules]
-"slug.io.fs" = { source = "modules/fs.slug", plugin = "slug.io.fs.native" }
+"slug.io.fs" = { source = "modules/fs.slug", native = true }
 
-[plugins."slug.io.fs.native"]
+[native]
+source = "native/source"
 abi = "slug-ffi-prototype/0.7"
 
-[plugins."slug.io.fs.native".libraries]
+[native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
 "linux-x86_64" = "native/linux-x86_64/libslug_io_fs.so"
 "windows-x86_64" = "native/windows-x86_64/slug_io_fs.dll"
 ```
+
+`native.source` is a clutch-relative directory containing source or other
+build inputs for its foreign implementation. It is optional and never compiled
+by the runtime; its purpose is to keep the module's FFI-related code with the
+clutch. When present, it must remain inside the clutch root. The selected
+library is also clutch-relative and is the only native file the runtime loads.
+
+Version 0 permits at most one `native = true` module per clutch because the
+prototype descriptor initializes one module identity. Other modules in that
+clutch remain source-only. A future multi-module native descriptor requires a
+separate ABI decision.
 
 The platform key is the host operating-system and architecture pair. Version 0
 recognizes only the keys listed above; an absent current-platform entry is a
@@ -76,8 +89,9 @@ cross-compilation, universal binaries, or ABI version 1.
 
 ## Migration
 
-The implementation will replace `slug.io.fs.rust` with the native plugin
-declaration and place a platform-specific test-built library under `native/`.
-Repositories without a native plugin remain source-only. Existing direct Rust
-host plugin registration stays available for embedding tests, but the CLI will
-not silently substitute it for a declared native plugin.
+The implementation will replace `slug.io.fs.rust` with `native = true`, move
+the C implementation into `native/source/`, and place a platform-specific
+test-built library under `native/<target>/`. Repositories without `[native]`
+remain source-only. Existing direct Rust host plugin registration stays
+available for embedding tests, but the CLI will not silently substitute it for
+a declared native module.
