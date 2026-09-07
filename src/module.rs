@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    ClutchRepository, Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction,
-    Program, SourceError, Value, Vm,
+    ClutchRepository, Configuration, FfiPrototypeModule, ModuleDeclaration, NativeDescriptorError,
+    NativeFunction, Program, SourceError, Value, Vm,
     clutch::{self, StagedClutchPlugin},
     native::{NativeResourceRegistry, native_resource_registry},
     source::{compile_with_resolver, environment::ModuleSnapshot, semantic_snapshot},
@@ -44,9 +44,16 @@ pub struct ModuleSource {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ClutchPluginSource {
-    root: PathBuf,
-    entry: String,
+enum ClutchPluginSource {
+    Host {
+        root: PathBuf,
+        entry: String,
+    },
+    Native {
+        root: PathBuf,
+        library: PathBuf,
+        abi: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -215,10 +222,21 @@ impl ModuleLoader {
             return Ok(ModuleSource {
                 path: module.path,
                 text,
-                clutch_plugin: module.plugin_entry.map(|entry| ClutchPluginSource {
-                    root: module.root,
-                    entry,
-                }),
+                clutch_plugin: match (module.plugin_entry, module.native_plugin) {
+                    (Some(entry), None) => Some(ClutchPluginSource::Host {
+                        root: module.root,
+                        entry,
+                    }),
+                    (None, Some(native)) => Some(ClutchPluginSource::Native {
+                        root: module.root,
+                        library: native.library,
+                        abi: native.abi,
+                    }),
+                    (None, None) => None,
+                    (Some(_), Some(_)) => {
+                        unreachable!("clutch manifest validation is inconsistent")
+                    }
+                },
             });
         }
         Err(ModuleLoadError::NotFound {
@@ -507,25 +525,44 @@ impl ModuleLoader {
         let Some(plugin) = &source.clutch_plugin else {
             return Ok(None);
         };
-        let initializer = self
-            .state
-            .clutch_repository
-            .plugin(&plugin.entry)
-            .ok_or_else(|| ModuleLoadError::Clutch {
-                path: plugin.root.clone(),
-                message: format!(
-                    "plugin entry `{}` is not configured by the host",
-                    plugin.entry
-                ),
-            })?;
         let mut registrar = clutch::ClutchPluginRegistrar::new(module_name);
-        if let Err(error) = initializer(&mut registrar) {
+        let result = match plugin {
+            ClutchPluginSource::Host { root, entry } => {
+                let initializer = self.state.clutch_repository.plugin(entry).ok_or_else(|| {
+                    ModuleLoadError::Clutch {
+                        path: root.clone(),
+                        message: format!("plugin entry `{entry}` is not configured by the host"),
+                    }
+                })?;
+                initializer(&mut registrar).map_err(|error| ModuleLoadError::Clutch {
+                    path: root.clone(),
+                    message: format!("plugin initialization failed: {error}"),
+                })
+            }
+            ClutchPluginSource::Native { root, library, abi } => {
+                if abi == crate::ffi_prototype::ABI_PROFILE {
+                    FfiPrototypeModule::load(library)
+                        .map_err(|error| ModuleLoadError::Clutch {
+                            path: library.clone(),
+                            message: format!("cannot load native plugin: {error}"),
+                        })?
+                        .stage(&mut registrar)
+                        .map_err(|error| ModuleLoadError::Clutch {
+                            path: root.clone(),
+                            message: format!("native plugin initialization failed: {error}"),
+                        })
+                } else {
+                    Err(ModuleLoadError::Clutch {
+                        path: root.clone(),
+                        message: format!("unsupported native ABI `{abi}`"),
+                    })
+                }
+            }
+        };
+        if let Err(error) = result {
             let mut staged = registrar.finish();
             staged.cleanup();
-            return Err(ModuleLoadError::Clutch {
-                path: plugin.root.clone(),
-                message: format!("plugin initialization failed: {error}"),
-            });
+            return Err(error);
         }
         Ok(Some(registrar.finish()))
     }

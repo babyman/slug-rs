@@ -10,7 +10,6 @@ mod bytecode;
 mod clutch;
 mod configuration;
 mod conformance;
-#[cfg(feature = "ffi-prototype")]
 #[allow(unsafe_code)]
 mod ffi_prototype;
 mod filesystem;
@@ -39,7 +38,6 @@ pub use clutch::{
 };
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
-#[cfg(feature = "ffi-prototype")]
 pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeModule};
 pub use filesystem::{initialize_filesystem_plugin, register_filesystem_foreign};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};

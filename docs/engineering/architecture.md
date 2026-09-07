@@ -10,7 +10,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Source front end | `src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
 | In-process bytecode | `src/bytecode.rs` | Public but unstable Rust instruction and program representation. |
 | Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
-| Experimental clutches | `src/clutch.rs`, `src/module.rs` | Explicit local source-module providers, scoped Rust plugins, and shutdown ownership. |
+| Experimental clutches | `src/clutch.rs`, `src/module.rs`, `src/ffi_prototype.rs` | Explicit local source-module providers, scoped plugins, manifest-selected native descriptors, and shutdown ownership. |
 | Filesystem capability | `src/filesystem.rs`, `clutch/manifest.toml`, `clutch/slug.io.fs.clutch/` | Native registrations and the installed experimental `slug.io.fs` clutch declaration. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
 | Runtime values | `src/value.rs` | Dynamic language values and operations. |

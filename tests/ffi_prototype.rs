@@ -39,9 +39,17 @@ fn compile_fixture(directory: &TemporaryDirectory, source: &str, name: &str) -> 
     compile_fixture_with_libraries(directory, source, name, &[])
 }
 
-#[test]
-fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
-    let directory = TemporaryDirectory::new();
+fn current_native_platform() -> &'static str {
+    match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "aarch64") => "macos-aarch64",
+        ("macos", "x86_64") => "macos-x86_64",
+        ("linux", "x86_64") => "linux-x86_64",
+        ("windows", "x86_64") => "windows-x86_64",
+        (os, architecture) => panic!("unsupported native test platform {os}-{architecture}"),
+    }
+}
+
+fn build_native_filesystem_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
     let clutch_root = directory.path().join("clutch/slug.io.fs.clutch");
     fs::create_dir_all(directory.path().join("clutch")).expect("create clutch repository");
     fs::copy(
@@ -50,34 +58,80 @@ fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
     )
     .expect("copy clutch repository manifest");
     fs::create_dir_all(clutch_root.join("modules")).expect("create filesystem clutch modules");
-    fs::create_dir_all(clutch_root.join("native")).expect("create filesystem clutch native dir");
-    fs::copy(
-        "clutch/slug.io.fs.clutch/clutch.toml",
-        clutch_root.join("clutch.toml"),
-    )
-    .expect("copy filesystem clutch manifest");
+    let target = current_native_platform();
+    fs::create_dir_all(clutch_root.join("native/source"))
+        .expect("create filesystem clutch native source dir");
+    fs::create_dir_all(clutch_root.join("native").join(target))
+        .expect("create filesystem clutch library dir");
     fs::copy(
         "clutch/slug.io.fs.clutch/modules/fs.slug",
         clutch_root.join("modules/fs.slug"),
     )
     .expect("copy filesystem declaration");
     let built = compile_fixture(
-        &directory,
-        "clutch/slug.io.fs.clutch/native/fs.c",
+        directory,
+        "clutch/slug.io.fs.clutch/native/source/fs.c",
         "slug_io_fs",
     );
-    let library = clutch_root.join("native").join(
+    let library = clutch_root.join("native").join(target).join(
         built
             .file_name()
             .expect("test-built library has a file name"),
     );
     fs::copy(built, &library).expect("place dynamic module in filesystem clutch");
-    let ffi = FfiPrototypeModule::load(&library).expect("load filesystem dynamic module");
-    let mut repository = ClutchRepository::from_manifest(directory.path().join("clutch"))
-        .expect("load filesystem clutch manifest");
-    repository
-        .define_plugin("slug.io.fs.rust", move |registrar| ffi.stage(registrar))
-        .expect("configure filesystem dynamic plugin");
+    fs::copy(
+        "clutch/slug.io.fs.clutch/native/source/fs.c",
+        clutch_root.join("native/source/fs.c"),
+    )
+    .expect("copy filesystem native source");
+    fs::write(
+        clutch_root.join("clutch.toml"),
+        format!(
+            "[modules]\n\
+             \"slug.io.fs\" = {{ source = \"modules/fs.slug\", native = true }}\n\n\
+             [native]\n\
+             source = \"native/source\"\n\
+             abi = \"slug-ffi-prototype/0.7\"\n\n\
+             [native.libraries]\n\
+             \"{target}\" = \"native/{target}/{}\"\n",
+            library
+                .file_name()
+                .expect("native library name")
+                .to_string_lossy(),
+        ),
+    )
+    .expect("write native filesystem clutch manifest");
+    ClutchRepository::from_manifest(directory.path().join("clutch"))
+        .expect("load filesystem clutch manifest")
+}
+
+#[test]
+fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
+    let directory = TemporaryDirectory::new();
+    let repository = build_native_filesystem_clutch(&directory);
+    let cli_file = directory.path().join("cli-written.txt");
+    let cli_program = directory.path().join("cli.slug");
+    fs::write(
+        &cli_program,
+        format!(
+            "val fs = import(\"slug.io.fs\")\n\
+             val output:fs.File = fs.openWrite(\"{}\")\n\
+             fs.write(output, \"from cli\")\n\
+             fs.close(output)\n",
+            cli_file.display()
+        ),
+    )
+    .expect("write native clutch CLI program");
+    let status = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .env("SLUG_HOME", directory.path())
+        .arg(&cli_program)
+        .status()
+        .expect("run CLI through native clutch layout");
+    assert!(status.success(), "CLI native clutch run failed: {status}");
+    assert_eq!(
+        fs::read_to_string(&cli_file).expect("read CLI native output"),
+        "from cli"
+    );
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
     let file = directory.path().join("written.txt");
     let program = loader

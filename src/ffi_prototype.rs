@@ -1,8 +1,8 @@
-//! Unstable, test-only bridge for exercising a minimal Slug-aware C module.
+//! Unstable bridge for the experimental clutch native-module layout.
 //!
 //! This is deliberately not the version 1 native ABI. It contains the unsafe
-//! dynamic-loader and raw-pointer work in one feature-gated module so the rest
-//! of the runtime continues to prohibit unsafe code.
+//! dynamic-loader and raw-pointer work in one isolated module so the rest of
+//! the runtime continues to prohibit unsafe code.
 
 use std::{
     cell::RefCell,
@@ -26,6 +26,7 @@ use crate::{
 
 const ABI_MAJOR: u32 = 0;
 const ABI_MINOR: u32 = 7;
+pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.7";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 
@@ -281,8 +282,8 @@ impl Error for FfiPrototypeError {}
 impl FfiPrototypeModule {
     /// Loads and validates one C module that follows the prototype header.
     ///
-    /// The library remains loaded for process lifetime. This API is available
-    /// only behind the `ffi-prototype` feature and is not an ABI promise.
+    /// The library remains loaded for process lifetime. This is not an ABI-v1
+    /// compatibility promise.
     ///
     /// # Errors
     ///

@@ -40,6 +40,10 @@
   platform selection, exact prototype ABI selection, transactional loading,
   and process-resident library code.
 
+- Implemented manifest-selected native clutches, including contained
+  `native.source` and platform-library validation, descriptor staging, and an
+  installed-layout filesystem C module test that runs through the public CLI.
+
 - Support loading test-only native FFI prototype modules on Linux and Windows,
   alongside macOS.
 

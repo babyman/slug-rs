@@ -8,12 +8,13 @@ promise. It defines the smallest composition boundary that implementation work
 may rely on. A later released clutch format requires a new decision record,
 versioned schema, and regression coverage.
 
-The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery, and
-Rust-host-configured, module-scoped plugin initializer are implemented.
-`Vm::shutdown` and final loader drop clean plugin state. Archive loading,
-package installation, and packaged dynamic native loading remain unimplemented.
-The feature-gated FFI prototype additionally test-builds the filesystem
-clutch's C implementation; it is not available to normal CLI installations.
+The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
+module-scoped Rust plugin initializer, and manifest-selected version-0 native
+loader are implemented. `Vm::shutdown` and final loader drop clean plugin
+state. Archive loading, package installation, and packaged binary distribution
+remain unimplemented. The installed-layout regression test builds the
+filesystem clutch's C implementation for the running platform; no platform
+library binary is committed to this repository.
 
 ## Purpose and terms
 
@@ -41,6 +42,28 @@ source path is relative to the clutch root, must remain within it, and must
 name a `.slug` file in version 0. A module without a plugin omits `plugin`.
 The optional `plugin` value is an opaque host configuration key, not a
 source-visible path or arbitrary native-library search instruction.
+
+Alternatively, one module may opt into the clutch's optional native section:
+
+```toml
+[modules]
+"slug.io.fs" = { source = "modules/fs.slug", native = true }
+
+[native]
+source = "native/source"
+abi = "slug-ffi-prototype/0.7"
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
+```
+
+`native` and `plugin` are mutually exclusive. The optional `native.source`
+directory contains FFI source or build inputs and is never compiled by Slug at
+runtime. `native.libraries` selects one checked library for the current
+supported OS/architecture; all paths must remain inside the clutch. Version 0
+allows only one `native = true` module because its descriptor represents one
+module identity. The loader accepts only `slug-ffi-prototype/0.7`, validates
+its descriptor, and does not search system paths or fall back to a host plugin.
 
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
@@ -84,10 +107,12 @@ the clutch's source `foreign` declarations. It cannot create ambient globals,
 bind arbitrary C symbols, or alter Slug semantics. Foreign signature and
 nominal-resource validation remain the native-ABI boundary.
 
-For a module that names a plugin, loading is transactional:
+For a module that names a host plugin or enables the clutch-native module,
+loading is transactional:
 
 1. validate the selected clutch manifest and paths;
-2. initialize the plugin under a clutch-owned registration scope;
+2. initialize the host plugin, or load and validate the selected native
+   descriptor, under a clutch-owned registration scope;
 3. compile the source module and validate its `foreign` declarations against
    that scope; and
 4. publish the module and registrations only after all preceding steps pass.
@@ -119,7 +144,8 @@ producer revocation and coordinated task cancellation remain future work.
 
 Implementations must report checked module or native diagnostics, never host
 panics, for: an unknown module, invalid manifest, an absent or unsupported
-plugin, failed plugin initialization, foreign mismatch, and duplicate provider.
+plugin or platform library, failed initialization, foreign mismatch, and
+duplicate provider.
 The first implementation must prove:
 
 - a source-only clutch imports as an ordinary module;

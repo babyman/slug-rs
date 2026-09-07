@@ -8,12 +8,13 @@ architecture contract, not a source-language specification. Slug programs
 continue to observe the rules in `language/`; this interface defines how trusted
 host code supplies those rules without depending on VM internals.
 
-The call-scoped static Rust facade implements version 0 of this design contract.
-No public binary ABI version, C header, dynamic loader, or external native
-module is implemented or accepted yet. The Rust API may change while channels
-and concurrency exercise the design. A public ABI becomes a compatibility
-promise only when version 1 is published with its C-compatible declarations and
-conformance tests.
+The call-scoped static Rust facade and an internal clutch-only dynamic loader
+implement version 0 of this design contract. The loader accepts only the
+version-0 prototype descriptor selected by a clutch manifest; it does not
+create a public binary ABI or accept third-party compatibility promises. The
+Rust API may change while channels and concurrency exercise the design. A
+public ABI becomes a compatibility promise only when version 1 is published
+with its C-compatible declarations and conformance tests.
 
 The terms in this document are intentionally distinct:
 
@@ -446,10 +447,11 @@ released together.
 
 ## Experimental C math module
 
-The `ffi-prototype` Cargo feature contains a test-only C module experiment with
-scalar `add` and `sqrt` functions. Its header, loader, and fixtures exist to
-exercise opaque calls, version rejection, and structured errors; they are not
-version 1 declarations and accept no third-party compatibility promise. The
+The `ffi-prototype` test suite contains C module fixtures with scalar `add` and
+`sqrt` functions. The same internal loader is selected by an experimental
+clutch's native manifest entry. Its header, loader, and fixtures exercise
+opaque calls, version rejection, and structured errors; they are not version 1
+declarations and accept no third-party compatibility promise. The
 prototype deliberately supports only exact arities, fixed-width and
 length-delimited descriptor fields, opaque member-key dispatch, and integer
 callback statuses. It keeps loaded code resident for the process lifetime and
@@ -493,6 +495,7 @@ safe regardless of resource drop order.
 
 The filesystem clutch fixture extends prototype ABI minor 7 with `set_nil` and
 copying `set_text` callback operations. Its test compiles
-`clutch/slug.io.fs.clutch/native/fs.c` into a temporary shared library and
-loads it through the clutch registrar. This proves descriptor-backed text-file
-resources without establishing a packaged dynamic-loader contract.
+`clutch/slug.io.fs.clutch/native/source/fs.c` into a temporary installed
+clutch layout and loads it through the ordinary clutch manifest and CLI. This
+proves descriptor-backed text-file resources without establishing a packaged
+distribution contract.

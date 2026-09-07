@@ -89,9 +89,11 @@ cross-compilation, universal binaries, or ABI version 1.
 
 ## Migration
 
-The implementation will replace `slug.io.fs.rust` with `native = true`, move
-the C implementation into `native/source/`, and place a platform-specific
-test-built library under `native/<target>/`. Repositories without `[native]`
+The filesystem C implementation moves into `native/source/`, and the native
+integration test places a platform-specific test-built library under
+`native/<target>/`. The repository keeps its Rust filesystem facade because it
+does not commit platform binaries; a future packaged-binary decision may make
+the installed `slug.io.fs` manifest native. Repositories without `[native]`
 remain source-only. Existing direct Rust host plugin registration stays
 available for embedding tests, but the CLI will not silently substitute it for
 a declared native module.

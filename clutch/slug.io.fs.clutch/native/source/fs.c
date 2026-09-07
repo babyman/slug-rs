@@ -1,4 +1,4 @@
-#include "slug_ffi_prototype.h"
+#include "slug_ffi_prototype.h" /* Version-0 clutch native source. */
 
 #include <stdio.h>
 #include <stdlib.h>

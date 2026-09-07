@@ -50,8 +50,9 @@ contract is documented separately as `.cslug`.
   isolated module initialization, and string-keyed exported-value maps.
 - Experimental exploded clutches named by `$SLUG_HOME/clutch/manifest.toml`
   may provide additional source modules after existing providers. A host may
-  configure a Rust-only, module-scoped native plugin; a dynamic implementation
-  is currently exercised only by the feature-gated test build.
+  configure a module-scoped Rust plugin or a manifest-selected experimental
+  native library. The repository does not commit platform library binaries;
+  the installed-layout regression test builds the filesystem library locally.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation
