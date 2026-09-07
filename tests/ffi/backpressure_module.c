@@ -54,6 +54,12 @@ static int32_t backpressured(const slug_ffi_host_api *host, slug_ffi_call *call,
     return SLUG_FFI_ERROR;
   }
   pthread_detach(thread);
+  /*
+   * The caller cannot receive until this foreign call returns. Wait until the
+   * second send has observed the full one-slot mailbox so this fixture proves
+   * that a retained value is retried, rather than relying on thread timing.
+   */
+  while (atomic_load(&saw_full) == 0) usleep(1000);
   if (!host->set_channel(call, channel)) return SLUG_FFI_ERROR;
   return SLUG_FFI_OK;
 }

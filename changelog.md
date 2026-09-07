@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed CI's native-prototype job to use the default test surface, and made
+  its backpressure regression deterministic across runner scheduling.
+
 - Made the version-0 native clutch loader and its dynamic-module regressions
   part of the default build and test surface. They remain experimental and
   intentionally incompatible across pre-release revisions.
