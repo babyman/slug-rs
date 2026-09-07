@@ -69,9 +69,10 @@ abi = "slug-ffi-prototype/0.7"
 `native` and `plugin` are mutually exclusive. The optional `native.source`
 directory contains FFI source or build inputs and is never compiled by Slug at
 runtime. `native.libraries` selects one checked library for the current
-supported OS/architecture; all paths must remain inside the clutch. Version 0
-allows only one `native = true` module because its descriptor represents one
-module identity. The loader accepts only `slug-ffi-prototype/0.7`, validates
+supported OS/architecture; all paths must remain inside the clutch. The
+current loader provisionally allows only one `native = true` module per clutch;
+this is an experimental descriptor-layout limitation, not a clutch invariant.
+The loader accepts only `slug-ffi-prototype/0.7`, validates
 its descriptor, and does not search system paths or fall back to a host plugin.
 
 The experiment does not define archive encoding, signatures, remote fetching,
@@ -132,22 +133,17 @@ import.
 
 After a successful load, a plugin remains active for the VM lifetime. Resource
 handles retain the owning module and resource-type identities already required
-by the native ABI. On shutdown, the runtime rejects new calls, revokes producer
-capabilities, requests resource closure, waits only for cooperative work to
-quiesce, and destroys safe plugin state. It then removes plugin registrations.
+by the native ABI. VM shutdown is deterministic and ordered: it stops new VM
+work, closes and destroys tracked resources into safe tombstones, destroys
+native module state, removes registrations, runs each one-shot plugin cleanup,
+and releases the final dynamic-library lease (`dlclose` or `FreeLibrary`).
 
-This experiment deliberately does **not** call `dlclose` or its platform
-equivalent. In-flight native work or leaked foreign references must keep native
-code resident rather than permit use-after-unload. This follows the current
-native ABI's process-lifetime code-residency rule; deterministic cleanup refers
-to module state and registrations, not forced library-code unloading.
-
-`Vm::shutdown` closes loader-tracked native resources before removing active
-clutch registrations and running their cleanup hooks; subsequent execution on
-that VM receives a checked `InvalidCall` error. Dropping the final
-`ModuleLoader` remains a fallback that performs the same resource-first
-cleanup. The host must quiesce other VMs sharing that loader before shutdown;
-producer revocation and coordinated task cancellation remain future work.
+Live unloading remains out of scope. The host must quiesce VMs sharing a loader
+before shutdown. Native functions and resources retained by Rust values share
+the plugin lifetime state; after shutdown they fail with
+`native.plugin_inactive` and never call an unloaded pointer. Cleanup failures
+are collected by `ModuleLoader::take_shutdown_errors`; one failure does not
+prevent other plugins from being finalized.
 
 ## Required diagnostics and proof
 

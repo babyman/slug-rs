@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Made experimental native clutch shutdown deterministic: resource payloads are
+  closed and destroyed into tombstones, module state and registrations are
+  finalized, stale callbacks report `native.plugin_inactive`, and final
+  library leases unload their dynamic libraries.
+
 - Removed the remaining checked-versus-unchecked semantic-analysis branch;
   every source and module snapshot now uses the same mandatory type checker.
 

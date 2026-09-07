@@ -258,7 +258,7 @@ pub type ClutchPluginInitializer =
 pub struct ClutchPluginRegistrar {
     module_name: String,
     functions: Vec<NativeFunction>,
-    cleanup: Option<fn()>,
+    cleanup: Option<Box<dyn FnOnce() -> Result<(), String>>>,
 }
 
 impl ClutchPluginRegistrar {
@@ -314,7 +314,25 @@ impl ClutchPluginRegistrar {
     ///
     /// Returns an error when a cleanup hook is already registered.
     pub fn set_cleanup(&mut self, cleanup: fn()) -> Result<(), NativeDescriptorError> {
-        if self.cleanup.replace(cleanup).is_some() {
+        self.set_cleanup_operation(move || {
+            cleanup();
+            Ok(())
+        })
+    }
+
+    /// Sets an owned one-shot cleanup operation for this plugin.
+    ///
+    /// The operation runs once on rollback or shutdown. Its failure is
+    /// recorded without preventing other plugins from being finalized.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a cleanup operation has already been registered.
+    pub fn set_cleanup_operation(
+        &mut self,
+        cleanup: impl FnOnce() -> Result<(), String> + 'static,
+    ) -> Result<(), NativeDescriptorError> {
+        if self.cleanup.replace(Box::new(cleanup)).is_some() {
             return Err(NativeDescriptorError::new(
                 "clutch plugin cleanup hook is already registered",
             ));
@@ -330,16 +348,27 @@ impl ClutchPluginRegistrar {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct StagedClutchPlugin {
     pub functions: Vec<NativeFunction>,
-    cleanup: Option<fn()>,
+    cleanup: Option<Box<dyn FnOnce() -> Result<(), String>>>,
+}
+
+impl fmt::Debug for StagedClutchPlugin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StagedClutchPlugin")
+            .field("functions", &self.functions)
+            .field("has_cleanup", &self.cleanup.is_some())
+            .finish()
+    }
 }
 
 impl StagedClutchPlugin {
-    pub(crate) fn cleanup(&mut self) {
+    pub(crate) fn cleanup(&mut self) -> Result<(), String> {
         if let Some(cleanup) = self.cleanup.take() {
-            cleanup();
+            cleanup()
+        } else {
+            Ok(())
         }
     }
 }
@@ -435,6 +464,9 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
         return Err("`modules` must provide at least one module".into());
     }
     let native = table.get("native").map(parse_native).transpose()?;
+    // Experimental layout limitation, not a clutch invariant: one native
+    // descriptor is currently staged per clutch. A future loader may let one
+    // plugin serve several declared modules through shared ownership.
     let mut native_module_count = 0;
     let mut result = HashMap::new();
     for (name, entry) in modules {
@@ -487,7 +519,10 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
         );
     }
     if native_module_count > 1 {
-        return Err("a clutch may enable native support for at most one module".into());
+        return Err(
+            "the experimental loader supports native backing for at most one module per clutch"
+                .into(),
+        );
     }
     if native_module_count > 0 && native.is_none() {
         return Err("a native module requires a `[native]` section".into());

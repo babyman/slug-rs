@@ -454,8 +454,10 @@ opaque calls, version rejection, and structured errors; they are not version 1
 declarations and accept no third-party compatibility promise. The
 prototype deliberately supports only exact arities, fixed-width and
 length-delimited descriptor fields, opaque member-key dispatch, and integer
-callback statuses. It keeps loaded code resident for the process lifetime and
-does not bridge arbitrary C libraries. Its test loader supports macOS, Linux,
+callback statuses. A clutch-owned library lease is released at deterministic VM
+shutdown only after resources and module state have been finalized; stale
+callbacks fail without entering unloaded code. It does not bridge arbitrary C
+libraries. Its test loader supports macOS, Linux,
 and Windows shared libraries. Prototype modules may allocate one
 opaque module-state pointer during initialization; callbacks receive it and the
 runtime calls the descriptor's teardown callback after the final module owner

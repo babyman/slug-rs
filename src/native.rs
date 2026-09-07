@@ -269,6 +269,20 @@ impl NativeResourceRegistry {
         }
     }
 
+    /// Deterministically closes and destroys every tracked resource.
+    ///
+    /// This is the shutdown counterpart to ordinary `close`: it takes each
+    /// payload after closing it, so a later Rust drop has only a tombstone to
+    /// observe.  Native plugin code can consequently be unloaded safely.
+    pub(crate) fn finalize_all_for_shutdown(&self) -> Vec<String> {
+        let resources = self.0.resources.borrow().clone();
+        resources
+            .into_iter()
+            .filter_map(|resource| resource.upgrade())
+            .filter_map(|resource| resource.finalize_for_shutdown().err())
+            .collect()
+    }
+
     #[cfg(test)]
     fn tracked_count(&self) -> usize {
         self.0.resources.borrow().len()
@@ -715,6 +729,10 @@ impl NativeModule {
         })
     }
 
+    pub(crate) fn state<T: Any>(&self) -> Option<&T> {
+        self.inner.state.downcast_ref()
+    }
+
     /// Describes a synchronous function owned by this module.
     ///
     /// # Errors
@@ -1080,6 +1098,27 @@ impl NativeResource {
                 self.registration.name
             ))
         }
+    }
+
+    fn finalize_for_shutdown(&self) -> Result<(), String> {
+        let close_error = self.close().err();
+        let Ok(mut payload) = self.payload.try_borrow_mut() else {
+            return Err(format!(
+                "native resource `{}` is already in use during shutdown",
+                self.registration.name
+            ));
+        };
+        if let Some(payload) = payload.take()
+            && catch_native_unwind(|| (self.registration.destroy)(payload)).is_err()
+        {
+            self.state.set(NativeResourceState::Closed);
+            return Err(format!(
+                "native resource `{}` destroy callback panicked",
+                self.registration.name
+            ));
+        }
+        self.state.set(NativeResourceState::Closed);
+        close_error.map_or(Ok(()), Err)
     }
 }
 

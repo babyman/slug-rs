@@ -550,7 +550,7 @@ fn dispatches_same_arity_c_functions_by_opaque_member_key() {
 }
 
 #[test]
-fn keeps_libraries_resident_while_destroying_each_module_state() {
+fn unloads_libraries_after_destroying_each_module_state() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(&directory, "tests/ffi/stateful_module.c", "stateful");
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -560,7 +560,7 @@ fn keeps_libraries_resident_while_destroying_each_module_state() {
     )
     .expect("write stateful module source");
 
-    for expected in [100, 201] {
+    for expected in [100, 100] {
         let main = directory.path().join("main.slug");
         let loader = ModuleLoader::new(directory.path(), None);
         let program = loader
@@ -577,6 +577,43 @@ fn keeps_libraries_resident_while_destroying_each_module_state() {
             expected.to_string()
         );
     }
+}
+
+#[test]
+fn rejects_stale_native_functions_after_explicit_plugin_shutdown() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/stateful_module.c",
+        "inactive_stateful",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/stateful.slug"),
+        "export foreign stateInfo = fn():num\n",
+    )
+    .expect("write stateful module source");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let program = loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            "val stateful = import(\"slug.stateful\")\nstateful.stateInfo()\n",
+        )
+        .expect("compile stateful module consumer");
+    let module = FfiPrototypeModule::load(library).expect("load stateful module");
+    let mut vm = Vm::with_module_loader(loader);
+    module.register(&mut vm).expect("register stateful module");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "100");
+
+    module.shutdown();
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("stale function must not enter unloaded native code");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.plugin_inactive")
+    );
 }
 
 #[test]

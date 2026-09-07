@@ -34,6 +34,7 @@ struct ModuleLoaderState {
     active_clutch_plugins: RefCell<HashMap<PathBuf, StagedClutchPlugin>>,
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
+    shutdown_errors: RefCell<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -162,6 +163,7 @@ impl ModuleLoader {
                 active_clutch_plugins: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
                 warnings: RefCell::new(Vec::new()),
+                shutdown_errors: RefCell::new(Vec::new()),
             }),
         }
     }
@@ -478,16 +480,27 @@ impl ModuleLoader {
         self.state.native_resources.clone()
     }
 
-    /// Closes native resources and releases clutch-owned registrations.
+    /// Finalizes native resources and releases every clutch-owned registration.
     ///
     /// A host must not execute additional work through a loader after shutdown.
     pub fn shutdown(&self) {
-        self.state.native_resources.close_all();
+        self.state
+            .shutdown_errors
+            .borrow_mut()
+            .extend(self.state.native_resources.finalize_all_for_shutdown());
         let plugins = std::mem::take(&mut *self.state.active_clutch_plugins.borrow_mut());
         for (_, mut plugin) in plugins {
             self.remove_foreign_batch(&plugin.functions);
-            plugin.cleanup();
+            if let Err(error) = plugin.cleanup() {
+                self.state.shutdown_errors.borrow_mut().push(error);
+            }
         }
+    }
+
+    /// Returns and clears failures reported by best-effort plugin shutdown.
+    #[must_use]
+    pub fn take_shutdown_errors(&self) -> Vec<String> {
+        std::mem::take(&mut *self.state.shutdown_errors.borrow_mut())
     }
 
     fn virtual_builtin_module(&self) -> ModuleInstance {
@@ -541,15 +554,26 @@ impl ModuleLoader {
             }
             ClutchPluginSource::Native { root, library, abi } => {
                 if abi == crate::ffi_prototype::ABI_PROFILE {
-                    FfiPrototypeModule::load(library)
-                        .map_err(|error| ModuleLoadError::Clutch {
+                    let module = FfiPrototypeModule::load(library).map_err(|error| {
+                        ModuleLoadError::Clutch {
                             path: library.clone(),
                             message: format!("cannot load native plugin: {error}"),
-                        })?
+                        }
+                    })?;
+                    module
                         .stage(&mut registrar)
                         .map_err(|error| ModuleLoadError::Clutch {
                             path: root.clone(),
                             message: format!("native plugin initialization failed: {error}"),
+                        })?;
+                    registrar
+                        .set_cleanup_operation(move || {
+                            module.shutdown();
+                            Ok(())
+                        })
+                        .map_err(|error| ModuleLoadError::Clutch {
+                            path: root.clone(),
+                            message: format!("cannot retain native plugin cleanup: {error}"),
                         })
                 } else {
                     Err(ModuleLoadError::Clutch {
@@ -561,7 +585,7 @@ impl ModuleLoader {
         };
         if let Err(error) = result {
             let mut staged = registrar.finish();
-            staged.cleanup();
+            let _ = staged.cleanup();
             return Err(error);
         }
         Ok(Some(registrar.finish()))
@@ -569,16 +593,20 @@ impl ModuleLoader {
 
     fn cleanup_plugin(plugin: &mut Option<StagedClutchPlugin>) {
         if let Some(plugin) = plugin {
-            plugin.cleanup();
+            let _ = plugin.cleanup();
         }
     }
 }
 
 impl Drop for ModuleLoaderState {
     fn drop(&mut self) {
-        self.native_resources.close_all();
+        self.shutdown_errors
+            .get_mut()
+            .extend(self.native_resources.finalize_all_for_shutdown());
         for plugin in self.active_clutch_plugins.get_mut().values_mut() {
-            plugin.cleanup();
+            if let Err(error) = plugin.cleanup() {
+                self.shutdown_errors.get_mut().push(error);
+            }
         }
     }
 }

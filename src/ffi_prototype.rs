@@ -5,15 +5,16 @@
 //! the runtime continues to prohibit unsafe code.
 
 use std::{
+    cell::Cell,
     cell::RefCell,
     collections::HashMap,
     error::Error,
     ffi::{CStr, c_char, c_void},
     fmt,
     mem::size_of,
-    path::{Path, PathBuf},
+    path::Path,
     rc::Rc,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, LazyLock},
 };
 
 #[cfg(unix)]
@@ -170,28 +171,20 @@ impl fmt::Debug for LoadedLibrary {
     }
 }
 
-static LIBRARIES: LazyLock<Mutex<HashMap<PathBuf, Arc<LoadedLibrary>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+impl Drop for LoadedLibrary {
+    fn drop(&mut self) {
+        // SAFETY: this is the unique final lease for an open platform handle.
+        unsafe { close_library(self.0) };
+    }
+}
 
-fn resident_library(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError> {
+fn library_lease(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError> {
     let path = std::fs::canonicalize(path).map_err(|error| {
         FfiPrototypeError::new(format!("cannot resolve FFI module path: {error}"))
     })?;
-    let mut libraries = LIBRARIES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(library) = libraries.get(&path) {
-        return Ok(library.clone());
-    }
     // SAFETY: platform loading is contained in this private prototype module.
-    let library = Arc::new(unsafe { LoadedLibrary::open(&path) }?);
-    libraries.insert(path, library.clone());
-    Ok(library)
+    Ok(Arc::new(unsafe { LoadedLibrary::open(&path) }?))
 }
-
-// Prototype modules intentionally remain loaded for process lifetime, matching
-// the planned native ABI's no-unload rule. Keeping the handle in module state
-// also makes the callback pointers valid for as long as the state is live.
 
 #[derive(Clone, Debug)]
 struct RegisteredFunction {
@@ -232,21 +225,33 @@ struct CResourceType {
 }
 
 struct FfiModuleState {
-    _library: Arc<LoadedLibrary>,
-    module_state: *mut c_void,
+    library: RefCell<Option<Arc<LoadedLibrary>>>,
+    module_state: Cell<*mut c_void>,
     destroy_module: Option<ModuleDestroy>,
     functions: HashMap<String, RegisteredFunction>,
     resources: Rc<RefCell<HashMap<String, CResourceType>>>,
+    active: Cell<bool>,
+}
+
+impl FfiModuleState {
+    fn shutdown(&self) {
+        if !self.active.replace(false) {
+            return;
+        }
+        let module_state = self.module_state.replace(std::ptr::null_mut());
+        if !module_state.is_null()
+            && let Some(destroy_module) = self.destroy_module
+        {
+            // SAFETY: the module owns this state and its library lease remains live.
+            unsafe { destroy_module(module_state) };
+        }
+        self.library.borrow_mut().take();
+    }
 }
 
 impl Drop for FfiModuleState {
     fn drop(&mut self) {
-        if !self.module_state.is_null()
-            && let Some(destroy_module) = self.destroy_module
-        {
-            // SAFETY: the module owns this state and its library remains resident.
-            unsafe { destroy_module(self.module_state) };
-        }
+        self.shutdown();
     }
 }
 
@@ -282,8 +287,8 @@ impl Error for FfiPrototypeError {}
 impl FfiPrototypeModule {
     /// Loads and validates one C module that follows the prototype header.
     ///
-    /// The library remains loaded for process lifetime. This is not an ABI-v1
-    /// compatibility promise.
+    /// The library is held by this module's lease and is unloaded after its
+    /// clutch has deterministically finalized all native state.
     ///
     /// # Errors
     ///
@@ -293,7 +298,7 @@ impl FfiPrototypeModule {
         // SAFETY: all dynamic-loader interactions and C descriptor reads are
         // validated within this private prototype boundary.
         unsafe {
-            let library = resident_library(path.as_ref())?;
+            let library = library_lease(path.as_ref())?;
             let init_name = c"slug_ffi_module_init";
             let init: ModuleInit = library.symbol(init_name)?;
             let mut module_state = std::ptr::null_mut();
@@ -315,11 +320,12 @@ impl FfiPrototypeModule {
             let module = NativeModule::new(
                 module_name,
                 FfiModuleState {
-                    _library: library,
-                    module_state,
+                    library: RefCell::new(Some(library)),
+                    module_state: Cell::new(module_state),
                     destroy_module,
                     functions,
                     resources: resource_types.clone(),
+                    active: Cell::new(true),
                 },
             )
             .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
@@ -375,6 +381,13 @@ impl FfiPrototypeModule {
             registrar.define_foreign(function)?;
         }
         Ok(())
+    }
+
+    /// Finalizes module state and releases this module's dynamic-library lease.
+    pub fn shutdown(&self) {
+        if let Some(state) = self.module.state::<FfiModuleState>() {
+            state.shutdown();
+        }
     }
 
     fn foreign_functions(&self) -> Result<Vec<crate::NativeFunction>, NativeDescriptorError> {
@@ -745,6 +758,16 @@ fn resource_type(call: &mut NativeCall<'_>, resource_name: FfiText) -> Option<CR
         ));
         return None;
     };
+    let active = call
+        .state::<FfiModuleState>()
+        .is_some_and(|state| state.active.get());
+    if !active {
+        call.set_error(NativeError::new(
+            "native.plugin_inactive",
+            "native plugin is no longer active",
+        ));
+        return None;
+    }
     let resource_type = call
         .state::<FfiModuleState>()
         .and_then(|state| state.resources.borrow().get(&name).cloned());
@@ -797,17 +820,20 @@ unsafe fn c_string(value: *const c_char) -> Option<String> {
 fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
     let function = call.member_key().and_then(|member_key| {
         call.state::<FfiModuleState>().and_then(|state| {
+            if !state.active.get() {
+                return None;
+            }
             state
                 .functions
                 .get(member_key)
                 .cloned()
-                .map(|function| (function, state.module_state))
+                .map(|function| (function, state.module_state.get()))
         })
     });
     let Some(function) = function else {
         return call.raise(NativeError::new(
-            "native.contract",
-            "no matching FFI function",
+            "native.plugin_inactive",
+            "native plugin is no longer active",
         ));
     };
     let mut bridge = CallBridge { call };
@@ -975,6 +1001,7 @@ unsafe extern "C" {
     fn dlopen(path: *const c_char, mode: i32) -> *mut c_void;
     fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
     fn dlerror() -> *const c_char;
+    fn dlclose(handle: *mut c_void) -> i32;
 }
 
 #[cfg(target_os = "linux")]
@@ -983,6 +1010,7 @@ unsafe extern "C" {
     fn dlopen(path: *const c_char, mode: i32) -> *mut c_void;
     fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
     fn dlerror() -> *const c_char;
+    fn dlclose(handle: *mut c_void) -> i32;
 }
 
 #[cfg(unix)]
@@ -1001,10 +1029,26 @@ unsafe fn loader_error() -> String {
     unsafe { c_string(error) }.unwrap_or_else(|| "unknown dynamic loader error".into())
 }
 
+#[cfg(unix)]
+unsafe fn close_library(handle: *mut c_void) {
+    if !handle.is_null() {
+        // SAFETY: `handle` is an open library handle owned by this final lease.
+        let _ = unsafe { dlclose(handle) };
+    }
+}
+
 #[cfg(windows)]
 unsafe fn loader_error() -> String {
     let error = unsafe { GetLastError() };
     format!("Windows error {error}")
+}
+
+#[cfg(windows)]
+unsafe fn close_library(handle: *mut c_void) {
+    if !handle.is_null() {
+        // SAFETY: `handle` is an open library handle owned by this final lease.
+        let _ = unsafe { FreeLibrary(handle) };
+    }
 }
 
 #[cfg(windows)]
@@ -1013,4 +1057,5 @@ unsafe extern "system" {
     fn LoadLibraryW(path: *const u16) -> *mut c_void;
     fn GetProcAddress(handle: *mut c_void, name: *const u8) -> *mut c_void;
     fn GetLastError() -> u32;
+    fn FreeLibrary(handle: *mut c_void) -> i32;
 }
