@@ -23,6 +23,8 @@ open state are validated by the native boundary.
 
 `readLine(file):str|nil` returns one line without a final `\n`, also removing
 the preceding `\r` from CRLF input. Empty lines are `""`; end of file is `nil`.
+To bound native memory use, a line may contain at most 16 MiB of UTF-8 bytes;
+reading a longer line returns a checked `native.io` error.
 `write(file, content):num` writes all of `content` and returns its UTF-8 byte
 length. Reading a writable handle or writing a readable handle is a checked
 runtime error.

@@ -204,6 +204,33 @@ fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
 }
 
 #[test]
+fn filesystem_clutch_rejects_lines_larger_than_its_memory_limit() {
+    let directory = TemporaryDirectory::new();
+    let _repository = build_native_clutch(
+        &directory,
+        "slug.io.fs",
+        "slug.io.fs.clutch",
+        "clutch/slug.io.fs.clutch/modules/fs.slug",
+        "clutch/slug.io.fs.clutch/native/source/fs.c",
+        "limited_slug_io_fs",
+        &[],
+    );
+    let file = directory.path().join("too-long.txt");
+    fs::write(&file, vec![b'x'; 16 * 1024 * 1024 + 1]).expect("write oversized line");
+    let output = run_clutch_cli(
+        &directory,
+        &format!(
+            "val fs = import(\"slug.io.fs\")\n\
+             val input = fs.openRead(\"{}\")\n\
+             fs.readLine(input)\n",
+            file.display()
+        ),
+    );
+    assert!(!output.status.success(), "oversized line must fail");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("file line exceeds 16 MiB limit"));
+}
+
+#[test]
 fn one_native_clutch_supports_pure_and_native_backed_modules() {
     let directory = TemporaryDirectory::new();
     let repository = build_native_clutch(
@@ -485,6 +512,44 @@ fn rejects_an_undersized_c_function_descriptor() {
         panic!("undersized descriptor must fail");
     };
     assert!(error.to_string().contains("undersized function descriptor"));
+}
+
+#[test]
+fn rejects_stale_c_collection_handles_without_corrupting_memory() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/invalid_collection_handle_module.c",
+        "invalid_collection_handle",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/handles.slug"),
+        "export foreign staleMap = fn():nil\n",
+    )
+    .expect("write collection-handle module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val handles = import(\"slug.handles\")\nhandles.staleMap()\n",
+        )
+        .expect("compile program using collection-handle module");
+    let module = FfiPrototypeModule::load(library).expect("load collection-handle module");
+    let mut vm = Vm::with_module_loader(loader);
+    module
+        .register(&mut vm)
+        .expect("register collection-handle module");
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("stale collection handle must be rejected");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.contract")
+    );
+    assert!(error.message.contains("FFI map handle is invalid"));
 }
 
 #[test]

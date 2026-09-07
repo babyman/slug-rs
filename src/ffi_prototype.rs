@@ -7,14 +7,14 @@
 use std::{
     cell::Cell,
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     error::Error,
     ffi::{CStr, c_char, c_void},
     fmt,
     mem::size_of,
     path::Path,
     rc::Rc,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 #[cfg(unix)]
@@ -246,6 +246,37 @@ struct FfiList {
 }
 struct FfiMap {
     entries: Vec<(NativeOwnedValue, NativeOwnedValue)>,
+}
+
+// C receives only opaque pointers for these call-scoped builders. Track every
+// allocation before exposing it so a stale, double-freed, or cross-kind handle
+// is rejected before Rust dereferences or deallocates it.
+static FFI_LIST_HANDLES: LazyLock<Mutex<HashSet<usize>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+static FFI_MAP_HANDLES: LazyLock<Mutex<HashSet<usize>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn register_handle<T>(handles: &Mutex<HashSet<usize>>, handle: *mut T) {
+    handles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(handle.cast::<()>() as usize);
+}
+
+fn has_handle<T>(handles: &Mutex<HashSet<usize>>, handle: *mut T) -> bool {
+    !handle.is_null()
+        && handles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&(handle.cast::<()>() as usize))
+}
+
+fn take_handle<T>(handles: &Mutex<HashSet<usize>>, handle: *mut T) -> bool {
+    !handle.is_null()
+        && handles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&(handle.cast::<()>() as usize))
 }
 
 #[derive(Clone)]
@@ -733,13 +764,21 @@ unsafe extern "C" fn list_create(context: *mut c_void, capacity: u64) -> *mut Ff
         ));
         return std::ptr::null_mut();
     };
-    Box::into_raw(Box::new(FfiList {
-        values: Vec::with_capacity(capacity),
-    }))
+    let mut values = Vec::new();
+    if values.try_reserve_exact(capacity).is_err() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI list capacity cannot be allocated",
+        ));
+        return std::ptr::null_mut();
+    }
+    let list = Box::into_raw(Box::new(FfiList { values }));
+    register_handle(&FFI_LIST_HANDLES, list);
+    list
 }
 
 unsafe extern "C" fn list_destroy(list: *mut FfiList) {
-    if !list.is_null() {
+    if take_handle(&FFI_LIST_HANDLES, list) {
         drop(unsafe { Box::from_raw(list) });
     }
 }
@@ -755,13 +794,21 @@ unsafe extern "C" fn map_create(context: *mut c_void, capacity: u64) -> *mut Ffi
         ));
         return std::ptr::null_mut();
     };
-    Box::into_raw(Box::new(FfiMap {
-        entries: Vec::with_capacity(capacity),
-    }))
+    let mut entries = Vec::new();
+    if entries.try_reserve_exact(capacity).is_err() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map capacity cannot be allocated",
+        ));
+        return std::ptr::null_mut();
+    }
+    let map = Box::into_raw(Box::new(FfiMap { entries }));
+    register_handle(&FFI_MAP_HANDLES, map);
+    map
 }
 
 unsafe extern "C" fn map_destroy(map: *mut FfiMap) {
-    if !map.is_null() {
+    if take_handle(&FFI_MAP_HANDLES, map) {
         drop(unsafe { Box::from_raw(map) });
     }
 }
@@ -772,6 +819,13 @@ fn map_set(
     key: FfiText,
     value: NativeOwnedValue,
 ) -> bool {
+    if !has_handle(&FFI_MAP_HANDLES, map) {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map handle is invalid",
+        ));
+        return false;
+    }
     let Some(map) = (unsafe { map.as_mut() }) else {
         call.set_error(NativeError::new(
             "native.contract",
@@ -874,6 +928,20 @@ unsafe extern "C" fn list_append_map(
     let Some(call) = (unsafe { call_from_context(context) }) else {
         return false;
     };
+    if !has_handle(&FFI_LIST_HANDLES, list) {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI list handle is invalid",
+        ));
+        return false;
+    }
+    if !has_handle(&FFI_MAP_HANDLES, map) {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map handle is invalid",
+        ));
+        return false;
+    }
     let Some(list) = (unsafe { list.as_mut() }) else {
         call.set_error(NativeError::new(
             "native.contract",
@@ -890,8 +958,8 @@ unsafe extern "C" fn list_append_map(
     };
     let entries = std::mem::take(&mut map.entries);
     list.values.push(NativeOwnedValue::map(entries));
-    unsafe {
-        drop(Box::from_raw(map));
+    if take_handle(&FFI_MAP_HANDLES, map) {
+        drop(unsafe { Box::from_raw(map) });
     }
     true
 }
@@ -899,10 +967,10 @@ unsafe extern "C" fn set_list(context: *mut c_void, list: *mut FfiList) -> bool 
     let Some(call) = (unsafe { call_from_context(context) }) else {
         return false;
     };
-    if list.is_null() {
+    if !take_handle(&FFI_LIST_HANDLES, list) {
         call.set_error(NativeError::new(
             "native.contract",
-            "FFI list handle is null",
+            "FFI list handle is invalid",
         ));
         return false;
     }

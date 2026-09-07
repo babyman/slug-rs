@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bound filesystem line reads to 16 MiB and reject invalid C-FFI collection
+  handles before they can corrupt host memory.
+
 - Added the `slug.db.sqlite` exploded Clutch experiment: variadic SQL bindings
   accept ordinary Slug scalar values and query results return native-built
   `list<map>` rows with NULL, number, text, and blob conversion.

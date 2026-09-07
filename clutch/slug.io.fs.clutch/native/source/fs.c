@@ -5,6 +5,7 @@
 #include <string.h>
 
 #define TEXT(value) ((slug_ffi_text){value, sizeof(value) - 1})
+#define MAX_LINE_BYTES (16u * 1024u * 1024u)
 
 static void destroy_file(void *resource) {
   if (resource != NULL) fclose((FILE *)resource);
@@ -14,13 +15,18 @@ static int32_t open_file(const slug_ffi_host_api *host, slug_ffi_call *call,
                          const char *mode) {
   slug_ffi_text path_text = {0};
   if (!host->argument_text(call, 0, &path_text)) return SLUG_FFI_ERROR;
-  char *path = malloc((size_t)path_text.length + 1);
+  if (path_text.length > SIZE_MAX - 1) {
+    host->set_error(call, TEXT("native.io"), TEXT("file path is too large"));
+    return SLUG_FFI_ERROR;
+  }
+  size_t path_length = (size_t)path_text.length;
+  char *path = malloc(path_length + 1);
   if (path == NULL) {
     host->set_error(call, TEXT("native.alloc"), TEXT("cannot allocate file path"));
     return SLUG_FFI_ERROR;
   }
-  memcpy(path, path_text.data, (size_t)path_text.length);
-  path[path_text.length] = '\0';
+  memcpy(path, path_text.data, path_length);
+  path[path_length] = '\0';
   FILE *file = fopen(path, mode);
   if (file == NULL) {
     free(path);
@@ -64,7 +70,17 @@ static int32_t read_line(const slug_ffi_host_api *host, slug_ffi_call *call, voi
   }
   int character = 0;
   while ((character = fgetc(file)) != EOF && character != '\n') {
-    if (length + 1 == capacity) {
+    if (length >= MAX_LINE_BYTES) {
+      free(line);
+      host->set_error(call, TEXT("native.io"), TEXT("file line exceeds 16 MiB limit"));
+      return SLUG_FFI_ERROR;
+    }
+    if (length == capacity) {
+      if (capacity > SIZE_MAX / 2 || capacity > MAX_LINE_BYTES / 2) {
+        free(line);
+        host->set_error(call, TEXT("native.alloc"), TEXT("cannot grow line buffer"));
+        return SLUG_FFI_ERROR;
+      }
       capacity *= 2;
       char *expanded = realloc(line, capacity);
       if (expanded == NULL) {

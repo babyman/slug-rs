@@ -25,6 +25,7 @@ export foreign openAppend = fn(path:str):File
 
 /**
  * Reads the next line without its trailing newline, or nil at end of file.
+ * Lines longer than 16 MiB fail with a checked native I/O error.
  */
 export foreign readLine = fn(file:File):str|nil
 
