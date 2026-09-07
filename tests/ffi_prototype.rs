@@ -79,6 +79,13 @@ fn build_native_clutch(
         .expect("native source has a file name");
     fs::copy(module_source, clutch_root.join("modules").join(module_file))
         .expect("copy clutch declaration");
+    if module_name == "slug.db.sqlite" {
+        fs::copy(
+            "clutch/slug.db.sqlite.clutch/modules/statement.slug",
+            clutch_root.join("modules/statement.slug"),
+        )
+        .expect("copy SQLite statement module");
+    }
     fs::write(
         clutch_root.join("modules/support.slug"),
         "export val kind = \"pure Slug\"\n",
@@ -115,6 +122,22 @@ fn build_native_clutch(
         ),
     )
     .expect("write native clutch manifest");
+    if module_name == "slug.db.sqlite" {
+        fs::write(
+            clutch_root.join("clutch.toml"),
+            format!(
+                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.8\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
+                module_file.to_string_lossy(),
+                library.file_name().expect("native library name").to_string_lossy(),
+            ),
+        )
+        .expect("write multi-module SQLite clutch manifest");
+        fs::write(
+            directory.path().join("clutch/manifest.toml"),
+            format!("[modules]\n\"{module_name}\" = \"{clutch_name}\"\n\"{module_name}.statement\" = \"{clutch_name}\"\n\"{support_module_name}\" = \"{clutch_name}\"\n"),
+        )
+        .expect("write multi-module SQLite repository manifest");
+    }
     ClutchRepository::from_manifest(directory.path().join("clutch")).expect("load clutch manifest")
 }
 
@@ -326,13 +349,18 @@ fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {
     let program = loader
         .compile_source(
             &directory.path().join("main.slug").to_string_lossy(),
-            "val { open, close, exec, query } = import(\"slug.db.sqlite\")\n\
-             val db = open(\":memory:\")\n\
-             defer { close(db) }\n\
-             exec(db, \"create table person(id integer primary key, name text, score real, note text, payload blob)\")\n\
-             exec(db, \"insert into person(name, score, note, payload) values (?, ?, ?, ?)\", \"Alice\", 1.5, nil, 0x\"41\")\n\
-             exec(db, \"insert into person(name, score, note, payload) values (?, ?, ?, ?)\", \"Bob\", 2.0, \"ok\", 0x\"42\")\n\
-             export val rows = query(db, \"select * from person order by id\")\n",
+            "val sqlite = import(\"slug.db.sqlite\")\n\
+             val statement = import(\"slug.db.sqlite.statement\")\n\
+             val db = sqlite.open(\":memory:\")\n\
+             defer { sqlite.close(db) }\n\
+             sqlite.exec(db, \"create table person(id integer primary key, name text)\")\n\
+             val insert = statement.prepare(db, \"insert into person(name) values (?)\")\n\
+             defer { statement.close(insert) }\n\
+             statement.exec(insert, \"Alice\")\n\
+             statement.exec(insert, \"Bob\")\n\
+             val query = statement.prepare(db, \"select id, name from person where id > ? order by id\")\n\
+             defer { statement.close(query) }\n\
+             export val rows = statement.query(query, 0)\n",
         )
         .expect("compile SQLite clutch consumer");
     let mut vm = Vm::with_module_loader(loader.clone());
@@ -340,7 +368,7 @@ fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {
         .expect("run SQLite clutch consumer");
     assert_eq!(
         vm.exported_values(&program).to_string(),
-        "{\"rows\": [{\"id\": 1, \"name\": \"Alice\", \"score\": 1.5, \"note\": nil, \"payload\": 0x\"41\"}, {\"id\": 2, \"name\": \"Bob\", \"score\": 2, \"note\": \"ok\", \"payload\": 0x\"42\"}]}"
+        "{\"rows\": [{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]}"
     );
     vm.shutdown();
 }

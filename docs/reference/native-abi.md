@@ -496,6 +496,11 @@ text, and blob columns return as Slug `nil`, `num`, `str`, and `bytes` values.
 Prepared statements, transactions, pooling, and migrations remain outside the
 experiment.
 
+The same clutch also supplies `slug.db.sqlite.statement`. Its source wrapper
+exposes native prepared-statement operations from the clutch's one loaded
+library. A `Statement` is a typed native resource; close and shutdown finalize
+it before the database handle is released.
+
 Prototype ABI minor 8 adds argument-kind and byte borrowing plus temporary
 list/map builders. The builders are call-scoped opaque handles: C transfers a
 map into a list and transfers the final list to the call, or destroys any

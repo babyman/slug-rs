@@ -1,0 +1,6 @@
+val sqlite = import("slug.db.sqlite")
+
+export val prepare = sqlite.prepare
+export val close = sqlite.closeStatement
+export val exec = sqlite.execStatement
+export val query = sqlite.queryStatement
