@@ -52,7 +52,9 @@ contract is documented separately as `.cslug`.
   may provide additional source modules after existing providers. A host may
   configure a module-scoped Rust plugin or a manifest-selected experimental
   native library. The local `slug.io.fs` clutch commits a macOS ARM native
-  library and reports a checked unavailable-platform error elsewhere.
+  library and reports a checked unavailable-platform error elsewhere. The
+  `slug.sqlite` clutch provides the second native-provider check by building
+  its adapter into a temporary installed layout during integration tests.
 - Canonical source-annotation resolution in every compiler mode, including
   checked built-in type names and constructor arity, including distinct
   `schema` values and nominal `struct<S>` construction. Semantic validation

@@ -50,11 +50,11 @@ fn current_native_platform() -> &'static str {
 fn build_native_filesystem_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
     let clutch_root = directory.path().join("clutch/slug.io.fs.clutch");
     fs::create_dir_all(directory.path().join("clutch")).expect("create clutch repository");
-    fs::copy(
-        "clutch/manifest.toml",
+    fs::write(
         directory.path().join("clutch/manifest.toml"),
+        "[modules]\n\"slug.io.fs\" = \"slug.io.fs.clutch\"\n",
     )
-    .expect("copy clutch repository manifest");
+    .expect("write filesystem clutch repository manifest");
     fs::create_dir_all(clutch_root.join("modules")).expect("create filesystem clutch modules");
     let target = current_native_platform();
     fs::create_dir_all(clutch_root.join("native/source"))
@@ -101,6 +101,62 @@ fn build_native_filesystem_clutch(directory: &TemporaryDirectory) -> ClutchRepos
     .expect("write native filesystem clutch manifest");
     ClutchRepository::from_manifest(directory.path().join("clutch"))
         .expect("load filesystem clutch manifest")
+}
+
+#[cfg(unix)]
+fn build_native_sqlite_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
+    let clutch_root = directory.path().join("clutch/slug.sqlite.clutch");
+    let target = current_native_platform();
+    fs::create_dir_all(clutch_root.join("modules")).expect("create SQLite clutch modules");
+    fs::create_dir_all(clutch_root.join("native/source")).expect("create SQLite clutch source");
+    fs::create_dir_all(clutch_root.join("native").join(target))
+        .expect("create SQLite clutch library directory");
+    fs::write(
+        directory.path().join("clutch/manifest.toml"),
+        "[modules]\n\"slug.sqlite\" = \"slug.sqlite.clutch\"\n",
+    )
+    .expect("write SQLite clutch repository manifest");
+    fs::copy(
+        "clutch/slug.sqlite.clutch/modules/sqlite.slug",
+        clutch_root.join("modules/sqlite.slug"),
+    )
+    .expect("copy SQLite declaration");
+    fs::copy(
+        "clutch/slug.sqlite.clutch/native/source/sqlite.c",
+        clutch_root.join("native/source/sqlite.c"),
+    )
+    .expect("copy SQLite source");
+    let built = compile_fixture_with_libraries(
+        directory,
+        "clutch/slug.sqlite.clutch/native/source/sqlite.c",
+        "slug_sqlite",
+        &["-lsqlite3"],
+    );
+    let library = clutch_root.join("native").join(target).join(
+        built
+            .file_name()
+            .expect("test-built library has a file name"),
+    );
+    fs::copy(built, &library).expect("place SQLite module in clutch");
+    fs::write(
+        clutch_root.join("clutch.toml"),
+        format!(
+            "[modules]\n\
+             \"slug.sqlite\" = {{ source = \"modules/sqlite.slug\", native = true }}\n\n\
+             [native]\n\
+             source = \"native/source\"\n\
+             abi = \"slug-ffi-prototype/0.7\"\n\n\
+             [native.libraries]\n\
+             \"{target}\" = \"native/{target}/{}\"\n",
+            library
+                .file_name()
+                .expect("native library name")
+                .to_string_lossy(),
+        ),
+    )
+    .expect("write SQLite clutch manifest");
+    ClutchRepository::from_manifest(directory.path().join("clutch"))
+        .expect("load SQLite clutch manifest")
 }
 
 #[test]
@@ -213,36 +269,15 @@ fn compile_fixture_with_libraries(
     output
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
-fn wraps_an_in_memory_sqlite_database_as_a_c_resource() {
+fn loads_sqlite_through_an_exploded_native_clutch() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture_with_libraries(
-        &directory,
-        "tests/ffi/sqlite_module.c",
-        "sqlite",
-        &["-lsqlite3"],
-    );
-    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
-    fs::write(
-        directory.path().join("slug/sqlite.slug"),
-        "export resource Database\n\
-         export resource Statement\n\
-         export foreign openMemory = fn():Database\n\
-         export foreign exec = fn(database:Database, sql:str):num\n\
-         export foreign queryInt = fn(database:Database, sql:str):num\n\
-         export foreign close = fn(database:Database):num\n\
-         export foreign prepare = fn(database:Database, sql:str):Statement\n\
-         export foreign bindInt = fn(statement:Statement, index:num, value:num):num\n\
-         export foreign stepInt = fn(statement:Statement):num\n\
-         export foreign closeStatement = fn(statement:Statement):num\n",
-    )
-    .expect("write sqlite module source");
+    fs::create_dir_all(directory.path().join("clutch")).expect("create clutch repository");
     let main = directory.path().join("main.slug");
-    let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C sqlite module");
+    let repository = build_native_sqlite_clutch(&directory);
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
     let mut vm = Vm::with_module_loader(loader.clone());
-    module.register(&mut vm).expect("register C sqlite module");
 
     let program = loader
         .compile_source(

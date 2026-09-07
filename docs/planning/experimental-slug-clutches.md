@@ -1496,8 +1496,10 @@ stabilizing any interface.
 
 ### Todo
 
-- [ ] Build a second, materially different clutch (the planned candidate is
-  `slug.sqlite`) using the same resolver and scoped-registration boundaries.
+- [x] Build a second, materially different clutch (`slug.sqlite`) using the
+  same resolver and scoped-registration boundaries. Its integration check
+  builds the adapter against the local SQLite development library into a
+  temporary installed clutch layout.
 - [ ] Build or simulate a third capability that does not primarily exercise
   filesystem or database resource lifetimes.
 - [ ] Compare the three implementations for duplicated loader code, missing

@@ -6,6 +6,10 @@
   part of the default build and test surface. They remain experimental and
   intentionally incompatible across pre-release revisions.
 
+- Promoted the SQLite C fixture into the `slug.sqlite` clutch source and added
+  a repository-resolved native-clutch regression for its database and prepared
+  statement resources.
+
 - Fixed deferred blocks that call a user-defined function so cleanup resumes
   the deferred action instead of falling through from the enclosing function.
 

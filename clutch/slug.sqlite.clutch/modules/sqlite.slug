@@ -1,0 +1,10 @@
+export resource Database
+export resource Statement
+export foreign openMemory = fn():Database
+export foreign exec = fn(database:Database, sql:str):num
+export foreign queryInt = fn(database:Database, sql:str):num
+export foreign close = fn(database:Database):num
+export foreign prepare = fn(database:Database, sql:str):Statement
+export foreign bindInt = fn(statement:Statement, index:num, value:num):num
+export foreign stepInt = fn(statement:Statement):num
+export foreign closeStatement = fn(statement:Statement):num

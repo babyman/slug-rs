@@ -13,7 +13,9 @@ module-scoped Rust plugin initializer, and manifest-selected version-0 native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
 state. Archive loading, package installation, and cross-platform binary
 distribution remain unimplemented. The local `slug.io.fs` clutch commits its
-macOS ARM library as the first installed native-package experiment.
+macOS ARM library as the first installed native-package experiment. The
+`slug.sqlite` source clutch is built into a temporary installed layout by the
+integration suite, proving a second provider with an external C dependency.
 
 ## Purpose and terms
 
