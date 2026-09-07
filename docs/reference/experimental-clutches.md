@@ -21,7 +21,9 @@ provider check without native resources or an external library. This checkout
 is a development repository: `make stage-native-clutches` builds every native
 source adapter for the current supported platform at its manifest-selected
 location before local programs import it. Those staged libraries are ignored
-local outputs rather than package artifacts.
+local outputs rather than package artifacts. The staging script supports macOS,
+Linux, and Windows hosts through POSIX-compatible Windows shells with a C
+compiler and each adapter's development dependencies installed.
 
 ## Purpose and terms
 

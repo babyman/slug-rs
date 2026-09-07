@@ -36,8 +36,8 @@ advertises source-only adapters as if they were already packaged binaries.
 ### Negative
 
 Development now requires a C compiler, and the SQLite adapter also requires a
-local SQLite development library. Staging supports only the host platforms
-implemented by the script.
+local SQLite development library. Windows staging requires a POSIX-compatible
+shell such as MSYS2, MinGW, or Cygwin in addition to those dependencies.
 
 ### Neutral
 

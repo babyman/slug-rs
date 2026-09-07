@@ -5,6 +5,7 @@ case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) platform=macos-aarch64 ;;
   Darwin-x86_64) platform=macos-x86_64 ;;
   Linux-x86_64) platform=linux-x86_64 ;;
+  MINGW*_NT-*-x86_64|MSYS_NT-*-x86_64|CYGWIN_NT-*-x86_64) platform=windows-x86_64 ;;
   *)
     echo "native clutch staging is unsupported on $(uname -s)-$(uname -m)" >&2
     exit 1
@@ -19,6 +20,10 @@ case "$platform" in
   linux-*)
     suffix=so
     linker='-shared -fPIC'
+    ;;
+  windows-*)
+    suffix=dll
+    linker=-shared
     ;;
 esac
 
