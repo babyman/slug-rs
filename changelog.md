@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed deferred blocks that call a user-defined function so cleanup resumes
+  the deferred action instead of falling through from the enclosing function.
+
 - Defined the version-0 experimental clutch boundary: local exploded-clutch
   manifests, module-provider resolution, transactional native-plugin binding,
   and safe shutdown cleanup without native code unloading.

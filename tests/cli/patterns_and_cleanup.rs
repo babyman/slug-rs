@@ -1177,6 +1177,31 @@ fn runs_deferred_actions_in_lifo_order_on_normal_return() {
 }
 
 #[test]
+fn runs_top_level_deferred_block_after_rebinding_a_called_global() {
+    let path = fixture_path("defer-rebound-global");
+    fs::write(
+        &path,
+        "defer { println(\"closing file\") }\n\
+         val original_println = println\n\
+         val println = fn(...args) { original_println(\"PL:\", ...args) }\n",
+    )
+    .expect("write deferred source");
+    let output = slug().arg(&path).output().expect("run deferred source");
+    fs::remove_file(path).expect("remove deferred source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "PL: closing file\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn runs_deferred_actions_before_an_uncaught_throw() {
     let path = fixture_path("defer-throw");
     fs::write(

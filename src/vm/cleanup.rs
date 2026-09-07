@@ -37,14 +37,26 @@ impl Vm {
                 None,
             )
         })?;
+        let returns_to_cleanup_action = !self
+            .frames
+            .last()
+            .expect("frame was checked")
+            .cleanup_action
+            && self
+                .frames
+                .get(self.frames.len().saturating_sub(2))
+                .is_some_and(|parent| parent.cleanup_action);
         let frame = self.frames.last_mut().expect("frame was checked");
         let scopes = std::mem::take(&mut frame.scopes);
-        self.cleanup
-            .push(if frame.cleanup_action && frame.cleanup_recovers {
-                Cleanup::Recover(value)
-            } else {
-                Cleanup::Return(value)
-            });
+        let cleanup_recovers = frame.cleanup_action && frame.cleanup_recovers;
+        if returns_to_cleanup_action {
+            self.cleanup.push(Cleanup::Resume);
+        }
+        self.cleanup.push(if cleanup_recovers {
+            Cleanup::Recover(value)
+        } else {
+            Cleanup::Return(value)
+        });
         self.cleanup
             .extend(scopes.into_iter().map(|actions| Cleanup::Actions {
                 actions,
