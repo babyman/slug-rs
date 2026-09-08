@@ -1149,12 +1149,46 @@ fn imports_transparent_type_aliases_through_module_type_paths() {
              export val value:paths.Path = values[0]\n",
         )
         .expect("compile importer using aliases");
-    let mut vm = Vm::with_module_loader(loader);
+    let mut vm = Vm::with_module_loader(loader.clone());
     vm.run_named(&program, "main")
         .expect("run importer using aliases");
     assert_eq!(
         vm.exported_values(&program).to_string(),
         "{\"value\": \"Slug\"}"
+    );
+
+    fs::write(
+        root.join("database.slug"),
+        "export resource Database\n\
+         export type DatabaseHandle = Database\n\
+         export foreign open = fn():Database\n\
+         export foreign accept = fn(database:Database):num\n",
+    )
+    .expect("write database alias module");
+    loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val database = import(\"database\")\n\
+             val handle:database.DatabaseHandle = database.open()\n\
+             database.accept(handle)\n",
+        )
+        .expect("imported nominal aliases retain their declared identity");
+    fs::write(
+        root.join("sockets.slug"),
+        "export resource Database\nexport foreign open = fn():Database\n",
+    )
+    .expect("write unrelated resource module");
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val database = import(\"database\")\n\
+             val sockets = import(\"sockets\")\n\
+             val handle:database.DatabaseHandle = sockets.open()\n",
+        )
+        .expect_err("an imported alias must not adopt another module's resource identity");
+    assert!(
+        error.to_string().contains("expected Database, got Database"),
+        "{error}"
     );
     fs::remove_dir_all(root).expect("remove alias module directory");
 }
