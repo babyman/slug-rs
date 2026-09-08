@@ -1,2 +1,20 @@
+/**
+ * Basic numeric operations implemented by the native math Clutch.
+ *
+ * The functions accept and return Slug numbers and report invalid native
+ * operations as checked runtime errors.
+ */
+
+/**
+ * Returns the integer sum of `left` and `right`.
+ *
+ * The operation reports an error when the result cannot fit in a Slug integer.
+ */
 export foreign add = fn(left:num, right:num):num
+
+/**
+ * Returns the non-negative square root of `value`.
+ *
+ * `value` must not be negative.
+ */
 export foreign sqrt = fn(value:num):num

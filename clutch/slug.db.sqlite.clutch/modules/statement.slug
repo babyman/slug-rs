@@ -1,6 +1,42 @@
+/**
+ * Reusable SQLite prepared statements backed by native `Statement` resources.
+ *
+ * Import `slug.db.sqlite` to open the owning database, then use this module to
+ * prepare, execute, query, and deterministically finalize statements.
+ */
+
 val sqlite = import("slug.db.sqlite")
 export resource Statement
+
+/**
+ * Compiles `sql` against `database` and returns a reusable statement handle.
+ *
+ * Close the statement before closing its database, normally with `defer`.
+ */
 export foreign prepare = fn(database:sqlite.Database, sql:str):Statement
+
+/**
+ * Finalizes `statement` and releases its native SQLite statement.
+ *
+ * A closed statement resource cannot be used again.
+ */
 export foreign close = fn(statement:Statement):num
+
+/**
+ * Executes `statement` with positional parameters and returns SQLite's
+ * affected-row count.
+ *
+ * The statement is reset and its bindings are cleared after each execution,
+ * allowing it to be called again with different `nil`, number, string, or byte
+ * parameters.
+ */
 export foreign exec = fn(statement:Statement, ...parameters:any|nil):num
+
+/**
+ * Executes `statement` with positional parameters and returns all result rows.
+ *
+ * Rows use the same column-name maps and SQLite-to-Slug value conversion as
+ * `slug.db.sqlite.query`. The statement is reset and its bindings are cleared
+ * after the query completes, so it may be reused.
+ */
 export foreign query = fn(statement:Statement, ...parameters:any|nil):list<map>

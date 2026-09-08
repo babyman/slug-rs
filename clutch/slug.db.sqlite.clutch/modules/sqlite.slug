@@ -1,5 +1,43 @@
+/**
+ * Direct SQLite database operations backed by a native `Database` resource.
+ *
+ * Use this module for one-shot SQL statements. For a statement that will be
+ * reused, import `slug.db.sqlite.statement` and prepare it from a database
+ * opened here. Close the database explicitly, normally with `defer`.
+ */
+
 export resource Database
+
+/**
+ * Opens a SQLite database at `path` and returns its native handle.
+ *
+ * Pass `":memory:"` to create an in-memory database for the lifetime of the
+ * returned handle.
+ */
 export foreign open = fn(path:str):Database
+
+/**
+ * Closes `database` and releases its native SQLite handle.
+ *
+ * Close all prepared statements created from the database before closing it.
+ * A closed database resource cannot be used again.
+ */
 export foreign close = fn(database:Database):num
+
+/**
+ * Executes one SQL statement with positional parameters and returns SQLite's
+ * affected-row count.
+ *
+ * Parameters bind in order to `?` placeholders. Supported values are `nil`,
+ * numbers, strings, and bytes, which bind as SQLite NULL, integer or real,
+ * text, and blob values respectively.
+ */
 export foreign exec = fn(database:Database, sql:str, ...parameters:any|nil):num
+
+/**
+ * Executes a query with positional parameters and returns all rows.
+ *
+ * Each row is a map keyed by its SQL column names. SQLite NULL, integer, real,
+ * text, and blob columns become Slug `nil`, `num`, `str`, and `bytes` values.
+ */
 export foreign query = fn(database:Database, sql:str, ...parameters:any|nil):list<map>;
