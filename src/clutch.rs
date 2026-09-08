@@ -306,11 +306,9 @@ impl ClutchPluginRegistrar {
                 function.qualified_name()
             )));
         }
-        if self
-            .functions
-            .iter()
-            .any(|existing| existing.name() == function.name())
-        {
+        if self.functions.iter().any(|existing| {
+            existing.module_name() == function.module_name() && existing.name() == function.name()
+        }) {
             return Err(NativeDescriptorError::new(format!(
                 "clutch plugin foreign function `{}.{}` is already staged",
                 function.module_name(),

@@ -14,7 +14,10 @@ use std::{
     mem::size_of,
     path::Path,
     rc::Rc,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{
+        Arc, LazyLock, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 #[cfg(unix)]
@@ -26,10 +29,11 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 8;
-pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.8";
+const ABI_MINOR: u32 = 9;
+pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.9";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
+static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
 
 #[repr(C)]
 struct HostApi {
@@ -75,7 +79,8 @@ type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -
 type ModuleDestroy = unsafe extern "C" fn(*mut c_void);
 type ResourceDestroy = unsafe extern "C" fn(*mut c_void);
 type ProducerTextDestroy = unsafe extern "C" fn(*mut c_void);
-type ModuleInit = unsafe extern "C" fn(*const HostApi, *mut *mut c_void) -> *const ModuleDescriptor;
+type LibraryInit =
+    unsafe extern "C" fn(*const HostApi, *mut *mut c_void) -> *const LibraryDescriptor;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -112,6 +117,16 @@ struct ModuleDescriptor {
     function_count: u64,
     resources: *const ResourceDescriptor,
     resource_count: u64,
+}
+
+#[repr(C)]
+struct LibraryDescriptor {
+    abi_major: u32,
+    abi_minor: u32,
+    descriptor_size: u32,
+    destroy_library: Option<ModuleDestroy>,
+    modules: *const ModuleDescriptor,
+    module_count: u64,
 }
 
 struct CallBridge<'call> {
@@ -286,22 +301,26 @@ struct CResourceType {
 }
 
 struct FfiModuleState {
-    library: RefCell<Option<Arc<LoadedLibrary>>>,
-    module_state: Cell<*mut c_void>,
-    destroy_module: Option<ModuleDestroy>,
+    library: Rc<FfiLibraryState>,
     functions: HashMap<String, RegisteredFunction>,
     resources: Rc<RefCell<HashMap<String, CResourceType>>>,
+}
+
+struct FfiLibraryState {
+    library: RefCell<Option<Arc<LoadedLibrary>>>,
+    module_state: Cell<*mut c_void>,
+    destroy_library: Option<ModuleDestroy>,
     active: Cell<bool>,
 }
 
-impl FfiModuleState {
+impl FfiLibraryState {
     fn shutdown(&self) {
         if !self.active.replace(false) {
             return;
         }
         let module_state = self.module_state.replace(std::ptr::null_mut());
         if !module_state.is_null()
-            && let Some(destroy_module) = self.destroy_module
+            && let Some(destroy_module) = self.destroy_library
         {
             // SAFETY: the module owns this state and its library lease remains live.
             unsafe { destroy_module(module_state) };
@@ -310,7 +329,7 @@ impl FfiModuleState {
     }
 }
 
-impl Drop for FfiModuleState {
+impl Drop for FfiLibraryState {
     fn drop(&mut self) {
         self.shutdown();
     }
@@ -319,8 +338,8 @@ impl Drop for FfiModuleState {
 /// A loaded, deliberately unstable Slug-aware C module.
 #[derive(Clone)]
 pub struct FfiPrototypeModule {
-    module: NativeModule,
-    functions: Vec<(String, NativeArity, String)>,
+    modules: Vec<(NativeModule, Vec<(String, NativeArity, String)>)>,
+    library: Rc<FfiLibraryState>,
 }
 
 /// A checked failure while loading or registering an FFI prototype module.
@@ -360,61 +379,70 @@ impl FfiPrototypeModule {
         // validated within this private prototype boundary.
         unsafe {
             let library = library_lease(path.as_ref())?;
-            let init_name = c"slug_ffi_module_init";
-            let init: ModuleInit = library.symbol(init_name)?;
+            let init_name = c"slug_ffi_library_init";
+            let init: LibraryInit = library.symbol(init_name)?;
             let mut module_state = std::ptr::null_mut();
-            let descriptor = init(host_api(), &raw mut module_state);
-            let (module_name, destroy_module, functions, resources) =
-                validate_descriptor(descriptor)?;
-            if !module_state.is_null() && destroy_module.is_none() {
+            let descriptors = validate_library_descriptor(init(host_api(), &raw mut module_state))?;
+            if !module_state.is_null() && descriptors.0.is_none() {
                 return Err(FfiPrototypeError::new(
-                    "FFI module returned state without a destroy callback",
+                    "FFI library returned state without a destroy callback",
                 ));
             }
-            let registered = functions
-                .iter()
-                .map(|(member_key, function)| {
-                    (function.name.clone(), function.arity, member_key.clone())
-                })
-                .collect();
             let resource_types = Rc::new(RefCell::new(HashMap::new()));
-            let module = NativeModule::new(
-                module_name,
-                FfiModuleState {
-                    library: RefCell::new(Some(library)),
-                    module_state: Cell::new(module_state),
-                    destroy_module,
-                    functions,
-                    resources: resource_types.clone(),
-                    active: Cell::new(true),
-                },
-            )
-            .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
-            let resource_types_to_register = resources
-                .into_iter()
-                .map(|resource| {
-                    let resource_type = module
-                        .resource_type(resource.name.clone(), close_c_resource, destroy_c_resource)
-                        .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
-                    Ok((resource.name, resource_type, resource.destroy))
-                })
-                .collect::<Result<Vec<_>, FfiPrototypeError>>()?;
-            resource_types
-                .borrow_mut()
-                .extend(resource_types_to_register.into_iter().map(
-                    |(name, resource_type, destroy)| {
-                        (
-                            name,
-                            CResourceType {
-                                resource_type,
-                                destroy,
-                            },
-                        )
+            let library_state = Rc::new(FfiLibraryState {
+                library: RefCell::new(Some(library)),
+                module_state: Cell::new(module_state),
+                destroy_library: descriptors.0,
+                active: Cell::new(true),
+            });
+            let scope = NEXT_LIBRARY_SCOPE.fetch_add(1, Ordering::Relaxed);
+            let mut modules = Vec::new();
+            for (module_name, _, functions, resources) in descriptors.1 {
+                let registered = functions
+                    .iter()
+                    .map(|(key, function)| (function.name.clone(), function.arity, key.clone()))
+                    .collect();
+                let module = NativeModule::new_with_scope(
+                    module_name,
+                    FfiModuleState {
+                        library: library_state.clone(),
+                        functions,
+                        resources: resource_types.clone(),
                     },
-                ));
+                    scope,
+                )
+                .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
+                let resource_types_to_register = resources
+                    .into_iter()
+                    .map(|resource| {
+                        let resource_type = module
+                            .resource_type(
+                                resource.name.clone(),
+                                close_c_resource,
+                                destroy_c_resource,
+                            )
+                            .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
+                        Ok((resource.name, resource_type, resource.destroy))
+                    })
+                    .collect::<Result<Vec<_>, FfiPrototypeError>>()?;
+                resource_types
+                    .borrow_mut()
+                    .extend(resource_types_to_register.into_iter().map(
+                        |(name, resource_type, destroy)| {
+                            (
+                                name,
+                                CResourceType {
+                                    resource_type,
+                                    destroy,
+                                },
+                            )
+                        },
+                    ));
+                modules.push((module, registered));
+            }
             Ok(Self {
-                module,
-                functions: registered,
+                modules,
+                library: library_state,
             })
         }
     }
@@ -446,22 +474,22 @@ impl FfiPrototypeModule {
 
     /// Finalizes module state and releases this module's dynamic-library lease.
     pub fn shutdown(&self) {
-        if let Some(state) = self.module.state::<FfiModuleState>() {
-            state.shutdown();
-        }
+        self.library.shutdown();
     }
 
     fn foreign_functions(&self) -> Result<Vec<crate::NativeFunction>, NativeDescriptorError> {
         let functions = self
-            .functions
+            .modules
             .iter()
-            .map(|(name, arity, member_key)| {
-                self.module.function_with_member_key(
-                    name.clone(),
-                    *arity,
-                    member_key.clone(),
-                    ffi_callback,
-                )
+            .flat_map(|(module, descriptors)| {
+                descriptors.iter().map(move |(name, arity, member_key)| {
+                    module.function_with_member_key(
+                        name.clone(),
+                        *arity,
+                        member_key.clone(),
+                        ffi_callback,
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(functions)
@@ -1150,7 +1178,7 @@ fn resource_type(call: &mut NativeCall<'_>, resource_name: FfiText) -> Option<CR
     };
     let active = call
         .state::<FfiModuleState>()
-        .is_some_and(|state| state.active.get());
+        .is_some_and(|state| state.library.active.get());
     if !active {
         call.set_error(NativeError::new(
             "native.plugin_inactive",
@@ -1210,14 +1238,14 @@ unsafe fn c_string(value: *const c_char) -> Option<String> {
 fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
     let function = call.member_key().and_then(|member_key| {
         call.state::<FfiModuleState>().and_then(|state| {
-            if !state.active.get() {
+            if !state.library.active.get() {
                 return None;
             }
             state
                 .functions
                 .get(member_key)
                 .cloned()
-                .map(|function| (function, state.module_state.get()))
+                .map(|function| (function, state.library.module_state.get()))
         })
     });
     let Some(function) = function else {
@@ -1236,6 +1264,34 @@ fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
             call.report_contract_violation(format!("FFI callback returned unknown status {status}"))
         }
     }
+}
+
+unsafe fn validate_library_descriptor(
+    descriptor: *const LibraryDescriptor,
+) -> Result<(Option<ModuleDestroy>, Vec<ValidatedDescriptor>), FfiPrototypeError> {
+    let descriptor = unsafe { descriptor.as_ref() }
+        .ok_or_else(|| FfiPrototypeError::new("FFI library returned a null descriptor"))?;
+    if descriptor.abi_major != ABI_MAJOR
+        || descriptor.abi_minor > ABI_MINOR
+        || descriptor.descriptor_size
+            < u32::try_from(size_of::<LibraryDescriptor>()).expect("descriptor fits u32")
+    {
+        return Err(FfiPrototypeError::new(
+            "FFI library requires an unsupported ABI table",
+        ));
+    }
+    let count = usize::try_from(descriptor.module_count)
+        .map_err(|_| FfiPrototypeError::new("FFI library module count exceeds host limits"))?;
+    if count == 0 || count > MAX_FUNCTIONS || descriptor.modules.is_null() {
+        return Err(FfiPrototypeError::new(
+            "FFI library has an invalid module table",
+        ));
+    }
+    let modules = unsafe { std::slice::from_raw_parts(descriptor.modules, count) }
+        .iter()
+        .map(|module| unsafe { validate_descriptor(module) })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((descriptor.destroy_library, modules))
 }
 
 unsafe fn validate_descriptor(

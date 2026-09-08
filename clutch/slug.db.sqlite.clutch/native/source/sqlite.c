@@ -125,16 +125,23 @@ static int32_t query_statement(const slug_ffi_host_api *host, slug_ffi_call *cal
 static int32_t close_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state; if (!host->close_resource(call, 0, TEXT("Statement"))) return SLUG_FFI_ERROR; host->set_i64(call, 0); return SLUG_FFI_OK;
 }
-static const slug_ffi_function_descriptor FUNCTIONS[] = {
+static const slug_ffi_function_descriptor DATABASE_FUNCTIONS[] = {
   {sizeof(slug_ffi_function_descriptor), TEXT("open"), TEXT("sqlite.open/v1"), 1, 1, open_database},
   {sizeof(slug_ffi_function_descriptor), TEXT("close"), TEXT("sqlite.close/v1"), 1, 1, close_database},
   {sizeof(slug_ffi_function_descriptor), TEXT("exec"), TEXT("sqlite.exec/v1"), 2, UINT64_MAX, exec_sql},
   {sizeof(slug_ffi_function_descriptor), TEXT("query"), TEXT("sqlite.query/v1"), 2, UINT64_MAX, query_sql},
-  {sizeof(slug_ffi_function_descriptor), TEXT("prepare"), TEXT("sqlite.prepare/v1"), 2, 2, prepare_statement},
-  {sizeof(slug_ffi_function_descriptor), TEXT("closeStatement"), TEXT("sqlite.close_statement/v1"), 1, 1, close_statement},
-  {sizeof(slug_ffi_function_descriptor), TEXT("execStatement"), TEXT("sqlite.exec_statement/v1"), 1, UINT64_MAX, exec_statement},
-  {sizeof(slug_ffi_function_descriptor), TEXT("queryStatement"), TEXT("sqlite.query_statement/v1"), 1, UINT64_MAX, query_statement},
 };
-static const slug_ffi_resource_descriptor RESOURCES[] = {{sizeof(slug_ffi_resource_descriptor), TEXT("Database"), destroy_database}, {sizeof(slug_ffi_resource_descriptor), TEXT("Statement"), destroy_statement}};
-static const slug_ffi_module_descriptor MODULE = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor), TEXT("slug.db.sqlite"), NULL, FUNCTIONS, 8, RESOURCES, 2};
-SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host, void **out_state) { if (host == NULL || out_state == NULL) return NULL; *out_state = NULL; return &MODULE; }
+static const slug_ffi_function_descriptor STATEMENT_FUNCTIONS[] = {
+  {sizeof(slug_ffi_function_descriptor), TEXT("prepare"), TEXT("sqlite.prepare/v1"), 2, 2, prepare_statement},
+  {sizeof(slug_ffi_function_descriptor), TEXT("close"), TEXT("sqlite.close_statement/v1"), 1, 1, close_statement},
+  {sizeof(slug_ffi_function_descriptor), TEXT("exec"), TEXT("sqlite.exec_statement/v1"), 1, UINT64_MAX, exec_statement},
+  {sizeof(slug_ffi_function_descriptor), TEXT("query"), TEXT("sqlite.query_statement/v1"), 1, UINT64_MAX, query_statement},
+};
+static const slug_ffi_resource_descriptor DATABASE_RESOURCES[] = {{sizeof(slug_ffi_resource_descriptor), TEXT("Database"), destroy_database}};
+static const slug_ffi_resource_descriptor STATEMENT_RESOURCES[] = {{sizeof(slug_ffi_resource_descriptor), TEXT("Statement"), destroy_statement}};
+static const slug_ffi_module_descriptor MODULES[] = {
+  {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor), TEXT("slug.db.sqlite"), NULL, DATABASE_FUNCTIONS, 4, DATABASE_RESOURCES, 1},
+  {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor), TEXT("slug.db.sqlite.statement"), NULL, STATEMENT_FUNCTIONS, 4, STATEMENT_RESOURCES, 1},
+};
+static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor), NULL, MODULES, 2};
+SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host, void **out_state) { if (host == NULL || out_state == NULL) return NULL; *out_state = NULL; return &LIBRARY; }

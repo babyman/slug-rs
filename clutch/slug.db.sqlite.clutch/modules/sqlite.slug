@@ -1,10 +1,5 @@
 export resource Database
-export resource Statement
 export foreign open = fn(path:str):Database
 export foreign close = fn(database:Database):num
 export foreign exec = fn(database:Database, sql:str, ...parameters:any|nil):num
 export foreign query = fn(database:Database, sql:str, ...parameters:any|nil):list<map>;
-export foreign prepare = fn(database:Database, sql:str):Statement
-export foreign closeStatement = fn(statement:Statement):num
-export foreign execStatement = fn(statement:Statement, ...parameters:any|nil):num
-export foreign queryStatement = fn(statement:Statement, ...parameters:any|nil):list<map>

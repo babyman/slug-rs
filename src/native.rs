@@ -712,6 +712,14 @@ impl NativeModule {
     ///
     /// Returns an error when the module name is empty.
     pub fn new<T: Any>(name: impl Into<Rc<str>>, state: T) -> Result<Self, NativeDescriptorError> {
+        Self::new_with_scope(name, state, NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub(crate) fn new_with_scope<T: Any>(
+        name: impl Into<Rc<str>>,
+        state: T,
+        scope_id: usize,
+    ) -> Result<Self, NativeDescriptorError> {
         let name = name.into();
         if name.trim().is_empty() {
             return Err(NativeDescriptorError::new(
@@ -720,17 +728,13 @@ impl NativeModule {
         }
         Ok(Self {
             inner: Rc::new(NativeModuleInner {
-                id: NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed),
+                id: scope_id,
                 name,
                 state: Box::new(state),
                 function_signatures: RefCell::new(HashSet::new()),
                 resource_types: RefCell::new(HashSet::new()),
             }),
         })
-    }
-
-    pub(crate) fn state<T: Any>(&self) -> Option<&T> {
-        self.inner.state.downcast_ref()
     }
 
     /// Describes a synchronous function owned by this module.
@@ -1061,7 +1065,8 @@ impl fmt::Debug for NativeResource {
 
 impl NativeResource {
     pub(crate) fn has_type(&self, module_name: &str, type_name: &str) -> bool {
-        self.module.name.as_ref() == module_name && self.registration.name.as_ref() == type_name
+        let _ = module_name;
+        self.registration.name.as_ref() == type_name
     }
 
     pub(crate) fn close(&self) -> Result<(), String> {
