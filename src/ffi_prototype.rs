@@ -336,9 +336,11 @@ impl Drop for FfiLibraryState {
 }
 
 /// A loaded, deliberately unstable Slug-aware C module.
+type RegisteredModule = (NativeModule, Vec<(String, NativeArity, String)>);
+
 #[derive(Clone)]
 pub struct FfiPrototypeModule {
-    modules: Vec<(NativeModule, Vec<(String, NativeArity, String)>)>,
+    modules: Vec<RegisteredModule>,
     library: Rc<FfiLibraryState>,
 }
 
@@ -365,7 +367,7 @@ impl fmt::Display for FfiPrototypeError {
 impl Error for FfiPrototypeError {}
 
 impl FfiPrototypeModule {
-    /// Loads and validates one C module that follows the prototype header.
+    /// Loads and validates one C library that follows the prototype header.
     ///
     /// The library is held by this module's lease and is unloaded after its
     /// clutch has deterministically finalized all native state.
@@ -1271,8 +1273,13 @@ unsafe fn validate_library_descriptor(
 ) -> Result<(Option<ModuleDestroy>, Vec<ValidatedDescriptor>), FfiPrototypeError> {
     let descriptor = unsafe { descriptor.as_ref() }
         .ok_or_else(|| FfiPrototypeError::new("FFI library returned a null descriptor"))?;
-    if descriptor.abi_major != ABI_MAJOR
-        || descriptor.abi_minor > ABI_MINOR
+    if descriptor.abi_major != ABI_MAJOR {
+        return Err(FfiPrototypeError::new(format!(
+            "FFI library requires ABI major {}, host supports {ABI_MAJOR}",
+            descriptor.abi_major
+        )));
+    }
+    if descriptor.abi_minor > ABI_MINOR
         || descriptor.descriptor_size
             < u32::try_from(size_of::<LibraryDescriptor>()).expect("descriptor fits u32")
     {

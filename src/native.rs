@@ -911,6 +911,10 @@ impl NativeFunction {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
+    pub(crate) fn resource_scope_id(&self) -> usize {
+        self.0.module.inner.id
+    }
+
     pub(crate) fn matches_declared_arity(&self, minimum: usize, maximum: Option<usize>) -> bool {
         match (self.0.arity, maximum) {
             (NativeArity::Exact(expected), Some(maximum)) => {
@@ -1065,8 +1069,11 @@ impl fmt::Debug for NativeResource {
 
 impl NativeResource {
     pub(crate) fn has_type(&self, module_name: &str, type_name: &str) -> bool {
-        let _ = module_name;
-        self.registration.name.as_ref() == type_name
+        self.module.name.as_ref() == module_name && self.registration.name.as_ref() == type_name
+    }
+
+    pub(crate) fn has_type_in_scope(&self, scope_id: usize, type_name: &str) -> bool {
+        self.registration.module_id == scope_id && self.registration.name.as_ref() == type_name
     }
 
     pub(crate) fn close(&self) -> Result<(), String> {

@@ -3237,7 +3237,7 @@ impl Vm {
                 span,
             ));
         };
-        if resource.has_type(function.module_name(), expected) {
+        if resource.has_type_in_scope(function.resource_scope_id(), expected) {
             return Ok(());
         }
         Err(self.error_at(

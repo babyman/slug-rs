@@ -38,12 +38,13 @@ static const slug_ffi_module_descriptor MODULE = {
   1,
 };
 
-const slug_ffi_module_descriptor *slug_ffi_module_init(const slug_ffi_host_api *host,
+static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor), destroy_module, &MODULE, 1};
+const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host,
                                                         void **out_state) {
   if (host == NULL || out_state == NULL) return NULL;
   module_state *state = malloc(sizeof(module_state));
   if (state == NULL) return NULL;
   state->serial = next_serial++;
   *out_state = state;
-  return &MODULE;
+  return &LIBRARY;
 }

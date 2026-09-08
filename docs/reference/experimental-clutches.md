@@ -64,7 +64,7 @@ subset of its modules:
 
 [native]
 source = "native/source"
-abi = "slug-ffi-prototype/0.8"
+abi = "slug-ffi-prototype/0.9"
 
 [native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
@@ -76,7 +76,8 @@ library for the current supported OS/architecture; all paths must remain inside
 the clutch. The library is initialized once for the clutch and may register
 implementations for any of its module identities. A module remains pure Slug
 unless its own `foreign` declarations require one of those registrations. The
-loader accepts only `slug-ffi-prototype/0.8`, validates its descriptor, and
+loader accepts only `slug-ffi-prototype/0.9`, validates its library descriptor,
+and
 does not search system paths or fall back to a host plugin.
 
 The experiment does not define archive encoding, signatures, remote fetching,

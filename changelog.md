@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Replaced the experimental native module initializer with a library descriptor
+  that can provide multiple Slug modules from one loaded Clutch. SQLite now
+  exposes direct database and prepared-statement modules through that boundary,
+  and all C fixtures use the new ABI.
+
 - Bound filesystem line reads to 16 MiB and reject invalid C-FFI collection
   handles before they can corrupt host memory.
 
