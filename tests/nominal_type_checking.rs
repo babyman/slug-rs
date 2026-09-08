@@ -112,3 +112,28 @@ fn schema_instances_use_schema_identity_not_field_structure() {
         rejects(source, expected);
     }
 }
+
+#[test]
+fn aliases_are_transparent_without_replacing_nominal_identity() {
+    accepts(
+        "type Path = str\n\
+         type Filename = Path\n\
+         val path:Path = \"notes.txt\"\n\
+         val filename:Filename = path\n\
+         val display = fn(value:str):Filename { value }\n\
+         display(filename)\n\
+         resource File\n\
+         type Input = File\n\
+         foreign read = fn(file:File):num\n\
+         val useInput = fn(input:Input) { read(input) }\n",
+    );
+
+    rejects(
+        "resource File\n\
+         resource Socket\n\
+         type Input = File\n\
+         foreign openSocket = fn():Socket\n\
+         val input:Input = openSocket()\n",
+        "expected File, got Socket",
+    );
+}
