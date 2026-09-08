@@ -1080,6 +1080,57 @@ fn foreign_callbacks_can_inspect_checked_enum_cases() {
 }
 
 #[test]
+fn nominal_types_remain_distinct_between_modules() {
+    let root = root("nominal-module-identities");
+    fs::create_dir_all(&root).expect("create nominal module directory");
+    for module in ["a", "b"] {
+        fs::write(
+            root.join(format!("{module}.slug")),
+            "export resource Handle\n\
+             export foreign create = fn():Handle\n\
+             export foreign accept = fn(handle:Handle):num\n\
+             export enum Mode { Text, Binary }\n\
+             export val Schema = struct { value:num }\n\
+             export val acceptMode = fn(mode:Mode) { mode }\n\
+             export val acceptSchema = fn(value:struct<Schema>) { value }\n",
+        )
+        .expect("write nominal module");
+    }
+    let loader = ModuleLoader::new(&root, None);
+    loader
+        .compile_source(
+            &root.join("same.slug").to_string_lossy(),
+            "val a = import(\"a\")\n\
+             val { Schema: ASchema } = import(\"a\")\n\
+             a.accept(a.create())\n\
+             a.acceptMode(a.Mode.Text)\n\
+             a.acceptSchema(ASchema { value: 1 })\n",
+        )
+        .expect("same module nominal identities are accepted");
+
+    for (source, expected) in [
+        (
+            "val a = import(\"a\")\nval b = import(\"b\")\nb.accept(a.create())\n",
+            "expected Handle, got Handle",
+        ),
+        (
+            "val a = import(\"a\")\nval b = import(\"b\")\nb.acceptMode(a.Mode.Text)\n",
+            "expected Mode, got Mode",
+        ),
+        (
+            "val a = import(\"a\")\nval b = import(\"b\")\nval { Schema: ASchema } = import(\"a\")\nb.acceptSchema(ASchema { value: 1 })\n",
+            "expected struct<Schema>, got struct<Schema>",
+        ),
+    ] {
+        let error = loader
+            .compile_source(&root.join("main.slug").to_string_lossy(), source)
+            .expect_err("cross-module nominal identities must be rejected");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+    fs::remove_dir_all(root).expect("remove nominal module directory");
+}
+
+#[test]
 fn imports_transparent_type_aliases_through_module_type_paths() {
     let root = root("alias-imports");
     fs::create_dir_all(&root).expect("create alias module directory");
