@@ -1111,15 +1111,15 @@ fn nominal_types_remain_distinct_between_modules() {
     for (source, expected) in [
         (
             "val a = import(\"a\")\nval b = import(\"b\")\nb.accept(a.create())\n",
-            "expected Handle, got Handle",
+            "expected b.Handle, got a.Handle",
         ),
         (
             "val a = import(\"a\")\nval b = import(\"b\")\nb.acceptMode(a.Mode.Text)\n",
-            "expected Mode, got Mode",
+            "expected b.Mode, got a.Mode",
         ),
         (
             "val a = import(\"a\")\nval b = import(\"b\")\nval { Schema: ASchema } = import(\"a\")\nb.acceptSchema(ASchema { value: 1 })\n",
-            "expected struct<Schema>, got struct<Schema>",
+            "expected struct<b.Schema>, got struct<a.Schema>",
         ),
     ] {
         let error = loader
@@ -1187,7 +1187,9 @@ fn imports_transparent_type_aliases_through_module_type_paths() {
         )
         .expect_err("an imported alias must not adopt another module's resource identity");
     assert!(
-        error.to_string().contains("expected Database, got Database"),
+        error
+            .to_string()
+            .contains("expected database.Database, got sockets.Database"),
         "{error}"
     );
     fs::remove_dir_all(root).expect("remove alias module directory");

@@ -2512,8 +2512,15 @@ fn require(expected: &Type, actual: &Type, span: &crate::SourceSpan) -> Result<(
     if actual.is_assignable_to(expected) {
         Ok(())
     } else {
+        let expected_display = expected.to_string();
+        let actual_display = actual.to_string();
+        let (expected_display, actual_display) = if expected_display == actual_display {
+            (expected.diagnostic_display(), actual.diagnostic_display())
+        } else {
+            (expected_display, actual_display)
+        };
         Err(SourceError::semantic(
-            format!("expected {expected}, got {actual}"),
+            format!("expected {expected_display}, got {actual_display}"),
             span.clone(),
         ))
     }

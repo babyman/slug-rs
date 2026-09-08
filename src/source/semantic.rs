@@ -58,6 +58,14 @@ impl NominalIdentity {
     pub(super) fn set_runtime_module(&mut self, module: String) {
         self.runtime_module = Some(module);
     }
+
+    fn diagnostic_name(&self) -> String {
+        let module = std::path::Path::new(&self.declaration_path)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&self.declaration_path);
+        format!("{module}.{}", self.name)
+    }
 }
 
 impl PartialEq for NominalIdentity {
@@ -106,6 +114,22 @@ pub(super) enum Type {
 }
 
 impl Type {
+    pub(super) fn diagnostic_display(&self) -> String {
+        match self {
+            Self::Resource(identity) | Self::Enum(identity) => identity.diagnostic_name(),
+            Self::Struct(Some(identity)) => format!("struct<{}>", identity.diagnostic_name()),
+            Self::List(Some(value)) => format!("list<{}>", value.diagnostic_display()),
+            Self::Task(Some(value)) => format!("task<{}>", value.diagnostic_display()),
+            Self::Channel(Some(value)) => format!("chan<{}>", value.diagnostic_display()),
+            Self::Union(values) => values
+                .iter()
+                .map(Self::diagnostic_display)
+                .collect::<Vec<_>>()
+                .join("|"),
+            _ => self.to_string(),
+        }
+    }
+
     pub(super) fn is_reifiable_match_constraint(&self) -> bool {
         match self {
             Self::Any
