@@ -105,22 +105,28 @@ static int32_t prepare_statement(const slug_ffi_host_api *host, slug_ffi_call *c
 static int statement_argument(const slug_ffi_host_api *host, slug_ffi_call *call, sqlite_statement **statement) {
   void *raw = NULL; if (!host->argument_resource(call, 0, TEXT("slug.db.sqlite.statement.Statement"), &raw)) return 0; *statement = raw; return 1;
 }
+static void reset_statement(sqlite_statement *statement) {
+  sqlite3_reset(statement->statement);
+  sqlite3_clear_bindings(statement->statement);
+}
 static int32_t exec_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state; sqlite_statement *statement;
-  if (!statement_argument(host, call, &statement) || !bind_values(host, call, statement->statement, (size_t)host->argument_count(call), 1)) return SLUG_FFI_ERROR;
-  if (sqlite3_step(statement->statement) != SQLITE_DONE) { error(host, call, sqlite3_db_handle(statement->statement)); sqlite3_reset(statement->statement); return SLUG_FFI_ERROR; }
-  sqlite3_reset(statement->statement); sqlite3_clear_bindings(statement->statement); host->set_i64(call, sqlite3_changes(sqlite3_db_handle(statement->statement))); return SLUG_FFI_OK;
+  if (!statement_argument(host, call, &statement)) return SLUG_FFI_ERROR;
+  if (!bind_values(host, call, statement->statement, (size_t)host->argument_count(call), 1)) { reset_statement(statement); return SLUG_FFI_ERROR; }
+  if (sqlite3_step(statement->statement) != SQLITE_DONE) { error(host, call, sqlite3_db_handle(statement->statement)); reset_statement(statement); return SLUG_FFI_ERROR; }
+  reset_statement(statement); host->set_i64(call, sqlite3_changes(sqlite3_db_handle(statement->statement))); return SLUG_FFI_OK;
 }
 static int32_t query_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state; sqlite_statement *statement; slug_ffi_list *rows;
-  if (!statement_argument(host, call, &statement) || !bind_values(host, call, statement->statement, (size_t)host->argument_count(call), 1)) return SLUG_FFI_ERROR;
-  rows = host->list_create(call, 0); if (rows == NULL) return SLUG_FFI_ERROR;
-  for (;;) { int status = sqlite3_step(statement->statement); if (status == SQLITE_DONE) break; if (status != SQLITE_ROW) { host->list_destroy(rows); error(host, call, sqlite3_db_handle(statement->statement)); sqlite3_reset(statement->statement); return SLUG_FFI_ERROR; }
-    int columns = sqlite3_column_count(statement->statement); slug_ffi_map *row = host->map_create(call, (uint64_t)columns); if (row == NULL) { host->list_destroy(rows); sqlite3_reset(statement->statement); return SLUG_FFI_ERROR; }
-    for (int column = 0; column < columns; column++) if (!set_column(host, call, row, statement->statement, column)) { host->map_destroy(row); host->list_destroy(rows); sqlite3_reset(statement->statement); return SLUG_FFI_ERROR; }
-    if (!host->list_append_map(call, rows, row)) { host->map_destroy(row); host->list_destroy(rows); sqlite3_reset(statement->statement); return SLUG_FFI_ERROR; }
+  if (!statement_argument(host, call, &statement)) return SLUG_FFI_ERROR;
+  if (!bind_values(host, call, statement->statement, (size_t)host->argument_count(call), 1)) { reset_statement(statement); return SLUG_FFI_ERROR; }
+  rows = host->list_create(call, 0); if (rows == NULL) { reset_statement(statement); return SLUG_FFI_ERROR; }
+  for (;;) { int status = sqlite3_step(statement->statement); if (status == SQLITE_DONE) break; if (status != SQLITE_ROW) { host->list_destroy(rows); error(host, call, sqlite3_db_handle(statement->statement)); reset_statement(statement); return SLUG_FFI_ERROR; }
+    int columns = sqlite3_column_count(statement->statement); slug_ffi_map *row = host->map_create(call, (uint64_t)columns); if (row == NULL) { host->list_destroy(rows); reset_statement(statement); return SLUG_FFI_ERROR; }
+    for (int column = 0; column < columns; column++) if (!set_column(host, call, row, statement->statement, column)) { host->map_destroy(row); host->list_destroy(rows); reset_statement(statement); return SLUG_FFI_ERROR; }
+    if (!host->list_append_map(call, rows, row)) { host->map_destroy(row); host->list_destroy(rows); reset_statement(statement); return SLUG_FFI_ERROR; }
   }
-  sqlite3_reset(statement->statement); sqlite3_clear_bindings(statement->statement); if (!host->set_list(call, rows)) return SLUG_FFI_ERROR; return SLUG_FFI_OK;
+  reset_statement(statement); if (!host->set_list(call, rows)) return SLUG_FFI_ERROR; return SLUG_FFI_OK;
 }
 static int32_t close_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state; if (!host->close_resource(call, 0, TEXT("slug.db.sqlite.statement.Statement"))) return SLUG_FFI_ERROR; host->set_i64(call, 0); return SLUG_FFI_OK;

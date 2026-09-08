@@ -1,6 +1,7 @@
 [modules]
 "slug.db.sqlite" = { source = "modules/sqlite.slug" }
 "slug.db.sqlite.statement" = { source = "modules/statement.slug" }
+"slug.db.sqlite.transaction" = { source = "modules/transaction.slug" }
 
 [native]
 source = "native/source"

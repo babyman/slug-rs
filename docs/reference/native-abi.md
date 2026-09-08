@@ -503,6 +503,11 @@ exposes native prepared-statement operations from the clutch's one loaded
 library. A `Statement` is a typed native resource; close and shutdown finalize
 it before the database handle is released.
 
+`slug.db.sqlite.transaction` is a third module in that clutch implemented only
+in Slug. It imports `slug.db.sqlite` and composes `BEGIN`, `COMMIT`, and
+`ROLLBACK`; it has no native descriptor. This proves that native support is
+optional per Clutch module rather than a library-wide wrapper requirement.
+
 Prototype ABI minor 11 uses one library descriptor containing one or more
 module descriptors. The library owns one loaded-code lease and lifecycle while
 each module retains its own foreign registrations and resource declarations.

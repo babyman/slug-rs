@@ -12,6 +12,11 @@
   resource name, allowing one library's modules to declare the same short
   resource name without collision.
 
+- Added the pure-Slug `slug.db.sqlite.transaction` module to the SQLite Clutch,
+  including commit/rollback helpers composed from its native database sibling.
+  Prepared-statement failures now reset statements and clear bindings before
+  they can be reused.
+
 - Bound filesystem line reads to 16 MiB and reject invalid C-FFI collection
   handles before they can corrupt host memory.
 

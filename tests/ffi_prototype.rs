@@ -85,6 +85,11 @@ fn build_native_clutch(
             clutch_root.join("modules/statement.slug"),
         )
         .expect("copy SQLite statement module");
+        fs::copy(
+            "clutch/slug.db.sqlite.clutch/modules/transaction.slug",
+            clutch_root.join("modules/transaction.slug"),
+        )
+        .expect("copy SQLite transaction module");
     }
     fs::write(
         clutch_root.join("modules/support.slug"),
@@ -126,7 +131,7 @@ fn build_native_clutch(
         fs::write(
             clutch_root.join("clutch.toml"),
             format!(
-                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.11\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
+                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{module_name}.transaction\" = {{ source = \"modules/transaction.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.11\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
                 module_file.to_string_lossy(),
                 library.file_name().expect("native library name").to_string_lossy(),
             ),
@@ -134,7 +139,7 @@ fn build_native_clutch(
         .expect("write multi-module SQLite clutch manifest");
         fs::write(
             directory.path().join("clutch/manifest.toml"),
-            format!("[modules]\n\"{module_name}\" = \"{clutch_name}\"\n\"{module_name}.statement\" = \"{clutch_name}\"\n\"{support_module_name}\" = \"{clutch_name}\"\n"),
+            format!("[modules]\n\"{module_name}\" = \"{clutch_name}\"\n\"{module_name}.statement\" = \"{clutch_name}\"\n\"{module_name}.transaction\" = \"{clutch_name}\"\n\"{support_module_name}\" = \"{clutch_name}\"\n"),
         )
         .expect("write multi-module SQLite repository manifest");
     }
@@ -369,6 +374,135 @@ fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {
     assert_eq!(
         vm.exported_values(&program).to_string(),
         "{\"rows\": [{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]}"
+    );
+    vm.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn sqlite_transaction_module_commits_successful_work() {
+    let directory = TemporaryDirectory::new();
+    let repository = build_native_clutch(
+        &directory,
+        "slug.db.sqlite",
+        "slug.db.sqlite.clutch",
+        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
+        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "slug_db_sqlite",
+        &["-lsqlite3"],
+    );
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let program = loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            "val sqlite = import(\"slug.db.sqlite\")\n\
+             val transaction = import(\"slug.db.sqlite.transaction\")\n\
+             val db = sqlite.open(\":memory:\")\n\
+             defer { sqlite.close(db) }\n\
+             sqlite.exec(db, \"create table person(name text)\")\n\
+             val result = transaction.transaction(db, fn(database:sqlite.Database) {\n\
+                 sqlite.exec(database, \"insert into person(name) values (?)\", \"Alice\")\n\
+                 \"committed\"\n\
+             })\n\
+             export val outcome = result\n\
+             export val rows = sqlite.query(db, \"select name from person\")\n",
+        )
+        .expect("compile successful transaction");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("commit successful transaction");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"outcome\": \"committed\", \"rows\": [{\"name\": \"Alice\"}]}"
+    );
+    vm.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn sqlite_transaction_module_rolls_back_and_rethrows_work_errors() {
+    let directory = TemporaryDirectory::new();
+    let repository = build_native_clutch(
+        &directory,
+        "slug.db.sqlite",
+        "slug.db.sqlite.clutch",
+        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
+        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "slug_db_sqlite",
+        &["-lsqlite3"],
+    );
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let program = loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            "val sqlite = import(\"slug.db.sqlite\")\n\
+             val transaction = import(\"slug.db.sqlite.transaction\")\n\
+             val db = sqlite.open(\":memory:\")\n\
+             defer { sqlite.close(db) }\n\
+             sqlite.exec(db, \"create table person(name text)\")\n\
+             val attempt = fn() {\n\
+                 defer onerror(err) { err }\n\
+                 transaction.transaction(db, fn(database:sqlite.Database) {\n\
+                     sqlite.exec(database, \"insert into person(name) values (?)\", \"discarded\")\n\
+                     throw \"transaction failed\"\n\
+                 })\n\
+             }\n\
+             export val error = attempt()\n\
+             export val rows = sqlite.query(db, \"select name from person\")\n",
+        )
+        .expect("compile failing transaction");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("recover the rethrown transaction error");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"error\": \"transaction failed\", \"rows\": []}"
+    );
+    vm.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn sqlite_statement_failures_clear_partial_bindings_before_reuse() {
+    let directory = TemporaryDirectory::new();
+    let repository = build_native_clutch(
+        &directory,
+        "slug.db.sqlite",
+        "slug.db.sqlite.clutch",
+        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
+        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "slug_db_sqlite",
+        &["-lsqlite3"],
+    );
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let program = loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            "val sqlite = import(\"slug.db.sqlite\")\n\
+             val statement = import(\"slug.db.sqlite.statement\")\n\
+             val db = sqlite.open(\":memory:\")\n\
+             defer { sqlite.close(db) }\n\
+             sqlite.exec(db, \"create table pair(left_value text, right_value text)\")\n\
+             val insert = statement.prepare(db, \"insert into pair(left_value, right_value) values (?, ?)\")\n\
+             defer { statement.close(insert) }\n\
+             statement.exec(insert, \"old\", \"stale\")\n\
+             val recover = fn(work) { defer onerror(err) { nil }; work() }\n\
+             recover(fn() { statement.exec(insert, \"discard\", []) })\n\
+             statement.exec(insert, \"fresh\")\n\
+             val query = statement.prepare(db, \"select ? as left_value, ? as right_value\")\n\
+             defer { statement.close(query) }\n\
+             statement.query(query, \"old\", \"stale\")\n\
+             recover(fn() { statement.query(query, \"discard\", []) })\n\
+             export val rows = sqlite.query(db, \"select left_value, right_value from pair order by rowid\")\n\
+             export val query_rows = statement.query(query, \"fresh\")\n",
+        )
+        .expect("compile statement cleanup program");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("reuse statements after failed partial bindings");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"rows\": [{\"left_value\": \"old\", \"right_value\": \"stale\"}, {\"left_value\": \"fresh\", \"right_value\": nil}], \"query_rows\": [{\"left_value\": \"fresh\", \"right_value\": nil}]}"
     );
     vm.shutdown();
 }
