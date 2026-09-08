@@ -137,3 +137,37 @@ fn aliases_are_transparent_without_replacing_nominal_identity() {
         "expected File, got Socket",
     );
 }
+
+#[test]
+fn callable_paths_preserve_nominal_assignability() {
+    accepts(
+        "resource File\n\
+         resource Socket\n\
+         val overload = fn(file:File):File { file }\n\
+         val overload = fn(socket:Socket):Socket { socket }\n\
+         val fileCallback = fn(file:File):File { file }\n\
+         val invoke = fn(callback:fn<File, File>, file:File) { callback(file) }\n\
+         val outer = fn(file:File) { overload(file); invoke(fileCallback, file) }\n",
+    );
+
+    for (source, expected) in [
+        (
+            "resource File\nresource Socket\nforeign openSocket = fn():Socket\nval defaulted = fn(file:File = openSocket()) { file }\n",
+            "expected File, got Socket",
+        ),
+        (
+            "resource File\nresource Socket\nforeign openSocket = fn():Socket\nval consume = fn(...files:File) { files }\nconsume(openSocket())\n",
+            "expected File, got Socket",
+        ),
+        (
+            "resource File\nresource Socket\nval invoke = fn(callback:fn<File, File>, file:File) { callback(file) }\nval outer = fn(file:File) { val socketCallback = fn(socket:Socket):Socket { socket }; invoke(socketCallback, file) }\n",
+            "expected File, got Socket",
+        ),
+        (
+            "resource File\nresource Socket\nforeign openSocket = fn():Socket\nval use = fn(file:File) { file }\nval use = fn(socket:Socket) { socket }\nval onlyFile = fn(file:File) { file }\nonlyFile(openSocket())\n",
+            "expected File, got Socket",
+        ),
+    ] {
+        rejects(source, expected);
+    }
+}
