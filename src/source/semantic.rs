@@ -716,4 +716,28 @@ mod tests {
         assert!(tuple.is_assignable_to(&tuple));
         assert!(Type::universal().is_assignable_to(&Type::universal()));
     }
+
+    #[test]
+    fn compound_types_retain_nominal_resource_identity() {
+        let file = Type::Resource(NominalIdentity::declared("test", "File"));
+        let socket = Type::Resource(NominalIdentity::declared("test", "Socket"));
+
+        for wrap in [
+            Type::List as fn(Option<Box<Type>>) -> Type,
+            Type::Channel,
+            Type::Task,
+        ] {
+            let files = wrap(Some(Box::new(file.clone())));
+            let sockets = wrap(Some(Box::new(socket.clone())));
+            assert!(files.is_assignable_to(&files));
+            assert!(!files.is_assignable_to(&sockets));
+            assert!(!sockets.is_assignable_to(&files));
+        }
+
+        let maybe_file = Type::union([file.clone(), Type::Nil]);
+        let maybe_socket = Type::union([socket.clone(), Type::Nil]);
+        assert!(!maybe_file.is_assignable_to(&maybe_socket));
+        assert!(!Type::List(Some(Box::new(maybe_file)))
+            .is_assignable_to(&Type::List(Some(Box::new(maybe_socket)))));
+    }
 }
