@@ -31,11 +31,15 @@ pub(super) enum ExprKind {
     Resource {
         exported: bool,
         name: String,
+        documentation: Option<String>,
+        tags: Vec<Tag>,
     },
     Enum {
         exported: bool,
         name: String,
         cases: Vec<String>,
+        documentation: Option<String>,
+        tags: Vec<Tag>,
     },
     TypeAlias {
         exported: bool,

@@ -714,7 +714,8 @@ It is a temporary source placeholder and does not produce a value.
 ## Tags, documentation, and foreign declarations
 
 A tag has the form `@name` or `@name(arguments)` and prefixes a `val`, `var`,
-`foreign`, or exported declaration. Tags may also prefix function parameters.
+`foreign`, `resource`, `enum`, or exported declaration. Tags may also prefix
+function parameters.
 Tag arguments are expressions evaluated in the declaration's module
 environment. Tags attach metadata and do not, by themselves, change evaluation
 semantics. `export` is a declaration modifier, not metadata. `@export` is its
@@ -722,17 +723,18 @@ retired export marker, but remains an ordinary valid tag name with no export
 semantics. Write `export val` or `export foreign` to make a declaration
 exported.
 
-The current Rust subset accepts tags on `val` and `var` declarations and on
-function parameters. It evaluates their arguments in the current lexical
-environment when the corresponding declaration or function literal is
-evaluated; declaration tags run before the declared value. Tagged foreign
-declarations retain their metadata, but host resolution and `slug.meta`
-introspection are not implemented yet.
+The current Rust subset accepts tags on `val`, `var`, `foreign`, `resource`,
+and `enum` declarations and on function parameters. It evaluates their
+arguments in the current lexical environment when the corresponding declaration
+or function literal is evaluated; declaration tags run before the declared
+value. Tagged foreign declarations retain their metadata, but host resolution
+and `slug.meta` introspection are not implemented yet.
 
 The subset also parses strict documentation blocks on top-level `val`, `var`,
-and `foreign` declarations, as well as a first module doc block followed by a
-blank line. It retains top-level declaration documentation and evaluated tag
-metadata in the module model; metadata introspection is not implemented yet.
+`foreign`, `resource`, and `enum` declarations, as well as a first module doc
+block followed by a blank line. It retains top-level declaration documentation
+and evaluated tag metadata in the module model; metadata introspection is not
+implemented yet.
 
 ```slug
 @deprecated
@@ -786,8 +788,9 @@ declared member in their live overload set.
 
 A doc block uses `/** ... */`. Every non-empty content line must begin with
 `*`, otherwise parsing fails. At top level, a doc block attaches to the next
-`val`, `var`, or `foreign` declaration, whether or not it is exported, allowing
-intervening tags, the `export` modifier, and comments. The first meaningful doc
+`val`, `var`, `foreign`, `resource`, or `enum` declaration, whether or not it
+is exported, allowing intervening tags, the `export` modifier, and comments.
+The first meaningful doc
 block in a module is the module documentation when it is followed by a blank
 line. Documentation and tags are observable through `slug.meta` introspection.
 

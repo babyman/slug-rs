@@ -11,6 +11,60 @@ fn retains_top_level_export_names_as_module_metadata() {
 }
 
 #[test]
+fn retains_resource_and_enum_declaration_metadata_through_compilation() {
+    let program = compile(
+        "nominal-metadata.slug",
+        "/**\n * An exported resource.\n */\n@native(\"sqlite3\")\nexport resource Database\n\n/**\n * A local resource.\n */\n@private\nresource Cache\n\n/**\n * An exported enum.\n */\n@stable\nexport enum OpenMode { Read, Write }\n\n/**\n * A local enum.\n */\n@internal(2)\nenum State { Idle, Busy }\n",
+    )
+    .expect("compile nominal declaration metadata");
+
+    let declarations = program.declarations();
+    assert_eq!(declarations.len(), 4);
+    for (declaration, binding, exported, resource_type, documentation, tag) in [
+        (
+            &declarations[0],
+            "Database",
+            true,
+            Some("Database"),
+            "\n * An exported resource.\n ",
+            "native",
+        ),
+        (
+            &declarations[1],
+            "Cache",
+            false,
+            Some("Cache"),
+            "\n * A local resource.\n ",
+            "private",
+        ),
+        (
+            &declarations[2],
+            "OpenMode",
+            true,
+            None,
+            "\n * An exported enum.\n ",
+            "stable",
+        ),
+        (
+            &declarations[3],
+            "State",
+            false,
+            None,
+            "\n * A local enum.\n ",
+            "internal",
+        ),
+    ] {
+        assert_eq!(declaration.bindings, [binding]);
+        assert_eq!(declaration.exported, exported);
+        assert_eq!(declaration.resource_type.as_deref(), resource_type);
+        assert_eq!(declaration.documentation.as_deref(), Some(documentation));
+        assert_eq!(declaration.tags.len(), 1);
+        assert_eq!(declaration.tags[0].name, tag);
+        assert!(declaration.tags[0].arguments.is_empty());
+    }
+}
+
+#[test]
 fn executes_integer_arithmetic() {
     let mut main = Chunk::new("main", 0);
     let seven = main.constant(Value::Int(7));

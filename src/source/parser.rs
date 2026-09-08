@@ -133,7 +133,7 @@ impl Parser {
             ) || matches!(self.kind(), TokenKind::Name(name) if name == "type"))
         {
             return Err(SourceError::at(
-                "documentation blocks and tags must prefix a val, var, or foreign declaration",
+                "documentation blocks and tags must prefix a val, var, foreign, resource, or enum declaration",
                 self.peek().span.clone(),
             ));
         }
@@ -232,19 +232,18 @@ impl Parser {
                     span,
                 ));
             }
-            if documentation.is_some() || !tags.is_empty() {
-                return Err(SourceError::at(
-                    "documentation blocks and tags cannot prefix a resource declaration",
-                    self.peek().span.clone(),
-                ));
-            }
             let token = self.next();
             let TokenKind::Name(name) = token.kind else {
                 return Err(SourceError::at("expected resource type name", token.span));
             };
             return Ok(Expr {
                 span,
-                kind: ExprKind::Resource { exported, name },
+                kind: ExprKind::Resource {
+                    exported,
+                    name,
+                    documentation,
+                    tags,
+                },
             });
         }
         if self.matches(&TokenKind::Enum) {
@@ -253,12 +252,6 @@ impl Parser {
                 return Err(SourceError::at(
                     "enum declarations are only valid at top level",
                     span,
-                ));
-            }
-            if documentation.is_some() || !tags.is_empty() {
-                return Err(SourceError::at(
-                    "documentation blocks and tags cannot prefix an enum declaration",
-                    self.peek().span.clone(),
                 ));
             }
             let token = self.next();
@@ -299,6 +292,8 @@ impl Parser {
                     exported,
                     name,
                     cases,
+                    documentation,
+                    tags,
                 },
             });
         }

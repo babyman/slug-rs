@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added retained declaration tags and documentation for exported and local
+  `resource` and `enum` declarations.
+
 - Replaced the experimental native module initializer with a library descriptor
   that can provide multiple Slug modules from one loaded Clutch. SQLite now
   exposes direct database and prepared-statement modules through that boundary,

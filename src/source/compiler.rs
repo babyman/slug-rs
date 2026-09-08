@@ -139,7 +139,13 @@ impl Compiler {
                 self.globals.insert(name.clone(), false);
                 self.callable_globals.insert(name.clone());
             }
-            if let ExprKind::Resource { exported, name } = &expression.kind {
+            if let ExprKind::Resource {
+                exported,
+                name,
+                documentation,
+                tags,
+            } = &expression.kind
+            {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
@@ -149,11 +155,24 @@ impl Compiler {
                     resource_type: Some(name.clone()),
                     foreign_callable_identity: None,
                     foreign_resource_signature: None,
-                    documentation: None,
-                    tags: Vec::new(),
+                    documentation: documentation.clone(),
+                    tags: tags
+                        .iter()
+                        .map(|tag| ModuleTag {
+                            name: tag.name.clone(),
+                            arguments: Vec::new(),
+                        })
+                        .collect(),
                 });
             }
-            if let ExprKind::Enum { exported, name, .. } = &expression.kind {
+            if let ExprKind::Enum {
+                exported,
+                name,
+                documentation,
+                tags,
+                ..
+            } = &expression.kind
+            {
                 self.declarations.push(ModuleDeclaration {
                     bindings: vec![name.clone()],
                     mutable: false,
@@ -163,8 +182,14 @@ impl Compiler {
                     resource_type: None,
                     foreign_callable_identity: None,
                     foreign_resource_signature: None,
-                    documentation: None,
-                    tags: Vec::new(),
+                    documentation: documentation.clone(),
+                    tags: tags
+                        .iter()
+                        .map(|tag| ModuleTag {
+                            name: tag.name.clone(),
+                            arguments: Vec::new(),
+                        })
+                        .collect(),
                 });
                 if *exported {
                     exports.push(name.clone());
@@ -307,18 +332,7 @@ impl Compiler {
                     );
                 }
                 let declaration = if state.is_module_scope() {
-                    Some(
-                        self.expressions
-                            .iter()
-                            .filter(|candidate| {
-                                matches!(
-                                    candidate.kind,
-                                    ExprKind::Declare { .. } | ExprKind::Foreign { .. }
-                                )
-                            })
-                            .position(|candidate| candidate.span == expression.span)
-                            .expect("compiled declaration was recorded"),
-                    )
+                    Some(self.module_declaration_index(expression))
                 } else {
                     None
                 };
@@ -391,18 +405,8 @@ impl Compiler {
                 }
                 state.emit(Op::Nil, &expression.span);
             }
-            ExprKind::Foreign { tags, .. } => {
-                let declaration = self
-                    .expressions
-                    .iter()
-                    .filter(|candidate| {
-                        matches!(
-                            candidate.kind,
-                            ExprKind::Declare { .. } | ExprKind::Foreign { .. }
-                        )
-                    })
-                    .position(|candidate| candidate.span == expression.span)
-                    .expect("compiled declaration was recorded");
+            ExprKind::Foreign { tags, .. } | ExprKind::Resource { tags, .. } => {
+                let declaration = self.module_declaration_index(expression);
                 self.tags(state, tags, Some(declaration), &expression.span)?;
                 state.emit(Op::Nil, &expression.span);
             }
@@ -757,10 +761,14 @@ impl Compiler {
                 state.emit(op, &expression.span);
             }
             ExprKind::TypeApply { callee, .. } => self.expression(state, callee)?,
-            ExprKind::Resource { .. } | ExprKind::TypeAlias { .. } => {
+            ExprKind::TypeAlias { .. } => {
                 state.emit(Op::Nil, &expression.span);
             }
-            ExprKind::Enum { name, cases, .. } => {
+            ExprKind::Enum {
+                name, cases, tags, ..
+            } => {
+                let declaration = self.module_declaration_index(expression);
+                self.tags(state, tags, Some(declaration), &expression.span)?;
                 for case in cases {
                     let key = state.constant(Value::string(case.clone()));
                     state.emit(Op::Constant(key), &expression.span);
@@ -977,6 +985,22 @@ impl Compiler {
             }
         }
         Ok(())
+    }
+
+    fn module_declaration_index(&self, expression: &Expr) -> usize {
+        self.expressions
+            .iter()
+            .filter(|candidate| {
+                matches!(
+                    candidate.kind,
+                    ExprKind::Declare { .. }
+                        | ExprKind::Foreign { .. }
+                        | ExprKind::Resource { .. }
+                        | ExprKind::Enum { .. }
+                )
+            })
+            .position(|candidate| candidate.span == expression.span)
+            .expect("compiled declaration was recorded")
     }
     fn compile_match(
         &mut self,

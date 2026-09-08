@@ -239,7 +239,7 @@ fn analyze_expressions(
     let mut resource_names = HashSet::new();
     let mut enum_names = HashSet::new();
     for expression in expressions {
-        if let ExprKind::Resource { exported, name } = &expression.kind {
+        if let ExprKind::Resource { exported, name, .. } = &expression.kind {
             if !resource_names.insert(name.clone()) {
                 return Err(SourceError::semantic(
                     format!("duplicate resource type `{name}`"),
@@ -525,6 +525,7 @@ fn record_exports(
         ExprKind::Resource {
             exported: true,
             name,
+            ..
         } => {
             if let Some(identity) = environment.resource_type(name) {
                 types.insert(
@@ -537,6 +538,7 @@ fn record_exports(
             exported: true,
             name,
             cases,
+            ..
         } => {
             if let Some(binding) = environment.lookup(name) {
                 exports.insert(name.clone(), binding.clone());

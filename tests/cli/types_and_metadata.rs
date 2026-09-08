@@ -1186,7 +1186,7 @@ fn accepts_tags_and_evaluates_their_arguments_before_declarations() {
     let cases = [(
         "tagged-expression",
         "@audit println(1)\n",
-        "slug: parse error: documentation blocks and tags must prefix a val, var, or foreign declaration",
+        "slug: parse error: documentation blocks and tags must prefix a val, var, foreign, resource, or enum declaration",
     )];
     for (kind, source, expected) in cases {
         let path = fixture_path(kind);
@@ -1249,7 +1249,7 @@ fn attaches_strict_documentation_blocks_to_top_level_declarations() {
         (
             "misplaced-documentation-block",
             "/**\n * Documentation\n */\nprintln(1)\n",
-            "slug: parse error: documentation blocks and tags must prefix a val, var, or foreign declaration",
+            "slug: parse error: documentation blocks and tags must prefix a val, var, foreign, resource, or enum declaration",
         ),
         (
             "nested-documentation-block",

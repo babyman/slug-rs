@@ -1626,18 +1626,21 @@ fn retains_top_level_declaration_documentation_and_evaluated_tags() {
 }
 
 #[test]
-fn exposes_resource_declarations_only_through_host_module_metadata() {
+fn retains_evaluated_resource_and_enum_declaration_metadata() {
     let root = root("resource-metadata");
     fs::create_dir_all(&root).expect("create module directory");
     fs::write(
         root.join("resources.slug"),
-        "export resource Handle\nexport foreign noop = fn()\n",
+        "/**\n * An exported resource.\n */\n@native(\"sqlite3\")\nexport resource Handle\n\n/**\n * A local resource.\n */\n@private(2)\nresource Cache\n\n/**\n * An exported enum.\n */\n@stable\nexport enum OpenMode { Read, Write }\n\n/**\n * A local enum.\n */\n@internal(\"test\")\nenum State { Idle, Busy }\nexport foreign noop = fn()\n",
     )
     .expect("write resource module");
     let loader = ModuleLoader::new(&root, None);
     let module = NativeModule::new("resources", ()).expect("native module is valid");
     module
         .resource_type("Handle", |_payload: &mut ()| {}, |_payload: ()| {})
+        .expect("native resource type is valid");
+    module
+        .resource_type("Cache", |_payload: &mut ()| {}, |_payload: ()| {})
         .expect("native resource type is valid");
     let mut vm = Vm::with_module_loader(loader.clone());
     vm.define_foreign(
@@ -1651,17 +1654,56 @@ fn exposes_resource_declarations_only_through_host_module_metadata() {
         .initialize(None, "resources")
         .expect("initialize resource module");
 
-    assert_eq!(instance.metadata.len(), 2);
-    assert_eq!(
-        instance.metadata[0].resource_type.as_deref(),
-        Some("Handle")
-    );
-    assert_eq!(instance.metadata[0].bindings, ["Handle"]);
-    assert!(instance.metadata[0].exported);
-    assert!(!instance.metadata[0].foreign);
+    assert_eq!(instance.metadata.len(), 5);
+    for (declaration, binding, exported, resource_type, documentation, tag, arguments) in [
+        (
+            &instance.metadata[0],
+            "Handle",
+            true,
+            Some("Handle"),
+            "\n * An exported resource.\n ",
+            "native",
+            vec![Value::string("sqlite3")],
+        ),
+        (
+            &instance.metadata[1],
+            "Cache",
+            false,
+            Some("Cache"),
+            "\n * A local resource.\n ",
+            "private",
+            vec![Value::Int(2)],
+        ),
+        (
+            &instance.metadata[2],
+            "OpenMode",
+            true,
+            None,
+            "\n * An exported enum.\n ",
+            "stable",
+            Vec::new(),
+        ),
+        (
+            &instance.metadata[3],
+            "State",
+            false,
+            None,
+            "\n * A local enum.\n ",
+            "internal",
+            vec![Value::string("test")],
+        ),
+    ] {
+        assert_eq!(declaration.bindings, [binding]);
+        assert_eq!(declaration.exported, exported);
+        assert_eq!(declaration.resource_type.as_deref(), resource_type);
+        assert_eq!(declaration.documentation.as_deref(), Some(documentation));
+        assert_eq!(declaration.tags.len(), 1);
+        assert_eq!(declaration.tags[0].name, tag);
+        assert_eq!(declaration.tags[0].arguments, arguments);
+    }
     assert_eq!(
         instance.exports.to_string(),
-        "{\"noop\": <native resources.noop>}"
+        "{\"OpenMode\": {\"Read\": OpenMode.Read, \"Write\": OpenMode.Write}, \"noop\": <native resources.noop>}"
     );
     fs::remove_dir_all(root).expect("remove module test directory");
 }

@@ -8,7 +8,7 @@ program = { statement_sep } , { statement , { statement_sep } } , EOF ;
 (* NEWLINE acts as a separator when ASI rules say it terminates the statement. *)
 statement_sep = ";" | NEWLINE ;
 
-(* Tags can prefix var/val/foreign declarations, including exported declarations.
+(* Tags can prefix var/val/foreign/resource/enum declarations, including exported declarations.
    Tags also appear in parameter lists. *)
 statement = tag_prefixed_decl
           | documented_decl
@@ -24,10 +24,10 @@ statement = tag_prefixed_decl
           | expression_stmt
           ;
 
-tag_prefixed_decl = tag_prefix , ( export_decl | var_expr | val_expr | foreign_decl ) ;
+tag_prefixed_decl = tag_prefix , ( export_decl | var_expr | val_expr | foreign_decl | resource_decl | enum_decl ) ;
 tag_prefix = tag , { { statement_sep } , tag } , { statement_sep } ;
 documented_decl = DOC_COMMENT , { statement_sep } ,
-                   ( tag_prefixed_decl | export_decl | var_expr | val_expr | foreign_decl ) ;
+                   ( tag_prefixed_decl | export_decl | var_expr | val_expr | foreign_decl | resource_decl | enum_decl ) ;
 
 (* export declarations and nominal-type declarations are valid only at module top level. *)
 export_decl = "export" , ( var_expr | val_expr | foreign_decl | resource_decl | enum_decl | type_alias_decl ) ;
