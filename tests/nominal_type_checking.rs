@@ -82,3 +82,33 @@ fn enum_assignability_uses_declaration_identity() {
         rejects(source, expected);
     }
 }
+
+#[test]
+fn schema_instances_use_schema_identity_not_field_structure() {
+    accepts(
+        "val Point = struct { x:num, y:num }\n\
+         val Size = struct { x:num, y:num }\n\
+         val point:struct<Point> = Point { x: 1, y: 2 }\n\
+         val size:struct<Size> = Size { x: 3, y: 4 }\n\
+         val move = fn(value:struct<Point>):struct<Point> { value copy { x: value.x + 1 } }\n\
+         move(point)\n\
+         size.x\n",
+    );
+
+    for (source, expected) in [
+        (
+            "val Point = struct { x:num, y:num }\nval Size = struct { x:num, y:num }\nval size:struct<Size> = Point { x: 1, y: 2 }\n",
+            "expected struct<Size>, got struct<Point>",
+        ),
+        (
+            "val Point = struct { x:num, y:num }\nval Size = struct { x:num, y:num }\nval consume = fn(value:struct<Point>) { value }\nconsume(Size { x: 1, y: 2 })\n",
+            "expected struct<Point>, got struct<Size>",
+        ),
+        (
+            "val Point = struct { x:num, y:num }\nval Size = struct { x:num, y:num }\nval wrong = fn(value:struct<Point>):struct<Size> { value }\nwrong(Point { x: 1, y: 2 })\n",
+            "expected struct<Size>, got struct<Point>",
+        ),
+    ] {
+        rejects(source, expected);
+    }
+}
