@@ -63,15 +63,17 @@ impl ForeignResourceSignature {
         }
     }
 
-    pub(crate) fn parameter_name(&self, index: usize) -> Option<&str> {
+    pub(crate) fn parameter_identity(&self, index: usize) -> Option<(Option<&str>, &str)> {
         self.parameters
             .get(index)
             .and_then(Option::as_ref)
-            .map(|identity| identity.name.as_str())
+            .map(|identity| (identity.explicit_runtime_module(), identity.name.as_str()))
     }
 
-    pub(crate) fn result_name(&self) -> Option<&str> {
-        self.result.as_ref().map(|identity| identity.name.as_str())
+    pub(crate) fn result_identity(&self) -> Option<(Option<&str>, &str)> {
+        self.result
+            .as_ref()
+            .map(|identity| (identity.explicit_runtime_module(), identity.name.as_str()))
     }
 }
 

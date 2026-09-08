@@ -30,8 +30,8 @@ static const slug_ffi_module_descriptor MODULE = {
 
 static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor), NULL, &MODULE, 1};
 const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host,
-                                                        void **module_state) {
-  if (host == NULL || module_state == NULL) return NULL;
-  *module_state = NULL;
+                                                        void **library_state) {
+  if (host == NULL || library_state == NULL) return NULL;
+  *library_state = NULL;
   return &LIBRARY;
 }

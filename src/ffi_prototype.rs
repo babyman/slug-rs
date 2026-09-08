@@ -29,8 +29,8 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 10;
-pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.10";
+const ABI_MINOR: u32 = 11;
+pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.11";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
@@ -298,15 +298,45 @@ struct CResourceType {
     destroy: ResourceDestroy,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct FfiResourceIdentity {
+    module_name: String,
+    resource_name: String,
+}
+
+impl FfiResourceIdentity {
+    fn declared(module_name: String, resource_name: String) -> Self {
+        Self {
+            module_name,
+            resource_name,
+        }
+    }
+
+    fn from_ffi(value: FfiText) -> Option<Self> {
+        let value = unsafe { text_from_ffi(value) }?;
+        let (module_name, resource_name) = value.rsplit_once('.')?;
+        if module_name.trim().is_empty() || resource_name.trim().is_empty() {
+            return None;
+        }
+        Some(Self::declared(module_name.into(), resource_name.into()))
+    }
+}
+
+impl fmt::Display for FfiResourceIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.module_name, self.resource_name)
+    }
+}
+
 struct FfiModuleState {
     library: Rc<FfiLibraryState>,
     functions: HashMap<String, RegisteredFunction>,
-    resources: Rc<RefCell<HashMap<String, CResourceType>>>,
+    resources: Rc<RefCell<HashMap<FfiResourceIdentity, CResourceType>>>,
 }
 
 struct FfiLibraryState {
     library: RefCell<Option<Arc<LoadedLibrary>>>,
-    module_state: Cell<*mut c_void>,
+    library_state: Cell<*mut c_void>,
     destroy_library: Option<LibraryDestroy>,
     active: Cell<bool>,
 }
@@ -316,12 +346,12 @@ impl FfiLibraryState {
         if !self.active.replace(false) {
             return;
         }
-        let module_state = self.module_state.replace(std::ptr::null_mut());
-        if !module_state.is_null()
+        let library_state = self.library_state.replace(std::ptr::null_mut());
+        if !library_state.is_null()
             && let Some(destroy_library) = self.destroy_library
         {
             // SAFETY: the library owns this state and its library lease remains live.
-            unsafe { destroy_library(module_state) };
+            unsafe { destroy_library(library_state) };
         }
         self.library.borrow_mut().take();
     }
@@ -333,11 +363,11 @@ impl Drop for FfiLibraryState {
     }
 }
 
-/// A loaded, deliberately unstable Slug-aware C module.
+/// A loaded, deliberately unstable Slug-aware C library.
 type RegisteredModule = (NativeModule, Vec<(String, NativeArity, String)>);
 
 #[derive(Clone)]
-pub struct FfiPrototypeModule {
+pub struct FfiPrototypeLibrary {
     modules: Vec<RegisteredModule>,
     library: Rc<FfiLibraryState>,
 }
@@ -364,7 +394,7 @@ impl fmt::Display for FfiPrototypeError {
 
 impl Error for FfiPrototypeError {}
 
-impl FfiPrototypeModule {
+impl FfiPrototypeLibrary {
     /// Loads and validates one C library that follows the prototype header.
     ///
     /// The library is held by this module's lease and is unloaded after its
@@ -381,9 +411,10 @@ impl FfiPrototypeModule {
             let library = library_lease(path.as_ref())?;
             let init_name = c"slug_ffi_library_init";
             let init: LibraryInit = library.symbol(init_name)?;
-            let mut module_state = std::ptr::null_mut();
-            let descriptors = validate_library_descriptor(init(host_api(), &raw mut module_state))?;
-            if !module_state.is_null() && descriptors.0.is_none() {
+            let mut library_state = std::ptr::null_mut();
+            let descriptors =
+                validate_library_descriptor(init(host_api(), &raw mut library_state))?;
+            if !library_state.is_null() && descriptors.0.is_none() {
                 return Err(FfiPrototypeError::new(
                     "FFI library returned state without a destroy callback",
                 ));
@@ -391,7 +422,7 @@ impl FfiPrototypeModule {
             let resource_types = Rc::new(RefCell::new(HashMap::new()));
             let library_state = Rc::new(FfiLibraryState {
                 library: RefCell::new(Some(library)),
-                module_state: Cell::new(module_state),
+                library_state: Cell::new(library_state),
                 destroy_library: descriptors.0,
                 active: Cell::new(true),
             });
@@ -403,7 +434,7 @@ impl FfiPrototypeModule {
                     .map(|(key, function)| (function.name.clone(), function.arity, key.clone()))
                     .collect();
                 let module = NativeModule::new_with_scope(
-                    module_name,
+                    module_name.clone(),
                     FfiModuleState {
                         library: library_state.clone(),
                         functions,
@@ -422,15 +453,19 @@ impl FfiPrototypeModule {
                                 destroy_c_resource,
                             )
                             .map_err(|error| FfiPrototypeError::new(error.to_string()))?;
-                        Ok((resource.name, resource_type, resource.destroy))
+                        Ok((
+                            FfiResourceIdentity::declared(module_name.clone(), resource.name),
+                            resource_type,
+                            resource.destroy,
+                        ))
                     })
                     .collect::<Result<Vec<_>, FfiPrototypeError>>()?;
                 resource_types
                     .borrow_mut()
                     .extend(resource_types_to_register.into_iter().map(
-                        |(name, resource_type, destroy)| {
+                        |(identity, resource_type, destroy)| {
                             (
-                                name,
+                                identity,
                                 CResourceType {
                                     resource_type,
                                     destroy,
@@ -1167,12 +1202,11 @@ unsafe extern "C" fn producer_send_text(
     }
 }
 
-fn resource_type(call: &mut NativeCall<'_>, resource_name: FfiText) -> Option<CResourceType> {
-    let name = unsafe { text_from_ffi(resource_name) }.filter(|name| !name.trim().is_empty());
-    let Some(name) = name else {
+fn resource_type(call: &mut NativeCall<'_>, resource_identity: FfiText) -> Option<CResourceType> {
+    let Some(identity) = FfiResourceIdentity::from_ffi(resource_identity) else {
         call.set_error(NativeError::new(
             "native.contract",
-            "FFI resource type is invalid",
+            "FFI resource identity must be `module_name.resource_name`",
         ));
         return None;
     };
@@ -1188,11 +1222,11 @@ fn resource_type(call: &mut NativeCall<'_>, resource_name: FfiText) -> Option<CR
     }
     let resource_type = call
         .state::<FfiModuleState>()
-        .and_then(|state| state.resources.borrow().get(&name).cloned());
+        .and_then(|state| state.resources.borrow().get(&identity).cloned());
     if resource_type.is_none() {
         call.set_error(NativeError::new(
             "native.contract",
-            format!("FFI module has no resource type `{name}`"),
+            format!("FFI library has no resource type `{identity}`"),
         ));
     }
     resource_type
@@ -1245,7 +1279,7 @@ fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
                 .functions
                 .get(member_key)
                 .cloned()
-                .map(|function| (function, state.library.module_state.get()))
+                .map(|function| (function, state.library.library_state.get()))
         })
     });
     let Some(function) = function else {
@@ -1277,7 +1311,7 @@ unsafe fn validate_library_descriptor(
             descriptor.abi_major
         )));
     }
-    if descriptor.abi_minor > ABI_MINOR
+    if descriptor.abi_minor != ABI_MINOR
         || descriptor.descriptor_size
             < u32::try_from(size_of::<LibraryDescriptor>()).expect("descriptor fits u32")
     {
@@ -1310,7 +1344,7 @@ unsafe fn validate_descriptor(
             descriptor.abi_major
         )));
     }
-    if descriptor.abi_minor > ABI_MINOR
+    if descriptor.abi_minor != ABI_MINOR
         || descriptor.descriptor_size
             < u32::try_from(size_of::<ModuleDescriptor>()).expect("descriptor fits u32")
     {

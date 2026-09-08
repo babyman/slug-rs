@@ -3,13 +3,13 @@
 
 typedef struct {
   int serial;
-} module_state;
+} library_state;
 
 static int next_serial = 1;
 static int destroyed = 0;
 
 static int32_t state_info(const slug_ffi_host_api *host, slug_ffi_call *call, void *raw_state) {
-  module_state *state = raw_state;
+  library_state *state = raw_state;
   if (state == NULL) {
     host->set_error(call, (slug_ffi_text){"state.missing", 13},
                     (slug_ffi_text){"module state is unavailable", 27});
@@ -41,7 +41,7 @@ static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR
 const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host,
                                                         void **out_state) {
   if (host == NULL || out_state == NULL) return NULL;
-  module_state *state = malloc(sizeof(module_state));
+  library_state *state = malloc(sizeof(library_state));
   if (state == NULL) return NULL;
   state->serial = next_serial++;
   *out_state = state;

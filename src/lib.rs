@@ -37,7 +37,7 @@ pub use clutch::{
 };
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
-pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeModule};
+pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeLibrary};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
 pub use native::{

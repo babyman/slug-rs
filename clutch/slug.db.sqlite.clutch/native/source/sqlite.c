@@ -21,7 +21,7 @@ static void destroy_statement(void *raw) {
   if (statement != NULL) { if (statement->statement != NULL) sqlite3_finalize(statement->statement); free(statement); }
 }
 static int sql_arguments(const slug_ffi_host_api *host, slug_ffi_call *call, void **raw, slug_ffi_text *sql) {
-  if (!host->argument_resource(call, 0, TEXT("Database"), raw) || !host->argument_text(call, 1, sql)) return 0;
+  if (!host->argument_resource(call, 0, TEXT("slug.db.sqlite.Database"), raw) || !host->argument_text(call, 1, sql)) return 0;
   if (sql->length > INT_MAX) { host->set_error(call, TEXT("sqlite.error"), TEXT("SQL text is too large")); return 0; }
   return 1;
 }
@@ -53,7 +53,7 @@ static int32_t open_database(const slug_ffi_host_api *host, slug_ffi_call *call,
   database = malloc(sizeof(*database));
   if (database == NULL) { sqlite3_close_v2(raw); host->set_error(call, TEXT("sqlite.error"), TEXT("cannot allocate database handle")); return SLUG_FFI_ERROR; }
   database->database = raw;
-  if (!host->set_resource(call, TEXT("Database"), database)) { destroy_database(database); return SLUG_FFI_ERROR; }
+  if (!host->set_resource(call, TEXT("slug.db.sqlite.Database"), database)) { destroy_database(database); return SLUG_FFI_ERROR; }
   return SLUG_FFI_OK;
 }
 static int32_t exec_sql(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
@@ -89,9 +89,9 @@ static int32_t query_sql(const slug_ffi_host_api *host, slug_ffi_call *call, voi
   sqlite3_finalize(statement); if (!host->set_list(call, rows)) return SLUG_FFI_ERROR; return SLUG_FFI_OK;
 }
 static int32_t close_database(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
-  (void)state; void *raw = NULL; if (!host->argument_resource(call, 0, TEXT("Database"), &raw)) return SLUG_FFI_ERROR;
+  (void)state; void *raw = NULL; if (!host->argument_resource(call, 0, TEXT("slug.db.sqlite.Database"), &raw)) return SLUG_FFI_ERROR;
   sqlite_database *database = raw; if (sqlite3_close(database->database) != SQLITE_OK) { error(host, call, database->database); return SLUG_FFI_ERROR; }
-  database->database = NULL; if (!host->close_resource(call, 0, TEXT("Database"))) return SLUG_FFI_ERROR; host->set_i64(call, 0); return SLUG_FFI_OK;
+  database->database = NULL; if (!host->close_resource(call, 0, TEXT("slug.db.sqlite.Database"))) return SLUG_FFI_ERROR; host->set_i64(call, 0); return SLUG_FFI_OK;
 }
 static int32_t prepare_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state; void *raw; slug_ffi_text sql; sqlite_database *database; sqlite_statement *statement;
@@ -99,11 +99,11 @@ static int32_t prepare_statement(const slug_ffi_host_api *host, slug_ffi_call *c
   statement = malloc(sizeof(*statement)); if (statement == NULL) { host->set_error(call, TEXT("sqlite.error"), TEXT("cannot allocate statement handle")); return SLUG_FFI_ERROR; }
   statement->statement = NULL;
   if (sqlite3_prepare_v2(database->database, sql.data, (int)sql.length, &statement->statement, NULL) != SQLITE_OK) { error(host, call, database->database); destroy_statement(statement); return SLUG_FFI_ERROR; }
-  if (!host->set_resource(call, TEXT("Statement"), statement)) { destroy_statement(statement); return SLUG_FFI_ERROR; }
+  if (!host->set_resource(call, TEXT("slug.db.sqlite.statement.Statement"), statement)) { destroy_statement(statement); return SLUG_FFI_ERROR; }
   return SLUG_FFI_OK;
 }
 static int statement_argument(const slug_ffi_host_api *host, slug_ffi_call *call, sqlite_statement **statement) {
-  void *raw = NULL; if (!host->argument_resource(call, 0, TEXT("Statement"), &raw)) return 0; *statement = raw; return 1;
+  void *raw = NULL; if (!host->argument_resource(call, 0, TEXT("slug.db.sqlite.statement.Statement"), &raw)) return 0; *statement = raw; return 1;
 }
 static int32_t exec_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state; sqlite_statement *statement;
@@ -123,7 +123,7 @@ static int32_t query_statement(const slug_ffi_host_api *host, slug_ffi_call *cal
   sqlite3_reset(statement->statement); sqlite3_clear_bindings(statement->statement); if (!host->set_list(call, rows)) return SLUG_FFI_ERROR; return SLUG_FFI_OK;
 }
 static int32_t close_statement(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
-  (void)state; if (!host->close_resource(call, 0, TEXT("Statement"))) return SLUG_FFI_ERROR; host->set_i64(call, 0); return SLUG_FFI_OK;
+  (void)state; if (!host->close_resource(call, 0, TEXT("slug.db.sqlite.statement.Statement"))) return SLUG_FFI_ERROR; host->set_i64(call, 0); return SLUG_FFI_OK;
 }
 static const slug_ffi_function_descriptor DATABASE_FUNCTIONS[] = {
   {sizeof(slug_ffi_function_descriptor), TEXT("open"), TEXT("sqlite.open/v1"), 1, 1, open_database},

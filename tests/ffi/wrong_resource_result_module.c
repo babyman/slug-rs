@@ -14,7 +14,7 @@ static int32_t create_counter(const slug_ffi_host_api *host, slug_ffi_call *call
                     (slug_ffi_text){"cannot allocate resource", 24});
     return SLUG_FFI_ERROR;
   }
-  if (!host->set_resource(call, (slug_ffi_text){"Counter", 7}, resource)) {
+  if (!host->set_resource(call, (slug_ffi_text){"slug.resource_result.Counter", 28}, resource)) {
     free(resource);
     return SLUG_FFI_ERROR;
   }

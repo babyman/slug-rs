@@ -34,7 +34,7 @@ static int32_t open_file(const slug_ffi_host_api *host, slug_ffi_call *call,
     return SLUG_FFI_ERROR;
   }
   free(path);
-  if (!host->set_resource(call, TEXT("File"), file)) {
+  if (!host->set_resource(call, TEXT("slug.io.fs.File"), file)) {
     fclose(file);
     return SLUG_FFI_ERROR;
   }
@@ -59,7 +59,7 @@ static int32_t open_append(const slug_ffi_host_api *host, slug_ffi_call *call, v
 static int32_t read_line(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
   void *resource = NULL;
-  if (!host->argument_resource(call, 0, TEXT("File"), &resource)) return SLUG_FFI_ERROR;
+  if (!host->argument_resource(call, 0, TEXT("slug.io.fs.File"), &resource)) return SLUG_FFI_ERROR;
   FILE *file = resource;
   size_t length = 0;
   size_t capacity = 128;
@@ -113,7 +113,7 @@ static int32_t write_file(const slug_ffi_host_api *host, slug_ffi_call *call, vo
   (void)state;
   void *resource = NULL;
   slug_ffi_text text = {0};
-  if (!host->argument_resource(call, 0, TEXT("File"), &resource) ||
+  if (!host->argument_resource(call, 0, TEXT("slug.io.fs.File"), &resource) ||
       !host->argument_text(call, 1, &text)) return SLUG_FFI_ERROR;
   if (fwrite(text.data, 1, (size_t)text.length, (FILE *)resource) != text.length) {
     host->set_error(call, TEXT("native.io"), TEXT("cannot write file"));
@@ -129,7 +129,7 @@ static int32_t write_file(const slug_ffi_host_api *host, slug_ffi_call *call, vo
 
 static int32_t close_file(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
-  if (!host->close_resource(call, 0, TEXT("File"))) return SLUG_FFI_ERROR;
+  if (!host->close_resource(call, 0, TEXT("slug.io.fs.File"))) return SLUG_FFI_ERROR;
   host->set_nil(call);
   return SLUG_FFI_OK;
 }

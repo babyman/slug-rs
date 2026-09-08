@@ -34,8 +34,8 @@ static const slug_ffi_module_descriptor MODULE = {
   TEXT("slug.math"), FUNCTIONS, 2,
 };
 static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor), NULL, &MODULE, 1};
-SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host, void **module_state) {
-  if (host == NULL || host->abi_major != SLUG_FFI_PROTOTYPE_ABI_MAJOR || host->table_size < sizeof(slug_ffi_host_api) || module_state == NULL) return NULL;
-  *module_state = NULL;
+SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host, void **library_state) {
+  if (host == NULL || host->abi_major != SLUG_FFI_PROTOTYPE_ABI_MAJOR || host->table_size < sizeof(slug_ffi_host_api) || library_state == NULL) return NULL;
+  *library_state = NULL;
   return &LIBRARY;
 }

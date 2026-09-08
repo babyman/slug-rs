@@ -51,6 +51,10 @@ impl NominalIdentity {
             .unwrap_or(&self.declaration_path)
     }
 
+    pub(super) fn explicit_runtime_module(&self) -> Option<&str> {
+        self.runtime_module.as_deref()
+    }
+
     pub(super) fn set_runtime_module(&mut self, module: String) {
         self.runtime_module = Some(module);
     }

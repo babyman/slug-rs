@@ -8,6 +8,10 @@
   and all C fixtures use the new ABI. ABI 0.10 makes library teardown the sole
   native lifecycle callback and removes the ignored module-level callback.
 
+- Made ABI 0.11 native resource identity fully qualified by Slug module and
+  resource name, allowing one library's modules to declare the same short
+  resource name without collision.
+
 - Bound filesystem line reads to 16 MiB and reject invalid C-FFI collection
   handles before they can corrupt host memory.
 

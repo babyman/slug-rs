@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use slug_vm::{ClutchRepository, FfiPrototypeModule, ModuleLoader, RuntimeErrorKind, Vm};
+use slug_vm::{ClutchRepository, FfiPrototypeLibrary, ModuleLoader, RuntimeErrorKind, Vm};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -111,7 +111,7 @@ fn build_native_clutch(
              \"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n\
              [native]\n\
              source = \"native/source\"\n\
-             abi = \"slug-ffi-prototype/0.10\"\n\n\
+             abi = \"slug-ffi-prototype/0.11\"\n\n\
              [native.libraries]\n\
              \"{target}\" = \"native/{target}/{}\"\n",
             module_file.to_string_lossy(),
@@ -126,7 +126,7 @@ fn build_native_clutch(
         fs::write(
             clutch_root.join("clutch.toml"),
             format!(
-                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.10\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
+                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.11\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
                 module_file.to_string_lossy(),
                 library.file_name().expect("native library name").to_string_lossy(),
             ),
@@ -426,7 +426,7 @@ fn loads_math_through_an_exploded_native_clutch() {
 fn rejects_a_c_module_with_an_incompatible_abi_major() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(&directory, "tests/ffi/invalid_module.c", "invalid");
-    let Err(error) = FfiPrototypeModule::load(library) else {
+    let Err(error) = FfiPrototypeLibrary::load(library) else {
         panic!("incompatible ABI must fail");
     };
     assert!(error.to_string().contains("ABI major 99"));
@@ -440,7 +440,7 @@ fn rejects_an_undersized_c_function_descriptor() {
         "tests/ffi/undersized_function_module.c",
         "undersized",
     );
-    let Err(error) = FfiPrototypeModule::load(library) else {
+    let Err(error) = FfiPrototypeLibrary::load(library) else {
         panic!("undersized descriptor must fail");
     };
     assert!(error.to_string().contains("undersized function descriptor"));
@@ -468,7 +468,7 @@ fn rejects_stale_c_collection_handles_without_corrupting_memory() {
             "val handles = import(\"slug.handles\")\nhandles.staleMap()\n",
         )
         .expect("compile program using collection-handle module");
-    let module = FfiPrototypeModule::load(library).expect("load collection-handle module");
+    let module = FfiPrototypeLibrary::load(library).expect("load collection-handle module");
     let mut vm = Vm::with_module_loader(loader);
     module
         .register(&mut vm)
@@ -492,7 +492,7 @@ fn rejects_a_c_resource_type_without_a_destroy_callback() {
         "tests/ffi/missing_resource_destroy_module.c",
         "missing_resource_destroy",
     );
-    let Err(error) = FfiPrototypeModule::load(library) else {
+    let Err(error) = FfiPrototypeLibrary::load(library) else {
         panic!("resource descriptor without a destructor must fail");
     };
     assert!(error.to_string().contains("has no destroy callback"));
@@ -511,7 +511,7 @@ fn rejects_source_resource_types_missing_from_the_native_module() {
     .expect("write mismatched resource module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C resource module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -546,7 +546,7 @@ fn rejects_native_resource_types_missing_from_the_source_module() {
     .expect("write mismatched resource module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C resource module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -591,7 +591,7 @@ fn turns_an_unknown_c_status_into_a_checked_contract_error() {
             "val status = import(\"slug.status\")\nstatus.status()\n",
         )
         .expect("compile program using status module");
-    let module = FfiPrototypeModule::load(library).expect("load status module");
+    let module = FfiPrototypeLibrary::load(library).expect("load status module");
     let mut vm = Vm::with_module_loader(loader);
     module.register(&mut vm).expect("register status module");
     let error = vm
@@ -619,7 +619,7 @@ fn dispatches_same_arity_c_functions_by_opaque_member_key() {
             "val same = import(\"slug.same\")\nsame.first() + same.second()\n",
         )
         .expect("compile program using same-arity module");
-    let module = FfiPrototypeModule::load(library).expect("load same-arity module");
+    let module = FfiPrototypeLibrary::load(library).expect("load same-arity module");
     let mut vm = Vm::with_module_loader(loader);
     module
         .register(&mut vm)
@@ -628,7 +628,7 @@ fn dispatches_same_arity_c_functions_by_opaque_member_key() {
 }
 
 #[test]
-fn unloads_libraries_after_destroying_each_module_state() {
+fn unloads_libraries_after_destroying_each_library_state() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(&directory, "tests/ffi/stateful_module.c", "stateful");
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -647,7 +647,7 @@ fn unloads_libraries_after_destroying_each_module_state() {
                 "val stateful = import(\"slug.stateful\")\nstateful.stateInfo()\n",
             )
             .expect("compile program using stateful module");
-        let module = FfiPrototypeModule::load(&library).expect("load stateful module");
+        let module = FfiPrototypeLibrary::load(&library).expect("load stateful module");
         let mut vm = Vm::with_module_loader(loader);
         module.register(&mut vm).expect("register stateful module");
         assert_eq!(
@@ -678,7 +678,7 @@ fn rejects_stale_native_functions_after_explicit_plugin_shutdown() {
             "val stateful = import(\"slug.stateful\")\nstateful.stateInfo()\n",
         )
         .expect("compile stateful module consumer");
-    let module = FfiPrototypeModule::load(library).expect("load stateful module");
+    let module = FfiPrototypeLibrary::load(library).expect("load stateful module");
     let mut vm = Vm::with_module_loader(loader);
     module.register(&mut vm).expect("register stateful module");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "100");
@@ -710,7 +710,7 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
     .expect("write resource module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(&library).expect("load C resource module");
+    let module = FfiPrototypeLibrary::load(&library).expect("load C resource module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -758,7 +758,7 @@ fn validates_resource_arguments_through_dynamic_foreign_calls() {
     .expect("write resource module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C resource module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -779,7 +779,7 @@ fn validates_resource_arguments_through_dynamic_foreign_calls() {
     assert!(
         error
             .message
-            .contains("non-resource argument where `Counter` is declared")
+            .contains("non-resource argument where `slug.resources.Counter` is declared")
     );
 }
 
@@ -801,7 +801,7 @@ fn rejects_foreign_resource_results_with_the_wrong_declared_type() {
     .expect("write resource result module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C resource module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C resource module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -820,7 +820,56 @@ fn rejects_foreign_resource_results_with_the_wrong_declared_type() {
     assert!(
         error
             .message
-            .contains("wrong resource type for its result; expected `Other`")
+            .contains("wrong resource type for its result; expected `slug.resource_result.Other`")
+    );
+}
+
+#[test]
+fn keeps_same_named_resources_in_distinct_module_namespaces() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/same_named_resource_modules.c",
+        "same_named_resources",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/alpha.slug"),
+        "export resource Handle\n\
+         export foreign create = fn():Handle\n\
+         export foreign read = fn(handle:Handle):num\n",
+    )
+    .expect("write alpha source module");
+    fs::write(
+        directory.path().join("slug/beta.slug"),
+        "export resource Handle\n\
+         export foreign create = fn():Handle\n\
+         export foreign read = fn(handle:Handle):num\n",
+    )
+    .expect("write beta source module");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let library = FfiPrototypeLibrary::load(library).expect("load C library");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    library
+        .register(&mut vm)
+        .expect("register both C module descriptors");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val alpha = import(\"slug.alpha\")\n\
+             val beta = import(\"slug.beta\")\n\
+             val alpha_handle = alpha.create()\n\
+             val beta_handle = beta.create()\n\
+             [alpha.read(alpha_handle), beta.read(beta_handle)]\n",
+        )
+        .expect("compile same-named resource program");
+
+    assert_eq!(
+        vm.run_named(&program, "main")
+            .expect("read resources from their declaring modules")
+            .to_string(),
+        "[1, 2]"
     );
 }
 
@@ -842,7 +891,7 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
     .expect("write resource module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(&library).expect("load C resource module");
+    let module = FfiPrototypeLibrary::load(&library).expect("load C resource module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -881,7 +930,7 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
 
     let replacement_loader = ModuleLoader::new(directory.path(), None);
     let mut replacement = Vm::with_module_loader(replacement_loader.clone());
-    let replacement_module = FfiPrototypeModule::load(&library).expect("reload C resource module");
+    let replacement_module = FfiPrototypeLibrary::load(&library).expect("reload C resource module");
     replacement_module
         .register(&mut replacement)
         .expect("register module in replacement VM");
@@ -914,7 +963,7 @@ fn lets_a_c_thread_send_through_an_owned_producer_capability() {
     .expect("write async module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C async module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C async module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module.register(&mut vm).expect("register C async module");
     let program = loader
@@ -945,7 +994,7 @@ fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
     .expect("write backpressure module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C backpressure module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C backpressure module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -977,7 +1026,7 @@ fn reports_closed_when_slug_revokes_a_c_producer_receiver() {
     .expect("write revocation module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C revocation module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C revocation module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)
@@ -1013,7 +1062,7 @@ fn transfers_owned_c_text_only_after_a_backpressured_retry_succeeds() {
     .expect("write text backpressure module source");
     let main = directory.path().join("main.slug");
     let loader = ModuleLoader::new(directory.path(), None);
-    let module = FfiPrototypeModule::load(library).expect("load C text backpressure module");
+    let module = FfiPrototypeLibrary::load(library).expect("load C text backpressure module");
     let mut vm = Vm::with_module_loader(loader.clone());
     module
         .register(&mut vm)

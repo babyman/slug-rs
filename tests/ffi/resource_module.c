@@ -24,7 +24,7 @@ static int32_t create_counter(const slug_ffi_host_api *host, slug_ffi_call *call
     return SLUG_FFI_ERROR;
   }
   resource->value = value;
-  if (!host->set_resource(call, (slug_ffi_text){"Counter", 7}, resource)) {
+  if (!host->set_resource(call, (slug_ffi_text){"slug.resources.Counter", 22}, resource)) {
     free(resource);
     return SLUG_FFI_ERROR;
   }
@@ -35,7 +35,7 @@ static int32_t read_counter(const slug_ffi_host_api *host, slug_ffi_call *call,
                             void *state) {
   (void)state;
   void *raw_resource = NULL;
-  if (!host->argument_resource(call, 0, (slug_ffi_text){"Counter", 7}, &raw_resource)) {
+  if (!host->argument_resource(call, 0, (slug_ffi_text){"slug.resources.Counter", 22}, &raw_resource)) {
     return SLUG_FFI_ERROR;
   }
   host->set_i64(call, ((counter_resource *)raw_resource)->value);
@@ -45,7 +45,7 @@ static int32_t read_counter(const slug_ffi_host_api *host, slug_ffi_call *call,
 static int32_t close_counter(const slug_ffi_host_api *host, slug_ffi_call *call,
                              void *state) {
   (void)state;
-  if (!host->close_resource(call, 0, (slug_ffi_text){"Counter", 7})) {
+  if (!host->close_resource(call, 0, (slug_ffi_text){"slug.resources.Counter", 22})) {
     return SLUG_FFI_ERROR;
   }
   host->set_i64(call, destroyed);

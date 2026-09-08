@@ -110,7 +110,7 @@ chooses to provide; the ABI does not compensate with hidden offloading.
 Every native function has one conceptual signature:
 
 ```text
-native_call(call_context, module_state) -> native_status
+native_call(call_context, library_state) -> native_status
 ```
 
 `call_context` is opaque and valid only for the dynamic extent of the callback.
@@ -204,11 +204,13 @@ Handle access validates all three identities. A module cannot cast a handle
 created by another module or by another registered type. Pointer values and
 integer addresses are never exposed as Slug values.
 
-When a module declares a source-level nominal resource type, its name MUST map
-to exactly one `NativeModule::resource_type(name, ...)` registration owned by
-that module. Calls through a matching
+For a native library that provides multiple Slug modules, a resource identity
+is the pair `(module_name, resource_name)`. The native API receives that
+identity as `module_name.resource_name`, such as
+`slug.db.sqlite.Database`. Short resource names are never shared across module
+namespaces, so two sibling modules may both declare `Handle`. Calls through a matching
 `foreign` declaration validate resource arguments and results against that
-registration, including dynamically reached calls. The source language has no
+fully qualified registration, including dynamically reached calls. The source language has no
 broad resource supertype; a callback accepting multiple kinds declares their
 explicit union.
 
@@ -501,11 +503,13 @@ exposes native prepared-statement operations from the clutch's one loaded
 library. A `Statement` is a typed native resource; close and shutdown finalize
 it before the database handle is released.
 
-Prototype ABI minor 10 uses one library descriptor containing one or more
+Prototype ABI minor 11 uses one library descriptor containing one or more
 module descriptors. The library owns one loaded-code lease and lifecycle while
 each module retains its own foreign registrations and resource declarations.
 Only the library descriptor may declare a teardown callback; module descriptors
 do not own native state or lifecycle callbacks.
+Its resource operations require fully qualified `(module_name, resource_name)`
+identities, rather than the earlier ambiguous short resource names.
 It also retains the minor-8 argument-kind and byte borrowing plus temporary
 list/map builders. The builders are call-scoped opaque handles: C transfers a
 map into a list and transfers the final list to the call, or destroys any

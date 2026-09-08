@@ -3198,7 +3198,7 @@ impl Vm {
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
         for (index, value) in arguments.iter().enumerate() {
-            let Some(expected) = signature.parameter_name(index) else {
+            let Some(expected) = signature.parameter_identity(index) else {
                 continue;
             };
             self.validate_foreign_resource_value(function, expected, value, "argument", span)?;
@@ -3213,7 +3213,7 @@ impl Vm {
         value: &Value,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
-        let Some(expected) = signature.result_name() else {
+        let Some(expected) = signature.result_identity() else {
             return Ok(());
         };
         self.validate_foreign_resource_value(function, expected, value, "result", span)
@@ -3222,29 +3222,34 @@ impl Vm {
     fn validate_foreign_resource_value(
         &self,
         function: &NativeFunction,
-        expected: &str,
+        expected: (Option<&str>, &str),
         value: &Value,
         position: &str,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
+        let expected_module = expected.0.unwrap_or_else(|| function.module_name());
         let Value::NativeResource(resource) = value else {
             return Err(self.error_at(
                 RuntimeErrorKind::NativeContract,
                 format!(
-                    "native `{}` returned a non-resource {position} where `{expected}` is declared",
-                    function.qualified_name()
+                    "native `{}` returned a non-resource {position} where `{}.{}` is declared",
+                    function.qualified_name(),
+                    expected_module,
+                    expected.1
                 ),
                 span,
             ));
         };
-        if resource.has_type_in_scope(function.resource_scope_id(), expected) {
+        if resource.has_type_in_scope(function.resource_scope_id(), expected_module, expected.1) {
             return Ok(());
         }
         Err(self.error_at(
             RuntimeErrorKind::NativeContract,
             format!(
-                "native `{}` returned the wrong resource type for its {position}; expected `{expected}`",
-                function.qualified_name()
+                "native `{}` returned the wrong resource type for its {position}; expected `{}.{}`",
+                function.qualified_name(),
+                expected_module,
+                expected.1
             ),
             span,
         ))

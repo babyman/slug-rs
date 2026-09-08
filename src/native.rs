@@ -1072,8 +1072,15 @@ impl NativeResource {
         self.module.name.as_ref() == module_name && self.registration.name.as_ref() == type_name
     }
 
-    pub(crate) fn has_type_in_scope(&self, scope_id: usize, type_name: &str) -> bool {
-        self.registration.module_id == scope_id && self.registration.name.as_ref() == type_name
+    pub(crate) fn has_type_in_scope(
+        &self,
+        scope_id: usize,
+        module_name: &str,
+        type_name: &str,
+    ) -> bool {
+        self.registration.module_id == scope_id
+            && self.module.name.as_ref() == module_name
+            && self.registration.name.as_ref() == type_name
     }
 
     pub(crate) fn close(&self) -> Result<(), String> {

@@ -4,7 +4,7 @@
 
 [native]
 source = "native/source"
-abi = "slug-ffi-prototype/0.10"
+abi = "slug-ffi-prototype/0.11"
 
 [native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_db_sqlite.dylib"

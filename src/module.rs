@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    ClutchRepository, Configuration, FfiPrototypeModule, ModuleDeclaration, NativeDescriptorError,
+    ClutchRepository, Configuration, FfiPrototypeLibrary, ModuleDeclaration, NativeDescriptorError,
     NativeFunction, Program, SourceError, Value, Vm,
     clutch::{self, StagedClutchPlugin},
     native::{NativeResourceRegistry, native_resource_registry},
@@ -571,7 +571,7 @@ impl ModuleLoader {
                 root, library, abi, ..
             } => {
                 if abi == crate::ffi_prototype::ABI_PROFILE {
-                    let module = FfiPrototypeModule::load(library).map_err(|error| {
+                    let module = FfiPrototypeLibrary::load(library).map_err(|error| {
                         ModuleLoadError::Clutch {
                             path: library.clone(),
                             message: format!("cannot load native plugin: {error}"),
