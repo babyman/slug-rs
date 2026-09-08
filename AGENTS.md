@@ -94,8 +94,15 @@ for mechanical edits or a local bug fix whose design is already specified.
 ## Working agreement
 
 - Inspect existing code and tests before choosing an implementation.
-- Keep commits scoped to one coherent prompt when a commit is requested. Use a
-  Semantic Commit Message (`feat`, `fix`, `refactor`, or `chore`) with a
-  50-character subject and a wrapped body.
+- Keep commits scoped to one coherent prompt when a commit is requested.
+- Commit messages MUST use Semantic Commit Messages with one of these types:
+  `feat`, `refactor`, `fix`, or `chore`.
+- Use the 50/72 commit-message format:
+
+  ```text
+  <semantic commit type>(<scope>): <subject>
+
+  <body>
+  ```
 - Append user-visible repository changes to `changelog.md` under `Unreleased`.
 - Do not commit secrets, build artifacts, or local editor state.
