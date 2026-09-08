@@ -75,6 +75,26 @@ fn executes_a_minimal_calculation_through_the_public_cli() {
 }
 
 #[test]
+fn treats_diagnostic_format_after_the_program_path_as_a_program_argument() {
+    let path = fixture_path("post-program-diagnostic-format-argument");
+    fs::write(
+        &path,
+        "val main = fn(args:list) { println(args[0] == \"--diagnostic-format=json\") }\n",
+    )
+    .expect("write argument source");
+    let output = slug()
+        .arg(&path)
+        .arg("--diagnostic-format=json")
+        .output()
+        .expect("run program with JSON-named argument");
+    fs::remove_file(path).expect("remove argument source");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "true\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn executes_a_bare_program_name_from_the_library_directory() {
     let root = std::env::temp_dir().join(format!(
         "slug-cli-library-entrypoint-{}",

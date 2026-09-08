@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `slug --diagnostic-format=json program.slug`, a versioned JSON stderr
+  diagnostic mode for parser, semantic/type, module, runtime, and runner
+  startup failures.
+
 - Added retained declaration tags and documentation for exported and local
   `resource` and `enum` declarations.
 

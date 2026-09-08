@@ -10,9 +10,11 @@ use std::{
     time::Duration,
 };
 
+use serde::Serialize;
 use slug_vm::{
     ClutchRepository, Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule,
-    NativeOwnedValue, NativeStatus, RuntimeError, SourceError, SourceErrorKind, SourceSpan, Vm,
+    NativeOwnedValue, NativeStatus, RuntimeError, RuntimeErrorKind, SourceError, SourceErrorKind,
+    SourceSpan, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -281,25 +283,32 @@ fn register_native_modules(vm: &mut Vm) {
 fn main() -> ExitCode {
     let mut args = env::args();
     let executable = args.next().unwrap_or_else(|| "slug".into());
-    match args.next().as_deref() {
+    let mut remaining = args.collect::<Vec<_>>().into_iter().peekable();
+    let json = remaining
+        .peek()
+        .is_some_and(|argument| argument == "--diagnostic-format=json");
+    if json {
+        remaining.next();
+    }
+    match remaining.next().as_deref() {
         Some("--version" | "-V") => {
             println!("slug-vm {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") | None => {
             println!(
-                "Usage: {executable} program.slug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len."
+                "Usage: {executable} [--diagnostic-format=json] program.slug [arguments...]\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len."
             );
             ExitCode::SUCCESS
         }
         Some(path) => {
-            let program_arguments = args.collect::<Vec<_>>();
-            run(path, &program_arguments)
+            let program_arguments = remaining.collect::<Vec<_>>();
+            run(path, &program_arguments, json)
         }
     }
 }
 
-fn run(path: &str, program_arguments: &[String]) -> ExitCode {
+fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT")
@@ -312,7 +321,12 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
     ) {
         Ok(source) => source,
         Err((path, error)) => {
-            eprintln!("slug: cannot read {}: {error}", path.display());
+            eprint_startup_error(
+                "io",
+                "entry_read",
+                format!("cannot read {}: {error}", path.display()),
+                json,
+            );
             return ExitCode::from(1);
         }
     };
@@ -338,7 +352,7 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
             match ClutchRepository::from_manifest(home.join("clutch")) {
                 Ok(repository) => repository,
                 Err(error) => {
-                    eprintln!("slug: {error}");
+                    eprint_startup_error("host", "clutch", error.to_string(), json);
                     return ExitCode::from(1);
                 }
             }
@@ -359,7 +373,7 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
                 SourceErrorKind::Parse => "parse",
                 SourceErrorKind::Semantic => "semantic",
             };
-            eprint_source_error(category, &error, &resolved_path, &source);
+            eprint_source_error(category, &error, &resolved_path, &source, json);
             return ExitCode::from(1);
         }
     };
@@ -374,7 +388,7 @@ fn run(path: &str, program_arguments: &[String]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprint_runtime_error(&error, &resolved_path, &source);
+            eprint_runtime_error(&error, &resolved_path, &source, json);
             ExitCode::from(1)
         }
     }
@@ -419,7 +433,57 @@ fn read_entry_source(
     ))
 }
 
-fn eprint_source_error(category: &str, error: &SourceError, input_path: &str, input: &str) {
+#[derive(Serialize)]
+struct JsonDiagnostic {
+    version: u8,
+    category: String,
+    kind: Option<String>,
+    message: String,
+    location: Option<JsonLocation>,
+    frames: Vec<JsonFrame>,
+    cause: Option<Box<JsonDiagnostic>>,
+}
+
+#[derive(Serialize)]
+struct JsonLocation {
+    path: String,
+    line: u32,
+    column: u32,
+}
+
+#[derive(Serialize)]
+struct JsonFrame {
+    function: String,
+    location: Option<JsonLocation>,
+}
+
+fn eprint_startup_error(category: &str, kind: &str, message: String, json: bool) {
+    if json {
+        eprint_json_diagnostic(&JsonDiagnostic {
+            version: 1,
+            category: category.into(),
+            kind: Some(kind.into()),
+            message,
+            location: None,
+            frames: Vec::new(),
+            cause: None,
+        });
+    } else {
+        eprintln!("slug: {message}");
+    }
+}
+
+fn eprint_source_error(
+    category: &str,
+    error: &SourceError,
+    input_path: &str,
+    input: &str,
+    json: bool,
+) {
+    if json {
+        eprint_json_diagnostic(&source_diagnostic(category, error));
+        return;
+    }
     eprintln!(
         "{}",
         render_source_error(category, error, input_path, input)
@@ -437,8 +501,86 @@ fn render_source_error(
         .unwrap_or_else(|| format!("slug: {category} error: {error}"))
 }
 
-fn eprint_runtime_error(error: &RuntimeError, input_path: &str, input: &str) {
+fn eprint_runtime_error(error: &RuntimeError, input_path: &str, input: &str, json: bool) {
+    if json {
+        eprint_json_diagnostic(&runtime_diagnostic(error));
+        return;
+    }
     eprintln!("{}", render_runtime_error(error, input_path, input));
+}
+
+fn eprint_json_diagnostic(diagnostic: &JsonDiagnostic) {
+    println_to_stderr(
+        &serde_json::to_string(&diagnostic).expect("diagnostic JSON is serializable"),
+    );
+}
+
+fn println_to_stderr(text: &str) {
+    eprintln!("{text}");
+}
+
+fn source_diagnostic(category: &str, error: &SourceError) -> JsonDiagnostic {
+    JsonDiagnostic {
+        version: 1,
+        category: category.into(),
+        kind: None,
+        message: error.message.clone(),
+        location: error.span.as_ref().map(json_location),
+        frames: Vec::new(),
+        cause: None,
+    }
+}
+
+fn runtime_diagnostic(error: &RuntimeError) -> JsonDiagnostic {
+    let category = if error.kind == RuntimeErrorKind::Module {
+        "module"
+    } else {
+        "runtime"
+    };
+    JsonDiagnostic {
+        version: 1,
+        category: category.into(),
+        kind: Some(runtime_kind(&error.kind).into()),
+        message: error.message.clone(),
+        location: error.span.as_ref().map(json_location),
+        frames: error
+            .frames
+            .iter()
+            .map(|frame| JsonFrame {
+                function: frame.function.clone(),
+                location: frame.span.as_ref().map(json_location),
+            })
+            .collect(),
+        cause: error
+            .cause
+            .as_deref()
+            .map(|cause| Box::new(runtime_diagnostic(cause))),
+    }
+}
+
+fn json_location(span: &SourceSpan) -> JsonLocation {
+    JsonLocation {
+        path: span.path.to_string(),
+        line: span.line,
+        column: span.column,
+    }
+}
+
+fn runtime_kind(kind: &RuntimeErrorKind) -> &'static str {
+    match kind {
+        RuntimeErrorKind::InvalidBytecode => "invalid_bytecode",
+        RuntimeErrorKind::Type => "type",
+        RuntimeErrorKind::Name => "name",
+        RuntimeErrorKind::Arity => "arity",
+        RuntimeErrorKind::DivideByZero => "divide_by_zero",
+        RuntimeErrorKind::InvalidCall => "invalid_call",
+        RuntimeErrorKind::Native => "native",
+        RuntimeErrorKind::NativeContract => "native_contract",
+        RuntimeErrorKind::Module => "module",
+        RuntimeErrorKind::NotImplemented => "not_implemented",
+        RuntimeErrorKind::Match => "match",
+        RuntimeErrorKind::Thrown => "thrown",
+    }
 }
 
 fn render_runtime_error(error: &RuntimeError, input_path: &str, input: &str) -> String {

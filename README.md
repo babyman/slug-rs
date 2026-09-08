@@ -140,8 +140,10 @@ cargo run --bin slug -- hello.slug
 ```
 
 The CLI executes the source file and automatically invokes a local `main()`.
-Pass additional arguments after the source path; use `cargo run --bin slug --
---help` to see the current command interface. Start with the
+Pass additional arguments after the source path. Prefix the source path with
+`--diagnostic-format=json` to receive runner-generated fatal diagnostics as one
+JSON document on standard error, which is intended for editor and agent integrations; use
+`cargo run --bin slug -- --help` to see the current command interface. Start with the
 [language support matrix](docs/generated/language-support.md) for the
 implemented subset, and use the [language documents](docs/language/README.md)
 as the source-language reference.

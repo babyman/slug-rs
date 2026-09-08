@@ -361,3 +361,128 @@ fn reports_runtime_faults_without_a_host_crash() {
             .starts_with("slug: runtime error: division by zero")
     );
 }
+
+fn json_diagnostic(stderr: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(stderr).expect("diagnostic is valid JSON")
+}
+
+#[test]
+fn json_mode_reports_parse_and_semantic_errors_structurally() {
+    let cases = [
+        (
+            "json-parse",
+            "val = 1\n",
+            "parse",
+            "expected binding name",
+            1,
+            5,
+        ),
+        (
+            "json-semantic",
+            "1 + true\n",
+            "semantic",
+            "operator `+` does not accept num and bool",
+            1,
+            3,
+        ),
+    ];
+
+    for (kind, source, category, message, line, column) in cases {
+        let path = fixture_path(kind);
+        fs::write(&path, source).expect("write invalid Slug source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run JSON diagnostic source");
+        fs::remove_file(&path).expect("remove invalid Slug source");
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let diagnostic = json_diagnostic(&output.stderr);
+        assert_eq!(diagnostic["version"], 1);
+        assert_eq!(diagnostic["category"], category);
+        assert!(diagnostic["kind"].is_null());
+        assert_eq!(diagnostic["message"], message);
+        assert_eq!(
+            diagnostic["location"]["path"],
+            path.to_string_lossy().as_ref()
+        );
+        assert_eq!(diagnostic["location"]["line"], line);
+        assert_eq!(diagnostic["location"]["column"], column);
+        assert_eq!(diagnostic["frames"], serde_json::json!([]));
+        assert!(diagnostic["cause"].is_null());
+    }
+}
+
+#[test]
+fn json_mode_reports_runtime_frames_and_module_failures() {
+    let runtime_path = fixture_path("json-runtime");
+    fs::write(
+        &runtime_path,
+        "val denominator = 0\nprintln(1 / denominator)\n",
+    )
+    .expect("write runtime source");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&runtime_path)
+        .output()
+        .expect("run JSON runtime source");
+    fs::remove_file(&runtime_path).expect("remove runtime source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(diagnostic["category"], "runtime");
+    assert_eq!(diagnostic["kind"], "divide_by_zero");
+    assert_eq!(diagnostic["message"], "division by zero");
+    assert_eq!(diagnostic["location"]["line"], 2);
+    assert_eq!(diagnostic["location"]["column"], 11);
+    assert_eq!(diagnostic["frames"][0]["function"], "main");
+    assert!(diagnostic["cause"].is_null());
+
+    let module_path = fixture_path("json-module");
+    fs::write(&module_path, "import(\"missing.module\")\n").expect("write module source");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&module_path)
+        .output()
+        .expect("run JSON module source");
+    fs::remove_file(&module_path).expect("remove module source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(diagnostic["category"], "module");
+    assert_eq!(diagnostic["kind"], "module");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing.module")
+    );
+}
+
+#[test]
+fn json_mode_reports_entry_read_failures() {
+    let path = fixture_path("missing-json-entry");
+    let _ = fs::remove_file(&path);
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&path)
+        .output()
+        .expect("run missing JSON entry");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(diagnostic["category"], "io");
+    assert_eq!(diagnostic["kind"], "entry_read");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot read")
+    );
+    assert!(diagnostic["location"].is_null());
+}

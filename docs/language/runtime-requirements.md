@@ -67,6 +67,10 @@ explicit `.slug` extension is retained during the fallback lookup.
 
 Successful execution exits with status zero. Parse, semantic, module-loading,
 or runtime failure exits nonzero and writes a Slug diagnostic to standard error.
+The optional runner flag `--diagnostic-format=json`, placed before the entry
+program, selects the versioned JSON diagnostic representation defined in
+[Error Behavior](errors.md#command-line-json-diagnostics). Arguments after the
+entry program are program arguments and cannot select this runner mode.
 The final expression value is not implicitly printed by the command-line
 runner. `print` and `println` write to standard output; only `println` appends
 a newline. `slug.io.stderr.println` writes to standard error.
