@@ -44,3 +44,41 @@ fn resource_assignability_uses_declaration_identity() {
         rejects(source, expected);
     }
 }
+
+#[test]
+fn enum_assignability_uses_declaration_identity() {
+    accepts(
+        "enum ReadMode { Text, Binary }\n\
+         enum WriteMode { Text, Binary }\n\
+         val read = fn(mode:ReadMode):ReadMode { mode }\n\
+         val write = fn(mode:WriteMode):WriteMode { mode }\n\
+         val text:ReadMode = ReadMode.Text\n\
+         read(text)\n\
+         write(WriteMode.Binary)\n",
+    );
+
+    for (source, expected) in [
+        (
+            "enum ReadMode { Text, Binary }\nenum WriteMode { Text, Binary }\nval mode:ReadMode = WriteMode.Text\n",
+            "expected ReadMode, got WriteMode",
+        ),
+        (
+            "enum ReadMode { Text, Binary }\nenum WriteMode { Text, Binary }\nval read = fn(mode:ReadMode) { mode }\nread(WriteMode.Text)\n",
+            "expected ReadMode, got WriteMode",
+        ),
+        (
+            "enum ReadMode { Text, Binary }\nenum WriteMode { Text, Binary }\nval wrong = fn(mode:ReadMode):WriteMode { mode }\nwrong(ReadMode.Text)\n",
+            "expected WriteMode, got ReadMode",
+        ),
+        (
+            "enum ReadMode { Text, Binary }\nenum WriteMode { Text, Binary }\nval mode:ReadMode|nil = WriteMode.Text\n",
+            "expected ReadMode|nil, got WriteMode",
+        ),
+        (
+            "enum ReadMode { Text, Binary }\nenum WriteMode { Text, Binary }\nval subject:ReadMode = ReadMode.Text\nmatch subject { WriteMode.Text => 1; _ => 0 }\n",
+            "match case cannot match remaining enum cases",
+        ),
+    ] {
+        rejects(source, expected);
+    }
+}
