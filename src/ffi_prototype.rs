@@ -29,8 +29,8 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 9;
-pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.9";
+const ABI_MINOR: u32 = 10;
+pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.10";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
@@ -76,7 +76,7 @@ struct HostApi {
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
-type ModuleDestroy = unsafe extern "C" fn(*mut c_void);
+type LibraryDestroy = unsafe extern "C" fn(*mut c_void);
 type ResourceDestroy = unsafe extern "C" fn(*mut c_void);
 type ProducerTextDestroy = unsafe extern "C" fn(*mut c_void);
 type LibraryInit =
@@ -112,7 +112,6 @@ struct ModuleDescriptor {
     abi_minor: u32,
     descriptor_size: u32,
     module_name: FfiText,
-    destroy_module: Option<ModuleDestroy>,
     functions: *const FunctionDescriptor,
     function_count: u64,
     resources: *const ResourceDescriptor,
@@ -124,7 +123,7 @@ struct LibraryDescriptor {
     abi_major: u32,
     abi_minor: u32,
     descriptor_size: u32,
-    destroy_library: Option<ModuleDestroy>,
+    destroy_library: Option<LibraryDestroy>,
     modules: *const ModuleDescriptor,
     module_count: u64,
 }
@@ -224,7 +223,6 @@ struct RegisteredFunction {
 
 type ValidatedDescriptor = (
     String,
-    Option<ModuleDestroy>,
     HashMap<String, RegisteredFunction>,
     Vec<RegisteredResource>,
 );
@@ -309,7 +307,7 @@ struct FfiModuleState {
 struct FfiLibraryState {
     library: RefCell<Option<Arc<LoadedLibrary>>>,
     module_state: Cell<*mut c_void>,
-    destroy_library: Option<ModuleDestroy>,
+    destroy_library: Option<LibraryDestroy>,
     active: Cell<bool>,
 }
 
@@ -320,10 +318,10 @@ impl FfiLibraryState {
         }
         let module_state = self.module_state.replace(std::ptr::null_mut());
         if !module_state.is_null()
-            && let Some(destroy_module) = self.destroy_library
+            && let Some(destroy_library) = self.destroy_library
         {
-            // SAFETY: the module owns this state and its library lease remains live.
-            unsafe { destroy_module(module_state) };
+            // SAFETY: the library owns this state and its library lease remains live.
+            unsafe { destroy_library(module_state) };
         }
         self.library.borrow_mut().take();
     }
@@ -399,7 +397,7 @@ impl FfiPrototypeModule {
             });
             let scope = NEXT_LIBRARY_SCOPE.fetch_add(1, Ordering::Relaxed);
             let mut modules = Vec::new();
-            for (module_name, _, functions, resources) in descriptors.1 {
+            for (module_name, functions, resources) in descriptors.1 {
                 let registered = functions
                     .iter()
                     .map(|(key, function)| (function.name.clone(), function.arity, key.clone()))
@@ -1270,7 +1268,7 @@ fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
 
 unsafe fn validate_library_descriptor(
     descriptor: *const LibraryDescriptor,
-) -> Result<(Option<ModuleDestroy>, Vec<ValidatedDescriptor>), FfiPrototypeError> {
+) -> Result<(Option<LibraryDestroy>, Vec<ValidatedDescriptor>), FfiPrototypeError> {
     let descriptor = unsafe { descriptor.as_ref() }
         .ok_or_else(|| FfiPrototypeError::new("FFI library returned a null descriptor"))?;
     if descriptor.abi_major != ABI_MAJOR {
@@ -1401,7 +1399,7 @@ unsafe fn validate_descriptor(
         }
     }
     let resources = unsafe { validate_resources(descriptor.resources, descriptor.resource_count) }?;
-    Ok((module_name, descriptor.destroy_module, functions, resources))
+    Ok((module_name, functions, resources))
 }
 
 unsafe fn validate_resources(

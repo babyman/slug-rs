@@ -114,7 +114,6 @@ static const slug_ffi_module_descriptor MODULE = {
   SLUG_FFI_PROTOTYPE_ABI_MINOR,
   sizeof(slug_ffi_module_descriptor),
   {"slug.textbackpressure", 21},
-  NULL,
   FUNCTIONS,
   3,
   NULL,

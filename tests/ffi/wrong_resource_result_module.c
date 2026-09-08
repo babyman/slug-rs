@@ -35,7 +35,6 @@ static const slug_ffi_module_descriptor MODULE = {
   SLUG_FFI_PROTOTYPE_ABI_MINOR,
   sizeof(slug_ffi_module_descriptor),
   {"slug.resource_result", 20},
-  NULL,
   FUNCTIONS,
   1,
   RESOURCES,

@@ -12,7 +12,7 @@
 #endif
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 9u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 10u
 
 typedef enum {
   SLUG_FFI_OK = 0,
@@ -119,7 +119,7 @@ struct slug_ffi_host_api {
 };
 
 typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);
-typedef void (*slug_ffi_module_destroy_fn)(void *);
+typedef void (*slug_ffi_library_destroy_fn)(void *);
 typedef void (*slug_ffi_resource_destroy_fn)(void *);
 
 typedef struct {
@@ -142,7 +142,6 @@ typedef struct {
   uint32_t abi_minor;
   uint32_t descriptor_size;
   slug_ffi_text module_name;
-  slug_ffi_module_destroy_fn destroy_module;
   const slug_ffi_function_descriptor *functions;
   uint64_t function_count;
   const slug_ffi_resource_descriptor *resources;
@@ -153,7 +152,7 @@ typedef struct {
   uint32_t abi_major;
   uint32_t abi_minor;
   uint32_t descriptor_size;
-  slug_ffi_module_destroy_fn destroy_library;
+  slug_ffi_library_destroy_fn destroy_library;
   const slug_ffi_module_descriptor *modules;
   uint64_t module_count;
 } slug_ffi_library_descriptor;

@@ -6,7 +6,6 @@ static const slug_ffi_module_descriptor MODULE = {
   sizeof(slug_ffi_module_descriptor),
   {"slug.invalid", 12},
   NULL,
-  NULL,
   0,
 };
 

@@ -10,7 +10,6 @@ static const slug_ffi_module_descriptor MODULE = {
   sizeof(slug_ffi_module_descriptor),
   {"slug.invalid_resource", 21},
   NULL,
-  NULL,
   0,
   RESOURCES,
   1,

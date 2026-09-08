@@ -140,8 +140,8 @@ static const slug_ffi_function_descriptor STATEMENT_FUNCTIONS[] = {
 static const slug_ffi_resource_descriptor DATABASE_RESOURCES[] = {{sizeof(slug_ffi_resource_descriptor), TEXT("Database"), destroy_database}};
 static const slug_ffi_resource_descriptor STATEMENT_RESOURCES[] = {{sizeof(slug_ffi_resource_descriptor), TEXT("Statement"), destroy_statement}};
 static const slug_ffi_module_descriptor MODULES[] = {
-  {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor), TEXT("slug.db.sqlite"), NULL, DATABASE_FUNCTIONS, 4, DATABASE_RESOURCES, 1},
-  {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor), TEXT("slug.db.sqlite.statement"), NULL, STATEMENT_FUNCTIONS, 4, STATEMENT_RESOURCES, 1},
+  {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor), TEXT("slug.db.sqlite"), DATABASE_FUNCTIONS, 4, DATABASE_RESOURCES, 1},
+  {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor), TEXT("slug.db.sqlite.statement"), STATEMENT_FUNCTIONS, 4, STATEMENT_RESOURCES, 1},
 };
 static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor), NULL, MODULES, 2};
 SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host, void **out_state) { if (host == NULL || out_state == NULL) return NULL; *out_state = NULL; return &LIBRARY; }

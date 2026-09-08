@@ -19,7 +19,7 @@ static int32_t state_info(const slug_ffi_host_api *host, slug_ffi_call *call, vo
   return SLUG_FFI_OK;
 }
 
-static void destroy_module(void *raw_state) {
+static void destroy_library(void *raw_state) {
   destroyed += 1;
   free(raw_state);
 }
@@ -33,12 +33,11 @@ static const slug_ffi_module_descriptor MODULE = {
   SLUG_FFI_PROTOTYPE_ABI_MINOR,
   sizeof(slug_ffi_module_descriptor),
   {"slug.stateful", 13},
-  destroy_module,
   FUNCTIONS,
   1,
 };
 
-static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor), destroy_module, &MODULE, 1};
+static const slug_ffi_library_descriptor LIBRARY = {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor), destroy_library, &MODULE, 1};
 const slug_ffi_library_descriptor *slug_ffi_library_init(const slug_ffi_host_api *host,
                                                         void **out_state) {
   if (host == NULL || out_state == NULL) return NULL;

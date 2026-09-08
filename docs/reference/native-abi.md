@@ -501,9 +501,11 @@ exposes native prepared-statement operations from the clutch's one loaded
 library. A `Statement` is a typed native resource; close and shutdown finalize
 it before the database handle is released.
 
-Prototype ABI minor 9 uses one library descriptor containing one or more
+Prototype ABI minor 10 uses one library descriptor containing one or more
 module descriptors. The library owns one loaded-code lease and lifecycle while
 each module retains its own foreign registrations and resource declarations.
+Only the library descriptor may declare a teardown callback; module descriptors
+do not own native state or lifecycle callbacks.
 It also retains the minor-8 argument-kind and byte borrowing plus temporary
 list/map builders. The builders are call-scoped opaque handles: C transfers a
 map into a list and transfers the final list to the call, or destroys any
