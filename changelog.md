@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Retained generic parameter and result substitution metadata in module exports.
+
 - Covered equivalence between explicit and inferred generic substitutions.
 
 - Kept independent generic substitutions isolated for parameterized maps.

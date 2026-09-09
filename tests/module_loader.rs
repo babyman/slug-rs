@@ -1497,6 +1497,26 @@ fn generic_imports_preserve_exact_nominal_result_identity() {
 }
 
 #[test]
+fn exported_generic_signatures_remain_instantiable_in_import_snapshots() {
+    let root = root("imported-generic-signature");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val first = fn<T>(values:list<T>):T|nil { values[0] }\n",
+    )
+    .expect("write generic API");
+    let main_path = root.join("main.slug");
+    let error = ModuleLoader::new(&root, None)
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\nval result = api.first([\"Slug\"])\nval invalid:num = result\n",
+        )
+        .expect_err("imported generic result retains inferred string type");
+    assert!(error.to_string().starts_with("expected num, got str|nil"));
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn selected_signatures_dispatch_same_shape_typed_overloads() {
     let root = root("typed-overload-selection");
     fs::create_dir_all(&root).expect("create module directory");
