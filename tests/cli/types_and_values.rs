@@ -481,6 +481,8 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
          val describeEqual = fn(value:str|nil) {\n\
            if (value == nil) { \"missing\" } else { use(value) }\n\
          }\n\
+         val reversedNotEqual = fn(value:str|nil) { if (nil != value) { use(value) } else { \"missing\" } }\n\
+         val reversedEqual = fn(value:str|nil) { if (nil == value) { \"missing\" } else { use(value) } }\n\
          val andResult = fn(value:str|nil) { (value != nil) && use(value) }\n\
          val orResult = fn(value:str|nil) { (value == nil) || use(value) }\n\
          val guarded = fn(value:str|nil) match { candidate if candidate != nil => use(candidate); _ => \"missing\" }\n\
@@ -491,7 +493,7 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
            if (flag) { value = \"left\" } else { value = \"right\" }\n\
            use(value)\n\
          }\n\
-         println(describe(\"Slug\"), describe(nil), describeEqual(\"Slug\"), andResult(\"go\"), orResult(\"go\"), guarded(\"match\"), nested(\"nested\"), shadowed(\"outer\"), assigned(true))\n",
+         println(describe(\"Slug\"), describe(nil), describeEqual(\"Slug\"), reversedNotEqual(\"reverse\"), reversedEqual(\"reverse\"), andResult(\"go\"), orResult(\"go\"), guarded(\"match\"), nested(\"nested\"), shadowed(\"outer\"), assigned(true))\n",
     )
     .expect("write nil narrowing source");
     let output = slug()
@@ -506,7 +508,7 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Slug! missing Slug! go! go! match! nested! shadow! left!\n"
+        "Slug! missing Slug! reverse! reverse! go! go! match! nested! shadow! left!\n"
     );
 
     fs::write(

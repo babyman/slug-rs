@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added direct nil-narrowing coverage for equality and inequality in either
+  operand order.
+
 - Recognize `if` expressions with two terminating branches as non-continuing
   during semantic analysis.
 
