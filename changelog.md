@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added text and JSON diagnostic coverage for narrowed actual types.
+
 - Preserved nominal schema identity while narrowing flow facts.
 
 - Added nested guard-and-match control-flow narrowing coverage.

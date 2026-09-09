@@ -416,6 +416,38 @@ fn json_mode_reports_parse_and_semantic_errors_structurally() {
 }
 
 #[test]
+fn narrowing_diagnostics_report_the_actual_surviving_type() {
+    let path = fixture_path("narrowed-type-diagnostic");
+    let source = "val needs_num = fn(value:num):num { value }\n\
+                  val invalid = fn(value:str|nil) {\n\
+                    if (value != nil) { needs_num(value) }\n\
+                  }\n";
+    fs::write(&path, source).expect("write narrowed diagnostic source");
+
+    let text_output = slug()
+        .arg(&path)
+        .output()
+        .expect("run text diagnostic source");
+    assert_eq!(text_output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(text_output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+
+    let json_output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&path)
+        .output()
+        .expect("run JSON diagnostic source");
+    fs::remove_file(path).expect("remove narrowed diagnostic source");
+    assert_eq!(json_output.status.code(), Some(1));
+    let diagnostic = json_diagnostic(&json_output.stderr);
+    assert_eq!(diagnostic["category"], "semantic");
+    assert_eq!(diagnostic["message"], "expected num, got str");
+}
+
+#[test]
 fn json_mode_reports_runtime_frames_and_module_failures() {
     let runtime_path = fixture_path("json-runtime");
     fs::write(
