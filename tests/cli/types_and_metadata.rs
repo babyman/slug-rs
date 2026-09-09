@@ -542,6 +542,37 @@ fn preserves_explicit_and_contextual_channel_element_types() {
 }
 
 #[test]
+fn generic_channel_and_task_apis_preserve_payload_types_together() {
+    let path = fixture_path("generic-concurrency-integration");
+    fs::write(
+        &path,
+        "val { await, chan, recv, send } = import(\"slug.channel\")\n\
+         val inbox = chan<num>()\n\
+         val sender = spawn { send(inbox, 42) }\n\
+         val received:num|nil = recv(inbox)\n\
+         val task:task<num> = spawn { 7 }\n\
+         val completed:num = await(task)\n\
+         await(sender)\n\
+         println(received, completed)\n",
+    )
+    .expect("write generic concurrency source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run generic concurrency source");
+    fs::remove_file(path).expect("remove generic concurrency source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "42 7\n"
+    );
+}
+
+#[test]
 fn infers_normalized_select_handler_results() {
     let path = fixture_path("select-result-inference");
     fs::write(

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added end-to-end generic channel and task payload inference coverage.
+
 - Kept unresolved generic substitutions as internal unknowns rather than `any`.
 
 - Covered deterministic concrete, generic, and variadic-generic overload
