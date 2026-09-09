@@ -116,7 +116,7 @@ fn build_native_clutch(
              \"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n\
              [native]\n\
              source = \"native/source\"\n\
-             abi = \"slug-ffi-prototype/0.11\"\n\n\
+             abi = \"slug-ffi-prototype/0.12\"\n\n\
              [native.libraries]\n\
              \"{target}\" = \"native/{target}/{}\"\n",
             module_file.to_string_lossy(),
@@ -131,7 +131,7 @@ fn build_native_clutch(
         fs::write(
             clutch_root.join("clutch.toml"),
             format!(
-                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{module_name}.transaction\" = {{ source = \"modules/transaction.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.11\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
+                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{module_name}.transaction\" = {{ source = \"modules/transaction.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.12\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
                 module_file.to_string_lossy(),
                 library.file_name().expect("native library name").to_string_lossy(),
             ),

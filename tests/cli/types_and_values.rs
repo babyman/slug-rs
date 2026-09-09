@@ -996,6 +996,31 @@ fn persistently_merges_removes_and_enumerates_maps() {
 }
 
 #[test]
+fn standard_clutch_preserves_non_string_map_keys() {
+    let path = fixture_path("standard-clutch-map-keys");
+    fs::write(
+        &path,
+        "val {keys} = import(\"slug.std\")\n\
+         println(keys({[1]: \"one\", [true]: \"yes\", name: \"Slug\"}))\n",
+    )
+    .expect("write standard clutch source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run standard clutch source");
+    fs::remove_file(path).expect("remove standard clutch source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[1, true, \"name\"]\n"
+    );
+}
+
+#[test]
 fn persistently_copies_maps_with_string_key_updates() {
     let path = fixture_path("map-copy");
     fs::write(

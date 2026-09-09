@@ -168,6 +168,14 @@ slices borrowed from a value have the same lifetime as the call unless copied.
 A callback may return a value it constructs during that call; the runtime takes
 ownership of the successful result before invalidating the call context.
 
+Prototype ABI 0.12 additionally gives C adapters opaque, callback-lifetime
+value tokens. An adapter may obtain an argument token, inspect a map's length
+and ordered entries, and append a token's value to a list builder. Tokens are
+validated by the host, cannot be retained after the callback, do not expose VM
+storage, and do not permit mutation. This supports generic collection adapters
+such as `slug.std.keys` without making individual collection operations ABI
+endpoints.
+
 Version 1 has no persistent arbitrary Slug-value root. Without native-to-Slug
 callbacks, channels and resources do not yet provide a concrete consumer that
 justifies freezing a rooting API or constraining a future garbage collector.

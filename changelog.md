@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved `slug.std` into the bundled `slug.core` Clutch and extended prototype
+  ABI 0.12 with checked, callback-scoped map-value traversal for its native
+  `keys` adapter.
+
 - Covered invariant nominal identity in nullable generic list inference.
 
 - Reject unprovable spread-call shapes instead of bypassing argument validation.

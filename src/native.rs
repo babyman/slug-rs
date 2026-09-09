@@ -492,6 +492,10 @@ impl NativeOwnedValue {
     pub(crate) fn into_value(self) -> Value {
         self.0
     }
+
+    pub(crate) fn as_ref(&self) -> NativeValueRef<'_> {
+        NativeValueRef { value: &self.0 }
+    }
 }
 
 #[derive(Clone, Copy)]

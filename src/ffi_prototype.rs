@@ -29,11 +29,12 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 11;
-pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.11";
+const ABI_MINOR: u32 = 12;
+pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.12";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
+static NEXT_VALUE_SCOPE: AtomicUsize = AtomicUsize::new(1);
 
 #[repr(C)]
 struct HostApi {
@@ -73,6 +74,11 @@ struct HostApi {
     list_append_map: unsafe extern "C" fn(*mut c_void, *mut FfiList, *mut FfiMap) -> bool,
     set_list: unsafe extern "C" fn(*mut c_void, *mut FfiList) -> bool,
     argument_count: unsafe extern "C" fn(*mut c_void) -> u64,
+    argument_value: unsafe extern "C" fn(*mut c_void, usize, *mut FfiValue) -> bool,
+    value_map_length: unsafe extern "C" fn(*mut c_void, FfiValue, *mut u64) -> bool,
+    value_map_entry:
+        unsafe extern "C" fn(*mut c_void, FfiValue, u64, *mut FfiValue, *mut FfiValue) -> bool,
+    list_append_value: unsafe extern "C" fn(*mut c_void, *mut FfiList, FfiValue) -> bool,
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
@@ -130,6 +136,8 @@ struct LibraryDescriptor {
 
 struct CallBridge<'call> {
     call: *mut NativeCall<'call>,
+    value_scope: u64,
+    values: Vec<NativeOwnedValue>,
 }
 
 struct LoadedLibrary(*mut c_void);
@@ -252,6 +260,13 @@ enum FfiValueKind {
     Float = 2,
     Text = 3,
     Bytes = 4,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FfiValue {
+    scope: u64,
+    token: u64,
 }
 
 struct FfiList {
@@ -566,6 +581,10 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     list_append_map,
     set_list,
     argument_count,
+    argument_value,
+    value_map_length,
+    value_map_entry,
+    list_append_value,
 });
 
 fn host_api() -> *const HostApi {
@@ -577,6 +596,212 @@ unsafe extern "C" fn argument_count(context: *mut c_void) -> u64 {
         return 0;
     };
     u64::try_from(call.argument_count()).unwrap_or(u64::MAX)
+}
+
+fn bridge_value<'bridge>(
+    bridge: &'bridge CallBridge<'_>,
+    value: FfiValue,
+) -> Option<&'bridge NativeOwnedValue> {
+    if value.scope != bridge.value_scope {
+        return None;
+    }
+    let index = usize::try_from(value.token.checked_sub(1)?).ok()?;
+    bridge.values.get(index)
+}
+
+fn bridge_store_value(bridge: &mut CallBridge<'_>, value: NativeOwnedValue) -> Option<FfiValue> {
+    bridge.values.push(value);
+    u64::try_from(bridge.values.len())
+        .ok()
+        .map(|token| FfiValue {
+            scope: bridge.value_scope,
+            token,
+        })
+}
+
+unsafe fn bridge_from_context<'call>(context: *mut c_void) -> Option<&'call mut CallBridge<'call>> {
+    unsafe { context.cast::<CallBridge<'call>>().as_mut() }
+}
+
+unsafe extern "C" fn argument_value(
+    context: *mut c_void,
+    index: usize,
+    output: *mut FfiValue,
+) -> bool {
+    let Some(bridge) = (unsafe { bridge_from_context(context) }) else {
+        return false;
+    };
+    let Some(call) = (unsafe { bridge.call.as_mut() }) else {
+        return false;
+    };
+    if output.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value output is null",
+        ));
+        return false;
+    }
+    let value = match call.argument(index) {
+        Ok(value) => value.to_owned(),
+        Err(error) => {
+            call.set_error(error);
+            return false;
+        }
+    };
+    let Some(value) = bridge_store_value(bridge, value) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value table is too large",
+        ));
+        return false;
+    };
+    unsafe { *output = value };
+    true
+}
+
+unsafe extern "C" fn value_map_length(
+    context: *mut c_void,
+    value: FfiValue,
+    output: *mut u64,
+) -> bool {
+    let Some(bridge) = (unsafe { bridge_from_context(context) }) else {
+        return false;
+    };
+    let Some(call) = (unsafe { bridge.call.as_mut() }) else {
+        return false;
+    };
+    if output.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map-length output is null",
+        ));
+        return false;
+    }
+    let Some(value) = bridge_value(bridge, value) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value handle is invalid",
+        ));
+        return false;
+    };
+    if value.as_ref().kind() != crate::NativeValueKind::Map {
+        call.set_error(NativeError::new("native.type", "expected map"));
+        return false;
+    }
+    let Ok(length) = u64::try_from(value.as_ref().len().expect("map has a length")) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "map length exceeds FFI range",
+        ));
+        return false;
+    };
+    unsafe { *output = length };
+    true
+}
+
+unsafe extern "C" fn value_map_entry(
+    context: *mut c_void,
+    value: FfiValue,
+    index: u64,
+    key_output: *mut FfiValue,
+    entry_value: *mut FfiValue,
+) -> bool {
+    let Some(bridge) = (unsafe { bridge_from_context(context) }) else {
+        return false;
+    };
+    let Some(call) = (unsafe { bridge.call.as_mut() }) else {
+        return false;
+    };
+    if key_output.is_null() || entry_value.is_null() {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map-entry output is null",
+        ));
+        return false;
+    }
+    let Ok(index) = usize::try_from(index) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI map-entry index is too large",
+        ));
+        return false;
+    };
+    let Some(value) = bridge_value(bridge, value) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value handle is invalid",
+        ));
+        return false;
+    };
+    let (key, mapped) = match value.as_ref().map_get(index) {
+        Ok(Some((key, mapped))) => (key.to_owned(), mapped.to_owned()),
+        Ok(None) => {
+            call.set_error(NativeError::new(
+                "native.range",
+                "FFI map-entry index is out of bounds",
+            ));
+            return false;
+        }
+        Err(error) => {
+            call.set_error(error);
+            return false;
+        }
+    };
+    let Some(key_value) = bridge_store_value(bridge, key) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value table is too large",
+        ));
+        return false;
+    };
+    let Some(mapped_value) = bridge_store_value(bridge, mapped) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value table is too large",
+        ));
+        return false;
+    };
+    unsafe {
+        *key_output = key_value;
+        *entry_value = mapped_value;
+    }
+    true
+}
+
+unsafe extern "C" fn list_append_value(
+    context: *mut c_void,
+    list: *mut FfiList,
+    value: FfiValue,
+) -> bool {
+    let Some(bridge) = (unsafe { bridge_from_context(context) }) else {
+        return false;
+    };
+    let Some(call) = (unsafe { bridge.call.as_mut() }) else {
+        return false;
+    };
+    if !has_handle(&FFI_LIST_HANDLES, list) {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI list handle is invalid",
+        ));
+        return false;
+    }
+    let Some(value) = bridge_value(bridge, value).cloned() else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI value handle is invalid",
+        ));
+        return false;
+    };
+    let Some(list) = (unsafe { list.as_mut() }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI list handle is null",
+        ));
+        return false;
+    };
+    list.values.push(value);
+    true
 }
 
 unsafe extern "C" fn argument_i64(context: *mut c_void, index: usize, output: *mut i64) -> bool {
@@ -1288,7 +1513,12 @@ fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
             "native plugin is no longer active",
         ));
     };
-    let mut bridge = CallBridge { call };
+    let mut bridge = CallBridge {
+        call,
+        value_scope: u64::try_from(NEXT_VALUE_SCOPE.fetch_add(1, Ordering::Relaxed))
+            .unwrap_or(u64::MAX),
+        values: Vec::new(),
+    };
     // SAFETY: the callback, host table, and call bridge follow the prototype
     // header and remain valid for the synchronous dynamic extent of this call.
     match unsafe { (function.0.callback)(host_api(), (&raw mut bridge).cast(), function.1) } {

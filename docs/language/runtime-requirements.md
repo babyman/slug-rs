@@ -91,7 +91,8 @@ For the current source fixtures, a conformance environment MUST make these
 modules and builtins available with the behavior exercised by their source:
 
 - builtins including `import`, `len`, `print`, and `println`;
-- `slug.std` and `slug.test` for assertions and core collection operations;
+- `slug.std` from the installed `slug.core` Clutch, and `slug.test`, for
+  assertions and core collection operations;
 - `slug.channel` for channels, `await`, `send`, `recv`, and `close`;
 - `slug.io.stdin` for the shared standard-input line stream when a fixture or
   library program imports it;
@@ -103,7 +104,7 @@ modules and builtins available with the behavior exercised by their source:
 - `slug.io.stderr` for standard-error output.
 
 The normative signatures and behavior belong to the source modules in
-`../../lib/slug` or installed experimental clutches and their library-reference
+installed Clutches or `../../lib/slug` and their library-reference
 pages. A clean-room implementation may write them in another implementation
 language, but it MUST expose the same Slug-visible module names, exports,
 results, errors, and stream behavior.

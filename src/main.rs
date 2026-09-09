@@ -81,30 +81,6 @@ fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::integer(length))
 }
 
-fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
-    let map = match call.argument(0) {
-        Ok(map) => map,
-        Err(error) => return call.raise(error),
-    };
-    if map.kind() != slug_vm::NativeValueKind::Map {
-        return call.raise(slug_vm::NativeError::new(
-            "native.type",
-            "`keys` expects a map",
-        ));
-    }
-    let length = map.len().expect("map kind has a length");
-    let mut keys = Vec::with_capacity(length);
-    for index in 0..length {
-        let (key, _) = match map.map_get(index) {
-            Ok(Some(entry)) => entry,
-            Ok(None) => unreachable!("map length bounds map entry access"),
-            Err(error) => return call.raise(error),
-        };
-        keys.push(key.to_owned());
-    }
-    call.return_value(NativeOwnedValue::list(keys))
-}
-
 fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
     let capacity = match call.argument_count() {
         0 => 0,
@@ -241,13 +217,6 @@ fn register_native_modules(vm: &mut Vm) {
             .expect("static builtin function is valid"),
     )
     .expect("static builtin binding is unique");
-
-    let std = NativeModule::new("slug.std", ()).expect("static native module is valid");
-    vm.define_foreign(
-        std.function("keys", NativeArity::Exact(1), native_keys)
-            .expect("static foreign function is valid"),
-    )
-    .expect("static foreign binding is unique");
 
     let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
     vm.define_foreign(

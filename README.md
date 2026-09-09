@@ -49,7 +49,8 @@ contract is documented separately as `.cslug`.
   fallback, then `$SLUG_HOME/clutch` experimental clutch providers, cached
   isolated module initialization, and string-keyed exported-value maps.
 - Experimental exploded clutches named by `$SLUG_HOME/clutch/manifest.toml`
-  may provide additional source modules after existing providers. A host may
+  may provide additional source modules after existing providers. The bundled
+  `slug.core.clutch` provides the explicit `slug.std` standard module. A host may
   configure a clutch-scoped Rust plugin or a manifest-selected experimental
   native library that supports any subset of the clutch's modules. The local `slug.io.fs` clutch commits a macOS ARM native
   library and reports a checked unavailable-platform error elsewhere. The

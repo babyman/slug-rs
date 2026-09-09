@@ -1,0 +1,12 @@
+[modules]
+"slug.std" = { source = "modules/std.slug" }
+
+[native]
+source = "native/source"
+abi = "slug-ffi-prototype/0.12"
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_core.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_core.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_core.so"
+"windows-x86_64" = "native/windows-x86_64/slug_core.dll"

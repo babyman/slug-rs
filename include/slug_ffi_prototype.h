@@ -12,7 +12,7 @@
 #endif
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 11u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 12u
 
 typedef enum {
   SLUG_FFI_OK = 0,
@@ -32,6 +32,11 @@ typedef struct slug_ffi_channel slug_ffi_channel;
 typedef struct slug_ffi_producer slug_ffi_producer;
 typedef struct slug_ffi_list slug_ffi_list;
 typedef struct slug_ffi_map slug_ffi_map;
+
+typedef struct {
+  uint64_t scope;
+  uint64_t token;
+} slug_ffi_value;
 
 typedef struct {
   const char *data;
@@ -68,6 +73,11 @@ typedef bool (*slug_ffi_map_set_text_fn)(slug_ffi_call *, slug_ffi_map *, slug_f
 typedef bool (*slug_ffi_map_set_bytes_fn)(slug_ffi_call *, slug_ffi_map *, slug_ffi_text, slug_ffi_text);
 typedef bool (*slug_ffi_list_append_map_fn)(slug_ffi_call *, slug_ffi_list *, slug_ffi_map *);
 typedef bool (*slug_ffi_set_list_fn)(slug_ffi_call *, slug_ffi_list *);
+typedef bool (*slug_ffi_argument_value_fn)(slug_ffi_call *, size_t, slug_ffi_value *);
+typedef bool (*slug_ffi_value_map_length_fn)(slug_ffi_call *, slug_ffi_value, uint64_t *);
+typedef bool (*slug_ffi_value_map_entry_fn)(slug_ffi_call *, slug_ffi_value, uint64_t,
+                                             slug_ffi_value *, slug_ffi_value *);
+typedef bool (*slug_ffi_list_append_value_fn)(slug_ffi_call *, slug_ffi_list *, slug_ffi_value);
 typedef void (*slug_ffi_set_error_fn)(slug_ffi_call *, slug_ffi_text, slug_ffi_text);
 typedef bool (*slug_ffi_set_resource_fn)(slug_ffi_call *, slug_ffi_text, void *);
 typedef bool (*slug_ffi_close_resource_fn)(slug_ffi_call *, size_t, slug_ffi_text);
@@ -116,6 +126,10 @@ struct slug_ffi_host_api {
   slug_ffi_list_append_map_fn list_append_map;
   slug_ffi_set_list_fn set_list;
   slug_ffi_argument_count_fn argument_count;
+  slug_ffi_argument_value_fn argument_value;
+  slug_ffi_value_map_length_fn value_map_length;
+  slug_ffi_value_map_entry_fn value_map_entry;
+  slug_ffi_list_append_value_fn list_append_value;
 };
 
 typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);
