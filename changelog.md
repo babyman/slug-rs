@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added nested guard-and-match control-flow narrowing coverage.
+
 - Centralized reachability-aware semantic environment merging for branches.
 
 - Kept guarded match alternatives conservative for post-match flow facts.

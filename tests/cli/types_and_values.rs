@@ -670,6 +670,36 @@ fn type_check_keeps_guarded_match_facts_conservative_afterward() {
 }
 
 #[test]
+fn type_check_preserves_facts_through_nested_guard_and_match_flow() {
+    let path = fixture_path("nested-flow-narrowing");
+    fs::write(
+        &path,
+        "val use = fn(value:str):str { value + \"!\" }\n\
+         val describe = fn(value:str|num|nil) {\n\
+           if (value == nil) { return \"missing\" }\n\
+           match value { text:str => use(text); number:num => \"number\" }\n\
+         }\n\
+         println(describe(\"Slug\"), describe(1), describe(nil))\n",
+    )
+    .expect("write nested-flow narrowing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nested-flow narrowing source");
+    fs::remove_file(path).expect("remove nested-flow narrowing source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug! number missing\n"
+    );
+}
+
+#[test]
 fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     let path = fixture_path("match-coverage");
     fs::write(
