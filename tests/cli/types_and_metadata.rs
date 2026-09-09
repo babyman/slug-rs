@@ -962,6 +962,30 @@ fn accepts_annotations_and_checks_provable_mismatches_on_request() {
 }
 
 #[test]
+fn local_generic_callable_aliases_retain_their_signature() {
+    let path = fixture_path("local-generic-alias");
+    fs::write(
+        &path,
+        "val first = fn<T>(values:list<T>):T|nil { values[0] }\n\
+         val head = first\n\
+         val result = head([\"Slug\"])\n\
+         val invalid:num = result\n",
+    )
+    .expect("write local generic alias source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run local generic alias source");
+    fs::remove_file(path).expect("remove local generic alias source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: expected num, got str|nil")
+    );
+}
+
+#[test]
 fn infers_precise_function_values_and_return_results() {
     let path = fixture_path("function-value-inference");
     fs::write(
