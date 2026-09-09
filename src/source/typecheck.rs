@@ -2532,6 +2532,7 @@ fn infer(
         return Ok(());
     }
     match (expected, actual) {
+        (Type::Union(expected), actual) => infer_union(expected, actual, substitutions, span),
         (Type::List(Some(expected)), Type::List(Some(actual))) => {
             infer(expected, actual, substitutions, span)
         }
@@ -2559,6 +2560,44 @@ fn infer(
         }
         _ => require(&substitute(expected, substitutions), actual, span),
     }
+}
+
+fn infer_union(
+    expected: &[Type],
+    actual: &Type,
+    substitutions: &mut HashMap<usize, Type>,
+    span: &crate::SourceSpan,
+) -> Result<(), SourceError> {
+    let mut remaining = match actual {
+        Type::Union(members) => members.clone(),
+        actual => vec![actual.clone()],
+    };
+    for expected in expected {
+        if matches!(expected, Type::Generic(_)) {
+            continue;
+        }
+        let Some(index) = remaining.iter().position(|actual| {
+            let mut trial = substitutions.clone();
+            infer(expected, actual, &mut trial, span).is_ok()
+        }) else {
+            continue;
+        };
+        let actual = remaining.remove(index);
+        infer(expected, &actual, substitutions, span)?;
+    }
+    for expected in expected {
+        if let Type::Generic(index) = expected {
+            let actual = Type::union(remaining.drain(..));
+            if !matches!(actual, Type::Never) {
+                infer(&Type::Generic(*index), &actual, substitutions, span)?;
+            }
+        }
+    }
+    require(
+        &substitute(&Type::union(expected.iter().cloned()), substitutions),
+        actual,
+        span,
+    )
 }
 
 fn infer_task_payload(
@@ -3054,6 +3093,51 @@ mod tests {
                 substitute(&signature.result, &substitutions),
                 Type::union([element, Type::Nil])
             );
+        }
+    }
+
+    #[test]
+    fn generic_inference_descends_through_structured_container_positions() {
+        let span = SourceSpan::new("test", 1, 1);
+        let cases = [
+            (
+                Type::List(Some(Box::new(Type::Generic(0)))),
+                Type::List(Some(Box::new(Type::Str))),
+            ),
+            (
+                Type::Map(Some((
+                    Box::new(Type::Generic(0)),
+                    Box::new(Type::Generic(1)),
+                ))),
+                Type::Map(Some((Box::new(Type::Str), Box::new(Type::Num)))),
+            ),
+            (
+                Type::Channel(Some(Box::new(Type::Generic(0)))),
+                Type::Channel(Some(Box::new(Type::Str))),
+            ),
+            (
+                Type::Task(Some(Box::new(Type::Generic(0)))),
+                Type::Task(Some(Box::new(Type::Num))),
+            ),
+            (
+                Type::Function(Some(vec![Type::Generic(0), Type::Generic(1)])),
+                Type::Function(Some(vec![Type::Str, Type::Num])),
+            ),
+            (
+                Type::Tuple(vec![Type::Generic(0), Type::Generic(1)]),
+                Type::Tuple(vec![Type::Str, Type::Num]),
+            ),
+            (
+                Type::union([Type::Generic(0), Type::Bool]),
+                Type::union([Type::Str, Type::Bool]),
+            ),
+        ];
+
+        for (expected, actual) in cases {
+            let mut substitutions = HashMap::new();
+            infer(&expected, &actual, &mut substitutions, &span)
+                .expect("infer through structured generic position");
+            assert_ne!(substitute(&expected, &substitutions), expected);
         }
     }
 }
