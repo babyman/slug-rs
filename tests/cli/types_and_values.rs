@@ -587,6 +587,33 @@ fn type_check_preserves_narrowing_after_terminating_if_branches() {
 }
 
 #[test]
+fn type_check_treats_an_if_with_two_terminating_branches_as_terminating() {
+    let path = fixture_path("terminating-if-expression");
+    fs::write(
+        &path,
+        "val needs_str = fn(value:str):str { value }\n\
+         val complete = fn(flag:bool):str {\n\
+           if (flag) { return \"done\" } else { throw \"failed\" }\n\
+           needs_str(42)\n\
+         }\n\
+         println(complete(true))\n",
+    )
+    .expect("write terminating-if expression source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run terminating-if expression source");
+    fs::remove_file(path).expect("remove terminating-if expression source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "done\n");
+}
+
+#[test]
 fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     let path = fixture_path("match-coverage");
     fs::write(

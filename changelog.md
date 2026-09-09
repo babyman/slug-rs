@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Recognize `if` expressions with two terminating branches as non-continuing
+  during semantic analysis.
+
 - Preserved direct nil-narrowing facts after an `if` when the opposite branch
   terminates.
 
