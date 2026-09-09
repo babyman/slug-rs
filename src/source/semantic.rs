@@ -761,8 +761,10 @@ mod tests {
         let maybe_file = Type::union([file.clone(), Type::Nil]);
         let maybe_socket = Type::union([socket.clone(), Type::Nil]);
         assert!(!maybe_file.is_assignable_to(&maybe_socket));
-        assert!(!Type::List(Some(Box::new(maybe_file)))
-            .is_assignable_to(&Type::List(Some(Box::new(maybe_socket)))));
+        assert!(
+            !Type::List(Some(Box::new(maybe_file)))
+                .is_assignable_to(&Type::List(Some(Box::new(maybe_socket))))
+        );
     }
 
     #[test]

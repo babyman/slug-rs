@@ -18,10 +18,6 @@ use super::{
     },
 };
 
-pub(super) fn analyze(expressions: &[Expr]) -> Result<SemanticAnalysis, SourceError> {
-    analyze_with_imports(expressions, ImportSnapshots::new())
-}
-
 pub(super) fn analyze_with_imports(
     expressions: &[Expr],
     imports: ImportSnapshots,

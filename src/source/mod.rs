@@ -86,12 +86,6 @@ pub(crate) fn compile_with_resolver(
     compile_expressions(path, expressions, imports)
 }
 
-pub(crate) fn semantic_snapshot(path: &str, source: &str) -> Result<ModuleSnapshot, SourceError> {
-    let tokens = Lexer::new(path, source).tokens()?;
-    let expressions = Parser::new(tokens).parse()?;
-    typecheck::analyze(&expressions).map(|analysis| analysis.snapshot)
-}
-
 fn compile_expressions(
     path: &str,
     expressions: Vec<ast::Expr>,

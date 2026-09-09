@@ -380,6 +380,47 @@ fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {
 
 #[cfg(unix)]
 #[test]
+fn sqlite_clutch_preserves_database_and_statement_identities() {
+    let directory = TemporaryDirectory::new();
+    let repository = build_native_clutch(
+        &directory,
+        "slug.db.sqlite",
+        "slug.db.sqlite.clutch",
+        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
+        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "slug_db_sqlite",
+        &["-lsqlite3"],
+    );
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let main = directory.path().join("main.slug");
+    loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val sqlite = import(\"slug.db.sqlite\")\n\
+             val statement = import(\"slug.db.sqlite.statement\")\n\
+             val db = sqlite.open(\":memory:\")\n\
+             val stmt = statement.prepare(db, \"select 1\")\n\
+             statement.close(stmt)\n\
+             sqlite.close(db)\n",
+        )
+        .expect("SQLite exports retain their nominal identities through the clutch snapshot");
+    let error = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val statement = import(\"slug.db.sqlite.statement\")\n\
+             resource Other\n\
+             foreign openOther = fn():Other\n\
+             statement.prepare(openOther(), \"select 1\")\n",
+        )
+        .expect_err("an unrelated resource cannot be passed as a SQLite database");
+    assert!(
+        error.to_string().contains("expected Database, got Other"),
+        "{error}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn sqlite_transaction_module_commits_successful_work() {
     let directory = TemporaryDirectory::new();
     let repository = build_native_clutch(

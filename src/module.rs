@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt, fs,
     path::{Path, PathBuf},
     rc::Rc,
@@ -11,7 +11,7 @@ use crate::{
     NativeFunction, Program, SourceError, Value, Vm,
     clutch::{self, StagedClutchPlugin},
     native::{NativeResourceRegistry, native_resource_registry},
-    source::{compile_with_resolver, environment::ModuleSnapshot, semantic_snapshot},
+    source::{compile_with_resolver, environment::ModuleSnapshot},
 };
 
 /// Host-owned roots used to load Slug module source.
@@ -28,6 +28,7 @@ struct ModuleLoaderState {
     configuration: Configuration,
     compiled: RefCell<HashMap<PathBuf, Program>>,
     semantic_snapshots: RefCell<HashMap<PathBuf, ModuleSnapshot>>,
+    resolving_snapshots: RefCell<HashSet<PathBuf>>,
     instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
@@ -159,6 +160,7 @@ impl ModuleLoader {
                 configuration,
                 compiled: RefCell::new(HashMap::new()),
                 semantic_snapshots: RefCell::new(HashMap::new()),
+                resolving_snapshots: RefCell::new(HashSet::new()),
                 instances: RefCell::new(HashMap::new()),
                 native_globals: RefCell::new(HashMap::new()),
                 foreign_functions: RefCell::new(HashMap::new()),
@@ -295,7 +297,23 @@ impl ModuleLoader {
         if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.path) {
             return Some(snapshot.clone());
         }
-        let snapshot = semantic_snapshot(&source.path.to_string_lossy(), &source.text).ok()?;
+        if !self
+            .state
+            .resolving_snapshots
+            .borrow_mut()
+            .insert(source.path.clone())
+        {
+            return None;
+        }
+        let snapshot = self
+            .compile_source(&source.path.to_string_lossy(), &source.text)
+            .ok()
+            .map(|program| program.semantic_snapshot().clone());
+        self.state
+            .resolving_snapshots
+            .borrow_mut()
+            .remove(&source.path);
+        let snapshot = snapshot?;
         self.state
             .semantic_snapshots
             .borrow_mut()
