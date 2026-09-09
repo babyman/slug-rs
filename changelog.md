@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserved generic callable metadata through imported aliases and destructuring.
+
 - Retained generic parameter and result substitution metadata in module exports.
 
 - Covered equivalence between explicit and inferred generic substitutions.

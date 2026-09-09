@@ -1517,6 +1517,28 @@ fn exported_generic_signatures_remain_instantiable_in_import_snapshots() {
 }
 
 #[test]
+fn imported_aliases_and_destructuring_retain_generic_callables() {
+    let root = root("imported-generic-aliases");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val first = fn<T>(values:list<T>):T|nil { values[0] }\n",
+    )
+    .expect("write generic API");
+    let main_path = root.join("main.slug");
+    for source in [
+        "val api = import(\"api\")\nval first = api.first\nval result = first([\"Slug\"])\nval invalid:num = result\n",
+        "val { first } = import(\"api\")\nval result = first([\"Slug\"])\nval invalid:num = result\n",
+    ] {
+        let error = ModuleLoader::new(&root, None)
+            .compile_source(&main_path.to_string_lossy(), source)
+            .expect_err("imported generic alias retains result substitution");
+        assert!(error.to_string().starts_with("expected num, got str|nil"));
+    }
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn selected_signatures_dispatch_same_shape_typed_overloads() {
     let root = root("typed-overload-selection");
     fs::create_dir_all(&root).expect("create module directory");
