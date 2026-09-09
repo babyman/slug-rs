@@ -255,7 +255,11 @@ fn filesystem_clutch_rejects_lines_larger_than_its_memory_limit() {
         ),
     );
     assert!(!output.status.success(), "oversized line must fail");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("file line exceeds 16 MiB limit"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("file line exceeds 16 MiB limit"),
+        "oversized line returned an unexpected diagnostic: {stderr}"
+    );
 }
 
 #[test]
