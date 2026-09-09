@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Narrow named match subjects to their case constraints during semantic
+  analysis.
+
 - Generalized flow facts to carry narrowed types independently of their source
   condition.
 

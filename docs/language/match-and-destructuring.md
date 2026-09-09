@@ -122,7 +122,9 @@ is a source error. A `struct<Name>` constraint resolves `Name` as a schema
 binding; an unknown name is a source error, while a resolved value that is not
 a schema follows the checked runtime type-error path.
 
-A successful constraint narrows the case bindings during semantic analysis.
+A successful constraint narrows the case bindings during semantic analysis. When
+the match subject is a simple binding, it is narrowed to the same constraint
+within that case; arbitrary expression aliases are not tracked.
 For example, `b` has type `bool` in `b: bool`, and `name` has type `str` in
 `{name}: map<str, str>`.
 

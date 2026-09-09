@@ -1021,6 +1021,33 @@ fn check_expression(
                         &mut scoped,
                     );
                 }
+                if let Some(Expr {
+                    kind: ExprKind::Name(name),
+                    ..
+                }) = subject.as_deref()
+                {
+                    let narrowed = case
+                        .patterns
+                        .iter()
+                        .zip(&constraints)
+                        .filter_map(|(pattern, constraint)| {
+                            constraint.clone().or_else(|| match &pattern.pattern {
+                                Pattern::Literal(value) => Some(value_type(value)),
+                                Pattern::Wildcard
+                                | Pattern::Binding(_)
+                                | Pattern::At { .. }
+                                | Pattern::List { .. }
+                                | Pattern::Map { .. }
+                                | Pattern::Pinned(_)
+                                | Pattern::MapAll
+                                | Pattern::EnumCase { .. } => None,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !narrowed.is_empty() {
+                        apply_flow_facts(&mut scoped, vec![(name.clone(), Type::union(narrowed))]);
+                    }
+                }
                 environment.record_match_constraints(case.span.clone(), constraints.clone());
                 if let Some(remaining_cases) = &mut enum_remaining {
                     if remaining_cases.is_empty() {
