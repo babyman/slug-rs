@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Kept Phase 6 generics parametric: it adds no bounds, variance, generic
+  nominal declarations, specialization, or monomorphization.
+
 - Explain inferred generic types in later argument mismatch diagnostics.
 
 - Covered imported resource identity through list, map, channel, and task
