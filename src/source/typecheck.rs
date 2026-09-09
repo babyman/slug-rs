@@ -3140,4 +3140,36 @@ mod tests {
             assert_ne!(substitute(&expected, &substitutions), expected);
         }
     }
+
+    #[test]
+    fn repeated_generic_parameters_require_one_exact_non_nil_type() {
+        let span = SourceSpan::new("test", 1, 1);
+        for (expected, actuals) in [
+            (
+                vec![Type::Generic(0), Type::Generic(0)],
+                vec![Type::Str, Type::Str],
+            ),
+            (
+                vec![
+                    Type::List(Some(Box::new(Type::Generic(0)))),
+                    Type::Generic(0),
+                ],
+                vec![Type::List(Some(Box::new(Type::Str))), Type::Str],
+            ),
+        ] {
+            let mut substitutions = HashMap::new();
+            for (expected, actual) in expected.iter().zip(&actuals) {
+                infer(expected, actual, &mut substitutions, &span)
+                    .expect("matching occurrences infer the same type");
+            }
+            assert_eq!(substitutions.get(&0), Some(&Type::Str));
+        }
+
+        let mut substitutions = HashMap::new();
+        infer(&Type::Generic(0), &Type::Str, &mut substitutions, &span)
+            .expect("first occurrence infers string");
+        let error = infer(&Type::Generic(0), &Type::Num, &mut substitutions, &span)
+            .expect_err("incompatible occurrence is rejected instead of widened");
+        assert!(error.to_string().starts_with("expected str, got num"));
+    }
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Require repeated generic parameter occurrences to resolve to one exact type.
+
 - Preserved imported nominal resource, enum, and struct identities through
   generic result substitution.
 
