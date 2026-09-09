@@ -1468,6 +1468,35 @@ fn imported_callable_snapshots_preserve_access_paths_generics_and_cache_identity
 }
 
 #[test]
+fn generic_imports_preserve_exact_nominal_result_identity() {
+    let root = root("generic-imported-nominal-identity");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("typed.slug"),
+        "export resource File\n\
+         export enum State { Ready }\n\
+         export val Record = struct {}\n\
+         export val identity = fn<T>(value:T):T { value }\n",
+    )
+    .expect("write typed module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+
+    for source in [
+        "resource File\nval api = import(\"typed\")\nval check = fn(file:api.File) { val result = api.identity(file); val invalid:File = result }\n",
+        "enum State { Ready }\nval api = import(\"typed\")\nval check = fn() { val result = api.identity(api.State.Ready); val invalid:State = result }\n",
+        "val Record = struct {}\nval api = import(\"typed\")\nval check = fn() { val result = api.identity(api.Record {}); val invalid:struct<Record> = result }\n",
+    ] {
+        let error = loader
+            .compile_source(&main_path.to_string_lossy(), source)
+            .expect_err("generic return retains imported nominal identity");
+        assert!(error.to_string().starts_with("expected"));
+    }
+
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn selected_signatures_dispatch_same_shape_typed_overloads() {
     let root = root("typed-overload-selection");
     fs::create_dir_all(&root).expect("create module directory");

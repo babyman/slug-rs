@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserved imported nominal resource, enum, and struct identities through
+  generic result substitution.
+
 - Made generic inference descend through unions and every parameterized
   container shape.
 
