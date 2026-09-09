@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Kept guarded match alternatives conservative for post-match flow facts.
+
 - Preserved the narrowed type of a named match subject after terminating
   alternatives are excluded from control flow.
 

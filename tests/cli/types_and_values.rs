@@ -644,6 +644,32 @@ fn type_check_preserves_surviving_named_match_subject_facts() {
 }
 
 #[test]
+fn type_check_keeps_guarded_match_facts_conservative_afterward() {
+    let path = fixture_path("guarded-match-flow");
+    fs::write(
+        &path,
+        "val use = fn(value:str):str { value }\n\
+         val invalid = fn(value:str|nil) {\n\
+           match value { text:str if true => use(text); _ => nil }\n\
+           use(value)\n\
+         }\n",
+    )
+    .expect("write guarded-match flow source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run guarded-match flow source");
+    fs::remove_file(path).expect("remove guarded-match flow source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected str, got str|nil")
+    );
+}
+
+#[test]
 fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     let path = fixture_path("match-coverage");
     fs::write(
