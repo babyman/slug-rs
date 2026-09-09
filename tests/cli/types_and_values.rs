@@ -485,6 +485,7 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
          val reversedEqual = fn(value:str|nil) { if (nil == value) { \"missing\" } else { use(value) } }\n\
          val andResult = fn(value:str|nil) { (value != nil) && use(value) }\n\
          val orResult = fn(value:str|nil) { (value == nil) || use(value) }\n\
+         val composed = fn(value:str|nil) { (value != nil) && ((value != nil) && use(value)) }\n\
          val guarded = fn(value:str|nil) match { candidate if candidate != nil => use(candidate); _ => \"missing\" }\n\
          val nested = fn(value:str|nil) { if (value != nil) { if (value != nil) { use(value) } else { \"impossible\" } } else { \"missing\" } }\n\
          val shadowed = fn(value:str|nil) { if (value != nil) { val value:str = \"shadow\"; use(value) } else { \"missing\" } }\n\
