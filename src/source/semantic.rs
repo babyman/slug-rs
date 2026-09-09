@@ -764,4 +764,19 @@ mod tests {
         assert!(!Type::List(Some(Box::new(maybe_file)))
             .is_assignable_to(&Type::List(Some(Box::new(maybe_socket)))));
     }
+
+    #[test]
+    fn invariant_compounds_do_not_bypass_nominal_assignability() {
+        let file = Type::Resource(NominalIdentity::declared("test", "File"));
+        let socket = Type::Resource(NominalIdentity::declared("test", "Socket"));
+        let file_map = Type::Map(Some((Box::new(Type::Str), Box::new(file.clone()))));
+        let socket_map = Type::Map(Some((Box::new(Type::Str), Box::new(socket.clone()))));
+        let file_function = Type::Function(Some(vec![file.clone(), file]));
+        let socket_function = Type::Function(Some(vec![socket.clone(), socket]));
+
+        assert!(!file_map.is_assignable_to(&socket_map));
+        assert!(!socket_map.is_assignable_to(&file_map));
+        assert!(!file_function.is_assignable_to(&socket_function));
+        assert!(!socket_function.is_assignable_to(&file_function));
+    }
 }
