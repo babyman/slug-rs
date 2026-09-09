@@ -1196,6 +1196,61 @@ fn imports_transparent_type_aliases_through_module_type_paths() {
 }
 
 #[test]
+fn resolves_imported_nominal_aliases_inside_containers_and_unions() {
+    let root = root("imported-nominal-annotation-resolution");
+    fs::create_dir_all(&root).expect("create annotation-resolution module directory");
+    fs::write(
+        root.join("database.slug"),
+        "export resource Database\n\
+         export type Handle = Database;\n\
+         export type MaybeHandle = Handle|nil;\n\
+         export type Handles = list<Handle>;\n\
+         export foreign open = fn():Database\n",
+    )
+    .expect("write database module");
+    fs::write(
+        root.join("socket.slug"),
+        "export resource Database\nexport foreign open = fn():Database\n",
+    )
+    .expect("write socket module");
+    compile(
+        &root.join("database.slug").to_string_lossy(),
+        "export resource Database\n\
+         export type Handle = Database;\n\
+         export type MaybeHandle = Handle|nil;\n\
+         export type Handles = list<Handle>;\n\
+         export foreign open = fn():Database\n",
+    )
+    .expect("database aliases compile independently");
+    let loader = ModuleLoader::new(&root, None);
+    let main = root.join("main.slug");
+    loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val database = import(\"database\")\n\
+             val handle:database.Handle = database.open()\n\
+             val maybe:database.MaybeHandle = nil\n\
+             val handles:database.Handles = [handle]\n",
+        )
+        .expect("imported aliases resolve to canonical nominal identities");
+    let error = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val database = import(\"database\")\n\
+             val socket = import(\"socket\")\n\
+             val handles:database.Handles = [socket.open()]\n",
+        )
+        .expect_err("nested imported nominal aliases retain their identity");
+    assert!(
+        error
+            .to_string()
+            .contains("expected list<database.Database>, got list<socket.Database>"),
+        "{error}"
+    );
+    fs::remove_dir_all(root).expect("remove annotation-resolution module directory");
+}
+
+#[test]
 fn local_bindings_shadow_all_imports_with_a_warning() {
     let root = root("import-shadowing");
     fs::create_dir_all(&root).expect("create module directory");
