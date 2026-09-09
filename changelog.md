@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Explain inferred generic types in later argument mismatch diagnostics.
+
 - Covered imported resource identity through list, map, channel, and task
   generic layers.
 

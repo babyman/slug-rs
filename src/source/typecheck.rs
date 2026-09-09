@@ -2392,6 +2392,18 @@ fn instantiate_candidate(
         let actual = (*actual).clone();
         if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
             if report_mismatch {
+                if let Some(index) = first_generic_parameter(&parameter.value_type)
+                    && let Some(inferred) = substitutions.get(&index)
+                {
+                    return Err(SourceError::semantic(
+                        format!(
+                            "{} (generic T{index} was inferred as {})",
+                            error.message,
+                            inferred.diagnostic_display()
+                        ),
+                        span.clone(),
+                    ));
+                }
                 return Err(error);
             }
             return Ok(None);
@@ -2413,6 +2425,38 @@ fn instantiate_candidate(
         result: substitute(&signature.result, &substitutions),
         identity: signature.identity(),
     }))
+}
+
+fn first_generic_parameter(value_type: &Type) -> Option<usize> {
+    match value_type {
+        Type::Generic(index) => Some(*index),
+        Type::List(Some(value)) | Type::Task(Some(value)) | Type::Channel(Some(value)) => {
+            first_generic_parameter(value)
+        }
+        Type::Map(Some((key, value))) => {
+            first_generic_parameter(key).or_else(|| first_generic_parameter(value))
+        }
+        Type::Function(Some(values)) | Type::Tuple(values) | Type::Union(values) => {
+            values.iter().find_map(first_generic_parameter)
+        }
+        Type::Never
+        | Type::Unknown
+        | Type::Any
+        | Type::Nil
+        | Type::Bool
+        | Type::Num
+        | Type::Str
+        | Type::Bytes
+        | Type::Resource(_)
+        | Type::Enum(_)
+        | Type::List(None)
+        | Type::Map(None)
+        | Type::Function(None)
+        | Type::Task(None)
+        | Type::Channel(None)
+        | Type::Schema
+        | Type::Struct(_) => None,
+    }
 }
 
 struct BoundArguments<'a> {
@@ -3325,5 +3369,41 @@ mod tests {
         .expect("dynamic evidence does not resolve a generic");
         assert!(substitutions.is_empty());
         assert_eq!(substitute(&Type::Generic(0), &substitutions), Type::Unknown);
+    }
+
+    #[test]
+    fn generic_mismatch_diagnostics_include_the_inferred_type() {
+        let signature = CallableSignature {
+            generic_arity: 1,
+            parameters: vec![
+                CallableParameter {
+                    label: None,
+                    value_type: Type::Generic(0),
+                    has_default: false,
+                    variadic: false,
+                },
+                CallableParameter {
+                    label: None,
+                    value_type: Type::Generic(0),
+                    has_default: false,
+                    variadic: false,
+                },
+            ],
+            result: Type::Generic(0),
+        };
+        let result = instantiate_candidate(
+            &signature,
+            &[ArgumentShape::Positional, ArgumentShape::Positional],
+            &[Type::Str, Type::Num],
+            None,
+            &[],
+            &SourceSpan::new("test", 1, 1),
+            &Environment::new(),
+            true,
+        );
+        let Err(error) = result else {
+            panic!("incompatible generic arguments must fail");
+        };
+        assert!(error.message.contains("generic T0 was inferred as str"));
     }
 }
