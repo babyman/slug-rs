@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Covered imported resource identity through list, map, channel, and task
+  generic layers.
+
 - Added end-to-end generic channel and task payload inference coverage.
 
 - Kept unresolved generic substitutions as internal unknowns rather than `any`.

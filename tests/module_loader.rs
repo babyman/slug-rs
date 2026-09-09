@@ -1539,6 +1539,36 @@ fn imported_aliases_and_destructuring_retain_generic_callables() {
 }
 
 #[test]
+fn generic_containers_retain_imported_resource_identity() {
+    let root = root("generic-resource-containers");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(root.join("api.slug"), "export resource File\n").expect("write resource API");
+    let main_path = root.join("main.slug");
+    let error = ModuleLoader::new(&root, None)
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "resource File\n\
+             val api = import(\"api\")\n\
+             val channel = import(\"slug.channel\")\n\
+             val check = fn(file:api.File) {\n\
+               val values:list<api.File> = [file]\n\
+               val entries:map<str, api.File> = {file: file}\n\
+               val inbox:chan<api.File> = channel.chan()\n\
+               val pending:task<api.File> = spawn { file }\n\
+               val invalid:list<File> = values\n\
+             }\n",
+        )
+        .expect_err("generic containers retain imported resource identity");
+    assert!(
+        error
+            .to_string()
+            .starts_with("expected list<main.File>, got list<api.File>"),
+        "{error}"
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn selected_signatures_dispatch_same_shape_typed_overloads() {
     let root = root("typed-overload-selection");
     fs::create_dir_all(&root).expect("create module directory");
