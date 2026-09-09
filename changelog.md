@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserved imported nominal callable signatures through nested module and
+  Clutch snapshots, including SQLite `Database` and `Statement` resources.
+
 - Added `slug --diagnostic-format=json program.slug`, a versioned JSON stderr
   diagnostic mode for parser, semantic/type, module, runtime, and runner
   startup failures.
