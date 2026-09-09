@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Covered consistent inference for every supplied variadic generic argument.
+
 - Covered higher-order generic inference through structural function arguments.
 
 - Retained generic callable metadata through local immutable aliases.

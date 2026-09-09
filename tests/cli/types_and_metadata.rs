@@ -1010,6 +1010,45 @@ fn higher_order_generic_calls_relate_input_callback_and_result_types() {
 }
 
 #[test]
+fn variadic_generic_arguments_all_constrain_the_same_type() {
+    let path = fixture_path("variadic-generics");
+    fs::write(
+        &path,
+        "val collect = fn<T>(...values:T):list<T> { values }\n\
+         val values = collect(\"a\", \"b\", \"c\")\n\
+         val invalid:list<num> = values\n",
+    )
+    .expect("write variadic generic source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run variadic generic source");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.starts_with("slug: semantic error: expected list<num>, got list<str>"),
+        "{stderr}"
+    );
+
+    fs::write(
+        &path,
+        "val collect = fn<T>(...values:T):list<T> { values }\ncollect(\"a\", 42)\n",
+    )
+    .expect("write inconsistent variadic generic source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inconsistent variadic generic source");
+    fs::remove_file(path).expect("remove variadic generic source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: expected str, got num")
+    );
+}
+
+#[test]
 fn infers_precise_function_values_and_return_results() {
     let path = fixture_path("function-value-inference");
     fs::write(

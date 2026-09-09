@@ -740,10 +740,12 @@ fn check_expression(
                     .transpose()?
                     .unwrap_or_else(Type::universal);
                 if !parameter.discard {
-                    scoped.declare(
-                        parameter.name.clone(),
-                        SemanticBinding::value(parameter_type.clone()),
-                    );
+                    let binding_type = if parameter.variadic {
+                        Type::List(Some(Box::new(parameter_type.clone())))
+                    } else {
+                        parameter_type.clone()
+                    };
+                    scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
                 }
                 if let Some(default) = &parameter.default {
                     let actual = check_expression(default, &mut scoped, function_type_parameters)?;
