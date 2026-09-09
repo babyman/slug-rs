@@ -818,8 +818,11 @@ expressions infer structural `fn<R, P...>` value types from their parameter
 annotations and declared or inferred result; that precision is retained through
 ordinary bindings and collection inference. It infers generic arguments from
 annotated call positions and supports explicit type applications. Successful
-match type constraints narrow case-local bindings. Flow-sensitive narrowing
-and inference for the remaining dynamic expression forms remain future work.
+match type constraints narrow case-local bindings. Semantic analysis tracks an
+expression's value type separately from whether its control flow can continue:
+`return`, `throw`, and `recur(...)` terminate their current flow even when a
+payload remains relevant to function result checking. Broader flow-sensitive
+narrowing and inference for dynamic expression forms remain future work.
 
 Operators, indexing, and slicing check
 statically known operand families. Numeric arithmetic, bitwise and shift

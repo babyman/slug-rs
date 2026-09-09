@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Began Phase 5 control-flow typing with explicit continuation tracking that
+  remains separate from expression value types.
+
 - Preserved imported nominal callable signatures through nested module and
   Clutch snapshots, including SQLite `Database` and `Statement` resources.
 

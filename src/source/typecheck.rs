@@ -38,6 +38,38 @@ pub(super) fn static_import_names(expressions: &[Expr]) -> Vec<String> {
     names
 }
 
+/// Whether evaluating an expression can leave control at the following source
+/// expression. This is deliberately independent from the expression's value
+/// type: a `return value` contributes `value` to function-result checking but
+/// cannot fall through to its enclosing block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Continuation {
+    FallsThrough,
+    Terminates,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CheckedExpression {
+    value_type: Type,
+    continuation: Continuation,
+}
+
+impl CheckedExpression {
+    fn falls_through(value_type: Type) -> Self {
+        Self {
+            value_type,
+            continuation: Continuation::FallsThrough,
+        }
+    }
+
+    fn terminates(value_type: Type) -> Self {
+        Self {
+            value_type,
+            continuation: Continuation::Terminates,
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
     match &expression.kind {
@@ -299,7 +331,7 @@ fn analyze_expressions(
         }
     }
     for expression in expressions {
-        check_expression(expression, &mut environment, &[])?;
+        let _ = check_expression_with_flow(expression, &mut environment, &[])?;
         record_exports(expression, &environment, &mut exports, &mut types);
     }
     Ok(environment.analysis(ModuleSnapshot { exports, types }))
@@ -1204,6 +1236,25 @@ fn check_expression(
         | ExprKind::Documentation(_) => Ok(Type::Nil),
         ExprKind::NotImplemented => Ok(Type::Unknown),
     }
+}
+
+/// Check an expression while retaining its source-level continuation outcome.
+///
+/// The existing type checker remains the authority for an expression's value
+/// type. Flow-sensitive constructs progressively use this result to decide
+/// which environments can reach their continuation.
+fn check_expression_with_flow(
+    expression: &Expr,
+    environment: &mut Environment,
+    type_parameters: &[String],
+) -> Result<CheckedExpression, SourceError> {
+    let value_type = check_expression(expression, environment, type_parameters)?;
+    Ok(match &expression.kind {
+        ExprKind::Return { .. } | ExprKind::Throw { .. } | ExprKind::Recur(_) => {
+            CheckedExpression::terminates(value_type)
+        }
+        _ => CheckedExpression::falls_through(value_type),
+    })
 }
 
 fn callable_result_type(value_type: &Type) -> Type {
