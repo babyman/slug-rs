@@ -1264,6 +1264,51 @@ fn check_expression_with_flow(
         environment.merge_compatible_types(&scoped, &scoped);
         return Ok(CheckedExpression::falls_through(result));
     }
+    if let ExprKind::If {
+        condition,
+        then_branch,
+        else_branch,
+    } = &expression.kind
+    {
+        check_expression(condition, environment, type_parameters)?;
+        let (then_facts, else_facts) = nil_condition_facts(condition, environment);
+        let mut then_environment = environment.clone();
+        apply_type_facts(&mut then_environment, then_facts);
+        let left = check_expression_with_flow(then_branch, &mut then_environment, type_parameters)?;
+        let mut else_environment = environment.clone();
+        apply_type_facts(&mut else_environment, else_facts);
+        let right = else_branch
+            .as_ref()
+            .map(|branch| {
+                check_expression_with_flow(branch, &mut else_environment, type_parameters)
+            })
+            .transpose()?
+            .unwrap_or_else(|| CheckedExpression::falls_through(Type::Nil));
+
+        return match (left.continuation, right.continuation) {
+            (Continuation::FallsThrough, Continuation::Terminates) => {
+                environment.merge_compatible_types(&then_environment, &then_environment);
+                Ok(CheckedExpression::falls_through(left.value_type))
+            }
+            (Continuation::Terminates, Continuation::FallsThrough) => {
+                environment.merge_compatible_types(&else_environment, &else_environment);
+                Ok(CheckedExpression::falls_through(right.value_type))
+            }
+            (Continuation::FallsThrough, Continuation::FallsThrough) => {
+                environment.merge_compatible_types(&then_environment, &else_environment);
+                Ok(CheckedExpression::falls_through(Type::union([
+                    left.value_type,
+                    right.value_type,
+                ])))
+            }
+            (Continuation::Terminates, Continuation::Terminates) => {
+                Ok(CheckedExpression::terminates(Type::union([
+                    left.value_type,
+                    right.value_type,
+                ])))
+            }
+        };
+    }
     let value_type = check_expression(expression, environment, type_parameters)?;
     Ok(match &expression.kind {
         ExprKind::Return { .. } | ExprKind::Throw { .. } | ExprKind::Recur(_) => {

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserved direct nil-narrowing facts after an `if` when the opposite branch
+  terminates.
+
 - Made `return` terminate semantic block flow while retaining its payload for
   inferred and declared function result types.
 

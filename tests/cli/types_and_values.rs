@@ -553,6 +553,40 @@ fn type_check_narrows_nilable_bindings_through_conditions() {
 }
 
 #[test]
+fn type_check_preserves_narrowing_after_terminating_if_branches() {
+    let path = fixture_path("terminating-if-narrowing");
+    fs::write(
+        &path,
+        "val use = fn(value:str):str { value + \"!\" }\n\
+         val guard = fn(value:str|nil) {\n\
+           if (value == nil) { return \"missing\" }\n\
+           use(value)\n\
+         }\n\
+         val inverse = fn(value:str|nil) {\n\
+           if (value != nil) { use(value) } else { return \"missing\" }\n\
+           use(value)\n\
+         }\n\
+         println(guard(\"Slug\"), guard(nil), inverse(\"Flow\"))\n",
+    )
+    .expect("write terminating-if narrowing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run terminating-if narrowing source");
+    fs::remove_file(path).expect("remove terminating-if narrowing source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Slug! missing Flow!\n"
+    );
+}
+
+#[test]
 fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     let path = fixture_path("match-coverage");
     fs::write(
