@@ -617,6 +617,33 @@ fn type_check_treats_an_if_with_two_terminating_branches_as_terminating() {
 }
 
 #[test]
+fn type_check_preserves_surviving_named_match_subject_facts() {
+    let path = fixture_path("terminating-match-narrowing");
+    fs::write(
+        &path,
+        "val use = fn(value:str):str { value + \"!\" }\n\
+         val describe = fn(value:str|nil) {\n\
+           match value { _:nil => return \"missing\"; text:str => use(text) }\n\
+           use(value)\n\
+         }\n\
+         println(describe(\"Slug\"), describe(nil))\n",
+    )
+    .expect("write terminating-match narrowing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run terminating-match narrowing source");
+    fs::remove_file(path).expect("remove terminating-match narrowing source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Slug! missing\n");
+}
+
+#[test]
 fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     let path = fixture_path("match-coverage");
     fs::write(
