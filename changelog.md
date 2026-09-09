@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added generic list-result inference coverage for primitive and nominal types.
+
 - Added text and JSON diagnostic coverage for narrowed actual types.
 
 - Preserved nominal schema identity while narrowing flow facts.

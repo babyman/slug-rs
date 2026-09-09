@@ -3017,4 +3017,43 @@ mod tests {
         assert!(more_specific(&concrete, &generic));
         assert!(!more_specific(&generic, &concrete));
     }
+
+    #[test]
+    fn generic_list_element_inference_preserves_known_result_types() {
+        let signature = CallableSignature {
+            generic_arity: 1,
+            parameters: vec![CallableParameter {
+                label: Some("values".into()),
+                value_type: Type::List(Some(Box::new(Type::Generic(0)))),
+                has_default: false,
+                variadic: false,
+            }],
+            result: Type::union([Type::Generic(0), Type::Nil]),
+        };
+        let database = Type::Resource(ResourceIdentity::declared("db.slug", "Database"));
+        let status = Type::Enum(super::super::semantic::EnumIdentity::declared(
+            "status.slug",
+            "Status",
+        ));
+        let user = Type::Struct(Some(super::super::semantic::SchemaIdentity::declared(
+            "user.slug",
+            "User",
+        )));
+
+        for element in [Type::Str, database, status, user] {
+            let actual = Type::List(Some(Box::new(element.clone())));
+            let mut substitutions = HashMap::new();
+            infer(
+                &signature.parameters[0].value_type,
+                &actual,
+                &mut substitutions,
+                &SourceSpan::new("test", 1, 1),
+            )
+            .expect("infer list element type");
+            assert_eq!(
+                substitute(&signature.result, &substitutions),
+                Type::union([element, Type::Nil])
+            );
+        }
+    }
 }
