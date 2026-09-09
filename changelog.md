@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserved nominal schema identity while narrowing flow facts.
+
 - Added nested guard-and-match control-flow narrowing coverage.
 
 - Centralized reachability-aware semantic environment merging for branches.

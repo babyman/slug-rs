@@ -700,6 +700,38 @@ fn type_check_preserves_facts_through_nested_guard_and_match_flow() {
 }
 
 #[test]
+fn type_check_preserves_nominal_identity_when_narrowing_flow_facts() {
+    let path = fixture_path("nominal-flow-narrowing");
+    fs::write(
+        &path,
+        "val S = struct {}\n\
+         val T = struct {}\n\
+         val use = fn(value:struct<S>|struct<T>):str { \"ready\" }\n\
+         val describe = fn(value:struct<S>|struct<T>|nil) {\n\
+           if (value == nil) { return \"missing\" }\n\
+           use(value)\n\
+         }\n\
+         println(describe(S {}), describe(T {}), describe(nil))\n",
+    )
+    .expect("write nominal-flow narrowing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nominal-flow narrowing source");
+    fs::remove_file(path).expect("remove nominal-flow narrowing source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "ready ready missing\n"
+    );
+}
+
+#[test]
 fn type_check_reports_closed_match_coverage_without_changing_dynamic_matches() {
     let path = fixture_path("match-coverage");
     fs::write(
