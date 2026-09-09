@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Kept independent generic substitutions isolated for parameterized maps.
+
 - Infer non-nil generic variables structurally through nullable positions.
 
 - Require repeated generic parameter occurrences to resolve to one exact type.

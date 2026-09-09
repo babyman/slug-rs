@@ -3203,4 +3203,19 @@ mod tests {
             .is_err()
         );
     }
+
+    #[test]
+    fn independent_generic_parameters_do_not_contaminate_each_other() {
+        let span = SourceSpan::new("test", 1, 1);
+        let expected = Type::Map(Some((
+            Box::new(Type::Generic(0)),
+            Box::new(Type::Generic(1)),
+        )));
+        let actual = Type::Map(Some((Box::new(Type::Str), Box::new(Type::Num))));
+        let mut substitutions = HashMap::new();
+        infer(&expected, &actual, &mut substitutions, &span)
+            .expect("independent map key and value generics infer");
+        assert_eq!(substitutions.get(&0), Some(&Type::Str));
+        assert_eq!(substitutions.get(&1), Some(&Type::Num));
+    }
 }
