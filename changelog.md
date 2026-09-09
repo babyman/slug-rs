@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Covered invariant nominal identity in nullable generic list inference.
+
 - Reject unprovable spread-call shapes instead of bypassing argument validation.
 
 - Kept Phase 6 generics parametric: it adds no bounds, variance, generic

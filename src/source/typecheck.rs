@@ -3353,6 +3353,21 @@ mod tests {
     }
 
     #[test]
+    fn nullable_generic_lists_preserve_invariant_nominal_elements() {
+        let file = Type::Resource(ResourceIdentity::declared("files.slug", "File"));
+        let socket = Type::Resource(ResourceIdentity::declared("sockets.slug", "Socket"));
+        let expected = Type::List(Some(Box::new(Type::union([Type::Generic(0), Type::Nil]))));
+        let file_list = Type::List(Some(Box::new(Type::union([file.clone(), Type::Nil]))));
+        let socket_list = Type::List(Some(Box::new(Type::union([socket, Type::Nil]))));
+        let span = SourceSpan::new("test", 1, 1);
+        let mut substitutions = HashMap::new();
+        infer(&expected, &file_list, &mut substitutions, &span)
+            .expect("nullable file list infers File");
+        assert_eq!(substitutions.get(&0), Some(&file));
+        assert!(infer(&expected, &socket_list, &mut substitutions, &span).is_err());
+    }
+
+    #[test]
     fn named_generic_arguments_contribute_without_defaulted_parameters() {
         let parameters = [
             CallableParameter {
