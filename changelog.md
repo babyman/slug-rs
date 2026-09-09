@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Generalized flow facts to carry narrowed types independently of their source
+  condition.
+
 - Added nested short-circuit narrowing regression coverage.
 
 - Added direct nil-narrowing coverage for equality and inequality in either

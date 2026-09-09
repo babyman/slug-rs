@@ -853,12 +853,12 @@ fn check_expression(
             else_branch,
         } => {
             check_expression(condition, environment, type_parameters)?;
-            let (then_facts, else_facts) = nil_condition_facts(condition, environment);
+            let (then_facts, else_facts) = condition_facts(condition, environment);
             let mut then_environment = environment.clone();
-            apply_type_facts(&mut then_environment, then_facts);
+            apply_flow_facts(&mut then_environment, then_facts);
             let left = check_expression(then_branch, &mut then_environment, type_parameters)?;
             let mut else_environment = environment.clone();
-            apply_type_facts(&mut else_environment, else_facts);
+            apply_flow_facts(&mut else_environment, else_facts);
             let right = else_branch
                 .as_ref()
                 .map(|branch| check_expression(branch, &mut else_environment, type_parameters))
@@ -898,8 +898,8 @@ fn check_expression(
             }
             if matches!(operator, Binary::And | Binary::Or) {
                 let mut right_environment = environment.clone();
-                let (then_facts, else_facts) = nil_condition_facts(left, environment);
-                apply_type_facts(
+                let (then_facts, else_facts) = condition_facts(left, environment);
+                apply_flow_facts(
                     &mut right_environment,
                     if matches!(operator, Binary::And) {
                         then_facts
@@ -1099,8 +1099,8 @@ fn check_expression(
                 if let Some(guard) = &case.guard {
                     check_expression(guard, &mut scoped, type_parameters)?;
                     {
-                        let (facts, _) = nil_condition_facts(guard, &scoped);
-                        apply_type_facts(&mut scoped, facts);
+                        let (facts, _) = condition_facts(guard, &scoped);
+                        apply_flow_facts(&mut scoped, facts);
                     }
                 }
                 results.push(check_expression(&case.value, &mut scoped, type_parameters)?);
@@ -1271,12 +1271,12 @@ fn check_expression_with_flow(
     } = &expression.kind
     {
         check_expression(condition, environment, type_parameters)?;
-        let (then_facts, else_facts) = nil_condition_facts(condition, environment);
+        let (then_facts, else_facts) = condition_facts(condition, environment);
         let mut then_environment = environment.clone();
-        apply_type_facts(&mut then_environment, then_facts);
+        apply_flow_facts(&mut then_environment, then_facts);
         let left = check_expression_with_flow(then_branch, &mut then_environment, type_parameters)?;
         let mut else_environment = environment.clone();
-        apply_type_facts(&mut else_environment, else_facts);
+        apply_flow_facts(&mut else_environment, else_facts);
         let right = else_branch
             .as_ref()
             .map(|branch| {
@@ -1741,9 +1741,12 @@ fn type_subtract(left: &Type, right: &Type) -> Option<Type> {
     }
 }
 
-type TypeFacts = Vec<(String, Type)>;
+/// Narrowed bindings known on one control-flow path. Facts retain their actual
+/// `Type` values, including nominal identities, so match constraints can share
+/// this representation with direct conditions.
+type FlowFacts = Vec<(String, Type)>;
 
-fn nil_condition_facts(expression: &Expr, environment: &Environment) -> (TypeFacts, TypeFacts) {
+fn condition_facts(expression: &Expr, environment: &Environment) -> (FlowFacts, FlowFacts) {
     let ExprKind::Binary {
         left,
         operator,
@@ -1772,7 +1775,7 @@ fn nil_condition_facts(expression: &Expr, environment: &Environment) -> (TypeFac
     }
 }
 
-fn apply_type_facts(environment: &mut Environment, facts: TypeFacts) {
+fn apply_flow_facts(environment: &mut Environment, facts: FlowFacts) {
     for (name, value_type) in facts {
         if let Some(binding) = environment.lookup_mut(&name) {
             binding.value_type = value_type;
