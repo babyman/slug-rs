@@ -447,6 +447,26 @@ impl Environment {
         }
     }
 
+    /// Merge the environments that can reach a control-flow continuation.
+    /// Returns whether at least one input environment survives.
+    pub(super) fn merge_reachable_types(
+        &mut self,
+        left: Option<&Self>,
+        right: Option<&Self>,
+    ) -> bool {
+        match (left, right) {
+            (Some(left), Some(right)) => {
+                self.merge_compatible_types(left, right);
+                true
+            }
+            (Some(environment), None) | (None, Some(environment)) => {
+                self.merge_compatible_types(environment, environment);
+                true
+            }
+            (None, None) => false,
+        }
+    }
+
     pub(super) fn import(&self, name: &str) -> Option<&ModuleSnapshot> {
         self.imports.get(name)
     }

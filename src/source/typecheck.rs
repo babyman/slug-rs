@@ -1346,21 +1346,22 @@ fn check_expression_with_flow(
 
         return match (left.continuation, right.continuation) {
             (Continuation::FallsThrough, Continuation::Terminates) => {
-                environment.merge_compatible_types(&then_environment, &then_environment);
+                environment.merge_reachable_types(Some(&then_environment), None);
                 Ok(CheckedExpression::falls_through(left.value_type))
             }
             (Continuation::Terminates, Continuation::FallsThrough) => {
-                environment.merge_compatible_types(&else_environment, &else_environment);
+                environment.merge_reachable_types(None, Some(&else_environment));
                 Ok(CheckedExpression::falls_through(right.value_type))
             }
             (Continuation::FallsThrough, Continuation::FallsThrough) => {
-                environment.merge_compatible_types(&then_environment, &else_environment);
+                environment.merge_reachable_types(Some(&then_environment), Some(&else_environment));
                 Ok(CheckedExpression::falls_through(Type::union([
                     left.value_type,
                     right.value_type,
                 ])))
             }
             (Continuation::Terminates, Continuation::Terminates) => {
+                debug_assert!(!environment.merge_reachable_types(None, None));
                 Ok(CheckedExpression::terminates(Type::union([
                     left.value_type,
                     right.value_type,
