@@ -3282,4 +3282,34 @@ mod tests {
         .expect("spread element infers generic");
         assert_eq!(substitutions.get(&0), Some(&Type::Str));
     }
+
+    #[test]
+    fn named_generic_arguments_contribute_without_defaulted_parameters() {
+        let parameters = [
+            CallableParameter {
+                label: Some("value".into()),
+                value_type: Type::Generic(0),
+                has_default: false,
+                variadic: false,
+            },
+            CallableParameter {
+                label: Some("fallback".into()),
+                value_type: Type::Generic(0),
+                has_default: true,
+                variadic: false,
+            },
+        ];
+        let actuals = [Type::Str];
+        let bound = bind_arguments(&parameters, &[ArgumentShape::Named("value")], &actuals)
+            .expect("named required argument binds with omitted default");
+        let mut substitutions = HashMap::new();
+        infer(
+            &bound.values[0].0.value_type,
+            bound.values[0].1,
+            &mut substitutions,
+            &SourceSpan::new("test", 1, 1),
+        )
+        .expect("named argument infers generic");
+        assert_eq!(substitutions.get(&0), Some(&Type::Str));
+    }
 }

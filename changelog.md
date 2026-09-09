@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Covered generic inference from named arguments with omitted defaults.
+
 - Infer a sole variadic generic parameter from a statically typed list spread.
 
 - Covered consistent inference for every supplied variadic generic argument.
