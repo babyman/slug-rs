@@ -3312,4 +3312,18 @@ mod tests {
         .expect("named argument infers generic");
         assert_eq!(substitutions.get(&0), Some(&Type::Str));
     }
+
+    #[test]
+    fn unresolved_generic_substitutions_remain_unknown_not_any() {
+        let mut substitutions = HashMap::new();
+        infer(
+            &Type::Generic(0),
+            &Type::Unknown,
+            &mut substitutions,
+            &SourceSpan::new("test", 1, 1),
+        )
+        .expect("dynamic evidence does not resolve a generic");
+        assert!(substitutions.is_empty());
+        assert_eq!(substitute(&Type::Generic(0), &substitutions), Type::Unknown);
+    }
 }

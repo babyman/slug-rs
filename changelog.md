@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Kept unresolved generic substitutions as internal unknowns rather than `any`.
+
 - Covered deterministic concrete, generic, and variadic-generic overload
   selection.
 
