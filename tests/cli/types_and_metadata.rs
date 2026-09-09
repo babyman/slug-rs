@@ -291,6 +291,28 @@ fn infers_block_results_without_leaking_block_bindings() {
 }
 
 #[test]
+fn return_payloads_infer_function_results_without_falling_through() {
+    let path = fixture_path("return-flow-inference");
+    fs::write(
+        &path,
+        "val describe = fn():str { return \"returned\"\n42 }\nprintln(describe())\n",
+    )
+    .expect("write return-flow inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run return-flow inference source");
+    fs::remove_file(path).expect("remove return-flow inference source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "returned\n");
+}
+
+#[test]
 fn infers_normalized_if_result_types() {
     let path = fixture_path("if-result-inference");
     fs::write(

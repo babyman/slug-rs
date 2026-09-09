@@ -750,7 +750,8 @@ fn check_expression(
                     require(&parameter_type, &actual, &default.span)?;
                 }
             }
-            let actual = check_expression(body, &mut scoped, function_type_parameters)?;
+            let actual =
+                check_expression_with_flow(body, &mut scoped, function_type_parameters)?.value_type;
             if let Some(return_annotation) = return_annotation {
                 let expected = resolve_static_annotation(
                     return_annotation,
@@ -1248,6 +1249,21 @@ fn check_expression_with_flow(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<CheckedExpression, SourceError> {
+    if let ExprKind::Block(values) = &expression.kind {
+        let mut scoped = environment.clone();
+        scoped.enter_scope();
+        let mut result = Type::Nil;
+        for value in values {
+            let checked = check_expression_with_flow(value, &mut scoped, type_parameters)?;
+            result = checked.value_type;
+            if checked.continuation == Continuation::Terminates {
+                environment.merge_compatible_types(&scoped, &scoped);
+                return Ok(CheckedExpression::terminates(result));
+            }
+        }
+        environment.merge_compatible_types(&scoped, &scoped);
+        return Ok(CheckedExpression::falls_through(result));
+    }
     let value_type = check_expression(expression, environment, type_parameters)?;
     Ok(match &expression.kind {
         ExprKind::Return { .. } | ExprKind::Throw { .. } | ExprKind::Recur(_) => {

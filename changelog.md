@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made `return` terminate semantic block flow while retaining its payload for
+  inferred and declared function result types.
+
 - Began Phase 5 control-flow typing with explicit continuation tracking that
   remains separate from expression value types.
 
