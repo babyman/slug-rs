@@ -2254,6 +2254,16 @@ fn check_call(
         }
     }
     if applicable.is_empty() {
+        if callables.len() == 1
+            && shapes
+                .iter()
+                .any(|shape| matches!(shape, ArgumentShape::Spread))
+        {
+            // The runtime binder remains responsible for a dynamic spread's
+            // arity. It cannot prove parameter or generic relationships, so
+            // do not report a successfully instantiated callable here.
+            return Ok(Type::Unknown);
+        }
         return Err(SourceError::semantic(
             format!("no matching overload for `{name}`"),
             expression.span.clone(),
@@ -2483,12 +2493,7 @@ fn bind_arguments<'a>(
                 uses_empty_variadic: false,
             });
         }
-        return Some(BoundArguments {
-            values: Vec::new(),
-            uses_empty_variadic: parameters
-                .last()
-                .is_some_and(|parameter| parameter.variadic),
-        });
+        return None;
     }
     let variadic = parameters
         .last()
@@ -3325,6 +3330,26 @@ mod tests {
         )
         .expect("spread element infers generic");
         assert_eq!(substitutions.get(&0), Some(&Type::Str));
+    }
+
+    #[test]
+    fn unprovable_spreads_do_not_bypass_argument_binding() {
+        let parameters = [
+            CallableParameter {
+                label: Some("prefix".into()),
+                value_type: Type::Str,
+                has_default: false,
+                variadic: false,
+            },
+            CallableParameter {
+                label: Some("values".into()),
+                value_type: Type::Generic(0),
+                has_default: false,
+                variadic: true,
+            },
+        ];
+        let actuals = [Type::List(Some(Box::new(Type::Str)))];
+        assert!(bind_arguments(&parameters, &[ArgumentShape::Spread], &actuals).is_none());
     }
 
     #[test]
