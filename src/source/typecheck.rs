@@ -2429,6 +2429,16 @@ fn bind_arguments<'a>(
         .iter()
         .any(|argument| matches!(argument, ArgumentShape::Spread))
     {
+        if parameters.len() == 1
+            && parameters[0].variadic
+            && matches!(arguments, [ArgumentShape::Spread])
+            && let Type::List(Some(element)) = &actuals[0]
+        {
+            return Some(BoundArguments {
+                values: vec![(&parameters[0], element.as_ref())],
+                uses_empty_variadic: false,
+            });
+        }
         return Some(BoundArguments {
             values: Vec::new(),
             uses_empty_variadic: parameters
@@ -3247,5 +3257,29 @@ mod tests {
             substitute(&signature.result, &inferred),
             substitute(&signature.result, &explicit)
         );
+    }
+
+    #[test]
+    fn known_list_spreads_infer_a_sole_variadic_generic_parameter() {
+        let parameter = CallableParameter {
+            label: Some("values".into()),
+            value_type: Type::Generic(0),
+            has_default: false,
+            variadic: true,
+        };
+        let actual = Type::List(Some(Box::new(Type::Str)));
+        let parameters = [parameter];
+        let actuals = [actual];
+        let bound = bind_arguments(&parameters, &[ArgumentShape::Spread], &actuals)
+            .expect("known spread binds");
+        let mut substitutions = HashMap::new();
+        infer(
+            &bound.values[0].0.value_type,
+            bound.values[0].1,
+            &mut substitutions,
+            &SourceSpan::new("test", 1, 1),
+        )
+        .expect("spread element infers generic");
+        assert_eq!(substitutions.get(&0), Some(&Type::Str));
     }
 }

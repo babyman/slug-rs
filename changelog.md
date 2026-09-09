@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Infer a sole variadic generic parameter from a statically typed list spread.
+
 - Covered consistent inference for every supplied variadic generic argument.
 
 - Covered higher-order generic inference through structural function arguments.
