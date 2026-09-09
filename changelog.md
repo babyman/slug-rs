@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Covered equivalence between explicit and inferred generic substitutions.
+
 - Kept independent generic substitutions isolated for parameterized maps.
 
 - Infer non-nil generic variables structurally through nullable positions.

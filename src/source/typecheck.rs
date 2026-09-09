@@ -3218,4 +3218,32 @@ mod tests {
         assert_eq!(substitutions.get(&0), Some(&Type::Str));
         assert_eq!(substitutions.get(&1), Some(&Type::Num));
     }
+
+    #[test]
+    fn explicit_generic_arguments_match_inferred_substitutions() {
+        let signature = CallableSignature {
+            generic_arity: 1,
+            parameters: vec![CallableParameter {
+                label: Some("values".into()),
+                value_type: Type::List(Some(Box::new(Type::Generic(0)))),
+                has_default: false,
+                variadic: false,
+            }],
+            result: Type::union([Type::Generic(0), Type::Nil]),
+        };
+        let actual = Type::List(Some(Box::new(Type::Str)));
+        let mut inferred = HashMap::new();
+        infer(
+            &signature.parameters[0].value_type,
+            &actual,
+            &mut inferred,
+            &SourceSpan::new("test", 1, 1),
+        )
+        .expect("infer explicit-equivalent substitution");
+        let explicit = HashMap::from([(0, Type::Str)]);
+        assert_eq!(
+            substitute(&signature.result, &inferred),
+            substitute(&signature.result, &explicit)
+        );
+    }
 }
