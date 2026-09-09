@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Covered higher-order generic inference through structural function arguments.
+
 - Retained generic callable metadata through local immutable aliases.
 
 - Preserved generic callable metadata through imported aliases and destructuring.

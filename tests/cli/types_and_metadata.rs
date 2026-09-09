@@ -986,6 +986,30 @@ fn local_generic_callable_aliases_retain_their_signature() {
 }
 
 #[test]
+fn higher_order_generic_calls_relate_input_callback_and_result_types() {
+    let path = fixture_path("higher-order-generics");
+    fs::write(
+        &path,
+        "val apply = fn<T,R>(value:T, transform:fn<R,T>):R { transform(value) }\n\
+         val size = fn(value:str):num { len(value) }\n\
+         val result = apply(\"Slug\", size)\n\
+         val invalid:str = result\n",
+    )
+    .expect("write higher-order generic source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run higher-order generic source");
+    fs::remove_file(path).expect("remove higher-order generic source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("stderr is UTF-8")
+            .starts_with("slug: semantic error: expected str, got num")
+    );
+}
+
+#[test]
 fn infers_precise_function_values_and_return_results() {
     let path = fixture_path("function-value-inference");
     fs::write(
