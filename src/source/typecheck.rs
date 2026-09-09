@@ -2606,17 +2606,7 @@ fn infer_task_payload(
     substitutions: &mut HashMap<usize, Type>,
     span: &crate::SourceSpan,
 ) -> Result<(), SourceError> {
-    let Type::Generic(index) = expected else {
-        return infer(expected, actual, substitutions, span);
-    };
-    if matches!(actual, Type::Unknown) {
-        return Ok(());
-    }
-    if let Some(previous) = substitutions.get(index) {
-        return require(previous, actual, span);
-    }
-    substitutions.insert(*index, actual.clone());
-    Ok(())
+    infer_payload(expected, actual, substitutions, span, false)
 }
 
 fn infer_channel_payload(
@@ -2625,10 +2615,20 @@ fn infer_channel_payload(
     substitutions: &mut HashMap<usize, Type>,
     span: &crate::SourceSpan,
 ) -> Result<(), SourceError> {
+    infer_payload(expected, actual, substitutions, span, true)
+}
+
+fn infer_payload(
+    expected: &Type,
+    actual: &Type,
+    substitutions: &mut HashMap<usize, Type>,
+    span: &crate::SourceSpan,
+    preserve_unknown: bool,
+) -> Result<(), SourceError> {
     let Type::Generic(index) = expected else {
         return infer(expected, actual, substitutions, span);
     };
-    if matches!(actual, Type::Unknown) {
+    if matches!(actual, Type::Unknown) || (preserve_unknown && actual == &Type::universal()) {
         substitutions.entry(*index).or_insert(Type::Unknown);
         return Ok(());
     }
@@ -3171,5 +3171,36 @@ mod tests {
         let error = infer(&Type::Generic(0), &Type::Num, &mut substitutions, &span)
             .expect_err("incompatible occurrence is rejected instead of widened");
         assert!(error.to_string().starts_with("expected str, got num"));
+    }
+
+    #[test]
+    fn nullable_generic_positions_extract_the_non_nil_type() {
+        let span = SourceSpan::new("test", 1, 1);
+        for (expected, actual) in [
+            (
+                Type::union([Type::Generic(0), Type::Nil]),
+                Type::union([Type::Str, Type::Nil]),
+            ),
+            (
+                Type::List(Some(Box::new(Type::union([Type::Generic(0), Type::Nil])))),
+                Type::List(Some(Box::new(Type::union([Type::Str, Type::Nil])))),
+            ),
+        ] {
+            let mut substitutions = HashMap::new();
+            infer(&expected, &actual, &mut substitutions, &span)
+                .expect("nullable position infers its non-nil component");
+            assert_eq!(substitutions.get(&0), Some(&Type::Str));
+        }
+
+        let mut substitutions = HashMap::new();
+        assert!(
+            infer(
+                &Type::Generic(0),
+                &Type::union([Type::Str, Type::Nil]),
+                &mut substitutions,
+                &span
+            )
+            .is_err()
+        );
     }
 }

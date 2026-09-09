@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Infer non-nil generic variables structurally through nullable positions.
+
 - Require repeated generic parameter occurrences to resolve to one exact type.
 
 - Preserved imported nominal resource, enum, and struct identities through
