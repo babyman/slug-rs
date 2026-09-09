@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Covered deterministic concrete, generic, and variadic-generic overload
+  selection.
+
 - Covered generic inference from named arguments with omitted defaults.
 
 - Infer a sole variadic generic parameter from a statically typed list spread.

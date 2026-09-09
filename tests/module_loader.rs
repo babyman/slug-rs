@@ -1673,6 +1673,30 @@ fn equal_and_incomparable_overload_candidates_remain_ambiguous() {
 }
 
 #[test]
+fn generic_and_variadic_overloads_resolve_without_declaration_order() {
+    let root = root("generic-variadic-overloads");
+    fs::create_dir_all(&root).expect("create module directory");
+    let main_path = root.join("main.slug");
+    let program = ModuleLoader::new(&root, None)
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val choose = fn<T>(value:T):str { \"generic\" }\n\
+             val choose = fn(value:str):str { \"concrete\" }\n\
+             val choose = fn<T>(value:T, ...rest:T):str { \"variadic\" }\n\
+             export val result = [choose(\"Slug\"), choose(1), choose(1, 2)]\n",
+        )
+        .expect("compile deterministic generic overloads");
+    let mut vm = Vm::new();
+    vm.run_named(&program, "main")
+        .expect("run deterministic generic overloads");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": [\"concrete\", \"generic\", \"variadic\"]}"
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn selected_defaulted_pipeline_rejects_a_replaced_live_binding() {
     let root = root("live-defaulted-pipeline-overload");
     fs::create_dir_all(&root).expect("create module directory");
