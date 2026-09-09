@@ -1003,6 +1003,7 @@ fn check_expression(
                 remaining = None;
             }
             let mut results = Vec::new();
+            let mut surviving_subject_types = Vec::new();
             for case in cases {
                 let mut scoped = environment.clone();
                 scoped.enter_scope();
@@ -1021,6 +1022,7 @@ fn check_expression(
                         &mut scoped,
                     );
                 }
+                let mut case_subject_type = None;
                 if let Some(Expr {
                     kind: ExprKind::Name(name),
                     ..
@@ -1045,7 +1047,9 @@ fn check_expression(
                         })
                         .collect::<Vec<_>>();
                     if !narrowed.is_empty() {
-                        apply_flow_facts(&mut scoped, vec![(name.clone(), Type::union(narrowed))]);
+                        let narrowed = Type::union(narrowed);
+                        apply_flow_facts(&mut scoped, vec![(name.clone(), narrowed.clone())]);
+                        case_subject_type = Some(narrowed);
                     }
                 }
                 environment.record_match_constraints(case.span.clone(), constraints.clone());
@@ -1130,7 +1134,15 @@ fn check_expression(
                         apply_flow_facts(&mut scoped, facts);
                     }
                 }
-                results.push(check_expression(&case.value, &mut scoped, type_parameters)?);
+                let checked =
+                    check_expression_with_flow(&case.value, &mut scoped, type_parameters)?;
+                if checked.continuation == Continuation::FallsThrough
+                    && case.guard.is_none()
+                    && let Some(value_type) = case_subject_type
+                {
+                    surviving_subject_types.push(value_type);
+                }
+                results.push(checked.value_type);
             }
             if coverage_enabled && let Some(remaining) = remaining {
                 return Err(SourceError::semantic(
@@ -1151,7 +1163,27 @@ fn check_expression(
                     expression.span.clone(),
                 ));
             }
-            Ok(Type::union(results))
+            if let Some(Expr {
+                kind: ExprKind::Name(name),
+                ..
+            }) = subject.as_deref()
+                && !surviving_subject_types.is_empty()
+            {
+                apply_flow_facts(
+                    environment,
+                    vec![(name.clone(), Type::union(surviving_subject_types))],
+                );
+            }
+            Ok(
+                if results
+                    .iter()
+                    .all(|value_type| matches!(value_type, Type::Never))
+                {
+                    Type::Never
+                } else {
+                    Type::union(results)
+                },
+            )
         }
         ExprKind::StructInit { schema, fields } => {
             let schema_type = check_expression(schema, environment, type_parameters)?;
@@ -1339,6 +1371,9 @@ fn check_expression_with_flow(
     let value_type = check_expression(expression, environment, type_parameters)?;
     Ok(match &expression.kind {
         ExprKind::Return { .. } | ExprKind::Throw { .. } | ExprKind::Recur(_) => {
+            CheckedExpression::terminates(value_type)
+        }
+        ExprKind::Match { .. } if matches!(value_type, Type::Never) => {
             CheckedExpression::terminates(value_type)
         }
         _ => CheckedExpression::falls_through(value_type),
