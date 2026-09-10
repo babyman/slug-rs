@@ -22,12 +22,14 @@ export val Error = struct {
 }
 
 /**
- * Writes values to standard output, separated by spaces, without a trailing newline.
+ * Writes and flushes values to standard output, separated by spaces, without a
+ * trailing newline.
  */
 export foreign print = fn(...values):nil
 
 /**
- * Writes values to standard output, separated by spaces and terminated by a newline.
+ * Writes and flushes values to standard output, separated by spaces and
+ * terminated by a newline.
  */
 export foreign println = fn(...values):nil
 

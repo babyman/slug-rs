@@ -31,11 +31,14 @@ fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
         })
         .collect::<Vec<_>>()
         .join(" ");
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
     let result = if newline {
-        writeln!(std::io::stdout().lock(), "{output}")
+        writeln!(stdout, "{output}")
     } else {
-        write!(std::io::stdout().lock(), "{output}")
-    };
+        write!(stdout, "{output}")
+    }
+    .and_then(|()| stdout.flush());
     if let Err(error) = result {
         return call.raise(slug_vm::NativeError::new(
             "native.io",

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Flush `print` and `println` before returning so `slug.io.stdin` prompts are
+  visible before waiting for input.
+
 - Moved `slug.math` into the bundled `slug.core` native Clutch while retaining
   its public module identity.
 

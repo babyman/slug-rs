@@ -632,7 +632,9 @@ arguments, evaluate them in ordinary left-to-right call order, and return
 separated by one ASCII space. `print` writes no trailing newline, while
 `println` appends exactly one `\n` after the final rendered argument. Thus
 `print()` writes nothing and `println()` writes one newline. Both functions
-write to standard output.
+write to standard output. Before either function returns, the host flushes
+standard output, so a prompt written with `print` is visible before a subsequent
+input operation waits.
 
 ### Length
 
