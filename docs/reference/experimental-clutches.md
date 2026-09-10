@@ -16,9 +16,9 @@ distribution remain unimplemented. The local `slug.io.fs` clutch commits its
 macOS ARM library as the first installed native-package experiment. The
 `slug.db.sqlite` source clutch is built into a temporary installed layout by
 the integration suite, proving variadic SQL bindings and compound value
-transfer through an external C dependency. The stateless `slug.math` source
-clutch provides the corresponding provider check without native resources or
-an external library. This checkout
+transfer through an external C dependency. The bundled `slug.core` clutch
+provides standard collections, standard input, and stateless math through one
+native library. This checkout
 is a development repository: `make stage-native-clutches` builds every native
 source adapter for the current supported platform at its manifest-selected
 location before local programs import it. Those staged libraries are ignored

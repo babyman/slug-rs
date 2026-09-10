@@ -91,11 +91,9 @@ For the current source fixtures, a conformance environment MUST make these
 modules and builtins available with the behavior exercised by their source:
 
 - builtins including `import`, `len`, `print`, and `println`;
-- `slug.std` from the installed `slug.core` Clutch, and `slug.test`, for
-  assertions and core collection operations;
+- `slug.std`, `slug.io.stdin`, and `slug.math` from the installed `slug.core`
+  Clutch, and `slug.test`, for assertions and core collection operations;
 - `slug.channel` for channels, `await`, `send`, `recv`, and `close`;
-- `slug.io.stdin` for the shared standard-input line stream when a fixture or
-  library program imports it;
 - `slug.io.fs` for explicit-lifecycle file resources when a fixture or library
   program imports it and the host installs the experimental filesystem clutch;
 - `slug.builtin` for host-provided foundational bindings when the fixture or

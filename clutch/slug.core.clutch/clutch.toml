@@ -1,6 +1,7 @@
 [modules]
 "slug.std" = { source = "modules/std.slug" }
 "slug.io.stdin" = { source = "modules/stdin.slug" }
+"slug.math" = { source = "modules/math.slug" }
 
 [native]
 source = "native/source"

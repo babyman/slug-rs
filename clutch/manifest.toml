@@ -5,4 +5,4 @@
 "slug.db.sqlite" = "slug.db.sqlite.clutch"
 "slug.db.sqlite.statement" = "slug.db.sqlite.clutch"
 "slug.db.sqlite.transaction" = "slug.db.sqlite.clutch"
-"slug.math" = "slug.math.clutch"
+"slug.math" = "slug.core.clutch"

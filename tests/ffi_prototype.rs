@@ -146,6 +146,68 @@ fn build_native_clutch(
     ClutchRepository::from_manifest(directory.path().join("clutch")).expect("load clutch manifest")
 }
 
+fn build_core_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
+    let clutch_root = directory.path().join("clutch/slug.core.clutch");
+    let target = current_native_platform();
+    fs::create_dir_all(clutch_root.join("modules")).expect("create core clutch modules");
+    fs::create_dir_all(clutch_root.join("native/source"))
+        .expect("create core clutch native source");
+    fs::create_dir_all(clutch_root.join("native").join(target))
+        .expect("create core clutch native library directory");
+    fs::write(
+        directory.path().join("clutch/manifest.toml"),
+        "[modules]\n\
+         \"slug.std\" = \"slug.core.clutch\"\n\
+         \"slug.io.stdin\" = \"slug.core.clutch\"\n\
+         \"slug.math\" = \"slug.core.clutch\"\n",
+    )
+    .expect("write core clutch repository manifest");
+    for (source, destination) in [
+        ("clutch/slug.core.clutch/modules/std.slug", "std.slug"),
+        ("clutch/slug.core.clutch/modules/stdin.slug", "stdin.slug"),
+        ("clutch/slug.core.clutch/modules/math.slug", "math.slug"),
+        ("clutch/slug.core.clutch/native/source/core.c", "core.c"),
+    ] {
+        let destination = if destination == "core.c" {
+            clutch_root.join("native/source").join(destination)
+        } else {
+            clutch_root.join("modules").join(destination)
+        };
+        fs::copy(source, destination).expect("copy core clutch source");
+    }
+    let built = compile_fixture(
+        directory,
+        "clutch/slug.core.clutch/native/source/core.c",
+        "core",
+    );
+    let library = clutch_root
+        .join("native")
+        .join(target)
+        .join(built.file_name().expect("core native library name"));
+    fs::copy(built, &library).expect("place core native library");
+    fs::write(
+        clutch_root.join("clutch.toml"),
+        format!(
+            "[modules]\n\
+             \"slug.std\" = {{ source = \"modules/std.slug\" }}\n\
+             \"slug.io.stdin\" = {{ source = \"modules/stdin.slug\" }}\n\
+             \"slug.math\" = {{ source = \"modules/math.slug\" }}\n\n\
+             [native]\n\
+             source = \"native/source\"\n\
+             abi = \"slug-ffi-prototype/0.13\"\n\n\
+             [native.libraries]\n\
+             \"{target}\" = \"native/{target}/{}\"\n",
+            library
+                .file_name()
+                .expect("core native library name")
+                .to_string_lossy(),
+        ),
+    )
+    .expect("write core clutch manifest");
+    ClutchRepository::from_manifest(directory.path().join("clutch"))
+        .expect("load core clutch repository")
+}
+
 fn run_clutch_cli(directory: &TemporaryDirectory, source: &str) -> std::process::Output {
     let program = directory.path().join("cli.slug");
     fs::write(&program, source).expect("write native clutch CLI program");
@@ -553,18 +615,10 @@ fn sqlite_statement_failures_clear_partial_bindings_before_reuse() {
 }
 
 #[test]
-fn loads_math_through_an_exploded_native_clutch() {
+fn loads_math_through_the_native_core_clutch() {
     let directory = TemporaryDirectory::new();
     let main = directory.path().join("main.slug");
-    let repository = build_native_clutch(
-        &directory,
-        "slug.math",
-        "slug.math.clutch",
-        "clutch/slug.math.clutch/modules/math.slug",
-        "clutch/slug.math.clutch/native/source/math.c",
-        "slug_math",
-        &[],
-    );
+    let repository = build_core_clutch(&directory);
     let output = run_clutch_cli(
         &directory,
         "val math = import(\"slug.math\")\nprintln(math.add(20, 22), math.sqrt(9.0))\n",

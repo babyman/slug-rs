@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Moved `slug.math` into the bundled `slug.core` native Clutch while retaining
+  its public module identity.
+
 - Extended the private C FFI prototype to ABI 0.13 with explicit producer
   close plus nil, boolean, float, and bytes sends.
 

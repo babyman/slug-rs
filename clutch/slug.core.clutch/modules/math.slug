@@ -1,5 +1,5 @@
 /**
- * Basic numeric operations implemented by the native math Clutch.
+ * Basic numeric operations implemented by the native core Clutch.
  *
  * The functions accept and return Slug numbers and report invalid native
  * operations as checked runtime errors.
