@@ -1,0 +1,12 @@
+[modules]
+"slug.io.stdin" = { source = "modules/stdin.slug" }
+
+[native]
+source = "native/source"
+abi = "slug-ffi-prototype/0.13"
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_io_stdin.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_io_stdin.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_io_stdin.so"
+"windows-x86_64" = "native/windows-x86_64/slug_io_stdin.dll"

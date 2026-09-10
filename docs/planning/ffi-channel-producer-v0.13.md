@@ -15,9 +15,9 @@ same capability, not reasons to widen the first ABI.
 
 ## Status
 
-The ABI 0.13 producer increment is complete: its host-table additions,
-ownership rules, and C fixtures are implemented. The remaining next milestone
-is extracting `slug.io.stdin` into a Clutch that consumes this capability.
+The ABI 0.13 producer increment and the `slug.io.stdin` Clutch extraction are
+complete. The C stdin reader holds only its producer capability; the Clutch's
+Slug wrapper owns the shared channel receiver.
 
 ## Review of the proposed requirements
 
@@ -140,7 +140,7 @@ every outstanding producer and preserve FIFO messages accepted before close.
 payload, close/release separation, backpressure retry, receiver revocation,
 and callback-return-before-worker-send.
 
-### 3. Extract `slug.io.stdin` into a native Clutch
+### 3. Complete `slug.io.stdin` extraction into a native Clutch
 
 - Move the `readLines` foreign implementation and its worker state from
   `src/main.rs` into a `slug.io.stdin` Clutch with a source wrapper that keeps

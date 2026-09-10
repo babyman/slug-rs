@@ -257,6 +257,10 @@ struct FfiChannel {
 
 struct FfiProducer {
     producer: crate::NativeChannelProducer,
+    // A foreign worker may still execute this library after the runtime has
+    // revoked its producer. Keep the dynamic library loaded until the worker
+    // releases the producer capability.
+    _library_lease: Arc<LoadedLibrary>,
 }
 
 #[repr(C)]
@@ -1366,8 +1370,21 @@ unsafe extern "C" fn channel_create(
         ));
         return std::ptr::null_mut();
     };
+    let Some(library_lease) = call
+        .state::<FfiModuleState>()
+        .and_then(|state| state.library.library.borrow().clone())
+    else {
+        call.set_error(NativeError::new(
+            "native.plugin_inactive",
+            "FFI library is no longer active",
+        ));
+        return std::ptr::null_mut();
+    };
     let (value, producer) = call.channel(capacity);
-    let producer = Box::into_raw(Box::new(FfiProducer { producer }));
+    let producer = Box::into_raw(Box::new(FfiProducer {
+        producer,
+        _library_lease: library_lease,
+    }));
     // SAFETY: checked non-null above; the C callback owns the returned producer.
     unsafe { *producer_output = producer };
     Box::into_raw(Box::new(FfiChannel { value }))

@@ -57,7 +57,7 @@ a specified feature is implemented.
 | [language-foundation-roadmap.md](planning/language-foundation-roadmap.md) | Dependency-ordered implementation tasks for source compatibility. |
 | [expression-foundation-inventory.md](planning/expression-foundation-inventory.md) | Current expression-support boundary and dependency-ordered implementation slices. |
 | [type-system-plan.md](planning/type-system-plan.md) | Dependency-ordered plan for the next static-checking milestones. |
-| [FFI channel producer prototype ABI 0.13 plan](planning/ffi-channel-producer-v0.13.md) | Prototype ABI 0.13 native-producer work required before extracting `slug.io.stdin` from the core executable. |
+| [FFI channel producer prototype ABI 0.13 plan](planning/ffi-channel-producer-v0.13.md) | Prototype ABI 0.13 native-producer work and the completed `slug.io.stdin` Clutch extraction. |
 | [Type Checking Phase 3_ Complete Inference Across Ordinary Expressions.md](planning/Type%20Checking%20Phase%203_%20Complete%20Inference%20Across%20Ordinary%20Expressions.md) | Acceptance criteria and execution packages for complete ordinary-expression inference. |
 | [nominal-types-implementation.md](planning/completed/nominal-types-implementation.md) | Checklist for nominal resources, enums, and aliases. |
 | [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |

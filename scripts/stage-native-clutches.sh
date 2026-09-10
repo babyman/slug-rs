@@ -40,6 +40,7 @@ stage() {
 }
 
 stage slug.io.fs.clutch clutch/slug.io.fs.clutch/native/source/fs.c libslug_io_fs
+stage slug.io.stdin.clutch clutch/slug.io.stdin.clutch/native/source/stdin.c libslug_io_stdin
 stage slug.db.sqlite.clutch clutch/slug.db.sqlite.clutch/native/source/sqlite.c libslug_db_sqlite -lsqlite3
 stage slug.math.clutch clutch/slug.math.clutch/native/source/math.c libslug_math -lm
 stage slug.core.clutch clutch/slug.core.clutch/native/source/core.c libslug_core

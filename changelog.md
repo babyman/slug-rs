@@ -5,6 +5,9 @@
 - Extended the private C FFI prototype to ABI 0.13 with explicit producer
   close plus nil, boolean, float, and bytes sends.
 
+- Moved the shared standard-input reader into the `slug.io.stdin` native
+  Clutch, leaving the public source API unchanged.
+
 - Documented the prototype ABI 0.13 channel-producer work required before
   moving `slug.io.stdin` out of the core executable.
 

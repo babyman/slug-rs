@@ -1,6 +1,7 @@
 [modules]
 "slug.std" = "slug.core.clutch"
 "slug.io.fs" = "slug.io.fs.clutch"
+"slug.io.stdin" = "slug.io.stdin.clutch"
 "slug.db.sqlite" = "slug.db.sqlite.clutch"
 "slug.db.sqlite.statement" = "slug.db.sqlite.clutch"
 "slug.db.sqlite.transaction" = "slug.db.sqlite.clutch"
