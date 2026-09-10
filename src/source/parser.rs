@@ -1110,33 +1110,42 @@ impl Parser {
                 span,
             });
         }
-        let map = ((matches!(self.kind(), TokenKind::Name(_) | TokenKind::Interpolated(_)))
-            && matches!(
-                self.tokens.get(self.index + 1).map(|token| &token.kind),
-                Some(TokenKind::Colon)
-            ))
-            || self.starts_computed_map_key();
+        let first_entry = self.next_non_separator_index();
+        let map = ((matches!(
+            self.tokens.get(first_entry).map(|token| &token.kind),
+            Some(TokenKind::Name(_) | TokenKind::Interpolated(_))
+        )) && matches!(
+            self.tokens.get(first_entry + 1).map(|token| &token.kind),
+            Some(TokenKind::Colon)
+        )) || self.starts_computed_map_key(first_entry);
         if map {
             self.map(span)
         } else {
             self.block_after_open(span)
         }
     }
-    fn starts_computed_map_key(&self) -> bool {
-        if !self.matches(&TokenKind::LBracket) {
+    fn next_non_separator_index(&self) -> usize {
+        self.tokens[self.index..]
+            .iter()
+            .position(|token| !matches!(token.kind, TokenKind::Sep | TokenKind::BlankSep))
+            .map_or(self.index, |offset| self.index + offset)
+    }
+    fn starts_computed_map_key(&self, index: usize) -> bool {
+        if !matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::LBracket)
+        ) {
             return false;
         }
         let mut depth = 0usize;
-        for (offset, token) in self.tokens[self.index..].iter().enumerate() {
+        for (offset, token) in self.tokens[index..].iter().enumerate() {
             match token.kind {
                 TokenKind::LBracket => depth += 1,
                 TokenKind::RBracket => {
                     depth -= 1;
                     if depth == 0 {
                         return matches!(
-                            self.tokens
-                                .get(self.index + offset + 1)
-                                .map(|token| &token.kind),
+                            self.tokens.get(index + offset + 1).map(|token| &token.kind),
                             Some(TokenKind::Colon)
                         );
                     }
@@ -1149,6 +1158,7 @@ impl Parser {
     fn map(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.enter_nesting(span.clone())?;
         let mut entries = Vec::new();
+        self.separators();
         loop {
             let key = if self.matches(&TokenKind::LBracket) {
                 self.next();
@@ -1180,6 +1190,7 @@ impl Parser {
                 break;
             }
             self.next();
+            self.separators();
             if self.matches(&TokenKind::RBrace) {
                 break;
             }

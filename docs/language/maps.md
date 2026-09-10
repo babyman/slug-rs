@@ -11,12 +11,18 @@ val byName = {name: "Slug", status: "ok"}
 val byQuotedName = {"name": "Slug", "status": "ok"}
 val field = "name"
 val byValue = {[field]: "Slug"}
+val multiline = {
+  'first': 1,
+  'second': 2,
+}
 ```
 
 A bare identifier or quoted string in a map literal is a string key. Therefore
 `{name: x}`, `{"name": x}`, and `{["name"]: x}` use the same key. Bracketing a
 key evaluates an expression, so `{[field]: x}` uses the value of `field` as its
 key. Map literal entries are evaluated in source order.
+Newlines immediately inside the braces or after an entry comma are whitespace;
+entries remain comma-delimited.
 
 A key must be hashable. Numbers, strings, bytes, and booleans are hashable.
 `nil`, lists, maps, functions, and structs are not valid map keys.

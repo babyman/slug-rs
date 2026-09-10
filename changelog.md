@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Parse multiline map literals whose first entry follows the opening brace on a
+  new line, including raw single-quoted string keys.
+
 - Flush `print` and `println` before returning so `slug.io.stdin` prompts are
   visible before waiting for input.
 

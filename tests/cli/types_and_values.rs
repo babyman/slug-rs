@@ -1021,6 +1021,37 @@ fn standard_clutch_preserves_non_string_map_keys() {
 }
 
 #[test]
+fn parses_multiline_maps_with_raw_quoted_keys() {
+    let path = fixture_path("multiline-raw-quoted-map");
+    fs::write(
+        &path,
+        "val ch = import(\"slug.std\")\n\
+         val m = {\n\
+         'k1': 1,\n\
+         'k2': 2,\n\
+         }\n\
+         println(m, m /> ch.keys)\n",
+    )
+    .expect("write multiline map source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run multiline map source");
+    fs::remove_file(path).expect("remove multiline map source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "{\"k1\": 1, \"k2\": 2} [\"k1\", \"k2\"]\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn persistently_copies_maps_with_string_key_updates() {
     let path = fixture_path("map-copy");
     fs::write(
