@@ -116,7 +116,7 @@ fn build_native_clutch(
              \"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n\
              [native]\n\
              source = \"native/source\"\n\
-             abi = \"slug-ffi-prototype/0.12\"\n\n\
+             abi = \"slug-ffi-prototype/0.13\"\n\n\
              [native.libraries]\n\
              \"{target}\" = \"native/{target}/{}\"\n",
             module_file.to_string_lossy(),
@@ -131,7 +131,7 @@ fn build_native_clutch(
         fs::write(
             clutch_root.join("clutch.toml"),
             format!(
-                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{module_name}.transaction\" = {{ source = \"modules/transaction.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.12\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
+                "[modules]\n\"{module_name}\" = {{ source = \"modules/{}\" }}\n\"{module_name}.statement\" = {{ source = \"modules/statement.slug\" }}\n\"{module_name}.transaction\" = {{ source = \"modules/transaction.slug\" }}\n\"{support_module_name}\" = {{ source = \"modules/support.slug\" }}\n\n[native]\nsource = \"native/source\"\nabi = \"slug-ffi-prototype/0.13\"\n\n[native.libraries]\n\"{target}\" = \"native/{target}/{}\"\n",
                 module_file.to_string_lossy(),
                 library.file_name().expect("native library name").to_string_lossy(),
             ),
@@ -1260,4 +1260,43 @@ fn transfers_owned_c_text_only_after_a_backpressured_retry_succeeds() {
         vm.run_named(&program, "main").unwrap().to_string(),
         "first:second:1:2"
     );
+}
+
+#[test]
+fn producer_abi_013_sends_owned_scalar_and_byte_values_then_closes() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_fixture(
+        &directory,
+        "tests/ffi/producer_values_module.c",
+        "producer_values",
+    );
+    fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
+    fs::write(
+        directory.path().join("slug/producer.slug"),
+        "export foreign values = fn():chan<any|nil>;\n\
+         export foreign accepted = fn():num;\n\
+         export foreign closedStatus = fn():num;\n\
+         export foreign bytesFreed = fn():num\n",
+    )
+    .expect("write producer module source");
+    let main = directory.path().join("main.slug");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let module = FfiPrototypeLibrary::load(library).expect("load C producer module");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    module
+        .register(&mut vm)
+        .expect("register C producer module");
+    let program = loader
+        .compile_source(
+            &main.to_string_lossy(),
+            "val producer = import(\"slug.producer\")\n\
+             val inbox = producer.values()\n\
+             select { recv inbox }\n\
+             select { recv inbox }\n\
+             val decimal = select { recv inbox }\n\
+             select { recv inbox }\n\
+             decimal + producer.accepted() + producer.closedStatus() + producer.bytesFreed()\n",
+        )
+        .expect("compile ABI 0.13 producer program");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "8.5");
 }

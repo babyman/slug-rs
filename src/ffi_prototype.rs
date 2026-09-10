@@ -29,8 +29,8 @@ use crate::{
 };
 
 const ABI_MAJOR: u32 = 0;
-const ABI_MINOR: u32 = 12;
-pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.12";
+const ABI_MINOR: u32 = 13;
+pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.13";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
@@ -79,6 +79,12 @@ struct HostApi {
     value_map_entry:
         unsafe extern "C" fn(*mut c_void, FfiValue, u64, *mut FfiValue, *mut FfiValue) -> bool,
     list_append_value: unsafe extern "C" fn(*mut c_void, *mut FfiList, FfiValue) -> bool,
+    producer_send_nil: unsafe extern "C" fn(*mut FfiProducer) -> i32,
+    producer_send_bool: unsafe extern "C" fn(*mut FfiProducer, bool) -> i32,
+    producer_send_f64: unsafe extern "C" fn(*mut FfiProducer, f64) -> i32,
+    producer_send_bytes:
+        unsafe extern "C" fn(*mut FfiProducer, FfiText, Option<ProducerTextDestroy>) -> i32,
+    producer_close: unsafe extern "C" fn(*mut FfiProducer),
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
@@ -585,6 +591,11 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     value_map_length,
     value_map_entry,
     list_append_value,
+    producer_send_nil,
+    producer_send_bool,
+    producer_send_f64,
+    producer_send_bytes,
+    producer_close,
 });
 
 fn host_api() -> *const HostApi {
@@ -1387,10 +1398,26 @@ unsafe extern "C" fn channel_destroy(channel: *mut FfiChannel) {
 }
 
 unsafe extern "C" fn producer_send_i64(producer: *mut FfiProducer, value: i64) -> i32 {
+    unsafe { producer_send_value(producer, NativeSendValue::integer(value)) }
+}
+
+unsafe extern "C" fn producer_send_nil(producer: *mut FfiProducer) -> i32 {
+    unsafe { producer_send_value(producer, NativeSendValue::nil()) }
+}
+
+unsafe extern "C" fn producer_send_bool(producer: *mut FfiProducer, value: bool) -> i32 {
+    unsafe { producer_send_value(producer, NativeSendValue::boolean(value)) }
+}
+
+unsafe extern "C" fn producer_send_f64(producer: *mut FfiProducer, value: f64) -> i32 {
+    unsafe { producer_send_value(producer, NativeSendValue::float(value)) }
+}
+
+unsafe fn producer_send_value(producer: *mut FfiProducer, value: NativeSendValue) -> i32 {
     let Some(producer) = (unsafe { producer.as_ref() }) else {
-        return 2;
+        return 3;
     };
-    match producer.producer.try_send(NativeSendValue::integer(value)) {
+    match producer.producer.try_send(value) {
         NativeProducerStatus::Sent => 0,
         NativeProducerStatus::Full(_) => 1,
         NativeProducerStatus::Closed(_) => 2,
@@ -1401,6 +1428,12 @@ unsafe extern "C" fn producer_destroy(producer: *mut FfiProducer) {
     if !producer.is_null() {
         // SAFETY: C destroys only a producer capability it still owns.
         drop(unsafe { Box::from_raw(producer) });
+    }
+}
+
+unsafe extern "C" fn producer_close(producer: *mut FfiProducer) {
+    if let Some(producer) = unsafe { producer.as_ref() } {
+        producer.producer.close();
     }
 }
 
@@ -1417,6 +1450,38 @@ unsafe extern "C" fn producer_send_text(
         return 3;
     };
     match producer.producer.try_send(NativeSendValue::string(text)) {
+        NativeProducerStatus::Sent => {
+            // SAFETY: C transfers ownership of the buffer only after a successful send.
+            unsafe { destroy(data.cast_mut().cast()) };
+            0
+        }
+        NativeProducerStatus::Full(_) => 1,
+        NativeProducerStatus::Closed(_) => 2,
+    }
+}
+
+unsafe extern "C" fn producer_send_bytes(
+    producer: *mut FfiProducer,
+    bytes: FfiText,
+    destroy: Option<ProducerTextDestroy>,
+) -> i32 {
+    let (Some(producer), Some(destroy)) = (unsafe { producer.as_ref() }, destroy) else {
+        return 3;
+    };
+    let data = bytes.data;
+    if bytes.length > 0 && data.is_null() {
+        return 3;
+    }
+    let Ok(length) = usize::try_from(bytes.length) else {
+        return 3;
+    };
+    let bytes = if length == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: the C caller keeps this length-delimited buffer valid for the call.
+        unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) }.to_vec()
+    };
+    match producer.producer.try_send(NativeSendValue::bytes(bytes)) {
         NativeProducerStatus::Sent => {
             // SAFETY: C transfers ownership of the buffer only after a successful send.
             unsafe { destroy(data.cast_mut().cast()) };

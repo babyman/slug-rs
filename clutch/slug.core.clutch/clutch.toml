@@ -3,7 +3,7 @@
 
 [native]
 source = "native/source"
-abi = "slug-ffi-prototype/0.12"
+abi = "slug-ffi-prototype/0.13"
 
 [native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_core.dylib"

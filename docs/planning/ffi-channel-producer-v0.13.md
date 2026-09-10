@@ -13,6 +13,12 @@ The target consumer is a `slug.io.stdin` Clutch. Sockets, timers, filesystem
 watchers, and device event sources are deliberately validation consumers of the
 same capability, not reasons to widen the first ABI.
 
+## Status
+
+The ABI 0.13 producer increment is complete: its host-table additions,
+ownership rules, and C fixtures are implemented. The remaining next milestone
+is extracting `slug.io.stdin` into a Clutch that consumes this capability.
+
 ## Review of the proposed requirements
 
 The proposal's central direction is accepted:
@@ -114,7 +120,7 @@ native thread failed to release it.
 **Exit:** Rust VM tests demonstrate a safe tombstone-like closed outcome for
 every outstanding producer and preserve FIFO messages accepted before close.
 
-### 2. Implement prototype ABI 0.13
+### 2. Complete prototype ABI 0.13
 
 - Bump `SLUG_FFI_PROTOTYPE_ABI_MINOR` from 12 to 13 and append the new host
   table entries; descriptors must select ABI 0.13 exactly.

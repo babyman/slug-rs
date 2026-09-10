@@ -494,6 +494,14 @@ copies the text into its owned message and invokes the destructor. On `full`,
 `closed`, or invalid UTF-8, C retains the buffer and is responsible for retry
 or release. A dropped Slug receiver makes later producer sends return `closed`.
 
+Prototype ABI 0.13 appends idempotent producer close plus non-blocking `nil`,
+boolean, float, and bytes sends to the host table. All producer sends report
+`sent`, `full`, `closed`, or `invalid`; only `sent` transfers a text or bytes
+buffer to the runtime. A successful text or bytes send copies the buffer into
+runtime-owned storage and invokes its supplied C destructor. On `full`,
+`closed`, or invalid input, C retains and releases that buffer itself.
+`producer_destroy` remains the prototype's explicit producer-release operation.
+
 The `slug.db.sqlite` clutch is the compound-value SQLite experiment. It owns a
 typed `Database` resource, opens an ordinary SQLite path (including
 `:memory:`), and exposes variadic `exec` and `query` functions. The adapter

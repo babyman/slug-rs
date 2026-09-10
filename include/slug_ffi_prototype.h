@@ -12,7 +12,7 @@
 #endif
 
 #define SLUG_FFI_PROTOTYPE_ABI_MAJOR 0u
-#define SLUG_FFI_PROTOTYPE_ABI_MINOR 12u
+#define SLUG_FFI_PROTOTYPE_ABI_MINOR 13u
 
 typedef enum {
   SLUG_FFI_OK = 0,
@@ -86,9 +86,16 @@ typedef slug_ffi_channel *(*slug_ffi_channel_create_fn)(slug_ffi_call *, uint64_
 typedef bool (*slug_ffi_set_channel_fn)(slug_ffi_call *, slug_ffi_channel *);
 typedef void (*slug_ffi_channel_destroy_fn)(slug_ffi_channel *);
 typedef int32_t (*slug_ffi_producer_send_i64_fn)(slug_ffi_producer *, int64_t);
+typedef int32_t (*slug_ffi_producer_send_nil_fn)(slug_ffi_producer *);
+typedef int32_t (*slug_ffi_producer_send_bool_fn)(slug_ffi_producer *, bool);
+typedef int32_t (*slug_ffi_producer_send_f64_fn)(slug_ffi_producer *, double);
 typedef void (*slug_ffi_producer_text_destroy_fn)(void *);
 typedef int32_t (*slug_ffi_producer_send_text_fn)(slug_ffi_producer *, slug_ffi_text,
                                                    slug_ffi_producer_text_destroy_fn);
+typedef void (*slug_ffi_producer_bytes_destroy_fn)(void *);
+typedef int32_t (*slug_ffi_producer_send_bytes_fn)(slug_ffi_producer *, slug_ffi_text,
+                                                    slug_ffi_producer_bytes_destroy_fn);
+typedef void (*slug_ffi_producer_close_fn)(slug_ffi_producer *);
 typedef void (*slug_ffi_producer_destroy_fn)(slug_ffi_producer *);
 
 struct slug_ffi_host_api {
@@ -130,6 +137,11 @@ struct slug_ffi_host_api {
   slug_ffi_value_map_length_fn value_map_length;
   slug_ffi_value_map_entry_fn value_map_entry;
   slug_ffi_list_append_value_fn list_append_value;
+  slug_ffi_producer_send_nil_fn producer_send_nil;
+  slug_ffi_producer_send_bool_fn producer_send_bool;
+  slug_ffi_producer_send_f64_fn producer_send_f64;
+  slug_ffi_producer_send_bytes_fn producer_send_bytes;
+  slug_ffi_producer_close_fn producer_close;
 };
 
 typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);

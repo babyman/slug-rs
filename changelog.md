@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Extended the private C FFI prototype to ABI 0.13 with explicit producer
+  close plus nil, boolean, float, and bytes sends.
+
 - Documented the prototype ABI 0.13 channel-producer work required before
   moving `slug.io.stdin` out of the core executable.
 
