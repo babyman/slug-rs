@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented the prototype ABI 0.13 channel-producer work required before
+  moving `slug.io.stdin` out of the core executable.
+
 - Moved `slug.std` into the bundled `slug.core` Clutch and extended prototype
   ABI 0.12 with checked, callback-scoped map-value traversal for its native
   `keys` adapter.
