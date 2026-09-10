@@ -80,6 +80,11 @@ loader accepts only `slug-ffi-prototype/0.13`, validates its library descriptor,
 and
 does not search system paths or fall back to a host plugin.
 
+Native source may include `slug_ffi_helpers.h`, a private header-only SDK that
+builds common asynchronous channel-source lifecycle patterns from the same
+prototype ABI. It is optional convenience code, not a separate Clutch ABI or
+runtime dependency.
+
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
 

@@ -5,12 +5,18 @@
 - Extended the private C FFI prototype to ABI 0.13 with explicit producer
   close plus nil, boolean, float, and bytes sends.
 
-- Moved the shared standard-input reader into the `slug.io.stdin` native
-  Clutch, leaving the public source API unchanged.
+- Moved the shared standard-input reader into the `slug.core` native Clutch,
+  leaving the `slug.io.stdin` public source API unchanged.
 
 - Added ABI 0.13's callback-thread-only native channel-result clone operation,
   allowing `slug.io.stdin.readLines` to remain a direct exported foreign
   binding while returning its one shared stream receiver.
+
+- Closed the stdin Clutch's receiver-handle teardown race by holding its state
+  lock through callback-result cloning.
+
+- Added a private header-only FFI helper SDK and migrated core standard input
+  to its durable asynchronous stream helper.
 
 - Documented the prototype ABI 0.13 channel-producer work required before
   moving `slug.io.stdin` out of the core executable.

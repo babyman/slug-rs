@@ -37,7 +37,7 @@ export val confirm = fn(message:str, default:bool = false):bool {
     print(message + if (default) { " [Y/n]: " } else { " [y/N]: " })
     readLine() /> match {
         "y", "Y", "yes", "Yes", "YES", "true", "1" => true
-        "n", "N", "no", "No", "NO", "false", "0" => false
+        "n", "N", "no", "No", "false", "0" => false
         _ => default
     }
 }

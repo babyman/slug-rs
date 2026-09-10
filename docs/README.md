@@ -40,6 +40,7 @@ a specified feature is implemented.
 | [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
+| [ffi-helpers.md](reference/ffi-helpers.md) | Private header-only helpers for common native channel-source lifecycle patterns. |
 
 ### Engineering
 

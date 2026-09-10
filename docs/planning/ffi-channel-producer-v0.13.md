@@ -9,13 +9,14 @@ native FFI: it targets `SLUG_FFI_PROTOTYPE_ABI_MINOR 13`, not a public version
 1 ABI. It does not make the general VM, call context, or arbitrary Slug values
 thread-safe.
 
-The target consumer is a `slug.io.stdin` Clutch. Sockets, timers, filesystem
+The target consumer is `slug.io.stdin`, packaged in the bundled core Clutch.
+Sockets, timers, filesystem
 watchers, and device event sources are deliberately validation consumers of the
 same capability, not reasons to widen the first ABI.
 
 ## Status
 
-The ABI 0.13 producer increment and the `slug.io.stdin` Clutch extraction are
+The ABI 0.13 producer increment and the `slug.io.stdin` core-Clutch migration are
 complete. Its direct `readLines` foreign binding retains an opaque native
 receiver handle on the callback thread, while the C stdin reader holds only
 its thread-safe producer capability.
@@ -90,9 +91,11 @@ void producer_destroy(slug_ffi_producer *producer);
 `channel_create`, `set_channel`, `set_channel_clone`, and `channel_destroy` are
 runtime-call-thread-only. `set_channel` consumes its native handle;
 `set_channel_clone` leaves the handle owned by native code and copies its
-receiver value into the callback result. It exists only for durable native
-stream receivers such as process standard input; it is not a generic retained
-value or cross-thread operation.
+receiver value into the callback result. It lets native code return another
+receiver for a native-owned channel without consuming the handle; it is not a
+generic retained value or cross-thread operation. Native state that owns such
+a handle must keep its synchronization guard held through `set_channel_clone`;
+teardown may destroy the handle only after that guard is released.
 All producer operations are thread-safe. The producer operation result is one
 of `sent`, `full`, `closed`, or an argument/handle-contract failure defined by
 the header. A released producer is invalid and must not be used again;
@@ -150,7 +153,7 @@ and callback-return-before-worker-send.
 ### 3. Complete `slug.io.stdin` extraction into a native Clutch
 
 - Move the `readLines` foreign implementation and its worker state from
-  `src/main.rs` into a `slug.io.stdin` Clutch with a direct exported foreign
+  `src/main.rs` into the core Clutch's `slug.io.stdin` module with a direct exported foreign
   declaration that keeps the existing `slug.io.stdin` source API unchanged.
 - Have its callback create and retain one opaque channel receiver, return a
   callback-thread-only clone on every `readLines()` call, and pass only the

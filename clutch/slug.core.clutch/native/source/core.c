@@ -1,6 +1,14 @@
 #include "slug_ffi_prototype.h"
+#include "slug_ffi_helpers.h"
+
+#include <stdio.h>
 
 #define TEXT(value) ((slug_ffi_text){value, sizeof(value) - 1})
+#define STDIN_CHANNEL_CAPACITY 32u
+
+typedef struct {
+  slug_ffi_async_stream *stdin;
+} core_state;
 
 static int32_t keys(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
@@ -19,22 +27,110 @@ static int32_t keys(const slug_ffi_host_api *host, slug_ffi_call *call, void *st
   return host->set_list(call, result) ? SLUG_FFI_OK : SLUG_FFI_ERROR;
 }
 
-static const slug_ffi_function_descriptor FUNCTIONS[] = {
-  {sizeof(slug_ffi_function_descriptor), TEXT("keys"), TEXT("std.keys/v1"), 1, 1, keys},
+static void stdin_worker(slug_ffi_async_sender *out, void *context) {
+  char *line = NULL;
+  size_t length = 0;
+  size_t capacity = 0;
+  int character;
+  (void)context;
+
+  while ((character = fgetc(stdin)) != EOF) {
+    if (character == '\n') {
+      if (length > 0 && line[length - 1] == '\r') length--;
+      if (line == NULL) {
+        line = malloc(1);
+        if (line == NULL) return;
+      }
+      if (!slug_ffi_async_sender_send_text(
+              out, (slug_ffi_text){line, (uint64_t)length}, free)) return;
+      line = NULL;
+      length = 0;
+      capacity = 0;
+      continue;
+    }
+
+    if (length == capacity) {
+      size_t next_capacity = capacity == 0 ? 128 : capacity * 2;
+      char *expanded;
+      if (next_capacity <= capacity) {
+        free(line);
+        return;
+      }
+      expanded = realloc(line, next_capacity);
+      if (expanded == NULL) {
+        free(line);
+        return;
+      }
+      line = expanded;
+      capacity = next_capacity;
+    }
+    line[length++] = (char)character;
+  }
+
+  if (ferror(stdin)) {
+    free(line);
+    return;
+  }
+  if (line != NULL) {
+    slug_ffi_async_sender_send_text(out, (slug_ffi_text){line, (uint64_t)length}, free);
+  }
+}
+
+static int32_t read_lines(const slug_ffi_host_api *host, slug_ffi_call *call,
+                          void *raw_state) {
+  core_state *state = raw_state;
+  if (state != NULL && slug_ffi_async_stream_set_result(state->stdin, call)) {
+    return SLUG_FFI_OK;
+  }
+  host->set_error(call, TEXT("native.io"), TEXT("cannot create standard-input stream"));
+  return SLUG_FFI_ERROR;
+}
+
+static const slug_ffi_function_descriptor STD_FUNCTIONS[] = {
+    {sizeof(slug_ffi_function_descriptor), TEXT("keys"), TEXT("std.keys/v1"), 1, 1, keys},
 };
-static const slug_ffi_module_descriptor MODULE = {
-  SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_module_descriptor),
-  TEXT("slug.std"), FUNCTIONS, 1, NULL, 0,
+
+static const slug_ffi_function_descriptor STDIN_FUNCTIONS[] = {
+    {sizeof(slug_ffi_function_descriptor), TEXT("readLines"),
+     TEXT("stdin.read_lines/v1"), 0, 0, read_lines},
 };
+
+static const slug_ffi_module_descriptor MODULES[] = {
+    {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
+     sizeof(slug_ffi_module_descriptor), TEXT("slug.std"), STD_FUNCTIONS, 1, NULL, 0},
+    {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
+     sizeof(slug_ffi_module_descriptor), TEXT("slug.io.stdin"), STDIN_FUNCTIONS, 1, NULL, 0},
+};
+
+static void destroy_library(void *raw_state) {
+  core_state *state = raw_state;
+  if (state == NULL) return;
+  slug_ffi_async_stream_destroy(state->stdin);
+  free(state);
+}
+
 static const slug_ffi_library_descriptor LIBRARY = {
-  SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR, sizeof(slug_ffi_library_descriptor),
-  NULL, &MODULE, 1,
+    SLUG_FFI_PROTOTYPE_ABI_MAJOR,
+    SLUG_FFI_PROTOTYPE_ABI_MINOR,
+    sizeof(slug_ffi_library_descriptor),
+    destroy_library,
+    MODULES,
+    2,
 };
 
 SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_init(
-    const slug_ffi_host_api *host, void **library_state) {
+    const slug_ffi_host_api *host, void **out_state) {
+  core_state *state;
   if (host == NULL || host->abi_major != SLUG_FFI_PROTOTYPE_ABI_MAJOR ||
-      host->table_size < sizeof(slug_ffi_host_api) || library_state == NULL) return NULL;
-  *library_state = NULL;
+      host->table_size < sizeof(slug_ffi_host_api) || out_state == NULL) return NULL;
+  state = calloc(1, sizeof(core_state));
+  if (state == NULL) return NULL;
+  state->stdin = slug_ffi_async_stream_create(
+      host, STDIN_CHANNEL_CAPACITY, stdin_worker, NULL, NULL);
+  if (state->stdin == NULL) {
+    free(state);
+    return NULL;
+  }
+  *out_state = state;
   return &LIBRARY;
 }
