@@ -96,6 +96,7 @@ typedef void (*slug_ffi_producer_bytes_destroy_fn)(void *);
 typedef int32_t (*slug_ffi_producer_send_bytes_fn)(slug_ffi_producer *, slug_ffi_text,
                                                     slug_ffi_producer_bytes_destroy_fn);
 typedef void (*slug_ffi_producer_close_fn)(slug_ffi_producer *);
+typedef bool (*slug_ffi_set_channel_clone_fn)(slug_ffi_call *, slug_ffi_channel *);
 typedef void (*slug_ffi_producer_destroy_fn)(slug_ffi_producer *);
 
 struct slug_ffi_host_api {
@@ -142,6 +143,7 @@ struct slug_ffi_host_api {
   slug_ffi_producer_send_f64_fn producer_send_f64;
   slug_ffi_producer_send_bytes_fn producer_send_bytes;
   slug_ffi_producer_close_fn producer_close;
+  slug_ffi_set_channel_clone_fn set_channel_clone;
 };
 
 typedef int32_t (*slug_ffi_callback)(const slug_ffi_host_api *, slug_ffi_call *, void *);

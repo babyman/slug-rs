@@ -85,6 +85,7 @@ struct HostApi {
     producer_send_bytes:
         unsafe extern "C" fn(*mut FfiProducer, FfiText, Option<ProducerTextDestroy>) -> i32,
     producer_close: unsafe extern "C" fn(*mut FfiProducer),
+    set_channel_clone: unsafe extern "C" fn(*mut c_void, *mut FfiChannel) -> bool,
 }
 
 type Callback = unsafe extern "C" fn(*const HostApi, *mut c_void, *mut c_void) -> i32;
@@ -600,6 +601,7 @@ static HOST_API: LazyLock<HostApi> = LazyLock::new(|| HostApi {
     producer_send_f64,
     producer_send_bytes,
     producer_close,
+    set_channel_clone,
 });
 
 fn host_api() -> *const HostApi {
@@ -1404,6 +1406,21 @@ unsafe extern "C" fn set_channel(context: *mut c_void, channel: *mut FfiChannel)
     // SAFETY: a non-null channel handle is transferred once from the C callback.
     let channel = unsafe { Box::from_raw(channel) };
     call.set_result(channel.value);
+    true
+}
+
+unsafe extern "C" fn set_channel_clone(context: *mut c_void, channel: *mut FfiChannel) -> bool {
+    let Some(call) = (unsafe { call_from_context(context) }) else {
+        return false;
+    };
+    let Some(channel) = (unsafe { channel.as_ref() }) else {
+        call.set_error(NativeError::new(
+            "native.contract",
+            "FFI channel handle is null",
+        ));
+        return false;
+    };
+    call.set_result(channel.value.clone());
     true
 }
 

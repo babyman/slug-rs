@@ -8,6 +8,10 @@
 - Moved the shared standard-input reader into the `slug.io.stdin` native
   Clutch, leaving the public source API unchanged.
 
+- Added ABI 0.13's callback-thread-only native channel-result clone operation,
+  allowing `slug.io.stdin.readLines` to remain a direct exported foreign
+  binding while returning its one shared stream receiver.
+
 - Documented the prototype ABI 0.13 channel-producer work required before
   moving `slug.io.stdin` out of the core executable.
 

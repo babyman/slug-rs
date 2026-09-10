@@ -5,19 +5,13 @@
  * line is delivered to one receiver; this is a stream, not a broadcast.
  */
 
-foreign openLines = fn():chan<str|nil>;
-
-val lines = openLines()
-
 /**
  * Returns the shared process-standard-input line channel.
  *
  * Lines exclude their trailing newline. Empty lines and one final line without
  * a newline are preserved. The channel closes when standard input ends.
  */
-export val readLines = fn():chan<str|nil> {
-    lines
-}
+export foreign readLines = fn():chan<str|nil>
 
 /**
  * Reads the next standard-input line, or nil after end of input.

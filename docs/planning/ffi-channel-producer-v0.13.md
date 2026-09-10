@@ -16,8 +16,9 @@ same capability, not reasons to widen the first ABI.
 ## Status
 
 The ABI 0.13 producer increment and the `slug.io.stdin` Clutch extraction are
-complete. The C stdin reader holds only its producer capability; the Clutch's
-Slug wrapper owns the shared channel receiver.
+complete. Its direct `readLines` foreign binding retains an opaque native
+receiver handle on the callback thread, while the C stdin reader holds only
+its thread-safe producer capability.
 
 ## Review of the proposed requirements
 
@@ -73,6 +74,7 @@ typedef struct slug_ffi_producer slug_ffi_producer;
 slug_ffi_channel *channel_create(
     slug_ffi_call *call, uint64_t capacity, slug_ffi_producer **out_producer);
 bool set_channel(slug_ffi_call *call, slug_ffi_channel *channel);
+bool set_channel_clone(slug_ffi_call *call, slug_ffi_channel *channel);
 void channel_destroy(slug_ffi_channel *channel);
 
 slug_ffi_producer_status producer_send_nil(slug_ffi_producer *producer);
@@ -85,7 +87,12 @@ void producer_close(slug_ffi_producer *producer);
 void producer_destroy(slug_ffi_producer *producer);
 ```
 
-`slug_channel_create` and `slug_call_set_channel` are runtime-call-thread-only.
+`channel_create`, `set_channel`, `set_channel_clone`, and `channel_destroy` are
+runtime-call-thread-only. `set_channel` consumes its native handle;
+`set_channel_clone` leaves the handle owned by native code and copies its
+receiver value into the callback result. It exists only for durable native
+stream receivers such as process standard input; it is not a generic retained
+value or cross-thread operation.
 All producer operations are thread-safe. The producer operation result is one
 of `sent`, `full`, `closed`, or an argument/handle-contract failure defined by
 the header. A released producer is invalid and must not be used again;
@@ -143,14 +150,16 @@ and callback-return-before-worker-send.
 ### 3. Complete `slug.io.stdin` extraction into a native Clutch
 
 - Move the `readLines` foreign implementation and its worker state from
-  `src/main.rs` into a `slug.io.stdin` Clutch with a source wrapper that keeps
-  the existing `slug.io.stdin` source API unchanged.
-- Have its callback create one bounded channel, publish the receiver, and pass
-  only the producer to the stdin worker. The worker retries a retained line on
+  `src/main.rs` into a `slug.io.stdin` Clutch with a direct exported foreign
+  declaration that keeps the existing `slug.io.stdin` source API unchanged.
+- Have its callback create and retain one opaque channel receiver, return a
+  callback-thread-only clone on every `readLines()` call, and pass only the
+  producer to the stdin worker. The worker retries a retained line on
   `full`, stops on `closed`, then calls close and release exactly once.
 - Give the Clutch an explicit cancellation path compatible with the ABI 0.13
-  producer lifecycle. Do not retain a `NativeOwnedValue`, call context, or VM
-  reference in global stdin state.
+  producer lifecycle. The native receiver handle is callback-thread-only;
+  worker state retains neither a `NativeOwnedValue`, call context, nor VM
+  reference.
 - Remove the core registration only after the external Clutch passes the
   existing stdin behavior tests and new shutdown/revocation tests.
 
