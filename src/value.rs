@@ -1,5 +1,5 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     fmt,
     fmt::Write as _,
@@ -7,6 +7,8 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "concurrency")]
+use std::cell::Cell;
 #[cfg(feature = "concurrency")]
 use std::rc::Weak;
 
@@ -105,6 +107,7 @@ impl Waiter {
         }
     }
 
+    #[cfg(feature = "concurrency")]
     pub(crate) fn task(task: &Task) -> Self {
         let identity = Rc::as_ptr(&task.state) as usize;
         Self {
@@ -283,6 +286,7 @@ impl WaitSet {
         }
     }
 
+    #[cfg(feature = "concurrency")]
     fn remove_losers(self, task: &Task) {
         if self.registrations.len() > 1 {
             self.remove(&Waiter::task(task));
@@ -555,11 +559,20 @@ pub struct Closure {
 
 /// A cached task completion. Tasks are runtime-owned and retain their outcome
 /// so repeated awaits can observe the same settlement.
+#[cfg(feature = "concurrency")]
 #[derive(Clone)]
 pub struct Task {
     state: Rc<RefCell<TaskState>>,
 }
 
+/// Placeholder retained only until the slim value representation drops its
+/// task variant. Slim code cannot construct one because task execution is
+/// unavailable without the concurrency runtime.
+#[cfg(not(feature = "concurrency"))]
+#[derive(Clone)]
+pub struct Task;
+
+#[cfg(feature = "concurrency")]
 struct TaskState {
     phase: TaskPhase,
     admission: Option<TaskAdmission>,
@@ -578,6 +591,7 @@ pub(crate) fn task_state_layout() -> (usize, usize) {
     )
 }
 
+#[cfg(feature = "concurrency")]
 enum TaskPhase {
     Pending(Box<crate::vm::TaskExecution>),
     Running,
@@ -603,12 +617,14 @@ impl fmt::Debug for Task {
     }
 }
 
+#[cfg(feature = "concurrency")]
 #[derive(Clone, Debug)]
 pub(crate) struct TaskAdmission {
     pub(crate) limit: usize,
     pub(crate) count: Rc<Cell<usize>>,
 }
 
+#[cfg(feature = "concurrency")]
 impl Task {
     #[must_use]
     pub(crate) fn pending(
@@ -788,6 +804,7 @@ impl Task {
     }
 }
 
+#[cfg(feature = "concurrency")]
 fn release_admission(state: &mut TaskState) {
     if state.admitted {
         if let Some(admission) = &state.admission {

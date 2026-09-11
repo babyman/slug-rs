@@ -24,15 +24,17 @@ feature configurations where applicable, and pass `make check` before handoff.
 
 ### 1. Gate task machinery
 
-- [ ] Compile `Task`, `TaskState`, task-specific `TaskExecution` behavior,
+- [x] Compile `Task`, `TaskState`, task-specific `TaskExecution` behavior,
   admission, settlement, cancellation, and ready-queue coordination only with
   `concurrency`.
-- [ ] Preserve the shared root/channel suspension path required by the slim
+- [x] Preserve the shared root/channel suspension path required by the slim
   host pump.
-- [ ] Remove the corresponding slim-build dead-code warnings.
+- [x] Remove the corresponding slim-build dead-code warnings.
 
 **Exit:** `scheduler.rs` is already absent from the slim build, and no task
-state or task-coordination implementation remains reachable there.
+state or task-coordination implementation remains reachable there. A
+zero-sized private task placeholder remains only because the next item removes
+the still-present `Value::Task` variant.
 
 ### 2. Remove task values from the slim runtime
 
@@ -79,4 +81,3 @@ split materially benefits embedding.
   user-visible capability, error behavior, or documented embedding guidance.
 - [ ] Move this plan to `docs/planning/completed/` when all extraction and
   measurement work is complete.
-

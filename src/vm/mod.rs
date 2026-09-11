@@ -10,6 +10,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::source::environment::CallableIdentity;
+#[cfg(feature = "concurrency")]
 use crate::value::Task;
 #[cfg(feature = "concurrency")]
 use crate::value::TaskAdmission;
@@ -275,14 +276,17 @@ impl TaskExecution {
         }
     }
 
+    #[cfg(feature = "concurrency")]
     pub(crate) fn set_current_task(&mut self, task: &Rc<Task>) {
         self.vm.current_waiter = Some(Waiter::task(task));
     }
 
+    #[cfg(feature = "concurrency")]
     pub(crate) fn resume(&mut self, result: VmResult<Value>) {
         self.vm.resume = Some(result);
     }
 
+    #[cfg(feature = "concurrency")]
     pub(crate) fn reject_closed_send(&mut self) {
         let span = match &self.vm.suspension {
             Some(Suspension::Select(span)) => span.clone(),
@@ -295,6 +299,7 @@ impl TaskExecution {
         )));
     }
 
+    #[cfg(feature = "concurrency")]
     pub(crate) fn take_wait_registration(&mut self) -> Option<WaitSet> {
         self.vm.wait_registration.take()
     }
