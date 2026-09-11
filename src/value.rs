@@ -5,7 +5,6 @@ use std::{
     fmt::Write as _,
     rc::Rc,
     sync::Arc,
-    time::Instant,
 };
 
 #[cfg(feature = "concurrency")]
@@ -106,7 +105,7 @@ impl Waiter {
         }
     }
 
-    pub(crate) fn task(task: Rc<Task>) -> Self {
+    pub(crate) fn task(task: &Task) -> Self {
         let identity = Rc::as_ptr(&task.state) as usize;
         Self {
             identity,
@@ -123,7 +122,7 @@ impl Waiter {
     }
 
     pub(crate) fn select(state: Rc<RefCell<SelectWaitState>>, wake: SelectWake) -> Self {
-        let identity = state.borrow().waiter.identity.clone();
+        let identity = state.borrow().waiter.identity;
         let resume_state = state.clone();
         Self {
             identity,
@@ -151,7 +150,7 @@ impl Waiter {
                 move || state.borrow().waiter.reject_closed_send()
             }),
             set_closed_send_error: Rc::new(move |error| {
-                state.borrow().waiter.set_closed_send_error(error)
+                state.borrow().waiter.set_closed_send_error(error);
             }),
         }
     }
@@ -168,7 +167,7 @@ impl Waiter {
         (self.reject_closed_send)();
     }
 
-    fn is_same(&self, other: &Waiter) -> bool {
+    pub(crate) fn is_same(&self, other: &Waiter) -> bool {
         self.identity == other.identity
     }
 }
@@ -179,7 +178,7 @@ pub(crate) enum WaitRegistration {
     ChannelReceive(Rc<Channel>),
     #[cfg(feature = "concurrency")]
     TaskAwait(Rc<Task>),
-    Timer(Rc<RefCell<TimerService>>),
+    Timer(crate::vm::timers::TimerRegistration),
 }
 
 impl WaitRegistration {
@@ -226,81 +225,8 @@ impl WaitRegistration {
                 }
                 state.waiters.retain(|candidate| !candidate.is_same(waiter));
             }
-            Self::Timer(timers) => {
-                let mut timers = timers.borrow_mut();
-                #[cfg(feature = "metrics")]
-                {
-                    metrics.borrow_mut().timer_waiter_entries_examined += timers.waiters.len();
-                }
-                timers
-                    .waiters
-                    .retain(|(_, candidate)| !candidate.is_same(waiter));
-            }
+            Self::Timer(registration) => registration.remove(waiter),
         }
-    }
-}
-
-/// Shared monotonic timer queue for one dynamic nursery.
-pub(crate) struct TimerService {
-    waiters: Vec<(Instant, Waiter)>,
-    #[cfg(feature = "metrics")]
-    metrics: Rc<RefCell<crate::vm::VmMetrics>>,
-}
-
-impl TimerService {
-    pub(crate) fn new(
-        #[cfg(feature = "metrics")] metrics: Rc<RefCell<crate::vm::VmMetrics>>,
-    ) -> Self {
-        Self {
-            waiters: Vec::new(),
-            #[cfg(feature = "metrics")]
-            metrics,
-        }
-    }
-
-    pub(crate) fn register(&mut self, deadline: Instant, waiter: Waiter) {
-        #[cfg(feature = "metrics")]
-        {
-            self.metrics.borrow_mut().timer_registrations += 1;
-        }
-        self.waiters.push((deadline, waiter));
-        #[cfg(feature = "metrics")]
-        {
-            let mut metrics = self.metrics.borrow_mut();
-            metrics.peak_timer_waiters = metrics.peak_timer_waiters.max(self.waiters.len());
-        }
-    }
-
-    pub(crate) fn take_due(&mut self) -> Vec<Waiter> {
-        let now = Instant::now();
-        let mut due = Vec::new();
-        #[cfg(feature = "metrics")]
-        let examined = self.waiters.len();
-        self.waiters.retain(|(deadline, waiter)| {
-            if *deadline <= now {
-                due.push(waiter.clone());
-                false
-            } else {
-                true
-            }
-        });
-        #[cfg(feature = "metrics")]
-        {
-            let mut metrics = self.metrics.borrow_mut();
-            metrics.timer_wakeups += due.len();
-            metrics.timer_wakeup_entries_examined += examined;
-        }
-        due
-    }
-
-    pub(crate) fn next_deadline(&self) -> Option<Instant> {
-        #[cfg(feature = "metrics")]
-        {
-            let mut metrics = self.metrics.borrow_mut();
-            metrics.timer_deadline_lookups += 1;
-            metrics.timer_deadline_entries_examined += self.waiters.len();
-        }
-        self.waiters.iter().map(|(deadline, _)| *deadline).min()
     }
 }
 
@@ -357,7 +283,7 @@ impl WaitSet {
 
     fn remove_losers(self, task: &Task) {
         if self.registrations.len() > 1 {
-            self.remove(&Waiter::task(Rc::new(task.clone())));
+            self.remove(&Waiter::task(task));
         }
     }
 
@@ -840,7 +766,7 @@ impl Task {
             .borrow_mut()
             .retain(|candidate| !Rc::ptr_eq(&candidate.state, &self.state));
         if let Some(wait_registration) = wait_registration {
-            wait_registration.remove_for_waiter(&Waiter::task(Rc::new(self.clone())));
+            wait_registration.remove_for_waiter(&Waiter::task(self));
         }
         for waiter in waiters {
             waiter.resume(Err(error.clone()));

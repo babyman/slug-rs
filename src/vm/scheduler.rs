@@ -2,12 +2,9 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Instant};
 
 #[cfg(feature = "metrics")]
 use crate::vm::VmMetrics;
-use crate::{
-    RuntimeError, Value,
-    value::{Task, TimerService},
-};
+use crate::{RuntimeError, Value, value::Task};
 
-use super::{TaskRunOutcome, progress::ProgressDriver};
+use super::{TaskRunOutcome, progress::ProgressDriver, timers::TimerService};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum SettlementPolicy {

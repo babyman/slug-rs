@@ -32,6 +32,7 @@ mod error;
 mod operations;
 mod progress;
 mod scheduler;
+pub(crate) mod timers;
 
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
@@ -263,7 +264,7 @@ impl TaskExecution {
     }
 
     pub(crate) fn set_current_task(&mut self, task: &Rc<Task>) {
-        self.vm.current_waiter = Some(Waiter::task(task.clone()));
+        self.vm.current_waiter = Some(Waiter::task(task));
     }
 
     pub(crate) fn resume(&mut self, result: VmResult<Value>) {
@@ -3378,7 +3379,11 @@ impl Vm {
                         deadline,
                         Waiter::select(select_state.clone(), SelectWake::Value { handler }),
                     );
-                    registrations.push(WaitRegistration::Timer(self.nursery.timer_service()));
+                    registrations.push(WaitRegistration::Timer(timers::TimerRegistration::new(
+                        self.nursery.timer_service(),
+                        #[cfg(feature = "metrics")]
+                        self.metrics.clone(),
+                    )));
                 }
                 RuntimeSelectCase::Default { .. } => {}
             }
