@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Restored scheduler-owned and slim native ingress, terminal host-execution
+  shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
+
 - Fixed default-feature release builds after the concurrency runtime split.
 
 - Added the default-enabled `concurrency` Cargo feature. Slim builds retain

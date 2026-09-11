@@ -24,16 +24,16 @@ in the final package.
 
 ### 1. Restore native ingress during scheduler-owned progress
 
-- [ ] Compose `ProgressDriver::make_available_progress` into the blocking
+- [x] Compose `ProgressDriver::make_available_progress` into the blocking
   scheduler loop used by `Nursery::run_task` and `Nursery::settle`.
-- [ ] Preserve the non-blocking contract of `Vm::poll` and
+- [x] Preserve the non-blocking contract of `Vm::poll` and
   `Vm::run_until_stalled`.
-- [ ] Preserve the generation snapshot/recheck sequence so a producer event
+- [x] Preserve the generation snapshot/recheck sequence so a producer event
   cannot be lost between the last drain and the condition-variable wait.
-- [ ] Add a VM regression in which an explicit nursery body suspends on a
+- [x] Add a VM regression in which an explicit nursery body suspends on a
   native channel and receives a value published later by a foreign thread.
-- [ ] Add the equivalent spawned-task/root-settlement regression.
-- [ ] Cover producer closure after suspension and require the receiver to
+- [x] Add the equivalent spawned-task/root-settlement regression.
+- [x] Cover producer closure after suspension and require the receiver to
   observe normal channel closure rather than hang or report a false blocked
   runtime.
 
@@ -44,19 +44,19 @@ the tests fail under the reviewed implementation and pass after the fix.
 
 ### 2. Fully unwind blocked host executions
 
-- [ ] Centralize host-execution cleanup so completion, failure, blocked
+- [x] Centralize host-execution cleanup so completion, failure, blocked
   detection, cancellation, and shutdown cannot clear different subsets of
   state.
-- [ ] Remove the root waiter from every retained wait registration before
+- [x] Remove the root waiter from every retained wait registration before
   discarding a blocked execution.
-- [ ] Clear `suspension`, `resume`, `wait_registration`, `current_waiter`, and
+- [x] Clear `suspension`, `resume`, `wait_registration`, `current_waiter`, and
   `host_execution` consistently.
-- [ ] Cancel scheduler-owned tasks with the existing checked error when the
+- [x] Cancel scheduler-owned tasks with the existing checked error when the
   `concurrency` feature is enabled.
-- [ ] Add full and slim VM regressions that run an impossible channel wait,
+- [x] Add full and slim VM regressions that run an impossible channel wait,
   observe the checked blocked error, and then successfully execute a second
   program on the same `Vm`.
-- [ ] Add a cleanup assertion showing that the abandoned channel/select waiter
+- [x] Add a cleanup assertion showing that the abandoned channel/select waiter
   is not retained.
 
 **Exit:** a blocked run neither poisons the next invocation nor retains its
@@ -71,15 +71,15 @@ cargo test --no-default-features --features metrics --test vm
 
 ### 3. Define shutdown for active host-driven execution
 
-- [ ] Make `Vm::shutdown` cancel and release an active host execution, including
+- [x] Make `Vm::shutdown` cancel and release an active host execution, including
   task, suspension, and wait-registration state.
-- [ ] Ensure `poll`, `run_until_stalled`, and `blocking_run` cannot continue
+- [x] Ensure `poll`, `run_until_stalled`, and `blocking_run` cannot continue
   Slug execution after shutdown.
-- [ ] Choose one checked, documented post-shutdown result for progress calls;
+- [x] Choose one checked, documented post-shutdown result for progress calls;
   do not silently report ordinary stalling while live execution state remains.
-- [ ] Add tests for shutdown before the first poll and after a native-channel
+- [x] Add tests for shutdown before the first poll and after a native-channel
   suspension, in full and slim configurations.
-- [ ] Verify native resources and module-loader state are still closed exactly
+- [x] Verify native resources and module-loader state are still closed exactly
   once.
 
 **Exit:** shutdown is a terminal lifecycle transition even when `start` or
@@ -94,13 +94,13 @@ cargo test --no-default-features --features metrics --test vm
 
 ### 4. Put the Cargo feature matrix in the repository gate
 
-- [ ] Add a named Make target for slim validation.
-- [ ] Run tests and strict Clippy without default features.
-- [ ] Include the independent `metrics` combination so conditional metric
+- [x] Add a named Make target for slim validation.
+- [x] Run tests and strict Clippy without default features.
+- [x] Include the independent `metrics` combination so conditional metric
   fields and arguments compile without `concurrency`.
-- [ ] Add the slim target to `make check`, which is the documented local and CI
+- [x] Add the slim target to `make check`, which is the documented local and CI
   handoff gate.
-- [ ] Update `docs/engineering/testing.md` and contributor command summaries to
+- [x] Update `docs/engineering/testing.md` and contributor command summaries to
   identify the supported feature matrix and focused slim command.
 
 The minimum matrix is:
@@ -135,13 +135,13 @@ capability end to end.
 
 ### 6. Release verification
 
-- [ ] Run `cargo fmt --all -- --check`.
-- [ ] Run strict Clippy for every supported feature combination.
-- [ ] Run the full default and slim test suites.
-- [ ] Run `make docs-check` and `git diff --check`.
-- [ ] Update `changelog.md` for the user-visible runtime, lifecycle, and build
+- [x] Run `cargo fmt --all -- --check`.
+- [x] Run strict Clippy for every supported feature combination.
+- [x] Run the full default and slim test suites.
+- [x] Run `make docs-check` and `git diff --check`.
+- [x] Update `changelog.md` for the user-visible runtime, lifecycle, and build
   gate fixes.
-- [ ] Move this document to `docs/planning/completed/` only after every exit
+- [x] Move this document to `docs/planning/completed/` only after every exit
   condition is satisfied.
 
 **Completion gate:**

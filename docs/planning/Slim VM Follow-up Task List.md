@@ -383,7 +383,7 @@ Do not attempt full deadlock detection as part of this cleanup.
 
 # 7. Validation
 
-## Task 14 — Run the Full Configuration Matrix
+## Task 14 — Run the Full Configuration Matrix ✓
 
 Validate at least:
 

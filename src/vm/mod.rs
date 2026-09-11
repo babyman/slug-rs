@@ -2588,6 +2588,7 @@ impl Vm {
     }
 
     #[cfg_attr(not(feature = "concurrency"), allow(clippy::needless_pass_by_value))]
+    #[allow(clippy::needless_pass_by_value)]
     fn module_closure_vm(
         &self,
         program: Rc<Program>,
