@@ -874,7 +874,51 @@ pub enum Value {
     },
 }
 
+/// Runtime-neutral value categories for source semantic conversion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ValueKind {
+    Nil,
+    Bool,
+    Num,
+    Str,
+    Bytes,
+    List,
+    Map,
+    StructSchema,
+    Struct,
+    Enum,
+    Channel,
+    Function,
+    Task,
+    Unknown,
+}
+
 impl Value {
+    pub(crate) fn kind(&self) -> ValueKind {
+        match self {
+            Self::Nil => ValueKind::Nil,
+            Self::Bool(_) => ValueKind::Bool,
+            Self::Int(_) | Self::Float(_) => ValueKind::Num,
+            Self::Str(_) => ValueKind::Str,
+            Self::Bytes(_) => ValueKind::Bytes,
+            Self::List(_) => ValueKind::List,
+            Self::Map(_) => ValueKind::Map,
+            Self::StructSchema(_) => ValueKind::StructSchema,
+            Self::Struct(_) => ValueKind::Struct,
+            Self::Enum(_) => ValueKind::Enum,
+            Self::Channel(_) => ValueKind::Channel,
+            Self::Closure(_)
+            | Self::Native(_)
+            | Self::DeclaredNative { .. }
+            | Self::Builtin(_)
+            | Self::Overloads(_) => ValueKind::Function,
+            #[cfg(feature = "concurrency")]
+            Self::Task(_) => ValueKind::Task,
+            Self::NativeResource(_) | Self::Uninitialized | Self::Binding { .. } => {
+                ValueKind::Unknown
+            }
+        }
+    }
     #[must_use]
     pub fn string(value: impl Into<Rc<str>>) -> Self {
         Self::Str(value.into())

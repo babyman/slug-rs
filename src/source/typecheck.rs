@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{SourceSpan, Value};
+use crate::{SourceSpan, Value, value::ValueKind};
 
 use super::{
     SourceError,
@@ -2760,30 +2760,28 @@ fn known_schema_identity(expression: &Expr, environment: &Environment) -> Option
     })
 }
 
-#[allow(unreachable_patterns)]
 fn value_type(value: &Value) -> Type {
-    match value {
-        Value::Nil => Type::Nil,
-        Value::Bool(_) => Type::Bool,
-        Value::Int(_) | Value::Float(_) => Type::Num,
-        Value::Str(_) => Type::Str,
-        Value::Bytes(_) => Type::Bytes,
-        Value::List(_) => Type::List(None),
-        Value::Map(_) => Type::Map(None),
-        Value::StructSchema(_) => Type::Schema,
-        Value::Struct(_) => Type::Struct(None),
-        Value::Enum(value) => Type::Enum(super::semantic::EnumIdentity::declared(
+    if let Value::Enum(value) = value {
+        return Type::Enum(super::semantic::EnumIdentity::declared(
             value.module.as_ref(),
             value.name.as_ref(),
-        )),
-        Value::Channel(_) => Type::Channel(None),
-        Value::Closure(_)
-        | Value::Native(_)
-        | Value::DeclaredNative { .. }
-        | Value::Builtin(_)
-        | Value::Overloads(_) => Type::Function(None),
-        Value::NativeResource(_) | Value::Uninitialized | Value::Binding { .. } => Type::Unknown,
-        _ => Type::Unknown,
+        ));
+    }
+    match value.kind() {
+        ValueKind::Nil => Type::Nil,
+        ValueKind::Bool => Type::Bool,
+        ValueKind::Num => Type::Num,
+        ValueKind::Str => Type::Str,
+        ValueKind::Bytes => Type::Bytes,
+        ValueKind::List => Type::List(None),
+        ValueKind::Map => Type::Map(None),
+        ValueKind::StructSchema => Type::Schema,
+        ValueKind::Struct => Type::Struct(None),
+        ValueKind::Enum => unreachable!("enum values are handled before kind conversion"),
+        ValueKind::Channel => Type::Channel(None),
+        ValueKind::Function => Type::Function(None),
+        ValueKind::Task => Type::Task(None),
+        ValueKind::Unknown => Type::Unknown,
     }
 }
 
