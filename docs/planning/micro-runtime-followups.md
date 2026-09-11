@@ -117,14 +117,14 @@ The minimum matrix is:
 
 ### 5. Restore slim native-ingress integration coverage
 
-- [ ] Remove the module-wide `concurrency` gate from the stdin CLI tests.
-- [ ] Gate only individual cases that actually require tasks, nurseries, or
+- [x] Remove the module-wide `concurrency` gate from the stdin CLI tests.
+- [x] Gate only individual cases that actually require tasks, nurseries, or
   timers.
-- [ ] Run delayed input, EOF closure, prompt sharing, and prompt-flush behavior
+- [x] Run delayed input, EOF closure, prompt sharing, and prompt-flush behavior
   against a slim CLI binary.
-- [ ] Keep at least one direct slim VM native-producer test in addition to the
+- [x] Keep at least one direct slim VM native-producer test in addition to the
   end-to-end stdin coverage.
-- [ ] If a stdin behavior genuinely cannot work without `concurrency`, resolve
+- [x] If a stdin behavior genuinely cannot work without `concurrency`, resolve
   that implementation gap or narrow the documented slim-runtime promise; do
   not hide the mismatch with a broad test cfg.
 

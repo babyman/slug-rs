@@ -2757,7 +2757,7 @@ impl Vm {
             }
             #[cfg(not(feature = "concurrency"))]
             {
-                false
+                self.progress.wait_for_progress()
             }
         }
     }
