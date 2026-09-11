@@ -752,7 +752,11 @@ impl Vm {
         let Some(loader) = &self.module_loader else {
             return Ok(());
         };
-        self.globals.borrow_mut().extend(loader.builtin_globals());
+        let mut globals = self.globals.borrow_mut();
+        for (name, value) in loader.builtin_globals() {
+            globals.entry(name).or_insert(value);
+        }
+        drop(globals);
         let instance = match loader.initialize(None, "slug.builtin") {
             Ok(instance) => instance,
             Err(crate::ModuleLoadError::NotFound { .. }) => return Ok(()),

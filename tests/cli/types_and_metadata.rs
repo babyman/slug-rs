@@ -1448,7 +1448,7 @@ fn uses_the_builtin_channel_constructor_with_slug_channel_operations() {
          println(returned == inbox)\n\
          println(channel.recv(inbox))\n\
          println(channel.recv(inbox))\n\
-         channel.close(inbox)\n\
+         close(inbox)\n\
          println(channel.recv(inbox))\n",
     )
     .expect("write slug.channel source");
@@ -1473,26 +1473,28 @@ fn uses_the_builtin_channel_constructor_with_slug_channel_operations() {
 }
 
 #[test]
-fn does_not_export_the_builtin_channel_constructor_from_slug_channel() {
-    let path = fixture_path("slug-channel-without-chan");
-    fs::write(
-        &path,
-        "val channel = import(\"slug.channel\")\nchannel.chan()\n",
-    )
-    .expect("write slug.channel source without builtin constructor");
-    let output = slug()
-        .arg(&path)
-        .output()
-        .expect("run slug.channel source without builtin constructor");
-    fs::remove_file(path).expect("remove slug.channel source without builtin constructor");
+fn does_not_export_builtin_channel_lifecycle_functions_from_slug_channel() {
+    let path = fixture_path("slug-channel-without-lifecycle-functions");
+    for member in ["chan()", "close(chan())"] {
+        fs::write(
+            &path,
+            format!("val channel = import(\"slug.channel\")\nchannel.{member}\n"),
+        )
+        .expect("write slug.channel source without builtin lifecycle functions");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run slug.channel source without builtin lifecycle functions");
 
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("cannot call nil"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("cannot call nil"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::remove_file(path).expect("remove slug.channel source without builtin lifecycle functions");
 }
 
 #[test]

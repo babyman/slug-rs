@@ -153,14 +153,12 @@ fn register_native_modules(vm: &mut Vm) {
             .expect("static builtin function is valid"),
     )
     .expect("static builtin binding is unique");
-
-    let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
-    vm.define_foreign(
-        channel
+    vm.define_builtin(
+        builtins
             .function("close", NativeArity::Exact(1), native_close)
-            .expect("static foreign function is valid"),
+            .expect("static builtin function is valid"),
     )
-    .expect("static foreign binding is unique");
+    .expect("static builtin binding is unique");
 }
 
 fn main() -> ExitCode {

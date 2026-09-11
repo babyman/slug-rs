@@ -47,3 +47,9 @@ export foreign len = fn(value:str|bytes|list|map):num
  * constructs a channel whose values conform to `T`.
  */
 export foreign chan = fn<T>(capacity:num = 0):chan<T>
+
+/**
+ * Closes a channel. Closing is idempotent; receivers return `nil` after any
+ * buffered values drain, and later sends fail.
+ */
+export foreign close = fn<T>(channel:chan<T>):nil

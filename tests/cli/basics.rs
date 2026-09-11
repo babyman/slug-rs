@@ -187,15 +187,19 @@ fn does_not_expose_the_internal_channel_constructor_as_a_global() {
 }
 
 #[test]
-fn does_not_expose_channel_close_as_a_global() {
-    let path = fixture_path("no-global-channel-close");
-    fs::write(&path, "println(close)\n").expect("write close lookup source");
+fn exposes_channel_close_as_a_builtin() {
+    let path = fixture_path("builtin-channel-close");
+    fs::write(
+        &path,
+        "val channel = chan()\nclose(channel)\nprintln(channel)\n",
+    )
+    .expect("write close source");
     let output = slug().arg(&path).output().expect("run close lookup source");
     fs::remove_file(path).expect("remove close lookup source");
 
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown name `close`"));
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "<chan>\n");
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -235,7 +239,7 @@ fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     let path = fixture_path("builtin-module");
     fs::write(
         &path,
-        "val builtin = import(\"slug.builtin\")\nval implicit = chan(1)\nbuiltin.print(builtin.len([1, 2]))\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\nbuiltin.println(implicit == builtin.chan(1))\n",
+        "val builtin = import(\"slug.builtin\")\nval implicit = chan(1)\nbuiltin.close(implicit)\nbuiltin.print(builtin.len([1, 2]))\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\nbuiltin.println(implicit == builtin.chan(1))\n",
     )
     .expect("write builtin import source");
     let output = slug()

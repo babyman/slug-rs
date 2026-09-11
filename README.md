@@ -35,11 +35,11 @@ contract is documented separately as `.cslug`.
   introspection), comments, automatic invocation of a local `main()` or typed
   `main(args:list)` / `main(args:map)` entrypoint, cooperative `spawn` task
   handles with `slug.channel.await`, explicit
-  nurseries, builtin `chan` construction and bounded FIFO channel operations
+  nurseries, builtin `chan` construction and `close`, plus bounded FIFO channel operations
   through the `slug.channel` library,
   `select` receive/send/timer/task-await/default cases, and implicitly
   imported `slug.builtin.print`, `slug.builtin.println`, `slug.builtin.len`,
-  and `slug.builtin.chan`, plus a shared process-standard-input line stream through
+  `slug.builtin.chan`, and `slug.builtin.close`, plus a shared process-standard-input line stream through
   `slug.io.stdin`, and opaque explicit-lifecycle file streams through
   `slug.io.fs`, represented in source by the nominal `fs.File` handle type
   and checked whole-case match constraints, plus fieldless nominal enum

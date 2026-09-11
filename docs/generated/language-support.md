@@ -74,7 +74,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Immutable configuration store and source precedence | implemented | `tests/configuration.rs` |
 | `cfg` builtin | implemented | `tests/configuration.rs` |
 | Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `tests/cli.rs` |
-| Builtin `chan` construction and bounded FIFO channel operations through the `slug.channel` module, plus bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Builtin `chan` construction and `close`, plus bounded FIFO channel operations through the `slug.channel` module and bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
 | Shared standard-input line stream and interactive helpers through core-Clutch `slug.io.stdin` | implemented | `tests/cli.rs` |
 | Broad `resource` source type | removed | `language/nominal-types.md` |
 | Nominal `resource Name` declarations, separate exported type paths, strongly typed source signatures, and whole-case match constraints | partial | `tests/cli.rs`, `tests/module_loader.rs`, and `language/nominal-types.md` |

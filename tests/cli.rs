@@ -8,7 +8,7 @@ fn slug() -> Command {
 
 fn channel_source(source: &str) -> String {
     format!(
-        "val {{ await, close, recv, send }} = import(\"slug.channel\")\n{}",
+        "val {{ await, recv, send }} = import(\"slug.channel\")\n{}",
         source.replace("channel(", "chan(")
     )
 }

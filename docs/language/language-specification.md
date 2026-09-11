@@ -1062,9 +1062,9 @@ error.
 Closing a channel is idempotent. The selection policy among simultaneously
 ready cases is intentionally unspecified.
 
-`chan(capacity = 0)` is an implicitly available builtin, also exported by
-`slug.builtin`. The public `slug.channel` surface is `send(channel, value)`,
-`recv(channel, timeout = 0)`, `close(channel)`, `await(handle,
+`chan(capacity = 0)` and `close(channel)` are implicitly available builtins,
+also exported by `slug.builtin`. The public `slug.channel` surface is
+`send(channel, value)`, `recv(channel, timeout = 0)`, `await(handle,
 timeout = 0)`, `trySend(channel, value)`, and `tryRecv(channel)`. These are
 library bindings, not global Slug bindings. `channel` is an internal runtime
 operation. `capacity` is a non-negative integer. A zero-capacity channel

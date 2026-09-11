@@ -264,6 +264,7 @@ fn analyze_expressions(
     let mut environment = Environment::with_imports(imports);
     if let Some(builtins) = environment.import_snapshot("slug.builtin") {
         environment.install_implicit_callable_export(&builtins, "chan");
+        environment.install_implicit_callable_export(&builtins, "close");
     }
     let mut exports = HashMap::new();
     let mut types = HashMap::new();
