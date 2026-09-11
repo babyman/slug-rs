@@ -262,7 +262,7 @@ impl TaskExecution {
     }
 
     pub(crate) fn set_current_task(&mut self, task: &Rc<Task>) {
-        self.vm.current_waiter = Some(Waiter::Task(task.clone()));
+        self.vm.current_waiter = Some(Waiter::task(task.clone()));
     }
 
     pub(crate) fn resume(&mut self, result: VmResult<Value>) {
@@ -979,7 +979,7 @@ impl Vm {
             cleanup_recovers: false,
         });
         let root = RootWaiter::new();
-        self.current_waiter = Some(Waiter::Root(root.clone()));
+        self.current_waiter = Some(Waiter::root(root.clone()));
         self.host_execution = Some(HostExecution {
             program: program.clone(),
             root,
@@ -1063,7 +1063,7 @@ impl Vm {
         if execution.result.is_none() {
             if let Some(result) = execution.root.take_resume() {
                 if let Some(wait_registration) = self.wait_registration.take() {
-                    wait_registration.remove_for_waiter(&Waiter::Root(execution.root.clone()));
+                    wait_registration.remove_for_waiter(&Waiter::root(execution.root.clone()));
                 }
                 self.resume = Some(result);
                 made_progress = true;
@@ -1242,21 +1242,21 @@ impl Vm {
 
     fn run_root_execution(&mut self, program: &Program) -> VmResult<Value> {
         let root = RootWaiter::new();
-        self.current_waiter = Some(Waiter::Root(root.clone()));
+        self.current_waiter = Some(Waiter::root(root.clone()));
         loop {
             match self.execute(program) {
                 ExecutionOutcome::Settled(result) => return self.settle_tasks(&result),
                 ExecutionOutcome::Suspended => loop {
                     if let Some(result) = root.take_resume() {
                         if let Some(wait_registration) = self.wait_registration.take() {
-                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                            wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
                         }
                         self.resume = Some(result);
                         break;
                     }
                     if !self.make_progress() {
                         if let Some(wait_registration) = self.wait_registration.take() {
-                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                            wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
                         }
                         let blocked = self.error(
                             RuntimeErrorKind::InvalidCall,
@@ -1272,21 +1272,21 @@ impl Vm {
 
     fn run_nested_execution(&mut self, program: &Program) -> VmResult<Value> {
         let root = RootWaiter::new();
-        self.current_waiter = Some(Waiter::Root(root.clone()));
+        self.current_waiter = Some(Waiter::root(root.clone()));
         loop {
             match self.execute(program) {
                 ExecutionOutcome::Settled(result) => return result,
                 ExecutionOutcome::Suspended => loop {
                     if let Some(result) = root.take_resume() {
                         if let Some(wait_registration) = self.wait_registration.take() {
-                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                            wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
                         }
                         self.resume = Some(result);
                         break;
                     }
                     if !self.make_progress() {
                         if let Some(wait_registration) = self.wait_registration.take() {
-                            wait_registration.remove_for_waiter(&Waiter::Root(root.clone()));
+                            wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
                         }
                         return Err(self.error(
                             RuntimeErrorKind::InvalidCall,
@@ -3334,10 +3334,10 @@ impl Vm {
         for case in values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
-                    channel.park_receiver(Waiter::Select {
-                        state: select_state.clone(),
-                        wake: SelectWake::Value { handler },
-                    });
+                    channel.park_receiver(Waiter::select(
+                        select_state.clone(),
+                        SelectWake::Value { handler },
+                    ));
                     registrations.push(WaitRegistration::ChannelReceive(channel));
                 }
                 RuntimeSelectCase::Send {
@@ -3345,10 +3345,8 @@ impl Vm {
                     value,
                     handler,
                 } => {
-                    let waiter = Waiter::Select {
-                        state: select_state.clone(),
-                        wake: SelectWake::Value { handler },
-                    };
+                    let waiter =
+                        Waiter::select(select_state.clone(), SelectWake::Value { handler });
                     waiter.set_closed_send_error(self.error_at(
                         RuntimeErrorKind::InvalidCall,
                         "send on a closed channel".into(),
@@ -3358,22 +3356,19 @@ impl Vm {
                     registrations.push(WaitRegistration::ChannelSend(channel));
                 }
                 RuntimeSelectCase::Await { task, handler } => {
-                    task.wait_for(Waiter::Select {
-                        state: select_state.clone(),
-                        wake: SelectWake::TaskAwait {
+                    task.wait_for(Waiter::select(
+                        select_state.clone(),
+                        SelectWake::TaskAwait {
                             handler,
                             observer: task.observer(),
                         },
-                    });
+                    ));
                     registrations.push(WaitRegistration::TaskAwait(task));
                 }
                 RuntimeSelectCase::After { deadline, handler } => {
                     self.nursery.timer_service().borrow_mut().register(
                         deadline,
-                        Waiter::Select {
-                            state: select_state.clone(),
-                            wake: SelectWake::Value { handler },
-                        },
+                        Waiter::select(select_state.clone(), SelectWake::Value { handler }),
                     );
                     registrations.push(WaitRegistration::Timer(self.nursery.timer_service()));
                 }

@@ -87,6 +87,18 @@ pub(crate) struct SelectWaitState {
 }
 
 impl Waiter {
+    pub(crate) fn root(root: RootWaiter) -> Self {
+        Self::Root(root)
+    }
+
+    pub(crate) fn task(task: Rc<Task>) -> Self {
+        Self::Task(task)
+    }
+
+    pub(crate) fn select(state: Rc<RefCell<SelectWaitState>>, wake: SelectWake) -> Self {
+        Self::Select { state, wake }
+    }
+
     pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
         match self {
             Self::Task(task) => task.resume(result),
@@ -322,7 +334,7 @@ impl WaitSet {
 
     fn remove_losers(self, task: &Task) {
         if self.registrations.len() > 1 {
-            self.remove(&Waiter::Task(Rc::new(task.clone())));
+            self.remove(&Waiter::task(Rc::new(task.clone())));
         }
     }
 
@@ -802,7 +814,7 @@ impl Task {
             .borrow_mut()
             .retain(|candidate| !Rc::ptr_eq(&candidate.state, &self.state));
         if let Some(wait_registration) = wait_registration {
-            wait_registration.remove_for_waiter(&Waiter::Task(Rc::new(self.clone())));
+            wait_registration.remove_for_waiter(&Waiter::task(Rc::new(self.clone())));
         }
         for waiter in waiters {
             waiter.resume(Err(error.clone()));
