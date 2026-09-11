@@ -55,6 +55,12 @@ impl ProgressDriver {
         changed
     }
 
+    /// Performs the shared, non-blocking portion of a host progress round.
+    /// Scheduler task dispatch and timer policy deliberately live elsewhere.
+    pub(super) fn make_available_progress(&self) -> bool {
+        self.drain_native_channels()
+    }
+
     pub(super) fn has_live_native_source(&self) -> bool {
         self.native_channels()
             .iter()

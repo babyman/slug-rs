@@ -183,7 +183,7 @@ impl Nursery {
     /// system event, so it is safe for a host-driven VM pump.
     pub(super) fn make_available_progress(&self) -> bool {
         self.run_next_ready_task()
-            || self.progress.drain_native_channels()
+            || self.progress.make_available_progress()
             || self.wake_due_timers()
     }
 
