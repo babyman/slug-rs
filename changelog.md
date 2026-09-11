@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed default-feature release builds after the concurrency runtime split.
+
 - Added the default-enabled `concurrency` Cargo feature. Slim builds retain
   channels and host-driven progress while reporting executed scheduler-only
   operations as checked unavailable-runtime-capability errors.
