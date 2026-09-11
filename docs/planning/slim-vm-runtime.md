@@ -65,13 +65,45 @@ without warnings.
 
 ### 5. Measure the extracted runtime
 
-- [ ] Compare full and slim binary size using the same target/profile.
-- [ ] Compare VM layout and baseline allocation/initialization costs.
-- [ ] Record the commands, environment, and results beside the change or in a
+- [x] Compare full and slim binary size using the same target/profile.
+- [x] Compare VM layout and baseline allocation/initialization costs.
+- [x] Record the commands, environment, and results beside the change or in a
   focused planning note; do not introduce timing-sensitive assertions.
 
 **Exit:** the repository has reproducible evidence showing whether the feature
 split materially benefits embedding.
+
+### Measurement record: 2026-09-11
+
+Measurements used Rust 1.96.1 on `aarch64-apple-darwin` (`arm64`) and the
+optimized Cargo release profile. Each comparison was built from the same
+checkout with the Cargo lockfile:
+
+```sh
+cargo build --release
+stat -f '%z' target/release/slug
+cargo build --release --no-default-features
+stat -f '%z' target/release/slug
+```
+
+| Measurement | Full (`concurrency`) | Slim (`--no-default-features`) | Change |
+|---|---:|---:|---:|
+| `slug` binary bytes | 2,663,984 | 2,604,752 | -59,232 (-2.2%) |
+| `size_of::<Vm>()` | 568 | 504 | -64 (-11.3%) |
+| `Closure` layout bytes | 72 | 48 | -24 (-33.3%) |
+| `Value` layout bytes | 48 | 48 | unchanged |
+| `Frame` layout bytes | 152 | 152 | unchanged |
+
+The VM and closure values are inline-layout baselines; their owned heap
+allocations are intentionally excluded. A single warm process measurement of
+`slug --version` with `/usr/bin/time -l` reported maximum resident sizes of
+1,654,784 bytes (full) and 1,638,400 bytes (slim), a 16,384-byte reduction.
+This process-level observation is directional only and is not a timing or
+memory regression threshold.
+
+The slim configuration therefore produces a modest but concrete embedding
+benefit: scheduler task state and its closure metadata disappear, while the
+shared value and frame representations remain the same.
 
 ### 6. Close documentation
 
