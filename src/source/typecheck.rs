@@ -2760,6 +2760,7 @@ fn known_schema_identity(expression: &Expr, environment: &Environment) -> Option
     })
 }
 
+#[allow(unreachable_patterns)]
 fn value_type(value: &Value) -> Type {
     match value {
         Value::Nil => Type::Nil,
@@ -2781,9 +2782,8 @@ fn value_type(value: &Value) -> Type {
         | Value::DeclaredNative { .. }
         | Value::Builtin(_)
         | Value::Overloads(_) => Type::Function(None),
-        #[cfg(feature = "concurrency")]
-        Value::Task(_) => Type::Task(None),
         Value::NativeResource(_) | Value::Uninitialized | Value::Binding { .. } => Type::Unknown,
+        _ => Type::Unknown,
     }
 }
 
