@@ -17,23 +17,31 @@ pub(super) struct Nursery {
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     policy: SettlementPolicy,
     timers: Rc<RefCell<TimerService>>,
-    progress: ProgressDriver,
+    progress: Rc<ProgressDriver>,
     #[cfg(feature = "metrics")]
     metrics: Rc<RefCell<VmMetrics>>,
 }
 
 impl Nursery {
-    pub(super) fn root(#[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>) -> Self {
+    pub(super) fn root(
+        progress: Rc<ProgressDriver>,
+        #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
+    ) -> Self {
         Self::new(
             SettlementPolicy::Join,
+            progress,
             #[cfg(feature = "metrics")]
             metrics,
         )
     }
 
-    pub(super) fn explicit(#[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>) -> Self {
+    pub(super) fn explicit(
+        progress: Rc<ProgressDriver>,
+        #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
+    ) -> Self {
         Self::new(
             SettlementPolicy::FailFast,
+            progress,
             #[cfg(feature = "metrics")]
             metrics,
         )
@@ -41,6 +49,7 @@ impl Nursery {
 
     fn new(
         policy: SettlementPolicy,
+        progress: Rc<ProgressDriver>,
         #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
     ) -> Self {
         Self {
@@ -51,7 +60,7 @@ impl Nursery {
                 #[cfg(feature = "metrics")]
                 metrics.clone(),
             ))),
-            progress: ProgressDriver::new(),
+            progress,
             #[cfg(feature = "metrics")]
             metrics,
         }
@@ -68,7 +77,6 @@ impl Nursery {
     pub(super) fn clear(&self) {
         self.tasks.borrow_mut().clear();
         self.ready.borrow_mut().clear();
-        self.progress.clear();
     }
 
     pub(super) fn add_task(&self, task: Rc<Task>) {
@@ -105,10 +113,6 @@ impl Nursery {
         for task in self.tasks.borrow().iter() {
             task.cancel(error);
         }
-    }
-
-    pub(super) fn track_native_channel(&self, channel: &Rc<crate::value::Channel>) {
-        self.progress.track_native_channel(channel);
     }
 
     pub(super) fn run_task(&self, task: &Task) {

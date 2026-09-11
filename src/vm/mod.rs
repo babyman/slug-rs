@@ -37,6 +37,7 @@ use operations::{
     list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
     slice_value, subtract,
 };
+use progress::ProgressDriver;
 use scheduler::Nursery;
 
 pub type VmResult<T> = Result<T, RuntimeError>;
@@ -285,6 +286,7 @@ pub struct Vm {
     stack: Vec<Value>,
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
+    progress: Rc<ProgressDriver>,
     nursery: Rc<Nursery>,
     direct_task_limit: Option<usize>,
     direct_task_count: Option<Rc<Cell<usize>>>,
@@ -304,6 +306,7 @@ impl Default for Vm {
     fn default() -> Self {
         #[cfg(feature = "metrics")]
         let metrics = Rc::new(RefCell::new(VmMetrics::default()));
+        let progress = Rc::new(ProgressDriver::new());
         Self {
             module_loader: None,
             module_program: None,
@@ -313,7 +316,9 @@ impl Default for Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
+            progress: progress.clone(),
             nursery: Rc::new(Nursery::root(
+                progress,
                 #[cfg(feature = "metrics")]
                 metrics.clone(),
             )),
@@ -934,6 +939,7 @@ impl Vm {
         self.frames.clear();
         self.cleanup.clear();
         self.nursery.clear();
+        self.progress.clear();
         self.module_metadata = program.declarations().to_vec();
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
@@ -2484,6 +2490,7 @@ impl Vm {
             stack: Vec::new(),
             frames: Vec::new(),
             cleanup: Vec::new(),
+            progress: self.progress.clone(),
             nursery: options.nursery,
             direct_task_limit: options.direct_task_limit,
             direct_task_count: options.direct_task_count,
@@ -2678,6 +2685,7 @@ impl Vm {
             ));
         };
         let nursery = Rc::new(Nursery::explicit(
+            self.progress.clone(),
             #[cfg(feature = "metrics")]
             self.metrics.clone(),
         ));
@@ -3215,7 +3223,7 @@ impl Vm {
         for case in &values {
             match case {
                 RuntimeSelectCase::Receive { channel, handler } => {
-                    self.nursery.track_native_channel(channel);
+                    self.progress.track_native_channel(channel);
                     if let ChannelReceive::Ready(value) = channel.try_receive() {
                         self.push_select_result(value, handler.clone());
                         return Ok(());
@@ -3226,7 +3234,7 @@ impl Vm {
                     value,
                     handler,
                 } => {
-                    self.nursery.track_native_channel(channel);
+                    self.progress.track_native_channel(channel);
                     match channel.try_send(value.clone()) {
                         ChannelSend::Ready => {
                             self.push_select_result(Value::Nil, handler.clone());
@@ -3396,7 +3404,7 @@ impl Vm {
                 if let Value::Channel(channel) = &value
                     && channel.has_native_producer()
                 {
-                    self.nursery.track_native_channel(channel);
+                    self.progress.track_native_channel(channel);
                 }
                 Ok(value)
             }
