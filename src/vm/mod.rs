@@ -1070,7 +1070,7 @@ impl Vm {
             };
         }
 
-        if self.nursery.make_available_progress() {
+        if self.progress.make_available_progress() || self.nursery.make_available_progress() {
             made_progress = true;
         }
         self.host_execution = Some(execution);
@@ -2611,7 +2611,7 @@ impl Vm {
     }
 
     fn make_progress(&self) -> bool {
-        self.nursery.make_progress()
+        self.progress.make_available_progress() || self.nursery.make_progress()
     }
 
     fn settle_tasks(&self, result: &VmResult<Value>) -> VmResult<Value> {
