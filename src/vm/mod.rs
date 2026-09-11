@@ -1,17 +1,18 @@
-use std::{
-    cell::Cell,
-    cmp::Ordering,
-    collections::HashSet,
-    path::Path,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
 
+#[cfg(feature = "concurrency")]
+use std::cell::Cell;
 #[cfg(feature = "metrics")]
 use std::cell::RefCell;
+#[cfg(feature = "metrics")]
+use std::time::Duration;
+#[cfg(any(feature = "concurrency", feature = "metrics"))]
+use std::time::Instant;
 
 use crate::source::environment::CallableIdentity;
 use crate::value::Task;
+#[cfg(feature = "concurrency")]
+use crate::value::TaskAdmission;
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, SpanId, Value,
@@ -19,7 +20,7 @@ use crate::{
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment,
-        RootWaiter, SelectWake, TaskAdmission, WaitRegistration, WaitSet, Waiter, binding_cell,
+        RootWaiter, SelectWake, WaitRegistration, WaitSet, Waiter, binding_cell,
         global_environment, module_binding,
     },
 };
@@ -31,7 +32,9 @@ mod cleanup;
 mod error;
 mod operations;
 mod progress;
+#[cfg(feature = "concurrency")]
 mod scheduler;
+#[cfg(feature = "concurrency")]
 pub(crate) mod timers;
 
 use cleanup::{Cleanup, Deferred};
@@ -43,6 +46,7 @@ use operations::{
     slice_value, subtract,
 };
 use progress::ProgressDriver;
+#[cfg(feature = "concurrency")]
 use scheduler::Nursery;
 
 pub type VmResult<T> = Result<T, RuntimeError>;
@@ -187,9 +191,13 @@ pub(super) fn frame_locals(arguments: Vec<Value>, local_count: usize) -> Vec<Loc
 }
 
 struct ClosureCallOptions {
+    #[cfg(feature = "concurrency")]
     direct_task_limit: Option<usize>,
+    #[cfg(feature = "concurrency")]
     direct_task_count: Option<Rc<Cell<usize>>>,
+    #[cfg(feature = "concurrency")]
     nursery: Rc<Nursery>,
+    #[cfg(feature = "concurrency")]
     settle_nursery: bool,
 }
 
@@ -201,9 +209,11 @@ struct ClosureCallOptions {
 pub(crate) struct TaskExecution {
     vm: Vm,
     program: Rc<Program>,
+    #[cfg(feature = "concurrency")]
     settle_nursery: bool,
 }
 
+#[cfg(feature = "concurrency")]
 enum TaskRunOutcome {
     Settled(VmResult<Value>),
     Suspended(Box<TaskExecution>),
@@ -234,6 +244,7 @@ enum RuntimeSelectCase {
         value: Value,
         handler: Option<Value>,
     },
+    #[cfg(feature = "concurrency")]
     After {
         deadline: Instant,
         handler: Option<Value>,
@@ -249,6 +260,7 @@ enum RuntimeSelectCase {
 }
 
 impl TaskExecution {
+    #[cfg(feature = "concurrency")]
     fn run(mut self) -> TaskRunOutcome {
         match self.vm.execute(&self.program) {
             ExecutionOutcome::Suspended => TaskRunOutcome::Suspended(Box::new(self)),
@@ -299,8 +311,11 @@ pub struct Vm {
     frames: Vec<Frame>,
     cleanup: Vec<Cleanup>,
     progress: Rc<ProgressDriver>,
+    #[cfg(feature = "concurrency")]
     nursery: Rc<Nursery>,
+    #[cfg(feature = "concurrency")]
     direct_task_limit: Option<usize>,
+    #[cfg(feature = "concurrency")]
     direct_task_count: Option<Rc<Cell<usize>>>,
     native_resources: NativeResourceRegistry,
     current_waiter: Option<Waiter>,
@@ -329,12 +344,15 @@ impl Default for Vm {
             frames: Vec::new(),
             cleanup: Vec::new(),
             progress: progress.clone(),
+            #[cfg(feature = "concurrency")]
             nursery: Rc::new(Nursery::root(
                 progress,
                 #[cfg(feature = "metrics")]
                 metrics.clone(),
             )),
+            #[cfg(feature = "concurrency")]
             direct_task_limit: None,
+            #[cfg(feature = "concurrency")]
             direct_task_count: None,
             native_resources: native_resource_registry(),
             current_waiter: None,
@@ -957,6 +975,7 @@ impl Vm {
         self.stack.clear();
         self.frames.clear();
         self.cleanup.clear();
+        #[cfg(feature = "concurrency")]
         self.nursery.clear();
         self.progress.clear();
         self.module_metadata = program.declarations().to_vec();
@@ -1166,6 +1185,7 @@ impl Vm {
                                 None,
                             )
                         });
+                    #[cfg(feature = "concurrency")]
                     self.nursery.cancel_all(&result);
                     self.host_execution = None;
                     self.current_waiter = None;
@@ -1185,6 +1205,7 @@ impl Vm {
         Rc::new(program.clone())
     }
 
+    #[cfg(feature = "concurrency")]
     fn installed_program(&self, program: &Program) -> VmResult<Rc<Program>> {
         let installed = self.module_program.clone().ok_or_else(|| {
             self.error(
@@ -1247,7 +1268,12 @@ impl Vm {
         self.current_waiter = Some(Waiter::root(root.clone()));
         loop {
             match self.execute(program) {
-                ExecutionOutcome::Settled(result) => return self.settle_tasks(&result),
+                ExecutionOutcome::Settled(result) => {
+                    #[cfg(feature = "concurrency")]
+                    return self.settle_tasks(&result);
+                    #[cfg(not(feature = "concurrency"))]
+                    return result;
+                }
                 ExecutionOutcome::Suspended => loop {
                     if let Some(result) = root.take_resume() {
                         if let Some(wait_registration) = self.wait_registration.take() {
@@ -1265,7 +1291,10 @@ impl Vm {
                             "task remains blocked with no runnable work".into(),
                             None,
                         );
+                        #[cfg(feature = "concurrency")]
                         return self.settle_tasks(&Err(blocked));
+                        #[cfg(not(feature = "concurrency"))]
+                        return Err(blocked);
                     }
                 },
             }
@@ -2170,9 +2199,13 @@ impl Vm {
                         provided,
                         span.clone(),
                         ClosureCallOptions {
+                            #[cfg(feature = "concurrency")]
                             direct_task_limit: None,
+                            #[cfg(feature = "concurrency")]
                             direct_task_count: None,
+                            #[cfg(feature = "concurrency")]
                             nursery: self.nursery.clone(),
+                            #[cfg(feature = "concurrency")]
                             settle_nursery: false,
                         },
                     )?;
@@ -2360,9 +2393,13 @@ impl Vm {
                         provided,
                         self.owned_span(span),
                         ClosureCallOptions {
+                            #[cfg(feature = "concurrency")]
                             direct_task_limit: None,
+                            #[cfg(feature = "concurrency")]
                             direct_task_count: None,
+                            #[cfg(feature = "concurrency")]
                             nursery: self.nursery.clone(),
+                            #[cfg(feature = "concurrency")]
                             settle_nursery: false,
                         },
                     )?;
@@ -2503,6 +2540,8 @@ impl Vm {
         span: Option<SourceSpan>,
         options: ClosureCallOptions,
     ) -> VmResult<TaskExecution> {
+        #[cfg(not(feature = "concurrency"))]
+        let _ = options;
         let chunk = program.chunk(closure.chunk).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -2535,8 +2574,11 @@ impl Vm {
             frames: Vec::new(),
             cleanup: Vec::new(),
             progress: self.progress.clone(),
+            #[cfg(feature = "concurrency")]
             nursery: options.nursery,
+            #[cfg(feature = "concurrency")]
             direct_task_limit: options.direct_task_limit,
+            #[cfg(feature = "concurrency")]
             direct_task_count: options.direct_task_count,
             native_resources: self.native_resources.clone(),
             current_waiter: None,
@@ -2567,6 +2609,7 @@ impl Vm {
         Ok(TaskExecution {
             vm,
             program,
+            #[cfg(feature = "concurrency")]
             settle_nursery: options.settle_nursery,
         })
     }
@@ -2591,6 +2634,7 @@ impl Vm {
         execution.vm.run_nested_execution(&execution.program)
     }
 
+    #[cfg(feature = "concurrency")]
     fn spawn_task_at(&mut self, program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
         let closure = self.pop_at(span)?;
         let Value::Closure(closure) = closure else {
@@ -2667,6 +2711,7 @@ impl Vm {
         }
     }
 
+    #[cfg(feature = "concurrency")]
     fn settle_tasks(&self, result: &VmResult<Value>) -> VmResult<Value> {
         let cancellation = self.error(
             RuntimeErrorKind::Thrown,
@@ -2681,6 +2726,7 @@ impl Vm {
         self.nursery.settle(result, &cancellation, &blocked)
     }
 
+    #[cfg(feature = "concurrency")]
     fn settle_tasks_available(&self, result: &VmResult<Value>) -> Option<VmResult<Value>> {
         let cancellation = self.error(
             RuntimeErrorKind::Thrown,
@@ -2690,6 +2736,7 @@ impl Vm {
         self.nursery.settle_available(result, &cancellation)
     }
 
+    #[cfg(feature = "concurrency")]
     fn run_nursery_at(
         &mut self,
         program: &Program,
@@ -3227,6 +3274,7 @@ impl Vm {
                         handler,
                     }
                 }
+                #[cfg(feature = "concurrency")]
                 SelectCase::After { .. } => {
                     let duration = self.pop_at(span)?;
                     let Value::Int(milliseconds) = duration else {
@@ -3255,6 +3303,10 @@ impl Vm {
                             })?,
                         handler,
                     }
+                }
+                #[cfg(not(feature = "concurrency"))]
+                SelectCase::After { .. } => {
+                    return Err(self.runtime_capability_error("select timer", span));
                 }
                 #[cfg(feature = "concurrency")]
                 SelectCase::Await { .. } => {
@@ -3323,6 +3375,7 @@ impl Vm {
                         return Ok(());
                     }
                 }
+                #[cfg(feature = "concurrency")]
                 RuntimeSelectCase::After { deadline, handler } => {
                     if *deadline <= Instant::now() {
                         self.push_select_result(Value::Nil, handler.clone());
@@ -3374,6 +3427,7 @@ impl Vm {
                     ));
                     registrations.push(WaitRegistration::TaskAwait(task));
                 }
+                #[cfg(feature = "concurrency")]
                 RuntimeSelectCase::After { deadline, handler } => {
                     self.nursery.timer_service().borrow_mut().register(
                         deadline,

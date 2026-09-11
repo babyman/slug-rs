@@ -178,6 +178,7 @@ pub(crate) enum WaitRegistration {
     ChannelReceive(Rc<Channel>),
     #[cfg(feature = "concurrency")]
     TaskAwait(Rc<Task>),
+    #[cfg(feature = "concurrency")]
     Timer(crate::vm::timers::TimerRegistration),
 }
 
@@ -225,6 +226,7 @@ impl WaitRegistration {
                 }
                 state.waiters.retain(|candidate| !candidate.is_same(waiter));
             }
+            #[cfg(feature = "concurrency")]
             Self::Timer(registration) => registration.remove(waiter),
         }
     }

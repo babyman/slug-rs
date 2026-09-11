@@ -1,16 +1,19 @@
+#[cfg(feature = "concurrency")]
+use std::sync::{Arc, Mutex};
 use std::{
     cell::Cell,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
-    sync::{Arc, Mutex},
 };
 
 use slug_vm::{
     CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPatternId,
     MatchRest, ModuleLoader, NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue,
     NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField, SchemaFieldsId,
-    SelectCase, SourceSpan, SpanId, StructFieldsId, Value, Vm, VmProgress, compile,
+    SourceSpan, SpanId, StructFieldsId, Value, Vm, compile,
 };
+#[cfg(feature = "concurrency")]
+use slug_vm::{SelectCase, VmProgress};
 
 #[cfg(not(feature = "concurrency"))]
 #[test]
@@ -283,6 +286,7 @@ fn reports_vm_runtime_layouts() {
     assert!(layout.local_slot_size_bytes >= layout.value_size_bytes);
     assert!(layout.frame_size_bytes > layout.local_slot_size_bytes);
     assert!(layout.closure_size_bytes > 0);
+    #[cfg(feature = "concurrency")]
     assert!(layout.task_state_size_bytes > layout.task_size_bytes);
 }
 
