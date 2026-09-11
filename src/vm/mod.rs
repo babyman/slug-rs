@@ -1060,9 +1060,14 @@ impl Vm {
             }
         }
 
-        if let Some(result) = execution.result.as_ref()
-            && let Some(result) = self.settle_tasks_available(result)
-        {
+        #[cfg(feature = "concurrency")]
+        let settled = execution
+            .result
+            .as_ref()
+            .and_then(|result| self.settle_tasks_available(result));
+        #[cfg(not(feature = "concurrency"))]
+        let settled = execution.result.clone();
+        if let Some(result) = settled {
             self.current_waiter = None;
             return match result {
                 Ok(value) => VmProgress::Completed(value),
@@ -1070,7 +1075,17 @@ impl Vm {
             };
         }
 
-        if self.progress.make_available_progress() || self.nursery.make_available_progress() {
+        let scheduler_progress = {
+            #[cfg(feature = "concurrency")]
+            {
+                self.nursery.make_available_progress()
+            }
+            #[cfg(not(feature = "concurrency"))]
+            {
+                false
+            }
+        };
+        if self.progress.make_available_progress() || scheduler_progress {
             made_progress = true;
         }
         self.host_execution = Some(execution);
@@ -1107,7 +1122,17 @@ impl Vm {
                 VmProgress::Completed(value) => return Ok(value),
                 VmProgress::Failed(error) => return Err(error),
                 VmProgress::MadeProgress => unreachable!("run_until_stalled exhausts progress"),
-                VmProgress::Stalled if self.nursery.wait_for_progress() => {}
+                VmProgress::Stalled
+                    if {
+                        #[cfg(feature = "concurrency")]
+                        {
+                            self.nursery.wait_for_progress()
+                        }
+                        #[cfg(not(feature = "concurrency"))]
+                        {
+                            self.progress.wait_for_progress()
+                        }
+                    } => {}
                 VmProgress::Stalled => {
                     let result = self
                         .host_execution
@@ -2611,7 +2636,16 @@ impl Vm {
     }
 
     fn make_progress(&self) -> bool {
-        self.progress.make_available_progress() || self.nursery.make_progress()
+        self.progress.make_available_progress() || {
+            #[cfg(feature = "concurrency")]
+            {
+                self.nursery.make_progress()
+            }
+            #[cfg(not(feature = "concurrency"))]
+            {
+                false
+            }
+        }
     }
 
     fn settle_tasks(&self, result: &VmResult<Value>) -> VmResult<Value> {

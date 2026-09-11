@@ -75,6 +75,20 @@ impl ProgressDriver {
         self.blocking_waiter.wait(&self.signal, observed, timeout);
     }
 
+    /// Waits only when a live native producer can create future progress.
+    #[cfg(not(feature = "concurrency"))]
+    pub(super) fn wait_for_progress(&self) -> bool {
+        if !self.has_live_native_source() {
+            return false;
+        }
+        let observed = self.snapshot();
+        if self.make_available_progress() {
+            return true;
+        }
+        self.wait(observed, None);
+        true
+    }
+
     fn native_channels(&self) -> Vec<Rc<Channel>> {
         let mut channels = self.native_channels.borrow_mut();
         channels.retain(|channel| channel.strong_count() > 0);
