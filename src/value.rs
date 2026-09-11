@@ -607,6 +607,7 @@ struct TaskState {
     wait_registration: Option<WaitSet>,
 }
 
+#[cfg(feature = "concurrency")]
 pub(crate) fn task_state_layout() -> (usize, usize) {
     (
         std::mem::size_of::<TaskState>(),

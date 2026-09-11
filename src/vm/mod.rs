@@ -11,9 +11,10 @@ use std::{
 use std::cell::RefCell;
 
 use crate::source::environment::CallableIdentity;
+use crate::value::Task;
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
-    NativeFunction, Program, SourceSpan, SpanId, Task, Value,
+    NativeFunction, Program, SourceSpan, SpanId, Value,
     bytecode::{EntrypointArguments, Op, SelectCase},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{

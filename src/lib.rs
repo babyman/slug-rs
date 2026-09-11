@@ -46,8 +46,10 @@ pub use native::{
     NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
 };
 pub use source::{SourceError, SourceErrorKind, compile};
+#[cfg(feature = "concurrency")]
+pub use value::Task;
 pub use value::{
-    Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Task, Value,
+    Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value,
 };
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;

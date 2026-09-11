@@ -2,7 +2,10 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Instant};
 
 #[cfg(feature = "metrics")]
 use crate::vm::VmMetrics;
-use crate::{RuntimeError, Task, Value, value::TimerService};
+use crate::{
+    RuntimeError, Value,
+    value::{Task, TimerService},
+};
 
 use super::{TaskRunOutcome, progress::ProgressDriver};
 
