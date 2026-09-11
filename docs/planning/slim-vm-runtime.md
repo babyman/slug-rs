@@ -56,9 +56,9 @@ front end continues to accept the same source.
 
 ### 4. Make the slim configuration warning-clean
 
-- [ ] Feature-gate concurrency-only VM tests, imports, and fixtures.
-- [ ] Pass `cargo clippy --no-default-features -- -D warnings`.
-- [ ] Preserve host-pump and native-ingress tests under both configurations.
+- [x] Feature-gate concurrency-only VM tests, imports, and fixtures.
+- [x] Pass `cargo clippy --no-default-features -- -D warnings`.
+- [x] Preserve host-pump and native-ingress tests under both configurations.
 
 **Exit:** `cargo test --no-default-features` and strict slim Clippy both pass
 without warnings.

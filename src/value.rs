@@ -554,6 +554,7 @@ pub struct Closure {
     pub(crate) captures: Vec<BindingCell>,
     pub(crate) program: Option<Rc<crate::Program>>,
     pub(crate) globals: Option<GlobalEnvironment>,
+    #[cfg(feature = "concurrency")]
     pub(crate) capture_sources: Vec<crate::Capture>,
 }
 

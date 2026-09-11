@@ -23,7 +23,7 @@ path = "src/main.rs"
 [[bench]]
 name = "vm"
 harness = false
-required-features = ["metrics"]
+required-features = ["metrics", "concurrency"]
 
 [lints.rust]
 unsafe_code = "deny"

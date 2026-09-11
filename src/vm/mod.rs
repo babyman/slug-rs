@@ -243,7 +243,10 @@ enum BorrowedSpanOpOutcome {
 
 #[derive(Clone)]
 enum Suspension {
-    Select(Option<SourceSpan>),
+    Select {
+        #[cfg(feature = "concurrency")]
+        span: Option<SourceSpan>,
+    },
 }
 
 enum RuntimeSelectCase {
@@ -300,7 +303,7 @@ impl TaskExecution {
     #[cfg(feature = "concurrency")]
     pub(crate) fn reject_closed_send(&mut self) {
         let span = match &self.vm.suspension {
-            Some(Suspension::Select(span)) => span.clone(),
+            Some(Suspension::Select { span }) => span.clone(),
             _ => None,
         };
         self.vm.resume = Some(Err(self.vm.error(
@@ -1003,6 +1006,7 @@ impl Vm {
                 captures: Vec::new(),
                 program: None,
                 globals: None,
+                #[cfg(feature = "concurrency")]
                 capture_sources: Vec::new(),
             }),
             function: chunk.name.clone(),
@@ -1211,6 +1215,7 @@ impl Vm {
         }
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     fn install_program(&mut self, program: &Program) -> Rc<Program> {
         #[cfg(feature = "metrics")]
         {
@@ -1379,6 +1384,7 @@ impl Vm {
                         captures: Vec::new(),
                         program: self.module_program.clone(),
                         globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                        #[cfg(feature = "concurrency")]
                         capture_sources: Vec::new(),
                     })),
                     None => {
@@ -1592,6 +1598,7 @@ impl Vm {
                         span,
                     )
                 })?;
+                #[cfg(feature = "concurrency")]
                 let capture_sources = captures.clone();
                 let captures = captures
                     .iter()
@@ -1616,6 +1623,7 @@ impl Vm {
                     captures,
                     program: self.module_program.clone(),
                     globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                    #[cfg(feature = "concurrency")]
                     capture_sources,
                 })));
             }
@@ -2020,6 +2028,7 @@ impl Vm {
                     captures,
                     program: self.module_program.clone(),
                     globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                    #[cfg(feature = "concurrency")]
                     capture_sources: capture_sources.to_vec(),
                 })));
             }
@@ -2547,6 +2556,7 @@ impl Vm {
         Ok(())
     }
 
+    #[cfg_attr(not(feature = "concurrency"), allow(clippy::needless_pass_by_value))]
     fn module_closure_execution(
         &self,
         program: Rc<Program>,
@@ -2557,7 +2567,7 @@ impl Vm {
         options: ClosureCallOptions,
     ) -> VmResult<TaskExecution> {
         #[cfg(not(feature = "concurrency"))]
-        let _ = options;
+        let ClosureCallOptions {} = options;
         let chunk = program.chunk(closure.chunk).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -3466,7 +3476,10 @@ impl Vm {
         WaitSet::set_select_registrations(&select_state, registrations.clone());
         self.wait_registration = Some(registrations);
         self.stack.push(Value::Nil);
-        self.suspension = Some(Suspension::Select(self.owned_span(span)));
+        self.suspension = Some(Suspension::Select {
+            #[cfg(feature = "concurrency")]
+            span: self.owned_span(span),
+        });
         Ok(())
     }
 
