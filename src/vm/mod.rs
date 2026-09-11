@@ -1126,7 +1126,7 @@ impl Vm {
         #[cfg(not(feature = "concurrency"))]
         let settled = execution.result.clone();
         if let Some(result) = settled {
-            self.current_waiter = None;
+            self.release_host_execution(execution, None);
             return match result {
                 Ok(value) => VmProgress::Completed(value),
                 Err(error) => VmProgress::Failed(error),
@@ -1205,13 +1205,41 @@ impl Vm {
                                 None,
                             )
                         });
-                    #[cfg(feature = "concurrency")]
-                    self.nursery.cancel_all(&result);
-                    self.host_execution = None;
-                    self.current_waiter = None;
+                    let execution = self
+                        .host_execution
+                        .take()
+                        .expect("a stalled blocking run has a host execution");
+                    self.release_host_execution(execution, Some(&result));
                     return Err(result);
                 }
             }
+        }
+    }
+
+    /// Discards the local state for one host-driven invocation. Callers retain
+    /// the terminal result separately so this routine can serve successful,
+    /// failed, blocked, and lifecycle-cancelled executions alike.
+    fn release_host_execution(
+        &mut self,
+        execution: HostExecution,
+        cancellation: Option<&RuntimeError>,
+    ) {
+        #[cfg(not(feature = "concurrency"))]
+        let _ = cancellation;
+        if let Some(wait_registration) = self.wait_registration.take() {
+            wait_registration.remove_for_waiter(&Waiter::root(execution.root));
+        }
+        self.suspension = None;
+        self.resume = None;
+        self.current_waiter = None;
+        self.stack.clear();
+        self.frames.clear();
+        self.cleanup.clear();
+        self.progress.clear();
+        #[cfg(feature = "concurrency")]
+        if let Some(error) = cancellation {
+            self.nursery.cancel_all(error);
+            self.nursery.clear();
         }
     }
 

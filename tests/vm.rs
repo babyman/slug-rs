@@ -81,6 +81,58 @@ fn slim_runtime_pumps_native_channel_select_without_a_scheduler() {
     ));
 }
 
+fn plain_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+    let channel = call.plain_channel(0);
+    call.return_value(channel)
+}
+
+#[test]
+fn a_blocked_host_execution_leaves_the_vm_reusable() {
+    let module = NativeModule::new("test.blocked_host_cleanup", ()).unwrap();
+    let function = module
+        .function("plain_channel", NativeArity::Exact(0), plain_channel)
+        .unwrap();
+    let blocked = compile(
+        "blocked-host-execution.slug",
+        "val channel = plain_channel()\nselect { recv channel }\n",
+    )
+    .expect("compile permanently blocked channel wait");
+    let complete =
+        compile("reused-host-execution.slug", "42\n").expect("compile follow-up execution");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+
+    let error = vm
+        .run_named(&blocked, "main")
+        .expect_err("an ordinary channel with no sender must block");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.message, "task remains blocked with no runnable work");
+    assert_eq!(vm.run_named(&complete, "main").unwrap(), Value::Int(42));
+}
+
+#[cfg(feature = "metrics")]
+#[test]
+fn abandoning_a_blocked_host_execution_removes_its_channel_waiter() {
+    let module = NativeModule::new("test.blocked_waiter_cleanup", ()).unwrap();
+    let function = module
+        .function("plain_channel", NativeArity::Exact(0), plain_channel)
+        .unwrap();
+    let program = compile(
+        "blocked-waiter-cleanup.slug",
+        "val channel = plain_channel()\nselect { recv channel }\n",
+    )
+    .expect("compile permanently blocked channel wait");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+
+    vm.run_named(&program, "main")
+        .expect_err("an ordinary channel with no sender must block");
+    assert!(
+        vm.metrics().wait_registration_removals >= 1,
+        "discarding the root execution must remove its channel waiter"
+    );
+}
+
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
     program.add_chunk(main);
