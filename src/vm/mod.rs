@@ -19,9 +19,12 @@ use crate::{
     value::{
         BindingCell, Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment,
         RootWaiter, SelectWake, TaskAdmission, WaitRegistration, WaitSet, Waiter, binding_cell,
-        global_environment, module_binding, task_state_layout,
+        global_environment, module_binding,
     },
 };
+
+#[cfg(feature = "concurrency")]
+use crate::value::task_state_layout;
 
 mod cleanup;
 mod error;
@@ -74,11 +77,17 @@ pub struct VmLayoutMetrics {
     pub frame_alignment_bytes: usize,
     pub closure_size_bytes: usize,
     pub closure_alignment_bytes: usize,
+    #[cfg(feature = "concurrency")]
     pub task_size_bytes: usize,
+    #[cfg(feature = "concurrency")]
     pub task_alignment_bytes: usize,
+    #[cfg(feature = "concurrency")]
     pub task_state_size_bytes: usize,
+    #[cfg(feature = "concurrency")]
     pub task_state_alignment_bytes: usize,
+    #[cfg(feature = "concurrency")]
     pub task_execution_size_bytes: usize,
+    #[cfg(feature = "concurrency")]
     pub task_execution_alignment_bytes: usize,
     pub instruction_size_bytes: usize,
     pub instruction_alignment_bytes: usize,
@@ -349,6 +358,7 @@ impl Vm {
     /// Returns deterministic Rust-layout measurements for VM runtime state.
     #[must_use]
     pub fn layout_metrics() -> VmLayoutMetrics {
+        #[cfg(feature = "concurrency")]
         let (task_state_size_bytes, task_state_alignment_bytes) = task_state_layout();
         VmLayoutMetrics {
             value_size_bytes: std::mem::size_of::<Value>(),
@@ -359,11 +369,17 @@ impl Vm {
             frame_alignment_bytes: std::mem::align_of::<Frame>(),
             closure_size_bytes: std::mem::size_of::<Closure>(),
             closure_alignment_bytes: std::mem::align_of::<Closure>(),
+            #[cfg(feature = "concurrency")]
             task_size_bytes: std::mem::size_of::<Task>(),
+            #[cfg(feature = "concurrency")]
             task_alignment_bytes: std::mem::align_of::<Task>(),
+            #[cfg(feature = "concurrency")]
             task_state_size_bytes,
+            #[cfg(feature = "concurrency")]
             task_state_alignment_bytes,
+            #[cfg(feature = "concurrency")]
             task_execution_size_bytes: std::mem::size_of::<TaskExecution>(),
+            #[cfg(feature = "concurrency")]
             task_execution_alignment_bytes: std::mem::align_of::<TaskExecution>(),
             instruction_size_bytes: std::mem::size_of::<crate::Instruction>(),
             instruction_alignment_bytes: std::mem::align_of::<crate::Instruction>(),
