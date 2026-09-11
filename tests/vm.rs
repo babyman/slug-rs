@@ -1,4 +1,3 @@
-#[cfg(feature = "concurrency")]
 use std::sync::{Arc, Mutex};
 use std::{
     cell::Cell,
@@ -6,14 +5,15 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(feature = "concurrency")]
+use slug_vm::SelectCase;
+use slug_vm::VmProgress;
 use slug_vm::{
     CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPatternId,
     MatchRest, ModuleLoader, NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue,
     NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField, SchemaFieldsId,
     SourceSpan, SpanId, StructFieldsId, Value, Vm, compile,
 };
-#[cfg(feature = "concurrency")]
-use slug_vm::{SelectCase, VmProgress};
 
 #[cfg(not(feature = "concurrency"))]
 #[test]
@@ -31,6 +31,54 @@ fn slim_runtime_defers_concurrency_capability_errors_until_execution() {
         error.message,
         "runtime capability `select timer or task-await` is unavailable"
     );
+}
+
+#[cfg(not(feature = "concurrency"))]
+#[test]
+fn slim_runtime_pumps_native_channel_select_without_a_scheduler() {
+    struct ProducerState(Mutex<Option<slug_vm::NativeChannelProducer>>);
+
+    fn create_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        call.state::<Arc<ProducerState>>()
+            .expect("producer state")
+            .0
+            .lock()
+            .expect("producer state lock")
+            .replace(producer);
+        call.return_value(channel)
+    }
+
+    let state = Arc::new(ProducerState(Mutex::new(None)));
+    let module = NativeModule::new("test.slim_host_pump", state.clone()).unwrap();
+    let function = module
+        .function("create_channel", NativeArity::Exact(0), create_channel)
+        .unwrap();
+    let program = compile(
+        "slim-host-pump.slug",
+        "val channel = create_channel()\nselect { recv channel }\n",
+    )
+    .expect("compile a channel-only select");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+
+    let producer = state
+        .0
+        .lock()
+        .expect("producer state lock")
+        .clone()
+        .expect("channel producer");
+    assert_eq!(
+        producer.try_send(slug_vm::NativeSendValue::integer(42)),
+        slug_vm::NativeProducerStatus::Sent
+    );
+    assert!(matches!(
+        vm.run_until_stalled(),
+        VmProgress::Completed(Value::Int(42))
+    ));
 }
 
 fn program_with_main(main: Chunk) -> Program {
@@ -66,7 +114,7 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
 }
 
 #[test]
-#[cfg(feature = "metrics")]
+#[cfg(all(feature = "concurrency", feature = "metrics"))]
 fn installed_program_is_shared_by_root_tasks_and_nested_nurseries() {
     let mut child = Chunk::new("child", 0);
     let result = child.constant(Value::Int(7));
@@ -146,7 +194,7 @@ fn promotes_only_locals_that_a_closure_captures() {
 }
 
 #[test]
-#[cfg(feature = "metrics")]
+#[cfg(all(feature = "concurrency", feature = "metrics"))]
 fn records_timer_and_select_cleanup_metrics() {
     let program = compile("scheduler-metrics.slug", "select { after 1; after 10 }\n")
         .expect("compile scheduler metrics source");
@@ -166,7 +214,7 @@ fn records_timer_and_select_cleanup_metrics() {
 }
 
 #[test]
-#[cfg(feature = "metrics")]
+#[cfg(all(feature = "concurrency", feature = "metrics"))]
 fn records_owned_spans_for_diagnostic_task_and_native_metric_paths() {
     fn fail(call: &mut NativeCall<'_>) -> NativeStatus {
         call.raise(NativeError::new("test.metrics", "deliberate failure"))
@@ -345,6 +393,7 @@ fn rejects_missing_opcode_pool_metadata_before_execution() {
     }
 }
 
+#[cfg(feature = "concurrency")]
 fn native_make_channel(call: &mut NativeCall<'_>) -> NativeStatus {
     let capacity = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
         Ok(value) => match usize::try_from(value) {
@@ -362,6 +411,7 @@ fn native_make_channel(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(channel)
 }
 
+#[cfg(feature = "concurrency")]
 fn vm_with_channel_constructor() -> Vm {
     let mut vm = Vm::new();
     let module = NativeModule::new("test.channels", ()).expect("native module is valid");

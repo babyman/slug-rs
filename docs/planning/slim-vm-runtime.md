@@ -47,10 +47,10 @@ front end continues to accept the same source.
 
 ### 3. Finish select feature boundaries
 
-- [ ] Retain channel send/receive select in the slim runtime.
-- [ ] Keep timer and task-await select registration, state, and metrics behind
+- [x] Retain channel send/receive select in the slim runtime.
+- [x] Keep timer and task-await select registration, state, and metrics behind
   `concurrency`.
-- [ ] Verify that ready/default channel select behavior remains unchanged.
+- [x] Verify that ready/default channel select behavior remains unchanged.
 
 **Exit:** slim select owns only channel readiness and root suspension state.
 
