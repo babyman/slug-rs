@@ -380,6 +380,13 @@ task-await `select` case MUST return a checked runtime error naming the
 unavailable capability. Unreached operations remain valid. Channel readiness
 operations remain available to the host-driven runtime.
 
+### Host shutdown
+
+`Vm::shutdown` is terminal. It cancels and releases any active host-driven
+execution, including its channel waits and scheduler-owned tasks. Every later
+host progress call returns a checked `VM has shut down` runtime error; it does
+not report an ordinary stall or resume prior Slug execution.
+
 ### Ownership and lifetime
 
 Every evaluation begins in an implicit root nursery. `spawn` creates a task and

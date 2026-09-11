@@ -133,6 +133,51 @@ fn abandoning_a_blocked_host_execution_removes_its_channel_waiter() {
     );
 }
 
+#[test]
+fn shutdown_cancels_a_host_execution_before_its_first_poll() {
+    let program = compile("shutdown-before-poll.slug", "42\n").expect("compile program");
+    let mut vm = Vm::new();
+    vm.start_named(&program, "main").expect("start execution");
+    vm.shutdown();
+
+    assert_shutdown_progress(&mut vm);
+}
+
+#[test]
+fn shutdown_cancels_a_host_execution_suspended_on_a_channel() {
+    let module = NativeModule::new("test.shutdown_suspension", ()).unwrap();
+    let function = module
+        .function("plain_channel", NativeArity::Exact(0), plain_channel)
+        .unwrap();
+    let program = compile(
+        "shutdown-suspended-execution.slug",
+        "val channel = plain_channel()\nselect { recv channel }\n",
+    )
+    .expect("compile blocked channel wait");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    vm.start_named(&program, "main").expect("start execution");
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+    vm.shutdown();
+
+    assert_shutdown_progress(&mut vm);
+}
+
+fn assert_shutdown_progress(vm: &mut Vm) {
+    for progress in [vm.poll(), vm.run_until_stalled()] {
+        let VmProgress::Failed(error) = progress else {
+            panic!("shutdown must reject all later progress calls");
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+        assert_eq!(error.message, "VM has shut down");
+    }
+    let error = vm
+        .blocking_run()
+        .expect_err("blocking progress after shutdown must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(error.message, "VM has shut down");
+}
+
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
     program.add_chunk(main);

@@ -447,6 +447,14 @@ impl Vm {
             return;
         }
         self.shutdown = true;
+        if let Some(execution) = self.host_execution.take() {
+            let cancellation = self.error(
+                RuntimeErrorKind::InvalidCall,
+                "VM has shut down".into(),
+                None,
+            );
+            self.release_host_execution(execution, Some(&cancellation));
+        }
         self.native_resources.close_all();
         if let Some(loader) = &self.module_loader {
             loader.shutdown();
@@ -1096,6 +1104,13 @@ impl Vm {
     /// external input and never re-enters Slug from a producer callback.
     #[must_use]
     pub fn poll(&mut self) -> VmProgress {
+        if self.shutdown {
+            return VmProgress::Failed(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "VM has shut down".into(),
+                None,
+            ));
+        }
         let Some(mut execution) = self.host_execution.take() else {
             return VmProgress::Stalled;
         };
