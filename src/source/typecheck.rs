@@ -262,6 +262,9 @@ fn analyze_expressions(
     imports: ImportSnapshots,
 ) -> Result<SemanticAnalysis, SourceError> {
     let mut environment = Environment::with_imports(imports);
+    if let Some(builtins) = environment.import_snapshot("slug.builtin") {
+        environment.install_implicit_callable_export(&builtins, "chan");
+    }
     let mut exports = HashMap::new();
     let mut types = HashMap::new();
     let mut resource_names = HashSet::new();

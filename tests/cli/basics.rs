@@ -235,7 +235,7 @@ fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     let path = fixture_path("builtin-module");
     fs::write(
         &path,
-        "val builtin = import(\"slug.builtin\")\nbuiltin.print(builtin.len([1, 2]))\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\n",
+        "val builtin = import(\"slug.builtin\")\nval implicit = chan(1)\nbuiltin.print(builtin.len([1, 2]))\nbuiltin.println(Error { msg: \"ready\" }.type, builtin.Error { msg: \"done\" }.type)\nbuiltin.println(implicit == builtin.chan(1))\n",
     )
     .expect("write builtin import source");
     let output = slug()
@@ -245,7 +245,10 @@ fn exposes_builtin_bindings_implicitly_and_by_explicit_import() {
     fs::remove_file(path).expect("remove builtin import source");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2Error Error\n");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "2Error Error\nfalse\n"
+    );
     assert!(output.stderr.is_empty());
 }
 

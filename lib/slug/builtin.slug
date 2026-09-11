@@ -38,3 +38,12 @@ export foreign println = fn(...values):nil
  * string, or elements in a list or map.
  */
 export foreign len = fn(value:str|bytes|list|map):num
+
+/**
+ * Creates a channel with an optional non-negative buffer capacity.
+ *
+ * A zero-capacity channel rendezvouses senders and receivers; a positive
+ * capacity queues that many values before a sender blocks. `chan<T>()`
+ * constructs a channel whose values conform to `T`.
+ */
+export foreign chan = fn<T>(capacity:num = 0):chan<T>

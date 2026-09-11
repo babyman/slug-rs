@@ -101,7 +101,7 @@ fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
         count => {
             return call.raise(slug_vm::NativeError::new(
                 "native.arity",
-                format!("`slug.channel.chan` expects at most 1 argument, got {count}"),
+                format!("`chan` expects at most 1 argument, got {count}"),
             ));
         }
     };
@@ -140,10 +140,8 @@ fn register_native_modules(vm: &mut Vm) {
             .expect("static builtin function is valid"),
     )
     .expect("static builtin binding is unique");
-
-    let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
-    vm.define_foreign(
-        channel
+    vm.define_builtin(
+        builtins
             .function(
                 "chan",
                 NativeArity::Range {
@@ -152,9 +150,11 @@ fn register_native_modules(vm: &mut Vm) {
                 },
                 native_channel,
             )
-            .expect("static foreign function is valid"),
+            .expect("static builtin function is valid"),
     )
-    .expect("static foreign binding is unique");
+    .expect("static builtin binding is unique");
+
+    let channel = NativeModule::new("slug.channel", ()).expect("static native module is valid");
     vm.define_foreign(
         channel
             .function("close", NativeArity::Exact(1), native_close)

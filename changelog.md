@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Promoted `chan(capacity = 0)` to the implicit `slug.builtin` foundation;
+  `slug.channel` now owns only channel operations.
+
 - Parse multiline map literals whose first entry follows the opening brace on a
   new line, including raw single-quoted string keys.
 

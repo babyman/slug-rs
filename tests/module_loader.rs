@@ -1549,11 +1549,10 @@ fn generic_containers_retain_imported_resource_identity() {
             &main_path.to_string_lossy(),
             "resource File\n\
              val api = import(\"api\")\n\
-             val channel = import(\"slug.channel\")\n\
              val check = fn(file:api.File) {\n\
                val values:list<api.File> = [file]\n\
                val entries:map<str, api.File> = {file: file}\n\
-               val inbox:chan<api.File> = channel.chan()\n\
+               val inbox:chan<api.File> = chan()\n\
                val pending:task<api.File> = spawn { file }\n\
                val invalid:list<File> = values\n\
              }\n",

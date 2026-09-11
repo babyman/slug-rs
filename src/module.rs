@@ -264,7 +264,11 @@ impl ModuleLoader {
             return Ok(program.clone());
         }
         let mut program = self
-            .compile_source(&source.path.to_string_lossy(), &source.text)
+            .compile_source_for_module(
+                &source.path.to_string_lossy(),
+                &source.text,
+                name != "slug.builtin",
+            )
             .map_err(|error| ModuleLoadError::Source {
                 path: source.path.clone(),
                 message: error.to_string(),
@@ -287,7 +291,16 @@ impl ModuleLoader {
     ///
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
-        compile_with_resolver(path, source, |name| {
+        self.compile_source_for_module(path, source, true)
+    }
+
+    fn compile_source_for_module(
+        &self,
+        path: &str,
+        source: &str,
+        include_implicit_builtins: bool,
+    ) -> Result<Program, SourceError> {
+        compile_with_resolver(path, source, include_implicit_builtins, |name| {
             self.semantic_snapshot(Some(Path::new(path)), name)
         })
     }
@@ -306,7 +319,11 @@ impl ModuleLoader {
             return None;
         }
         let snapshot = self
-            .compile_source(&source.path.to_string_lossy(), &source.text)
+            .compile_source_for_module(
+                &source.path.to_string_lossy(),
+                &source.text,
+                name != "slug.builtin",
+            )
             .ok()
             .map(|program| program.semantic_snapshot().clone());
         self.state

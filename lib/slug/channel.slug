@@ -4,14 +4,14 @@
  * Provides buffered and unbuffered channels for communicating between
  * concurrent tasks, following Slug's structured concurrency model.
  *
- * Channels are created with `chan()` and closed with `close()`. Use `send`
- * and `recv` for blocking operations, or `trySend`/`tryRecv` for
+ * Channels are created with the builtin `chan()` and closed with `close()`.
+ * Use `send` and `recv` for blocking operations, or `trySend`/`tryRecv` for
  * non-blocking variants. Use `await` to block until a spawned task completes.
  *
  * ## Example
  *
  * ```slug
- * val { chan, send, recv, close } = import("slug.channel")
+ * val { send, recv, close } = import("slug.channel")
  *
  * val ch = chan()
  *
@@ -30,15 +30,6 @@
  * A timeout of `0` (default) means wait indefinitely. When a timeout
  * elapses a `TimeoutError` is thrown.
  */
-
-/**
- * creates a new channel with an optional buffer capacity.
- *
- * An unbuffered channel (capacity 0) blocks the sender until a receiver
- * is ready. A buffered channel allows up to `capacity` messages to be
- * queued before blocking.
- */
-export foreign chan = fn<T>(capacity:num = 0):chan<T>
 
 /**
  * closes a channel, signalling that no more values will be sent.

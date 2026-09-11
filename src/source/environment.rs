@@ -243,6 +243,24 @@ impl Environment {
         }
     }
 
+    pub(super) fn install_implicit_callable_export(&mut self, module: &ModuleSnapshot, name: &str) {
+        let Some(binding) = module
+            .exports
+            .get(name)
+            .filter(|binding| !binding.callables.is_empty())
+        else {
+            return;
+        };
+        self.scopes
+            .first_mut()
+            .expect("a semantic environment always has a root scope")
+            .insert(name.into(), binding.clone());
+    }
+
+    pub(super) fn import_snapshot(&self, name: &str) -> Option<ModuleSnapshot> {
+        self.imports.get(name).cloned()
+    }
+
     pub(super) fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.type_scopes.push(HashMap::new());

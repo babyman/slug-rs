@@ -75,14 +75,22 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
 pub(crate) fn compile_with_resolver(
     path: &str,
     source: &str,
+    include_implicit_builtins: bool,
     mut resolve: impl FnMut(&str) -> Option<ModuleSnapshot>,
 ) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    let imports = typecheck::static_import_names(&expressions)
+    let mut imports = typecheck::static_import_names(&expressions)
         .into_iter()
         .filter_map(|name| resolve(&name).map(|snapshot| (name, snapshot)))
         .collect::<HashMap<_, _>>();
+    if include_implicit_builtins
+        && let std::collections::hash_map::Entry::Vacant(entry) =
+            imports.entry("slug.builtin".into())
+        && let Some(snapshot) = resolve("slug.builtin")
+    {
+        entry.insert(snapshot);
+    }
     compile_expressions(path, expressions, imports)
 }
 

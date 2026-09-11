@@ -501,7 +501,7 @@ fn preserves_explicit_and_contextual_channel_element_types() {
     let path = fixture_path("channel-element-inference");
     fs::write(
         &path,
-        "val { await, chan, recv, send } = import(\"slug.channel\")\n\
+        "val { await, recv, send } = import(\"slug.channel\")\n\
          val inbox = chan<num>()\n\
          val sender = spawn { send(inbox, 1) }\n\
          val received:num|nil = recv(inbox)\n\
@@ -522,8 +522,8 @@ fn preserves_explicit_and_contextual_channel_element_types() {
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
 
     for source in [
-        "val { chan, send } = import(\"slug.channel\")\nval inbox = chan<num>()\nsend(inbox, \"wrong\")\n",
-        "val { chan, send } = import(\"slug.channel\")\nval inbox:chan<num> = chan()\nsend(inbox, \"wrong\")\n",
+        "val { send } = import(\"slug.channel\")\nval inbox = chan<num>()\nsend(inbox, \"wrong\")\n",
+        "val { send } = import(\"slug.channel\")\nval inbox:chan<num> = chan()\nsend(inbox, \"wrong\")\n",
     ] {
         fs::write(&path, source).expect("write invalid typed channel source");
         let output = slug()
@@ -546,7 +546,7 @@ fn generic_channel_and_task_apis_preserve_payload_types_together() {
     let path = fixture_path("generic-concurrency-integration");
     fs::write(
         &path,
-        "val { await, chan, recv, send } = import(\"slug.channel\")\n\
+        "val { await, recv, send } = import(\"slug.channel\")\n\
          val inbox = chan<num>()\n\
          val sender = spawn { send(inbox, 42) }\n\
          val received:num|nil = recv(inbox)\n\
@@ -1438,12 +1438,12 @@ fn reports_unregistered_documented_foreign_declarations() {
 }
 
 #[test]
-fn imports_slug_channel_with_its_registered_foreign_bindings() {
+fn uses_the_builtin_channel_constructor_with_slug_channel_operations() {
     let path = fixture_path("slug-channel-library");
     fs::write(
         &path,
         "val channel = import(\"slug.channel\")\n\
-         val inbox = channel.chan(2)\n\
+         val inbox = chan(2)\n\
          val returned = inbox /> channel.send(7) /> channel.send(42)\n\
          println(returned == inbox)\n\
          println(channel.recv(inbox))\n\
@@ -1470,6 +1470,29 @@ fn imports_slug_channel_with_its_registered_foreign_bindings() {
         "true\n7\n42\nnil\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn does_not_export_the_builtin_channel_constructor_from_slug_channel() {
+    let path = fixture_path("slug-channel-without-chan");
+    fs::write(
+        &path,
+        "val channel = import(\"slug.channel\")\nchannel.chan()\n",
+    )
+    .expect("write slug.channel source without builtin constructor");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run slug.channel source without builtin constructor");
+    fs::remove_file(path).expect("remove slug.channel source without builtin constructor");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot call nil"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
