@@ -81,6 +81,20 @@ fn slim_runtime_pumps_native_channel_select_without_a_scheduler() {
     ));
 }
 
+#[test]
+fn full_and_slim_compile_the_same_scheduler_source() {
+    let program = compile(
+        "compiler-feature-equivalence.slug",
+        "val channel = chan(0)\n\
+         val task = spawn { select { recv channel; after 1 } }\n\
+         nursery { select { await task; after 1 } }\n",
+    );
+    assert!(
+        program.is_ok(),
+        "runtime feature selection must not change source acceptance: {program:?}"
+    );
+}
+
 fn plain_channel(call: &mut NativeCall<'_>) -> NativeStatus {
     let channel = call.plain_channel(0);
     call.return_value(channel)

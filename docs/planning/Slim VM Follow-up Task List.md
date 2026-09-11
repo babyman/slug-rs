@@ -139,7 +139,7 @@ The slim build contains no `TaskExecution` type or associated task-execution imp
 
 ---
 
-## Task 4 — Continue Removing Concurrency-Only Dead Code
+## Task 4 — Continue Removing Concurrency-Only Dead Code ✓
 
 Use the no-default-features build and compiler warnings to identify any remaining implementation that exists solely for:
 
@@ -168,7 +168,7 @@ remains green and concurrency-only dead-code warnings are eliminated or meaningf
 
 # 3. Protect the Host-Driven Runtime Contract
 
-## Task 5 — Add/Confirm Non-Blocking `run_until_stalled()` Tests
+## Task 5 — Add/Confirm Non-Blocking `run_until_stalled()` Tests ✓
 
 Protect the core invariant:
 
@@ -185,7 +185,7 @@ The call must return `Stalled` rather than waiting.
 
 ---
 
-## Task 6 — Protect Against Native Re-entry
+## Task 6 — Protect Against Native Re-entry ✓
 
 Add or retain a test demonstrating that native producer notification:
 
@@ -212,7 +212,7 @@ run_until_stalled()
 
 ---
 
-## Task 7 — Keep Progress Notification Scheduler-Neutral
+## Task 7 — Keep Progress Notification Scheduler-Neutral ✓
 
 Confirm the generic progress signal remains independent of:
 
@@ -233,7 +233,7 @@ It must not encode:
 
 # 4. Preserve the Shared Channel Boundary
 
-## Task 8 — Keep Channels Available Without `concurrency`
+## Task 8 — Keep Channels Available Without `concurrency` ✓
 
 Verify the slim runtime continues to support:
 
@@ -264,7 +264,7 @@ This path must remain functional without the scheduler.
 
 ---
 
-## Task 9 — Keep Scheduler-Dependent `select` Cases Isolated
+## Task 9 — Keep Scheduler-Dependent `select` Cases Isolated ✓
 
 Retain the current useful split:
 
@@ -285,7 +285,7 @@ The existence of scheduler-specific `select` cases must not cause all of `select
 
 # 5. Runtime Capability Errors
 
-## Task 10 — Standardize Unsupported Capability Errors
+## Task 10 — Standardize Unsupported Capability Errors ✓
 
 Executed concurrency-only operations in a slim runtime should produce a checked, consistent runtime error.
 
@@ -315,7 +315,7 @@ Unsupported functionality:
 
 ---
 
-## Task 11 — Keep FFI ABI Stable Across Builds
+## Task 11 — Keep FFI ABI Stable Across Builds ✓
 
 Confirm the slim configuration does not structurally alter the public FFI ABI.
 
@@ -400,7 +400,7 @@ the previously measured behavior.
 
 ---
 
-## Task 15 — Add a Compiler-Equivalence Test
+## Task 15 — Add a Compiler-Equivalence Test ✓
 
 Add a small fixture suite that is checked under both full and slim configurations.
 
