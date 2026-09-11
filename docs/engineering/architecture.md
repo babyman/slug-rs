@@ -40,6 +40,12 @@ implements a small source subset through a checked bytecode virtual machine.
   work. `Vm::blocking_run` is the adapter that may wait for a notification or
   timer, preserving the convenient blocking API for the CLI.
 
+The public `VmProgress::Stalled` result currently covers both an in-flight
+execution waiting for external or scheduled progress and a VM with no active
+host execution. The VM retains the internal state needed to distinguish native
+ingress, timer, and quiescent conditions, but a separate public `Idle` result
+is deferred until a long-lived embedding API needs that distinction.
+
 ## VM and bytecode direction
 
 The current operand-stack VM remains the implementation baseline while known

@@ -332,7 +332,7 @@ Native channel producer functionality remains supported in slim builds.
 
 # 6. Embedding API Follow-up
 
-## Task 12 — Document `Idle` vs `Stalled` as a Deferred API Question
+## Task 12 — Document `Idle` vs `Stalled` as a Deferred API Question ✓
 
 Do not necessarily change the API now, but document the semantic distinction between:
 
@@ -361,7 +361,7 @@ Treat this as a future embedding-API refinement rather than a blocker for the sl
 
 ---
 
-## Task 13 — Preserve Internal Stall Information
+## Task 13 — Preserve Internal Stall Information ✓
 
 Continue retaining enough internal information to eventually distinguish:
 
