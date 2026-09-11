@@ -23,9 +23,11 @@ progress after a notification or timer deadline.
 
 Embedders can drive one VM owner from an event loop without interpreter
 re-entry. Existing blocking source execution and the native producer ABI are
-unchanged. Scheduler-owned tasks remain available; making task scheduling an
-optional build policy is a subsequent extraction, not a separate source
-language.
+unchanged. The default-enabled `concurrency` Cargo feature supplies
+scheduler-owned tasks, timers, nurseries, and task-aware `select`; a slim
+`--no-default-features` build retains channels, ingress, and host-driven
+progress. The source language remains one model: an executed scheduler-only
+operation in the slim runtime reports a checked unavailable-capability error.
 
 ## Migration
 

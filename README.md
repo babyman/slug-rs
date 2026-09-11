@@ -45,6 +45,11 @@ contract is documented separately as `.cslug`.
   and checked whole-case match constraints, plus fieldless nominal enum
   declarations with qualified values, match patterns, exhaustive coverage, and
   transparent compile-time `type Name = Annotation` aliases.
+- The default `concurrency` Cargo feature supplies tasks, nurseries, timers,
+  and task-aware `select`. Builds with `--no-default-features` retain channels,
+  native ingress, `Vm::poll`, and `Vm::run_until_stalled`; source programs stay
+  valid, while executing a concurrency-only operation returns a checked
+  unavailable-runtime-capability error.
 - Source-level `import(name, ...)` with checked string module names,
   importer-relative and project-root resolution, `$SLUG_HOME/lib` library
   fallback, then `$SLUG_HOME/clutch` experimental clutch providers, cached

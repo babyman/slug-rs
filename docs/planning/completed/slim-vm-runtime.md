@@ -134,7 +134,7 @@ this audit.
 
 ### 6. Close documentation
 
-- [ ] Update the architecture note and changelog only for findings that alter
+- [x] Update the architecture note and changelog only for findings that alter
   user-visible capability, error behavior, or documented embedding guidance.
-- [ ] Move this plan to `docs/planning/completed/` when all extraction and
+- [x] Move this plan to `docs/planning/completed/` when all extraction and
   measurement work is complete.
