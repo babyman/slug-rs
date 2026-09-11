@@ -105,6 +105,33 @@ The slim configuration therefore produces a modest but concrete embedding
 benefit: scheduler task state and its closure metadata disappear, while the
 shared value and frame representations remain the same.
 
+### High-frequency object audit: 2026-09-11
+
+The only concurrency-only field found in common execution objects was
+`Closure::capture_sources`; it accounts for the 24-byte closure reduction.
+`Frame` has no concurrency-only fields, `Value::Task` is already absent in the
+slim configuration, and the remaining channel state is intentionally shared by
+the host-pump model.
+
+The VM benchmark is available with either feature configuration (`metrics` is
+now its only required feature) and includes two shared-path workloads:
+
+- `ordinary-calls-200` makes 200 ordinary calls per run.
+- `closures-retained-128` creates and retains 128 closures per run.
+
+One optimized run on the measurement environment above produced the following
+elapsed times. They are directional observations, not performance thresholds:
+
+| Workload | Full | Slim | Change |
+|---|---:|---:|---:|
+| `ordinary-calls-200` (1,000 runs) | 179.67 ms | 167.85 ms | -6.6% |
+| `closures-retained-128` (100 runs) | 13.83 ms | 12.32 ms | -10.9% |
+
+The closure workload retains 128 closures at once, so the measured 24-byte
+layout reduction removes 3,072 bytes of inline closure storage from that live
+set. No other common runtime representation exposed concurrency-only state in
+this audit.
+
 ### 6. Close documentation
 
 - [ ] Update the architecture note and changelog only for findings that alter

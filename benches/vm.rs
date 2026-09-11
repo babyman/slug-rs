@@ -1,5 +1,6 @@
+#[cfg(feature = "concurrency")]
+use std::fmt::Write;
 use std::{
-    fmt::Write,
     hint::black_box,
     time::{Duration, Instant},
 };
@@ -41,7 +42,7 @@ fn install_native_increment(vm: &mut Vm) {
 fn main() {
     let vm_layout = Vm::layout_metrics();
     println!(
-        "VM layout: Value {}/{}, LocalSlot {}/{}, Frame {}/{}, Closure {}/{}, Task {}/{}, TaskState {}/{}, TaskExecution {}/{} bytes/alignment",
+        "VM layout: Value {}/{}, LocalSlot {}/{}, Frame {}/{}, Closure {}/{} bytes/alignment",
         vm_layout.value_size_bytes,
         vm_layout.value_alignment_bytes,
         vm_layout.local_slot_size_bytes,
@@ -50,6 +51,10 @@ fn main() {
         vm_layout.frame_alignment_bytes,
         vm_layout.closure_size_bytes,
         vm_layout.closure_alignment_bytes,
+    );
+    #[cfg(feature = "concurrency")]
+    println!(
+        "Scheduler layout: Task {}/{}, TaskState {}/{}, TaskExecution {}/{} bytes/alignment",
         vm_layout.task_size_bytes,
         vm_layout.task_alignment_bytes,
         vm_layout.task_state_size_bytes,
@@ -64,10 +69,9 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations, workload.install);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {scheduler_wait:?} scheduler wait); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {timers} timer registrations; {lookups} deadline lookups/{deadline_entries} entries; {wakeups} timer wakeups/{wakeup_entries} entries; {removals} wait-registration removals; removal entries channel/task/timer {channel_entries}/{task_entries}/{timer_entries}; peak timers/ready/channel/task {peak_timers}/{peak_ready}/{peak_channel}/{peak_task}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
-            scheduler_wait = metrics.scheduler_wait_time,
             verification = metrics.verification_time,
             instructions = metrics.instructions_executed,
             clones = metrics.instruction_clones,
@@ -77,19 +81,9 @@ fn main() {
             program_clone_bytes = metrics.program_clone_bytes,
             frames = metrics.frames_created,
             cells = metrics.local_binding_cells_created,
-            timers = metrics.timer_registrations,
-            lookups = metrics.timer_deadline_lookups,
-            wakeups = metrics.timer_wakeups,
             removals = metrics.wait_registration_removals,
-            deadline_entries = metrics.timer_deadline_entries_examined,
-            wakeup_entries = metrics.timer_wakeup_entries_examined,
             channel_entries = metrics.channel_waiter_entries_examined,
-            task_entries = metrics.task_waiter_entries_examined,
-            timer_entries = metrics.timer_waiter_entries_examined,
-            peak_timers = metrics.peak_timer_waiters,
-            peak_ready = metrics.peak_ready_queue,
             peak_channel = metrics.peak_channel_waiters,
-            peak_task = metrics.peak_task_waiters,
             program_inline = layout.program_inline_bytes,
             chunk_storage = layout.chunk_storage_bytes,
             constant_bytes = layout.constant_pool_capacity_bytes,
@@ -105,6 +99,21 @@ fn main() {
             span_entries = layout.span_table_entries,
             inline_span_bytes = layout.inline_span_bytes,
             compressed_span_map_bytes = layout.compressed_span_map_bytes,
+        );
+        #[cfg(feature = "concurrency")]
+        println!(
+            "  scheduler: {:?} wait; {} timer registrations; deadline lookups/entries {}/{}; wakeups/entries {}/{}; removal entries task/timer {}/{}; peak timers/ready/task {}/{}/{}",
+            metrics.scheduler_wait_time,
+            metrics.timer_registrations,
+            metrics.timer_deadline_lookups,
+            metrics.timer_deadline_entries_examined,
+            metrics.timer_wakeups,
+            metrics.timer_wakeup_entries_examined,
+            metrics.task_waiter_entries_examined,
+            metrics.timer_waiter_entries_examined,
+            metrics.peak_timer_waiters,
+            metrics.peak_ready_queue,
+            metrics.peak_task_waiters,
         );
     }
 }
@@ -128,24 +137,28 @@ fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration,
         metrics.program_clone_bytes += run_metrics.program_clone_bytes;
         metrics.frames_created += run_metrics.frames_created;
         metrics.local_binding_cells_created += run_metrics.local_binding_cells_created;
-        metrics.timer_registrations += run_metrics.timer_registrations;
-        metrics.timer_deadline_lookups += run_metrics.timer_deadline_lookups;
-        metrics.timer_wakeups += run_metrics.timer_wakeups;
         metrics.wait_registration_removals += run_metrics.wait_registration_removals;
-        metrics.timer_deadline_entries_examined += run_metrics.timer_deadline_entries_examined;
-        metrics.timer_wakeup_entries_examined += run_metrics.timer_wakeup_entries_examined;
         metrics.channel_waiter_entries_examined += run_metrics.channel_waiter_entries_examined;
-        metrics.task_waiter_entries_examined += run_metrics.task_waiter_entries_examined;
-        metrics.timer_waiter_entries_examined += run_metrics.timer_waiter_entries_examined;
-        metrics.peak_timer_waiters = metrics
-            .peak_timer_waiters
-            .max(run_metrics.peak_timer_waiters);
-        metrics.peak_ready_queue = metrics.peak_ready_queue.max(run_metrics.peak_ready_queue);
         metrics.peak_channel_waiters = metrics
             .peak_channel_waiters
             .max(run_metrics.peak_channel_waiters);
-        metrics.peak_task_waiters = metrics.peak_task_waiters.max(run_metrics.peak_task_waiters);
-        metrics.scheduler_wait_time += run_metrics.scheduler_wait_time;
+        #[cfg(feature = "concurrency")]
+        {
+            metrics.timer_registrations += run_metrics.timer_registrations;
+            metrics.timer_deadline_lookups += run_metrics.timer_deadline_lookups;
+            metrics.timer_wakeups += run_metrics.timer_wakeups;
+            metrics.timer_deadline_entries_examined += run_metrics.timer_deadline_entries_examined;
+            metrics.timer_wakeup_entries_examined += run_metrics.timer_wakeup_entries_examined;
+            metrics.task_waiter_entries_examined += run_metrics.task_waiter_entries_examined;
+            metrics.timer_waiter_entries_examined += run_metrics.timer_waiter_entries_examined;
+            metrics.peak_timer_waiters = metrics
+                .peak_timer_waiters
+                .max(run_metrics.peak_timer_waiters);
+            metrics.peak_ready_queue = metrics.peak_ready_queue.max(run_metrics.peak_ready_queue);
+            metrics.peak_task_waiters =
+                metrics.peak_task_waiters.max(run_metrics.peak_task_waiters);
+            metrics.scheduler_wait_time += run_metrics.scheduler_wait_time;
+        }
         metrics.verification_time += run_metrics.verification_time;
     }
     (started.elapsed(), metrics)
@@ -165,6 +178,22 @@ const WORKLOADS: &[Workload] = &[
         iterations: ITERATIONS,
         source: || {
             "val makeAdder = fn(base) { fn(value) { base + value } }\nval add = makeAdder(1)\nadd(41)\n".into()
+        },
+        install: no_native_setup,
+    },
+    Workload {
+        name: "ordinary-calls-200",
+        iterations: ITERATIONS,
+        source: || {
+            "val increment = fn(value) { value + 1 }\nval apply = fn(remaining, value) { if (remaining == 0) { value } else { recur(remaining - 1, increment(value)) } }\napply(200, 0)\n".into()
+        },
+        install: no_native_setup,
+    },
+    Workload {
+        name: "closures-retained-128",
+        iterations: 100,
+        source: || {
+            "val build = fn(remaining, values) { if (remaining == 0) { values } else { recur(remaining - 1, [...values, fn(value) { value + remaining }]) } }\nbuild(128, [])\n".into()
         },
         install: no_native_setup,
     },
@@ -198,30 +227,35 @@ const WORKLOADS: &[Workload] = &[
         },
         install: install_native_increment,
     },
+    #[cfg(feature = "concurrency")]
     Workload {
         name: "many-timers-8",
         iterations: 100,
         source: many_timers_8,
         install: no_native_setup,
     },
+    #[cfg(feature = "concurrency")]
     Workload {
         name: "many-timers-32",
         iterations: 100,
         source: many_timers_32,
         install: no_native_setup,
     },
+    #[cfg(feature = "concurrency")]
     Workload {
         name: "many-timers-128",
         iterations: 25,
         source: many_timers_128,
         install: no_native_setup,
     },
+    #[cfg(feature = "concurrency")]
     Workload {
         name: "many-select-cases",
         iterations: 100,
         source: many_select_cases,
         install: no_native_setup,
     },
+    #[cfg(feature = "concurrency")]
     Workload {
         name: "cancel-suspended-waits",
         iterations: 10,
@@ -230,18 +264,22 @@ const WORKLOADS: &[Workload] = &[
     },
 ];
 
+#[cfg(feature = "concurrency")]
 fn many_timers_8() -> String {
     many_timers(8)
 }
 
+#[cfg(feature = "concurrency")]
 fn many_timers_32() -> String {
     many_timers(32)
 }
 
+#[cfg(feature = "concurrency")]
 fn many_timers_128() -> String {
     many_timers(128)
 }
 
+#[cfg(feature = "concurrency")]
 fn many_timers(count: usize) -> String {
     let mut source = String::from("val worker = fn() { select { after 1 } }\n");
     for index in 0..count {
@@ -256,6 +294,7 @@ fn many_timers(count: usize) -> String {
     source
 }
 
+#[cfg(feature = "concurrency")]
 fn many_select_cases() -> String {
     let mut source = String::from("select {\n");
     for milliseconds in 1..=16 {
@@ -265,6 +304,7 @@ fn many_select_cases() -> String {
     source
 }
 
+#[cfg(feature = "concurrency")]
 fn cancel_suspended_waits() -> String {
     let mut source =
         String::from("val attempt = fn() {\ndefer onerror(error) { nil }\nnursery {\n");
