@@ -1220,11 +1220,9 @@ impl Vm {
                                 None,
                             )
                         });
-                    let execution = self
-                        .host_execution
-                        .take()
-                        .expect("a stalled blocking run has a host execution");
-                    self.release_host_execution(execution, Some(&result));
+                    if let Some(execution) = self.host_execution.take() {
+                        self.release_host_execution(execution, Some(&result));
+                    }
                     return Err(result);
                 }
             }
