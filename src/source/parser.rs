@@ -1186,6 +1186,7 @@ impl Parser {
             self.consume(&TokenKind::Colon, "expected :")?;
             let value = self.expression()?;
             entries.push((key, value));
+            self.separators();
             if !self.matches(&TokenKind::Comma) {
                 break;
             }

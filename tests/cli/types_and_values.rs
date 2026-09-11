@@ -1028,7 +1028,7 @@ fn parses_multiline_maps_with_raw_quoted_keys() {
         "val ch = import(\"slug.std\")\n\
          val m = {\n\
          'k1': 1,\n\
-         'k2': 2,\n\
+         'k2': 2\n\
          }\n\
          println(m, m /> ch.keys)\n",
     )
