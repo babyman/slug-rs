@@ -471,6 +471,7 @@ fn infers_map_literal_key_and_value_types_independently() {
     );
 }
 
+#[cfg(feature = "concurrency")]
 #[test]
 fn preserves_spawn_result_types_through_task_await() {
     let path = fixture_path("task-result-inference");
@@ -496,6 +497,7 @@ fn preserves_spawn_result_types_through_task_await() {
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
 }
 
+#[cfg(feature = "concurrency")]
 #[test]
 fn preserves_explicit_and_contextual_channel_element_types() {
     let path = fixture_path("channel-element-inference");
@@ -541,6 +543,7 @@ fn preserves_explicit_and_contextual_channel_element_types() {
     fs::remove_file(path).expect("remove typed channel source");
 }
 
+#[cfg(feature = "concurrency")]
 #[test]
 fn generic_channel_and_task_apis_preserve_payload_types_together() {
     let path = fixture_path("generic-concurrency-integration");
@@ -572,6 +575,7 @@ fn generic_channel_and_task_apis_preserve_payload_types_together() {
     );
 }
 
+#[cfg(feature = "concurrency")]
 #[test]
 fn infers_normalized_select_handler_results() {
     let path = fixture_path("select-result-inference");

@@ -810,6 +810,19 @@ impl Vm {
         globals.insert("stacktrace".into(), Value::Builtin(Builtin::Stacktrace));
     }
 
+    #[cfg(not(feature = "concurrency"))]
+    fn runtime_capability_error(
+        &self,
+        capability: &str,
+        span: Option<&SourceSpan>,
+    ) -> RuntimeError {
+        self.error_at(
+            RuntimeErrorKind::InvalidCall,
+            format!("runtime capability `{capability}` is unavailable"),
+            span,
+        )
+    }
+
     /// Executes a zero-argument entry chunk.
     ///
     /// # Errors
@@ -1695,10 +1708,32 @@ impl Vm {
                 self.pipeline_call_at(program, kinds, Some(identity), span)?;
             }
             Op::Import(kinds) => self.import_at(kinds, span)?,
-            Op::Select(cases) => self.select_at(cases, span)?,
+            Op::Select(cases) => {
+                #[cfg(not(feature = "concurrency"))]
+                if cases
+                    .iter()
+                    .any(|case| matches!(case, SelectCase::After { .. } | SelectCase::Await { .. }))
+                {
+                    return Err(self.runtime_capability_error("select timer or task-await", span));
+                }
+                self.select_at(cases, span)?;
+            }
             Op::SelectApply => self.select_apply_at(program, span)?,
-            Op::Spawn => self.spawn_task_at(program, span)?,
-            Op::Nursery { has_limit } => self.run_nursery_at(program, *has_limit, span)?,
+            Op::Spawn => {
+                #[cfg(feature = "concurrency")]
+                self.spawn_task_at(program, span)?;
+                #[cfg(not(feature = "concurrency"))]
+                return Err(self.runtime_capability_error("spawn", span));
+            }
+            Op::Nursery { has_limit } => {
+                #[cfg(feature = "concurrency")]
+                self.run_nursery_at(program, *has_limit, span)?;
+                #[cfg(not(feature = "concurrency"))]
+                {
+                    let _ = has_limit;
+                    return Err(self.runtime_capability_error("nursery", span));
+                }
+            }
             Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
             Op::LeaveScope => {
                 let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {

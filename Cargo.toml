@@ -12,6 +12,8 @@ name = "slug_vm"
 path = "src/lib.rs"
 
 [features]
+default = ["concurrency"]
+concurrency = []
 metrics = []
 
 [[bin]]

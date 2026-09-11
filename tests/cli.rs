@@ -21,6 +21,7 @@ fn fixture_path(kind: &str) -> std::path::PathBuf {
 // here so each module can focus on one observable source-language boundary.
 #[path = "cli/basics.rs"]
 mod basics;
+#[cfg(feature = "concurrency")]
 #[path = "cli/concurrency.rs"]
 mod concurrency;
 #[path = "cli/diagnostics.rs"]

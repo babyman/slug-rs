@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the default-enabled `concurrency` Cargo feature. Slim builds retain
+  channels and host-driven progress while reporting executed scheduler-only
+  operations as checked unavailable-runtime-capability errors.
+
 - Added host-driven VM progress through `Vm::poll` and
   `Vm::run_until_stalled`; native channel ingress now signals generic progress,
   while `Vm::blocking_run` owns blocking waits.

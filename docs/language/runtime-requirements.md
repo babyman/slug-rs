@@ -371,6 +371,15 @@ across a `recur` iteration.
 
 ## Tasks and nurseries
 
+### Optional runtime capability
+
+An implementation MAY omit Slug-managed concurrency while retaining the same
+source grammar, type checking, bytecode shape, channels, and native ingress.
+In that configuration, an executed `spawn`, `nursery`, timer `select` case, or
+task-await `select` case MUST return a checked runtime error naming the
+unavailable capability. Unreached operations remain valid. Channel readiness
+operations remain available to the host-driven runtime.
+
 ### Ownership and lifetime
 
 Every evaluation begins in an implicit root nursery. `spawn` creates a task and

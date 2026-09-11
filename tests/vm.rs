@@ -12,6 +12,24 @@ use slug_vm::{
     SelectCase, SourceSpan, SpanId, StructFieldsId, Value, Vm, VmProgress, compile,
 };
 
+#[cfg(not(feature = "concurrency"))]
+#[test]
+fn slim_runtime_defers_concurrency_capability_errors_until_execution() {
+    let program = compile(
+        "slim-capability.slug",
+        "if false { spawn { 42 } }\nselect { after 1 }\n",
+    )
+    .expect("concurrency syntax remains valid in a slim build");
+    let error = Vm::new()
+        .run_named(&program, "main")
+        .expect_err("executed scheduler operation must report its unavailable capability");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidCall);
+    assert_eq!(
+        error.message,
+        "runtime capability `select timer or task-await` is unavailable"
+    );
+}
+
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
     program.add_chunk(main);
@@ -563,5 +581,6 @@ mod bytecode;
 mod calls_and_native;
 #[path = "vm/collections.rs"]
 mod collections;
+#[cfg(feature = "concurrency")]
 #[path = "vm/concurrency.rs"]
 mod concurrency;
