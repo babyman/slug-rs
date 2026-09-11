@@ -48,13 +48,11 @@ pub(crate) enum ChannelReceive {
 }
 
 #[derive(Clone)]
-pub(crate) enum Waiter {
-    Task(Rc<Task>),
-    Root(RootWaiter),
-    Select {
-        state: Rc<RefCell<SelectWaitState>>,
-        wake: SelectWake,
-    },
+pub(crate) struct Waiter {
+    identity: usize,
+    resume: Rc<dyn Fn(Result<Value, crate::RuntimeError>)>,
+    reject_closed_send: Rc<dyn Fn()>,
+    set_closed_send_error: Rc<dyn Fn(crate::RuntimeError)>,
 }
 
 #[derive(Clone)]
@@ -88,67 +86,85 @@ pub(crate) struct SelectWaitState {
 
 impl Waiter {
     pub(crate) fn root(root: RootWaiter) -> Self {
-        Self::Root(root)
+        let identity = Rc::as_ptr(&root.state) as usize;
+        Self {
+            identity,
+            resume: Rc::new({
+                let root = root.clone();
+                move |result| root.resume(result)
+            }),
+            reject_closed_send: Rc::new({
+                let root = root.clone();
+                move || root.reject_closed_send()
+            }),
+            set_closed_send_error: Rc::new(move |error| root.set_closed_send_error(error)),
+        }
     }
 
     pub(crate) fn task(task: Rc<Task>) -> Self {
-        Self::Task(task)
+        let identity = Rc::as_ptr(&task.state) as usize;
+        Self {
+            identity,
+            resume: Rc::new({
+                let task = task.clone();
+                move |result| task.resume(result)
+            }),
+            reject_closed_send: Rc::new({
+                let task = task.clone();
+                move || task.reject_closed_send()
+            }),
+            set_closed_send_error: Rc::new(|_| {}),
+        }
     }
 
     pub(crate) fn select(state: Rc<RefCell<SelectWaitState>>, wake: SelectWake) -> Self {
-        Self::Select { state, wake }
-    }
-
-    pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
-        match self {
-            Self::Task(task) => task.resume(result),
-            Self::Root(root) => root.resume(result),
-            Self::Select { state, wake } => {
-                let mut state = state.borrow_mut();
-                if state.selected {
+        let identity = state.borrow().waiter.identity.clone();
+        let resume_state = state.clone();
+        Self {
+            identity,
+            resume: Rc::new(move |result| {
+                let mut selected = resume_state.borrow_mut();
+                if selected.selected {
                     return;
                 }
-                state.selected = true;
-                let registrations = state.registrations.take();
-                let waiter = state.waiter.clone();
-                drop(state);
-                let handler = wake.selected();
+                selected.selected = true;
+                let registrations = selected.registrations.take();
+                let waiter = selected.waiter.clone();
+                drop(selected);
                 if let Some(registrations) = registrations {
                     registrations.remove_for_waiter(&waiter);
                 }
+                let handler = wake.selected();
                 waiter.resume(
                     result.map(|value| {
                         Value::List(vec![value, handler.unwrap_or(Value::Nil)].into())
                     }),
                 );
-            }
+            }),
+            reject_closed_send: Rc::new({
+                let state = state.clone();
+                move || state.borrow().waiter.reject_closed_send()
+            }),
+            set_closed_send_error: Rc::new(move |error| {
+                state.borrow().waiter.set_closed_send_error(error)
+            }),
         }
+    }
+
+    pub(crate) fn resume(&self, result: Result<Value, crate::RuntimeError>) {
+        (self.resume)(result);
     }
 
     pub(crate) fn set_closed_send_error(&self, error: crate::RuntimeError) {
-        if let Self::Root(root) = self {
-            root.set_closed_send_error(error);
-        } else if let Self::Select { state, .. } = self {
-            state.borrow().waiter.set_closed_send_error(error);
-        }
+        (self.set_closed_send_error)(error);
     }
 
     pub(crate) fn reject_closed_send(&self) {
-        match self {
-            Self::Task(task) => task.reject_closed_send(),
-            Self::Root(root) => root.reject_closed_send(),
-            Self::Select { state, .. } => state.borrow().waiter.reject_closed_send(),
-        }
+        (self.reject_closed_send)();
     }
 
     fn is_same(&self, other: &Waiter) -> bool {
-        match (self, other) {
-            (Self::Task(left), Self::Task(right)) => Rc::ptr_eq(&left.state, &right.state),
-            (Self::Root(left), Self::Root(right)) => Rc::ptr_eq(&left.state, &right.state),
-            (Self::Select { state, .. }, other) => state.borrow().waiter.is_same(other),
-            (other, Self::Select { state, .. }) => other.is_same(&state.borrow().waiter),
-            _ => false,
-        }
+        self.identity == other.identity
     }
 }
 
