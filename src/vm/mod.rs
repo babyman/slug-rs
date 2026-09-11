@@ -237,6 +237,7 @@ enum RuntimeSelectCase {
         deadline: Instant,
         handler: Option<Value>,
     },
+    #[cfg(feature = "concurrency")]
     Await {
         task: Rc<Task>,
         handler: Option<Value>,
@@ -3254,6 +3255,7 @@ impl Vm {
                         handler,
                     }
                 }
+                #[cfg(feature = "concurrency")]
                 SelectCase::Await { .. } => {
                     let value = self.pop_at(span)?;
                     let Value::Task(task) = value else {
@@ -3264,6 +3266,10 @@ impl Vm {
                         ));
                     };
                     RuntimeSelectCase::Await { task, handler }
+                }
+                #[cfg(not(feature = "concurrency"))]
+                SelectCase::Await { .. } => {
+                    return Err(self.runtime_capability_error("select task-await", span));
                 }
                 SelectCase::Default { .. } => RuntimeSelectCase::Default { handler },
             };
@@ -3301,6 +3307,7 @@ impl Vm {
                         ChannelSend::Pending => {}
                     }
                 }
+                #[cfg(feature = "concurrency")]
                 RuntimeSelectCase::Await { task, handler } => {
                     if task.is_running() {
                         return Err(self.error_at(
@@ -3355,6 +3362,7 @@ impl Vm {
                     channel.park_sender(waiter, value);
                     registrations.push(WaitRegistration::ChannelSend(channel));
                 }
+                #[cfg(feature = "concurrency")]
                 RuntimeSelectCase::Await { task, handler } => {
                     task.wait_for(Waiter::select(
                         select_state.clone(),

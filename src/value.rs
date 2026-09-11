@@ -3,10 +3,13 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt,
     fmt::Write as _,
-    rc::{Rc, Weak},
+    rc::Rc,
     sync::Arc,
     time::Instant,
 };
+
+#[cfg(feature = "concurrency")]
+use std::rc::Weak;
 
 use crate::{
     native::{NativeChannelProducer, NativeFunction, NativeResource},
@@ -60,6 +63,7 @@ pub(crate) enum SelectWake {
     Value {
         handler: Option<Value>,
     },
+    #[cfg(feature = "concurrency")]
     TaskAwait {
         handler: Option<Value>,
         observer: TaskObserver,
@@ -70,6 +74,7 @@ impl SelectWake {
     fn selected(&self) -> Option<Value> {
         match self {
             Self::Value { handler } => handler.clone(),
+            #[cfg(feature = "concurrency")]
             Self::TaskAwait { handler, observer } => {
                 observer.observe();
                 handler.clone()
@@ -172,6 +177,7 @@ impl Waiter {
 pub(crate) enum WaitRegistration {
     ChannelSend(Rc<Channel>),
     ChannelReceive(Rc<Channel>),
+    #[cfg(feature = "concurrency")]
     TaskAwait(Rc<Task>),
     Timer(Rc<RefCell<TimerService>>),
 }
@@ -209,6 +215,7 @@ impl WaitRegistration {
                     .receivers
                     .retain(|candidate| !candidate.is_same(waiter));
             }
+            #[cfg(feature = "concurrency")]
             Self::TaskAwait(target) => {
                 let mut state = target.state.borrow_mut();
                 #[cfg(feature = "metrics")]
@@ -650,8 +657,10 @@ enum TaskPhase {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "concurrency")]
 pub(crate) struct TaskObserver(Weak<RefCell<TaskState>>);
 
+#[cfg(feature = "concurrency")]
 impl TaskObserver {
     fn observe(&self) {
         if let Some(state) = self.0.upgrade() {
@@ -802,6 +811,7 @@ impl Task {
         self.state.borrow_mut().observed = true;
     }
 
+    #[cfg(feature = "concurrency")]
     pub(crate) fn observer(&self) -> TaskObserver {
         TaskObserver(Rc::downgrade(&self.state))
     }
