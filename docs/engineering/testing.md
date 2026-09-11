@@ -17,6 +17,13 @@ The VM and CLI targets are common loops, so Make exposes them directly. Run the
 listed `cargo test --test …` command for the remaining focused integration
 boundaries; `make test` runs all of them.
 
+## Feature matrix
+
+`make check` validates the default scheduler runtime with metrics and invokes
+`make slim` for every supported no-default-features configuration. `make slim`
+runs tests and strict Clippy both without extra features and with `metrics`.
+Use `cargo test --no-default-features --test vm` for a focused slim VM loop.
+
 Add a regression test with every behavior change. Error behavior must assert a
 Slug error or CLI diagnostic rather than merely proving that execution did not
 panic. Source syntax and user-visible behavior require a CLI test even when a

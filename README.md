@@ -162,9 +162,9 @@ make check
 cargo run --bin slug -- --help
 ```
 
-`make check` runs formatting validation, Clippy with warnings denied, and all
-unit and integration tests. Use `make test-vm` or `make test-cli` for the
-focused test loop. Agent-specific development rules and language-change
+`make check` runs formatting validation, strict Clippy, full tests, and the
+supported slim-runtime feature matrix. Use `make test-vm`, `make test-cli`, or
+`make slim` for focused runtime validation. Agent-specific development rules and language-change
 workflow guidance are in [AGENTS.md](AGENTS.md).
 
 The repository pins Rust 1.96.1, including `rustfmt` and Clippy, in
