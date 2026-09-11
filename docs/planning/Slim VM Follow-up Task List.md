@@ -105,7 +105,7 @@ not alter type-checking behavior.
 
 # 2. Complete Mechanical Concurrency Extraction
 
-## Task 3 — Gate `TaskExecution` as a Whole
+## Task 3 — Gate `TaskExecution` as a Whole ✓
 
 `TaskExecution` is concurrency-only state and should not exist in the slim runtime.
 

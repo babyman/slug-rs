@@ -209,8 +209,6 @@ struct ClosureCallOptions {
     direct_task_count: Option<Rc<Cell<usize>>>,
     #[cfg(feature = "concurrency")]
     nursery: Rc<Nursery>,
-    #[cfg(feature = "concurrency")]
-    settle_nursery: bool,
 }
 
 /// The independently owned interpreter state for a spawned task.
@@ -218,10 +216,10 @@ struct ClosureCallOptions {
 /// It currently runs to settlement, but keeping the VM intact makes future
 /// blocking operations able to return it to the scheduler without rebuilding
 /// frames, locals, or the operand stack.
+#[cfg(feature = "concurrency")]
 pub(crate) struct TaskExecution {
     vm: Vm,
     program: Rc<Program>,
-    #[cfg(feature = "concurrency")]
     settle_nursery: bool,
 }
 
@@ -274,8 +272,8 @@ enum RuntimeSelectCase {
     },
 }
 
+#[cfg(feature = "concurrency")]
 impl TaskExecution {
-    #[cfg(feature = "concurrency")]
     fn run(mut self) -> TaskRunOutcome {
         match self.vm.execute(&self.program) {
             ExecutionOutcome::Suspended => TaskRunOutcome::Suspended(Box::new(self)),
@@ -290,17 +288,14 @@ impl TaskExecution {
         }
     }
 
-    #[cfg(feature = "concurrency")]
     pub(crate) fn set_current_task(&mut self, task: &Rc<Task>) {
         self.vm.current_waiter = Some(Waiter::task(task));
     }
 
-    #[cfg(feature = "concurrency")]
     pub(crate) fn resume(&mut self, result: VmResult<Value>) {
         self.vm.resume = Some(result);
     }
 
-    #[cfg(feature = "concurrency")]
     pub(crate) fn reject_closed_send(&mut self) {
         let span = match &self.vm.suspension {
             Some(Suspension::Select { span }) => span.clone(),
@@ -313,7 +308,6 @@ impl TaskExecution {
         )));
     }
 
-    #[cfg(feature = "concurrency")]
     pub(crate) fn take_wait_registration(&mut self) -> Option<WaitSet> {
         self.vm.wait_registration.take()
     }
@@ -2271,8 +2265,6 @@ impl Vm {
                             direct_task_count: None,
                             #[cfg(feature = "concurrency")]
                             nursery: self.nursery.clone(),
-                            #[cfg(feature = "concurrency")]
-                            settle_nursery: false,
                         },
                     )?;
                     self.stack.truncate(base);
@@ -2465,8 +2457,6 @@ impl Vm {
                             direct_task_count: None,
                             #[cfg(feature = "concurrency")]
                             nursery: self.nursery.clone(),
-                            #[cfg(feature = "concurrency")]
-                            settle_nursery: false,
                         },
                     )?;
                     self.stack.truncate(base);
@@ -2598,7 +2588,7 @@ impl Vm {
     }
 
     #[cfg_attr(not(feature = "concurrency"), allow(clippy::needless_pass_by_value))]
-    fn module_closure_execution(
+    fn module_closure_vm(
         &self,
         program: Rc<Program>,
         closure: Rc<Closure>,
@@ -2606,7 +2596,7 @@ impl Vm {
         provided: Option<Vec<bool>>,
         span: Option<SourceSpan>,
         options: ClosureCallOptions,
-    ) -> VmResult<TaskExecution> {
+    ) -> VmResult<Vm> {
         #[cfg(not(feature = "concurrency"))]
         let ClosureCallOptions {} = options;
         let chunk = program.chunk(closure.chunk).ok_or_else(|| {
@@ -2673,12 +2663,7 @@ impl Vm {
             cleanup_action: false,
             cleanup_recovers: false,
         });
-        Ok(TaskExecution {
-            vm,
-            program,
-            #[cfg(feature = "concurrency")]
-            settle_nursery: options.settle_nursery,
-        })
+        Ok(vm)
     }
 
     fn call_module_closure(
@@ -2690,15 +2675,9 @@ impl Vm {
         span: Option<SourceSpan>,
         options: ClosureCallOptions,
     ) -> VmResult<Value> {
-        let mut execution = self.module_closure_execution(
-            program.clone(),
-            closure,
-            arguments,
-            provided,
-            span,
-            options,
-        )?;
-        execution.vm.run_nested_execution(&execution.program)
+        let mut vm =
+            self.module_closure_vm(program.clone(), closure, arguments, provided, span, options)?;
+        vm.run_nested_execution(program)
     }
 
     #[cfg(feature = "concurrency")]
@@ -2742,8 +2721,9 @@ impl Vm {
             globals: closure.globals.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
-        let execution = self.module_closure_execution(
-            self.installed_program(program)?,
+        let task_program = self.installed_program(program)?;
+        let vm = self.module_closure_vm(
+            task_program.clone(),
             closure,
             Vec::new(),
             None,
@@ -2752,9 +2732,13 @@ impl Vm {
                 direct_task_limit: None,
                 direct_task_count: None,
                 nursery: self.nursery.clone(),
-                settle_nursery: false,
             },
         )?;
+        let execution = TaskExecution {
+            vm,
+            program: task_program,
+            settle_nursery: false,
+        };
         let task = Rc::new(Task::pending(
             execution,
             admission,
@@ -2856,8 +2840,9 @@ impl Vm {
             #[cfg(feature = "metrics")]
             self.metrics.clone(),
         ));
-        let execution = self.module_closure_execution(
-            self.installed_program(program)?,
+        let task_program = self.installed_program(program)?;
+        let vm = self.module_closure_vm(
+            task_program.clone(),
             closure,
             Vec::new(),
             None,
@@ -2866,9 +2851,13 @@ impl Vm {
                 direct_task_limit: limit,
                 direct_task_count: limit.map(|_| Rc::new(Cell::new(0))),
                 nursery: nursery.clone(),
-                settle_nursery: true,
             },
         )?;
+        let execution = TaskExecution {
+            vm,
+            program: task_program,
+            settle_nursery: true,
+        };
         let body = Rc::new(Task::pending(execution, None, nursery.ready_queue()));
         nursery.enqueue(body.clone());
         nursery.run_task(&body);
