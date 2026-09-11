@@ -182,7 +182,9 @@ impl Nursery {
     /// Performs one available runtime round. It never waits for an operating
     /// system event, so it is safe for a host-driven VM pump.
     pub(super) fn make_available_progress(&self) -> bool {
-        self.run_next_ready_task() || self.wake_due_timers()
+        self.progress.make_available_progress()
+            || self.run_next_ready_task()
+            || self.wake_due_timers()
     }
 
     /// Blocking-adapter wait only. Core VM progress must use

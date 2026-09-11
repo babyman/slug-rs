@@ -470,6 +470,87 @@ fn a_foreign_thread_wakes_a_root_parked_on_a_native_channel() {
 }
 
 #[test]
+fn a_foreign_thread_wakes_an_explicit_nursery_body_parked_on_a_native_channel() {
+    fn delayed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert_eq!(
+                producer.try_send(slug_vm::NativeSendValue::integer(42)),
+                slug_vm::NativeProducerStatus::Sent
+            );
+        });
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.nursery_producer_wake", ()).unwrap();
+    let function = module
+        .function("delayed_channel", NativeArity::Exact(0), delayed_channel)
+        .unwrap();
+    let program = compile(
+        "nursery-native-producer-wake.slug",
+        "val channel = delayed_channel()\nnursery { select { recv channel } }\n",
+    )
+    .expect("compile explicit nursery native producer source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(42));
+}
+
+#[test]
+fn a_foreign_thread_wakes_a_root_settling_a_task_on_a_native_channel() {
+    fn delayed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert_eq!(
+                producer.try_send(slug_vm::NativeSendValue::integer(42)),
+                slug_vm::NativeProducerStatus::Sent
+            );
+        });
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.root_settlement_producer_wake", ()).unwrap();
+    let function = module
+        .function("delayed_channel", NativeArity::Exact(0), delayed_channel)
+        .unwrap();
+    let program = compile(
+        "root-settlement-native-producer-wake.slug",
+        "val channel = delayed_channel()\nspawn { select { recv channel } }\nnil\n",
+    )
+    .expect("compile root settlement native producer source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Nil);
+}
+
+#[test]
+fn a_closed_foreign_producer_wakes_a_task_settling_at_the_root() {
+    fn delayed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            producer.close();
+        });
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.root_settlement_producer_close", ()).unwrap();
+    let function = module
+        .function("delayed_channel", NativeArity::Exact(0), delayed_channel)
+        .unwrap();
+    let program = compile(
+        "root-settlement-native-producer-close.slug",
+        "val channel = delayed_channel()\nspawn { if (select { recv channel }) { 1 } else { 42 } }\nnil\n",
+    )
+    .expect("compile root settlement native producer closure source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Nil);
+}
+
+#[test]
 fn a_late_native_event_wakes_without_a_fixed_polling_deadline() {
     fn delayed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
         let (channel, producer) = call.channel(1);
