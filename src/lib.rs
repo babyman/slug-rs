@@ -52,5 +52,6 @@ pub use value::{
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
 pub use vm::{
-    CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmResult,
+    CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress,
+    VmResult,
 };

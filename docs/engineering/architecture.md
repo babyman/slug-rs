@@ -33,6 +33,12 @@ implements a small source subset through a checked bytecode virtual machine.
   information is available.
 - Language semantics belong in `docs/language/`, not only in implementation
   code.
+- Slug code and VM-owned state have one host-driving owner. Native producers
+  enqueue restricted owned values and notify possible progress; they never
+  enter the interpreter or resume a particular task.
+- `Vm::poll` and `Vm::run_until_stalled` perform only immediately available
+  work. `Vm::blocking_run` is the adapter that may wait for a notification or
+  timer, preserving the convenient blocking API for the CLI.
 
 ## VM and bytecode direction
 

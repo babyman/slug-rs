@@ -9,7 +9,7 @@ use slug_vm::{
     CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPatternId,
     MatchRest, ModuleLoader, NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue,
     NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField, SchemaFieldsId,
-    SelectCase, SourceSpan, SpanId, StructFieldsId, Value, Vm, compile,
+    SelectCase, SourceSpan, SpanId, StructFieldsId, Value, Vm, VmProgress, compile,
 };
 
 fn program_with_main(main: Chunk) -> Program {

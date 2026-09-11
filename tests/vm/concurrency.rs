@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn host_driven_execution_stalls_without_waiting_then_observes_a_due_timer() {
+    let program = compile("host-driven-timer.slug", "select { after 50 }\n42\n")
+        .expect("compile host-driven timer source");
+    let mut vm = Vm::new();
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+
+    let started = std::time::Instant::now();
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(20),
+        "host-driven progress must not wait for the timer"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    assert!(matches!(
+        vm.run_until_stalled(),
+        VmProgress::Completed(Value::Int(42))
+    ));
+}
+
+#[test]
+fn host_driven_execution_drains_native_ingress_without_producer_reentry() {
+    struct ProducerState(Mutex<Option<slug_vm::NativeChannelProducer>>);
+
+    fn create_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        call.state::<Arc<ProducerState>>()
+            .expect("producer state")
+            .0
+            .lock()
+            .expect("producer state lock")
+            .replace(producer);
+        call.return_value(channel)
+    }
+
+    let state = Arc::new(ProducerState(Mutex::new(None)));
+    let module = NativeModule::new("test.host_pump", state.clone()).unwrap();
+    let function = module
+        .function("create_channel", NativeArity::Exact(0), create_channel)
+        .unwrap();
+    let program = compile(
+        "host-driven-native.slug",
+        "val channel = create_channel()\nselect { recv channel }\n",
+    )
+    .expect("compile host-driven native source");
+    let mut vm = Vm::new();
+    vm.define_native(function).unwrap();
+    vm.start_named(&program, "main")
+        .expect("start host-driven execution");
+    assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+
+    let producer = state
+        .0
+        .lock()
+        .expect("producer state lock")
+        .clone()
+        .expect("channel producer");
+    assert_eq!(
+        producer.try_send(slug_vm::NativeSendValue::integer(42)),
+        slug_vm::NativeProducerStatus::Sent
+    );
+    assert!(matches!(
+        vm.run_until_stalled(),
+        VmProgress::Completed(Value::Int(42))
+    ));
+}
+
+#[test]
 fn private_select_await_resumes_a_suspended_task_frame_after_a_timer() {
     let mut child = Chunk::new("child", 0);
     let delay = child.constant(Value::Int(1));

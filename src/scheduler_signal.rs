@@ -1,19 +1,33 @@
 use std::{
-    sync::{Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, Weak},
     time::Duration,
 };
 
-/// A generation-counted wake signal shared by a scheduler and event sources.
-pub(crate) struct SchedulerSignal {
+/// A generation-counted notification that an owner may be able to make VM
+/// progress.  It deliberately carries no task identity and never executes
+/// Slug code on the notifying thread.
+pub(crate) struct ProgressSignal {
     generation: Mutex<u64>,
-    changed: Condvar,
+    blocking_waiters: Mutex<Vec<Weak<BlockingProgressState>>>,
 }
 
-impl SchedulerSignal {
+struct BlockingProgressState {
+    changed: Condvar,
+    lock: Mutex<()>,
+}
+
+/// The blocking adapter for a [`ProgressSignal`].  The condition variable is
+/// intentionally outside the shared notification object: hosts which drive
+/// the VM themselves never need to wait on it.
+pub(crate) struct BlockingProgressWaiter {
+    state: Arc<BlockingProgressState>,
+}
+
+impl ProgressSignal {
     pub(crate) fn new() -> Self {
         Self {
             generation: Mutex::new(0),
-            changed: Condvar::new(),
+            blocking_waiters: Mutex::new(Vec::new()),
         }
     }
 
@@ -30,27 +44,62 @@ impl SchedulerSignal {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *generation = generation.wrapping_add(1);
-        self.changed.notify_all();
+        drop(generation);
+        let waiters = {
+            let mut waiters = self
+                .blocking_waiters
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            waiters.retain(|waiter| waiter.strong_count() > 0);
+            waiters.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+        };
+        for waiter in waiters {
+            let _lock = waiter
+                .lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            waiter.changed.notify_all();
+        }
     }
 
-    pub(crate) fn wait(&self, observed: u64, timeout: Option<Duration>) {
-        let generation = self
-            .generation
+    pub(crate) fn blocking_waiter(&self) -> BlockingProgressWaiter {
+        let state = Arc::new(BlockingProgressState {
+            changed: Condvar::new(),
+            lock: Mutex::new(()),
+        });
+        self.blocking_waiters
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Arc::downgrade(&state));
+        BlockingProgressWaiter { state }
+    }
+}
+
+impl BlockingProgressWaiter {
+    pub(crate) fn wait(&self, signal: &ProgressSignal, observed: u64, timeout: Option<Duration>) {
+        if signal.snapshot() != observed {
+            return;
+        }
+        let lock = self
+            .state
+            .lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *generation != observed {
+        if signal.snapshot() != observed {
             return;
         }
         if let Some(timeout) = timeout {
             drop(
-                self.changed
-                    .wait_timeout_while(generation, timeout, |generation| *generation == observed)
+                self.state
+                    .changed
+                    .wait_timeout(lock, timeout)
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
             );
         } else {
             drop(
-                self.changed
-                    .wait_while(generation, |generation| *generation == observed)
+                self.state
+                    .changed
+                    .wait(lock)
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
             );
         }

@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     native::{NativeChannelProducer, NativeFunction, NativeResource},
-    scheduler_signal::SchedulerSignal,
+    scheduler_signal::ProgressSignal,
     source::environment::CallableIdentity,
     source::environment::ForeignResourceSignature,
 };
@@ -413,9 +413,9 @@ impl Channel {
         }
     }
 
-    pub(crate) fn register_scheduler(&self, signal: &Arc<SchedulerSignal>) {
+    pub(crate) fn register_progress_signal(&self, signal: &Arc<ProgressSignal>) {
         if let Some(producer) = &self.native_producer {
-            producer.register_scheduler(signal);
+            producer.register_progress_signal(signal);
         }
     }
 

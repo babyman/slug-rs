@@ -40,6 +40,21 @@ use scheduler::Nursery;
 
 pub type VmResult<T> = Result<T, RuntimeError>;
 
+/// The observable result of one host-driven VM progress turn.
+#[derive(Clone, Debug)]
+pub enum VmProgress {
+    MadeProgress,
+    Stalled,
+    Completed(Value),
+    Failed(RuntimeError),
+}
+
+struct HostExecution {
+    program: Rc<Program>,
+    root: RootWaiter,
+    result: Option<VmResult<Value>>,
+}
+
 type NamedArgument = (String, Value);
 type ExpandedCallArguments = (Vec<Value>, Vec<NamedArgument>);
 
@@ -225,7 +240,7 @@ impl TaskExecution {
             ExecutionOutcome::Suspended => TaskRunOutcome::Suspended(Box::new(self)),
             ExecutionOutcome::Settled(result) => {
                 let result = if self.settle_nursery {
-                    self.vm.settle_tasks(result)
+                    self.vm.settle_tasks(&result)
                 } else {
                     result
                 };
@@ -277,6 +292,7 @@ pub struct Vm {
     suspension: Option<Suspension>,
     resume: Option<VmResult<Value>>,
     wait_registration: Option<WaitSet>,
+    host_execution: Option<HostExecution>,
     active_span: Option<SpanId>,
     shutdown: bool,
     #[cfg(feature = "metrics")]
@@ -307,6 +323,7 @@ impl Default for Vm {
             suspension: None,
             resume: None,
             wait_registration: None,
+            host_execution: None,
             active_span: None,
             shutdown: false,
             #[cfg(feature = "metrics")]
@@ -805,6 +822,20 @@ impl Vm {
         self.run_installed_execution(&program, entry)
     }
 
+    /// Starts a zero-argument entry for host-driven execution. Call
+    /// [`Self::poll`] or [`Self::run_until_stalled`] to drive it. Neither
+    /// method waits for an operating-system event.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error for invalid bytecode, an invalid entry, a shut
+    /// down VM, or an already active host-driven execution.
+    pub fn start(&mut self, program: &Program, entry: usize) -> VmResult<()> {
+        self.reset_metrics();
+        let program = self.install_program(program);
+        self.start_installed_execution(&program, entry)
+    }
+
     /// Executes an already installed zero-argument entry chunk without cloning
     /// its immutable bytecode.
     ///
@@ -817,7 +848,30 @@ impl Vm {
         self.run_installed_execution(program, entry)
     }
 
+    /// Starts an already installed entry for host-driven execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error for invalid bytecode, an invalid entry, a shut
+    /// down VM, or an already active host-driven execution.
+    pub fn start_installed(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<()> {
+        self.reset_metrics();
+        self.start_installed_execution(program, entry)
+    }
+
     fn run_installed_execution(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<Value> {
+        self.start_installed_execution(program, entry)?;
+        self.blocking_run()
+    }
+
+    fn start_installed_execution(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<()> {
+        if self.host_execution.is_some() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCall,
+                "VM already has a host-driven execution".into(),
+                None,
+            ));
+        }
         if self.shutdown {
             return Err(self.error(
                 RuntimeErrorKind::InvalidCall,
@@ -887,7 +941,14 @@ impl Vm {
             cleanup_action: false,
             cleanup_recovers: false,
         });
-        self.run_root_execution(program)
+        let root = RootWaiter::new();
+        self.current_waiter = Some(Waiter::Root(root.clone()));
+        self.host_execution = Some(HostExecution {
+            program: program.clone(),
+            root,
+            result: None,
+        });
+        Ok(())
     }
 
     /// Executes a zero-argument chunk selected by name.
@@ -900,6 +961,25 @@ impl Vm {
         self.reset_metrics();
         let program = self.install_program(program);
         self.run_named_installed_execution(&program, entry)
+    }
+
+    /// Starts an entry selected by name for host-driven execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when the named entry is absent or cannot be
+    /// started for host-driven execution.
+    pub fn start_named(&mut self, program: &Program, entry: &str) -> VmResult<()> {
+        self.reset_metrics();
+        let program = self.install_program(program);
+        let index = program.find_chunk(entry).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::Name,
+                format!("unknown entry `{entry}`"),
+                None,
+            )
+        })?;
+        self.start_installed_execution(&program, index)
     }
 
     /// Executes an entry selected by name from an installed program.
@@ -932,6 +1012,103 @@ impl Vm {
         self.active_span = None;
         #[cfg(feature = "metrics")]
         self.metrics.borrow_mut().clone_from(&VmMetrics::default());
+    }
+
+    /// Performs one host-driven progress round. This method never waits for
+    /// external input and never re-enters Slug from a producer callback.
+    #[must_use]
+    pub fn poll(&mut self) -> VmProgress {
+        let Some(mut execution) = self.host_execution.take() else {
+            return VmProgress::Stalled;
+        };
+        let mut made_progress = false;
+
+        if execution.result.is_none() {
+            if let Some(result) = execution.root.take_resume() {
+                if let Some(wait_registration) = self.wait_registration.take() {
+                    wait_registration.remove_for_waiter(&Waiter::Root(execution.root.clone()));
+                }
+                self.resume = Some(result);
+                made_progress = true;
+            }
+            match self.execute(&execution.program) {
+                ExecutionOutcome::Settled(result) => {
+                    execution.result = Some(result);
+                    made_progress = true;
+                }
+                ExecutionOutcome::Suspended => {}
+            }
+        }
+
+        if let Some(result) = execution.result.as_ref()
+            && let Some(result) = self.settle_tasks_available(result)
+        {
+            self.current_waiter = None;
+            return match result {
+                Ok(value) => VmProgress::Completed(value),
+                Err(error) => VmProgress::Failed(error),
+            };
+        }
+
+        if self.nursery.make_available_progress() {
+            made_progress = true;
+        }
+        self.host_execution = Some(execution);
+        if made_progress {
+            VmProgress::MadeProgress
+        } else {
+            VmProgress::Stalled
+        }
+    }
+
+    /// Drives all immediately available VM work to a local fixed point. It
+    /// does not perform an operating-system wait.
+    #[must_use]
+    pub fn run_until_stalled(&mut self) -> VmProgress {
+        loop {
+            match self.poll() {
+                VmProgress::MadeProgress => {}
+                result => return result,
+            }
+        }
+    }
+
+    /// Convenience adapter for command-line and simple embedding hosts. The
+    /// core progress API remains non-blocking; this method alone waits for
+    /// native wake notifications or scheduled timers.
+    ///
+    /// # Errors
+    ///
+    /// Returns the execution error, or a checked blocked-task error when no
+    /// runnable work or future progress source remains.
+    pub fn blocking_run(&mut self) -> VmResult<Value> {
+        loop {
+            match self.run_until_stalled() {
+                VmProgress::Completed(value) => return Ok(value),
+                VmProgress::Failed(error) => return Err(error),
+                VmProgress::MadeProgress => unreachable!("run_until_stalled exhausts progress"),
+                VmProgress::Stalled if self.nursery.wait_for_progress() => {}
+                VmProgress::Stalled => {
+                    let result = self
+                        .host_execution
+                        .as_ref()
+                        .and_then(|execution| execution.result.as_ref())
+                        .and_then(|result| result.as_ref().err())
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            self.error(
+                                RuntimeErrorKind::InvalidCall,
+                                "task remains blocked with no runnable work".into(),
+                                None,
+                            )
+                        });
+                    self.nursery.cancel_all(&result);
+                    self.host_execution = None;
+                    self.current_waiter = None;
+                    return Err(result);
+                }
+            }
+        }
     }
 
     fn install_program(&mut self, program: &Program) -> Rc<Program> {
@@ -1006,7 +1183,7 @@ impl Vm {
         self.current_waiter = Some(Waiter::Root(root.clone()));
         loop {
             match self.execute(program) {
-                ExecutionOutcome::Settled(result) => return self.settle_tasks(result),
+                ExecutionOutcome::Settled(result) => return self.settle_tasks(&result),
                 ExecutionOutcome::Suspended => loop {
                     if let Some(result) = root.take_resume() {
                         if let Some(wait_registration) = self.wait_registration.take() {
@@ -1024,7 +1201,7 @@ impl Vm {
                             "task remains blocked with no runnable work".into(),
                             None,
                         );
-                        return self.settle_tasks(Err(blocked));
+                        return self.settle_tasks(&Err(blocked));
                     }
                 },
             }
@@ -2279,6 +2456,7 @@ impl Vm {
             suspension: None,
             resume: None,
             wait_registration: None,
+            host_execution: None,
             active_span: None,
             shutdown: false,
             #[cfg(feature = "metrics")]
@@ -2393,7 +2571,7 @@ impl Vm {
         self.nursery.make_progress()
     }
 
-    fn settle_tasks(&self, result: VmResult<Value>) -> VmResult<Value> {
+    fn settle_tasks(&self, result: &VmResult<Value>) -> VmResult<Value> {
         let cancellation = self.error(
             RuntimeErrorKind::Thrown,
             "sibling cancelled due to fail-fast".into(),
@@ -2405,6 +2583,15 @@ impl Vm {
             None,
         );
         self.nursery.settle(result, &cancellation, &blocked)
+    }
+
+    fn settle_tasks_available(&self, result: &VmResult<Value>) -> Option<VmResult<Value>> {
+        let cancellation = self.error(
+            RuntimeErrorKind::Thrown,
+            "sibling cancelled due to fail-fast".into(),
+            None,
+        );
+        self.nursery.settle_available(result, &cancellation)
     }
 
     fn run_nursery_at(

@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use crate::{Value, scheduler_signal::SchedulerSignal, value::Channel};
+use crate::{Value, scheduler_signal::ProgressSignal, value::Channel};
 
 /// An owned value that a foreign thread may publish through a channel producer.
 #[derive(Clone, Debug, PartialEq)]
@@ -84,7 +84,7 @@ struct NativeProducerState {
     queue: Mutex<VecDeque<NativeSendValue>>,
     closed: AtomicBool,
     producer_leases: AtomicUsize,
-    scheduler_signals: Mutex<Vec<SyncWeak<SchedulerSignal>>>,
+    progress_signals: Mutex<Vec<SyncWeak<ProgressSignal>>>,
 }
 
 impl NativeChannelProducer {
@@ -97,7 +97,7 @@ impl NativeChannelProducer {
                 queue: Mutex::new(VecDeque::new()),
                 closed: AtomicBool::new(false),
                 producer_leases: AtomicUsize::new(1),
-                scheduler_signals: Mutex::new(Vec::new()),
+                progress_signals: Mutex::new(Vec::new()),
             }),
             producer_lease: true,
         }
@@ -125,12 +125,12 @@ impl NativeChannelProducer {
         }
         queue.push_back(value);
         drop(queue);
-        self.notify_schedulers();
+        self.notify_progress();
         NativeProducerStatus::Sent
     }
     pub fn close(&self) {
         self.state.closed.store(true, Ordering::Release);
-        self.notify_schedulers();
+        self.notify_progress();
     }
     #[must_use]
     pub fn is_closed(&self) -> bool {
@@ -169,10 +169,10 @@ impl NativeChannelProducer {
         debug_assert!(previous > 0, "native channel occupancy underflow");
     }
 
-    pub(crate) fn register_scheduler(&self, signal: &Arc<SchedulerSignal>) {
+    pub(crate) fn register_progress_signal(&self, signal: &Arc<ProgressSignal>) {
         let mut signals = self
             .state
-            .scheduler_signals
+            .progress_signals
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         signals.retain(|candidate| candidate.strong_count() > 0);
@@ -195,11 +195,11 @@ impl NativeChannelProducer {
         }
     }
 
-    fn notify_schedulers(&self) {
+    fn notify_progress(&self) {
         let signals = {
             let mut signals = self
                 .state
-                .scheduler_signals
+                .progress_signals
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             signals.retain(|signal| signal.strong_count() > 0);
@@ -232,7 +232,7 @@ impl Drop for NativeChannelProducer {
             let previous = self.state.producer_leases.fetch_sub(1, Ordering::AcqRel);
             debug_assert!(previous > 0, "native producer lease underflow");
         }
-        self.notify_schedulers();
+        self.notify_progress();
     }
 }
 

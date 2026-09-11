@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added host-driven VM progress through `Vm::poll` and
+  `Vm::run_until_stalled`; native channel ingress now signals generic progress,
+  while `Vm::blocking_run` owns blocking waits.
+
 - Promoted `chan(capacity = 0)` and `close(channel)` to the implicit
   `slug.builtin` foundation; `slug.channel` now owns only send, receive, and
   task-await operations.
