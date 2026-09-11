@@ -22,7 +22,7 @@ while differing only when execution reaches an unavailable runtime capability.
 
 # 1. Remove Runtime Feature Awareness from the Type Checker
 
-## Task 1 — Remove `#[cfg(feature = "concurrency")]` from `typecheck.rs`
+## Task 1 — Remove `#[cfg(feature = "concurrency")]` from `typecheck.rs` ✓
 
 Remove the concurrency feature gate currently associated with runtime `Value::Task` handling.
 
@@ -59,7 +59,7 @@ They should fail only if execution reaches an unsupported runtime operation.
 
 ---
 
-## Task 2 — Decouple Runtime `Value` Representation from Source Typing
+## Task 2 — Decouple Runtime `Value` Representation from Source Typing ✓
 
 Inspect the current `value_type()` path and determine why source type checking requires matching against runtime
 `Value`.

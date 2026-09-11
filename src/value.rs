@@ -889,6 +889,7 @@ pub(crate) enum ValueKind {
     Enum,
     Channel,
     Function,
+    #[allow(dead_code)]
     Task,
     Unknown,
 }
