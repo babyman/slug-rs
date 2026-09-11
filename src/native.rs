@@ -547,6 +547,7 @@ impl<'call> NativeValueRef<'call> {
             | Value::Builtin(_)
             | Value::Overloads(_) => NativeValueKind::Function,
             Value::NativeResource(_) => NativeValueKind::Resource,
+            #[cfg(feature = "concurrency")]
             Value::Task(_) => NativeValueKind::Task,
             Value::Uninitialized | Value::Binding { .. } => {
                 unreachable!("native arguments are resolved before invocation")

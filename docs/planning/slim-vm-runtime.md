@@ -32,16 +32,14 @@ feature configurations where applicable, and pass `make check` before handoff.
 - [x] Remove the corresponding slim-build dead-code warnings.
 
 **Exit:** `scheduler.rs` is already absent from the slim build, and no task
-state or task-coordination implementation remains reachable there. A
-zero-sized private task placeholder remains only because the next item removes
-the still-present `Value::Task` variant.
+state or task-coordination implementation remains reachable there.
 
 ### 2. Remove task values from the slim runtime
 
-- [ ] Compile `Value::Task` and task-only value matching/formatting only with
+- [x] Compile `Value::Task` and task-only value matching/formatting only with
   `concurrency`.
-- [ ] Keep task source forms valid through parsing and type checking.
-- [ ] Retain checked unavailable-capability errors when slim execution reaches
+- [x] Keep task source forms valid through parsing and type checking.
+- [x] Retain checked unavailable-capability errors when slim execution reaches
   `spawn`, nursery, task await, or task-await select.
 
 **Exit:** the slim value representation has no task variant while the language

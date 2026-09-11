@@ -565,13 +565,6 @@ pub struct Task {
     state: Rc<RefCell<TaskState>>,
 }
 
-/// Placeholder retained only until the slim value representation drops its
-/// task variant. Slim code cannot construct one because task execution is
-/// unavailable without the concurrency runtime.
-#[cfg(not(feature = "concurrency"))]
-#[derive(Clone)]
-pub struct Task;
-
 #[cfg(feature = "concurrency")]
 struct TaskState {
     phase: TaskPhase,
@@ -611,6 +604,7 @@ impl TaskObserver {
     }
 }
 
+#[cfg(feature = "concurrency")]
 impl fmt::Debug for Task {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<task>")
@@ -859,6 +853,7 @@ pub enum Value {
     Enum(Rc<EnumValue>),
     Channel(Rc<Channel>),
     Closure(Rc<Closure>),
+    #[cfg(feature = "concurrency")]
     Task(Rc<Task>),
     Native(NativeFunction),
     /// A host callable paired with the source declaration's private identity.
@@ -909,6 +904,7 @@ impl Value {
             | Self::DeclaredNative { .. }
             | Self::Builtin(_)
             | Self::Overloads(_) => "fn",
+            #[cfg(feature = "concurrency")]
             Self::Task(_) => "task",
             Self::NativeResource(_) => "native resource",
         }
@@ -962,6 +958,7 @@ impl PartialEq for Value {
             (Self::Enum(a), Self::Enum(b)) => a == b,
             (Self::Channel(a), Self::Channel(b)) => Rc::ptr_eq(a, b),
             (Self::Closure(a), Self::Closure(b)) => Rc::ptr_eq(a, b),
+            #[cfg(feature = "concurrency")]
             (Self::Task(a), Self::Task(b)) => Rc::ptr_eq(a, b),
             (Self::Native(a), Self::Native(b)) => a.same_function(b),
             (
@@ -1009,6 +1006,7 @@ impl fmt::Debug for Value {
             Self::Enum(value) => write!(f, "{}.{}", value.name, value.case),
             Self::Channel(_) => write!(f, "<chan>"),
             Self::Closure(_) => write!(f, "<fn>"),
+            #[cfg(feature = "concurrency")]
             Self::Task(_) => write!(f, "<task>"),
             Self::Native(function) => write!(f, "<native {}>", function.qualified_name()),
             Self::DeclaredNative { function, .. } => {

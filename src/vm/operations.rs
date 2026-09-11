@@ -493,7 +493,10 @@ fn matches_type(
                 | Value::Builtin(_)
                 | Value::Overloads(_)
         )),
+        #[cfg(feature = "concurrency")]
         MatchType::Task => Ok(matches!(value, Value::Task(_))),
+        #[cfg(not(feature = "concurrency"))]
+        MatchType::Task => Ok(false),
         MatchType::Channel => Ok(matches!(value, Value::Channel(_))),
         MatchType::Schema => Ok(matches!(value, Value::StructSchema(_))),
         MatchType::Struct(None) => Ok(matches!(value, Value::Struct(_))),
