@@ -1,20 +1,10 @@
-use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    rc::{Rc, Weak},
-    sync::Arc,
-    time::Instant,
-};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Instant};
 
 #[cfg(feature = "metrics")]
 use crate::vm::VmMetrics;
-use crate::{
-    RuntimeError, Task, Value,
-    scheduler_signal::{BlockingProgressWaiter, ProgressSignal},
-    value::{Channel, TimerService},
-};
+use crate::{RuntimeError, Task, Value, value::TimerService};
 
-use super::TaskRunOutcome;
+use super::{TaskRunOutcome, progress::ProgressDriver};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum SettlementPolicy {
@@ -27,9 +17,7 @@ pub(super) struct Nursery {
     ready: Rc<RefCell<VecDeque<Rc<Task>>>>,
     policy: SettlementPolicy,
     timers: Rc<RefCell<TimerService>>,
-    native_channels: RefCell<Vec<Weak<Channel>>>,
-    signal: Arc<ProgressSignal>,
-    blocking_waiter: BlockingProgressWaiter,
+    progress: ProgressDriver,
     #[cfg(feature = "metrics")]
     metrics: Rc<RefCell<VmMetrics>>,
 }
@@ -55,8 +43,6 @@ impl Nursery {
         policy: SettlementPolicy,
         #[cfg(feature = "metrics")] metrics: Rc<RefCell<VmMetrics>>,
     ) -> Self {
-        let signal = Arc::new(ProgressSignal::new());
-        let blocking_waiter = signal.blocking_waiter();
         Self {
             tasks: RefCell::new(Vec::new()),
             ready: Rc::new(RefCell::new(VecDeque::new())),
@@ -65,9 +51,7 @@ impl Nursery {
                 #[cfg(feature = "metrics")]
                 metrics.clone(),
             ))),
-            native_channels: RefCell::new(Vec::new()),
-            signal,
-            blocking_waiter,
+            progress: ProgressDriver::new(),
             #[cfg(feature = "metrics")]
             metrics,
         }
@@ -84,6 +68,7 @@ impl Nursery {
     pub(super) fn clear(&self) {
         self.tasks.borrow_mut().clear();
         self.ready.borrow_mut().clear();
+        self.progress.clear();
     }
 
     pub(super) fn add_task(&self, task: Rc<Task>) {
@@ -122,19 +107,8 @@ impl Nursery {
         }
     }
 
-    pub(super) fn track_native_channel(&self, channel: &Rc<Channel>) {
-        if !channel.has_native_producer() {
-            return;
-        }
-        channel.register_progress_signal(&self.signal);
-        let mut channels = self.native_channels.borrow_mut();
-        if !channels.iter().any(|candidate| {
-            candidate
-                .upgrade()
-                .is_some_and(|candidate| Rc::ptr_eq(&candidate, channel))
-        }) {
-            channels.push(Rc::downgrade(channel));
-        }
+    pub(super) fn track_native_channel(&self, channel: &Rc<crate::value::Channel>) {
+        self.progress.track_native_channel(channel);
     }
 
     pub(super) fn run_task(&self, task: &Task) {
@@ -204,7 +178,9 @@ impl Nursery {
     /// Performs one available runtime round. It never waits for an operating
     /// system event, so it is safe for a host-driven VM pump.
     pub(super) fn make_available_progress(&self) -> bool {
-        self.run_next_ready_task() || self.drain_native_channels() || self.wake_due_timers()
+        self.run_next_ready_task()
+            || self.progress.drain_native_channels()
+            || self.wake_due_timers()
     }
 
     /// Blocking-adapter wait only. Core VM progress must use
@@ -213,18 +189,18 @@ impl Nursery {
         if self.make_available_progress() {
             return true;
         }
-        let observed = self.signal.snapshot();
+        let observed = self.progress.snapshot();
         if self.make_available_progress() {
             return true;
         }
         let deadline = self.timers.borrow().next_deadline();
-        if deadline.is_none() && !self.has_live_native_source() {
+        if deadline.is_none() && !self.progress.has_live_native_source() {
             return false;
         }
         let timeout = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
         #[cfg(feature = "metrics")]
         let wait_started = Instant::now();
-        self.blocking_waiter.wait(&self.signal, observed, timeout);
+        self.progress.wait(observed, timeout);
         #[cfg(feature = "metrics")]
         {
             self.metrics.borrow_mut().scheduler_wait_time += wait_started.elapsed();
@@ -267,26 +243,6 @@ impl Nursery {
             ready.push_back(task);
         }
         None
-    }
-
-    fn native_channels(&self) -> Vec<Rc<Channel>> {
-        let mut channels = self.native_channels.borrow_mut();
-        channels.retain(|channel| channel.strong_count() > 0);
-        channels.iter().filter_map(Weak::upgrade).collect()
-    }
-
-    fn drain_native_channels(&self) -> bool {
-        let mut changed = false;
-        for channel in self.native_channels() {
-            changed |= channel.drain_native();
-        }
-        changed
-    }
-
-    fn has_live_native_source(&self) -> bool {
-        self.native_channels()
-            .iter()
-            .any(|channel| channel.has_live_native_producer())
     }
 
     fn wake_due_timers(&self) -> bool {

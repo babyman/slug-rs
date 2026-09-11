@@ -17,7 +17,7 @@ use slug_vm::{
 fn slim_runtime_defers_concurrency_capability_errors_until_execution() {
     let program = compile(
         "slim-capability.slug",
-        "if false { spawn { 42 } }\nselect { after 1 }\n",
+        "if (false) { spawn { 42 } }\nselect { after 1 }\n",
     )
     .expect("concurrency syntax remains valid in a slim build");
     let error = Vm::new()

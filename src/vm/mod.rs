@@ -26,6 +26,7 @@ use crate::{
 mod cleanup;
 mod error;
 mod operations;
+mod progress;
 mod scheduler;
 
 use cleanup::{Cleanup, Deferred};
