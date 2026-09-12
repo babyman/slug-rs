@@ -939,25 +939,25 @@ state. The executable is a first-class embedded host, not a subprocess wrapper.
 
 ## Tasks
 
-- [ ] Add the `slug-server` executable at `src/bin/slug-server.rs`.
-- [ ] Add an in-process server-engine library module; keep stdin/stdout
+- [x] Add the `slug-server` executable at `src/bin/slug-server.rs`.
+- [x] Add an in-process server-engine library module; keep stdin/stdout
   ownership in the binary.
-- [ ] Define versioned request, success-response, error-response, and event
+- [x] Define versioned request, success-response, error-response, and event
   envelopes.
-- [ ] Define one canonical serializable diagnostic projection for source and
+- [x] Define one canonical serializable diagnostic projection for source and
   runtime errors, including spans, frames, causes, native details, and thrown
   values where representable.
-- [ ] Define structured `protocol` and `host` diagnostics for failures that do
+- [x] Define structured `protocol` and `host` diagnostics for failures that do
   not originate as Slug errors.
-- [ ] Define the protocol version constant and `initialize` capability result.
-- [ ] Implement `initialize`, `session.open`, and `session.close`.
-- [ ] Store only session metadata; `submit` remains unimplemented.
-- [ ] Decode NDJSON from stdin and encode every response/event as one stdout
+- [x] Define the protocol version constant and `initialize` capability result.
+- [x] Implement `initialize`, `session.open`, and `session.close`.
+- [x] Store only session metadata; `submit` remains unimplemented.
+- [x] Decode NDJSON from stdin and encode every response/event as one stdout
   line.
-- [ ] Keep server logging and transport failures off protocol stdout.
-- [ ] Reject malformed JSON, malformed envelopes, unknown methods, and unknown
+- [x] Keep server logging and transport failures off protocol stdout.
+- [x] Reject malformed JSON, malformed envelopes, unknown methods, and unknown
   sessions without terminating the server.
-- [ ] Add in-process engine tests and NDJSON boundary tests.
+- [x] Add in-process engine tests and NDJSON boundary tests.
 
 ## Acceptance Criteria
 

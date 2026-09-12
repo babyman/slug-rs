@@ -13,6 +13,7 @@ mod conformance;
 #[allow(unsafe_code)]
 mod ffi_prototype;
 mod fixture;
+pub mod interactive;
 mod module;
 mod native;
 mod scheduler_signal;

@@ -7,6 +7,10 @@
   client task lists, including canonical diagnostic and output-sink
   prerequisites.
 
+- Added the protocol-only `slug-server` executable with NDJSON
+  initialize/open/close lifecycle handling and canonical structured diagnostic
+  projections.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 
