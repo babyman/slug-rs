@@ -153,8 +153,9 @@ cargo run --bin slug-repl
 ```
 
 It embeds the interactive server engine, presents a `>` prompt, and sends each
-line through the structured session protocol. Type `:quit` or `:exit`, or send
-end-of-file, to close the session.
+complete source unit through the structured session protocol. Incomplete syntax
+such as a function body uses a `.` continuation prompt. Type `:quit` or `:exit`,
+or send end-of-file, to close the session.
 
 The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with

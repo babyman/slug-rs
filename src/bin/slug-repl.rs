@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use slug_vm::interactive::{
     Diagnostic, DiagnosticCategory, Event, PROTOCOL_VERSION, Response, Server,
 };
+use slug_vm::source_is_incomplete;
 
 fn main() -> ExitCode {
     run(
@@ -14,6 +15,12 @@ fn main() -> ExitCode {
         &mut io::stdout().lock(),
         &mut io::stderr().lock(),
     )
+}
+
+enum ReadSubmission {
+    Empty,
+    Exit,
+    Source { source: String, input_closed: bool },
 }
 
 fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) -> ExitCode {
@@ -48,27 +55,19 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
     if writeln!(output, "Slug REPL\n").is_err() {
         return ExitCode::from(1);
     }
-    let mut line = String::new();
     loop {
-        if write!(output, "> ").and_then(|()| output.flush()).is_err() {
-            return ExitCode::from(1);
-        }
-        line.clear();
-        match input.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {}
+        let (source, input_closed) = match read_submission(input, output, &session) {
+            Ok(ReadSubmission::Empty) => continue,
+            Ok(ReadSubmission::Exit) => break,
+            Ok(ReadSubmission::Source {
+                source,
+                input_closed,
+            }) => (source, input_closed),
             Err(error) => {
                 let _ = writeln!(errors, "input error: {error}");
                 return ExitCode::from(1);
             }
-        }
-        let source = line.trim_end_matches(['\n', '\r']);
-        if source == ":quit" || source == ":exit" {
-            break;
-        }
-        if source.is_empty() {
-            continue;
-        }
+        };
         let response = request(
             &mut server,
             request_id,
@@ -85,6 +84,9 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
         if render_submission_response(&response, output, errors).is_err() {
             return ExitCode::from(1);
         }
+        if input_closed {
+            break;
+        }
     }
 
     let closed = request(
@@ -99,6 +101,48 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
     } else {
         render_response_error(&closed, errors);
         ExitCode::from(1)
+    }
+}
+
+fn read_submission(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    session: &str,
+) -> io::Result<ReadSubmission> {
+    let mut line = String::new();
+    let mut source = String::new();
+    loop {
+        let prompt = if source.is_empty() { "> " } else { ". " };
+        write!(output, "{prompt}")?;
+        output.flush()?;
+        line.clear();
+        if input.read_line(&mut line)? == 0 {
+            return Ok(if source.is_empty() {
+                ReadSubmission::Exit
+            } else {
+                ReadSubmission::Source {
+                    source,
+                    input_closed: true,
+                }
+            });
+        }
+        let line = line.trim_end_matches(['\n', '\r']);
+        if source.is_empty() && (line == ":quit" || line == ":exit") {
+            return Ok(ReadSubmission::Exit);
+        }
+        if source.is_empty() && line.is_empty() {
+            return Ok(ReadSubmission::Empty);
+        }
+        if !source.is_empty() {
+            source.push('\n');
+        }
+        source.push_str(line);
+        if !source_is_incomplete(&format!("<interactive:{session}>"), &source) {
+            return Ok(ReadSubmission::Source {
+                source,
+                input_closed: false,
+            });
+        }
     }
 }
 

@@ -36,6 +36,10 @@
 - Added the `slug-repl` terminal client with persistent sessions, output-event
   rendering, structured diagnostics, and clean session shutdown.
 
+- Added syntax-aware multiline input to `slug-repl`, with continuation prompts
+  for incomplete functions and blocks while preserving immediate diagnostics for
+  invalid source.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

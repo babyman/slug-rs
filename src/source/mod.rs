@@ -88,6 +88,43 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     compile_expressions(path, expressions, ImportSnapshots::new())
 }
 
+/// Returns whether appending more text could complete the source syntax.
+///
+/// This intentionally performs only lexical and syntactic analysis. Frontends
+/// can use it to decide whether to request another input line without hiding
+/// semantic diagnostics behind a continuation prompt.
+#[must_use]
+pub fn source_is_incomplete(path: &str, source: &str) -> bool {
+    let tokens = match Lexer::new(path, source).tokens() {
+        Ok(tokens) => tokens,
+        Err(error) => return incomplete_lexer_error(&error, source),
+    };
+    let Some(end) = tokens.last().map(|token| token.span.clone()) else {
+        return false;
+    };
+    match Parser::new(tokens).parse() {
+        Ok(_) => false,
+        Err(error) => {
+            error.message != "expected binding name"
+                && error.span.as_ref().is_some_and(|span| span == &end)
+        }
+    }
+}
+
+fn incomplete_lexer_error(error: &SourceError, source: &str) -> bool {
+    matches!(
+        error.message.as_str(),
+        "unterminated block comment"
+            | "unterminated byte literal"
+            | "unterminated documentation block"
+            | "unterminated string"
+    ) || (error.message == "expected . after .." && source.ends_with(".."))
+        || (error.message == "expected ???" && source.ends_with('?'))
+        || (error.message == "expected exponent digit" && source.ends_with(['e', 'E', '+', '-']))
+        || (error.message == "expected hexadecimal digit"
+            && (source.ends_with("0x") || source.ends_with("0x_")))
+}
+
 pub(crate) fn compile_interactive(
     path: &str,
     source: &str,

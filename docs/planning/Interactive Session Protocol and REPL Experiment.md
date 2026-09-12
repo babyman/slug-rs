@@ -1201,10 +1201,10 @@ Multiline detection should remain a frontend/client concern rather than wire-pro
 
 ## Tasks
 
-- [ ] Determine whether the parser can distinguish incomplete from invalid source.
-- [ ] Support multiline functions and blocks.
-- [ ] Continue prompting while input is incomplete.
-- [ ] Avoid magic blank-line termination unless necessary.
+- [x] Determine whether the parser can distinguish incomplete from invalid source.
+- [x] Support multiline functions and blocks.
+- [x] Continue prompting while input is incomplete.
+- [x] Avoid magic blank-line termination unless necessary.
 
 Example:
 
