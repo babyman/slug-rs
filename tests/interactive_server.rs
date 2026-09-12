@@ -123,6 +123,59 @@ fn session_persists_compiler_and_runtime_bindings_across_submissions() {
 }
 
 #[test]
+fn session_accumulates_incomplete_source_without_affecting_other_sessions() {
+    let mut server = initialized_server();
+    let first = open_session(&mut server);
+    let second = open_session(&mut server);
+
+    let opening = submit(&mut server, 3, &first, "val add = fn(a, b) {");
+    assert_eq!(
+        opening.result,
+        Some(serde_json::json!({ "state": "incomplete" }))
+    );
+    assert!(opening.ok);
+
+    let independent = submit(&mut server, 4, &second, "1 + 2");
+    assert_eq!(independent.result, Some(serde_json::json!({ "value": 3 })));
+
+    let body = submit(&mut server, 5, &first, "a + b");
+    assert_eq!(
+        body.result,
+        Some(serde_json::json!({ "state": "incomplete" }))
+    );
+    let complete = submit(&mut server, 6, &first, "}");
+    assert_eq!(complete.result, Some(serde_json::json!({ "value": null })));
+
+    let called = submit(&mut server, 7, &first, "add(2, 3)");
+    assert_eq!(called.result, Some(serde_json::json!({ "value": 5 })));
+}
+
+#[test]
+fn invalid_and_semantic_submissions_clear_pending_source() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let invalid = submit(&mut server, 3, &session, "val =");
+    assert!(!invalid.ok);
+    assert_eq!(
+        invalid.error.expect("parse diagnostic").kind.as_deref(),
+        Some("parse")
+    );
+
+    let reusable = submit(&mut server, 4, &session, "1 + 2");
+    assert_eq!(reusable.result, Some(serde_json::json!({ "value": 3 })));
+
+    let semantic = submit(&mut server, 5, &session, "1 + true");
+    assert!(!semantic.ok);
+    assert_eq!(
+        semantic.error.expect("semantic diagnostic").kind.as_deref(),
+        Some("semantic")
+    );
+    let reusable = submit(&mut server, 6, &session, "3 + 4");
+    assert_eq!(reusable.result, Some(serde_json::json!({ "value": 7 })));
+}
+
+#[test]
 fn compile_failures_do_not_commit_session_state() {
     let mut server = initialized_server();
     let session = open_session(&mut server);

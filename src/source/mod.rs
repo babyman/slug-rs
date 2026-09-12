@@ -35,6 +35,13 @@ pub(crate) struct InteractiveCompilation {
     pub(crate) state: InteractiveCompilerState,
 }
 
+/// Syntax readiness of source accumulated by an interactive session.
+pub(crate) enum SourceReadiness {
+    Complete,
+    Incomplete,
+    Invalid(SourceError),
+}
+
 #[derive(Clone, Debug)]
 pub struct SourceError {
     pub kind: SourceErrorKind,
@@ -88,25 +95,30 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     compile_expressions(path, expressions, ImportSnapshots::new())
 }
 
-/// Returns whether appending more text could complete the source syntax.
-///
-/// This intentionally performs only lexical and syntactic analysis. Frontends
-/// can use it to decide whether to request another input line without hiding
-/// semantic diagnostics behind a continuation prompt.
-#[must_use]
-pub fn source_is_incomplete(path: &str, source: &str) -> bool {
+pub(crate) fn source_readiness(path: &str, source: &str) -> SourceReadiness {
     let tokens = match Lexer::new(path, source).tokens() {
         Ok(tokens) => tokens,
-        Err(error) => return incomplete_lexer_error(&error, source),
+        Err(error) => {
+            return if incomplete_lexer_error(&error, source) {
+                SourceReadiness::Incomplete
+            } else {
+                SourceReadiness::Invalid(error)
+            };
+        }
     };
     let Some(end) = tokens.last().map(|token| token.span.clone()) else {
-        return false;
+        return SourceReadiness::Complete;
     };
     match Parser::new(tokens).parse() {
-        Ok(_) => false,
+        Ok(_) => SourceReadiness::Complete,
         Err(error) => {
-            error.message != "expected binding name"
+            if error.message != "expected binding name"
                 && error.span.as_ref().is_some_and(|span| span == &end)
+            {
+                SourceReadiness::Incomplete
+            } else {
+                SourceReadiness::Invalid(error)
+            }
         }
     }
 }

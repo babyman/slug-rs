@@ -44,6 +44,9 @@
   thrown values, native details, and chained causes without changing the
   protocol envelope.
 
+- Moved interactive multiline accumulation and source readiness into each
+  server session so thin clients submit one source fragment at a time.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

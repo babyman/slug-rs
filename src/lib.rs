@@ -46,7 +46,7 @@ pub use native::{
     NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,
     NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
 };
-pub use source::{SourceError, SourceErrorKind, compile, source_is_incomplete};
+pub use source::{SourceError, SourceErrorKind, compile};
 #[cfg(feature = "concurrency")]
 pub use value::Task;
 pub use value::{

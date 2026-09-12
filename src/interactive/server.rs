@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::{
     NativeArity, NativeCall, NativeDescriptorError, NativeFunction, NativeModule, NativeOwnedValue,
     NativeStatus, Value as SlugValue, Vm,
-    source::{InteractiveCompilerState, compile_interactive},
+    source::{InteractiveCompilerState, SourceReadiness, compile_interactive, source_readiness},
     vm::InteractiveEnvironment,
 };
 #[cfg(not(feature = "concurrency"))]
@@ -61,6 +61,7 @@ struct Session {
     compiler: InteractiveCompilerState,
     runtime: InteractiveEnvironment,
     execution: SessionExecution,
+    pending_source: String,
 }
 
 #[cfg(feature = "concurrency")]
@@ -272,6 +273,7 @@ impl Server {
                 compiler: InteractiveCompilerState::default(),
                 runtime: self.vm.interactive_environment(),
                 execution: SessionExecution::Idle,
+                pending_source: String::new(),
             },
         );
         Response::success(request.id, None, json!({ "session": session }))
@@ -352,7 +354,40 @@ impl Server {
             );
         }
         let path = format!("<interactive:{session}>");
-        let compilation = match compile_interactive(&path, &params.source, &existing.compiler) {
+        let source = {
+            let active = self
+                .sessions
+                .get_mut(&session)
+                .expect("validated session remains available during submission");
+            if !active.pending_source.is_empty() {
+                active.pending_source.push('\n');
+            }
+            active.pending_source.push_str(&params.source);
+            match source_readiness(&path, &active.pending_source) {
+                SourceReadiness::Incomplete => {
+                    return Response::success(
+                        request.id,
+                        Some(session),
+                        json!({ "state": "incomplete" }),
+                    );
+                }
+                SourceReadiness::Invalid(error) => {
+                    active.pending_source.clear();
+                    return Response::failure(
+                        Some(request.id),
+                        Some(session),
+                        Diagnostic::from_source(&error),
+                    );
+                }
+                SourceReadiness::Complete => std::mem::take(&mut active.pending_source),
+            }
+        };
+        let compiler = &self
+            .sessions
+            .get(&session)
+            .expect("validated session remains available during submission")
+            .compiler;
+        let compilation = match compile_interactive(&path, &source, compiler) {
             Ok(compilation) => compilation,
             Err(error) => {
                 return Response::failure(

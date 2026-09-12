@@ -67,14 +67,14 @@ session server
 
 ## Tasks
 
-- [ ] Add pending interactive source state to each session.
-- [ ] Remove the multiline source buffer from `slug-repl`.
-- [ ] Remove direct `source_is_incomplete()` usage from `slug-repl`.
-- [ ] Remove any parser/frontend dependency used by the REPL for multiline handling.
-- [ ] Send each entered line to the server.
-- [ ] Preserve line boundaries when accumulating fragments.
-- [ ] Keep pending input isolated between sessions.
-- [ ] Release pending input when a session closes.
+- [x] Add pending interactive source state to each session.
+- [x] Remove the multiline source buffer from `slug-repl`.
+- [x] Remove direct `source_is_incomplete()` usage from `slug-repl`.
+- [x] Remove any parser/frontend dependency used by the REPL for multiline handling.
+- [x] Send each entered line to the server.
+- [x] Preserve line boundaries when accumulating fragments.
+- [x] Keep pending input isolated between sessions.
+- [x] Release pending input when a session closes.
 
 ## Architectural Rule
 
@@ -102,11 +102,11 @@ classify accumulated source
 
 ## Tasks
 
-- [ ] Append submitted source to the session's pending input.
-- [ ] Preserve newline boundaries.
-- [ ] Determine whether the accumulated source is complete, incomplete, or invalid.
-- [ ] Do not compile or execute incomplete source.
-- [ ] Retain incomplete source for the next request.
+- [x] Append submitted source to the session's pending input.
+- [x] Preserve newline boundaries.
+- [x] Determine whether the accumulated source is complete, incomplete, or invalid.
+- [x] Do not compile or execute incomplete source.
+- [x] Retain incomplete source for the next request.
 
 Example:
 
@@ -143,11 +143,11 @@ The exact representation should follow the existing parser architecture rather t
 
 ## Tasks
 
-- [ ] Distinguish incomplete syntax from invalid syntax.
-- [ ] Preserve the existing structured source diagnostic.
-- [ ] Do not mistake semantic/type failures for incomplete source.
-- [ ] Keep readiness analysis in frontend/library code.
-- [ ] Remove this responsibility entirely from terminal clients.
+- [x] Distinguish incomplete syntax from invalid syntax.
+- [x] Preserve the existing structured source diagnostic.
+- [x] Do not mistake semantic/type failures for incomplete source.
+- [x] Keep readiness analysis in frontend/library code.
+- [x] Remove this responsibility entirely from terminal clients.
 
 `source_is_incomplete()` may remain as an implementation detail during the experiment.
 
@@ -187,11 +187,11 @@ The exact representation may follow the existing result schema.
 
 ## Tasks
 
-- [ ] Represent incomplete source explicitly.
-- [ ] Preserve the pending source.
-- [ ] Do not modify compiler state.
-- [ ] Do not modify runtime state.
-- [ ] Do not create an execution.
+- [x] Represent incomplete source explicitly.
+- [x] Preserve the pending source.
+- [x] Do not modify compiler state.
+- [x] Do not modify runtime state.
+- [x] Do not create an execution.
 
 ---
 
@@ -217,11 +217,11 @@ clear pending source
 
 ## Tasks
 
-- [ ] Compile the complete accumulated submission.
-- [ ] Preserve persistent compiler behavior.
-- [ ] Preserve the session runtime environment.
-- [ ] Return the ordinary submission result.
-- [ ] Clear pending input after successful completion.
+- [x] Compile the complete accumulated submission.
+- [x] Preserve persistent compiler behavior.
+- [x] Preserve the session runtime environment.
+- [x] Return the ordinary submission result.
+- [x] Clear pending input after successful completion.
 
 ## Acceptance Test
 
@@ -259,12 +259,12 @@ Likewise, syntactically complete source that fails semantic/type checking termin
 
 ## Tasks
 
-- [ ] Return the canonical structured diagnostic.
-- [ ] Clear pending source after genuine syntax failure.
-- [ ] Clear pending source after semantic/type-check failure.
-- [ ] Do not commit compiler state.
-- [ ] Do not modify persistent bindings.
-- [ ] Leave the session immediately reusable.
+- [x] Return the canonical structured diagnostic.
+- [x] Clear pending source after genuine syntax failure.
+- [x] Clear pending source after semantic/type-check failure.
+- [x] Do not commit compiler state.
+- [x] Do not modify persistent bindings.
+- [x] Leave the session immediately reusable.
 
 ## Acceptance Test
 
@@ -302,12 +302,12 @@ response
 
 ## Tasks
 
-- [ ] Remove parser imports.
-- [ ] Remove source completeness logic.
-- [ ] Remove client-owned multiline accumulation.
-- [ ] Render continuation prompt based solely on server response.
-- [ ] Render primary prompt after completion/error.
-- [ ] Verify the REPL has no knowledge of Slug grammar.
+- [x] Remove parser imports.
+- [x] Remove source completeness logic.
+- [x] Remove client-owned multiline accumulation.
+- [x] Render continuation prompt based solely on server response.
+- [x] Render primary prompt after completion/error.
+- [x] Verify the REPL has no knowledge of Slug grammar.
 
 The terminal REPL should be:
 
@@ -773,10 +773,10 @@ This should remain future work, but the multiline implementation must preserve t
 
 ## Finish Before Calling the Experiment Complete
 
-- [ ] Server-owned pending source.
-- [ ] Incremental `submit`.
-- [ ] Complete/incomplete/invalid distinction.
-- [ ] Thin parser-free `slug-repl`.
+- [x] Server-owned pending source.
+- [x] Incremental `submit`.
+- [x] Complete/incomplete/invalid distinction.
+- [x] Thin parser-free `slug-repl`.
 - [ ] Multiline server tests.
 - [ ] Thin-client integration tests.
 - [ ] Real `slug-server` NDJSON process test.

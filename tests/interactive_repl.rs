@@ -3,16 +3,6 @@ use std::{
     process::{Command, Stdio},
 };
 
-use slug_vm::source_is_incomplete;
-
-#[test]
-fn source_completeness_distinguishes_appendable_and_invalid_input() {
-    assert!(source_is_incomplete("<repl>", "val add = fn(a, b) {"));
-    assert!(source_is_incomplete("<repl>", "1 +"));
-    assert!(!source_is_incomplete("<repl>", "val ="));
-    assert!(!source_is_incomplete("<repl>", "1 + true"));
-}
-
 #[test]
 fn repl_initializes_persists_values_renders_events_and_closes() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_slug-repl"))

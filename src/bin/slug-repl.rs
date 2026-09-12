@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use slug_vm::interactive::{
     Diagnostic, DiagnosticCategory, Event, PROTOCOL_VERSION, Response, Server,
 };
-use slug_vm::source_is_incomplete;
 
 fn main() -> ExitCode {
     run(
@@ -18,9 +17,8 @@ fn main() -> ExitCode {
 }
 
 enum ReadSubmission {
-    Empty,
     Exit,
-    Source { source: String, input_closed: bool },
+    Source(String),
 }
 
 fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) -> ExitCode {
@@ -55,14 +53,11 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
     if writeln!(output, "Slug REPL\n").is_err() {
         return ExitCode::from(1);
     }
+    let mut continuing = false;
     loop {
-        let (source, input_closed) = match read_submission(input, output, &session) {
-            Ok(ReadSubmission::Empty) => continue,
+        let source = match read_submission(input, output, continuing) {
             Ok(ReadSubmission::Exit) => break,
-            Ok(ReadSubmission::Source {
-                source,
-                input_closed,
-            }) => (source, input_closed),
+            Ok(ReadSubmission::Source(source)) => source,
             Err(error) => {
                 let _ = writeln!(errors, "input error: {error}");
                 return ExitCode::from(1);
@@ -81,12 +76,10 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
                 return ExitCode::from(1);
             }
         }
-        if render_submission_response(&response, output, errors).is_err() {
-            return ExitCode::from(1);
-        }
-        if input_closed {
-            break;
-        }
+        continuing = match render_submission_response(&response, output, errors) {
+            Ok(continuing) => continuing,
+            Err(_) => return ExitCode::from(1),
+        };
     }
 
     let closed = request(
@@ -107,43 +100,20 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
 fn read_submission(
     input: &mut dyn BufRead,
     output: &mut dyn Write,
-    session: &str,
+    continuing: bool,
 ) -> io::Result<ReadSubmission> {
     let mut line = String::new();
-    let mut source = String::new();
-    loop {
-        let prompt = if source.is_empty() { "> " } else { ". " };
-        write!(output, "{prompt}")?;
-        output.flush()?;
-        line.clear();
-        if input.read_line(&mut line)? == 0 {
-            return Ok(if source.is_empty() {
-                ReadSubmission::Exit
-            } else {
-                ReadSubmission::Source {
-                    source,
-                    input_closed: true,
-                }
-            });
-        }
-        let line = line.trim_end_matches(['\n', '\r']);
-        if source.is_empty() && (line == ":quit" || line == ":exit") {
-            return Ok(ReadSubmission::Exit);
-        }
-        if source.is_empty() && line.is_empty() {
-            return Ok(ReadSubmission::Empty);
-        }
-        if !source.is_empty() {
-            source.push('\n');
-        }
-        source.push_str(line);
-        if !source_is_incomplete(&format!("<interactive:{session}>"), &source) {
-            return Ok(ReadSubmission::Source {
-                source,
-                input_closed: false,
-            });
-        }
+    let prompt = if continuing { ". " } else { "> " };
+    write!(output, "{prompt}")?;
+    output.flush()?;
+    if input.read_line(&mut line)? == 0 {
+        return Ok(ReadSubmission::Exit);
     }
+    let line = line.trim_end_matches(['\n', '\r']);
+    if line == ":quit" || line == ":exit" {
+        return Ok(ReadSubmission::Exit);
+    }
+    Ok(ReadSubmission::Source(line.into()))
 }
 
 fn request(
@@ -174,14 +144,17 @@ fn render_submission_response(
     response: &Response,
     output: &mut dyn Write,
     errors: &mut dyn Write,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     if !response.ok {
         render_response_error(response, errors);
-        return Ok(());
+        return Ok(false);
     }
     let Some(result) = &response.result else {
-        return Ok(());
+        return Ok(false);
     };
+    if result.get("state").and_then(Value::as_str) == Some("incomplete") {
+        return Ok(true);
+    }
     if let Some(value) = result.get("value") {
         if !value.is_null() {
             writeln!(output, "{}", display_value(value))?;
@@ -189,7 +162,7 @@ fn render_submission_response(
     } else if let Some(state) = result.get("state").and_then(Value::as_str) {
         writeln!(output, "[{state}]")?;
     }
-    Ok(())
+    Ok(false)
 }
 
 fn render_event(event: &Event, output: &mut dyn Write, errors: &mut dyn Write) -> io::Result<()> {
