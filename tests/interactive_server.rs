@@ -524,6 +524,43 @@ fn server_binary_keeps_ndjson_on_stdout() {
 }
 
 #[test]
+fn server_binary_returns_structured_slug_diagnostics_on_protocol_stdout() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start slug-server");
+    let input = concat!(
+        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"protocol\":1}}\n",
+        "{\"id\":2,\"method\":\"session.open\"}\n",
+        "{\"id\":3,\"session\":\"s1\",\"method\":\"submit\",\"params\":{\"source\":\"1 + true\"}}\n",
+        "{\"id\":4,\"session\":\"s1\",\"method\":\"session.close\"}\n"
+    );
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write input");
+    let output = child.wait_with_output().expect("wait for server");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let messages = String::from_utf8(output.stdout)
+        .expect("stdout is UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("NDJSON response"))
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[2]["id"], 3);
+    assert_eq!(messages[2]["ok"], false);
+    assert_eq!(messages[2]["error"]["category"], "source");
+    assert_eq!(messages[2]["error"]["kind"], "semantic");
+    assert_eq!(messages[3]["result"], serde_json::Value::Null);
+}
+
+#[test]
 fn server_binary_preserves_a_binding_between_ndjson_submissions() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
         .stdin(Stdio::piped())

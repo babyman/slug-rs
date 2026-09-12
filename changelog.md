@@ -47,6 +47,9 @@
 - Moved interactive multiline accumulation and source readiness into each
   server session so thin clients submit one source fragment at a time.
 
+- Confirmed `slug-server` keeps structured Slug diagnostics in NDJSON protocol
+  responses on stdout while reserving stderr for non-protocol host failures.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

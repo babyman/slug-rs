@@ -353,15 +353,19 @@ NDJSON stdout
 
 ## Tasks
 
-- [ ] Add at least one process-level `slug-server` integration test.
-- [ ] Launch the actual `slug-server` binary.
-- [ ] Write NDJSON requests to stdin.
-- [ ] Read NDJSON responses/events from stdout.
-- [ ] Verify one JSON object per line.
-- [ ] Verify responses are flushed appropriately.
-- [ ] Verify server diagnostics use stderr only.
-- [ ] Verify program output never corrupts protocol stdout.
-- [ ] Verify event/response ordering is usable.
+- [x] Add at least one process-level `slug-server` integration test.
+- [x] Launch the actual `slug-server` binary.
+- [x] Write NDJSON requests to stdin.
+- [x] Read NDJSON responses/events from stdout.
+- [x] Verify one JSON object per line.
+- [x] Verify responses are flushed appropriately.
+- [x] Verify protocol responses and events, including structured Slug diagnostics,
+  use stdout exclusively; reserve stderr for non-protocol host/process diagnostics
+  and logging.
+- [x] Verify program output never corrupts protocol stdout.
+- [x] Verify event/response ordering is usable.
+
+> **A Slug error is protocol data. A server-host failure is process diagnostics.**
 
 ## Suggested Smoke Test
 
@@ -779,7 +783,7 @@ This should remain future work, but the multiline implementation must preserve t
 - [x] Thin parser-free `slug-repl`.
 - [ ] Multiline server tests.
 - [ ] Thin-client integration tests.
-- [ ] Real `slug-server` NDJSON process test.
+- [x] Real `slug-server` NDJSON process test.
 
 ## Review While Here
 
