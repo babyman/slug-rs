@@ -62,6 +62,9 @@
 - Covered thin-client prompt transitions driven solely by server readiness
   responses, including recovery after structured source errors.
 
+- Recorded the interactive protocol's deferred correlation, cancellation,
+  execution-context, parser-reuse, and runtime-rollback decisions.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

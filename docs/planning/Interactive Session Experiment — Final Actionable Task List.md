@@ -477,13 +477,21 @@ It may nevertheless matter to future IDE or agent clients.
 
 ## Tasks
 
-- [ ] Document the question.
-- [ ] Verify session identity is sufficient for the current protocol.
-- [ ] Do not add submission IDs unless a concrete use case requires them.
+- [x] Document the question.
+- [x] Verify session identity is sufficient for the current protocol.
+- [x] Do not add submission IDs unless a concrete use case requires them.
 
 Concurrent submissions within one session remain unsupported, so no immediate ambiguity exists.
 
 This should remain a deliberately deferred protocol decision.
+
+### Decision
+
+Session identity is sufficient while a session permits only one active
+submission. `session.poll` resolves that session's sole outstanding execution,
+so a second correlation identifier would not disambiguate any currently valid
+request sequence. Add submission IDs only when concurrent submissions or a
+client workflow needs them.
 
 ---
 
@@ -514,12 +522,18 @@ host
 
 ## Tasks
 
-- [ ] Record that `InteractiveExecution` may be more general than REPL/session functionality.
-- [ ] Watch for another embedding use case that needs the same abstraction.
-- [ ] Do not rename or generalize it solely on speculation.
-- [ ] Revisit only when a second consumer appears.
+- [x] Record that `InteractiveExecution` may be more general than REPL/session functionality.
+- [x] Watch for another embedding use case that needs the same abstraction.
+- [x] Do not rename or generalize it solely on speculation.
+- [x] Revisit only when a second consumer appears.
 
 This is an architectural observation, not immediate work.
+
+### Decision
+
+`InteractiveExecution` remains named for its only current consumer. Its
+detachable state is a useful host-embedding observation, but no second consumer
+exists to establish a better general abstraction or name.
 
 ---
 
@@ -616,9 +630,16 @@ without reparsing.
 
 ## Deferred Tasks
 
-- [ ] Determine whether the parser can naturally expose this result.
-- [ ] Reuse the successful AST if doing so simplifies the compiler pipeline.
-- [ ] Avoid optimizing duplicate parsing without evidence that it matters.
+- [x] Determine whether the parser can naturally expose this result.
+- [x] Reuse the successful AST if doing so simplifies the compiler pipeline.
+- [x] Avoid optimizing duplicate parsing without evidence that it matters.
+
+### Decision
+
+The current parser can classify an accumulated source unit but its AST remains
+private to the source compiler. The server therefore performs an acceptable
+readiness parse before the normal compilation parse. Keep this boundary until
+profiling or a language-service consumer makes AST reuse worthwhile.
 
 ---
 
@@ -646,9 +667,15 @@ session
 
 ## For Now
 
-- [ ] Do not implement unless it falls out cheaply.
-- [ ] Ensure the session representation does not make cancellation difficult later.
-- [ ] Record it as a future protocol operation.
+- [x] Do not implement unless it falls out cheaply.
+- [x] Ensure the session representation does not make cancellation difficult later.
+- [x] Record it as a future protocol operation.
+
+### Decision
+
+Do not add `session.input.cancel` yet. Pending source is a distinct
+session-local field, so a future cancellation operation can clear it without
+affecting compiler, runtime, or active-execution state.
 
 ---
 
@@ -670,11 +697,18 @@ runtime failure     → no rollback guarantee
 
 ## Tasks
 
-- [ ] Preserve current semantics.
-- [ ] Document the distinction clearly.
-- [ ] Do not delay multiline/server ownership work to solve runtime transactions.
+- [x] Preserve current semantics.
+- [x] Document the distinction clearly.
+- [x] Do not delay multiline/server ownership work to solve runtime transactions.
 
 Measure the need later.
+
+### Decision
+
+Pending input is cleared once syntactically complete source reaches compilation;
+parser, semantic, type-check, and compile failures therefore leave committed
+session state unchanged. Runtime failures retain the existing no-rollback
+behavior and remain outside this experiment.
 
 ---
 
@@ -792,12 +826,12 @@ This should remain future work, but the multiline implementation must preserve t
 
 ## Record and Defer
 
-- [ ] Original submission/request correlation after stalls.
-- [ ] Generalization of `InteractiveExecution`.
-- [ ] Parser AST reuse/double parsing.
-- [ ] Input cancellation.
-- [ ] Runtime transactional rollback.
-- [ ] Completion and other language-service operations.
+- [x] Original submission/request correlation after stalls.
+- [x] Generalization of `InteractiveExecution`.
+- [x] Parser AST reuse/double parsing.
+- [x] Input cancellation.
+- [x] Runtime transactional rollback.
+- [x] Completion and other language-service operations.
 
 ---
 
@@ -805,17 +839,17 @@ This should remain future work, but the multiline implementation must preserve t
 
 The experiment is ready to close when:
 
-- [ ] `slug-repl` contains no parser or source-completeness logic.
-- [ ] pending interactive source belongs entirely to the server session.
-- [ ] every entered fragment crosses the session protocol.
-- [ ] the server distinguishes complete, incomplete, and invalid source.
-- [ ] incomplete input preserves session-local pending source.
-- [ ] invalid and compile-failing submissions clear pending input without corrupting persistent state.
-- [ ] multiple sessions can independently hold pending source.
-- [ ] full and slim runtimes retain equivalent session semantics.
-- [ ] output remains explicitly session-attributed and protocol-safe.
-- [ ] the actual `slug-server` executable has been exercised through NDJSON stdin/stdout.
-- [ ] the terminal REPL remains a disposable thin client.
+- [x] `slug-repl` contains no parser or source-completeness logic.
+- [x] pending interactive source belongs entirely to the server session.
+- [x] every entered fragment crosses the session protocol.
+- [x] the server distinguishes complete, incomplete, and invalid source.
+- [x] incomplete input preserves session-local pending source.
+- [x] invalid and compile-failing submissions clear pending input without corrupting persistent state.
+- [x] multiple sessions can independently hold pending source.
+- [x] full and slim runtimes retain equivalent session semantics.
+- [x] output remains explicitly session-attributed and protocol-safe.
+- [x] the actual `slug-server` executable has been exercised through NDJSON stdin/stdout.
+- [x] the terminal REPL remains a disposable thin client.
 
 The final architectural invariant is:
 
