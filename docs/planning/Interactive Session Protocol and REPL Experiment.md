@@ -1032,17 +1032,17 @@ is proven.
 
 ## Tasks
 
-- [ ] Create several session-local compiler snapshots and runtime environments
+- [x] Create several session-local compiler snapshots and runtime environments
   over one shared VM.
-- [ ] Verify equal binding names in separate sessions never collide.
-- [ ] Verify closures retain the correct originating session environment.
-- [ ] Define the explicit mechanism for host-provided shared bindings or
+- [x] Verify equal binding names in separate sessions never collide.
+- [x] Verify closures retain the correct originating session environment.
+- [x] Define the explicit mechanism for host-provided shared bindings or
   resources; do not expose the VM-global map as an accidental sharing channel.
-- [ ] Verify closing one session releases only its resources and leaves the
+- [x] Verify closing one session releases only its resources and leaves the
   remaining sessions usable.
-- [ ] Prove deliberately shared channels/resources communicate using ordinary
+- [x] Prove deliberately shared channels/resources communicate using ordinary
   Slug semantics.
-- [ ] Avoid a VM per session unless evidence demonstrates it is necessary.
+- [x] Avoid a VM per session unless evidence demonstrates it is necessary.
 
 ## Acceptance Criteria
 

@@ -1,6 +1,8 @@
 use std::{
+    cell::RefCell,
     io::Write,
     process::{Command, Stdio},
+    rc::Rc,
 };
 
 use slug_vm::{
@@ -223,6 +225,79 @@ fn session_bindings_shadow_host_bindings_without_leaking_to_other_sessions() {
 }
 
 #[test]
+fn sessions_retain_independent_bindings_and_closures() {
+    let mut server = initialized_server();
+    let first = open_session(&mut server);
+    let second = open_session(&mut server);
+
+    assert!(submit(&mut server, 3, &first, "var x = 10").ok);
+    assert!(submit(&mut server, 4, &first, "val read = fn() { x }").ok);
+    assert!(submit(&mut server, 5, &second, "var x = 20").ok);
+    assert!(submit(&mut server, 6, &second, "val read = fn() { x }").ok);
+    assert!(submit(&mut server, 7, &first, "x = 11").ok);
+
+    let first_value = submit(&mut server, 8, &first, "read()");
+    let second_value = submit(&mut server, 9, &second, "read()");
+
+    assert_eq!(first_value.result, Some(serde_json::json!({ "value": 11 })));
+    assert_eq!(
+        second_value.result,
+        Some(serde_json::json!({ "value": 20 }))
+    );
+}
+
+#[test]
+fn closing_a_session_preserves_the_other_session() {
+    let mut server = initialized_server();
+    let first = open_session(&mut server);
+    let second = open_session(&mut server);
+    assert!(submit(&mut server, 3, &second, "val x = 20").ok);
+
+    let closed = server.handle_line(&request(4, "session.close", Some(&first), None).to_string());
+    assert!(closed.ok);
+    let rejected = submit(&mut server, 5, &first, "1");
+    assert_eq!(
+        rejected.error.expect("closed session diagnostic").code,
+        "unknown_session"
+    );
+    let surviving = submit(&mut server, 6, &second, "x");
+    assert_eq!(surviving.result, Some(serde_json::json!({ "value": 20 })));
+}
+
+#[test]
+fn sessions_communicate_through_an_explicitly_shared_host_channel() {
+    let mut server = initialized_server();
+    let first = open_session(&mut server);
+    let second = open_session(&mut server);
+    let module = NativeModule::new(
+        "test.interactive_shared_channel",
+        Rc::new(RefCell::new(Option::<NativeOwnedValue>::None)),
+    )
+    .expect("native module");
+    let channel = module
+        .function("shared_queue", NativeArity::Exact(0), shared_queue)
+        .expect("native function");
+    server
+        .define_host_native(channel)
+        .expect("register shared channel factory");
+
+    assert!(submit(&mut server, 3, &first, "val queue = shared_queue()").ok);
+    assert!(
+        submit(
+            &mut server,
+            4,
+            &first,
+            "select { send queue, 99 /> fn(_) { nil } }"
+        )
+        .ok
+    );
+    assert!(submit(&mut server, 5, &second, "val queue = shared_queue()").ok);
+    let received = submit(&mut server, 6, &second, "select { recv queue }");
+
+    assert_eq!(received.result, Some(serde_json::json!({ "value": 99 })));
+}
+
+#[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
     let source = Diagnostic::from_source(&source);
@@ -397,4 +472,20 @@ fn submit(
 
 fn host_answer(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::integer(42))
+}
+
+fn shared_queue(call: &mut NativeCall<'_>) -> NativeStatus {
+    let Some(state) = call
+        .state::<Rc<RefCell<Option<NativeOwnedValue>>>>()
+        .cloned()
+    else {
+        return call.report_contract_violation("shared queue state is unavailable");
+    };
+    let mut queue = state.borrow_mut();
+    if let Some(existing) = queue.as_ref() {
+        return call.return_value(existing.clone());
+    }
+    let channel = call.plain_channel(1);
+    queue.replace(channel.clone());
+    call.return_value(channel)
 }

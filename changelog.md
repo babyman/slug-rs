@@ -21,6 +21,9 @@
 - Added shared host-native bindings for interactive sessions through a
   host-backed overlay that preserves session-local shadowing and isolation.
 
+- Verified multi-session isolation, closure ownership, session teardown, and
+  host-provided shared-channel communication within the single interactive VM.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 
