@@ -1063,11 +1063,11 @@ the protocol event contract and session attribution.
 
 ## Tasks
 
-- [ ] Route stdout and stderr from the host-owned sink into protocol events.
-- [ ] Include the originating session identifier on every output event.
-- [ ] Preserve response ordering relative to output produced by its submission.
-- [ ] Verify raw program output never corrupts NDJSON stdout.
-- [ ] Specify and test behavior for output from background/shared runtime work.
+- [x] Route stdout and stderr from the host-owned sink into protocol events.
+- [x] Include the originating session identifier on every output event.
+- [x] Preserve response ordering relative to output produced by its submission.
+- [x] Verify raw program output never corrupts NDJSON stdout.
+- [x] Specify and test behavior for output from background/shared runtime work.
 
 ## Acceptance Criteria
 

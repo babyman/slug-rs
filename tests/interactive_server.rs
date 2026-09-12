@@ -8,7 +8,7 @@ use std::{
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind,
     compile,
-    interactive::{Diagnostic, DiagnosticCategory, Server},
+    interactive::{Diagnostic, DiagnosticCategory, OutputError, OutputStream, Server},
 };
 
 fn request(
@@ -181,6 +181,33 @@ fn output_is_captured_as_a_session_event() {
     assert_eq!(events[0].event, "stdout");
     assert_eq!(events[0].data, serde_json::json!("hello"));
     assert_eq!(events[1].data, serde_json::json!(" world\n"));
+}
+
+#[test]
+fn host_and_background_output_are_explicitly_attributed_to_live_sessions() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    server
+        .emit_output(&session, OutputStream::Stderr, "warning\\n")
+        .expect("emit stderr event");
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session, session);
+    assert_eq!(events[0].event, "stderr");
+    assert_eq!(events[0].data, serde_json::json!("warning\\n"));
+
+    assert!(
+        server
+            .handle_line(&request(3, "session.close", Some(&session), None).to_string())
+            .ok
+    );
+    assert_eq!(
+        server
+            .emit_output(&session, OutputStream::Stdout, "late")
+            .expect_err("closed sessions cannot receive output"),
+        OutputError::UnknownSession(session)
+    );
 }
 
 #[test]
@@ -427,6 +454,43 @@ fn server_binary_emits_program_output_only_as_ndjson_events() {
         serde_json::json!({ "session": "s1", "event": "stdout", "data": "hello\n" })
     );
     assert_eq!(messages[3]["result"], serde_json::json!({ "value": null }));
+}
+
+#[test]
+fn server_binary_orders_output_before_a_failing_submission_response() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start slug-server");
+    let input = concat!(
+        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"protocol\":1}}\n",
+        "{\"id\":2,\"method\":\"session.open\"}\n",
+        "{\"id\":3,\"session\":\"s1\",\"method\":\"submit\",\"params\":{\"source\":\"println('before failure')\\nthrow 1\"}}\n"
+    );
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write input");
+    let output = child.wait_with_output().expect("wait for server");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let messages = String::from_utf8(output.stdout)
+        .expect("stdout is UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("NDJSON message"))
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(
+        messages[2],
+        serde_json::json!({ "session": "s1", "event": "stdout", "data": "before failure\n" })
+    );
+    assert_eq!(messages[3]["id"], 3);
+    assert_eq!(messages[3]["ok"], false);
 }
 
 fn initialized_server() -> Server {

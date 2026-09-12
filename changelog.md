@@ -24,6 +24,9 @@
 - Verified multi-session isolation, closure ownership, session teardown, and
   host-provided shared-channel communication within the single interactive VM.
 
+- Completed interactive output events with explicit stdout/stderr host emission,
+  session attribution, response ordering, and safe queued background output.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

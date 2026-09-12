@@ -1,7 +1,7 @@
 //! Interactive session protocol support for embedded Slug hosts.
 //!
-//! The initial server shell owns protocol lifecycle only. Source submission and
-//! persistent runtime state are deliberately deferred to later milestones.
+//! The server owns protocol lifecycle, persistent session state, and output
+//! events without exposing raw program bytes on the NDJSON transport.
 
 mod diagnostics;
 mod protocol;
@@ -9,4 +9,4 @@ mod server;
 
 pub use diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation};
 pub use protocol::{Event, PROTOCOL_VERSION, Request, Response};
-pub use server::Server;
+pub use server::{OutputError, OutputStream, Server};

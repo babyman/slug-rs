@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -11,6 +11,38 @@ use crate::{
 };
 
 use super::{Diagnostic, Event, PROTOCOL_VERSION, Request, Response};
+
+/// The protocol event stream used for host or program output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
+impl OutputStream {
+    const fn event_name(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+/// Failure to attribute host output to a live interactive session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OutputError {
+    UnknownSession(String),
+}
+
+impl fmt::Display for OutputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownSession(session) => write!(formatter, "unknown session `{session}`"),
+        }
+    }
+}
+
+impl std::error::Error for OutputError {}
 
 /// In-process owner of interactive-session protocol lifecycle.
 pub struct Server {
@@ -41,16 +73,20 @@ impl OutputSink {
         self.active_session = None;
     }
 
-    fn write(&mut self, event: &str, data: String) -> bool {
+    fn write_active(&mut self, stream: OutputStream, data: String) -> bool {
         let Some(session) = &self.active_session else {
             return false;
         };
+        self.write(session.clone(), stream, data);
+        true
+    }
+
+    fn write(&mut self, session: String, stream: OutputStream, data: String) {
         self.events.push(Event {
-            session: session.clone(),
-            event: event.into(),
+            session,
+            event: stream.event_name().into(),
             data: Value::String(data),
         });
-        true
     }
 }
 
@@ -89,6 +125,32 @@ impl Server {
     #[must_use]
     pub fn take_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.output.borrow_mut().events)
+    }
+
+    /// Queues host or background-runtime output for a live session.
+    ///
+    /// The embedding host must supply the session explicitly. Events queued
+    /// outside a `submit` are delivered the next time the host drains
+    /// [`Self::take_events`]; output is never written directly to protocol
+    /// stdout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::UnknownSession`] after the session is closed or
+    /// when its identifier is not known to this server.
+    pub fn emit_output(
+        &mut self,
+        session: &str,
+        stream: OutputStream,
+        data: impl Into<String>,
+    ) -> Result<(), OutputError> {
+        if !self.sessions.contains_key(session) {
+            return Err(OutputError::UnknownSession(session.into()));
+        }
+        self.output
+            .borrow_mut()
+            .write(session.into(), stream, data.into());
+        Ok(())
     }
 
     /// Handles one decoded protocol request.
@@ -336,7 +398,7 @@ fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
             "interactive output sink is unavailable",
         ));
     };
-    if !sink.borrow_mut().write("stdout", output) {
+    if !sink.borrow_mut().write_active(OutputStream::Stdout, output) {
         return call.raise(crate::NativeError::new(
             "native.output",
             "interactive output was produced outside a submission",
