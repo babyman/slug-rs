@@ -1149,12 +1149,12 @@ concurrency.
 
 ## Tasks
 
-- [ ] Drive sessions through the existing host-driven VM APIs.
-- [ ] Define the slim host-managed counterpart to task-backed sessions without
+- [x] Drive sessions through the existing host-driven VM APIs.
+- [x] Define the slim host-managed counterpart to task-backed sessions without
   exposing the implementation choice in the protocol.
-- [ ] Preserve stalled execution and resume it after native ingress.
-- [ ] Prevent VM re-entry from external producers.
-- [ ] Run the relevant server-engine tests with `--no-default-features`.
+- [x] Preserve stalled execution and resume it after native ingress.
+- [x] Prevent VM re-entry from external producers.
+- [x] Run the relevant server-engine tests with `--no-default-features`.
 
 ## Acceptance Criteria
 

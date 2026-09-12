@@ -363,6 +363,24 @@ pub(crate) struct InteractiveEnvironment {
     imported_globals: HashSet<String>,
 }
 
+/// Detached root-execution state for a slim interactive session.
+#[cfg(not(feature = "concurrency"))]
+pub(crate) struct InteractiveExecution {
+    module_program: Option<Rc<Program>>,
+    imported_globals: HashSet<String>,
+    module_metadata: Vec<ModuleDeclaration>,
+    stack: Vec<Value>,
+    frames: Vec<Frame>,
+    cleanup: Vec<Cleanup>,
+    progress: Rc<ProgressDriver>,
+    current_waiter: Option<Waiter>,
+    suspension: Option<Suspension>,
+    resume: Option<VmResult<Value>>,
+    wait_registration: Option<WaitSet>,
+    host_execution: Option<HostExecution>,
+    active_span: Option<SpanId>,
+}
+
 /// A scheduler-owned interactive submission running in the shared VM.
 #[cfg(feature = "concurrency")]
 #[derive(Clone)]
@@ -601,31 +619,115 @@ impl Vm {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    pub(crate) fn run_named_in_environment(
+    pub(crate) fn start_named_interactive_execution(
         &mut self,
         program: &Program,
         entry: &str,
         environment: &mut InteractiveEnvironment,
-    ) -> VmResult<Value> {
+    ) -> VmResult<InteractiveExecution> {
         Self::synchronize_interactive_environment(environment);
-        let previous_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
-        let previous_imported = std::mem::replace(
+        let host_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
+        let host_imported = std::mem::replace(
             &mut self.imported_globals,
             std::mem::take(&mut environment.imported_globals),
         );
-        let result = self.run_named(program, entry);
-        environment.globals.clone_from(&self.globals);
-        environment
-            .imported_globals
-            .clone_from(&self.imported_globals);
-        self.globals = previous_globals;
-        self.imported_globals = previous_imported;
-        if result.is_ok() {
+        if let Err(error) = self.start_named(program, entry) {
             environment
-                .local_bindings
-                .extend(program.bindings().iter().cloned());
+                .imported_globals
+                .clone_from(&self.imported_globals);
+            self.globals = host_globals;
+            self.imported_globals = host_imported;
+            return Err(error);
         }
-        result
+        Ok(self.detach_interactive_execution(environment, host_globals, host_imported))
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    pub(crate) fn run_interactive_execution_until_stalled(
+        &mut self,
+        execution: &mut InteractiveExecution,
+        environment: &mut InteractiveEnvironment,
+    ) -> VmProgress {
+        let (host_globals, host_imported) =
+            self.activate_interactive_execution(execution, environment);
+        let progress = self.run_until_stalled();
+        *execution = self.detach_interactive_execution(environment, host_globals, host_imported);
+        progress
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    pub(crate) fn cancel_interactive_execution(
+        &mut self,
+        execution: &mut InteractiveExecution,
+        environment: &mut InteractiveEnvironment,
+    ) {
+        let (host_globals, host_imported) =
+            self.activate_interactive_execution(execution, environment);
+        let error = self.error(
+            RuntimeErrorKind::InvalidCall,
+            "interactive session was closed".into(),
+            None,
+        );
+        if let Some(host_execution) = self.host_execution.take() {
+            self.release_host_execution(host_execution, Some(&error));
+        }
+        *execution = self.detach_interactive_execution(environment, host_globals, host_imported);
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    fn activate_interactive_execution(
+        &mut self,
+        execution: &mut InteractiveExecution,
+        environment: &mut InteractiveEnvironment,
+    ) -> (GlobalEnvironment, HashSet<String>) {
+        debug_assert!(self.host_execution.is_none());
+        let host_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
+        let host_imported = std::mem::replace(
+            &mut self.imported_globals,
+            std::mem::take(&mut execution.imported_globals),
+        );
+        self.module_program = execution.module_program.take();
+        self.module_metadata = std::mem::take(&mut execution.module_metadata);
+        self.stack = std::mem::take(&mut execution.stack);
+        self.frames = std::mem::take(&mut execution.frames);
+        self.cleanup = std::mem::take(&mut execution.cleanup);
+        self.progress = std::mem::replace(&mut execution.progress, Rc::new(ProgressDriver::new()));
+        self.current_waiter = execution.current_waiter.take();
+        self.suspension = execution.suspension.take();
+        self.resume = execution.resume.take();
+        self.wait_registration = execution.wait_registration.take();
+        self.host_execution = execution.host_execution.take();
+        self.active_span = execution.active_span.take();
+        (host_globals, host_imported)
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    fn detach_interactive_execution(
+        &mut self,
+        environment: &mut InteractiveEnvironment,
+        host_globals: GlobalEnvironment,
+        host_imported: HashSet<String>,
+    ) -> InteractiveExecution {
+        let execution_imported = std::mem::take(&mut self.imported_globals);
+        environment.globals.clone_from(&self.globals);
+        environment.imported_globals.clone_from(&execution_imported);
+        self.globals = host_globals;
+        self.imported_globals = host_imported;
+        InteractiveExecution {
+            module_program: self.module_program.take(),
+            imported_globals: execution_imported,
+            module_metadata: std::mem::take(&mut self.module_metadata),
+            stack: std::mem::take(&mut self.stack),
+            frames: std::mem::take(&mut self.frames),
+            cleanup: std::mem::take(&mut self.cleanup),
+            progress: std::mem::replace(&mut self.progress, Rc::new(ProgressDriver::new())),
+            current_waiter: self.current_waiter.take(),
+            suspension: self.suspension.take(),
+            resume: self.resume.take(),
+            wait_registration: self.wait_registration.take(),
+            host_execution: self.host_execution.take(),
+            active_span: self.active_span.take(),
+        }
     }
 
     #[cfg(feature = "concurrency")]
@@ -735,7 +837,6 @@ impl Vm {
         }
     }
 
-    #[cfg(feature = "concurrency")]
     pub(crate) fn commit_interactive_bindings(
         environment: &mut InteractiveEnvironment,
         program: &Program,

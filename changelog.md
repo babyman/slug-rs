@@ -30,6 +30,9 @@
 - Added task-backed interactive submissions with `session.poll`, allowing one
   session to stall on native ingress while another session continues running.
 
+- Made stalled interactive sessions protocol-equivalent in slim builds through
+  detachable host-driven execution contexts and native progress polling.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

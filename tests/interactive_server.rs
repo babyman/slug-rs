@@ -1,4 +1,3 @@
-#[cfg(feature = "concurrency")]
 use std::sync::{Arc, Mutex};
 use std::{
     cell::RefCell,
@@ -12,7 +11,6 @@ use slug_vm::{
     compile,
     interactive::{Diagnostic, DiagnosticCategory, OutputError, OutputStream, Server},
 };
-#[cfg(feature = "concurrency")]
 use slug_vm::{NativeChannelProducer, NativeProducerStatus, NativeSendValue};
 
 fn request(
@@ -328,7 +326,6 @@ fn sessions_communicate_through_an_explicitly_shared_host_channel() {
     assert_eq!(received.result, Some(serde_json::json!({ "value": 99 })));
 }
 
-#[cfg(feature = "concurrency")]
 #[test]
 fn stalled_session_does_not_prevent_another_session_from_running() {
     let mut server = initialized_server();
@@ -606,10 +603,8 @@ fn shared_queue(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(channel)
 }
 
-#[cfg(feature = "concurrency")]
 struct ProducerState(Mutex<Option<NativeChannelProducer>>);
 
-#[cfg(feature = "concurrency")]
 fn session_input(call: &mut NativeCall<'_>) -> NativeStatus {
     let (channel, producer) = call.channel(1);
     let Some(state) = call.state::<Arc<ProducerState>>() else {
