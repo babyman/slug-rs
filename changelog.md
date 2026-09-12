@@ -40,6 +40,10 @@
   for incomplete functions and blocks while preserving immediate diagnostics for
   invalid source.
 
+- Expanded `slug-repl` diagnostics to render preserved runtime stack frames,
+  thrown values, native details, and chained causes without changing the
+  protocol envelope.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

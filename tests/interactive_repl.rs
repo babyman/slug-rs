@@ -103,3 +103,26 @@ fn repl_reports_invalid_source_without_a_continuation_prompt() {
     assert!(!stdout.contains(". "));
     assert!(stderr.contains("source error (parse): expected binding name"));
 }
+
+#[test]
+fn repl_renders_runtime_details_from_the_protocol_diagnostic() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-repl"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start slug-repl");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"val inner = fn() { 1 / 0 }\nval outer = fn() { inner() }\nouter()\n:quit\n")
+        .expect("write input");
+    let output = child.wait_with_output().expect("wait for repl");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.contains("runtime error (divide_by_zero): division by zero"));
+    assert!(stderr.contains("--> <interactive:s1>:1:22"));
+    assert!(stderr.contains("at <fn #0> (<interactive:s1>:1:20)"));
+}

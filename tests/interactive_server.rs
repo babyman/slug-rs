@@ -403,6 +403,40 @@ fn diagnostic_projection_preserves_source_and_runtime_structure() {
 }
 
 #[test]
+fn submitted_diagnostics_retain_source_kinds_and_locations() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let parse = submit(&mut server, 3, &session, "val =");
+    let parse = parse.error.expect("parse diagnostic");
+    assert_eq!(parse.category, DiagnosticCategory::Source);
+    assert_eq!(parse.kind.as_deref(), Some("parse"));
+    assert_eq!(
+        parse.location.expect("parse location").path,
+        "<interactive:s1>"
+    );
+
+    let semantic = submit(&mut server, 4, &session, "1 + true");
+    let semantic = semantic.error.expect("semantic diagnostic");
+    assert_eq!(semantic.category, DiagnosticCategory::Source);
+    assert_eq!(semantic.kind.as_deref(), Some("semantic"));
+    assert_eq!(
+        semantic.location.expect("semantic location").path,
+        "<interactive:s1>"
+    );
+
+    let runtime = submit(&mut server, 5, &session, "1 / 0");
+    let runtime = runtime.error.expect("runtime diagnostic");
+    assert_eq!(runtime.category, DiagnosticCategory::Runtime);
+    assert_eq!(runtime.kind.as_deref(), Some("divide_by_zero"));
+    assert_eq!(
+        runtime.location.expect("runtime location").path,
+        "<interactive:s1>"
+    );
+    assert!(!runtime.frames.is_empty());
+}
+
+#[test]
 fn server_binary_keeps_ndjson_on_stdout() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
         .stdin(Stdio::piped())

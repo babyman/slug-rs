@@ -212,6 +212,14 @@ fn render_response_error(response: &Response, errors: &mut dyn Write) {
 }
 
 fn render_diagnostic(diagnostic: &Diagnostic, errors: &mut dyn Write) -> io::Result<()> {
+    render_diagnostic_indented(diagnostic, errors, "")
+}
+
+fn render_diagnostic_indented(
+    diagnostic: &Diagnostic,
+    errors: &mut dyn Write,
+    indent: &str,
+) -> io::Result<()> {
     let kind = diagnostic
         .kind
         .as_deref()
@@ -222,13 +230,42 @@ fn render_diagnostic(diagnostic: &Diagnostic, errors: &mut dyn Write) -> io::Res
         DiagnosticCategory::Protocol => "protocol",
         DiagnosticCategory::Host => "host",
     };
-    writeln!(errors, "{category} error ({kind}): {}", diagnostic.message)?;
+    writeln!(
+        errors,
+        "{indent}{category} error ({kind}): {}",
+        diagnostic.message
+    )?;
     if let Some(location) = &diagnostic.location {
         writeln!(
             errors,
-            "  --> {}:{}:{}",
+            "{indent}  --> {}:{}:{}",
             location.path, location.line, location.column
         )?;
+    }
+    if let Some(thrown) = &diagnostic.thrown {
+        writeln!(errors, "{indent}  thrown: {}", thrown.display)?;
+    }
+    if let Some(native) = &diagnostic.native {
+        write!(errors, "{indent}  native: {}", native.code)?;
+        if let Some(data) = &native.data {
+            write!(errors, " ({}: {})", data.kind, data.display)?;
+        }
+        writeln!(errors)?;
+    }
+    for frame in &diagnostic.frames {
+        write!(errors, "{indent}  at {}", frame.function)?;
+        if let Some(location) = &frame.location {
+            write!(
+                errors,
+                " ({}:{}:{})",
+                location.path, location.line, location.column
+            )?;
+        }
+        writeln!(errors)?;
+    }
+    if let Some(cause) = &diagnostic.cause {
+        writeln!(errors, "{indent}  caused by:")?;
+        render_diagnostic_indented(cause, errors, &format!("{indent}    "))?;
     }
     Ok(())
 }

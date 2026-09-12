@@ -1226,12 +1226,12 @@ This milestone concerns presentation only.
 
 ## Tasks
 
-- [ ] Verify parser errors expose sufficient structured information.
-- [ ] Verify type errors expose sufficient structured information.
-- [ ] Verify runtime errors expose sufficient structured information.
-- [ ] Preserve source spans through the protocol.
-- [ ] Render useful terminal diagnostics.
-- [ ] Preserve the canonical structured diagnostic projection for non-terminal
+- [x] Verify parser errors expose sufficient structured information.
+- [x] Verify type errors expose sufficient structured information.
+- [x] Verify runtime errors expose sufficient structured information.
+- [x] Preserve source spans through the protocol.
+- [x] Render useful terminal diagnostics.
+- [x] Preserve the canonical structured diagnostic projection for non-terminal
   clients.
 
 ---
