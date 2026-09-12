@@ -146,6 +146,16 @@ Run it from the repository root:
 cargo run --bin slug -- hello.slug
 ```
 
+For a persistent interactive session, run the minimal terminal client:
+
+```sh
+cargo run --bin slug-repl
+```
+
+It embeds the interactive server engine, presents a `>` prompt, and sends each
+line through the structured session protocol. Type `:quit` or `:exit`, or send
+end-of-file, to close the session.
+
 The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with
 `--diagnostic-format=json` to receive runner-generated fatal diagnostics as one

@@ -1169,16 +1169,16 @@ Only after the protocol and session model work.
 
 ## Tasks
 
-- [ ] Launch or connect to the session server.
-- [ ] Send `initialize`.
-- [ ] Open one session.
-- [ ] Display a prompt.
-- [ ] Read source.
-- [ ] Send `submit`.
-- [ ] Display returned values.
-- [ ] Render output events.
-- [ ] Render structured Slug errors.
-- [ ] Close the session on exit.
+- [x] Launch or connect to the session server.
+- [x] Send `initialize`.
+- [x] Open one session.
+- [x] Display a prompt.
+- [x] Read source.
+- [x] Send `submit`.
+- [x] Display returned values.
+- [x] Render output events.
+- [x] Render structured Slug errors.
+- [x] Close the session on exit.
 
 ## Initial UX
 

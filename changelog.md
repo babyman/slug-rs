@@ -33,6 +33,9 @@
 - Made stalled interactive sessions protocol-equivalent in slim builds through
   detachable host-driven execution contexts and native progress polling.
 
+- Added the `slug-repl` terminal client with persistent sessions, output-event
+  rendering, structured diagnostics, and clean session shutdown.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 
