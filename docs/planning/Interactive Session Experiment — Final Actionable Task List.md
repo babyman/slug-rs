@@ -564,13 +564,13 @@ Continue enforcing:
 
 ## Required Cases
 
-- [ ] Primary prompt for idle session.
-- [ ] Continuation prompt after server reports incomplete.
-- [ ] Multiple continuation lines.
-- [ ] Return to primary prompt after completion.
-- [ ] Return to primary prompt after structured error.
-- [ ] Multiline function can be called afterward.
-- [ ] Client contains no parser dependency.
+- [x] Primary prompt for idle session.
+- [x] Continuation prompt after server reports incomplete.
+- [x] Multiple continuation lines.
+- [x] Return to primary prompt after completion.
+- [x] Return to primary prompt after structured error.
+- [x] Multiline function can be called afterward.
+- [x] Client contains no parser dependency.
 
 ---
 
@@ -782,7 +782,7 @@ This should remain future work, but the multiline implementation must preserve t
 - [x] Complete/incomplete/invalid distinction.
 - [x] Thin parser-free `slug-repl`.
 - [x] Multiline server tests.
-- [ ] Thin-client integration tests.
+- [x] Thin-client integration tests.
 - [x] Real `slug-server` NDJSON process test.
 
 ## Review While Here

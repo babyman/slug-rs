@@ -59,6 +59,9 @@
 - Added server-side incremental source coverage for nested blocks, delimiters,
   strings, semantic failures, session isolation, and pending-input teardown.
 
+- Covered thin-client prompt transitions driven solely by server readiness
+  responses, including recovery after structured source errors.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 
