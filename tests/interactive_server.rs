@@ -93,6 +93,74 @@ fn engine_reports_protocol_failures_and_remains_usable() {
 }
 
 #[test]
+fn session_persists_compiler_and_runtime_bindings_across_submissions() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let defined = submit(&mut server, 3, &session, "val x = 10");
+    assert!(defined.ok);
+    assert_eq!(defined.result, Some(serde_json::json!({ "value": null })));
+
+    let evaluated = submit(&mut server, 4, &session, "x + 5");
+    assert!(evaluated.ok);
+    assert_eq!(evaluated.result, Some(serde_json::json!({ "value": 15 })));
+
+    let function = submit(
+        &mut server,
+        5,
+        &session,
+        "val add = fn(value) { x + value }",
+    );
+    assert!(function.ok);
+    let called = submit(&mut server, 6, &session, "add(7)");
+    assert!(called.ok);
+    assert_eq!(called.result, Some(serde_json::json!({ "value": 17 })));
+}
+
+#[test]
+fn compile_failures_do_not_commit_session_state() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    assert!(submit(&mut server, 3, &session, "val x = 10").ok);
+
+    let failed = submit(&mut server, 4, &session, "val broken = 1 + true");
+    assert!(!failed.ok);
+    assert_eq!(
+        failed.error.expect("source diagnostic").category,
+        DiagnosticCategory::Source
+    );
+
+    let preserved = submit(&mut server, 5, &session, "x");
+    assert!(preserved.ok);
+    assert_eq!(preserved.result, Some(serde_json::json!({ "value": 10 })));
+    let absent = submit(&mut server, 6, &session, "broken");
+    assert!(!absent.ok);
+    assert_eq!(
+        absent.error.expect("runtime diagnostic").kind.as_deref(),
+        Some("name")
+    );
+}
+
+#[test]
+fn closures_observe_later_mutations_in_their_session_environment() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    assert!(submit(&mut server, 3, &session, "var count = 1").ok);
+    assert!(
+        submit(
+            &mut server,
+            4,
+            &session,
+            "val increment = fn() { count = count + 1 }"
+        )
+        .ok
+    );
+    assert!(submit(&mut server, 5, &session, "increment()").ok);
+    let count = submit(&mut server, 6, &session, "count");
+    assert_eq!(count.result, Some(serde_json::json!({ "value": 2 })));
+}
+
+#[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
     let source = Diagnostic::from_source(&source);
@@ -153,4 +221,78 @@ fn server_binary_keeps_ndjson_on_stdout() {
     assert_eq!(messages[0]["result"]["protocol"], 1);
     assert_eq!(messages[1]["result"]["session"], "s1");
     assert_eq!(messages[2]["result"], serde_json::Value::Null);
+}
+
+#[test]
+fn server_binary_preserves_a_binding_between_ndjson_submissions() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start slug-server");
+    let input = concat!(
+        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"protocol\":1}}\n",
+        "{\"id\":2,\"method\":\"session.open\"}\n",
+        "{\"id\":3,\"session\":\"s1\",\"method\":\"submit\",\"params\":{\"source\":\"val x = 10\"}}\n",
+        "{\"id\":4,\"session\":\"s1\",\"method\":\"submit\",\"params\":{\"source\":\"x + 5\"}}\n"
+    );
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write input");
+    let output = child.wait_with_output().expect("wait for server");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let messages = String::from_utf8(output.stdout)
+        .expect("stdout is UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("NDJSON response"))
+        .collect::<Vec<_>>();
+    assert_eq!(messages[2]["result"], serde_json::json!({ "value": null }));
+    assert_eq!(messages[3]["result"], serde_json::json!({ "value": 15 }));
+}
+
+fn initialized_server() -> Server {
+    let mut server = Server::default();
+    let response = server.handle_line(
+        &request(
+            1,
+            "initialize",
+            None,
+            Some(serde_json::json!({ "protocol": 1 })),
+        )
+        .to_string(),
+    );
+    assert!(response.ok);
+    server
+}
+
+fn open_session(server: &mut Server) -> String {
+    let response = server.handle_line(&request(2, "session.open", None, None).to_string());
+    assert!(response.ok);
+    response.result.expect("session result")["session"]
+        .as_str()
+        .expect("session identifier")
+        .into()
+}
+
+fn submit(
+    server: &mut Server,
+    id: u64,
+    session: &str,
+    source: &str,
+) -> slug_vm::interactive::Response {
+    server.handle_line(
+        &request(
+            id,
+            "submit",
+            Some(session),
+            Some(serde_json::json!({ "source": source })),
+        )
+        .to_string(),
+    )
 }

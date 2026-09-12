@@ -988,27 +988,28 @@ Session
 
 ## Tasks
 
-- [ ] Seed parsing, semantic analysis, and compilation from the session's last
+- [x] Seed parsing, semantic analysis, and compilation from the session's last
   committed compiler snapshot.
-- [ ] Retain the minimum semantic information needed for previous bindings,
+- [x] Retain the minimum semantic information needed for previous bindings,
   callable signatures, aliases, and imports to remain visible to later
   submissions.
-- [ ] Introduce a durable session-local runtime environment whose binding cells
+- [x] Introduce a durable session-local runtime environment whose binding cells
   remain reference-stable after each successful submission.
-- [ ] Ensure closures created by earlier submissions retain that same session
+- [x] Ensure closures created by earlier submissions retain that same session
   environment and observe later mutations within it.
 - [ ] Layer session-local bindings over shared VM/host facilities without
   exposing another session's bindings.
 - [ ] Make a host-owned output sink available before executing `submit`; it
   must prevent program output from writing raw bytes to protocol stdout.
-- [ ] Implement source `submit`: parse, analyze, compile, execute, encode the
+- [x] Implement source `submit`: parse, analyze, compile, execute, encode the
   result, and commit durable session state only after compilation succeeds.
-- [ ] Guarantee parser, semantic, and compiler failures leave the previously
+- [x] Guarantee parser, semantic, and compiler failures leave the previously
   committed compiler snapshot and runtime environment unchanged.
-- [ ] Leave runtime rollback explicitly out of scope; record observed runtime
+- [x] Leave runtime rollback explicitly out of scope; record observed runtime
   binding behavior rather than adding speculative rollback machinery.
-- [ ] Add direct engine tests for persistence, compiler-failure atomicity,
-  closure retention, and output containment.
+- [x] Add direct engine tests for persistence, compiler-failure atomicity, and
+  closure retention.
+- [ ] Add direct engine tests for output containment.
 
 ## Acceptance Criteria
 

@@ -1,7 +1,10 @@
 //! The Rust source front end. Its AST and bytecode lowering are deliberately
 //! private while the language surface is still growing.
 
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use crate::{Program, SourceSpan};
 
@@ -17,7 +20,20 @@ use compiler::Compiler;
 use lexer::Lexer;
 use parser::Parser;
 
-use self::environment::{ImportSnapshots, ModuleSnapshot};
+use self::environment::{ImportSnapshots, ModuleSnapshot, SessionSnapshot};
+
+/// Compiler state retained by an interactive source session.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct InteractiveCompilerState {
+    semantic: SessionSnapshot,
+    globals: HashMap<String, bool>,
+    callable_globals: HashSet<String>,
+}
+
+pub(crate) struct InteractiveCompilation {
+    pub(crate) program: Program,
+    pub(crate) state: InteractiveCompilerState,
+}
 
 #[derive(Clone, Debug)]
 pub struct SourceError {
@@ -72,6 +88,38 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     compile_expressions(path, expressions, ImportSnapshots::new())
 }
 
+pub(crate) fn compile_interactive(
+    path: &str,
+    source: &str,
+    state: &InteractiveCompilerState,
+) -> Result<InteractiveCompilation, SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    let analysis = typecheck::analyze_with_imports_and_session(
+        &expressions,
+        ImportSnapshots::new(),
+        &state.semantic,
+    )?;
+    let compiled = Compiler::with_globals(
+        path,
+        expressions,
+        &analysis,
+        state.globals.clone(),
+        state.callable_globals.clone(),
+    )
+    .compile()?;
+    let mut program = compiled.program;
+    program.set_semantic_snapshot(analysis.snapshot);
+    Ok(InteractiveCompilation {
+        program,
+        state: InteractiveCompilerState {
+            semantic: analysis.session_snapshot,
+            globals: compiled.globals,
+            callable_globals: compiled.callable_globals,
+        },
+    })
+}
+
 pub(crate) fn compile_with_resolver(
     path: &str,
     source: &str,
@@ -100,7 +148,9 @@ fn compile_expressions(
     imports: ImportSnapshots,
 ) -> Result<Program, SourceError> {
     let analysis = typecheck::analyze_with_imports(&expressions, imports)?;
-    let mut program = Compiler::new(path, expressions, &analysis).compile()?;
+    let mut program = Compiler::new(path, expressions, &analysis)
+        .compile()?
+        .program;
     program.set_semantic_snapshot(analysis.snapshot);
     Ok(program)
 }

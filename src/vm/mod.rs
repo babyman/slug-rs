@@ -1,9 +1,7 @@
-use std::{cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
 
 #[cfg(feature = "concurrency")]
 use std::cell::Cell;
-#[cfg(feature = "metrics")]
-use std::cell::RefCell;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Duration;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
@@ -342,6 +340,12 @@ pub struct Vm {
     metrics: Rc<RefCell<VmMetrics>>,
 }
 
+/// Global bindings retained by one interactive session using a shared VM.
+pub(crate) struct InteractiveEnvironment {
+    globals: GlobalEnvironment,
+    imported_globals: HashSet<String>,
+}
+
 impl Default for Vm {
     fn default() -> Self {
         #[cfg(feature = "metrics")]
@@ -547,6 +551,34 @@ impl Vm {
     #[must_use]
     pub fn global(&self, name: &str) -> Option<Value> {
         self.globals.borrow().get(name).cloned()
+    }
+
+    pub(crate) fn interactive_environment(&self) -> InteractiveEnvironment {
+        InteractiveEnvironment {
+            globals: Rc::new(RefCell::new(self.globals.borrow().clone())),
+            imported_globals: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn run_named_in_environment(
+        &mut self,
+        program: &Program,
+        entry: &str,
+        environment: &mut InteractiveEnvironment,
+    ) -> VmResult<Value> {
+        let previous_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
+        let previous_imported = std::mem::replace(
+            &mut self.imported_globals,
+            std::mem::take(&mut environment.imported_globals),
+        );
+        let result = self.run_named(program, entry);
+        environment.globals.clone_from(&self.globals);
+        environment
+            .imported_globals
+            .clone_from(&self.imported_globals);
+        self.globals = previous_globals;
+        self.imported_globals = previous_imported;
+        result
     }
 
     /// Returns counters for the most recent public VM invocation.

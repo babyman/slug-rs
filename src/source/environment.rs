@@ -199,11 +199,19 @@ pub(crate) struct ModuleSnapshot {
     pub(super) types: HashMap<String, TypeMember>,
 }
 
+/// Semantic bindings retained by one interactive source session.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SessionSnapshot {
+    bindings: HashMap<String, SemanticBinding>,
+    types: HashMap<String, TypeMember>,
+}
+
 pub(super) type ImportSnapshots = HashMap<String, ModuleSnapshot>;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct SemanticAnalysis {
     pub(super) snapshot: ModuleSnapshot,
+    pub(super) session_snapshot: SessionSnapshot,
     pub(super) selected_calls: HashMap<SourceSpan, CallableIdentity>,
     pub(super) function_identities: HashMap<SourceSpan, CallableIdentity>,
     pub(super) foreign_identities: HashMap<SourceSpan, CallableIdentity>,
@@ -231,13 +239,16 @@ pub(super) struct Environment {
 impl Environment {
     #[cfg(test)]
     pub(super) fn new() -> Self {
-        Self::with_imports(HashMap::new())
+        Self::with_imports_and_session(HashMap::new(), &SessionSnapshot::default())
     }
 
-    pub(super) fn with_imports(imports: ImportSnapshots) -> Self {
+    pub(super) fn with_imports_and_session(
+        imports: ImportSnapshots,
+        session: &SessionSnapshot,
+    ) -> Self {
         Self {
-            scopes: vec![HashMap::new()],
-            type_scopes: vec![HashMap::new()],
+            scopes: vec![session.bindings.clone()],
+            type_scopes: vec![session.types.clone()],
             imports: Rc::new(imports),
             records: Rc::new(RefCell::new(SemanticRecords::default())),
         }
@@ -531,11 +542,19 @@ impl Environment {
         let records = self.records.borrow();
         SemanticAnalysis {
             snapshot,
+            session_snapshot: self.session_snapshot(),
             selected_calls: records.selected_calls.clone(),
             function_identities: records.function_identities.clone(),
             foreign_identities: records.foreign_identities.clone(),
             foreign_resource_signatures: records.foreign_resource_signatures.clone(),
             match_constraints: records.match_constraints.clone(),
+        }
+    }
+
+    fn session_snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            bindings: self.scopes.first().cloned().unwrap_or_default(),
+            types: self.type_scopes.first().cloned().unwrap_or_default(),
         }
     }
 }

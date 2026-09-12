@@ -1,9 +1,13 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::Vm;
+use crate::{
+    Value as SlugValue, Vm,
+    source::{InteractiveCompilerState, compile_interactive},
+    vm::InteractiveEnvironment,
+};
 
 use super::{Diagnostic, PROTOCOL_VERSION, Request, Response};
 
@@ -11,8 +15,13 @@ use super::{Diagnostic, PROTOCOL_VERSION, Request, Response};
 pub struct Server {
     vm: Vm,
     initialized: bool,
-    sessions: BTreeSet<String>,
+    sessions: BTreeMap<String, Session>,
     next_session: u64,
+}
+
+struct Session {
+    compiler: InteractiveCompilerState,
+    runtime: InteractiveEnvironment,
 }
 
 impl Server {
@@ -22,7 +31,7 @@ impl Server {
         Self {
             vm,
             initialized: false,
-            sessions: BTreeSet::new(),
+            sessions: BTreeMap::new(),
             next_session: 0,
         }
     }
@@ -40,14 +49,7 @@ impl Server {
             "initialize" => self.initialize(request),
             "session.open" => self.open(request),
             "session.close" => self.close(request),
-            "submit" => Response::failure(
-                Some(request.id),
-                request.session,
-                Diagnostic::protocol(
-                    "method_unavailable",
-                    "method `submit` is not available during the server-shell milestone",
-                ),
-            ),
+            "submit" => self.submit(request),
             method => Response::failure(
                 Some(request.id),
                 request.session,
@@ -121,7 +123,13 @@ impl Server {
         }
         self.next_session += 1;
         let session = format!("s{}", self.next_session);
-        self.sessions.insert(session.clone());
+        self.sessions.insert(
+            session.clone(),
+            Session {
+                compiler: InteractiveCompilerState::default(),
+                runtime: self.vm.interactive_environment(),
+            },
+        );
         Response::success(request.id, None, json!({ "session": session }))
     }
 
@@ -143,7 +151,7 @@ impl Server {
                 Diagnostic::protocol("missing_session", "`session.close` requires a session"),
             );
         };
-        if !self.sessions.remove(&session) {
+        if self.sessions.remove(&session).is_none() {
             return Response::failure(
                 Some(request.id),
                 Some(session.clone()),
@@ -151,6 +159,60 @@ impl Server {
             );
         }
         Response::success(request.id, Some(session), Value::Null)
+    }
+
+    fn submit(&mut self, request: Request) -> Response {
+        if let Some(response) = self.require_initialized(&request) {
+            return response;
+        }
+        let params = match required_params::<SubmitParams>(&request, "submit") {
+            Ok(params) => params,
+            Err(error) => return Response::failure(Some(request.id), request.session, *error),
+        };
+        let Some(session) = request.session else {
+            return Response::failure(
+                Some(request.id),
+                None,
+                Diagnostic::protocol("missing_session", "`submit` requires a session"),
+            );
+        };
+        let Some(existing) = self.sessions.get(&session) else {
+            return Response::failure(
+                Some(request.id),
+                Some(session.clone()),
+                Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
+            );
+        };
+        let path = format!("<interactive:{session}>");
+        let compilation = match compile_interactive(&path, &params.source, &existing.compiler) {
+            Ok(compilation) => compilation,
+            Err(error) => {
+                return Response::failure(
+                    Some(request.id),
+                    Some(session),
+                    Diagnostic::from_source(&error),
+                );
+            }
+        };
+        let (vm, sessions) = (&mut self.vm, &mut self.sessions);
+        let active = sessions
+            .get_mut(&session)
+            .expect("validated session remains available during submission");
+        match vm.run_named_in_environment(&compilation.program, "main", &mut active.runtime) {
+            Ok(value) => {
+                active.compiler = compilation.state;
+                Response::success(
+                    request.id,
+                    Some(session),
+                    json!({ "value": protocol_value(&value) }),
+                )
+            }
+            Err(error) => Response::failure(
+                Some(request.id),
+                Some(session),
+                Diagnostic::from_runtime(&error),
+            ),
+        }
     }
 
     fn require_initialized(&self, request: &Request) -> Option<Response> {
@@ -177,6 +239,49 @@ impl Default for Server {
 #[serde(deny_unknown_fields)]
 struct InitializeParams {
     protocol: u8,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitParams {
+    source: String,
+}
+
+fn protocol_value(value: &SlugValue) -> Value {
+    match value {
+        SlugValue::Nil => Value::Null,
+        SlugValue::Bool(value) => Value::Bool(*value),
+        SlugValue::Int(value) => json!(value),
+        SlugValue::Float(value) if value.is_finite() => json!(value),
+        SlugValue::Str(value) => json!(value.as_ref()),
+        SlugValue::List(values) => Value::Array(values.iter().map(protocol_value).collect()),
+        _ => json!({ "kind": value_kind(value), "display": value.to_string() }),
+    }
+}
+
+fn value_kind(value: &SlugValue) -> &'static str {
+    match value {
+        SlugValue::Uninitialized | SlugValue::Binding { .. } => "binding",
+        SlugValue::Nil => "nil",
+        SlugValue::Bool(_) => "bool",
+        SlugValue::Int(_) | SlugValue::Float(_) => "num",
+        SlugValue::Str(_) => "str",
+        SlugValue::Bytes(_) => "bytes",
+        SlugValue::List(_) => "list",
+        SlugValue::Map(_) => "map",
+        SlugValue::StructSchema(_) => "struct_schema",
+        SlugValue::Struct(_) => "struct",
+        SlugValue::Enum(_) => "enum",
+        SlugValue::Channel(_) => "chan",
+        SlugValue::Closure(_)
+        | SlugValue::Native(_)
+        | SlugValue::DeclaredNative { .. }
+        | SlugValue::Builtin(_) => "fn",
+        #[cfg(feature = "concurrency")]
+        SlugValue::Task(_) => "task",
+        SlugValue::NativeResource(_) => "native_resource",
+        SlugValue::Overloads(_) => "overloads",
+    }
 }
 
 fn required_params<T>(request: &Request, method: &str) -> Result<T, Box<Diagnostic>>

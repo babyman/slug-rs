@@ -11,6 +11,10 @@
   initialize/open/close lifecycle handling and canonical structured diagnostic
   projections.
 
+- Added persistent interactive source submission with session compiler
+  snapshots, durable session environments, closure retention, and
+  compile-failure atomicity.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

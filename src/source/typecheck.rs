@@ -10,7 +10,7 @@ use super::{
     },
     environment::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
-        SemanticAnalysis, SemanticBinding, function_value_type,
+        SemanticAnalysis, SemanticBinding, SessionSnapshot, function_value_type,
     },
     semantic::{
         ResourceIdentity, SchemaIdentity, Type, resolve_annotation, resolve_resource_references,
@@ -25,7 +25,18 @@ pub(super) fn analyze_with_imports(
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
-    analyze_expressions(expressions, imports)
+    analyze_expressions(expressions, imports, &SessionSnapshot::default())
+}
+
+pub(super) fn analyze_with_imports_and_session(
+    expressions: &[Expr],
+    imports: ImportSnapshots,
+    session: &SessionSnapshot,
+) -> Result<SemanticAnalysis, SourceError> {
+    for expression in expressions {
+        validate_expression(expression, &[])?;
+    }
+    analyze_expressions(expressions, imports, session)
 }
 
 pub(super) fn static_import_names(expressions: &[Expr]) -> Vec<String> {
@@ -260,8 +271,9 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
 fn analyze_expressions(
     expressions: &[Expr],
     imports: ImportSnapshots,
+    session: &SessionSnapshot,
 ) -> Result<SemanticAnalysis, SourceError> {
-    let mut environment = Environment::with_imports(imports);
+    let mut environment = Environment::with_imports_and_session(imports, session);
     if let Some(builtins) = environment.import_snapshot("slug.builtin") {
         environment.install_implicit_callable_export(&builtins, "chan");
         environment.install_implicit_callable_export(&builtins, "close");

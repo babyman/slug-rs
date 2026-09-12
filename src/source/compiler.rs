@@ -36,14 +36,31 @@ pub(super) struct Compiler {
     callable_identities: Vec<CallableIdentity>,
     guard_comparisons: bool,
 }
+
+pub(super) struct CompiledProgram {
+    pub(super) program: Program,
+    pub(super) globals: HashMap<String, bool>,
+    pub(super) callable_globals: HashSet<String>,
+}
+
 impl Compiler {
     pub(super) fn new(path: &str, expressions: Vec<Expr>, analysis: &SemanticAnalysis) -> Self {
+        Self::with_globals(path, expressions, analysis, HashMap::new(), HashSet::new())
+    }
+
+    pub(super) fn with_globals(
+        path: &str,
+        expressions: Vec<Expr>,
+        analysis: &SemanticAnalysis,
+        globals: HashMap<String, bool>,
+        callable_globals: HashSet<String>,
+    ) -> Self {
         Self {
             path: path.into(),
             expressions,
             chunks: Vec::new(),
-            globals: HashMap::new(),
-            callable_globals: HashSet::new(),
+            globals,
+            callable_globals,
             declarations: Vec::new(),
             selected_calls: analysis.selected_calls.clone(),
             function_identities: analysis.function_identities.clone(),
@@ -55,7 +72,7 @@ impl Compiler {
         }
     }
     #[allow(clippy::too_many_lines)]
-    pub(super) fn compile(mut self) -> Result<Program, SourceError> {
+    pub(super) fn compile(mut self) -> Result<CompiledProgram, SourceError> {
         let mut exports = Vec::new();
         let mut bindings = Vec::new();
         let entrypoint = self.entrypoint()?;
@@ -224,7 +241,11 @@ impl Compiler {
         program.set_exports(exports);
         program.set_entrypoint(entrypoint);
         program.set_callable_identities(self.callable_identities);
-        Ok(program)
+        Ok(CompiledProgram {
+            program,
+            globals: self.globals,
+            callable_globals: self.callable_globals,
+        })
     }
 
     fn entrypoint(&mut self) -> Result<Option<Entrypoint>, SourceError> {
