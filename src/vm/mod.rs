@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
 
 #[cfg(feature = "concurrency")]
 use std::cell::Cell;
-#[cfg(feature = "metrics")]
+#[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::cell::RefCell;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Duration;
@@ -221,6 +221,7 @@ pub(crate) struct TaskExecution {
     vm: Vm,
     program: Rc<Program>,
     settle_nursery: bool,
+    interactive_imported_globals: Option<Rc<RefCell<HashSet<String>>>>,
 }
 
 #[cfg(feature = "concurrency")]
@@ -276,8 +277,12 @@ enum RuntimeSelectCase {
 impl TaskExecution {
     fn run(mut self) -> TaskRunOutcome {
         match self.vm.execute(&self.program) {
-            ExecutionOutcome::Suspended => TaskRunOutcome::Suspended(Box::new(self)),
+            ExecutionOutcome::Suspended => {
+                self.sync_interactive_imports();
+                TaskRunOutcome::Suspended(Box::new(self))
+            }
             ExecutionOutcome::Settled(result) => {
+                self.sync_interactive_imports();
                 let result = if self.settle_nursery {
                     self.vm.settle_tasks(&result)
                 } else {
@@ -285,6 +290,14 @@ impl TaskExecution {
                 };
                 TaskRunOutcome::Settled(result)
             }
+        }
+    }
+
+    fn sync_interactive_imports(&self) {
+        if let Some(imported_globals) = &self.interactive_imported_globals {
+            imported_globals
+                .borrow_mut()
+                .clone_from(&self.vm.imported_globals);
         }
     }
 
@@ -348,6 +361,27 @@ pub(crate) struct InteractiveEnvironment {
     host_globals: GlobalEnvironment,
     local_bindings: HashSet<String>,
     imported_globals: HashSet<String>,
+}
+
+/// A scheduler-owned interactive submission running in the shared VM.
+#[cfg(feature = "concurrency")]
+#[derive(Clone)]
+pub(crate) struct InteractiveTask {
+    task: Rc<Task>,
+    imported_globals: Rc<RefCell<HashSet<String>>>,
+}
+
+#[cfg(feature = "concurrency")]
+impl InteractiveTask {
+    pub(crate) fn outcome(&self) -> Option<VmResult<Value>> {
+        self.task.outcome()
+    }
+
+    pub(crate) fn synchronize_environment(&self, environment: &mut InteractiveEnvironment) {
+        environment
+            .imported_globals
+            .clone_from(&self.imported_globals.borrow());
+    }
 }
 
 impl Default for Vm {
@@ -566,21 +600,14 @@ impl Vm {
         }
     }
 
+    #[cfg(not(feature = "concurrency"))]
     pub(crate) fn run_named_in_environment(
         &mut self,
         program: &Program,
         entry: &str,
         environment: &mut InteractiveEnvironment,
     ) -> VmResult<Value> {
-        {
-            let host = environment.host_globals.borrow();
-            let mut globals = environment.globals.borrow_mut();
-            for (name, value) in host.iter() {
-                if !environment.local_bindings.contains(name) {
-                    globals.insert(name.clone(), value.clone());
-                }
-            }
-        }
+        Self::synchronize_interactive_environment(environment);
         let previous_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
         let previous_imported = std::mem::replace(
             &mut self.imported_globals,
@@ -599,6 +626,123 @@ impl Vm {
                 .extend(program.bindings().iter().cloned());
         }
         result
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn start_named_interactive_task(
+        &mut self,
+        program: &Program,
+        entry: &str,
+        environment: &mut InteractiveEnvironment,
+    ) -> VmResult<InteractiveTask> {
+        self.reset_metrics();
+        Self::synchronize_interactive_environment(environment);
+        let program = self.install_program(program);
+        let entry = program.find_chunk(entry).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::Name,
+                format!("unknown entry `{entry}`"),
+                None,
+            )
+        })?;
+        program
+            .validate(entry)
+            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
+        let closure = Rc::new(Closure {
+            chunk: entry,
+            captures: Vec::new(),
+            program: Some(program.clone()),
+            globals: Some(environment.globals.clone()),
+            capture_sources: Vec::new(),
+        });
+        let imported_globals = Rc::new(RefCell::new(environment.imported_globals.clone()));
+        let mut task_vm = self.module_closure_vm(
+            program.clone(),
+            closure,
+            Vec::new(),
+            None,
+            None,
+            ClosureCallOptions {
+                direct_task_limit: None,
+                direct_task_count: None,
+                nursery: self.nursery.clone(),
+            },
+        )?;
+        task_vm
+            .imported_globals
+            .clone_from(&imported_globals.borrow());
+        let task = Rc::new(Task::pending(
+            TaskExecution {
+                vm: task_vm,
+                program,
+                settle_nursery: false,
+                interactive_imported_globals: Some(imported_globals.clone()),
+            },
+            None,
+            self.nursery.ready_queue(),
+        ));
+        self.nursery.add_task(task.clone());
+        Ok(InteractiveTask {
+            task,
+            imported_globals,
+        })
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn cancel_interactive_task(&self, task: &InteractiveTask) {
+        let error = self.error(
+            RuntimeErrorKind::InvalidCall,
+            "interactive session was closed".into(),
+            None,
+        );
+        task.task.cancel(&error);
+        self.nursery.remove_task(&task.task);
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn release_interactive_task(&self, task: &InteractiveTask) {
+        self.nursery.remove_task(&task.task);
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn run_interactive_task_until_stalled(
+        &mut self,
+        task: &InteractiveTask,
+    ) -> VmProgress {
+        loop {
+            if let Some(result) = task.outcome() {
+                return match result {
+                    Ok(value) => VmProgress::Completed(value),
+                    Err(error) => VmProgress::Failed(error),
+                };
+            }
+            let ingress_progress = self.progress.make_available_progress();
+            let task_progress = self.nursery.run_specific_task(&task.task);
+            let timer_progress = self.nursery.wake_due_timers();
+            if !(ingress_progress || task_progress || timer_progress) {
+                return VmProgress::Stalled;
+            }
+        }
+    }
+
+    fn synchronize_interactive_environment(environment: &mut InteractiveEnvironment) {
+        let host = environment.host_globals.borrow();
+        let mut globals = environment.globals.borrow_mut();
+        for (name, value) in host.iter() {
+            if !environment.local_bindings.contains(name) {
+                globals.insert(name.clone(), value.clone());
+            }
+        }
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn commit_interactive_bindings(
+        environment: &mut InteractiveEnvironment,
+        program: &Program,
+    ) {
+        environment
+            .local_bindings
+            .extend(program.bindings().iter().cloned());
     }
 
     /// Returns counters for the most recent public VM invocation.
@@ -1158,6 +1302,15 @@ impl Vm {
             ));
         }
         let Some(mut execution) = self.host_execution.take() else {
+            #[cfg(feature = "concurrency")]
+            {
+                return if self.nursery.make_available_progress() {
+                    VmProgress::MadeProgress
+                } else {
+                    VmProgress::Stalled
+                };
+            }
+            #[cfg(not(feature = "concurrency"))]
             return VmProgress::Stalled;
         };
         let mut made_progress = false;
@@ -2791,6 +2944,7 @@ impl Vm {
             vm,
             program: task_program,
             settle_nursery: false,
+            interactive_imported_globals: None,
         };
         let task = Rc::new(Task::pending(
             execution,
@@ -2910,6 +3064,7 @@ impl Vm {
             vm,
             program: task_program,
             settle_nursery: true,
+            interactive_imported_globals: None,
         };
         let body = Rc::new(Task::pending(execution, None, nursery.ready_queue()));
         nursery.enqueue(body.clone());

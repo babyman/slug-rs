@@ -671,6 +671,15 @@ impl Task {
         matches!(self.state.borrow().phase, TaskPhase::Pending(_))
     }
 
+    pub(crate) fn is_ready(&self) -> bool {
+        let state = self.state.borrow();
+        matches!(state.phase, TaskPhase::Pending(_)) && state.wait_registration.is_none()
+    }
+
+    pub(crate) fn is_same_task(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+
     pub(crate) fn try_admit(&self) -> bool {
         let mut state = self.state.borrow_mut();
         if !matches!(state.phase, TaskPhase::Pending(_)) || state.admitted {

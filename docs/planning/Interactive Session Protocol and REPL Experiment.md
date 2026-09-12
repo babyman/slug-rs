@@ -542,6 +542,43 @@ Response:
 
 Source is the only input form required by the initial experiment.
 
+When a task-backed submission cannot make immediate progress, its successful
+response is instead:
+
+```json
+{
+  "id": 3,
+  "session": "s1",
+  "ok": true,
+  "result": {
+    "state": "stalled"
+  }
+}
+```
+
+The session retains that submission and rejects another `submit` until it
+settles or is closed.
+
+---
+
+## `session.poll`
+
+Drive one active or stalled session using immediately available runtime work.
+The method never waits for an operating-system event.
+
+```json
+{
+  "id": 4,
+  "session": "s1",
+  "method": "session.poll"
+}
+```
+
+It returns the original submission's terminal value or runtime diagnostic once
+native ingress, a timer, or another runtime source makes progress. If it is
+still waiting, it returns `{ "state": "stalled" }`. Polling an idle session
+returns `{ "state": "idle" }`.
+
 ---
 
 ## `session.close`
@@ -1086,16 +1123,16 @@ isolation and output are established.
 
 ## Tasks
 
-- [ ] Model idle, active, and stalled submission state explicitly in the
+- [x] Model idle, active, and stalled submission state explicitly in the
   session manager.
-- [ ] Prototype long-lived task-backed sessions or the smallest equivalent
+- [x] Prototype long-lived task-backed sessions or the smallest equivalent
   execution-context representation.
-- [ ] Reuse the existing scheduler, task, channel, and progress machinery;
+- [x] Reuse the existing scheduler, task, channel, and progress machinery;
   introduce no REPL scheduler.
-- [ ] Preserve a stalled submission and continue progressing another session
+- [x] Preserve a stalled submission and continue progressing another session
   where the runtime permits it.
-- [ ] Resume stalled execution after native ingress/progress notification.
-- [ ] Determine whether the VM's single active host-driven execution requires
+- [x] Resume stalled execution after native ingress/progress notification.
+- [x] Determine whether the VM's single active host-driven execution requires
   an execution-context extension, and record that result.
 
 ## Acceptance Criteria

@@ -27,6 +27,9 @@
 - Completed interactive output events with explicit stdout/stderr host emission,
   session attribution, response ordering, and safe queued background output.
 
+- Added task-backed interactive submissions with `session.poll`, allowing one
+  session to stall on native ingress while another session continues running.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

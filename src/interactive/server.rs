@@ -9,6 +9,8 @@ use crate::{
     source::{InteractiveCompilerState, compile_interactive},
     vm::InteractiveEnvironment,
 };
+#[cfg(feature = "concurrency")]
+use crate::{VmProgress, source::InteractiveCompilation, vm::InteractiveTask};
 
 use super::{Diagnostic, Event, PROTOCOL_VERSION, Request, Response};
 
@@ -56,6 +58,21 @@ pub struct Server {
 struct Session {
     compiler: InteractiveCompilerState,
     runtime: InteractiveEnvironment,
+    #[cfg(feature = "concurrency")]
+    execution: SessionExecution,
+}
+
+#[cfg(feature = "concurrency")]
+enum SessionExecution {
+    Idle,
+    Active {
+        task: InteractiveTask,
+        compilation: InteractiveCompilation,
+    },
+    Stalled {
+        task: InteractiveTask,
+        compilation: InteractiveCompilation,
+    },
 }
 
 #[derive(Default)]
@@ -161,6 +178,7 @@ impl Server {
             "session.open" => self.open(request),
             "session.close" => self.close(request),
             "submit" => self.submit(request),
+            "session.poll" => self.poll(request),
             method => Response::failure(
                 Some(request.id),
                 request.session,
@@ -239,6 +257,8 @@ impl Server {
             Session {
                 compiler: InteractiveCompilerState::default(),
                 runtime: self.vm.interactive_environment(),
+                #[cfg(feature = "concurrency")]
+                execution: SessionExecution::Idle,
             },
         );
         Response::success(request.id, None, json!({ "session": session }))
@@ -262,6 +282,10 @@ impl Server {
                 Diagnostic::protocol("missing_session", "`session.close` requires a session"),
             );
         };
+        #[cfg(feature = "concurrency")]
+        if let Some(task) = self.session_task(&session) {
+            self.vm.cancel_interactive_task(&task);
+        }
         if self.sessions.remove(&session).is_none() {
             return Response::failure(
                 Some(request.id),
@@ -294,6 +318,17 @@ impl Server {
                 Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
             );
         };
+        #[cfg(feature = "concurrency")]
+        if !matches!(existing.execution, SessionExecution::Idle) {
+            return Response::failure(
+                Some(request.id),
+                Some(session),
+                Diagnostic::protocol(
+                    "submission_active",
+                    "poll the active submission before submitting more source",
+                ),
+            );
+        }
         let path = format!("<interactive:{session}>");
         let compilation = match compile_interactive(&path, &params.source, &existing.compiler) {
             Ok(compilation) => compilation,
@@ -305,28 +340,157 @@ impl Server {
                 );
             }
         };
+        #[cfg(feature = "concurrency")]
+        {
+            let task = {
+                let (vm, sessions) = (&mut self.vm, &mut self.sessions);
+                let active = sessions
+                    .get_mut(&session)
+                    .expect("validated session remains available during submission");
+                match vm.start_named_interactive_task(
+                    &compilation.program,
+                    "main",
+                    &mut active.runtime,
+                ) {
+                    Ok(task) => task,
+                    Err(error) => {
+                        return Response::failure(
+                            Some(request.id),
+                            Some(session),
+                            Diagnostic::from_runtime(&error),
+                        );
+                    }
+                }
+            };
+            self.sessions
+                .get_mut(&session)
+                .expect("validated session remains available during submission")
+                .execution = SessionExecution::Active { task, compilation };
+            self.drive_session(request.id, session)
+        }
+        #[cfg(not(feature = "concurrency"))]
+        {
+            self.output.borrow_mut().begin(session.clone());
+            let (vm, sessions) = (&mut self.vm, &mut self.sessions);
+            let active = sessions
+                .get_mut(&session)
+                .expect("validated session remains available during submission");
+            let execution =
+                vm.run_named_in_environment(&compilation.program, "main", &mut active.runtime);
+            self.output.borrow_mut().end();
+            match execution {
+                Ok(value) => {
+                    active.compiler = compilation.state;
+                    Response::success(
+                        request.id,
+                        Some(session),
+                        json!({ "value": protocol_value(&value) }),
+                    )
+                }
+                Err(error) => Response::failure(
+                    Some(request.id),
+                    Some(session),
+                    Diagnostic::from_runtime(&error),
+                ),
+            }
+        }
+    }
+
+    fn poll(&mut self, request: Request) -> Response {
+        if let Some(response) = self.require_initialized(&request) {
+            return response;
+        }
+        if request.params.is_some() {
+            return Response::failure(
+                Some(request.id),
+                request.session,
+                Diagnostic::protocol("invalid_request", "`session.poll` does not accept params"),
+            );
+        }
+        let Some(session) = request.session else {
+            return Response::failure(
+                Some(request.id),
+                None,
+                Diagnostic::protocol("missing_session", "`session.poll` requires a session"),
+            );
+        };
+        if !self.sessions.contains_key(&session) {
+            return Response::failure(
+                Some(request.id),
+                Some(session.clone()),
+                Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
+            );
+        }
+        #[cfg(feature = "concurrency")]
+        return self.drive_session(request.id, session);
+        #[cfg(not(feature = "concurrency"))]
+        Response::success(request.id, Some(session), json!({ "state": "idle" }))
+    }
+
+    #[cfg(feature = "concurrency")]
+    fn session_task(&self, session: &str) -> Option<InteractiveTask> {
+        let session = self.sessions.get(session)?;
+        match &session.execution {
+            SessionExecution::Idle => None,
+            SessionExecution::Active { task, .. } | SessionExecution::Stalled { task, .. } => {
+                Some(task.clone())
+            }
+        }
+    }
+
+    #[cfg(feature = "concurrency")]
+    fn drive_session(&mut self, id: u64, session: String) -> Response {
+        let Some(task) = self.session_task(&session) else {
+            return Response::success(id, Some(session), json!({ "state": "idle" }));
+        };
         self.output.borrow_mut().begin(session.clone());
-        let (vm, sessions) = (&mut self.vm, &mut self.sessions);
-        let active = sessions
-            .get_mut(&session)
-            .expect("validated session remains available during submission");
-        let execution =
-            vm.run_named_in_environment(&compilation.program, "main", &mut active.runtime);
+        let progress = self.vm.run_interactive_task_until_stalled(&task);
         self.output.borrow_mut().end();
-        match execution {
+        let result = match progress {
+            VmProgress::Completed(value) => Some(Ok(value)),
+            VmProgress::Failed(error) => Some(Err(error)),
+            VmProgress::MadeProgress | VmProgress::Stalled => None,
+        };
+        let Some(result) = result else {
+            let active = self
+                .sessions
+                .get_mut(&session)
+                .expect("active session remains available during its poll");
+            let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
+            active.execution = match execution {
+                SessionExecution::Active { task, compilation }
+                | SessionExecution::Stalled { task, compilation } => {
+                    SessionExecution::Stalled { task, compilation }
+                }
+                SessionExecution::Idle => SessionExecution::Idle,
+            };
+            return Response::success(id, Some(session), json!({ "state": "stalled" }));
+        };
+        let active = self
+            .sessions
+            .get_mut(&session)
+            .expect("active session remains available during its poll");
+        let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
+        let (task, compilation) = match execution {
+            SessionExecution::Active { task, compilation }
+            | SessionExecution::Stalled { task, compilation } => (task, compilation),
+            SessionExecution::Idle => unreachable!("completed task must have session state"),
+        };
+        task.synchronize_environment(&mut active.runtime);
+        self.vm.release_interactive_task(&task);
+        match result {
             Ok(value) => {
+                Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
                 active.compiler = compilation.state;
                 Response::success(
-                    request.id,
+                    id,
                     Some(session),
                     json!({ "value": protocol_value(&value) }),
                 )
             }
-            Err(error) => Response::failure(
-                Some(request.id),
-                Some(session),
-                Diagnostic::from_runtime(&error),
-            ),
+            Err(error) => {
+                Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
+            }
         }
     }
 

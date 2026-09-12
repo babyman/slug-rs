@@ -91,6 +91,15 @@ impl Nursery {
         }
     }
 
+    pub(super) fn remove_task(&self, task: &Rc<Task>) {
+        self.tasks
+            .borrow_mut()
+            .retain(|candidate| !candidate.is_same_task(task));
+        self.ready
+            .borrow_mut()
+            .retain(|candidate| !candidate.is_same_task(task));
+    }
+
     pub(super) fn enqueue(&self, task: Rc<Task>) {
         let mut ready = self.ready.borrow_mut();
         ready.push_back(task);
@@ -117,6 +126,29 @@ impl Nursery {
 
     pub(super) fn run_task(&self, task: &Task) {
         while task.is_pending() && self.make_progress() {}
+    }
+
+    /// Runs one known task without choosing work from the shared ready queue.
+    /// Interactive hosts use this to preserve the session that owns a
+    /// submission while still relying on the scheduler's ordinary task state.
+    pub(super) fn run_specific_task(&self, task: &Rc<Task>) -> bool {
+        if !task.is_ready() || !task.try_admit() {
+            return false;
+        }
+        self.ready
+            .borrow_mut()
+            .retain(|candidate| !candidate.is_same_task(task));
+        let Some(run) = task.take_pending(task) else {
+            return false;
+        };
+        match run.run() {
+            TaskRunOutcome::Settled(result) => task.complete(&result),
+            TaskRunOutcome::Suspended(mut execution) => {
+                let wait_registration = execution.take_wait_registration();
+                task.suspend(*execution, wait_registration);
+            }
+        }
+        true
     }
 
     pub(super) fn settle(
@@ -250,7 +282,7 @@ impl Nursery {
         None
     }
 
-    fn wake_due_timers(&self) -> bool {
+    pub(super) fn wake_due_timers(&self) -> bool {
         let due = self.timers.borrow_mut().take_due();
         let woke = !due.is_empty();
         for waiter in due {

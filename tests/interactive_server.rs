@@ -1,3 +1,5 @@
+#[cfg(feature = "concurrency")]
+use std::sync::{Arc, Mutex};
 use std::{
     cell::RefCell,
     io::Write,
@@ -10,6 +12,8 @@ use slug_vm::{
     compile,
     interactive::{Diagnostic, DiagnosticCategory, OutputError, OutputStream, Server},
 };
+#[cfg(feature = "concurrency")]
+use slug_vm::{NativeChannelProducer, NativeProducerStatus, NativeSendValue};
 
 fn request(
     id: u64,
@@ -324,6 +328,54 @@ fn sessions_communicate_through_an_explicitly_shared_host_channel() {
     assert_eq!(received.result, Some(serde_json::json!({ "value": 99 })));
 }
 
+#[cfg(feature = "concurrency")]
+#[test]
+fn stalled_session_does_not_prevent_another_session_from_running() {
+    let mut server = initialized_server();
+    let stalled = open_session(&mut server);
+    let runnable = open_session(&mut server);
+    let state = Arc::new(ProducerState(Mutex::new(None)));
+    let module = NativeModule::new("test.interactive_ingress", state.clone()).expect("module");
+    let input = module
+        .function("session_input", NativeArity::Exact(0), session_input)
+        .expect("native function");
+    server
+        .define_host_native(input)
+        .expect("register input factory");
+
+    let pending = submit(
+        &mut server,
+        3,
+        &stalled,
+        "val inbox = session_input()\nselect { recv inbox }",
+    );
+    assert_eq!(
+        pending.result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+    let rejected = submit(&mut server, 4, &stalled, "1");
+    assert_eq!(
+        rejected.error.expect("active submission diagnostic").code,
+        "submission_active"
+    );
+
+    let completed = submit(&mut server, 5, &runnable, "6 * 7");
+    assert_eq!(completed.result, Some(serde_json::json!({ "value": 42 })));
+
+    let producer = state
+        .0
+        .lock()
+        .expect("producer state")
+        .clone()
+        .expect("native producer");
+    assert_eq!(
+        producer.try_send(NativeSendValue::integer(99)),
+        NativeProducerStatus::Sent
+    );
+    let resumed = server.handle_line(&request(6, "session.poll", Some(&stalled), None).to_string());
+    assert_eq!(resumed.result, Some(serde_json::json!({ "value": 99 })));
+}
+
 #[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
@@ -551,5 +603,22 @@ fn shared_queue(call: &mut NativeCall<'_>) -> NativeStatus {
     }
     let channel = call.plain_channel(1);
     queue.replace(channel.clone());
+    call.return_value(channel)
+}
+
+#[cfg(feature = "concurrency")]
+struct ProducerState(Mutex<Option<NativeChannelProducer>>);
+
+#[cfg(feature = "concurrency")]
+fn session_input(call: &mut NativeCall<'_>) -> NativeStatus {
+    let (channel, producer) = call.channel(1);
+    let Some(state) = call.state::<Arc<ProducerState>>() else {
+        return call.report_contract_violation("input producer state is unavailable");
+    };
+    state
+        .0
+        .lock()
+        .expect("producer state lock")
+        .replace(producer);
     call.return_value(channel)
 }
