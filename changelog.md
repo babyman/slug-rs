@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Turned the interactive-session and REPL experiment into staged server-shell,
+  persistence, isolation, output, stalled-runtime, slim-runtime, and terminal
+  client task lists, including canonical diagnostic and output-sink
+  prerequisites.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

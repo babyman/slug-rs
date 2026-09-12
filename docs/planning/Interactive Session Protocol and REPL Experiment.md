@@ -252,11 +252,13 @@ The session server coordinates their persistent interactive lifecycle.
 
 ---
 
-## 7. Existing Structured Errors Are Canonical
+## 7. Canonical Protocol Diagnostics
 
-The protocol must use Slug's existing structured error representation.
+The protocol must project Slug's existing structured errors into one canonical,
+versioned, serializable diagnostic envelope. The current Rust error structs are
+not themselves a wire format.
 
-Do not create a REPL-specific error or diagnostic model.
+Do not create a REPL-specific display-text error model.
 
 ```text
 parser ─────────┐
@@ -267,7 +269,10 @@ session server ─┤
 IDE / agent ────┘
 ```
 
-The wire protocol may wrap an error to associate it with a request and session, but the underlying Slug error should cross the boundary without being flattened into display text.
+The wire protocol may wrap a diagnostic to associate it with a request and
+session, but it must preserve structured fields rather than flattening them
+into display text. The same envelope must also represent `protocol` and `host`
+failures that have no underlying Slug error.
 
 ---
 
@@ -369,7 +374,7 @@ This is redundant for correlation but useful for tracing, logging, and simple cl
 
 # Error Response
 
-A failed operation wraps an existing structured Slug error.
+A failed operation returns the canonical protocol diagnostic projection.
 
 Conceptually:
 
@@ -379,12 +384,15 @@ Conceptually:
   "session": "s1",
   "ok": false,
   "error": {
-    "...": "existing Slug structured error representation"
+    "category": "source | runtime | protocol | host",
+    "...": "structured diagnostic fields"
   }
 }
 ```
 
-The server must not flatten the error into an ad hoc message string.
+The server must not flatten the error into an ad hoc message string. Source and
+runtime diagnostic fields are projections of the existing Slug errors; protocol
+and host diagnostics use the same envelope.
 
 The terminal client may render the structured error for humans.
 
@@ -924,62 +932,37 @@ Use the experiment to determine whether this distinction deserves first-class ru
 
 ---
 
-# Milestone 0 — Protocol Types
+# Milestone 1 — Server Shell
+
+Build the protocol boundary before changing persistent compiler or runtime
+state. The executable is a first-class embedded host, not a subprocess wrapper.
 
 ## Tasks
 
-- [ ] Define request envelope.
-- [ ] Define success response envelope.
-- [ ] Define error response envelope around existing Slug structured errors.
-- [ ] Define event envelope.
-- [ ] Define protocol version constant.
-- [ ] Define `initialize`.
-- [ ] Define `session.open`.
-- [ ] Define `submit`.
-- [ ] Define `session.close`.
-- [ ] Define `stdout` event.
-- [ ] Define `stderr` event.
-- [ ] Add encode/decode tests.
-- [ ] Reject malformed JSON cleanly.
-- [ ] Reject unknown methods cleanly.
-- [ ] Verify existing structured errors survive protocol serialization without information loss.
+- [ ] Add the `slug-server` executable at `src/bin/slug-server.rs`.
+- [ ] Add an in-process server-engine library module; keep stdin/stdout
+  ownership in the binary.
+- [ ] Define versioned request, success-response, error-response, and event
+  envelopes.
+- [ ] Define one canonical serializable diagnostic projection for source and
+  runtime errors, including spans, frames, causes, native details, and thrown
+  values where representable.
+- [ ] Define structured `protocol` and `host` diagnostics for failures that do
+  not originate as Slug errors.
+- [ ] Define the protocol version constant and `initialize` capability result.
+- [ ] Implement `initialize`, `session.open`, and `session.close`.
+- [ ] Store only session metadata; `submit` remains unimplemented.
+- [ ] Decode NDJSON from stdin and encode every response/event as one stdout
+  line.
+- [ ] Keep server logging and transport failures off protocol stdout.
+- [ ] Reject malformed JSON, malformed envelopes, unknown methods, and unknown
+  sessions without terminating the server.
+- [ ] Add in-process engine tests and NDJSON boundary tests.
 
 ## Acceptance Criteria
 
-Protocol messages can round-trip:
-
-```text
-JSON line
-   ↓
-protocol type
-   ↓
-JSON line
-```
-
-and existing Slug structured errors cross the boundary intact.
-
----
-
-# Milestone 1 — Minimal Session Server
-
-Build the smallest protocol server.
-
-## Tasks
-
-- [ ] Read NDJSON requests from stdin.
-- [ ] Write NDJSON responses to stdout.
-- [ ] Implement `initialize`.
-- [ ] Implement `session.open`.
-- [ ] Implement `session.close`.
-- [ ] Store session metadata.
-- [ ] Reject unknown sessions.
-- [ ] Keep server logging off protocol stdout.
-
-`submit` may remain unimplemented.
-
-## Acceptance Criteria
-
-This conversation works entirely over stdin/stdout:
+`slug-server` embeds the library server engine, and this conversation works
+entirely over NDJSON stdin/stdout:
 
 ```text
 initialize
@@ -987,137 +970,103 @@ session.open
 session.close
 ```
 
+The request and diagnostic envelopes round-trip without relying on display-text
+rendering.
+
 ---
 
-# Milestone 2 — First Persistent Submission
+# Milestone 2 — Persistent Single Session
 
-This is the first major architectural checkpoint.
+This is the first architectural checkpoint. Deliberately establish the two
+durable session boundaries before attempting multi-session execution:
+
+```text
+Session
+    compiler snapshot
+    runtime environment
+```
 
 ## Tasks
 
-- [ ] Implement source `submit`.
-- [ ] Parse submitted source.
-- [ ] Type-check against session context.
-- [ ] Compile submitted source.
-- [ ] Execute it through the existing VM.
-- [ ] Return its result.
-- [ ] Preserve interactive compiler state.
-- [ ] Preserve runtime state required by the session.
-- [ ] Propagate existing structured errors unchanged.
+- [ ] Seed parsing, semantic analysis, and compilation from the session's last
+  committed compiler snapshot.
+- [ ] Retain the minimum semantic information needed for previous bindings,
+  callable signatures, aliases, and imports to remain visible to later
+  submissions.
+- [ ] Introduce a durable session-local runtime environment whose binding cells
+  remain reference-stable after each successful submission.
+- [ ] Ensure closures created by earlier submissions retain that same session
+  environment and observe later mutations within it.
+- [ ] Layer session-local bindings over shared VM/host facilities without
+  exposing another session's bindings.
+- [ ] Make a host-owned output sink available before executing `submit`; it
+  must prevent program output from writing raw bytes to protocol stdout.
+- [ ] Implement source `submit`: parse, analyze, compile, execute, encode the
+  result, and commit durable session state only after compilation succeeds.
+- [ ] Guarantee parser, semantic, and compiler failures leave the previously
+  committed compiler snapshot and runtime environment unchanged.
+- [ ] Leave runtime rollback explicitly out of scope; record observed runtime
+  binding behavior rather than adding speculative rollback machinery.
+- [ ] Add direct engine tests for persistence, compiler-failure atomicity,
+  closure retention, and output containment.
 
 ## Acceptance Criteria
 
-Submit:
+One session executes without source replay or process restart:
 
 ```slug
 val x = 10
-```
-
-Then:
-
-```slug
 x + 5
 ```
 
-Result:
-
-```text
-15
-```
-
-No source replay or process restart should be required between submissions unless the experiment demonstrates that replay is the cleaner implementation.
+and returns `15`. A later parser, semantic, or compiler failure leaves `x`
+available with value `10`.
 
 ---
 
-# Milestone 3 — Shared VM Sessions
+# Milestone 3 — Multiple Sessions in One VM
 
-Explore multiple sessions against one VM.
+Explore isolation and deliberate sharing after the single-session environment
+is proven.
 
 ## Tasks
 
-- [ ] Create multiple session contexts within a shared VM.
-- [ ] Determine minimum session-local state.
-- [ ] Keep interactive bindings session-local.
-- [ ] Verify explicitly shared runtime state remains shareable.
-- [ ] Verify closing one session does not damage another.
-- [ ] Avoid VM-per-session unless evidence requires it.
+- [ ] Create several session-local compiler snapshots and runtime environments
+  over one shared VM.
+- [ ] Verify equal binding names in separate sessions never collide.
+- [ ] Verify closures retain the correct originating session environment.
+- [ ] Define the explicit mechanism for host-provided shared bindings or
+  resources; do not expose the VM-global map as an accidental sharing channel.
+- [ ] Verify closing one session releases only its resources and leaves the
+  remaining sessions usable.
+- [ ] Prove deliberately shared channels/resources communicate using ordinary
+  Slug semantics.
+- [ ] Avoid a VM per session unless evidence demonstrates it is necessary.
 
 ## Acceptance Criteria
 
 ```text
-s1:
-    val x = 10
-
-s2:
-    val x = 20
-
-s1: x
-→ 10
-
-s2: x
-→ 20
+s1: val x = 10; x → 10
+s2: val x = 20; x → 20
 ```
 
-while both sessions use the same underlying runtime.
+Both sessions use one VM. They cannot read one another's `x`, but can use an
+explicitly shared host binding or channel.
 
 ---
 
-# Milestone 4 — Task-Backed Sessions
+# Milestone 4 — Output Events
 
-Explore the natural full-runtime implementation.
-
-## Tasks
-
-- [ ] Prototype a session as a long-lived task or equivalent execution context.
-- [ ] Suspend an idle session while waiting for source.
-- [ ] Make it runnable when a submission arrives.
-- [ ] Return it to waiting after completion.
-- [ ] Preserve a genuinely stalled submission.
-- [ ] Verify one stalled session does not prevent another from progressing.
-- [ ] Reuse the existing scheduler and progress machinery.
-
-## Acceptance Criteria
-
-Conceptually:
-
-```text
-s1 ── waiting
-s2 ── executing
-s3 ── stalled
-```
-
-can coexist naturally inside one VM.
-
----
-
-# Milestone 5 — Failure Isolation
+The output sink exists before executable submission; this milestone completes
+the protocol event contract and session attribution.
 
 ## Tasks
 
-- [ ] Test parser failure.
-- [ ] Test type-check failure.
-- [ ] Test compiler failure where applicable.
-- [ ] Verify failed compilation does not mutate session state.
-- [ ] Determine runtime-failure commit semantics.
-- [ ] Verify runtime failure leaves session reusable.
-- [ ] Verify structured error information is preserved.
-
-## Acceptance Criteria
-
-Valid session state survives failed submissions and partially introduced bindings do not leak into the persistent environment.
-
----
-
-# Milestone 6 — Program Output Events
-
-## Tasks
-
-- [ ] Capture Slug stdout.
-- [ ] Emit `stdout` protocol events.
-- [ ] Capture Slug stderr where applicable.
-- [ ] Emit `stderr` protocol events.
-- [ ] Ensure program output never appears as raw protocol stdout.
-- [ ] Include session identity on every event.
+- [ ] Route stdout and stderr from the host-owned sink into protocol events.
+- [ ] Include the originating session identifier on every output event.
+- [ ] Preserve response ordering relative to output produced by its submission.
+- [ ] Verify raw program output never corrupts NDJSON stdout.
+- [ ] Specify and test behavior for output from background/shared runtime work.
 
 ## Acceptance Criteria
 
@@ -1125,54 +1074,58 @@ Valid session state survives failed submissions and partially introduced binding
 print("hello")
 ```
 
-produces:
-
-```json
-{"session":"s1","event":"stdout","data":"hello\n"}
-```
-
-followed by the terminal response for the submission.
+emits a session-scoped `stdout` event and leaves protocol stdout valid NDJSON.
 
 ---
 
-# Milestone 7 — Host-Driven and Slim Sessions
+# Milestone 5 — Stalled and Task-Backed Execution
 
-Exercise the same abstraction without requiring concurrency.
+Explore concurrent-runtime execution contexts only after ordinary session
+isolation and output are established.
 
 ## Tasks
 
-- [ ] Run session execution through existing host-driven VM APIs.
-- [ ] Determine the host-managed equivalent of task-backed sessions.
-- [ ] Preserve stalled execution.
-- [ ] Resume after native ingress.
+- [ ] Model idle, active, and stalled submission state explicitly in the
+  session manager.
+- [ ] Prototype long-lived task-backed sessions or the smallest equivalent
+  execution-context representation.
+- [ ] Reuse the existing scheduler, task, channel, and progress machinery;
+  introduce no REPL scheduler.
+- [ ] Preserve a stalled submission and continue progressing another session
+  where the runtime permits it.
+- [ ] Resume stalled execution after native ingress/progress notification.
+- [ ] Determine whether the VM's single active host-driven execution requires
+  an execution-context extension, and record that result.
+
+## Acceptance Criteria
+
+Idle, executing, and stalled sessions coexist in one shared VM without a
+stalled session preventing independent runnable work from progressing.
+
+---
+
+# Milestone 6 — Slim Runtime Equivalence
+
+Exercise the same protocol and session abstraction without Slug-managed
+concurrency.
+
+## Tasks
+
+- [ ] Drive sessions through the existing host-driven VM APIs.
+- [ ] Define the slim host-managed counterpart to task-backed sessions without
+  exposing the implementation choice in the protocol.
+- [ ] Preserve stalled execution and resume it after native ingress.
 - [ ] Prevent VM re-entry from external producers.
-- [ ] Verify the session protocol does not depend on `concurrency`.
-- [ ] Run relevant tests with `--no-default-features`.
+- [ ] Run the relevant server-engine tests with `--no-default-features`.
 
 ## Acceptance Criteria
 
-The same logical protocol can drive a slim runtime even though its session implementation does not use Slug tasks.
+The slim and full builds expose the same session protocol and semantics, even
+though only the full runtime may use task-backed execution internally.
 
 ---
 
-# Milestone 8 — Shared Communication
-
-## Tasks
-
-- [ ] Create an explicitly shared channel/resource.
-- [ ] Make it visible to two session contexts.
-- [ ] Send from one session.
-- [ ] Receive from another.
-- [ ] Verify ordinary interactive bindings remain isolated.
-- [ ] Use normal Slug semantics rather than protocol-level messaging.
-
-## Acceptance Criteria
-
-Two sessions can deliberately communicate through the shared runtime without gaining accidental access to one another's local interactive environment.
-
----
-
-# Milestone 9 — Minimal Terminal Client
+# Milestone 7 — Minimal Terminal Client
 
 Only after the protocol and session model work.
 
@@ -1204,7 +1157,7 @@ No sophisticated terminal editing is required.
 
 ---
 
-# Milestone 10 — Multiline Input
+# Milestone 8 — Multiline Input
 
 Multiline detection should remain a frontend/client concern rather than wire-protocol syntax.
 
@@ -1227,7 +1180,7 @@ Example:
 
 ---
 
-# Milestone 11 — Error Presentation
+# Milestone 9 — Error Presentation
 
 The structured error model already exists.
 
@@ -1240,7 +1193,8 @@ This milestone concerns presentation only.
 - [ ] Verify runtime errors expose sufficient structured information.
 - [ ] Preserve source spans through the protocol.
 - [ ] Render useful terminal diagnostics.
-- [ ] Preserve the untouched structured representation for non-terminal clients.
+- [ ] Preserve the canonical structured diagnostic projection for non-terminal
+  clients.
 
 ---
 
@@ -1250,9 +1204,9 @@ This milestone concerns presentation only.
 
 - [ ] `initialize` succeeds.
 - [ ] Invalid JSON does not terminate the server.
-- [ ] Unknown method produces a structured error.
-- [ ] Unknown session produces a structured error.
-- [ ] Existing Slug errors serialize without information loss.
+- [ ] Unknown method and unknown session produce `protocol` diagnostics.
+- [ ] Source and runtime errors serialize through the canonical projection
+  without losing supported fields.
 
 ## Sessions
 
@@ -1281,6 +1235,7 @@ This milestone concerns presentation only.
 
 - [ ] Ordinary expression returns a value.
 - [ ] Runtime error leaves session usable.
+- [ ] Runtime rollback behavior is documented, not implied.
 - [ ] Stalled session remains alive.
 - [ ] One stalled session does not block another.
 - [ ] Native ingress can wake stalled execution.
@@ -1295,11 +1250,12 @@ This milestone concerns presentation only.
 
 ## Errors
 
-- [ ] Parser failure retains existing structured error.
-- [ ] Type-check failure retains existing structured error.
-- [ ] Runtime failure retains existing structured error.
+- [ ] Parser failure retains its structured source fields.
+- [ ] Type-check failure retains its structured source fields.
+- [ ] Runtime failure retains spans, frames, causes, native details, and thrown
+  values where representable.
 - [ ] Terminal client can render the error.
-- [ ] Machine clients receive the same underlying representation.
+- [ ] Machine clients receive the canonical diagnostic projection.
 
 ---
 
@@ -1309,11 +1265,14 @@ Keep implementation boundaries provisional.
 
 ```text
 src/
-    repl/
+    interactive/
         protocol.rs
         server.rs
         session.rs
-        client.rs
+        diagnostics.rs
+        output.rs
+    bin/
+        slug-server.rs
 ```
 
 or equivalent modules within the existing architecture.
@@ -1324,17 +1283,16 @@ Let implementation pressure reveal the permanent boundaries.
 
 ---
 
-# First Vertical Slice
+# First Vertical Slice — Server Shell
 
-The first meaningful implementation target is deliberately tiny.
+The first implementation target deliberately excludes executable submission.
 
 Input:
 
 ```json
 {"id":1,"method":"initialize","params":{"protocol":1}}
 {"id":2,"method":"session.open"}
-{"id":3,"session":"s1","method":"submit","params":{"source":"val x = 10"}}
-{"id":4,"session":"s1","method":"submit","params":{"source":"x + 5"}}
+{"id":3,"session":"s1","method":"session.close"}
 ```
 
 Expected output:
@@ -1342,11 +1300,27 @@ Expected output:
 ```json
 {"id":1,"ok":true,"result":{"protocol":1,"capabilities":{"sessions":true}}}
 {"id":2,"ok":true,"result":{"session":"s1"}}
-{"id":3,"session":"s1","ok":true,"result":{"value":null}}
-{"id":4,"session":"s1","ok":true,"result":{"value":15}}
+{"id":3,"session":"s1","ok":true,"result":null}
 ```
 
-If this works with genuine persistent compiler and runtime state, the experiment has crossed its first important architectural boundary.
+If this works through the embedded library engine, the experiment has established
+the executable and protocol seam without changing compiler or VM semantics.
+
+---
+
+# Second Vertical Slice — Persistent Binding Proof
+
+Only after the server shell is established, prove the persistent-session
+boundary with:
+
+```json
+{"id":3,"session":"s1","method":"submit","params":{"source":"val x = 10"}}
+{"id":4,"session":"s1","method":"submit","params":{"source":"x + 5"}}
+```
+
+The expected results are `null` and `15`. This slice must use genuine
+session-local compiler and runtime state, not source replay or a process
+restart.
 
 ---
 
@@ -1434,7 +1408,7 @@ The experiment succeeds when:
 - a small server owns persistent Slug sessions,
 - a small terminal REPL communicates only through the protocol,
 - NDJSON stdin/stdout transport works reliably,
-- existing Slug structured errors cross the boundary intact,
+- canonical structured diagnostic projections cross the boundary intact,
 - state persists across submissions,
 - multiple sessions coexist within a shared runtime,
 - session-local bindings remain isolated,
