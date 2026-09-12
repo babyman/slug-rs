@@ -176,6 +176,91 @@ fn invalid_and_semantic_submissions_clear_pending_source() {
 }
 
 #[test]
+fn session_completes_nested_blocks_and_delimited_source_incrementally() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    for (id, source) in [(3, "val nested = fn() {"), (4, "{ { 42 } }")] {
+        assert_eq!(
+            submit(&mut server, id, &session, source).result,
+            Some(serde_json::json!({ "state": "incomplete" }))
+        );
+    }
+    assert_eq!(
+        submit(&mut server, 5, &session, "}").result,
+        Some(serde_json::json!({ "value": null }))
+    );
+    assert_eq!(
+        submit(&mut server, 6, &session, "nested()").result,
+        Some(serde_json::json!({ "value": 42 }))
+    );
+
+    assert_eq!(
+        submit(&mut server, 7, &session, "val values = [").result,
+        Some(serde_json::json!({ "state": "incomplete" }))
+    );
+    assert_eq!(
+        submit(&mut server, 8, &session, "1]").result,
+        Some(serde_json::json!({ "value": null }))
+    );
+}
+
+#[test]
+fn session_retains_incomplete_strings_but_clears_complete_semantic_failures() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    assert_eq!(
+        submit(&mut server, 3, &session, "val text = \"hello").result,
+        Some(serde_json::json!({ "state": "incomplete" }))
+    );
+    assert_eq!(
+        submit(&mut server, 4, &session, "world\"").result,
+        Some(serde_json::json!({ "value": null }))
+    );
+
+    assert_eq!(
+        submit(&mut server, 5, &session, "val invalid = fn() {").result,
+        Some(serde_json::json!({ "state": "incomplete" }))
+    );
+    assert_eq!(
+        submit(&mut server, 6, &session, "1 + true").result,
+        Some(serde_json::json!({ "state": "incomplete" }))
+    );
+    let failed = submit(&mut server, 7, &session, "}");
+    assert!(!failed.ok);
+    assert_eq!(
+        failed.error.expect("semantic diagnostic").kind.as_deref(),
+        Some("semantic")
+    );
+    assert_eq!(
+        submit(&mut server, 8, &session, "1 + 2").result,
+        Some(serde_json::json!({ "value": 3 }))
+    );
+}
+
+#[test]
+fn closing_a_session_discards_its_pending_source() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    assert_eq!(
+        submit(&mut server, 3, &session, "val pending = fn() {").result,
+        Some(serde_json::json!({ "state": "incomplete" }))
+    );
+
+    assert!(
+        server
+            .handle_line(&request(4, "session.close", Some(&session), None).to_string())
+            .ok
+    );
+    let replacement = open_session(&mut server);
+    assert_eq!(
+        submit(&mut server, 5, &replacement, "1 + 2").result,
+        Some(serde_json::json!({ "value": 3 }))
+    );
+}
+
+#[test]
 fn compile_failures_do_not_commit_session_state() {
     let mut server = initialized_server();
     let session = open_session(&mut server);

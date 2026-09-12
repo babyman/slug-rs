@@ -56,6 +56,9 @@
 - Covered independent and resumed interactive-session output attribution while
   retaining protocol-only process stdout.
 
+- Added server-side incremental source coverage for nested blocks, delimiters,
+  strings, semantic failures, session isolation, and pending-input teardown.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

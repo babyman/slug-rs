@@ -545,18 +545,18 @@ Continue enforcing:
 
 ## Required Cases
 
-- [ ] Single-line expression.
-- [ ] Multiline function.
-- [ ] Multiline block.
-- [ ] Nested blocks.
-- [ ] Incomplete delimiter.
-- [ ] Incomplete string where applicable.
-- [ ] Clearly invalid syntax.
-- [ ] Type error after syntactically complete multiline source.
-- [ ] Successful submission after previous invalid input.
-- [ ] Pending source isolated across sessions.
-- [ ] One session can remain incomplete while another executes.
-- [ ] Closing a session with pending input cleans up correctly.
+- [x] Single-line expression.
+- [x] Multiline function.
+- [x] Multiline block.
+- [x] Nested blocks.
+- [x] Incomplete delimiter.
+- [x] Incomplete string where applicable.
+- [x] Clearly invalid syntax.
+- [x] Type error after syntactically complete multiline source.
+- [x] Successful submission after previous invalid input.
+- [x] Pending source isolated across sessions.
+- [x] One session can remain incomplete while another executes.
+- [x] Closing a session with pending input cleans up correctly.
 
 ---
 
@@ -781,7 +781,7 @@ This should remain future work, but the multiline implementation must preserve t
 - [x] Incremental `submit`.
 - [x] Complete/incomplete/invalid distinction.
 - [x] Thin parser-free `slug-repl`.
-- [ ] Multiline server tests.
+- [x] Multiline server tests.
 - [ ] Thin-client integration tests.
 - [x] Real `slug-server` NDJSON process test.
 
