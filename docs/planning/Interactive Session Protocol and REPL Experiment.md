@@ -1297,6 +1297,24 @@ This milestone concerns presentation only.
 
 ---
 
+## Completion Review
+
+Milestones 1–9 are implemented, but this original experiment plan remains
+active until its test matrix is fully reconciled. In particular, interactive
+submissions do not currently configure a module loader:
+
+```slug
+import("slug.builtin")
+```
+
+returns the checked runtime error `module loader is not configured`. The
+`Imports behave consistently across submissions` matrix item therefore remains
+open and must not be marked complete by inference from the persistent compiler
+snapshot work. The completed final actionable task list intentionally covered
+the later server-ownership, transport, and thin-client boundary work only.
+
+---
+
 # Suggested Initial Implementation Shape
 
 Keep implementation boundaries provisional.

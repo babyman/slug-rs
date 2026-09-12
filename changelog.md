@@ -65,6 +65,10 @@
 - Recorded the interactive protocol's deferred correlation, cancellation,
   execution-context, parser-reuse, and runtime-rollback decisions.
 
+- Archived the completed interactive-session final action list while retaining
+  the original experiment plan for its unresolved interactive import-loader
+  coverage.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 
