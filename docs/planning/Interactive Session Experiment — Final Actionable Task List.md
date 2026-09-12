@@ -436,10 +436,10 @@ slim runtime
 
 ## Requirements
 
-- [ ] Identify actual duplicated logic rather than refactoring merely for symmetry.
-- [ ] Determine whether a generic representation simplifies the implementation.
-- [ ] Keep full/slim runtime mechanisms distinct where they genuinely differ.
-- [ ] Do not introduce a complicated trait hierarchy just to eliminate a small enum.
+- [x] Identify actual duplicated logic rather than refactoring merely for symmetry.
+- [x] Determine whether a generic representation simplifies the implementation.
+- [x] Keep full/slim runtime mechanisms distinct where they genuinely differ.
+- [x] Do not introduce a complicated trait hierarchy just to eliminate a small enum.
 
 ## Decision Rule
 
@@ -787,7 +787,7 @@ This should remain future work, but the multiline implementation must preserve t
 
 ## Review While Here
 
-- [ ] Full/slim `SessionExecution` duplication.
+- [x] Full/slim `SessionExecution` duplication.
 - [ ] Explicit output/session attribution.
 
 ## Record and Defer

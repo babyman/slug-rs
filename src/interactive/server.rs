@@ -64,31 +64,23 @@ struct Session {
     pending_source: String,
 }
 
-#[cfg(feature = "concurrency")]
-enum SessionExecution {
+enum SessionExecutionState<E> {
     Idle,
     Active {
-        task: InteractiveTask,
+        execution: E,
         compilation: InteractiveCompilation,
     },
     Stalled {
-        task: InteractiveTask,
+        execution: E,
         compilation: InteractiveCompilation,
     },
 }
 
+#[cfg(feature = "concurrency")]
+type SessionExecution = SessionExecutionState<InteractiveTask>;
+
 #[cfg(not(feature = "concurrency"))]
-enum SessionExecution {
-    Idle,
-    Active {
-        execution: InteractiveExecution,
-        compilation: InteractiveCompilation,
-    },
-    Stalled {
-        execution: InteractiveExecution,
-        compilation: InteractiveCompilation,
-    },
-}
+type SessionExecution = SessionExecutionState<InteractiveExecution>;
 
 #[derive(Default)]
 struct OutputSink {
@@ -422,7 +414,10 @@ impl Server {
             self.sessions
                 .get_mut(&session)
                 .expect("validated session remains available during submission")
-                .execution = SessionExecution::Active { task, compilation };
+                .execution = SessionExecution::Active {
+                execution: task,
+                compilation,
+            };
             self.drive_session(request.id, session)
         }
         #[cfg(not(feature = "concurrency"))]
@@ -494,9 +489,8 @@ impl Server {
         let session = self.sessions.get(session)?;
         match &session.execution {
             SessionExecution::Idle => None,
-            SessionExecution::Active { task, .. } | SessionExecution::Stalled { task, .. } => {
-                Some(task.clone())
-            }
+            SessionExecution::Active { execution, .. }
+            | SessionExecution::Stalled { execution, .. } => Some(execution.clone()),
         }
     }
 
@@ -520,10 +514,17 @@ impl Server {
                 .expect("active session remains available during its poll");
             let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
             active.execution = match execution {
-                SessionExecution::Active { task, compilation }
-                | SessionExecution::Stalled { task, compilation } => {
-                    SessionExecution::Stalled { task, compilation }
+                SessionExecution::Active {
+                    execution,
+                    compilation,
                 }
+                | SessionExecution::Stalled {
+                    execution,
+                    compilation,
+                } => SessionExecution::Stalled {
+                    execution,
+                    compilation,
+                },
                 SessionExecution::Idle => SessionExecution::Idle,
             };
             return Response::success(id, Some(session), json!({ "state": "stalled" }));
@@ -534,8 +535,14 @@ impl Server {
             .expect("active session remains available during its poll");
         let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
         let (task, compilation) = match execution {
-            SessionExecution::Active { task, compilation }
-            | SessionExecution::Stalled { task, compilation } => (task, compilation),
+            SessionExecution::Active {
+                execution,
+                compilation,
+            }
+            | SessionExecution::Stalled {
+                execution,
+                compilation,
+            } => (execution, compilation),
             SessionExecution::Idle => unreachable!("completed task must have session state"),
         };
         task.synchronize_environment(&mut active.runtime);

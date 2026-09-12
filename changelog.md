@@ -50,6 +50,9 @@
 - Confirmed `slug-server` keeps structured Slug diagnostics in NDJSON protocol
   responses on stdout while reserving stderr for non-protocol host failures.
 
+- Unified full and slim interactive session state around one generic execution
+  carrier while retaining their distinct task and host-driven runtime paths.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 
