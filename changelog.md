@@ -18,6 +18,9 @@
 - Routed `slug-server` `print` and `println` output into session-scoped NDJSON
   stdout events instead of raw protocol stdout.
 
+- Added shared host-native bindings for interactive sessions through a
+  host-backed overlay that preserves session-local shadowing and isolation.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

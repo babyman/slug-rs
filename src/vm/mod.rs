@@ -1,7 +1,9 @@
-use std::{cell::RefCell, cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
+use std::{cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
 
 #[cfg(feature = "concurrency")]
 use std::cell::Cell;
+#[cfg(feature = "metrics")]
+use std::cell::RefCell;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Duration;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
@@ -343,6 +345,8 @@ pub struct Vm {
 /// Global bindings retained by one interactive session using a shared VM.
 pub(crate) struct InteractiveEnvironment {
     globals: GlobalEnvironment,
+    host_globals: GlobalEnvironment,
+    local_bindings: HashSet<String>,
     imported_globals: HashSet<String>,
 }
 
@@ -555,7 +559,9 @@ impl Vm {
 
     pub(crate) fn interactive_environment(&self) -> InteractiveEnvironment {
         InteractiveEnvironment {
-            globals: Rc::new(RefCell::new(self.globals.borrow().clone())),
+            globals: global_environment(),
+            host_globals: self.globals.clone(),
+            local_bindings: HashSet::new(),
             imported_globals: HashSet::new(),
         }
     }
@@ -566,6 +572,15 @@ impl Vm {
         entry: &str,
         environment: &mut InteractiveEnvironment,
     ) -> VmResult<Value> {
+        {
+            let host = environment.host_globals.borrow();
+            let mut globals = environment.globals.borrow_mut();
+            for (name, value) in host.iter() {
+                if !environment.local_bindings.contains(name) {
+                    globals.insert(name.clone(), value.clone());
+                }
+            }
+        }
         let previous_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
         let previous_imported = std::mem::replace(
             &mut self.imported_globals,
@@ -578,6 +593,11 @@ impl Vm {
             .clone_from(&self.imported_globals);
         self.globals = previous_globals;
         self.imported_globals = previous_imported;
+        if result.is_ok() {
+            environment
+                .local_bindings
+                .extend(program.bindings().iter().cloned());
+        }
         result
     }
 

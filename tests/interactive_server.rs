@@ -4,7 +4,8 @@ use std::{
 };
 
 use slug_vm::{
-    RuntimeErrorKind, compile,
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind,
+    compile,
     interactive::{Diagnostic, DiagnosticCategory, Server},
 };
 
@@ -181,6 +182,47 @@ fn output_is_captured_as_a_session_event() {
 }
 
 #[test]
+fn sessions_observe_host_bindings_registered_after_they_open() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    let module = NativeModule::new("test.interactive_host", ()).expect("native module");
+    let answer = module
+        .function("host_answer", NativeArity::Exact(0), host_answer)
+        .expect("native function");
+    server
+        .define_host_native(answer)
+        .expect("register shared host binding");
+
+    let response = submit(&mut server, 3, &session, "host_answer()");
+    assert!(response.ok);
+    assert_eq!(response.result, Some(serde_json::json!({ "value": 42 })));
+}
+
+#[test]
+fn session_bindings_shadow_host_bindings_without_leaking_to_other_sessions() {
+    let mut server = initialized_server();
+    let first = open_session(&mut server);
+    let second = open_session(&mut server);
+    let module = NativeModule::new("test.interactive_host", ()).expect("native module");
+    let answer = module
+        .function("shared_name", NativeArity::Exact(0), host_answer)
+        .expect("native function");
+    server
+        .define_host_native(answer)
+        .expect("register shared host binding");
+
+    assert!(submit(&mut server, 3, &first, "val shared_name = 10").ok);
+    let first_value = submit(&mut server, 4, &first, "shared_name");
+    let second_value = submit(&mut server, 5, &second, "shared_name()");
+
+    assert_eq!(first_value.result, Some(serde_json::json!({ "value": 10 })));
+    assert_eq!(
+        second_value.result,
+        Some(serde_json::json!({ "value": 42 }))
+    );
+}
+
+#[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
     let source = Diagnostic::from_source(&source);
@@ -351,4 +393,8 @@ fn submit(
         )
         .to_string(),
     )
+}
+
+fn host_answer(call: &mut NativeCall<'_>) -> NativeStatus {
+    call.return_value(NativeOwnedValue::integer(42))
 }

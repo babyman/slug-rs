@@ -997,7 +997,7 @@ Session
   remain reference-stable after each successful submission.
 - [x] Ensure closures created by earlier submissions retain that same session
   environment and observe later mutations within it.
-- [ ] Layer session-local bindings over shared VM/host facilities without
+- [x] Layer session-local bindings over shared VM/host facilities without
   exposing another session's bindings.
 - [x] Make a host-owned output sink available before executing `submit`; it
   must prevent program output from writing raw bytes to protocol stdout.
