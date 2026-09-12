@@ -161,6 +161,26 @@ fn closures_observe_later_mutations_in_their_session_environment() {
 }
 
 #[test]
+fn output_is_captured_as_a_session_event() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    let response = submit(
+        &mut server,
+        3,
+        &session,
+        "print(\"hello\")\nprintln(\" world\")",
+    );
+
+    assert!(response.ok);
+    let events = server.take_events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].session, session);
+    assert_eq!(events[0].event, "stdout");
+    assert_eq!(events[0].data, serde_json::json!("hello"));
+    assert_eq!(events[1].data, serde_json::json!(" world\n"));
+}
+
+#[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
     let source = Diagnostic::from_source(&source);
@@ -254,6 +274,42 @@ fn server_binary_preserves_a_binding_between_ndjson_submissions() {
         .collect::<Vec<_>>();
     assert_eq!(messages[2]["result"], serde_json::json!({ "value": null }));
     assert_eq!(messages[3]["result"], serde_json::json!({ "value": 15 }));
+}
+
+#[test]
+fn server_binary_emits_program_output_only_as_ndjson_events() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start slug-server");
+    let input = concat!(
+        "{\"id\":1,\"method\":\"initialize\",\"params\":{\"protocol\":1}}\n",
+        "{\"id\":2,\"method\":\"session.open\"}\n",
+        "{\"id\":3,\"session\":\"s1\",\"method\":\"submit\",\"params\":{\"source\":\"println('hello')\"}}\n"
+    );
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write input");
+    let output = child.wait_with_output().expect("wait for server");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let messages = String::from_utf8(output.stdout)
+        .expect("stdout is UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("NDJSON response"))
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(
+        messages[2],
+        serde_json::json!({ "session": "s1", "event": "stdout", "data": "hello\n" })
+    );
+    assert_eq!(messages[3]["result"], serde_json::json!({ "value": null }));
 }
 
 fn initialized_server() -> Server {

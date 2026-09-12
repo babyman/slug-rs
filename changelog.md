@@ -15,6 +15,9 @@
   snapshots, durable session environments, closure retention, and
   compile-failure atomicity.
 
+- Routed `slug-server` `print` and `println` output into session-scoped NDJSON
+  stdout events instead of raw protocol stdout.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

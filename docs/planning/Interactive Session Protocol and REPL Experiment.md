@@ -999,7 +999,7 @@ Session
   environment and observe later mutations within it.
 - [ ] Layer session-local bindings over shared VM/host facilities without
   exposing another session's bindings.
-- [ ] Make a host-owned output sink available before executing `submit`; it
+- [x] Make a host-owned output sink available before executing `submit`; it
   must prevent program output from writing raw bytes to protocol stdout.
 - [x] Implement source `submit`: parse, analyze, compile, execute, encode the
   result, and commit durable session state only after compilation succeeds.
@@ -1009,7 +1009,7 @@ Session
   binding behavior rather than adding speculative rollback machinery.
 - [x] Add direct engine tests for persistence, compiler-failure atomicity, and
   closure retention.
-- [ ] Add direct engine tests for output containment.
+- [x] Add direct engine tests for output containment.
 
 ## Acceptance Criteria
 
