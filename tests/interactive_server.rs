@@ -239,6 +239,25 @@ fn output_is_captured_as_a_session_event() {
 }
 
 #[test]
+fn sessions_emit_output_with_their_own_explicit_attribution() {
+    let mut server = initialized_server();
+    let first = open_session(&mut server);
+    let second = open_session(&mut server);
+
+    assert!(submit(&mut server, 3, &first, "println('first')").ok);
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session, first);
+    assert_eq!(events[0].data, serde_json::json!("first\n"));
+
+    assert!(submit(&mut server, 4, &second, "println('second')").ok);
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session, second);
+    assert_eq!(events[0].data, serde_json::json!("second\n"));
+}
+
+#[test]
 fn host_and_background_output_are_explicitly_attributed_to_live_sessions() {
     let mut server = initialized_server();
     let session = open_session(&mut server);
@@ -397,7 +416,7 @@ fn stalled_session_does_not_prevent_another_session_from_running() {
         &mut server,
         3,
         &stalled,
-        "val inbox = session_input()\nselect { recv inbox }",
+        "val inbox = session_input()\nval value = select { recv inbox }\nprintln('resumed')\nvalue",
     );
     assert_eq!(
         pending.result,
@@ -424,6 +443,10 @@ fn stalled_session_does_not_prevent_another_session_from_running() {
     );
     let resumed = server.handle_line(&request(6, "session.poll", Some(&stalled), None).to_string());
     assert_eq!(resumed.result, Some(serde_json::json!({ "value": 99 })));
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].session, stalled);
+    assert_eq!(events[0].data, serde_json::json!("resumed\n"));
 }
 
 #[test]

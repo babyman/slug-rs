@@ -53,6 +53,9 @@
 - Unified full and slim interactive session state around one generic execution
   carrier while retaining their distinct task and host-driven runtime paths.
 
+- Covered independent and resumed interactive-session output attribution while
+  retaining protocol-only process stdout.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

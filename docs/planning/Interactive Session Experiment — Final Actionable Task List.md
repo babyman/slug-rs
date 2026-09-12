@@ -533,11 +533,11 @@ Continue enforcing:
 
 ## Tasks
 
-- [ ] Preserve explicit session attribution.
-- [ ] Verify multiline changes do not bypass the output sink.
-- [ ] Verify stalled/resumed submissions retain correct attribution.
-- [ ] Test two sessions producing output independently.
-- [ ] Keep raw process stdout reserved for protocol framing.
+- [x] Preserve explicit session attribution.
+- [x] Verify multiline changes do not bypass the output sink.
+- [x] Verify stalled/resumed submissions retain correct attribution.
+- [x] Test two sessions producing output independently.
+- [x] Keep raw process stdout reserved for protocol framing.
 
 ---
 
@@ -788,7 +788,7 @@ This should remain future work, but the multiline implementation must preserve t
 ## Review While Here
 
 - [x] Full/slim `SessionExecution` duplication.
-- [ ] Explicit output/session attribution.
+- [x] Explicit output/session attribution.
 
 ## Record and Defer
 
