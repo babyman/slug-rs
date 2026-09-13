@@ -170,13 +170,13 @@ later send or timer can observe.
 
 ### Task 6 — Simplify and document
 
-- [ ] Delete the superseded single-active-submission state and its
+- [x] Delete the superseded single-active-submission state and its
   `submission_active` protocol behavior.
-- [ ] Update the README and runtime requirements only where they still imply a
+- [x] Update the README and runtime requirements only where they still imply a
   build-specific interactive restriction.
-- [ ] Add an implementation decision record only if the final carrier boundary
-  changes the established runtime architecture beyond this plan.
-- [ ] Add the user-visible behavior change to `changelog.md`.
+- [x] No additional implementation decision record: the final carrier boundary
+  remains the one established by this plan and its existing decision record.
+- [x] Add the user-visible behavior change to `changelog.md`.
 
 **Gate:** default and slim tests share the same interactive protocol assertions
 without feature-specific expected outcomes.

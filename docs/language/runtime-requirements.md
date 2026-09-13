@@ -495,6 +495,9 @@ binding-free cell from that same session. The later cell observes bindings
 committed by earlier completed cells and can resume the background cell through
 ordinary shared values such as channels.
 
+This protocol behavior is independent of the runtime's execution carrier; an
+implementation MAY use scheduler tasks or host-driven resumable executions.
+
 While any background cell remains suspended, an interactive host MUST reject a
 new cell that declares bindings. This prevents a later compiler snapshot from
 overtaking the suspended cell's eventual binding commit. Once all background

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Made stalled interactive cells accept later binding-free input in both the
+  scheduler-backed and slim host-driven runtimes, with retained-cell teardown
+  on session close and server shutdown.
+
 - Fixed interactive task supervision so spawned work runs and is cancelled with
   its submitted session form.
 

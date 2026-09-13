@@ -1,9 +1,7 @@
-use std::{cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
 
 #[cfg(feature = "concurrency")]
 use std::cell::Cell;
-#[cfg(any(feature = "concurrency", feature = "metrics"))]
-use std::cell::RefCell;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Duration;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]

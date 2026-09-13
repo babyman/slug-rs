@@ -501,7 +501,7 @@ impl Server {
                 }
             }
             if response.ok && !self.sessions[&session].executions.is_empty() {
-                response = self.pump_slim_session(request.id, session.clone());
+                response = self.pump_slim_session(request.id, &session);
             }
             response
         }
@@ -535,7 +535,7 @@ impl Server {
         #[cfg(feature = "concurrency")]
         return self.poll_session(request.id, session);
         #[cfg(not(feature = "concurrency"))]
-        self.pump_slim_session(request.id, session)
+        self.pump_slim_session(request.id, &session)
     }
 
     #[cfg(feature = "concurrency")]
@@ -707,18 +707,18 @@ impl Server {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    fn pump_slim_session(&mut self, id: u64, session: String) -> Response {
-        let count = self.sessions[&session].executions.len();
+    fn pump_slim_session(&mut self, id: u64, session: &str) -> Response {
+        let count = self.sessions[session].executions.len();
         for _ in 0..count {
-            let response = self.drive_slim_session(id, session.clone());
+            let response = self.drive_slim_session(id, session.into());
             if !response.ok {
                 return response;
             }
         }
         Response::success(
             id,
-            Some(session.clone()),
-            if self.sessions[&session].executions.is_empty() {
+            Some(session.into()),
+            if self.sessions[session].executions.is_empty() {
                 json!({ "state": "idle" })
             } else {
                 json!({ "state": "stalled" })

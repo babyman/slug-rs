@@ -161,17 +161,19 @@ optional source path seeds the newly opened session before the first prompt, so
 its bindings remain available interactively.
 If a later top-level form in that source waits on a channel, the REPL reports
 `[stalled]` but keeps the form alive; later binding-free input can send to a
-previously declared channel and resume it.
+previously declared channel and resume it in both runtime configurations.
 Incomplete syntax such as a function body uses a `.` continuation prompt. Type
 `:quit` or `:exit`, or send end-of-file, to close the session. Set
 `SLUG_SERVER` to use a different local server executable. Distributions must
 install `slug-repl` and `slug-server` together.
 
-Interactive submissions run as ordinary scheduler tasks. A function imported
-from a Slug module, or retained from an earlier prompt, can suspend and later
-resume in that same task. New top-level bindings are committed only when their
-submission settles successfully; while a binding-producing submission waits,
-later input may use already committed bindings but may not declare new ones.
+Interactive submissions run as session-owned cells: scheduler tasks in the
+default runtime and detached host-driven executions in the slim runtime. A
+function imported from a Slug module, or retained from an earlier prompt, can
+suspend and later resume in its owning cell. New top-level bindings are
+committed only when their cell settles successfully; while a binding-producing
+cell waits, later input may use already committed bindings but may not declare
+new ones.
 
 The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with
