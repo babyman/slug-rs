@@ -74,9 +74,7 @@ interactive semantics.
 - [x] Cover protocol results, output events, and binding visibility rather than
   terminal prompt formatting alone.
 
-**Gate:** the current slim `submission_active` result is captured as a failing
-expected-behavior regression; the default runtime establishes the desired
-protocol transcript.
+**Gate:** default and slim tests capture the same desired wakeup transcript.
 
 ### Task 1 — Normalize source into ordered interactive cells
 

@@ -199,7 +199,7 @@ fn imported_channel_calls_suspend_and_resume_in_an_interactive_task() {
 
 #[test]
 #[cfg(not(feature = "concurrency"))]
-fn slim_server_currently_rejects_a_sender_while_a_cell_is_stalled() {
+fn slim_server_accepts_a_sender_while_a_cell_is_stalled() {
     let mut server = initialized_server();
     let session = open_session(&mut server);
 
@@ -207,18 +207,16 @@ fn slim_server_currently_rejects_a_sender_while_a_cell_is_stalled() {
         &mut server,
         3,
         &session,
-        "var msg = chan(8)\nselect { recv msg }",
+        "var msg = chan(8)\nselect { recv msg /> fn(value) { println(value) } }",
     );
     assert_eq!(
         waiting.result,
         Some(serde_json::json!({ "state": "stalled" }))
     );
 
-    let rejected = submit(&mut server, 4, &session, "select { send msg, 2 }");
-    assert_eq!(
-        rejected.error.expect("active submission diagnostic").code,
-        "submission_active"
-    );
+    let sent = submit(&mut server, 4, &session, "select { send msg, 2 }");
+    assert!(sent.ok, "{sent:?}");
+    assert_eq!(server.take_events()[0].data, serde_json::json!("2\n"));
 }
 
 #[test]

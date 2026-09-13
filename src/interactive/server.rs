@@ -356,7 +356,7 @@ impl Server {
         #[cfg(feature = "concurrency")]
         let session_exists = self.sessions.contains_key(&session);
         #[cfg(not(feature = "concurrency"))]
-        let existing = self.sessions.get(&session);
+        let session_exists = self.sessions.contains_key(&session);
         #[cfg(feature = "concurrency")]
         if !session_exists {
             return Response::failure(
@@ -366,22 +366,11 @@ impl Server {
             );
         }
         #[cfg(not(feature = "concurrency"))]
-        let Some(existing) = existing else {
+        if !session_exists {
             return Response::failure(
                 Some(request.id),
                 Some(session.clone()),
                 Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
-            );
-        };
-        #[cfg(not(feature = "concurrency"))]
-        if !existing.executions.is_empty() {
-            return Response::failure(
-                Some(request.id),
-                Some(session),
-                Diagnostic::protocol(
-                    "submission_active",
-                    "poll the active submission before submitting more source",
-                ),
             );
         }
         let path = format!("<interactive:{session}>");
@@ -434,6 +423,20 @@ impl Server {
                     );
                 }
             };
+            if !self.sessions[&session].executions.is_empty()
+                && compilations
+                    .iter()
+                    .any(|compilation| !compilation.program.bindings().is_empty())
+            {
+                return Response::failure(
+                    Some(request.id),
+                    Some(session),
+                    Diagnostic::protocol(
+                        "background_bindings",
+                        "a session with suspended forms accepts only binding-free source until they settle",
+                    ),
+                );
+            }
             let mut response = Response::success(request.id, Some(session.clone()), Value::Null);
             for compilation in compilations {
                 let execution = {
@@ -473,6 +476,14 @@ impl Server {
                 {
                     break;
                 }
+            }
+            while !self.sessions[&session].executions.is_empty()
+                && response
+                    .result
+                    .as_ref()
+                    .is_some_and(|result| result.get("state").is_none())
+            {
+                response = self.drive_slim_session(request.id, session.clone());
             }
             response
         }
