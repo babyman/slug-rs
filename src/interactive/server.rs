@@ -434,8 +434,8 @@ impl Server {
                 .get(&session)
                 .expect("validated session remains available during submission")
                 .compiler;
-            let compilation = match self.vm.compile_interactive_source(&path, &source, compiler) {
-                Ok(compilation) => compilation,
+            let compilations = match self.vm.compile_interactive_forms(&path, &source, compiler) {
+                Ok(compilations) => compilations,
                 Err(error) => {
                     return Response::failure(
                         Some(request.id),
@@ -444,34 +444,46 @@ impl Server {
                     );
                 }
             };
-            let execution = {
-                let (vm, sessions) = (&mut self.vm, &mut self.sessions);
-                let active = sessions
-                    .get_mut(&session)
-                    .expect("validated session remains available during submission");
-                match vm.start_named_interactive_execution(
-                    &compilation.program,
-                    "main",
-                    &mut active.runtime,
-                ) {
-                    Ok(execution) => execution,
-                    Err(error) => {
-                        return Response::failure(
-                            Some(request.id),
-                            Some(session),
-                            Diagnostic::from_runtime(&error),
-                        );
+            let mut response = Response::success(request.id, Some(session.clone()), Value::Null);
+            for compilation in compilations {
+                let execution = {
+                    let (vm, sessions) = (&mut self.vm, &mut self.sessions);
+                    let active = sessions
+                        .get_mut(&session)
+                        .expect("validated session remains available during submission");
+                    match vm.start_named_interactive_execution(
+                        &compilation.program,
+                        "main",
+                        &mut active.runtime,
+                    ) {
+                        Ok(execution) => execution,
+                        Err(error) => {
+                            return Response::failure(
+                                Some(request.id),
+                                Some(session),
+                                Diagnostic::from_runtime(&error),
+                            );
+                        }
                     }
+                };
+                self.sessions
+                    .get_mut(&session)
+                    .expect("validated session remains available during submission")
+                    .execution = SessionExecution::Active {
+                    execution,
+                    compilation,
+                };
+                response = self.drive_slim_session(request.id, session.clone());
+                if !response.ok
+                    || response
+                        .result
+                        .as_ref()
+                        .is_some_and(|result| result.get("state").is_some())
+                {
+                    break;
                 }
-            };
-            self.sessions
-                .get_mut(&session)
-                .expect("validated session remains available during submission")
-                .execution = SessionExecution::Active {
-                execution,
-                compilation,
-            };
-            self.drive_slim_session(request.id, session)
+            }
+            response
         }
     }
 

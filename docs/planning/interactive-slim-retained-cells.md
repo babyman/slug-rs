@@ -80,12 +80,12 @@ protocol transcript.
 
 ### Task 1 — Normalize source into ordered interactive cells
 
-- [ ] Remove the slim-only whole-submission compilation path.
-- [ ] Make both server configurations use `compile_interactive_forms` and
+- [x] Remove the slim-only whole-submission compilation path.
+- [x] Make both server configurations use `compile_interactive_forms` and
   preserve source order within a complete submission.
-- [ ] Commit each completed preceding form before compiling/running its next
+- [x] Commit each completed preceding form before compiling/running its next
   form, including startup source passed through `slug-repl session.slug`.
-- [ ] Retain source-readiness behavior: incomplete source remains pending;
+- [x] Retain source-readiness behavior: incomplete source remains pending;
   parse and semantic failures clear only that pending source and commit no new
   state.
 

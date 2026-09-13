@@ -576,20 +576,6 @@ impl Vm {
         vm
     }
 
-    #[cfg(not(feature = "concurrency"))]
-    pub(crate) fn compile_interactive_source(
-        &self,
-        path: &str,
-        source: &str,
-        state: &InteractiveCompilerState,
-    ) -> Result<InteractiveCompilation, crate::SourceError> {
-        self.module_loader.as_ref().map_or_else(
-            || crate::source::compile_interactive(path, source, state),
-            |loader| loader.compile_interactive_source(path, source, state),
-        )
-    }
-
-    #[cfg(feature = "concurrency")]
     pub(crate) fn compile_interactive_forms(
         &self,
         path: &str,
