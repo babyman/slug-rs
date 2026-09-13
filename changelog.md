@@ -90,6 +90,9 @@
 - Made `slug-repl session.slug` seed its persistent interactive session from
   the supplied source file before presenting the prompt.
 
+- Made `slug-server app.slug` emit launched-program output as root-origin
+  protocol events, distinct from session-attributed output.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

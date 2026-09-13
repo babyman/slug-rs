@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::{
     NativeArity, NativeCall, NativeDescriptorError, NativeFunction, NativeModule, NativeOwnedValue,
-    NativeStatus, NativeValueKind, Value as SlugValue, Vm,
+    NativeStatus, NativeValueKind, Program, Value as SlugValue, Vm, VmResult,
     source::{InteractiveCompilerState, SourceReadiness, source_readiness},
     vm::InteractiveEnvironment,
 };
@@ -14,7 +14,7 @@ use crate::{VmProgress, source::InteractiveCompilation, vm::InteractiveExecution
 #[cfg(feature = "concurrency")]
 use crate::{VmProgress, source::InteractiveCompilation, vm::InteractiveTask};
 
-use super::{Diagnostic, Event, PROTOCOL_VERSION, Request, Response};
+use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
 
 /// The protocol event stream used for host or program output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,30 +84,34 @@ type SessionExecution = SessionExecutionState<InteractiveExecution>;
 
 #[derive(Default)]
 struct OutputSink {
-    active_session: Option<String>,
+    active_origin: Option<EventOrigin>,
     events: Vec<Event>,
 }
 
 impl OutputSink {
     fn begin(&mut self, session: String) {
-        self.active_session = Some(session);
+        self.active_origin = Some(EventOrigin::Session { session });
     }
 
     fn end(&mut self) {
-        self.active_session = None;
+        self.active_origin = None;
+    }
+
+    fn begin_root(&mut self) {
+        self.active_origin = Some(EventOrigin::Root);
     }
 
     fn write_active(&mut self, stream: OutputStream, data: String) -> bool {
-        let Some(session) = &self.active_session else {
+        let Some(origin) = &self.active_origin else {
             return false;
         };
-        self.write(session.clone(), stream, data);
+        self.write(origin.clone(), stream, data);
         true
     }
 
-    fn write(&mut self, session: String, stream: OutputStream, data: String) {
+    fn write(&mut self, origin: EventOrigin, stream: OutputStream, data: String) {
         self.events.push(Event {
-            session,
+            origin,
             event: stream.event_name().into(),
             data: Value::String(data),
         });
@@ -153,6 +157,18 @@ impl Server {
         std::mem::take(&mut self.output.borrow_mut().events)
     }
 
+    /// Runs a launched application with output attributed to the root runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked runtime error from the launched program.
+    pub fn run_root_program(&mut self, program: &Program) -> VmResult<SlugValue> {
+        self.output.borrow_mut().begin_root();
+        let result = self.vm.run_program(program);
+        self.output.borrow_mut().end();
+        result
+    }
+
     /// Queues host or background-runtime output for a live session.
     ///
     /// The embedding host must supply the session explicitly. Events queued
@@ -173,9 +189,13 @@ impl Server {
         if !self.sessions.contains_key(session) {
             return Err(OutputError::UnknownSession(session.into()));
         }
-        self.output
-            .borrow_mut()
-            .write(session.into(), stream, data.into());
+        self.output.borrow_mut().write(
+            EventOrigin::Session {
+                session: session.into(),
+            },
+            stream,
+            data.into(),
+        );
         Ok(())
     }
 

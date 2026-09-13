@@ -53,10 +53,19 @@ impl Response {
     }
 }
 
-/// An unsolicited session-associated protocol event.
+/// The runtime context that produced an unsolicited protocol event.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum EventOrigin {
+    Root,
+    Session { session: String },
+}
+
+/// An unsolicited protocol event from the root application or one session.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Event {
-    pub session: String,
+    #[serde(flatten)]
+    pub origin: EventOrigin,
     pub event: String,
     pub data: Value,
 }

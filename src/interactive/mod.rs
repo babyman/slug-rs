@@ -8,5 +8,5 @@ mod protocol;
 mod server;
 
 pub use diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation};
-pub use protocol::{Event, IncomingMessage, PROTOCOL_VERSION, Request, Response};
+pub use protocol::{Event, EventOrigin, IncomingMessage, PROTOCOL_VERSION, Request, Response};
 pub use server::{OutputError, OutputStream, Server};

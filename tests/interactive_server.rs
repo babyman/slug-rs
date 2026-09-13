@@ -10,7 +10,7 @@ use slug_vm::{ModuleLoader, Vm};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind,
     compile,
-    interactive::{Diagnostic, DiagnosticCategory, OutputError, OutputStream, Server},
+    interactive::{Diagnostic, DiagnosticCategory, EventOrigin, OutputError, OutputStream, Server},
 };
 use slug_vm::{NativeChannelProducer, NativeProducerStatus, NativeSendValue};
 
@@ -154,6 +154,22 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
         missing.error.expect("runtime diagnostic").kind.as_deref(),
         Some("module")
     );
+}
+
+#[test]
+fn launched_program_output_has_a_root_origin() {
+    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let mut server = Server::new(Vm::with_module_loader(loader.clone()));
+    let program = loader
+        .compile_source("<root>", "println('worker started')")
+        .expect("compile root program");
+
+    server.run_root_program(&program).expect("run root program");
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].origin, EventOrigin::Root);
+    assert_eq!(events[0].event, "stdout");
+    assert_eq!(events[0].data, serde_json::json!("worker started\n"));
 }
 
 #[test]
@@ -351,7 +367,12 @@ fn output_is_captured_as_a_session_event() {
     assert!(response.ok);
     let events = server.take_events();
     assert_eq!(events.len(), 2);
-    assert_eq!(events[0].session, session);
+    assert_eq!(
+        events[0].origin,
+        EventOrigin::Session {
+            session: session.clone()
+        }
+    );
     assert_eq!(events[0].event, "stdout");
     assert_eq!(events[0].data, serde_json::json!("hello"));
     assert_eq!(events[1].data, serde_json::json!(" world\n"));
@@ -366,13 +387,13 @@ fn sessions_emit_output_with_their_own_explicit_attribution() {
     assert!(submit(&mut server, 3, &first, "println('first')").ok);
     let events = server.take_events();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].session, first);
+    assert_eq!(events[0].origin, EventOrigin::Session { session: first });
     assert_eq!(events[0].data, serde_json::json!("first\n"));
 
     assert!(submit(&mut server, 4, &second, "println('second')").ok);
     let events = server.take_events();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].session, second);
+    assert_eq!(events[0].origin, EventOrigin::Session { session: second });
     assert_eq!(events[0].data, serde_json::json!("second\n"));
 }
 
@@ -386,7 +407,12 @@ fn host_and_background_output_are_explicitly_attributed_to_live_sessions() {
         .expect("emit stderr event");
     let events = server.take_events();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].session, session);
+    assert_eq!(
+        events[0].origin,
+        EventOrigin::Session {
+            session: session.clone()
+        }
+    );
     assert_eq!(events[0].event, "stderr");
     assert_eq!(events[0].data, serde_json::json!("warning\\n"));
 
@@ -564,7 +590,7 @@ fn stalled_session_does_not_prevent_another_session_from_running() {
     assert_eq!(resumed.result, Some(serde_json::json!({ "value": 99 })));
     let events = server.take_events();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].session, stalled);
+    assert_eq!(events[0].origin, EventOrigin::Session { session: stalled });
     assert_eq!(events[0].data, serde_json::json!("resumed\n"));
 }
 
@@ -766,7 +792,7 @@ fn server_binary_emits_program_output_only_as_ndjson_events() {
     assert_eq!(messages.len(), 4);
     assert_eq!(
         messages[2],
-        serde_json::json!({ "session": "s1", "event": "stdout", "data": "hello\n" })
+        serde_json::json!({ "source": "session", "session": "s1", "event": "stdout", "data": "hello\n" })
     );
     assert_eq!(messages[3]["result"], serde_json::json!({ "value": null }));
 }
@@ -802,7 +828,7 @@ fn server_binary_orders_output_before_a_failing_submission_response() {
     assert_eq!(messages.len(), 4);
     assert_eq!(
         messages[2],
-        serde_json::json!({ "session": "s1", "event": "stdout", "data": "before failure\n" })
+        serde_json::json!({ "source": "session", "session": "s1", "event": "stdout", "data": "before failure\n" })
     );
     assert_eq!(messages[3]["id"], 3);
     assert_eq!(messages[3]["ok"], false);
