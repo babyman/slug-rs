@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::{
     NativeArity, NativeCall, NativeDescriptorError, NativeFunction, NativeModule, NativeOwnedValue,
-    NativeStatus, Value as SlugValue, Vm,
+    NativeStatus, NativeValueKind, Value as SlugValue, Vm,
     source::{InteractiveCompilerState, SourceReadiness, compile_interactive, source_readiness},
     vm::InteractiveEnvironment,
 };
@@ -655,8 +655,8 @@ impl Server {
         }
     }
 
-    fn install_output_builtins(&mut self) {
-        let module = NativeModule::new("slug.interactive.output", self.output.clone())
+    fn install_session_builtins(&mut self) {
+        let module = NativeModule::new("slug.interactive", self.output.clone())
             .expect("static interactive output module is valid");
         for (name, callback) in [
             ("print", native_print as NativeCallback),
@@ -669,6 +669,12 @@ impl Server {
                 .define_native(function)
                 .expect("interactive output binding is unique");
         }
+        let length = module
+            .function("len", NativeArity::Exact(1), native_len)
+            .expect("static interactive length function is valid");
+        self.vm
+            .define_native(length)
+            .expect("interactive length binding is unique");
     }
 
     fn require_initialized(&self, request: &Request) -> Option<Response> {
@@ -688,7 +694,7 @@ impl Server {
 impl Default for Server {
     fn default() -> Self {
         let mut server = Self::new(Vm::new());
-        server.install_output_builtins();
+        server.install_session_builtins();
         server
     }
 }
@@ -701,6 +707,39 @@ fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
 
 fn native_println(call: &mut NativeCall<'_>) -> NativeStatus {
     native_write(call, true)
+}
+
+fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
+    let value = match call.argument(0) {
+        Ok(value) => value,
+        Err(error) => return call.raise(error),
+    };
+    let length = match value.kind() {
+        NativeValueKind::String => match value.as_str() {
+            Ok(value) => value.chars().count(),
+            Err(error) => return call.raise(error),
+        },
+        NativeValueKind::Bytes => match value.as_bytes() {
+            Ok(value) => value.len(),
+            Err(error) => return call.raise(error),
+        },
+        NativeValueKind::List | NativeValueKind::Map => {
+            value.len().expect("collection kind has a length")
+        }
+        kind => {
+            return call.raise(crate::NativeError::new(
+                "native.type",
+                format!("`len` expects str, bytes, list, or map, got {kind:?}"),
+            ));
+        }
+    };
+    let Ok(length) = i64::try_from(length) else {
+        return call.raise(crate::NativeError::new(
+            "native.range",
+            "`len` result exceeds the supported integer range",
+        ));
+    };
+    call.return_value(NativeOwnedValue::integer(length))
 }
 
 fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {

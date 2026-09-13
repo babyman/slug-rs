@@ -28,6 +28,28 @@ fn repl_initializes_persists_values_renders_events_and_closes() {
 }
 
 #[test]
+fn repl_exposes_the_implicit_len_builtin() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-repl"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start slug-repl");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"println(\"hello Slug!\", 'len:', len('hello Slug!'))\n:quit\n")
+        .expect("write input");
+    let output = child.wait_with_output().expect("wait for repl");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert!(stdout.contains("hello Slug! len: 11\n"));
+}
+
+#[test]
 fn repl_renders_structured_source_errors() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_slug-repl"))
         .stdin(Stdio::piped())
