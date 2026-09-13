@@ -32,3 +32,10 @@ removed.
 
 Programs that previously reported a blocked-task error when a cross-program
 closure waited now suspend and resume through the ordinary scheduler.
+
+## Implementation notes
+
+Frames also retain the closure's lexical global environment. This is required
+for imported functions to resolve module-private bindings after dispatch moves
+to their frame. Interactive cells execute against private binding overlays;
+the host promotes their declared bindings only after successful settlement.

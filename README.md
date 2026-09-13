@@ -167,6 +167,12 @@ Incomplete syntax such as a function body uses a `.` continuation prompt. Type
 `SLUG_SERVER` to use a different local server executable. Distributions must
 install `slug-repl` and `slug-server` together.
 
+Interactive submissions run as ordinary scheduler tasks. A function imported
+from a Slug module, or retained from an earlier prompt, can suspend and later
+resume in that same task. New top-level bindings are committed only when their
+submission settles successfully; while a binding-producing submission waits,
+later input may use already committed bindings but may not declare new ones.
+
 The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with
 `--diagnostic-format=json` to receive runner-generated fatal diagnostics as one

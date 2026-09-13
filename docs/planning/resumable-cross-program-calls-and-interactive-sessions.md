@@ -140,10 +140,10 @@ is intentionally a separate parity task.
 
 ### Task 6 — Simplify and document
 
-- [ ] Delete superseded nested-execution and single-program code paths.
-- [ ] Update runtime requirements, README, changelog, and decisions without
+- [x] Delete superseded nested-execution and single-program code paths.
+- [x] Update runtime requirements, README, changelog, and decisions without
   rewriting historical records.
-- [ ] Run the full validation matrix below.
+- [x] Run the full validation matrix below.
 
 **Gate:** no Slug closure uses a nested VM merely because its program differs
 from its caller's.

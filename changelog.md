@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Made VM frames own both their code and lexical globals, so imported and
+  prior-interactive-cell closures suspend and resume in their caller's task
+  rather than running in a nested VM.
+
+- Isolated pending interactive-cell bindings until successful task settlement,
+  while preserving mutation of existing bindings and shared channel/object
+  effects. Background task failures now return from `session.poll` as runtime
+  diagnostics.
+
 - Let a stalled interactive top-level form remain session-owned while later
   binding-free REPL input resumes it through previously committed channels.
 
