@@ -5,6 +5,9 @@
 - Made `slug --help` show the CLI version and whether it is a full or slim
   runtime build.
 
+- Optimize release executables for size with symbol stripping, aborting panics,
+  full link-time optimization, and a single codegen unit.
+
 - Turned the interactive-session and REPL experiment into staged server-shell,
   persistence, isolation, output, stalled-runtime, slim-runtime, and terminal
   client task lists, including canonical diagnostic and output-sink
