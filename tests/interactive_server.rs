@@ -198,6 +198,30 @@ fn imported_channel_calls_suspend_and_resume_in_an_interactive_task() {
 }
 
 #[test]
+#[cfg(not(feature = "concurrency"))]
+fn slim_server_currently_rejects_a_sender_while_a_cell_is_stalled() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let waiting = submit(
+        &mut server,
+        3,
+        &session,
+        "var msg = chan(8)\nselect { recv msg }",
+    );
+    assert_eq!(
+        waiting.result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+
+    let rejected = submit(&mut server, 4, &session, "select { send msg, 2 }");
+    assert_eq!(
+        rejected.error.expect("active submission diagnostic").code,
+        "submission_active"
+    );
+}
+
+#[test]
 fn launched_program_output_has_a_root_origin() {
     let loader = ModuleLoader::new(".", Some("lib".into()));
     let mut server = Server::new(Vm::with_module_loader(loader.clone()));

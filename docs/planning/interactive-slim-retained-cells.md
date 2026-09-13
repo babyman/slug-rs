@@ -67,11 +67,11 @@ interactive semantics.
 
 ### Task 0 — Capture parity regressions
 
-- [ ] Add a feature-matrix test helper that executes the same server scenario
+- [x] Add feature-matrix server coverage for the same stalled-cell scenario
   with default features and `--no-default-features`.
-- [ ] Reproduce a startup source that commits `msg`, stalls in `recv(msg)`, and
+- [x] Reproduce a startup source that commits `msg`, stalls in `recv(msg)`, and
   resumes after a later `send(msg, value)`.
-- [ ] Cover protocol results, output events, and binding visibility rather than
+- [x] Cover protocol results, output events, and binding visibility rather than
   terminal prompt formatting alone.
 
 **Gate:** the current slim `submission_active` result is captured as a failing
