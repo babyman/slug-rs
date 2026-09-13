@@ -115,7 +115,6 @@ fn repl_can_resume_a_stalled_startup_form_from_later_input() {
 
 #[test]
 #[cfg(feature = "concurrency")]
-#[ignore = "Task 2: a closure from an earlier interactive cell cannot yet suspend"]
 fn repl_resumes_a_prior_cell_listener_closure() {
     let path = std::env::temp_dir().join(format!("slug-repl-listener-{}.slug", std::process::id()));
     fs::write(

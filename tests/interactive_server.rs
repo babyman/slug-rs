@@ -160,7 +160,6 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
 
 #[test]
 #[cfg(feature = "concurrency")]
-#[ignore = "Task 2: imported Slug closures still run through a nested VM"]
 fn imported_channel_calls_suspend_and_resume_in_an_interactive_task() {
     let loader = ModuleLoader::new(".", Some("lib".into()));
     let mut server = Server::new(Vm::with_module_loader(loader));

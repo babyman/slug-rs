@@ -86,11 +86,11 @@ unchanged.
 
 ### Task 2 — Normal frame calls across programs
 
-- [ ] Remove `call_module_closure` and `run_nested_execution` as the
+- [x] Remove `call_module_closure` and `run_nested_execution` as the
   cross-program closure path.
-- [ ] Make ordinary calls, `call_at`, overloads, pipelines, spreads, deferred
+- [x] Make ordinary calls, `call_at`, overloads, pipelines, spreads, deferred
   actions, and callbacks push a normal frame for any Slug closure.
-- [ ] Preserve closure globals/captures, arity checks, call spans, selected
+- [x] Preserve closure globals/captures, arity checks, call spans, selected
   overload identities, `return`, `throw`, `defer`, `recur`, and stacktraces.
 
 **Gate:** Task 0 cross-program VM and source cases pass without a nested VM.

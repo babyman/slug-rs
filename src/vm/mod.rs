@@ -1604,25 +1604,6 @@ impl Vm {
         Rc::new(program.clone())
     }
 
-    #[cfg(feature = "concurrency")]
-    fn installed_program(&self, program: &Program) -> VmResult<Rc<Program>> {
-        let installed = self.module_program.clone().ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "execution has no installed program".into(),
-                None,
-            )
-        })?;
-        if !std::ptr::eq(Rc::as_ref(&installed), program) {
-            return Err(self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "task execution program differs from the installed program".into(),
-                None,
-            ));
-        }
-        Ok(installed)
-    }
-
     #[allow(clippy::too_many_lines)]
     fn execute(&mut self, program: &Program) -> ExecutionOutcome {
         if let Some(result) = self.resume.take() {
@@ -1694,35 +1675,6 @@ impl Vm {
                         return self.settle_tasks(&Err(blocked));
                         #[cfg(not(feature = "concurrency"))]
                         return Err(blocked);
-                    }
-                },
-            }
-        }
-    }
-
-    fn run_nested_execution(&mut self, program: &Program) -> VmResult<Value> {
-        let root = RootWaiter::new();
-        self.current_waiter = Some(Waiter::root(root.clone()));
-        loop {
-            match self.execute(program) {
-                ExecutionOutcome::Settled(result) => return result,
-                ExecutionOutcome::Suspended => loop {
-                    if let Some(result) = root.take_resume() {
-                        if let Some(wait_registration) = self.wait_registration.take() {
-                            wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
-                        }
-                        self.resume = Some(result);
-                        break;
-                    }
-                    if !self.make_progress() {
-                        if let Some(wait_registration) = self.wait_registration.take() {
-                            wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
-                        }
-                        return Err(self.error(
-                            RuntimeErrorKind::InvalidCall,
-                            "task remains blocked with no runnable work".into(),
-                            None,
-                        ));
                     }
                 },
             }
@@ -2595,39 +2547,6 @@ impl Vm {
             .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
         match callee {
             Value::Closure(closure) => {
-                if let Some(module_program) = &closure.program
-                    && self
-                        .module_program
-                        .as_ref()
-                        .is_none_or(|current| !Rc::ptr_eq(current, module_program))
-                {
-                    let arguments = self.stack[base + 1..]
-                        .iter()
-                        .map(|value| {
-                            value.resolve().map_err(|message| {
-                                self.error(RuntimeErrorKind::Name, message, span.clone())
-                            })
-                        })
-                        .collect::<VmResult<Vec<_>>>()?;
-                    let result = self.call_module_closure(
-                        module_program,
-                        closure.clone(),
-                        arguments,
-                        provided,
-                        span.clone(),
-                        ClosureCallOptions {
-                            #[cfg(feature = "concurrency")]
-                            direct_task_limit: None,
-                            #[cfg(feature = "concurrency")]
-                            direct_task_count: None,
-                            #[cfg(feature = "concurrency")]
-                            nursery: self.nursery.clone(),
-                        },
-                    )?;
-                    self.stack.truncate(base);
-                    self.stack.push(result);
-                    return Ok(());
-                }
                 let frame_program = closure.program.clone().unwrap_or(self.active_program()?);
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error(
@@ -2789,39 +2708,6 @@ impl Vm {
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
         match callee {
             Value::Closure(closure) => {
-                if let Some(module_program) = &closure.program
-                    && self
-                        .module_program
-                        .as_ref()
-                        .is_none_or(|current| !Rc::ptr_eq(current, module_program))
-                {
-                    let arguments = self.stack[base + 1..]
-                        .iter()
-                        .map(|value| {
-                            value.resolve().map_err(|message| {
-                                self.error_at(RuntimeErrorKind::Name, message, span)
-                            })
-                        })
-                        .collect::<VmResult<Vec<_>>>()?;
-                    let result = self.call_module_closure(
-                        module_program,
-                        closure.clone(),
-                        arguments,
-                        provided,
-                        self.owned_span(span),
-                        ClosureCallOptions {
-                            #[cfg(feature = "concurrency")]
-                            direct_task_limit: None,
-                            #[cfg(feature = "concurrency")]
-                            direct_task_count: None,
-                            #[cfg(feature = "concurrency")]
-                            nursery: self.nursery.clone(),
-                        },
-                    )?;
-                    self.stack.truncate(base);
-                    self.stack.push(result);
-                    return Ok(());
-                }
                 let frame_program = closure.program.clone().unwrap_or(self.active_program()?);
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error_at(
@@ -3029,22 +2915,8 @@ impl Vm {
         Ok(vm)
     }
 
-    fn call_module_closure(
-        &self,
-        program: &Rc<Program>,
-        closure: Rc<Closure>,
-        arguments: Vec<Value>,
-        provided: Option<Vec<bool>>,
-        span: Option<SourceSpan>,
-        options: ClosureCallOptions,
-    ) -> VmResult<Value> {
-        let mut vm =
-            self.module_closure_vm(program.clone(), closure, arguments, provided, span, options)?;
-        vm.run_nested_execution(program)
-    }
-
     #[cfg(feature = "concurrency")]
-    fn spawn_task_at(&mut self, program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
+    fn spawn_task_at(&mut self, _program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
         let closure = self.pop_at(span)?;
         let Value::Closure(closure) = closure else {
             return Err(self.error_at(
@@ -3084,7 +2956,7 @@ impl Vm {
             globals: closure.globals.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
-        let task_program = self.installed_program(program)?;
+        let task_program = closure.program.clone().unwrap_or(self.active_program()?);
         let vm = self.module_closure_vm(
             task_program.clone(),
             closure,
@@ -3154,7 +3026,7 @@ impl Vm {
     #[cfg(feature = "concurrency")]
     fn run_nursery_at(
         &mut self,
-        program: &Program,
+        _program: &Program,
         has_limit: bool,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
@@ -3204,7 +3076,7 @@ impl Vm {
             #[cfg(feature = "metrics")]
             self.metrics.clone(),
         ));
-        let task_program = self.installed_program(program)?;
+        let task_program = closure.program.clone().unwrap_or(self.active_program()?);
         let vm = self.module_closure_vm(
             task_program.clone(),
             closure,
