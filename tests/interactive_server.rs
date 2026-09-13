@@ -1,3 +1,4 @@
+#[cfg(feature = "concurrency")]
 use std::sync::{Arc, Mutex};
 use std::{
     cell::RefCell,
@@ -6,13 +7,14 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(feature = "concurrency")]
+use slug_vm::NativeChannelProducer;
 use slug_vm::{ModuleLoader, Vm};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind,
     compile,
     interactive::{Diagnostic, DiagnosticCategory, EventOrigin, OutputError, OutputStream, Server},
 };
-use slug_vm::{NativeChannelProducer, NativeProducerStatus, NativeSendValue};
 
 fn request(
     id: u64,
@@ -544,7 +546,8 @@ fn sessions_communicate_through_an_explicitly_shared_host_channel() {
 }
 
 #[test]
-fn stalled_session_does_not_prevent_another_session_from_running() {
+#[cfg(feature = "concurrency")]
+fn stalled_form_allows_a_later_binding_free_submission_to_resume_it() {
     let mut server = initialized_server();
     let stalled = open_session(&mut server);
     let runnable = open_session(&mut server);
@@ -561,37 +564,34 @@ fn stalled_session_does_not_prevent_another_session_from_running() {
         &mut server,
         3,
         &stalled,
-        "val inbox = session_input()\nval value = select { recv inbox }\nprintln('resumed')\nvalue",
+        "val inbox = session_input()\nselect { recv inbox /> fn(value) { println('resumed', value) } }",
     );
     assert_eq!(
         pending.result,
         Some(serde_json::json!({ "state": "stalled" }))
     );
-    let rejected = submit(&mut server, 4, &stalled, "1");
+    let rejected = submit(&mut server, 4, &stalled, "val later = 1");
     assert_eq!(
-        rejected.error.expect("active submission diagnostic").code,
-        "submission_active"
+        rejected.error.expect("background binding diagnostic").code,
+        "background_bindings"
     );
-
-    let completed = submit(&mut server, 5, &runnable, "6 * 7");
-    assert_eq!(completed.result, Some(serde_json::json!({ "value": 42 })));
-
-    let producer = state
-        .0
-        .lock()
-        .expect("producer state")
-        .clone()
-        .expect("native producer");
-    assert_eq!(
-        producer.try_send(NativeSendValue::integer(99)),
-        NativeProducerStatus::Sent
-    );
-    let resumed = server.handle_line(&request(6, "session.poll", Some(&stalled), None).to_string());
-    assert_eq!(resumed.result, Some(serde_json::json!({ "value": 99 })));
+    let sent = submit(&mut server, 5, &stalled, "select { send inbox, 99 }");
+    assert_eq!(sent.result, Some(serde_json::json!({ "value": null })));
     let events = server.take_events();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].origin, EventOrigin::Session { session: stalled });
-    assert_eq!(events[0].data, serde_json::json!("resumed\n"));
+    assert_eq!(
+        events[0].origin,
+        EventOrigin::Session {
+            session: stalled.clone()
+        }
+    );
+    assert_eq!(events[0].data, serde_json::json!("resumed 99\n"));
+
+    let completed = submit(&mut server, 6, &runnable, "6 * 7");
+    assert_eq!(completed.result, Some(serde_json::json!({ "value": 42 })));
+
+    let resumed = server.handle_line(&request(7, "session.poll", Some(&stalled), None).to_string());
+    assert_eq!(resumed.result, Some(serde_json::json!({ "state": "idle" })));
 }
 
 #[test]
@@ -895,8 +895,10 @@ fn shared_queue(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(channel)
 }
 
+#[cfg(feature = "concurrency")]
 struct ProducerState(Mutex<Option<NativeChannelProducer>>);
 
+#[cfg(feature = "concurrency")]
 fn session_input(call: &mut NativeCall<'_>) -> NativeStatus {
     let (channel, producer) = call.channel(1);
     let Some(state) = call.state::<Arc<ProducerState>>() else {

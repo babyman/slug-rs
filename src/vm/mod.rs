@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::source::environment::CallableIdentity;
-use crate::source::{InteractiveCompilation, InteractiveCompilerState, compile_interactive};
+use crate::source::{InteractiveCompilation, InteractiveCompilerState};
 #[cfg(feature = "concurrency")]
 use crate::value::Task;
 #[cfg(feature = "concurrency")]
@@ -493,6 +493,7 @@ impl Vm {
         vm
     }
 
+    #[cfg(not(feature = "concurrency"))]
     pub(crate) fn compile_interactive_source(
         &self,
         path: &str,
@@ -500,8 +501,21 @@ impl Vm {
         state: &InteractiveCompilerState,
     ) -> Result<InteractiveCompilation, crate::SourceError> {
         self.module_loader.as_ref().map_or_else(
-            || compile_interactive(path, source, state),
+            || crate::source::compile_interactive(path, source, state),
             |loader| loader.compile_interactive_source(path, source, state),
+        )
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn compile_interactive_forms(
+        &self,
+        path: &str,
+        source: &str,
+        state: &InteractiveCompilerState,
+    ) -> Result<Vec<InteractiveCompilation>, crate::SourceError> {
+        self.module_loader.as_ref().map_or_else(
+            || crate::source::compile_interactive_forms(path, source, state),
+            |loader| loader.compile_interactive_forms(path, source, state),
         )
     }
 

@@ -137,6 +137,7 @@ fn incomplete_lexer_error(error: &SourceError, source: &str) -> bool {
             && (source.ends_with("0x") || source.ends_with("0x_")))
 }
 
+#[cfg(not(feature = "concurrency"))]
 pub(crate) fn compile_interactive(
     path: &str,
     source: &str,
@@ -145,6 +146,21 @@ pub(crate) fn compile_interactive(
     compile_interactive_with_resolver(path, source, state, |_| None)
 }
 
+/// Compiles each complete top-level interactive form as an independent cell.
+///
+/// Each returned compilation is analysed against the state produced by the
+/// preceding form. This lets an interactive host commit completed forms before
+/// retaining a later form that suspends.
+#[cfg(feature = "concurrency")]
+pub(crate) fn compile_interactive_forms(
+    path: &str,
+    source: &str,
+    state: &InteractiveCompilerState,
+) -> Result<Vec<InteractiveCompilation>, SourceError> {
+    compile_interactive_forms_with_resolver(path, source, state, |_| None)
+}
+
+#[cfg(not(feature = "concurrency"))]
 pub(crate) fn compile_interactive_with_resolver(
     path: &str,
     source: &str,
@@ -182,6 +198,55 @@ pub(crate) fn compile_interactive_with_resolver(
             callable_globals: compiled.callable_globals,
         },
     })
+}
+
+#[cfg(feature = "concurrency")]
+pub(crate) fn compile_interactive_forms_with_resolver(
+    path: &str,
+    source: &str,
+    state: &InteractiveCompilerState,
+    mut resolve: impl FnMut(&str) -> Option<ModuleSnapshot>,
+) -> Result<Vec<InteractiveCompilation>, SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    let mut state = state.clone();
+    let mut compilations = Vec::with_capacity(expressions.len());
+    for expression in expressions {
+        let imports = typecheck::static_import_names(std::slice::from_ref(&expression))
+            .into_iter()
+            .filter_map(|name| resolve(&name).map(|snapshot| (name, snapshot)))
+            .collect::<HashMap<_, _>>();
+        let mut imports = imports;
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            imports.entry("slug.builtin".into())
+            && let Some(snapshot) = resolve("slug.builtin")
+        {
+            entry.insert(snapshot);
+        }
+        let expressions = vec![expression];
+        let analysis =
+            typecheck::analyze_with_imports_and_session(&expressions, imports, &state.semantic)?;
+        let compiled = Compiler::with_globals(
+            path,
+            expressions,
+            &analysis,
+            state.globals.clone(),
+            state.callable_globals.clone(),
+        )
+        .compile()?;
+        let mut program = compiled.program;
+        program.set_semantic_snapshot(analysis.snapshot);
+        state = InteractiveCompilerState {
+            semantic: analysis.session_snapshot,
+            globals: compiled.globals,
+            callable_globals: compiled.callable_globals,
+        };
+        compilations.push(InteractiveCompilation {
+            program,
+            state: state.clone(),
+        });
+    }
+    Ok(compilations)
 }
 
 pub(crate) fn compile_with_resolver(

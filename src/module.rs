@@ -12,8 +12,8 @@ use crate::{
     clutch::{self, StagedClutchPlugin},
     native::{NativeResourceRegistry, native_resource_registry},
     source::{
-        InteractiveCompilation, InteractiveCompilerState, compile_interactive_with_resolver,
-        compile_with_resolver, environment::ModuleSnapshot,
+        InteractiveCompilation, InteractiveCompilerState, compile_with_resolver,
+        environment::ModuleSnapshot,
     },
 };
 
@@ -297,13 +297,26 @@ impl ModuleLoader {
         self.compile_source_for_module(path, source, true)
     }
 
+    #[cfg(not(feature = "concurrency"))]
     pub(crate) fn compile_interactive_source(
         &self,
         path: &str,
         source: &str,
         state: &InteractiveCompilerState,
     ) -> Result<InteractiveCompilation, SourceError> {
-        compile_interactive_with_resolver(path, source, state, |name| {
+        crate::source::compile_interactive_with_resolver(path, source, state, |name| {
+            self.semantic_snapshot(None, name)
+        })
+    }
+
+    #[cfg(feature = "concurrency")]
+    pub(crate) fn compile_interactive_forms(
+        &self,
+        path: &str,
+        source: &str,
+        state: &InteractiveCompilerState,
+    ) -> Result<Vec<InteractiveCompilation>, SourceError> {
+        crate::source::compile_interactive_forms_with_resolver(path, source, state, |name| {
             self.semantic_snapshot(None, name)
         })
     }

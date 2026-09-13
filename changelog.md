@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Let a stalled interactive top-level form remain session-owned while later
+  binding-free REPL input resumes it through previously committed channels.
+
 - Made `slug-repl` a protocol-only client that launches `slug-server` as a
   separate local process.
 

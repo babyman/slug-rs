@@ -485,6 +485,22 @@ Cancelling a parked task MUST remove its channel-send, channel-receive,
 task-await, and timer registrations before it settles. A later operation MUST
 NOT observe or communicate with a cancelled waiter.
 
+## Interactive session execution
+
+An interactive host evaluates each complete top-level form as an ordered
+interactive cell. A completed cell commits its bindings before the host starts
+the following form. If a form suspends on a channel, task, timer, or `select`,
+the host retains it as a session-owned background cell and MAY accept a later
+binding-free cell from that same session. The later cell observes bindings
+committed by earlier completed cells and can resume the background cell through
+ordinary shared values such as channels.
+
+While any background cell remains suspended, an interactive host MUST reject a
+new cell that declares bindings. This prevents a later compiler snapshot from
+overtaking the suspended cell's eventual binding commit. Once all background
+cells settle, ordinary binding declarations are accepted again. Closing the
+session cancels every retained background cell.
+
 ## Required implementation isolation
 
 The VM may use threads, goroutines, frames, environments, stacks, or slots

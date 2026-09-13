@@ -82,6 +82,38 @@ fn repl_seeds_the_session_from_an_optional_source_file() {
 }
 
 #[test]
+#[cfg(feature = "concurrency")]
+fn repl_can_resume_a_stalled_startup_form_from_later_input() {
+    let path = std::env::temp_dir().join(format!("slug-repl-stalled-{}.slug", std::process::id()));
+    fs::write(
+        &path,
+        "var msg = chan(8)\nprintln('initialized msg', msg)\nselect { recv msg /> fn(value) { println('received', value) } }\n",
+    )
+    .expect("write startup source");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-repl"))
+        .arg(&path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start slug-repl");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"select { send msg, 'hello' }\n:quit\n")
+        .expect("write input");
+    let output = child.wait_with_output().expect("wait for repl");
+    fs::remove_file(path).expect("remove startup source");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert!(stdout.contains("[stalled]"));
+    assert!(stdout.contains("received hello"));
+}
+
+#[test]
 fn repl_renders_structured_source_errors() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_slug-repl"))
         .stdin(Stdio::piped())

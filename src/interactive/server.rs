@@ -60,10 +60,21 @@ pub struct Server {
 struct Session {
     compiler: InteractiveCompilerState,
     runtime: InteractiveEnvironment,
+    #[cfg(feature = "concurrency")]
+    executions: Vec<InteractiveSubmission>,
+    #[cfg(not(feature = "concurrency"))]
     execution: SessionExecution,
     pending_source: String,
 }
 
+/// One independently schedulable interactive top-level form.
+#[cfg(feature = "concurrency")]
+struct InteractiveSubmission {
+    execution: InteractiveTask,
+    compilation: InteractiveCompilation,
+}
+
+#[cfg(not(feature = "concurrency"))]
 enum SessionExecutionState<E> {
     Idle,
     Active {
@@ -75,9 +86,6 @@ enum SessionExecutionState<E> {
         compilation: InteractiveCompilation,
     },
 }
-
-#[cfg(feature = "concurrency")]
-type SessionExecution = SessionExecutionState<InteractiveTask>;
 
 #[cfg(not(feature = "concurrency"))]
 type SessionExecution = SessionExecutionState<InteractiveExecution>;
@@ -286,6 +294,9 @@ impl Server {
             Session {
                 compiler: InteractiveCompilerState::default(),
                 runtime: self.vm.interactive_environment(),
+                #[cfg(feature = "concurrency")]
+                executions: Vec::new(),
+                #[cfg(not(feature = "concurrency"))]
                 execution: SessionExecution::Idle,
                 pending_source: String::new(),
             },
@@ -312,8 +323,10 @@ impl Server {
             );
         };
         #[cfg(feature = "concurrency")]
-        if let Some(task) = self.session_task(&session) {
-            self.vm.cancel_interactive_task(&task);
+        if let Some(active) = self.sessions.get(&session) {
+            for execution in &active.executions {
+                self.vm.cancel_interactive_task(&execution.execution);
+            }
         }
         #[cfg(not(feature = "concurrency"))]
         if let Some(mut execution) = self.session_execution(&session) {
@@ -350,13 +363,27 @@ impl Server {
                 Diagnostic::protocol("missing_session", "`submit` requires a session"),
             );
         };
-        let Some(existing) = self.sessions.get(&session) else {
+        #[cfg(feature = "concurrency")]
+        let session_exists = self.sessions.contains_key(&session);
+        #[cfg(not(feature = "concurrency"))]
+        let existing = self.sessions.get(&session);
+        #[cfg(feature = "concurrency")]
+        if !session_exists {
+            return Response::failure(
+                Some(request.id),
+                Some(session.clone()),
+                Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
+            );
+        }
+        #[cfg(not(feature = "concurrency"))]
+        let Some(existing) = existing else {
             return Response::failure(
                 Some(request.id),
                 Some(session.clone()),
                 Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
             );
         };
+        #[cfg(not(feature = "concurrency"))]
         if !matches!(existing.execution, SessionExecution::Idle) {
             return Response::failure(
                 Some(request.id),
@@ -396,54 +423,27 @@ impl Server {
                 SourceReadiness::Complete => std::mem::take(&mut active.pending_source),
             }
         };
-        let compiler = &self
-            .sessions
-            .get(&session)
-            .expect("validated session remains available during submission")
-            .compiler;
-        let compilation = match self.vm.compile_interactive_source(&path, &source, compiler) {
-            Ok(compilation) => compilation,
-            Err(error) => {
-                return Response::failure(
-                    Some(request.id),
-                    Some(session),
-                    Diagnostic::from_source(&error),
-                );
-            }
-        };
         #[cfg(feature = "concurrency")]
         {
-            let task = {
-                let (vm, sessions) = (&mut self.vm, &mut self.sessions);
-                let active = sessions
-                    .get_mut(&session)
-                    .expect("validated session remains available during submission");
-                match vm.start_named_interactive_task(
-                    &compilation.program,
-                    "main",
-                    &mut active.runtime,
-                ) {
-                    Ok(task) => task,
-                    Err(error) => {
-                        return Response::failure(
-                            Some(request.id),
-                            Some(session),
-                            Diagnostic::from_runtime(&error),
-                        );
-                    }
-                }
-            };
-            self.sessions
-                .get_mut(&session)
-                .expect("validated session remains available during submission")
-                .execution = SessionExecution::Active {
-                execution: task,
-                compilation,
-            };
-            self.drive_session(request.id, session)
+            self.submit_forms(request.id, session, &path, &source)
         }
         #[cfg(not(feature = "concurrency"))]
         {
+            let compiler = &self
+                .sessions
+                .get(&session)
+                .expect("validated session remains available during submission")
+                .compiler;
+            let compilation = match self.vm.compile_interactive_source(&path, &source, compiler) {
+                Ok(compilation) => compilation,
+                Err(error) => {
+                    return Response::failure(
+                        Some(request.id),
+                        Some(session),
+                        Diagnostic::from_source(&error),
+                    );
+                }
+            };
             let execution = {
                 let (vm, sessions) = (&mut self.vm, &mut self.sessions);
                 let active = sessions
@@ -501,87 +501,175 @@ impl Server {
             );
         }
         #[cfg(feature = "concurrency")]
-        return self.drive_session(request.id, session);
+        return self.poll_session(request.id, session);
         #[cfg(not(feature = "concurrency"))]
         self.drive_slim_session(request.id, session)
     }
 
     #[cfg(feature = "concurrency")]
-    fn session_task(&self, session: &str) -> Option<InteractiveTask> {
-        let session = self.sessions.get(session)?;
-        match &session.execution {
-            SessionExecution::Idle => None,
-            SessionExecution::Active { execution, .. }
-            | SessionExecution::Stalled { execution, .. } => Some(execution.clone()),
-        }
-    }
-
-    #[cfg(feature = "concurrency")]
-    fn drive_session(&mut self, id: u64, session: String) -> Response {
-        let Some(task) = self.session_task(&session) else {
-            return Response::success(id, Some(session), json!({ "state": "idle" }));
-        };
-        self.output.borrow_mut().begin(session.clone());
-        let progress = self.vm.run_interactive_task_until_stalled(&task);
-        self.output.borrow_mut().end();
-        let result = match progress {
-            VmProgress::Completed(value) => Some(Ok(value)),
-            VmProgress::Failed(error) => Some(Err(error)),
-            VmProgress::MadeProgress | VmProgress::Stalled => None,
-        };
-        let Some(result) = result else {
-            let active = self
-                .sessions
-                .get_mut(&session)
-                .expect("active session remains available during its poll");
-            let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
-            active.execution = match execution {
-                SessionExecution::Active {
-                    execution,
-                    compilation,
-                }
-                | SessionExecution::Stalled {
-                    execution,
-                    compilation,
-                } => SessionExecution::Stalled {
-                    execution,
-                    compilation,
-                },
-                SessionExecution::Idle => SessionExecution::Idle,
-            };
-            return Response::success(id, Some(session), json!({ "state": "stalled" }));
-        };
-        let active = self
-            .sessions
-            .get_mut(&session)
-            .expect("active session remains available during its poll");
-        let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
-        let (task, compilation) = match execution {
-            SessionExecution::Active {
-                execution,
-                compilation,
+    fn submit_forms(&mut self, id: u64, session: String, path: &str, source: &str) -> Response {
+        let compiler = &self.sessions[&session].compiler;
+        let compilations = match self.vm.compile_interactive_forms(path, source, compiler) {
+            Ok(compilations) => compilations,
+            Err(error) => {
+                return Response::failure(Some(id), Some(session), Diagnostic::from_source(&error));
             }
-            | SessionExecution::Stalled {
-                execution,
-                compilation,
-            } => (execution, compilation),
-            SessionExecution::Idle => unreachable!("completed task must have session state"),
         };
-        task.synchronize_environment(&mut active.runtime);
-        self.vm.release_interactive_task(&task);
-        match result {
-            Ok(value) => {
-                Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
-                active.compiler = compilation.state;
-                Response::success(
-                    id,
-                    Some(session),
-                    json!({ "value": protocol_value(&value) }),
-                )
+        if !self.sessions[&session].executions.is_empty()
+            && compilations
+                .iter()
+                .any(|compilation| !compilation.program.bindings().is_empty())
+        {
+            return Response::failure(
+                Some(id),
+                Some(session),
+                Diagnostic::protocol(
+                    "background_bindings",
+                    "a session with suspended forms accepts only binding-free source until they settle",
+                ),
+            );
+        }
+        let mut last = SlugValue::Nil;
+        for compilation in compilations {
+            let task = {
+                let (vm, sessions) = (&mut self.vm, &mut self.sessions);
+                let active = sessions
+                    .get_mut(&session)
+                    .expect("session remains available");
+                match vm.start_named_interactive_task(
+                    &compilation.program,
+                    "main",
+                    &mut active.runtime,
+                ) {
+                    Ok(task) => task,
+                    Err(error) => {
+                        return Response::failure(
+                            Some(id),
+                            Some(session),
+                            Diagnostic::from_runtime(&error),
+                        );
+                    }
+                }
+            };
+            self.output.borrow_mut().begin(session.clone());
+            let progress = self.vm.run_interactive_task_until_stalled(&task);
+            self.output.borrow_mut().end();
+            match progress {
+                VmProgress::Completed(value) => {
+                    let active = self
+                        .sessions
+                        .get_mut(&session)
+                        .expect("session remains available");
+                    task.synchronize_environment(&mut active.runtime);
+                    self.vm.release_interactive_task(&task);
+                    Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
+                    active.compiler = compilation.state;
+                    last = value;
+                }
+                VmProgress::Failed(error) => {
+                    self.vm.release_interactive_task(&task);
+                    return Response::failure(
+                        Some(id),
+                        Some(session),
+                        Diagnostic::from_runtime(&error),
+                    );
+                }
+                VmProgress::MadeProgress | VmProgress::Stalled => {
+                    self.sessions
+                        .get_mut(&session)
+                        .expect("session remains available")
+                        .executions
+                        .push(InteractiveSubmission {
+                            execution: task,
+                            compilation,
+                        });
+                    return Response::success(id, Some(session), json!({ "state": "stalled" }));
+                }
+            }
+        }
+        match self.pump_background(&session) {
+            Ok(_) => {
+                Response::success(id, Some(session), json!({ "value": protocol_value(&last) }))
             }
             Err(error) => {
                 Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
             }
+        }
+    }
+
+    #[cfg(feature = "concurrency")]
+    fn poll_session(&mut self, id: u64, session: String) -> Response {
+        match self.pump_background(&session) {
+            Ok(pending) => Response::success(
+                id,
+                Some(session),
+                if pending {
+                    json!({ "state": "stalled" })
+                } else {
+                    json!({ "state": "idle" })
+                },
+            ),
+            Err(error) => {
+                Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
+            }
+        }
+    }
+
+    #[cfg(feature = "concurrency")]
+    fn pump_background(&mut self, session: &str) -> Result<bool, crate::RuntimeError> {
+        let tasks = self.sessions[session]
+            .executions
+            .iter()
+            .map(|submission| submission.execution.clone())
+            .collect::<Vec<_>>();
+        for task in tasks {
+            self.output.borrow_mut().begin(session.into());
+            let progress = self.vm.run_interactive_task_until_stalled(&task);
+            self.output.borrow_mut().end();
+            let _ = progress;
+        }
+        let executions = std::mem::take(
+            &mut self
+                .sessions
+                .get_mut(session)
+                .expect("session remains available")
+                .executions,
+        );
+        let mut pending = Vec::new();
+        let mut failure = None;
+        for submission in executions {
+            match submission.execution.outcome() {
+                None => pending.push(submission),
+                Some(Ok(_)) => {
+                    self.vm.release_interactive_task(&submission.execution);
+                    let active = self
+                        .sessions
+                        .get_mut(session)
+                        .expect("session remains available");
+                    submission
+                        .execution
+                        .synchronize_environment(&mut active.runtime);
+                    Vm::commit_interactive_bindings(
+                        &mut active.runtime,
+                        &submission.compilation.program,
+                    );
+                    active.compiler = submission.compilation.state;
+                }
+                Some(Err(error)) => {
+                    self.vm.release_interactive_task(&submission.execution);
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        let active = self
+            .sessions
+            .get_mut(session)
+            .expect("session remains available");
+        active.executions = pending;
+        if let Some(error) = failure {
+            Err(error)
+        } else {
+            Ok(!active.executions.is_empty())
         }
     }
 
