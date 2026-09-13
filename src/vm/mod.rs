@@ -176,6 +176,11 @@ struct CallableRuntimeSignature {
 
 #[derive(Clone)]
 struct Frame {
+    /// The code unit that owns this frame's instruction pointer and chunk.
+    ///
+    /// An execution can cross program boundaries through closures, so this
+    /// cannot be inferred from a VM-wide program owner.
+    program: Rc<Program>,
     closure: Rc<Closure>,
     function: String,
     call_span: Option<SourceSpan>,
@@ -1331,6 +1336,7 @@ impl Vm {
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
         self.frames.push(Frame {
+            program: program.clone(),
             closure: Rc::new(Closure {
                 chunk: entry,
                 captures: Vec::new(),
@@ -1724,15 +1730,16 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn execute_raw(&mut self, program: &Program) -> VmResult<ExecutionOutcome> {
+    fn execute_raw(&mut self, _program: &Program) -> VmResult<ExecutionOutcome> {
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
             }
-            let instruction = self.next_instruction(program)?;
+            let frame_program = self.active_program()?;
+            let instruction = self.next_instruction(&frame_program)?;
             self.active_span = instruction.span;
             if let BorrowedSpanOpOutcome::Settled(value) =
-                self.execute_borrowed_span_op(program, &instruction.op, None)?
+                self.execute_borrowed_span_op(&frame_program, &instruction.op, None)?
             {
                 return Ok(ExecutionOutcome::Settled(Ok(value)));
             }
@@ -1754,8 +1761,8 @@ impl Vm {
                     Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
                         chunk: *function,
                         captures: Vec::new(),
-                        program: self.module_program.clone(),
-                        globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                        program: Some(self.active_program()?),
+                        globals: Some(self.globals.clone()),
                         #[cfg(feature = "concurrency")]
                         capture_sources: Vec::new(),
                     })),
@@ -1993,8 +2000,8 @@ impl Vm {
                 self.stack.push(Value::Closure(Rc::new(Closure {
                     chunk: *chunk,
                     captures,
-                    program: self.module_program.clone(),
-                    globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                    program: Some(self.active_program()?),
+                    globals: Some(self.globals.clone()),
                     #[cfg(feature = "concurrency")]
                     capture_sources,
                 })));
@@ -2398,8 +2405,8 @@ impl Vm {
                 self.stack.push(Value::Closure(Rc::new(Closure {
                     chunk: *chunk,
                     captures,
-                    program: self.module_program.clone(),
-                    globals: self.module_program.as_ref().map(|_| self.globals.clone()),
+                    program: Some(self.active_program()?),
+                    globals: Some(self.globals.clone()),
                     #[cfg(feature = "concurrency")]
                     capture_sources: capture_sources.to_vec(),
                 })));
@@ -2548,6 +2555,19 @@ impl Vm {
         })
     }
 
+    fn active_program(&self) -> VmResult<Rc<Program>> {
+        self.frames
+            .last()
+            .map(|frame| frame.program.clone())
+            .ok_or_else(|| {
+                self.error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "no active call frame".into(),
+                    None,
+                )
+            })
+    }
+
     #[allow(clippy::too_many_lines)]
     fn call(
         &mut self,
@@ -2608,7 +2628,8 @@ impl Vm {
                     self.stack.push(result);
                     return Ok(());
                 }
-                let chunk = program.chunk(closure.chunk).ok_or_else(|| {
+                let frame_program = closure.program.clone().unwrap_or(self.active_program()?);
+                let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error(
                         RuntimeErrorKind::InvalidBytecode,
                         "closure references missing chunk".into(),
@@ -2647,6 +2668,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
+                    program: frame_program.clone(),
                     closure,
                     function: chunk.name.clone(),
                     call_span: span,
@@ -2800,7 +2822,8 @@ impl Vm {
                     self.stack.push(result);
                     return Ok(());
                 }
-                let chunk = program.chunk(closure.chunk).ok_or_else(|| {
+                let frame_program = closure.program.clone().unwrap_or(self.active_program()?);
+                let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
                         "closure references missing chunk".into(),
@@ -2839,6 +2862,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
+                    program: frame_program.clone(),
                     closure,
                     function: chunk.name.clone(),
                     call_span: self.owned_span(span),
@@ -2990,6 +3014,7 @@ impl Vm {
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
         vm.frames.push(Frame {
+            program: program.clone(),
             closure,
             function: chunk.name.clone(),
             call_span: span,
@@ -4349,7 +4374,7 @@ impl Vm {
     fn active_span(&self) -> Option<&SourceSpan> {
         let span = self
             .active_span
-            .and_then(|span| self.module_program.as_ref()?.span(span));
+            .and_then(|span| self.frames.last()?.program.span(span));
         #[cfg(feature = "metrics")]
         if span.is_some() {
             self.metrics.borrow_mut().source_span_lookups += 1;

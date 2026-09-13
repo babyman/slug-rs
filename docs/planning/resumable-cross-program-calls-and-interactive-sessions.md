@@ -73,12 +73,12 @@ expected-final-behavior regressions are intentionally ignored until Task 2.
 
 ### Task 1 — Program-owned frames
 
-- [ ] Add an owned `Rc<Program>` or equivalent stable code reference to `Frame`.
-- [ ] Make instruction fetch, chunk lookup, span lookup, cleanup, call-frame
+- [x] Add an owned `Rc<Program>` or equivalent stable code reference to `Frame`.
+- [x] Make instruction fetch, chunk lookup, span lookup, cleanup, call-frame
   rendering, and validation derive their program from the active frame.
-- [ ] Retain a root-entry owner only for installation/startup; stop using a VM
+- [x] Retain a root-entry owner only for installation/startup; stop using a VM
   or task-level program as dispatch authority.
-- [ ] Audit frames created by ordinary source, imports, modules, interactive
+- [x] Audit frames created by ordinary source, imports, modules, interactive
   cells, spawned tasks, deferred actions, and cleanup.
 
 **Gate:** same-program behavior and malformed-bytecode diagnostics remain

@@ -345,6 +345,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
+                    program: closure.program.clone().unwrap_or(self.active_program()?),
                     closure,
                     function: chunk.name.clone(),
                     call_span: None,
