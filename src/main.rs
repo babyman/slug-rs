@@ -177,8 +177,14 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") | None => {
+            let build = if cfg!(feature = "concurrency") {
+                "full build"
+            } else {
+                "slim build"
+            };
             println!(
-                "Usage: {executable} [--diagnostic-format=json] program.slug [arguments...]\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len."
+                "slug-vm {} ({build})\n\nUsage: {executable} [--diagnostic-format=json] program.slug [arguments...]\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len.",
+                env!("CARGO_PKG_VERSION"),
             );
             ExitCode::SUCCESS
         }

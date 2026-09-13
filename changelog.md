@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made `slug --help` show the CLI version and whether it is a full or slim
+  runtime build.
+
 - Turned the interactive-session and REPL experiment into staged server-shell,
   persistence, isolation, output, stalled-runtime, slim-runtime, and terminal
   client task lists, including canonical diagnostic and output-sink
@@ -68,6 +71,8 @@
 - Archived the completed interactive-session final action list while retaining
   the original experiment plan for its unresolved interactive import-loader
   coverage.
+
+- Made the documented implicit `len` builtin available in interactive sessions.
 
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.

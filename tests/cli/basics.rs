@@ -5,6 +5,13 @@ fn help_describes_the_current_public_capability() {
     let output = slug().arg("--help").output().expect("run slug --help");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
+    assert!(stdout.contains("slug-vm 0.1.0"));
+    let build = if cfg!(feature = "concurrency") {
+        "full build"
+    } else {
+        "slim build"
+    };
+    assert!(stdout.contains(build));
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains(
         "bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len"
