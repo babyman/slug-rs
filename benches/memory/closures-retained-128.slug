@@ -1,0 +1,9 @@
+val build = fn(remaining, values) {
+    if (remaining == 0) {
+        values
+    } else {
+        recur(remaining - 1, [...values, fn(value) { value + remaining }])
+    }
+}
+
+build(128, [])

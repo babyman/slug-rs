@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an opt-in peak-RSS measurement target for minimal and retained-closure
+  VM workloads.
+
 - Made `slug --help` show the CLI version and whether it is a full or slim
   runtime build.
 

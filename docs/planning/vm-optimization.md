@@ -65,6 +65,14 @@ Program-layout measurements are computed only when explicitly requested and do
 not require this feature; runtime counters must not add work to normal
 dispatch.
 
+`make measure-vm-memory` builds the release CLI and runs each checked-in source
+fixture in its own process, reporting peak resident memory in bytes. It uses
+`/usr/bin/time -l` on macOS and GNU `time` on Linux. The fixture set establishes
+a minimal source-execution baseline plus retained-closure workloads at 128 and
+1,024 items. Peak RSS includes process startup, the allocator, and mapped
+runtime code, so it is directional host evidence rather than a portable CI
+threshold.
+
 ### Initial baseline
 
 The initial `make bench-vm` run establishes the following representation
