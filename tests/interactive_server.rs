@@ -159,6 +159,46 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
 }
 
 #[test]
+#[cfg(feature = "concurrency")]
+#[ignore = "Task 2: imported Slug closures still run through a nested VM"]
+fn imported_channel_calls_suspend_and_resume_in_an_interactive_task() {
+    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let mut server = Server::new(Vm::with_module_loader(loader));
+    assert!(
+        server
+            .handle_line(
+                &request(
+                    1,
+                    "initialize",
+                    None,
+                    Some(serde_json::json!({ "protocol": 1 }))
+                )
+                .to_string()
+            )
+            .ok
+    );
+    let session = open_session(&mut server);
+
+    let waiting = submit(
+        &mut server,
+        3,
+        &session,
+        "val {*} = import('slug.channel')\nvar msg = chan(8)\nrecv(msg) /> fn(value) { println('received', value) }",
+    );
+    assert_eq!(
+        waiting.result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+
+    let sent = submit(&mut server, 4, &session, "send(msg, 'hello')");
+    assert!(sent.ok, "{sent:?}");
+    assert_eq!(
+        server.take_events()[0].data,
+        serde_json::json!("received hello\n")
+    );
+}
+
+#[test]
 fn launched_program_output_has_a_root_origin() {
     let loader = ModuleLoader::new(".", Some("lib".into()));
     let mut server = Server::new(Vm::with_module_loader(loader.clone()));

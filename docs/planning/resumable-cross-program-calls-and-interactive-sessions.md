@@ -58,17 +58,18 @@ kind and does not introduce a REPL-specific execution engine.
 
 ### Task 0 — Regression suite and baseline
 
-- [ ] Add VM coverage for a cross-program closure that blocks on a channel and
+- [x] Add VM coverage for a cross-program closure that blocks on a channel and
   later resumes.
-- [ ] Add source coverage for imported `slug.channel.recv` and `send` waiting
+- [x] Add source coverage for imported `slug.channel.recv` and `send` waiting
   and resuming.
-- [ ] Add interactive server and REPL coverage for a prior-cell closure,
+- [x] Add interactive server and REPL coverage for a prior-cell closure,
   imported channel calls, listener/send resumption, background failure, and
   session-close cancellation.
-- [ ] Capture each current blocked-task failure as a reproducer, not an
+- [x] Capture each current blocked-task failure as a reproducer, not an
   expected result.
 
-**Gate:** every reproducer has an expected value, output, or diagnostic.
+**Gate:** every reproducer has an expected value, output, or diagnostic. The
+expected-final-behavior regressions are intentionally ignored until Task 2.
 
 ### Task 1 — Program-owned frames
 
