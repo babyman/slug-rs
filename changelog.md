@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made `slug-repl` a protocol-only client that launches `slug-server` as a
+  separate local process.
+
 - Added an opt-in peak-RSS measurement target for minimal and retained-closure
   VM workloads.
 

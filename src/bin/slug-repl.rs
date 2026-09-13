@@ -1,11 +1,13 @@
 use std::{
-    io::{self, BufRead, Write},
-    process::ExitCode,
+    env,
+    io::{self, BufRead, BufReader, Write},
+    path::PathBuf,
+    process::{Child, ChildStdin, ChildStdout, Command, ExitCode, Stdio},
 };
 
 use serde_json::{Value, json};
 use slug_vm::interactive::{
-    Diagnostic, DiagnosticCategory, Event, PROTOCOL_VERSION, Response, Server,
+    Diagnostic, DiagnosticCategory, Event, IncomingMessage, PROTOCOL_VERSION, Request, Response,
 };
 
 fn main() -> ExitCode {
@@ -22,22 +24,59 @@ enum ReadSubmission {
 }
 
 fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) -> ExitCode {
-    let mut server = Server::default();
+    let mut server = match ServerProcess::spawn() {
+        Ok(server) => server,
+        Err(error) => {
+            let _ = writeln!(errors, "slug-repl: cannot start slug-server: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    let result = run_session(&mut server, input, output, errors);
+    let shutdown = server.finish();
+    if let Err(error) = shutdown {
+        let _ = writeln!(errors, "slug-repl: slug-server shutdown failed: {error}");
+        return ExitCode::from(1);
+    }
+    result
+}
+
+fn run_session(
+    server: &mut ServerProcess,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    errors: &mut dyn Write,
+) -> ExitCode {
     let mut request_id = 1;
-    let initialized = request(
-        &mut server,
+    let initialized = match request(
+        server,
         request_id,
         "initialize",
         None,
         json!({
             "protocol": PROTOCOL_VERSION,
         }),
-    );
+        output,
+        errors,
+    ) {
+        Ok(response) => response,
+        Err(error) => return render_transport_error(&error, errors),
+    };
     request_id += 1;
     let Some(()) = render_startup_response(&initialized, errors) else {
         return ExitCode::from(1);
     };
-    let opened = request(&mut server, request_id, "session.open", None, Value::Null);
+    let opened = match request(
+        server,
+        request_id,
+        "session.open",
+        None,
+        Value::Null,
+        output,
+        errors,
+    ) {
+        Ok(response) => response,
+        Err(error) => return render_transport_error(&error, errors),
+    };
     request_id += 1;
     let Some(session) = opened
         .result
@@ -63,38 +102,48 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
                 return ExitCode::from(1);
             }
         };
-        let response = request(
-            &mut server,
+        let response = match request(
+            server,
             request_id,
             "submit",
             Some(&session),
             json!({ "source": source }),
-        );
+            output,
+            errors,
+        ) {
+            Ok(response) => response,
+            Err(error) => return render_transport_error(&error, errors),
+        };
         request_id += 1;
-        for event in server.take_events() {
-            if render_event(&event, output, errors).is_err() {
-                return ExitCode::from(1);
-            }
-        }
         continuing = match render_submission_response(&response, output, errors) {
             Ok(continuing) => continuing,
             Err(_) => return ExitCode::from(1),
         };
     }
 
-    let closed = request(
-        &mut server,
+    let closed = match request(
+        server,
         request_id,
         "session.close",
         Some(&session),
         Value::Null,
-    );
+        output,
+        errors,
+    ) {
+        Ok(response) => response,
+        Err(error) => return render_transport_error(&error, errors),
+    };
     if closed.ok {
         ExitCode::SUCCESS
     } else {
         render_response_error(&closed, errors);
         ExitCode::from(1)
     }
+}
+
+fn render_transport_error(error: &io::Error, errors: &mut dyn Write) -> ExitCode {
+    let _ = writeln!(errors, "slug-repl: slug-server protocol error: {error}");
+    ExitCode::from(1)
 }
 
 fn read_submission(
@@ -117,20 +166,125 @@ fn read_submission(
 }
 
 fn request(
-    server: &mut Server,
+    server: &mut ServerProcess,
     id: u64,
     method: &str,
     session: Option<&str>,
     params: Value,
-) -> Response {
-    let mut request = json!({ "id": id, "method": method });
-    if let Some(session) = session {
-        request["session"] = json!(session);
+    output: &mut dyn Write,
+    errors: &mut dyn Write,
+) -> io::Result<Response> {
+    let request = Request {
+        id,
+        session: session.map(str::to_owned),
+        method: method.into(),
+        params: (!params.is_null()).then_some(params),
+    };
+    let (events, response) = server.client.request(&request)?;
+    for event in events {
+        render_event(&event, output, errors)?;
     }
-    if !params.is_null() {
-        request["params"] = params;
+    Ok(response)
+}
+
+struct ProtocolClient<R, W> {
+    reader: R,
+    writer: W,
+}
+
+impl<R: BufRead, W: Write> ProtocolClient<R, W> {
+    fn request(&mut self, request: &Request) -> io::Result<(Vec<Event>, Response)> {
+        serde_json::to_writer(&mut self.writer, request).map_err(io::Error::other)?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()?;
+
+        let mut events = Vec::new();
+        loop {
+            let mut line = String::new();
+            if self.reader.read_line(&mut line)? == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "slug-server closed its protocol stream before responding",
+                ));
+            }
+            let message = serde_json::from_str(&line).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("slug-server emitted malformed protocol JSON: {error}"),
+                )
+            })?;
+            match message {
+                IncomingMessage::Event(event) => events.push(event),
+                IncomingMessage::Response(response) if response.id == Some(request.id) => {
+                    return Ok((events, *response));
+                }
+                IncomingMessage::Response(response) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "slug-server responded with id {:?}, expected {}",
+                            response.id, request.id
+                        ),
+                    ));
+                }
+            }
+        }
     }
-    server.handle_line(&request.to_string())
+}
+
+struct ServerProcess {
+    child: Child,
+    client: ProtocolClient<BufReader<ChildStdout>, ChildStdin>,
+}
+
+impl ServerProcess {
+    fn spawn() -> io::Result<Self> {
+        let executable = env::var_os("SLUG_SERVER")
+            .map(PathBuf::from)
+            .map_or_else(sibling_server_path, Ok)?;
+        let mut child = Command::new(&executable)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|error| {
+                io::Error::new(error.kind(), format!("{}: {error}", executable.display()))
+            })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("slug-server stdin was not piped"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("slug-server stdout was not piped"))?;
+        Ok(Self {
+            child,
+            client: ProtocolClient {
+                reader: BufReader::new(stdout),
+                writer: stdin,
+            },
+        })
+    }
+
+    fn finish(self) -> io::Result<()> {
+        let Self { mut child, client } = self;
+        drop(client);
+        let status = child.wait()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "slug-server exited with {status}"
+            )))
+        }
+    }
+}
+
+fn sibling_server_path() -> io::Result<PathBuf> {
+    let mut path = env::current_exe()?;
+    path.set_file_name(format!("slug-server{}", env::consts::EXE_SUFFIX));
+    Ok(path)
 }
 
 fn render_startup_response(response: &Response, errors: &mut dyn Write) -> Option<()> {

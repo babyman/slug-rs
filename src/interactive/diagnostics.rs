@@ -1,9 +1,9 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{RuntimeError, RuntimeErrorKind, SourceError, SourceErrorKind, SourceSpan, Value};
 
 /// A versioned, wire-safe projection of a Slug or server failure.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Diagnostic {
     pub version: u8,
     pub category: DiagnosticCategory,
@@ -23,7 +23,7 @@ pub struct Diagnostic {
 }
 
 /// The origin of a protocol diagnostic.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticCategory {
     Source,
@@ -33,7 +33,7 @@ pub enum DiagnosticCategory {
 }
 
 /// A source coordinate preserved in a diagnostic projection.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticLocation {
     pub path: String,
     pub line: u32,
@@ -41,7 +41,7 @@ pub struct DiagnosticLocation {
 }
 
 /// One Slug call frame in a runtime diagnostic.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticFrame {
     pub function: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,14 +49,14 @@ pub struct DiagnosticFrame {
 }
 
 /// A lossless-for-display summary for values that cannot yet be protocol values.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ValueSummary {
     pub kind: String,
     pub display: String,
 }
 
 /// Structured native error details retained by runtime diagnostics.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct NativeDiagnostic {
     pub code: String,
     #[serde(skip_serializing_if = "Option::is_none")]

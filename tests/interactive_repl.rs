@@ -162,3 +162,20 @@ fn repl_renders_runtime_details_from_the_protocol_diagnostic() {
     assert!(stderr.contains("--> <interactive:s1>:1:22"));
     assert!(stderr.contains("at <fn #0> (<interactive:s1>:1:20)"));
 }
+
+#[test]
+fn repl_reports_a_missing_configured_server() {
+    let missing_server =
+        std::env::temp_dir().join(format!("slug-repl-missing-server-{}", std::process::id()));
+    let output = Command::new(env!("CARGO_BIN_EXE_slug-repl"))
+        .env("SLUG_SERVER", missing_server)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("start slug-repl");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.contains("cannot start slug-server"));
+}

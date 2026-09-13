@@ -19,7 +19,7 @@ pub struct Request {
 }
 
 /// One terminal response to a protocol request.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Response {
     pub id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,9 +54,17 @@ impl Response {
 }
 
 /// An unsolicited session-associated protocol event.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Event {
     pub session: String,
     pub event: String,
     pub data: Value,
+}
+
+/// A protocol message received by a client.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum IncomingMessage {
+    Event(Event),
+    Response(Box<Response>),
 }

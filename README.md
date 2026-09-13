@@ -149,13 +149,16 @@ cargo run --bin slug -- hello.slug
 For a persistent interactive session, run the minimal terminal client:
 
 ```sh
+cargo build --bins
 cargo run --bin slug-repl
 ```
 
-It embeds the interactive server engine, presents a `>` prompt, and sends each
-complete source unit through the structured session protocol. Incomplete syntax
-such as a function body uses a `.` continuation prompt. Type `:quit` or `:exit`,
-or send end-of-file, to close the session.
+It launches the sibling `slug-server` executable, presents a `>` prompt, and
+sends each complete source unit through its structured session protocol.
+Incomplete syntax such as a function body uses a `.` continuation prompt. Type
+`:quit` or `:exit`, or send end-of-file, to close the session. Set
+`SLUG_SERVER` to use a different local server executable. Distributions must
+install `slug-repl` and `slug-server` together.
 
 The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with
