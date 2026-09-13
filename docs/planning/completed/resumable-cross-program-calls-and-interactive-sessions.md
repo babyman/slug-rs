@@ -5,7 +5,7 @@
 Remove the VM assumption that an execution has one current `Program`, then make
 interactive sessions host-owned supervisors of independently resumable
 submitted-cell tasks. This implements
-[the frame-owned-program decision](../decisions/2026-09-13-frame-owned-programs.md).
+[the frame-owned-program decision](../../decisions/2026-09-13-frame-owned-programs.md).
 
 ## Architectural target
 
