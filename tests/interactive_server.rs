@@ -686,6 +686,49 @@ fn pending_cell_bindings_are_not_visible_before_settlement() {
 }
 
 #[test]
+#[cfg(feature = "concurrency")]
+fn poll_delivers_a_background_task_failure() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    let state = Arc::new(ProducerState(Mutex::new(None)));
+    let module = NativeModule::new("test.interactive_failure", state.clone()).expect("module");
+    let input = module
+        .function("session_input", NativeArity::Exact(0), session_input)
+        .expect("native function");
+    server
+        .define_host_native(input)
+        .expect("register input factory");
+
+    let pending = submit(
+        &mut server,
+        3,
+        &session,
+        "val inbox = session_input()\nselect { recv inbox /> fn(_) { throw 42 } }",
+    );
+    assert_eq!(
+        pending.result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+    let producer = state
+        .0
+        .lock()
+        .expect("producer state")
+        .clone()
+        .expect("session input producer");
+    assert_eq!(
+        producer.try_send(slug_vm::NativeSendValue::integer(1)),
+        slug_vm::NativeProducerStatus::Sent
+    );
+
+    let failure = server.handle_line(&request(4, "session.poll", Some(&session), None).to_string());
+    assert!(!failure.ok);
+    assert_eq!(
+        failure.error.expect("background failure").kind.as_deref(),
+        Some("thrown")
+    );
+}
+
+#[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
     let source = Diagnostic::from_source(&source);

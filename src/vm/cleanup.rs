@@ -311,6 +311,7 @@ impl Vm {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn call_cleanup(
         &mut self,
         action: Value,
@@ -338,6 +339,10 @@ impl Vm {
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
                     program: closure.program.clone().unwrap_or(self.active_program()?),
+                    globals: closure
+                        .globals
+                        .clone()
+                        .unwrap_or_else(|| self.globals.clone()),
                     closure,
                     function: chunk.name.clone(),
                     call_span: None,

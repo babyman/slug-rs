@@ -122,16 +122,21 @@ previously committed `msg` can wake the blocked cell.
 
 ### Task 5 — Session task supervision
 
-- [ ] Replace the single active execution slot with a session-owned task set.
-- [ ] Pump all runnable session tasks after submit/poll while retaining request
+- [x] Replace the single active execution slot with a session-owned task set.
+- [x] Pump all runnable session tasks after submit/poll while retaining request
   result attribution and session output attribution.
-- [ ] Define deterministic background-failure delivery.
-- [ ] Cancel and release every owned task at session close.
-- [ ] Either implement the same contract for slim executions or explicitly
+- [x] Define deterministic background-failure delivery.
+- [x] Cancel and release every owned task at session close.
+- [x] Either implement the same contract for slim executions or explicitly
   retain and document its limitation as a separate parity task.
 
 **Gate:** listener/send REPL regressions pass; independent sessions remain
 isolated.
+
+The slim runtime retains its existing single-submission session behavior:
+while a slim submission is active, callers must poll it before submitting more
+source. Multi-task session supervision depends on the concurrency scheduler and
+is intentionally a separate parity task.
 
 ### Task 6 — Simplify and document
 

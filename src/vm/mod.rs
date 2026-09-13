@@ -180,6 +180,7 @@ struct Frame {
     /// An execution can cross program boundaries through closures, so this
     /// cannot be inferred from a VM-wide program owner.
     program: Rc<Program>,
+    globals: GlobalEnvironment,
     closure: Rc<Closure>,
     function: String,
     call_span: Option<SourceSpan>,
@@ -1421,6 +1422,7 @@ impl Vm {
         self.record_frame(chunk.locals);
         self.frames.push(Frame {
             program: program.clone(),
+            globals: self.globals.clone(),
             closure: Rc::new(Closure {
                 chunk: entry,
                 captures: Vec::new(),
@@ -1768,6 +1770,12 @@ impl Vm {
                 return Ok(ExecutionOutcome::Suspended);
             }
             let frame_program = self.active_program()?;
+            self.globals = self
+                .frames
+                .last()
+                .expect("active frame was checked")
+                .globals
+                .clone();
             let instruction = self.next_instruction(&frame_program)?;
             self.active_span = instruction.span;
             if let BorrowedSpanOpOutcome::Settled(value) =
@@ -2627,7 +2635,11 @@ impl Vm {
             .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
         match callee {
             Value::Closure(closure) => {
-                let frame_program = closure.program.clone().unwrap_or(self.active_program()?);
+                let frame_program = closure
+                    .program
+                    .clone()
+                    .or_else(|| self.module_program.clone())
+                    .unwrap_or_else(|| Rc::new(program.clone()));
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error(
                         RuntimeErrorKind::InvalidBytecode,
@@ -2668,6 +2680,10 @@ impl Vm {
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
                     program: frame_program.clone(),
+                    globals: closure
+                        .globals
+                        .clone()
+                        .unwrap_or_else(|| self.globals.clone()),
                     closure,
                     function: chunk.name.clone(),
                     call_span: span,
@@ -2788,7 +2804,11 @@ impl Vm {
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
         match callee {
             Value::Closure(closure) => {
-                let frame_program = closure.program.clone().unwrap_or(self.active_program()?);
+                let frame_program = closure
+                    .program
+                    .clone()
+                    .or_else(|| self.module_program.clone())
+                    .unwrap_or_else(|| Rc::new(program.clone()));
                 let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                     self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
@@ -2829,6 +2849,10 @@ impl Vm {
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
                     program: frame_program.clone(),
+                    globals: closure
+                        .globals
+                        .clone()
+                        .unwrap_or_else(|| self.globals.clone()),
                     closure,
                     function: chunk.name.clone(),
                     call_span: self.owned_span(span),
@@ -2981,6 +3005,7 @@ impl Vm {
         vm.record_frame(chunk.locals);
         vm.frames.push(Frame {
             program: program.clone(),
+            globals: vm.globals.clone(),
             closure,
             function: chunk.name.clone(),
             call_span: span,
