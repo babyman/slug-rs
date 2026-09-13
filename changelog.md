@@ -83,6 +83,10 @@
 
 - Made the documented implicit `len` builtin available in interactive sessions.
 
+- Made `slug-server` construct the same configured module-resolution host as
+  `slug`, including static import checking and the complete `slug.builtin`
+  foundation module.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

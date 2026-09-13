@@ -8,10 +8,10 @@ use std::{
 };
 
 use serde::Serialize;
+use slug_vm::host::{build_default_host_vm, default_library_root};
 use slug_vm::{
-    ClutchRepository, Configuration, ModuleLoader, NativeArity, NativeCall, NativeModule,
-    NativeOwnedValue, NativeStatus, RuntimeError, RuntimeErrorKind, SourceError, SourceErrorKind,
-    SourceSpan, Vm,
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
+    RuntimeErrorKind, SourceError, SourceErrorKind, SourceSpan, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -198,9 +198,7 @@ fn main() -> ExitCode {
 fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
-    let library_root = env::var_os("SLUG_FIXTURE_LIBRARY_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| slug_home.as_ref().map(|home| home.join("lib")));
+    let library_root = default_library_root(slug_home.as_deref());
     let (resolved_path, source) = match read_entry_source(
         path,
         configured_source_root.as_deref(),
@@ -227,31 +225,18 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let configuration = Configuration::load(
+    let (mut vm, loader) = match build_default_host_vm(
         &source_root,
         slug_home.as_deref(),
-        env::vars(),
         program_arguments,
         entry_module,
-    );
-    let clutches = match slug_home.as_ref() {
-        Some(home) if home.join("clutch/manifest.toml").exists() => {
-            match ClutchRepository::from_manifest(home.join("clutch")) {
-                Ok(repository) => repository,
-                Err(error) => {
-                    eprint_startup_error("host", "clutch", error.to_string(), json);
-                    return ExitCode::from(1);
-                }
-            }
+    ) {
+        Ok(host) => host,
+        Err(error) => {
+            eprint_startup_error("host", "clutch", error.to_string(), json);
+            return ExitCode::from(1);
         }
-        _ => ClutchRepository::default(),
     };
-    let loader = ModuleLoader::with_configuration_and_clutch_repository(
-        source_root,
-        library_root,
-        configuration,
-        clutches,
-    );
     let resolved_path = resolved_path.to_string_lossy();
     let mut program = match loader.compile_source(&resolved_path, &source) {
         Ok(program) => program,
@@ -265,7 +250,6 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
         }
     };
     program.set_module_name(entry_module);
-    let mut vm = Vm::with_module_loader(loader.clone());
     register_native_modules(&mut vm);
     match vm.run_program(&program) {
         Ok(_) => {

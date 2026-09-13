@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::{
     NativeArity, NativeCall, NativeDescriptorError, NativeFunction, NativeModule, NativeOwnedValue,
     NativeStatus, NativeValueKind, Value as SlugValue, Vm,
-    source::{InteractiveCompilerState, SourceReadiness, compile_interactive, source_readiness},
+    source::{InteractiveCompilerState, SourceReadiness, source_readiness},
     vm::InteractiveEnvironment,
 };
 #[cfg(not(feature = "concurrency"))]
@@ -118,13 +118,15 @@ impl Server {
     /// Creates a server around the shared VM that future session execution will use.
     #[must_use]
     pub fn new(vm: Vm) -> Self {
-        Self {
+        let mut server = Self {
             vm,
             initialized: false,
             sessions: BTreeMap::new(),
             next_session: 0,
             output: Rc::new(RefCell::new(OutputSink::default())),
-        }
+        };
+        server.install_session_builtins();
+        server
     }
 
     /// Returns the shared embedded VM without starting session execution.
@@ -379,7 +381,7 @@ impl Server {
             .get(&session)
             .expect("validated session remains available during submission")
             .compiler;
-        let compilation = match compile_interactive(&path, &source, compiler) {
+        let compilation = match self.vm.compile_interactive_source(&path, &source, compiler) {
             Ok(compilation) => compilation,
             Err(error) => {
                 return Response::failure(
@@ -656,7 +658,7 @@ impl Server {
     }
 
     fn install_session_builtins(&mut self) {
-        let module = NativeModule::new("slug.interactive", self.output.clone())
+        let module = NativeModule::new("slug.builtin", self.output.clone())
             .expect("static interactive output module is valid");
         for (name, callback) in [
             ("print", native_print as NativeCallback),
@@ -665,16 +667,41 @@ impl Server {
             let function = module
                 .function(name, NativeArity::Variadic { minimum: 0 }, callback)
                 .expect("static interactive output function is valid");
-            self.vm
-                .define_native(function)
+            self.define_session_builtin(function)
                 .expect("interactive output binding is unique");
         }
         let length = module
             .function("len", NativeArity::Exact(1), native_len)
             .expect("static interactive length function is valid");
-        self.vm
-            .define_native(length)
+        self.define_session_builtin(length)
             .expect("interactive length binding is unique");
+        let channel = module
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                native_channel,
+            )
+            .expect("static interactive channel function is valid");
+        self.define_session_builtin(channel)
+            .expect("interactive channel binding is unique");
+        let close = module
+            .function("close", NativeArity::Exact(1), native_close)
+            .expect("static interactive close function is valid");
+        self.define_session_builtin(close)
+            .expect("interactive close binding is unique");
+    }
+
+    fn define_session_builtin(
+        &mut self,
+        function: NativeFunction,
+    ) -> Result<(), NativeDescriptorError> {
+        if self.vm.has_module_loader() {
+            self.vm.define_builtin(function.clone())?;
+        }
+        self.vm.define_native(function)
     }
 
     fn require_initialized(&self, request: &Request) -> Option<Response> {
@@ -693,9 +720,7 @@ impl Server {
 
 impl Default for Server {
     fn default() -> Self {
-        let mut server = Self::new(Vm::new());
-        server.install_session_builtins();
-        server
+        Self::new(Vm::new())
     }
 }
 
@@ -740,6 +765,39 @@ fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
         ));
     };
     call.return_value(NativeOwnedValue::integer(length))
+}
+
+fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+    let capacity = match call.argument_count() {
+        0 => 0,
+        1 => match call.argument(0).and_then(crate::NativeValueRef::as_i64) {
+            Ok(value) => match usize::try_from(value) {
+                Ok(value) => value,
+                Err(_) => {
+                    return call.raise(crate::NativeError::new(
+                        "native.type",
+                        "channel capacity must not be negative or too large",
+                    ));
+                }
+            },
+            Err(error) => return call.raise(error),
+        },
+        count => {
+            return call.raise(crate::NativeError::new(
+                "native.arity",
+                format!("`chan` expects at most 1 argument, got {count}"),
+            ));
+        }
+    };
+    let channel = call.plain_channel(capacity);
+    call.return_value(channel)
+}
+
+fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
+    if let Err(error) = call.close_channel(0) {
+        return call.raise(error);
+    }
+    call.return_value(NativeOwnedValue::nil())
 }
 
 fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {

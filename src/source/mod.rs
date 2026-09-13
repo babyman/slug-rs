@@ -142,13 +142,28 @@ pub(crate) fn compile_interactive(
     source: &str,
     state: &InteractiveCompilerState,
 ) -> Result<InteractiveCompilation, SourceError> {
+    compile_interactive_with_resolver(path, source, state, |_| None)
+}
+
+pub(crate) fn compile_interactive_with_resolver(
+    path: &str,
+    source: &str,
+    state: &InteractiveCompilerState,
+    mut resolve: impl FnMut(&str) -> Option<ModuleSnapshot>,
+) -> Result<InteractiveCompilation, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    let analysis = typecheck::analyze_with_imports_and_session(
-        &expressions,
-        ImportSnapshots::new(),
-        &state.semantic,
-    )?;
+    let mut imports = typecheck::static_import_names(&expressions)
+        .into_iter()
+        .filter_map(|name| resolve(&name).map(|snapshot| (name, snapshot)))
+        .collect::<HashMap<_, _>>();
+    if let std::collections::hash_map::Entry::Vacant(entry) = imports.entry("slug.builtin".into())
+        && let Some(snapshot) = resolve("slug.builtin")
+    {
+        entry.insert(snapshot);
+    }
+    let analysis =
+        typecheck::analyze_with_imports_and_session(&expressions, imports, &state.semantic)?;
     let compiled = Compiler::with_globals(
         path,
         expressions,

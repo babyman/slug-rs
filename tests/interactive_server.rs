@@ -6,6 +6,7 @@ use std::{
     rc::Rc,
 };
 
+use slug_vm::{ModuleLoader, Vm};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind,
     compile,
@@ -120,6 +121,39 @@ fn session_persists_compiler_and_runtime_bindings_across_submissions() {
     let called = submit(&mut server, 6, &session, "add(7)");
     assert!(called.ok);
     assert_eq!(called.result, Some(serde_json::json!({ "value": 17 })));
+}
+
+#[test]
+fn configured_server_resolves_and_typechecks_builtin_imports() {
+    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let mut server = Server::new(Vm::with_module_loader(loader));
+    let response = server.handle_line(
+        &request(
+            1,
+            "initialize",
+            None,
+            Some(serde_json::json!({ "protocol": 1 })),
+        )
+        .to_string(),
+    );
+    assert!(response.ok);
+    let session = open_session(&mut server);
+
+    let imported = submit(
+        &mut server,
+        3,
+        &session,
+        "val builtin = import(\"slug.builtin\")\nbuiltin.len(\"hello\")",
+    );
+    assert!(imported.ok, "{imported:?}");
+    assert_eq!(imported.result, Some(serde_json::json!({ "value": 5 })));
+
+    let missing = submit(&mut server, 4, &session, "import(\"missing.module\")");
+    assert!(!missing.ok);
+    assert_eq!(
+        missing.error.expect("runtime diagnostic").kind.as_deref(),
+        Some("module")
+    );
 }
 
 #[test]

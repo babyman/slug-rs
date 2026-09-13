@@ -10,6 +10,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::source::environment::CallableIdentity;
+use crate::source::{InteractiveCompilation, InteractiveCompilerState, compile_interactive};
 #[cfg(feature = "concurrency")]
 use crate::value::Task;
 #[cfg(feature = "concurrency")]
@@ -490,6 +491,22 @@ impl Vm {
         };
         vm.install_configuration_builtins();
         vm
+    }
+
+    pub(crate) fn compile_interactive_source(
+        &self,
+        path: &str,
+        source: &str,
+        state: &InteractiveCompilerState,
+    ) -> Result<InteractiveCompilation, crate::SourceError> {
+        self.module_loader.as_ref().map_or_else(
+            || compile_interactive(path, source, state),
+            |loader| loader.compile_interactive_source(path, source, state),
+        )
+    }
+
+    pub(crate) fn has_module_loader(&self) -> bool {
+        self.module_loader.is_some()
     }
 
     /// Stops this VM and releases clutch-owned runtime state.

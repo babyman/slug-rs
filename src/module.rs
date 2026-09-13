@@ -11,7 +11,10 @@ use crate::{
     NativeFunction, Program, SourceError, Value, Vm,
     clutch::{self, StagedClutchPlugin},
     native::{NativeResourceRegistry, native_resource_registry},
-    source::{compile_with_resolver, environment::ModuleSnapshot},
+    source::{
+        InteractiveCompilation, InteractiveCompilerState, compile_interactive_with_resolver,
+        compile_with_resolver, environment::ModuleSnapshot,
+    },
 };
 
 /// Host-owned roots used to load Slug module source.
@@ -292,6 +295,17 @@ impl ModuleLoader {
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
         self.compile_source_for_module(path, source, true)
+    }
+
+    pub(crate) fn compile_interactive_source(
+        &self,
+        path: &str,
+        source: &str,
+        state: &InteractiveCompilerState,
+    ) -> Result<InteractiveCompilation, SourceError> {
+        compile_interactive_with_resolver(path, source, state, |name| {
+            self.semantic_snapshot(None, name)
+        })
     }
 
     fn compile_source_for_module(

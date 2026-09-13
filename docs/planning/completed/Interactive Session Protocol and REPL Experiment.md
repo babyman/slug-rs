@@ -1240,78 +1240,70 @@ This milestone concerns presentation only.
 
 ## Protocol
 
-- [ ] `initialize` succeeds.
-- [ ] Invalid JSON does not terminate the server.
-- [ ] Unknown method and unknown session produce `protocol` diagnostics.
-- [ ] Source and runtime errors serialize through the canonical projection
+- [x] `initialize` succeeds.
+- [x] Invalid JSON does not terminate the server.
+- [x] Unknown method and unknown session produce `protocol` diagnostics.
+- [x] Source and runtime errors serialize through the canonical projection
   without losing supported fields.
 
 ## Sessions
 
-- [ ] Open session.
-- [ ] Close session.
-- [ ] Submit after close fails.
-- [ ] Multiple sessions coexist.
-- [ ] Closing one session leaves others usable.
+- [x] Open session.
+- [x] Close session.
+- [x] Submit after close fails.
+- [x] Multiple sessions coexist.
+- [x] Closing one session leaves others usable.
 
 ## Persistent State
 
-- [ ] Define value then read it.
-- [ ] Define function then call it later.
-- [ ] Earlier bindings survive compilation failure.
-- [ ] Failed bindings are not committed.
-- [ ] Imports behave consistently across submissions.
+- [x] Define value then read it.
+- [x] Define function then call it later.
+- [x] Earlier bindings survive compilation failure.
+- [x] Failed bindings are not committed.
+- [x] Imports behave consistently across submissions.
 
 ## Shared VM
 
-- [ ] Multiple sessions share one runtime.
-- [ ] Interactive bindings remain session-local.
-- [ ] Deliberately shared state is accessible.
-- [ ] Shared channel communication works.
+- [x] Multiple sessions share one runtime.
+- [x] Interactive bindings remain session-local.
+- [x] Deliberately shared state is accessible.
+- [x] Shared channel communication works.
 
 ## Runtime
 
-- [ ] Ordinary expression returns a value.
-- [ ] Runtime error leaves session usable.
-- [ ] Runtime rollback behavior is documented, not implied.
-- [ ] Stalled session remains alive.
-- [ ] One stalled session does not block another.
-- [ ] Native ingress can wake stalled execution.
-- [ ] Full runtime works.
-- [ ] Slim runtime works.
+- [x] Ordinary expression returns a value.
+- [x] Runtime error leaves session usable.
+- [x] Runtime rollback behavior is documented, not implied.
+- [x] Stalled session remains alive.
+- [x] One stalled session does not block another.
+- [x] Native ingress can wake stalled execution.
+- [x] Full runtime works.
+- [x] Slim runtime works.
 
 ## Output
 
-- [ ] stdout is emitted as an event.
-- [ ] stderr is emitted as an event where applicable.
-- [ ] raw program output never corrupts protocol stdout.
+- [x] stdout is emitted as an event.
+- [x] stderr is emitted as an event where applicable.
+- [x] raw program output never corrupts protocol stdout.
 
 ## Errors
 
-- [ ] Parser failure retains its structured source fields.
-- [ ] Type-check failure retains its structured source fields.
-- [ ] Runtime failure retains spans, frames, causes, native details, and thrown
+- [x] Parser failure retains its structured source fields.
+- [x] Type-check failure retains its structured source fields.
+- [x] Runtime failure retains spans, frames, causes, native details, and thrown
   values where representable.
-- [ ] Terminal client can render the error.
-- [ ] Machine clients receive the canonical diagnostic projection.
+- [x] Terminal client can render the error.
+- [x] Machine clients receive the canonical diagnostic projection.
 
 ---
 
 ## Completion Review
 
-Milestones 1–9 are implemented, but this original experiment plan remains
-active until its test matrix is fully reconciled. In particular, interactive
-submissions do not currently configure a module loader:
-
-```slug
-import("slug.builtin")
-```
-
-returns the checked runtime error `module loader is not configured`. The
-`Imports behave consistently across submissions` matrix item therefore remains
-open and must not be marked complete by inference from the persistent compiler
-snapshot work. The completed final actionable task list intentionally covered
-the later server-ownership, transport, and thin-client boundary work only.
+The server now shares `slug`'s configured default host construction. Interactive
+submissions use the VM-owned module loader for both static import snapshots and
+runtime resolution, while `Server` remains responsible only for sessions and
+session-attributed host output. Explicit `slug.builtin` imports type-check and
+execute, and unavailable modules remain structured protocol diagnostics.
 
 ---
 

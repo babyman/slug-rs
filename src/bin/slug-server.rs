@@ -1,15 +1,33 @@
 use std::{
+    env,
     io::{self, BufRead, Write},
     process::ExitCode,
 };
 
 use serde::Serialize;
+use slug_vm::host::build_default_host_vm;
 use slug_vm::interactive::Server;
 
 fn main() -> ExitCode {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let mut server = Server::default();
+    let source_root = match env::current_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("slug-server: cannot determine current directory: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    let slug_home = env::var_os("SLUG_HOME").map(std::path::PathBuf::from);
+    let (vm, _) =
+        match build_default_host_vm(&source_root, slug_home.as_deref(), &[], "interactive") {
+            Ok(host) => host,
+            Err(error) => {
+                eprintln!("slug-server: cannot configure default host: {error}");
+                return ExitCode::from(1);
+            }
+        };
+    let mut server = Server::new(vm);
     let mut output = stdout.lock();
 
     for line in stdin.lock().lines() {
