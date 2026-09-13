@@ -220,6 +220,26 @@ fn slim_server_accepts_a_sender_while_a_cell_is_stalled() {
 }
 
 #[test]
+#[cfg(not(feature = "concurrency"))]
+fn slim_retained_cells_share_committed_mutable_bindings() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    let waiting = submit(
+        &mut server,
+        3,
+        &session,
+        "var n = 0\nvar gate = chan(1)\nval f = fn() { select { recv gate }; n = n + 1 }\nf()",
+    );
+    assert_eq!(
+        waiting.result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+    assert!(submit(&mut server, 4, &session, "select { send gate, true }").ok);
+    let value = submit(&mut server, 5, &session, "n");
+    assert_eq!(value.result, Some(serde_json::json!({ "value": 1 })));
+}
+
+#[test]
 fn launched_program_output_has_a_root_origin() {
     let loader = ModuleLoader::new(".", Some("lib".into()));
     let mut server = Server::new(Vm::with_module_loader(loader.clone()));

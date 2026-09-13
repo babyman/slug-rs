@@ -725,7 +725,7 @@ impl Vm {
         entry: &str,
         environment: &mut InteractiveEnvironment,
     ) -> VmResult<InteractiveExecution> {
-        Self::synchronize_interactive_environment(environment);
+        Self::synchronize_host_interactive_environment(environment);
         let host_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
         let host_imported = std::mem::replace(
             &mut self.imported_globals,
@@ -940,7 +940,7 @@ impl Vm {
         }
     }
 
-    fn synchronize_interactive_environment(environment: &mut InteractiveEnvironment) {
+    fn synchronize_host_interactive_environment(environment: &mut InteractiveEnvironment) {
         let host = environment.host_globals.borrow();
         let mut globals = environment.globals.borrow_mut();
         for (name, value) in host.iter() {
@@ -950,9 +950,10 @@ impl Vm {
         }
     }
 
-    #[cfg(feature = "concurrency")]
-    fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
-        Self::synchronize_interactive_environment(environment);
+    pub(crate) fn interactive_overlay(
+        environment: &mut InteractiveEnvironment,
+    ) -> InteractiveEnvironment {
+        Self::synchronize_host_interactive_environment(environment);
         InteractiveEnvironment {
             globals: Rc::new(RefCell::new(environment.globals.borrow().clone())),
             host_globals: environment.host_globals.clone(),
@@ -968,6 +969,83 @@ impl Vm {
         environment
             .local_bindings
             .extend(program.bindings().iter().cloned());
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    pub(crate) fn synchronize_interactive_submission(
+        source: &InteractiveEnvironment,
+        destination: &mut InteractiveEnvironment,
+        program: &Program,
+    ) {
+        let source_globals = source.globals.borrow();
+        let mut destination_globals = destination.globals.borrow_mut();
+        for name in program.bindings() {
+            if let Some(value) = source_globals.get(name) {
+                let value = Self::rebind_slim_interactive_value(
+                    value.clone(),
+                    &source.globals,
+                    &destination.globals,
+                );
+                let mutable = program
+                    .declarations()
+                    .iter()
+                    .any(|declaration| declaration.mutable && declaration.bindings.contains(name));
+                if mutable
+                    && !destination_globals
+                        .get(name)
+                        .is_some_and(|binding| binding.replace_binding(value.clone()))
+                {
+                    destination_globals.insert(
+                        name.clone(),
+                        Value::Binding {
+                            name: name.clone().into(),
+                            cell: binding_cell(value.clone()),
+                        },
+                    );
+                } else if !mutable {
+                    destination_globals.insert(name.clone(), value);
+                }
+            }
+        }
+        for name in &source.imported_globals {
+            if let Some(value) = source_globals.get(name) {
+                destination_globals.insert(name.clone(), value.clone());
+            }
+        }
+        destination
+            .imported_globals
+            .clone_from(&source.imported_globals);
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    fn rebind_slim_interactive_value(
+        value: Value,
+        source: &GlobalEnvironment,
+        destination: &GlobalEnvironment,
+    ) -> Value {
+        match value {
+            Value::Closure(closure)
+                if closure
+                    .globals
+                    .as_ref()
+                    .is_some_and(|globals| Rc::ptr_eq(globals, source)) =>
+            {
+                Value::Closure(Rc::new(Closure {
+                    chunk: closure.chunk,
+                    captures: closure.captures.clone(),
+                    program: closure.program.clone(),
+                    globals: Some(destination.clone()),
+                }))
+            }
+            Value::Overloads(values) => Value::Overloads(Rc::new(
+                values
+                    .iter()
+                    .cloned()
+                    .map(|value| Self::rebind_slim_interactive_value(value, source, destination))
+                    .collect(),
+            )),
+            value => value,
+        }
     }
 
     /// Returns counters for the most recent public VM invocation.

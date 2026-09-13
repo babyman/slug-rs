@@ -78,6 +78,7 @@ struct InteractiveSubmission {
 struct InteractiveSlimSubmission {
     execution: InteractiveExecution,
     compilation: InteractiveCompilation,
+    runtime: InteractiveEnvironment,
 }
 
 #[derive(Default)]
@@ -323,7 +324,7 @@ impl Server {
             for mut submission in std::mem::take(&mut session_state.executions) {
                 self.vm.cancel_interactive_execution(
                     &mut submission.execution,
-                    &mut session_state.runtime,
+                    &mut submission.runtime,
                 );
             }
         }
@@ -439,17 +440,18 @@ impl Server {
             }
             let mut response = Response::success(request.id, Some(session.clone()), Value::Null);
             for compilation in compilations {
-                let execution = {
+                let (execution, runtime) = {
                     let (vm, sessions) = (&mut self.vm, &mut self.sessions);
                     let active = sessions
                         .get_mut(&session)
                         .expect("validated session remains available during submission");
+                    let mut runtime = Vm::interactive_overlay(&mut active.runtime);
                     match vm.start_named_interactive_execution(
                         &compilation.program,
                         "main",
-                        &mut active.runtime,
+                        &mut runtime,
                     ) {
-                        Ok(execution) => execution,
+                        Ok(execution) => (execution, runtime),
                         Err(error) => {
                             return Response::failure(
                                 Some(request.id),
@@ -466,6 +468,7 @@ impl Server {
                     .push(InteractiveSlimSubmission {
                         execution,
                         compilation,
+                        runtime,
                     });
                 response = self.drive_slim_session(request.id, session.clone());
                 if !response.ok
@@ -701,18 +704,15 @@ impl Server {
         let Some(InteractiveSlimSubmission {
             mut execution,
             compilation,
+            mut runtime,
         }) = submission
         else {
             return Response::success(id, Some(session), json!({ "state": "idle" }));
         };
         self.output.borrow_mut().begin(session.clone());
         let progress = {
-            let active = self
-                .sessions
-                .get_mut(&session)
-                .expect("active session remains available during its poll");
             self.vm
-                .run_interactive_execution_until_stalled(&mut execution, &mut active.runtime)
+                .run_interactive_execution_until_stalled(&mut execution, &mut runtime)
         };
         self.output.borrow_mut().end();
         match progress {
@@ -721,6 +721,11 @@ impl Server {
                     .sessions
                     .get_mut(&session)
                     .expect("active session remains available during its poll");
+                Vm::synchronize_interactive_submission(
+                    &runtime,
+                    &mut active.runtime,
+                    &compilation.program,
+                );
                 Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
                 active.compiler = compilation.state;
                 Response::success(
@@ -740,6 +745,7 @@ impl Server {
                     .push(InteractiveSlimSubmission {
                         execution,
                         compilation,
+                        runtime,
                     });
                 Response::success(id, Some(session), json!({ "state": "stalled" }))
             }

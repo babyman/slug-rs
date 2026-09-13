@@ -114,15 +114,15 @@ f()
 
 ### Task 3 — Share committed bindings without exposing pending namespaces
 
-- [ ] Factor overlay creation so default and slim cells clone the committed
+- [x] Factor overlay creation so default and slim cells clone the committed
   namespace map while retaining shared `BindingCell` identities.
-- [ ] Factor settlement synchronization so completed declarations/imports are
+- [x] Factor settlement synchronization so completed declarations/imports are
   merged into the committed session environment in both builds.
-- [ ] Rebind committed closures to the durable session globals, including
+- [x] Rebind committed closures to the durable session globals, including
   overload sets, so later calls observe session mutations.
-- [ ] Keep pending-cell declarations absent from later compiler snapshots and
+- [x] Keep pending-cell declarations absent from later compiler snapshots and
   runtime lookup.
-- [ ] Preserve immediate visibility of mutations to bindings committed before
+- [x] Preserve immediate visibility of mutations to bindings committed before
   the retained cell began.
 
 **Gate:** this scenario prints `1` under both feature configurations:
