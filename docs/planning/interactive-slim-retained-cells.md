@@ -139,15 +139,15 @@ println(n)
 
 ### Task 4 — Accept and pump later binding-free cells
 
-- [ ] Replace slim's unconditional `submission_active` rejection with the
+- [x] Replace slim's unconditional `submission_active` rejection with the
   shared `background_bindings` declaration gate.
-- [ ] Drive the submitted binding-free cell and every runnable retained cell
+- [x] Drive the submitted binding-free cell and every runnable retained cell
   after `submit` and `session.poll`.
-- [ ] Preserve non-blocking host progress: slim must use available native and
+- [x] Preserve non-blocking host progress: slim must use available native and
   timer progress only and must not introduce scheduler waits.
-- [ ] Return `stalled` while retained work remains, `idle` after all retained
+- [x] Return `stalled` while retained work remains, `idle` after all retained
   cells settle, and a structured runtime diagnostic for a background failure.
-- [ ] Preserve event-before-response ordering when a send wakes a retained
+- [x] Preserve event-before-response ordering when a send wakes a retained
   receiver that prints output.
 
 **Gate:** after the startup program in Task 1 stalls, `send(msg, 2)` is
