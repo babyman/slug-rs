@@ -240,6 +240,112 @@ fn slim_retained_cells_share_committed_mutable_bindings() {
 }
 
 #[test]
+#[cfg(not(feature = "concurrency"))]
+fn closing_a_slim_session_removes_retained_channel_waiters() {
+    let mut server = initialized_server();
+    let waiting = open_session(&mut server);
+    let sender = open_session(&mut server);
+    let module = NativeModule::new(
+        "test.interactive_slim_close",
+        Rc::new(RefCell::new(Option::<NativeOwnedValue>::None)),
+    )
+    .expect("native module");
+    let channel = module
+        .function("shared_queue", NativeArity::Exact(0), shared_queue)
+        .expect("native function");
+    server
+        .define_host_native(channel)
+        .expect("register shared channel factory");
+
+    assert!(submit(&mut server, 3, &waiting, "val queue = shared_queue()").ok);
+    assert_eq!(
+        submit(&mut server, 4, &waiting, "select { recv queue }").result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+    assert_eq!(
+        submit(&mut server, 5, &waiting, "select { recv queue }").result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+    assert!(
+        server
+            .handle_line(&request(6, "session.close", Some(&waiting), None).to_string())
+            .ok
+    );
+
+    assert!(submit(&mut server, 7, &sender, "val queue = shared_queue()").ok);
+    assert!(submit(&mut server, 8, &sender, "select { send queue, 9 }").ok);
+    assert_eq!(
+        submit(&mut server, 9, &sender, "select { recv queue }").result,
+        Some(serde_json::json!({ "value": 9 }))
+    );
+}
+
+#[test]
+#[cfg(not(feature = "concurrency"))]
+fn failed_slim_retained_cells_do_not_commit_their_bindings() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    assert!(submit(&mut server, 3, &session, "var queue = chan(1)").ok);
+    assert_eq!(
+        submit(
+            &mut server,
+            4,
+            &session,
+            "var leaked = select { recv queue /> fn(_) { throw 42 } }",
+        )
+        .result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+
+    let failure = submit(&mut server, 5, &session, "select { send queue, true }");
+    assert!(!failure.ok);
+    assert_eq!(
+        failure
+            .error
+            .expect("retained cell failure")
+            .kind
+            .as_deref(),
+        Some("thrown")
+    );
+
+    let unavailable = submit(&mut server, 6, &session, "leaked");
+    assert!(!unavailable.ok);
+    assert_eq!(
+        unavailable
+            .error
+            .expect("uncommitted binding diagnostic")
+            .kind
+            .as_deref(),
+        Some("name")
+    );
+    assert_eq!(
+        submit(&mut server, 7, &session, "queue").result,
+        Some(serde_json::json!({
+            "value": { "kind": "chan", "display": "<chan>" }
+        }))
+    );
+}
+
+#[test]
+#[cfg(not(feature = "concurrency"))]
+fn dropping_a_slim_server_cancels_all_retained_cells() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    assert!(submit(&mut server, 3, &session, "var queue = chan(1)").ok);
+    assert_eq!(
+        submit(&mut server, 4, &session, "select { recv queue }").result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+    assert_eq!(
+        submit(&mut server, 5, &session, "select { recv queue }").result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+
+    drop(server);
+}
+
+#[test]
 fn launched_program_output_has_a_root_origin() {
     let loader = ModuleLoader::new(".", Some("lib".into()));
     let mut server = Server::new(Vm::with_module_loader(loader.clone()));

@@ -156,13 +156,13 @@ message.
 
 ### Task 5 — Teardown and error isolation
 
-- [ ] Cancel every retained slim execution during `session.close`, removing
+- [x] Cancel every retained slim execution during `session.close`, removing
   channel, task-await, and timer wait registrations.
-- [ ] Discard failed cell declarations while retaining effects on previously
+- [x] Discard failed cell declarations while retaining effects on previously
   committed mutable cells and explicit shared resources.
-- [ ] Ensure one session's retained cells cannot be progressed, committed,
+- [x] Ensure one session's retained cells cannot be progressed, committed,
   cancelled, or attributed to another session.
-- [ ] Verify server shutdown releases all retained slim contexts without host
+- [x] Verify server shutdown releases all retained slim contexts without host
   panics.
 
 **Gate:** closing a session with several waiting cells leaves no waiter that a

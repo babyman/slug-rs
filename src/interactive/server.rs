@@ -57,6 +57,26 @@ pub struct Server {
     output: Rc<RefCell<OutputSink>>,
 }
 
+impl Drop for Server {
+    fn drop(&mut self) {
+        #[cfg(feature = "concurrency")]
+        for session in self.sessions.values() {
+            for submission in &session.executions {
+                self.vm.cancel_interactive_task(&submission.execution);
+            }
+        }
+        #[cfg(not(feature = "concurrency"))]
+        for session in self.sessions.values_mut() {
+            for mut submission in std::mem::take(&mut session.executions) {
+                self.vm.cancel_interactive_execution(
+                    &mut submission.execution,
+                    &mut submission.runtime,
+                );
+            }
+        }
+    }
+}
+
 struct Session {
     compiler: InteractiveCompilerState,
     runtime: InteractiveEnvironment,
