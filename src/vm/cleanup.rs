@@ -25,11 +25,7 @@ pub(super) enum Cleanup {
 }
 
 impl Vm {
-    pub(super) fn begin_return(
-        &mut self,
-        program: &Program,
-        value: Value,
-    ) -> VmResult<Option<Value>> {
+    pub(super) fn begin_return(&mut self, value: Value) -> VmResult<Option<Value>> {
         let frame_depth = self.frames.len().checked_sub(1).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -63,7 +59,7 @@ impl Vm {
                 success: true,
                 frame_depth,
             }));
-        self.drive_cleanup(program)
+        self.drive_cleanup()
     }
 
     pub(super) fn recur_at(
@@ -123,7 +119,7 @@ impl Vm {
                     success: true,
                     frame_depth: self.frames.len() - 1,
                 }));
-            self.drive_cleanup(program)?;
+            self.drive_cleanup()?;
             return Ok(());
         }
         self.finish_recur(arguments, provided, local_count, stack_base);
@@ -187,11 +183,7 @@ impl Vm {
         })
     }
 
-    pub(super) fn recover_from_error(
-        &mut self,
-        program: &Program,
-        value: Value,
-    ) -> VmResult<Option<Value>> {
+    pub(super) fn recover_from_error(&mut self, value: Value) -> VmResult<Option<Value>> {
         let frame_depth = self.frames.len().checked_sub(1).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -221,10 +213,10 @@ impl Vm {
         }
         self.cleanup = recovered;
         self.cleanup.insert(0, Cleanup::Return(value));
-        self.drive_cleanup(program)
+        self.drive_cleanup()
     }
 
-    pub(super) fn drive_cleanup(&mut self, program: &Program) -> VmResult<Option<Value>> {
+    pub(super) fn drive_cleanup(&mut self) -> VmResult<Option<Value>> {
         loop {
             match self.cleanup.last_mut() {
                 Some(Cleanup::Actions {
@@ -239,7 +231,7 @@ impl Vm {
                         ..
                     }) if *success => {}
                     Some(Deferred { action, mode }) => {
-                        return self.call_cleanup(program, action, mode == DeferMode::Error);
+                        return self.call_cleanup(action, mode == DeferMode::Error);
                     }
                     None => {
                         self.cleanup.pop();
@@ -278,7 +270,7 @@ impl Vm {
                         )
                     })?;
                     self.stack.truncate(frame.stack_base);
-                    return self.recover_from_error(program, value);
+                    return self.recover_from_error(value);
                 }
                 Some(Cleanup::Resume) => {
                     self.cleanup.pop();
@@ -321,7 +313,6 @@ impl Vm {
 
     pub(super) fn call_cleanup(
         &mut self,
-        program: &Program,
         action: Value,
         recovers_error: bool,
     ) -> VmResult<Option<Value>> {
@@ -378,9 +369,9 @@ impl Vm {
                 };
                 let value = self.invoke_native(&function, &arguments, None, None)?;
                 if recovers_error {
-                    self.recover_from_error(program, value)
+                    self.recover_from_error(value)
                 } else {
-                    self.drive_cleanup(program)
+                    self.drive_cleanup()
                 }
             }
             Value::DeclaredNative {
@@ -399,9 +390,9 @@ impl Vm {
                 let value =
                     self.invoke_native(&function, &arguments, Some(&resource_signature), None)?;
                 if recovers_error {
-                    self.recover_from_error(program, value)
+                    self.recover_from_error(value)
                 } else {
-                    self.drive_cleanup(program)
+                    self.drive_cleanup()
                 }
             }
             Value::Builtin(builtin) => {
@@ -413,11 +404,12 @@ impl Vm {
                 } else {
                     Vec::new()
                 };
-                let value = self.call_builtin(builtin, program, &arguments, None)?;
+                let program = self.active_program()?;
+                let value = self.call_builtin(builtin, &program, &arguments, None)?;
                 if recovers_error {
-                    self.recover_from_error(program, value)
+                    self.recover_from_error(value)
                 } else {
-                    self.drive_cleanup(program)
+                    self.drive_cleanup()
                 }
             }
             _ => unreachable!("defer validates callability"),

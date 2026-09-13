@@ -63,7 +63,6 @@ pub enum VmProgress {
 }
 
 struct HostExecution {
-    program: Rc<Program>,
     root: RootWaiter,
     result: Option<VmResult<Value>>,
 }
@@ -225,7 +224,6 @@ struct ClosureCallOptions {
 #[cfg(feature = "concurrency")]
 pub(crate) struct TaskExecution {
     vm: Vm,
-    program: Rc<Program>,
     settle_nursery: bool,
     interactive_imported_globals: Option<Rc<RefCell<HashSet<String>>>>,
 }
@@ -282,7 +280,7 @@ enum RuntimeSelectCase {
 #[cfg(feature = "concurrency")]
 impl TaskExecution {
     fn run(mut self) -> TaskRunOutcome {
-        match self.vm.execute(&self.program) {
+        match self.vm.execute() {
             ExecutionOutcome::Suspended => {
                 self.sync_interactive_imports();
                 TaskRunOutcome::Suspended(Box::new(self))
@@ -632,7 +630,7 @@ impl Vm {
         self.stack.extend(arguments);
         let count = self.stack.len() - 1;
         self.call(&program, count, None, None)?;
-        self.run_root_execution(&program)
+        self.run_root_execution()
     }
 
     #[must_use]
@@ -812,7 +810,6 @@ impl Vm {
         let task = Rc::new(Task::pending(
             TaskExecution {
                 vm: task_vm,
-                program,
                 settle_nursery: false,
                 interactive_imported_globals: Some(imported_globals.clone()),
             },
@@ -1357,11 +1354,7 @@ impl Vm {
         });
         let root = RootWaiter::new();
         self.current_waiter = Some(Waiter::root(root.clone()));
-        self.host_execution = Some(HostExecution {
-            program: program.clone(),
-            root,
-            result: None,
-        });
+        self.host_execution = Some(HostExecution { root, result: None });
         Ok(())
     }
 
@@ -1461,7 +1454,7 @@ impl Vm {
                 self.resume = Some(result);
                 made_progress = true;
             }
-            match self.execute(&execution.program) {
+            match self.execute() {
                 ExecutionOutcome::Settled(result) => {
                     execution.result = Some(result);
                     made_progress = true;
@@ -1605,7 +1598,7 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn execute(&mut self, program: &Program) -> ExecutionOutcome {
+    fn execute(&mut self) -> ExecutionOutcome {
         if let Some(result) = self.resume.take() {
             self.suspension = None;
             match result {
@@ -1616,7 +1609,7 @@ impl Vm {
                 }
                 Err(error) => {
                     self.begin_error(error);
-                    match self.drive_cleanup(program) {
+                    match self.drive_cleanup() {
                         Ok(Some(value)) => return ExecutionOutcome::Settled(Ok(value)),
                         Ok(None) => {}
                         Err(error) => return ExecutionOutcome::Settled(Err(error)),
@@ -1625,7 +1618,7 @@ impl Vm {
             }
         }
         loop {
-            match self.execute_raw(program) {
+            match self.execute_raw() {
                 Ok(ExecutionOutcome::Settled(result)) => return ExecutionOutcome::Settled(result),
                 Ok(ExecutionOutcome::Suspended) => return ExecutionOutcome::Suspended,
                 Err(error) if self.frames.is_empty() => {
@@ -1633,7 +1626,7 @@ impl Vm {
                 }
                 Err(error) => {
                     self.begin_error(error);
-                    match self.drive_cleanup(program) {
+                    match self.drive_cleanup() {
                         Ok(Some(value)) => return ExecutionOutcome::Settled(Ok(value)),
                         Ok(None) => {}
                         Err(error) => return ExecutionOutcome::Settled(Err(error)),
@@ -1643,11 +1636,11 @@ impl Vm {
         }
     }
 
-    fn run_root_execution(&mut self, program: &Program) -> VmResult<Value> {
+    fn run_root_execution(&mut self) -> VmResult<Value> {
         let root = RootWaiter::new();
         self.current_waiter = Some(Waiter::root(root.clone()));
         loop {
-            match self.execute(program) {
+            match self.execute() {
                 ExecutionOutcome::Settled(result) => {
                     #[cfg(feature = "concurrency")]
                     return self.settle_tasks(&result);
@@ -1682,7 +1675,7 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn execute_raw(&mut self, _program: &Program) -> VmResult<ExecutionOutcome> {
+    fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
@@ -2186,7 +2179,7 @@ impl Vm {
                     success: true,
                     frame_depth: self.frames.len() - 1,
                 });
-                if let Some(value) = self.drive_cleanup(program)? {
+                if let Some(value) = self.drive_cleanup()? {
                     return Ok(BorrowedSpanOpOutcome::Settled(value));
                 }
             }
@@ -2261,7 +2254,7 @@ impl Vm {
             }
             Op::Return => {
                 let value = self.pop_at(span)?;
-                if let Some(value) = self.begin_return(program, value)? {
+                if let Some(value) = self.begin_return(value)? {
                     return Ok(BorrowedSpanOpOutcome::Settled(value));
                 }
             }
@@ -2971,7 +2964,6 @@ impl Vm {
         )?;
         let execution = TaskExecution {
             vm,
-            program: task_program,
             settle_nursery: false,
             interactive_imported_globals: None,
         };
@@ -3091,7 +3083,6 @@ impl Vm {
         )?;
         let execution = TaskExecution {
             vm,
-            program: task_program,
             settle_nursery: true,
             interactive_imported_globals: None,
         };

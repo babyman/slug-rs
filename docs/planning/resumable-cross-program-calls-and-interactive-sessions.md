@@ -97,10 +97,10 @@ unchanged.
 
 ### Task 3 — Program-polymorphic task execution
 
-- [ ] Remove remaining `TaskExecution` single-program assumptions.
-- [ ] Prove mixed-program frame stacks survive select/channel/timer/task-await
+- [x] Remove remaining `TaskExecution` single-program assumptions.
+- [x] Prove mixed-program frame stacks survive select/channel/timer/task-await
   suspension, cancellation, native ingress, and task settlement.
-- [ ] Keep nursery ownership and scheduler admission unchanged.
+- [x] Keep nursery ownership and scheduler admission unchanged.
 
 **Gate:** a spawned task can suspend inside an imported blocking function and
 settle after an ordinary sender runs.
