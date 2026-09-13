@@ -191,6 +191,7 @@ struct Frame {
     scopes: Vec<Vec<Deferred>>,
     cleanup_action: bool,
     cleanup_recovers: bool,
+    cleanup_owner_depth: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -208,6 +209,7 @@ pub(super) fn frame_locals(arguments: Vec<Value>, local_count: usize) -> Vec<Loc
     locals
 }
 
+#[cfg(feature = "concurrency")]
 struct ClosureCallOptions {
     #[cfg(feature = "concurrency")]
     direct_task_limit: Option<usize>,
@@ -391,6 +393,7 @@ pub(crate) struct InteractiveExecution {
 #[derive(Clone)]
 pub(crate) struct InteractiveTask {
     task: Rc<Task>,
+    nursery: Rc<Nursery>,
     globals: GlobalEnvironment,
     imported_globals: Rc<RefCell<HashSet<String>>>,
 }
@@ -850,6 +853,11 @@ impl Vm {
     ) -> VmResult<InteractiveTask> {
         self.reset_metrics();
         let task_environment = Self::interactive_overlay(environment);
+        let nursery = Rc::new(Nursery::root(
+            self.progress.clone(),
+            #[cfg(feature = "metrics")]
+            self.metrics.clone(),
+        ));
         let program = self.install_program(program);
         let entry = program.find_chunk(entry).ok_or_else(|| {
             self.error(
@@ -878,7 +886,7 @@ impl Vm {
             ClosureCallOptions {
                 direct_task_limit: None,
                 direct_task_count: None,
-                nursery: self.nursery.clone(),
+                nursery: nursery.clone(),
             },
         )?;
         task_vm
@@ -891,11 +899,12 @@ impl Vm {
                 interactive_imported_globals: Some(imported_globals.clone()),
             },
             None,
-            self.nursery.ready_queue(),
+            nursery.ready_queue(),
         ));
-        self.nursery.add_task(task.clone());
+        nursery.add_task(task.clone());
         Ok(InteractiveTask {
             task,
+            nursery,
             globals: task_environment.globals,
             imported_globals,
         })
@@ -908,13 +917,13 @@ impl Vm {
             "interactive session was closed".into(),
             None,
         );
-        task.task.cancel(&error);
-        self.nursery.remove_task(&task.task);
+        task.nursery.cancel_all(&error);
+        task.nursery.clear();
     }
 
     #[cfg(feature = "concurrency")]
-    pub(crate) fn release_interactive_task(&self, task: &InteractiveTask) {
-        self.nursery.remove_task(&task.task);
+    pub(crate) fn release_interactive_task(task: &InteractiveTask) {
+        task.nursery.clear();
     }
 
     #[cfg(feature = "concurrency")]
@@ -924,14 +933,21 @@ impl Vm {
     ) -> VmProgress {
         loop {
             if let Some(result) = task.outcome() {
-                return match result {
-                    Ok(value) => VmProgress::Completed(value),
-                    Err(error) => VmProgress::Failed(error),
-                };
+                let cancellation = self.error(
+                    RuntimeErrorKind::Thrown,
+                    "sibling cancelled due to fail-fast".into(),
+                    None,
+                );
+                if let Some(result) = task.nursery.settle_available(&result, &cancellation) {
+                    return match result {
+                        Ok(value) => VmProgress::Completed(value),
+                        Err(error) => VmProgress::Failed(error),
+                    };
+                }
             }
             let ingress_progress = self.progress.make_available_progress();
-            let task_progress = self.nursery.run_specific_task(&task.task);
-            let timer_progress = self.nursery.wake_due_timers();
+            let task_progress = task.nursery.make_available_progress();
+            let timer_progress = task.nursery.wake_due_timers();
             if !(ingress_progress || task_progress || timer_progress) {
                 return VmProgress::Stalled;
             }
@@ -948,6 +964,7 @@ impl Vm {
         }
     }
 
+    #[cfg(feature = "concurrency")]
     fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
         Self::synchronize_interactive_environment(environment);
         InteractiveEnvironment {
@@ -1440,6 +1457,7 @@ impl Vm {
             scopes: vec![Vec::new()],
             cleanup_action: false,
             cleanup_recovers: false,
+            cleanup_owner_depth: None,
         });
         let root = RootWaiter::new();
         self.current_waiter = Some(Waiter::root(root.clone()));
@@ -2694,6 +2712,7 @@ impl Vm {
                     scopes: vec![Vec::new()],
                     cleanup_action: false,
                     cleanup_recovers: false,
+                    cleanup_owner_depth: None,
                 });
             }
             Value::Native(function) => {
@@ -2863,6 +2882,7 @@ impl Vm {
                     scopes: vec![Vec::new()],
                     cleanup_action: false,
                     cleanup_recovers: false,
+                    cleanup_owner_depth: None,
                 });
             }
             Value::Native(function) => {
@@ -2938,7 +2958,7 @@ impl Vm {
         Ok(())
     }
 
-    #[cfg_attr(not(feature = "concurrency"), allow(clippy::needless_pass_by_value))]
+    #[cfg(feature = "concurrency")]
     #[allow(clippy::needless_pass_by_value)]
     fn module_closure_vm(
         &self,
@@ -2949,8 +2969,6 @@ impl Vm {
         span: Option<SourceSpan>,
         options: ClosureCallOptions,
     ) -> VmResult<Vm> {
-        #[cfg(not(feature = "concurrency"))]
-        let ClosureCallOptions {} = options;
         let chunk = program.chunk(closure.chunk).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -3016,6 +3034,7 @@ impl Vm {
             scopes: vec![Vec::new()],
             cleanup_action: false,
             cleanup_recovers: false,
+            cleanup_owner_depth: None,
         });
         Ok(vm)
     }

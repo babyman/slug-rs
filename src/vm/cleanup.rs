@@ -15,7 +15,10 @@ pub(super) enum Cleanup {
         frame_depth: usize,
     },
     Return(Value),
-    Recover(Value),
+    Recover {
+        value: Value,
+        frame_depth: usize,
+    },
     Resume,
     Recur {
         arguments: Vec<Value>,
@@ -45,11 +48,22 @@ impl Vm {
         let frame = self.frames.last_mut().expect("frame was checked");
         let scopes = std::mem::take(&mut frame.scopes);
         let cleanup_recovers = frame.cleanup_action && frame.cleanup_recovers;
+        let cleanup_owner_depth = frame.cleanup_owner_depth;
+        if cleanup_recovers && cleanup_owner_depth.is_none() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "error cleanup has no owning frame".into(),
+                None,
+            ));
+        }
         if returns_to_cleanup_action {
             self.cleanup.push(Cleanup::Resume);
         }
         self.cleanup.push(if cleanup_recovers {
-            Cleanup::Recover(value)
+            Cleanup::Recover {
+                value,
+                frame_depth: cleanup_owner_depth.unwrap_or_default(),
+            }
         } else {
             Cleanup::Return(value)
         });
@@ -183,14 +197,18 @@ impl Vm {
         })
     }
 
-    pub(super) fn recover_from_error(&mut self, value: Value) -> VmResult<Option<Value>> {
-        let frame_depth = self.frames.len().checked_sub(1).ok_or_else(|| {
-            self.error(
+    pub(super) fn recover_from_error(
+        &mut self,
+        value: Value,
+        frame_depth: usize,
+    ) -> VmResult<Option<Value>> {
+        if self.frames.get(frame_depth).is_none() {
+            return Err(self.error(
                 RuntimeErrorKind::InvalidBytecode,
-                "error cleanup has no enclosing frame".into(),
+                "error cleanup has no owning frame".into(),
                 None,
-            )
-        })?;
+            ));
+        }
         let mut recovered = Vec::new();
         for cleanup in self.cleanup.drain(..) {
             match cleanup {
@@ -211,6 +229,9 @@ impl Vm {
                 _ => {}
             }
         }
+        self.frames.truncate(frame_depth + 1);
+        let stack_base = self.frames[frame_depth].stack_base;
+        self.stack.truncate(stack_base);
         self.cleanup = recovered;
         self.cleanup.insert(0, Cleanup::Return(value));
         self.drive_cleanup()
@@ -220,7 +241,9 @@ impl Vm {
         loop {
             match self.cleanup.last_mut() {
                 Some(Cleanup::Actions {
-                    actions, success, ..
+                    actions,
+                    success,
+                    frame_depth,
                 }) => match actions.pop() {
                     Some(Deferred {
                         mode: DeferMode::Success,
@@ -231,7 +254,8 @@ impl Vm {
                         ..
                     }) if *success => {}
                     Some(Deferred { action, mode }) => {
-                        return self.call_cleanup(action, mode == DeferMode::Error);
+                        let frame_depth = *frame_depth;
+                        return self.call_cleanup(action, mode == DeferMode::Error, frame_depth);
                     }
                     None => {
                         self.cleanup.pop();
@@ -257,8 +281,9 @@ impl Vm {
                     }
                     self.stack.push(value);
                 }
-                Some(Cleanup::Recover(_)) => {
-                    let Cleanup::Recover(value) = self.cleanup.pop().expect("cleanup exists")
+                Some(Cleanup::Recover { .. }) => {
+                    let Cleanup::Recover { value, frame_depth } =
+                        self.cleanup.pop().expect("cleanup exists")
                     else {
                         unreachable!();
                     };
@@ -270,7 +295,7 @@ impl Vm {
                         )
                     })?;
                     self.stack.truncate(frame.stack_base);
-                    return self.recover_from_error(value);
+                    return self.recover_from_error(value, frame_depth);
                 }
                 Some(Cleanup::Resume) => {
                     self.cleanup.pop();
@@ -316,6 +341,7 @@ impl Vm {
         &mut self,
         action: Value,
         recovers_error: bool,
+        frame_depth: usize,
     ) -> VmResult<Option<Value>> {
         match action {
             Value::Closure(closure) => {
@@ -360,6 +386,7 @@ impl Vm {
                     scopes: vec![Vec::new()],
                     cleanup_action: true,
                     cleanup_recovers: recovers_error,
+                    cleanup_owner_depth: Some(frame_depth),
                 });
                 Ok(None)
             }
@@ -374,7 +401,7 @@ impl Vm {
                 };
                 let value = self.invoke_native(&function, &arguments, None, None)?;
                 if recovers_error {
-                    self.recover_from_error(value)
+                    self.recover_from_error(value, frame_depth)
                 } else {
                     self.drive_cleanup()
                 }
@@ -395,7 +422,7 @@ impl Vm {
                 let value =
                     self.invoke_native(&function, &arguments, Some(&resource_signature), None)?;
                 if recovers_error {
-                    self.recover_from_error(value)
+                    self.recover_from_error(value, frame_depth)
                 } else {
                     self.drive_cleanup()
                 }
@@ -412,7 +439,7 @@ impl Vm {
                 let program = self.active_program()?;
                 let value = self.call_builtin(builtin, &program, &arguments, None)?;
                 if recovers_error {
-                    self.recover_from_error(value)
+                    self.recover_from_error(value, frame_depth)
                 } else {
                     self.drive_cleanup()
                 }

@@ -561,13 +561,13 @@ impl Server {
                         .get_mut(&session)
                         .expect("session remains available");
                     task.synchronize_environment(&mut active.runtime, &compilation.program);
-                    self.vm.release_interactive_task(&task);
+                    Vm::release_interactive_task(&task);
                     Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
                     active.compiler = compilation.state;
                     last = value;
                 }
                 VmProgress::Failed(error) => {
-                    self.vm.release_interactive_task(&task);
+                    Vm::release_interactive_task(&task);
                     return Response::failure(
                         Some(id),
                         Some(session),
@@ -641,7 +641,7 @@ impl Server {
             match submission.execution.outcome() {
                 None => pending.push(submission),
                 Some(Ok(_)) => {
-                    self.vm.release_interactive_task(&submission.execution);
+                    Vm::release_interactive_task(&submission.execution);
                     let active = self
                         .sessions
                         .get_mut(session)
@@ -657,7 +657,7 @@ impl Server {
                     active.compiler = submission.compilation.state;
                 }
                 Some(Err(error)) => {
-                    self.vm.release_interactive_task(&submission.execution);
+                    Vm::release_interactive_task(&submission.execution);
                     failure.get_or_insert(error);
                 }
             }

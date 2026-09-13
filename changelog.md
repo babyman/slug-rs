@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed interactive task supervision so spawned work runs and is cancelled with
+  its submitted session form.
+
+- Fixed cross-module deferred error recovery so an outer handler unwinds inner
+  frames before resuming execution.
+
 - Made VM frames own both their code and lexical globals, so imported and
   prior-interactive-cell closures suspend and resume in their caller's task
   rather than running in a nested VM.

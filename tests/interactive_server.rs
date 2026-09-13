@@ -635,6 +635,22 @@ fn stalled_form_allows_a_later_binding_free_submission_to_resume_it() {
 
 #[test]
 #[cfg(feature = "concurrency")]
+fn submitted_tasks_supervise_spawned_children() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let response = submit(&mut server, 3, &session, "spawn { println('child ran') }");
+
+    assert!(response.ok, "{response:?}");
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].origin, EventOrigin::Session { session });
+    assert_eq!(events[0].event, "stdout");
+    assert_eq!(events[0].data, serde_json::json!("child ran\n"));
+}
+
+#[test]
+#[cfg(feature = "concurrency")]
 fn pending_cell_bindings_are_not_visible_before_settlement() {
     let mut server = initialized_server();
     let session = open_session(&mut server);
