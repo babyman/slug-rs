@@ -390,6 +390,7 @@ pub(crate) struct InteractiveExecution {
 #[derive(Clone)]
 pub(crate) struct InteractiveTask {
     task: Rc<Task>,
+    globals: GlobalEnvironment,
     imported_globals: Rc<RefCell<HashSet<String>>>,
 }
 
@@ -399,10 +400,85 @@ impl InteractiveTask {
         self.task.outcome()
     }
 
-    pub(crate) fn synchronize_environment(&self, environment: &mut InteractiveEnvironment) {
+    pub(crate) fn synchronize_environment(
+        &self,
+        environment: &mut InteractiveEnvironment,
+        program: &Program,
+    ) {
+        let task_globals = self.globals.borrow();
+        let mut session_globals = environment.globals.borrow_mut();
+        for name in program.bindings() {
+            if let Some(value) = task_globals.get(name) {
+                let value = Self::rebind_interactive_value(
+                    value.clone(),
+                    &self.globals,
+                    &environment.globals,
+                );
+                let mutable = program
+                    .declarations()
+                    .iter()
+                    .any(|declaration| declaration.mutable && declaration.bindings.contains(name));
+                if mutable {
+                    if !session_globals
+                        .get(name)
+                        .is_some_and(|binding| binding.replace_binding(value.clone()))
+                    {
+                        session_globals.insert(
+                            name.clone(),
+                            Value::Binding {
+                                name: name.clone().into(),
+                                cell: binding_cell(value),
+                            },
+                        );
+                    }
+                } else {
+                    session_globals.insert(name.clone(), value);
+                }
+            }
+        }
+        for name in self.imported_globals.borrow().iter() {
+            if let Some(value) = task_globals.get(name) {
+                session_globals.insert(name.clone(), value.clone());
+            }
+        }
+        drop(session_globals);
         environment
             .imported_globals
             .clone_from(&self.imported_globals.borrow());
+    }
+
+    fn rebind_interactive_value(
+        value: Value,
+        task_globals: &GlobalEnvironment,
+        session_globals: &GlobalEnvironment,
+    ) -> Value {
+        match value {
+            Value::Closure(closure)
+                if closure
+                    .globals
+                    .as_ref()
+                    .is_some_and(|globals| Rc::ptr_eq(globals, task_globals)) =>
+            {
+                Value::Closure(Rc::new(Closure {
+                    chunk: closure.chunk,
+                    captures: closure.captures.clone(),
+                    program: closure.program.clone(),
+                    globals: Some(session_globals.clone()),
+                    #[cfg(feature = "concurrency")]
+                    capture_sources: closure.capture_sources.clone(),
+                }))
+            }
+            Value::Overloads(values) => Value::Overloads(Rc::new(
+                values
+                    .iter()
+                    .cloned()
+                    .map(|value| {
+                        Self::rebind_interactive_value(value, task_globals, session_globals)
+                    })
+                    .collect(),
+            )),
+            value => value,
+        }
     }
 }
 
@@ -772,7 +848,7 @@ impl Vm {
         environment: &mut InteractiveEnvironment,
     ) -> VmResult<InteractiveTask> {
         self.reset_metrics();
-        Self::synchronize_interactive_environment(environment);
+        let task_environment = Self::interactive_overlay(environment);
         let program = self.install_program(program);
         let entry = program.find_chunk(entry).ok_or_else(|| {
             self.error(
@@ -788,10 +864,10 @@ impl Vm {
             chunk: entry,
             captures: Vec::new(),
             program: Some(program.clone()),
-            globals: Some(environment.globals.clone()),
+            globals: Some(task_environment.globals.clone()),
             capture_sources: Vec::new(),
         });
-        let imported_globals = Rc::new(RefCell::new(environment.imported_globals.clone()));
+        let imported_globals = Rc::new(RefCell::new(task_environment.imported_globals));
         let mut task_vm = self.module_closure_vm(
             program.clone(),
             closure,
@@ -819,6 +895,7 @@ impl Vm {
         self.nursery.add_task(task.clone());
         Ok(InteractiveTask {
             task,
+            globals: task_environment.globals,
             imported_globals,
         })
     }
@@ -867,6 +944,16 @@ impl Vm {
             if !environment.local_bindings.contains(name) {
                 globals.insert(name.clone(), value.clone());
             }
+        }
+    }
+
+    fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
+        Self::synchronize_interactive_environment(environment);
+        InteractiveEnvironment {
+            globals: Rc::new(RefCell::new(environment.globals.borrow().clone())),
+            host_globals: environment.host_globals.clone(),
+            local_bindings: environment.local_bindings.clone(),
+            imported_globals: environment.imported_globals.clone(),
         }
     }
 

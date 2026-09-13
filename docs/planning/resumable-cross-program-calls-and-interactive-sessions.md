@@ -107,14 +107,14 @@ settle after an ordinary sender runs.
 
 ### Task 4 — Submitted-cell binding overlays
 
-- [ ] Give each cell an uncommitted binding overlay layered over committed
+- [x] Give each cell an uncommitted binding overlay layered over committed
   session bindings and host bindings.
-- [ ] Compile later cells from only the committed compiler snapshot.
-- [ ] Promote bindings and compiler state after successful settlement; discard
+- [x] Compile later cells from only the committed compiler snapshot.
+- [x] Promote bindings and compiler state after successful settlement; discard
   uncommitted bindings after source/runtime failure.
-- [ ] Define assignment to existing mutable bindings and retain ordinary shared
+- [x] Define assignment to existing mutable bindings and retain ordinary shared
   object/channel side effects.
-- [ ] Retain the conservative declaration gate while a binding-producing cell
+- [x] Retain the conservative declaration gate while a binding-producing cell
   is pending.
 
 **Gate:** `var x = blocking()` does not expose `x` to another cell, while a

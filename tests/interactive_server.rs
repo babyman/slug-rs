@@ -634,6 +634,58 @@ fn stalled_form_allows_a_later_binding_free_submission_to_resume_it() {
 }
 
 #[test]
+#[cfg(feature = "concurrency")]
+fn pending_cell_bindings_are_not_visible_before_settlement() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+    let state = Arc::new(ProducerState(Mutex::new(None)));
+    let module = NativeModule::new("test.interactive_overlay", state.clone()).expect("module");
+    let input = module
+        .function("session_input", NativeArity::Exact(0), session_input)
+        .expect("native function");
+    server
+        .define_host_native(input)
+        .expect("register input factory");
+
+    let pending = submit(
+        &mut server,
+        3,
+        &session,
+        "val inbox = session_input()\nvar value = select { recv inbox }",
+    );
+    assert_eq!(
+        pending.result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+
+    let unavailable = submit(&mut server, 4, &session, "value");
+    assert_eq!(
+        unavailable
+            .error
+            .expect("uncommitted binding diagnostic")
+            .kind
+            .as_deref(),
+        Some("name")
+    );
+
+    let producer = state
+        .0
+        .lock()
+        .expect("producer state")
+        .clone()
+        .expect("session input producer");
+    assert_eq!(
+        producer.try_send(slug_vm::NativeSendValue::integer(42)),
+        slug_vm::NativeProducerStatus::Sent
+    );
+    let settled = server.handle_line(&request(5, "session.poll", Some(&session), None).to_string());
+    assert_eq!(settled.result, Some(serde_json::json!({ "state": "idle" })));
+
+    let value = submit(&mut server, 6, &session, "value");
+    assert_eq!(value.result, Some(serde_json::json!({ "value": 42 })));
+}
+
+#[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
     let source = Diagnostic::from_source(&source);

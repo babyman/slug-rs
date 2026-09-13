@@ -560,7 +560,7 @@ impl Server {
                         .sessions
                         .get_mut(&session)
                         .expect("session remains available");
-                    task.synchronize_environment(&mut active.runtime);
+                    task.synchronize_environment(&mut active.runtime, &compilation.program);
                     self.vm.release_interactive_task(&task);
                     Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
                     active.compiler = compilation.state;
@@ -646,9 +646,10 @@ impl Server {
                         .sessions
                         .get_mut(session)
                         .expect("session remains available");
-                    submission
-                        .execution
-                        .synchronize_environment(&mut active.runtime);
+                    submission.execution.synchronize_environment(
+                        &mut active.runtime,
+                        &submission.compilation.program,
+                    );
                     Vm::commit_interactive_bindings(
                         &mut active.runtime,
                         &submission.compilation.program,
