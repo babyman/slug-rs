@@ -101,12 +101,12 @@ f()
 
 ### Task 2 — Model retained cells independently of carriers
 
-- [ ] Replace slim `SessionExecution::{Idle, Active, Stalled}` with retained
+- [x] Replace slim `SessionExecution::{Idle, Active, Stalled}` with retained
   cell records equivalent in lifecycle to the default runtime's retained task
   submissions.
-- [ ] Give each record its compilation, overlay environment, and one carrier:
+- [x] Give each record its compilation and one carrier:
   `InteractiveTask` in default builds or `InteractiveExecution` in slim builds.
-- [ ] Keep the carrier representation private and avoid a public trait or task
+- [x] Keep the carrier representation private and avoid a public trait or task
   kind unless a shared helper cannot express the lifecycle cleanly.
 - [ ] Define small internal lifecycle operations: start, drive, settle, retain,
   and cancel.

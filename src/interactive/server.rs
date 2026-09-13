@@ -63,7 +63,7 @@ struct Session {
     #[cfg(feature = "concurrency")]
     executions: Vec<InteractiveSubmission>,
     #[cfg(not(feature = "concurrency"))]
-    execution: SessionExecution,
+    executions: Vec<InteractiveSlimSubmission>,
     pending_source: String,
 }
 
@@ -75,20 +75,10 @@ struct InteractiveSubmission {
 }
 
 #[cfg(not(feature = "concurrency"))]
-enum SessionExecutionState<E> {
-    Idle,
-    Active {
-        execution: E,
-        compilation: InteractiveCompilation,
-    },
-    Stalled {
-        execution: E,
-        compilation: InteractiveCompilation,
-    },
+struct InteractiveSlimSubmission {
+    execution: InteractiveExecution,
+    compilation: InteractiveCompilation,
 }
-
-#[cfg(not(feature = "concurrency"))]
-type SessionExecution = SessionExecutionState<InteractiveExecution>;
 
 #[derive(Default)]
 struct OutputSink {
@@ -297,7 +287,7 @@ impl Server {
                 #[cfg(feature = "concurrency")]
                 executions: Vec::new(),
                 #[cfg(not(feature = "concurrency"))]
-                execution: SessionExecution::Idle,
+                executions: Vec::new(),
                 pending_source: String::new(),
             },
         );
@@ -329,13 +319,13 @@ impl Server {
             }
         }
         #[cfg(not(feature = "concurrency"))]
-        if let Some(mut execution) = self.session_execution(&session) {
-            let session_state = self
-                .sessions
-                .get_mut(&session)
-                .expect("validated session remains available during close");
-            self.vm
-                .cancel_interactive_execution(&mut execution, &mut session_state.runtime);
+        if let Some(session_state) = self.sessions.get_mut(&session) {
+            for mut submission in std::mem::take(&mut session_state.executions) {
+                self.vm.cancel_interactive_execution(
+                    &mut submission.execution,
+                    &mut session_state.runtime,
+                );
+            }
         }
         if self.sessions.remove(&session).is_none() {
             return Response::failure(
@@ -384,7 +374,7 @@ impl Server {
             );
         };
         #[cfg(not(feature = "concurrency"))]
-        if !matches!(existing.execution, SessionExecution::Idle) {
+        if !existing.executions.is_empty() {
             return Response::failure(
                 Some(request.id),
                 Some(session),
@@ -469,10 +459,11 @@ impl Server {
                 self.sessions
                     .get_mut(&session)
                     .expect("validated session remains available during submission")
-                    .execution = SessionExecution::Active {
-                    execution,
-                    compilation,
-                };
+                    .executions
+                    .push(InteractiveSlimSubmission {
+                        execution,
+                        compilation,
+                    });
                 response = self.drive_slim_session(request.id, session.clone());
                 if !response.ok
                     || response
@@ -687,56 +678,21 @@ impl Server {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    fn session_execution(&mut self, session: &str) -> Option<InteractiveExecution> {
-        let active = self.sessions.get_mut(session)?;
-        let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
-        match execution {
-            SessionExecution::Idle => {
-                active.execution = SessionExecution::Idle;
-                None
-            }
-            SessionExecution::Active {
-                execution,
-                compilation,
-            }
-            | SessionExecution::Stalled {
-                execution,
-                compilation,
-            } => {
-                active.execution = SessionExecution::Active {
-                    execution,
-                    compilation,
-                };
-                let execution = std::mem::replace(&mut active.execution, SessionExecution::Idle);
-                match execution {
-                    SessionExecution::Active { execution, .. } => Some(execution),
-                    SessionExecution::Idle | SessionExecution::Stalled { .. } => unreachable!(),
-                }
-            }
-        }
-    }
-
     #[cfg(not(feature = "concurrency"))]
     fn drive_slim_session(&mut self, id: u64, session: String) -> Response {
-        let execution = {
+        let submission = {
             let active = self
                 .sessions
                 .get_mut(&session)
                 .expect("validated session remains available during its poll");
-            std::mem::replace(&mut active.execution, SessionExecution::Idle)
+            active.executions.pop()
         };
-        let (mut execution, compilation) = match execution {
-            SessionExecution::Idle => {
-                return Response::success(id, Some(session), json!({ "state": "idle" }));
-            }
-            SessionExecution::Active {
-                execution,
-                compilation,
-            }
-            | SessionExecution::Stalled {
-                execution,
-                compilation,
-            } => (execution, compilation),
+        let Some(InteractiveSlimSubmission {
+            mut execution,
+            compilation,
+        }) = submission
+        else {
+            return Response::success(id, Some(session), json!({ "state": "idle" }));
         };
         self.output.borrow_mut().begin(session.clone());
         let progress = {
@@ -769,10 +725,11 @@ impl Server {
                 self.sessions
                     .get_mut(&session)
                     .expect("active session remains available during its poll")
-                    .execution = SessionExecution::Stalled {
-                    execution,
-                    compilation,
-                };
+                    .executions
+                    .push(InteractiveSlimSubmission {
+                        execution,
+                        compilation,
+                    });
                 Response::success(id, Some(session), json!({ "state": "stalled" }))
             }
         }
