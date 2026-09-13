@@ -151,10 +151,14 @@ For a persistent interactive session, run the minimal terminal client:
 ```sh
 cargo build --bins
 cargo run --bin slug-repl
+# or seed the session from a source file
+cargo run --bin slug-repl -- session.slug
 ```
 
 It launches the sibling `slug-server` executable, presents a `>` prompt, and
-sends each complete source unit through its structured session protocol.
+sends each complete source unit through its structured session protocol. An
+optional source path seeds the newly opened session before the first prompt, so
+its bindings remain available interactively.
 Incomplete syntax such as a function body uses a `.` continuation prompt. Type
 `:quit` or `:exit`, or send end-of-file, to close the session. Set
 `SLUG_SERVER` to use a different local server executable. Distributions must

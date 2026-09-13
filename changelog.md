@@ -87,6 +87,9 @@
   `slug`, including static import checking and the complete `slug.builtin`
   foundation module.
 
+- Made `slug-repl session.slug` seed its persistent interactive session from
+  the supplied source file before presenting the prompt.
+
 - Restored scheduler-owned and slim native ingress, terminal host-execution
   shutdown, reusable blocked VMs, and the complete slim Cargo validation gate.
 

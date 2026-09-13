@@ -1,5 +1,5 @@
 use std::{
-    env,
+    env, fs,
     io::{self, BufRead, BufReader, Write},
     path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, ExitCode, Stdio},
@@ -11,10 +11,28 @@ use slug_vm::interactive::{
 };
 
 fn main() -> ExitCode {
+    let mut arguments = env::args_os();
+    let executable = arguments.next().unwrap_or_else(|| "slug-repl".into());
+    let startup_path = arguments.next().map(PathBuf::from);
+    if arguments.next().is_some() {
+        eprintln!("Usage: {} [session.slug]", executable.to_string_lossy());
+        return ExitCode::from(1);
+    }
+    let startup_source = match startup_path {
+        Some(path) => match fs::read_to_string(&path) {
+            Ok(source) => Some(source),
+            Err(error) => {
+                eprintln!("slug-repl: cannot read {}: {error}", path.display());
+                return ExitCode::from(1);
+            }
+        },
+        None => None,
+    };
     run(
         &mut io::stdin().lock(),
         &mut io::stdout().lock(),
         &mut io::stderr().lock(),
+        startup_source.as_deref(),
     )
 }
 
@@ -23,7 +41,12 @@ enum ReadSubmission {
     Source(String),
 }
 
-fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) -> ExitCode {
+fn run(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    errors: &mut dyn Write,
+    startup_source: Option<&str>,
+) -> ExitCode {
     let mut server = match ServerProcess::spawn() {
         Ok(server) => server,
         Err(error) => {
@@ -31,7 +54,7 @@ fn run(input: &mut dyn BufRead, output: &mut dyn Write, errors: &mut dyn Write) 
             return ExitCode::from(1);
         }
     };
-    let result = run_session(&mut server, input, output, errors);
+    let result = run_session(&mut server, input, output, errors, startup_source);
     let shutdown = server.finish();
     if let Err(error) = shutdown {
         let _ = writeln!(errors, "slug-repl: slug-server shutdown failed: {error}");
@@ -45,6 +68,7 @@ fn run_session(
     input: &mut dyn BufRead,
     output: &mut dyn Write,
     errors: &mut dyn Write,
+    startup_source: Option<&str>,
 ) -> ExitCode {
     let mut request_id = 1;
     let initialized = match request(
@@ -88,6 +112,16 @@ fn run_session(
         render_response_error(&opened, errors);
         return ExitCode::from(1);
     };
+
+    if let Some(source) = startup_source
+        && let Err(exit_code) =
+            submit_startup_source(server, request_id, &session, source, output, errors)
+    {
+        return exit_code;
+    }
+    if startup_source.is_some() {
+        request_id += 1;
+    }
 
     if writeln!(output, "Slug REPL\n").is_err() {
         return ExitCode::from(1);
@@ -139,6 +173,37 @@ fn run_session(
         render_response_error(&closed, errors);
         ExitCode::from(1)
     }
+}
+
+fn submit_startup_source(
+    server: &mut ServerProcess,
+    request_id: u64,
+    session: &str,
+    source: &str,
+    output: &mut dyn Write,
+    errors: &mut dyn Write,
+) -> Result<(), ExitCode> {
+    let response = request(
+        server,
+        request_id,
+        "submit",
+        Some(session),
+        json!({ "source": source }),
+        output,
+        errors,
+    )
+    .map_err(|error| render_transport_error(&error, errors))?;
+    let Ok(continuing) = render_submission_response(&response, output, errors) else {
+        return Err(ExitCode::from(1));
+    };
+    if !response.ok {
+        return Err(ExitCode::from(1));
+    }
+    if continuing {
+        let _ = writeln!(errors, "slug-repl: startup source is incomplete");
+        return Err(ExitCode::from(1));
+    }
+    Ok(())
 }
 
 fn render_transport_error(error: &io::Error, errors: &mut dyn Write) -> ExitCode {
