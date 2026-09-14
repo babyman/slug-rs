@@ -1,10 +1,11 @@
 use std::{
     env, fs,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, IsTerminal, Write},
     path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, ExitCode, Stdio},
 };
 
+use rustyline::{DefaultEditor, error::ReadlineError};
 use serde_json::{Value, json};
 use slug_vm::interactive::{
     Diagnostic, DiagnosticCategory, Event, IncomingMessage, PROTOCOL_VERSION, Request, Response,
@@ -28,12 +29,19 @@ fn main() -> ExitCode {
         },
         None => None,
     };
-    run(
-        &mut io::stdin().lock(),
-        &mut io::stdout().lock(),
-        &mut io::stderr().lock(),
-        startup_source.as_deref(),
-    )
+    let stdin = io::stdin();
+    let mut output = io::stdout().lock();
+    let mut errors = io::stderr().lock();
+    if stdin.is_terminal() {
+        run_interactive(&mut output, &mut errors, startup_source.as_deref())
+    } else {
+        run(
+            &mut stdin.lock(),
+            &mut output,
+            &mut errors,
+            startup_source.as_deref(),
+        )
+    }
 }
 
 enum ReadSubmission {
@@ -47,6 +55,35 @@ fn run(
     errors: &mut dyn Write,
     startup_source: Option<&str>,
 ) -> ExitCode {
+    let mut reader = BufferedInput { input };
+    run_with_reader(&mut reader, output, errors, startup_source)
+}
+
+fn run_interactive(
+    output: &mut dyn Write,
+    errors: &mut dyn Write,
+    startup_source: Option<&str>,
+) -> ExitCode {
+    let editor = match DefaultEditor::new() {
+        Ok(editor) => editor,
+        Err(error) => {
+            let _ = writeln!(
+                errors,
+                "slug-repl: cannot initialize terminal input: {error}"
+            );
+            return ExitCode::from(1);
+        }
+    };
+    let mut reader = TerminalInput { editor };
+    run_with_reader(&mut reader, output, errors, startup_source)
+}
+
+fn run_with_reader(
+    reader: &mut dyn SubmissionReader,
+    output: &mut dyn Write,
+    errors: &mut dyn Write,
+    startup_source: Option<&str>,
+) -> ExitCode {
     let mut server = match ServerProcess::spawn() {
         Ok(server) => server,
         Err(error) => {
@@ -54,7 +91,7 @@ fn run(
             return ExitCode::from(1);
         }
     };
-    let result = run_session(&mut server, input, output, errors, startup_source);
+    let result = run_session(&mut server, reader, output, errors, startup_source);
     let shutdown = server.finish();
     if let Err(error) = shutdown {
         let _ = writeln!(errors, "slug-repl: slug-server shutdown failed: {error}");
@@ -65,7 +102,7 @@ fn run(
 
 fn run_session(
     server: &mut ServerProcess,
-    input: &mut dyn BufRead,
+    input: &mut dyn SubmissionReader,
     output: &mut dyn Write,
     errors: &mut dyn Write,
     startup_source: Option<&str>,
@@ -128,7 +165,7 @@ fn run_session(
     }
     let mut continuing = false;
     loop {
-        let source = match read_submission(input, output, continuing) {
+        let source = match input.read_submission(output, continuing) {
             Ok(ReadSubmission::Exit) => break,
             Ok(ReadSubmission::Source(source)) => source,
             Err(error) => {
@@ -211,23 +248,66 @@ fn render_transport_error(error: &io::Error, errors: &mut dyn Write) -> ExitCode
     ExitCode::from(1)
 }
 
-fn read_submission(
-    input: &mut dyn BufRead,
-    output: &mut dyn Write,
-    continuing: bool,
-) -> io::Result<ReadSubmission> {
-    let mut line = String::new();
-    let prompt = if continuing { ". " } else { "> " };
-    write!(output, "{prompt}")?;
-    output.flush()?;
-    if input.read_line(&mut line)? == 0 {
-        return Ok(ReadSubmission::Exit);
+trait SubmissionReader {
+    fn read_submission(
+        &mut self,
+        output: &mut dyn Write,
+        continuing: bool,
+    ) -> io::Result<ReadSubmission>;
+}
+
+struct BufferedInput<'a> {
+    input: &'a mut dyn BufRead,
+}
+
+impl SubmissionReader for BufferedInput<'_> {
+    fn read_submission(
+        &mut self,
+        output: &mut dyn Write,
+        continuing: bool,
+    ) -> io::Result<ReadSubmission> {
+        let mut line = String::new();
+        let prompt = if continuing { ". " } else { "> " };
+        write!(output, "{prompt}")?;
+        output.flush()?;
+        if self.input.read_line(&mut line)? == 0 {
+            return Ok(ReadSubmission::Exit);
+        }
+        Ok(submission_from_line(line.trim_end_matches(['\n', '\r'])))
     }
-    let line = line.trim_end_matches(['\n', '\r']);
+}
+
+struct TerminalInput {
+    editor: DefaultEditor,
+}
+
+impl SubmissionReader for TerminalInput {
+    fn read_submission(
+        &mut self,
+        _output: &mut dyn Write,
+        continuing: bool,
+    ) -> io::Result<ReadSubmission> {
+        let prompt = if continuing { ". " } else { "> " };
+        let line = match self.editor.readline(prompt) {
+            Ok(line) => line,
+            Err(ReadlineError::Eof) => return Ok(ReadSubmission::Exit),
+            Err(error) => return Err(io::Error::other(error)),
+        };
+        let submission = submission_from_line(&line);
+        if matches!(&submission, ReadSubmission::Source(source) if !source.is_empty()) {
+            self.editor
+                .add_history_entry(line)
+                .map_err(io::Error::other)?;
+        }
+        Ok(submission)
+    }
+}
+
+fn submission_from_line(line: &str) -> ReadSubmission {
     if line == ":quit" || line == ":exit" {
-        return Ok(ReadSubmission::Exit);
+        return ReadSubmission::Exit;
     }
-    Ok(ReadSubmission::Source(line.into()))
+    ReadSubmission::Source(line.into())
 }
 
 fn request(

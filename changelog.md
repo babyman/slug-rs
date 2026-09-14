@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added terminal-side cursor editing and per-session command history to
+  `slug-repl`, while retaining plain line-oriented behavior for piped input.
+
 - Made interactive protocol responses report a submitted cell's outcome and
   retained session state independently, so the REPL preserves completed values
   while unrelated background cells remain stalled.

@@ -156,7 +156,10 @@ cargo run --bin slug-repl -- session.slug
 ```
 
 It launches the sibling `slug-server` executable, presents a `>` prompt, and
-sends each complete source unit through its structured session protocol. An
+sends each complete source unit through its structured session protocol. In a
+terminal, the prompt supports cursor-based line editing and Up/Down command
+history for the current REPL session; piped input remains plain line-oriented.
+An
 optional source path seeds the newly opened session before the first prompt, so
 its bindings remain available interactively.
 If a later top-level form in that source waits on a channel, the REPL reports
