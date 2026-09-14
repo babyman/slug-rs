@@ -49,6 +49,12 @@ enum ReadSubmission {
     Source(String),
 }
 
+enum TerminalReadline {
+    Exit,
+    Interrupted,
+    Line(String),
+}
+
 fn run(
     input: &mut dyn BufRead,
     output: &mut dyn Write,
@@ -288,18 +294,29 @@ impl SubmissionReader for TerminalInput {
         continuing: bool,
     ) -> io::Result<ReadSubmission> {
         let prompt = if continuing { ". " } else { "> " };
-        let line = match self.editor.readline(prompt) {
-            Ok(line) => line,
-            Err(ReadlineError::Eof) => return Ok(ReadSubmission::Exit),
-            Err(error) => return Err(io::Error::other(error)),
-        };
-        let submission = submission_from_line(&line);
-        if matches!(&submission, ReadSubmission::Source(source) if !source.is_empty()) {
-            self.editor
-                .add_history_entry(line)
-                .map_err(io::Error::other)?;
+        loop {
+            let line = match readline_submission(self.editor.readline(prompt))? {
+                TerminalReadline::Exit => return Ok(ReadSubmission::Exit),
+                TerminalReadline::Interrupted => continue,
+                TerminalReadline::Line(line) => line,
+            };
+            let submission = submission_from_line(&line);
+            if matches!(&submission, ReadSubmission::Source(source) if !source.is_empty()) {
+                self.editor
+                    .add_history_entry(line)
+                    .map_err(io::Error::other)?;
+            }
+            return Ok(submission);
         }
-        Ok(submission)
+    }
+}
+
+fn readline_submission(result: Result<String, ReadlineError>) -> io::Result<TerminalReadline> {
+    match result {
+        Ok(line) => Ok(TerminalReadline::Line(line)),
+        Err(ReadlineError::Eof) => Ok(TerminalReadline::Exit),
+        Err(ReadlineError::Interrupted) => Ok(TerminalReadline::Interrupted),
+        Err(error) => Err(io::Error::other(error)),
     }
 }
 
@@ -548,5 +565,18 @@ fn display_value(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
         value => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctrl_c_discards_the_terminal_submission() {
+        assert!(matches!(
+            readline_submission(Err(ReadlineError::Interrupted)),
+            Ok(TerminalReadline::Interrupted)
+        ));
     }
 }

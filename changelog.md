@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made Ctrl-C discard the current `slug-repl` input line and return to its
+  prompt instead of exiting with an input error.
+
 - Added terminal-side cursor editing and per-session command history to
   `slug-repl`, while retaining plain line-oriented behavior for piped input.
 
