@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TEXT(value) ((slug_ffi_text){value, sizeof(value) - 1})
+#define SLUG_TEXT(value) ((slug_ffi_text){value, sizeof(value) - 1})
 #define MAX_LINE_BYTES (16u * 1024u * 1024u)
 
 static void destroy_file(void *resource) {
@@ -16,13 +16,13 @@ static int32_t open_file(const slug_ffi_host_api *host, slug_ffi_call *call,
   slug_ffi_text path_text = {0};
   if (!host->argument_text(call, 0, &path_text)) return SLUG_FFI_ERROR;
   if (path_text.length > SIZE_MAX - 1) {
-    host->set_error(call, TEXT("native.io"), TEXT("file path is too large"));
+    host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("file path is too large"));
     return SLUG_FFI_ERROR;
   }
   size_t path_length = (size_t)path_text.length;
   char *path = malloc(path_length + 1);
   if (path == NULL) {
-    host->set_error(call, TEXT("native.alloc"), TEXT("cannot allocate file path"));
+    host->set_error(call, SLUG_TEXT("native.alloc"), SLUG_TEXT("cannot allocate file path"));
     return SLUG_FFI_ERROR;
   }
   memcpy(path, path_text.data, path_length);
@@ -30,11 +30,11 @@ static int32_t open_file(const slug_ffi_host_api *host, slug_ffi_call *call,
   FILE *file = fopen(path, mode);
   if (file == NULL) {
     free(path);
-    host->set_error(call, TEXT("native.io"), TEXT("cannot open file"));
+    host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("cannot open file"));
     return SLUG_FFI_ERROR;
   }
   free(path);
-  if (!host->set_resource(call, TEXT("slug.io.fs.File"), file)) {
+  if (!host->set_resource(call, SLUG_TEXT("slug.io.fs.File"), file)) {
     fclose(file);
     return SLUG_FFI_ERROR;
   }
@@ -59,33 +59,33 @@ static int32_t open_append(const slug_ffi_host_api *host, slug_ffi_call *call, v
 static int32_t read_line(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
   void *resource = NULL;
-  if (!host->argument_resource(call, 0, TEXT("slug.io.fs.File"), &resource)) return SLUG_FFI_ERROR;
+  if (!host->argument_resource(call, 0, SLUG_TEXT("slug.io.fs.File"), &resource)) return SLUG_FFI_ERROR;
   FILE *file = resource;
   size_t length = 0;
   size_t capacity = 128;
   char *line = malloc(capacity);
   if (line == NULL) {
-    host->set_error(call, TEXT("native.alloc"), TEXT("cannot allocate line buffer"));
+    host->set_error(call, SLUG_TEXT("native.alloc"), SLUG_TEXT("cannot allocate line buffer"));
     return SLUG_FFI_ERROR;
   }
   int character = 0;
   while ((character = fgetc(file)) != EOF && character != '\n') {
     if (length >= MAX_LINE_BYTES) {
       free(line);
-      host->set_error(call, TEXT("native.io"), TEXT("file line exceeds 16 MiB limit"));
+      host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("file line exceeds 16 MiB limit"));
       return SLUG_FFI_ERROR;
     }
     if (length == capacity) {
       if (capacity > SIZE_MAX / 2 || capacity > MAX_LINE_BYTES / 2) {
         free(line);
-        host->set_error(call, TEXT("native.alloc"), TEXT("cannot grow line buffer"));
+        host->set_error(call, SLUG_TEXT("native.alloc"), SLUG_TEXT("cannot grow line buffer"));
         return SLUG_FFI_ERROR;
       }
       capacity *= 2;
       char *expanded = realloc(line, capacity);
       if (expanded == NULL) {
         free(line);
-        host->set_error(call, TEXT("native.alloc"), TEXT("cannot grow line buffer"));
+        host->set_error(call, SLUG_TEXT("native.alloc"), SLUG_TEXT("cannot grow line buffer"));
         return SLUG_FFI_ERROR;
       }
       line = expanded;
@@ -94,7 +94,7 @@ static int32_t read_line(const slug_ffi_host_api *host, slug_ffi_call *call, voi
   }
   if (ferror(file)) {
     free(line);
-    host->set_error(call, TEXT("native.io"), TEXT("cannot read file"));
+    host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("cannot read file"));
     return SLUG_FFI_ERROR;
   }
   if (character == EOF && length == 0) {
@@ -113,14 +113,14 @@ static int32_t write_file(const slug_ffi_host_api *host, slug_ffi_call *call, vo
   (void)state;
   void *resource = NULL;
   slug_ffi_text text = {0};
-  if (!host->argument_resource(call, 0, TEXT("slug.io.fs.File"), &resource) ||
+  if (!host->argument_resource(call, 0, SLUG_TEXT("slug.io.fs.File"), &resource) ||
       !host->argument_text(call, 1, &text)) return SLUG_FFI_ERROR;
   if (fwrite(text.data, 1, (size_t)text.length, (FILE *)resource) != text.length) {
-    host->set_error(call, TEXT("native.io"), TEXT("cannot write file"));
+    host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("cannot write file"));
     return SLUG_FFI_ERROR;
   }
   if (fflush((FILE *)resource) != 0) {
-    host->set_error(call, TEXT("native.io"), TEXT("cannot flush file"));
+    host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("cannot flush file"));
     return SLUG_FFI_ERROR;
   }
   host->set_i64(call, (int64_t)text.length);
@@ -129,29 +129,29 @@ static int32_t write_file(const slug_ffi_host_api *host, slug_ffi_call *call, vo
 
 static int32_t close_file(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
   (void)state;
-  if (!host->close_resource(call, 0, TEXT("slug.io.fs.File"))) return SLUG_FFI_ERROR;
+  if (!host->close_resource(call, 0, SLUG_TEXT("slug.io.fs.File"))) return SLUG_FFI_ERROR;
   host->set_nil(call);
   return SLUG_FFI_OK;
 }
 
 static const slug_ffi_function_descriptor FUNCTIONS[] = {
-  {sizeof(slug_ffi_function_descriptor), TEXT("openRead"), TEXT("fs.openRead/v1"), 1, 1, open_read},
-  {sizeof(slug_ffi_function_descriptor), TEXT("openWrite"), TEXT("fs.openWrite/v1"), 1, 1, open_write},
-  {sizeof(slug_ffi_function_descriptor), TEXT("openAppend"), TEXT("fs.openAppend/v1"), 1, 1, open_append},
-  {sizeof(slug_ffi_function_descriptor), TEXT("readLine"), TEXT("fs.readLine/v1"), 1, 1, read_line},
-  {sizeof(slug_ffi_function_descriptor), TEXT("write"), TEXT("fs.write/v1"), 2, 2, write_file},
-  {sizeof(slug_ffi_function_descriptor), TEXT("close"), TEXT("fs.close/v1"), 1, 1, close_file},
+  {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("openRead"), SLUG_TEXT("fs.openRead/v1"), 1, 1, open_read},
+  {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("openWrite"), SLUG_TEXT("fs.openWrite/v1"), 1, 1, open_write},
+  {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("openAppend"), SLUG_TEXT("fs.openAppend/v1"), 1, 1, open_append},
+  {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("readLine"), SLUG_TEXT("fs.readLine/v1"), 1, 1, read_line},
+  {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("write"), SLUG_TEXT("fs.write/v1"), 2, 2, write_file},
+  {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("close"), SLUG_TEXT("fs.close/v1"), 1, 1, close_file},
 };
 
 static const slug_ffi_resource_descriptor RESOURCES[] = {
-  {sizeof(slug_ffi_resource_descriptor), TEXT("File"), destroy_file},
+  {sizeof(slug_ffi_resource_descriptor), SLUG_TEXT("File"), destroy_file},
 };
 
 static const slug_ffi_module_descriptor MODULE = {
   SLUG_FFI_PROTOTYPE_ABI_MAJOR,
   SLUG_FFI_PROTOTYPE_ABI_MINOR,
   sizeof(slug_ffi_module_descriptor),
-  TEXT("slug.io.fs"),
+  SLUG_TEXT("slug.io.fs"),
   FUNCTIONS,
   6,
   RESOURCES,

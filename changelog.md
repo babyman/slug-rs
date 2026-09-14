@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed Windows native-clutch fixture builds and quoted Windows filesystem
+  paths in generated Slug test programs.
+
 - Made Ctrl-C discard the current `slug-repl` input line and return to its
   prompt instead of exiting with an input error.
 

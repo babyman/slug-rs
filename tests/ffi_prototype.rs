@@ -218,6 +218,20 @@ fn run_clutch_cli(directory: &TemporaryDirectory, source: &str) -> std::process:
         .expect("run CLI through native clutch layout")
 }
 
+fn slug_path_literal(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
+#[test]
+fn slug_path_literal_escapes_slug_string_delimiters() {
+    assert_eq!(
+        slug_path_literal(Path::new(r#"C:\workspace\quoted"name.txt"#)),
+        r#"C:\\workspace\\quoted\"name.txt"#
+    );
+}
+
 #[test]
 fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
     let directory = TemporaryDirectory::new();
@@ -239,7 +253,7 @@ fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
              val output:fs.File = fs.openWrite(\"{}\")\n\
              fs.write(output, \"from cli\")\n\
              fs.close(output)\n",
-            cli_file.display()
+            slug_path_literal(&cli_file)
         ),
     )
     .expect("write native clutch CLI program");
@@ -268,8 +282,8 @@ fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
                  defer fs.close(input)\n\
                  export val line:str|nil = fs.readLine(input)\n\
                  export val eof:str|nil = fs.readLine(input)\n",
-                file.display(),
-                file.display()
+                slug_path_literal(&file),
+                slug_path_literal(&file)
             ),
         )
         .expect("compile filesystem clutch consumer");
@@ -313,7 +327,7 @@ fn filesystem_clutch_rejects_lines_larger_than_its_memory_limit() {
             "val fs = import(\"slug.io.fs\")\n\
              val input = fs.openRead(\"{}\")\n\
              fs.readLine(input)\n",
-            file.display()
+            slug_path_literal(&file)
         ),
     );
     assert!(!output.status.success(), "oversized line must fail");
@@ -347,7 +361,7 @@ fn one_native_clutch_supports_pure_and_native_backed_modules() {
                  val output:fs.File = fs.openWrite(\"{}\")\n\
                  fs.write(output, support.kind)\n\
                  fs.close(output)\n",
-                file.display()
+                slug_path_literal(&file)
             ),
         )
         .expect("compile mixed clutch consumer");

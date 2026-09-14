@@ -5,11 +5,11 @@
 #include <math.h>
 #include <stdio.h>
 
-#define TEXT(value) ((slug_ffi_text){value, sizeof(value) - 1})
+#define SLUG_TEXT(value) ((slug_ffi_text){value, sizeof(value) - 1})
 #define STDIN_CHANNEL_CAPACITY 32u
 
 typedef struct {
-  slug_ffi_async_stream *stdin;
+  slug_ffi_async_stream *input_stream;
 } core_state;
 
 static int32_t keys(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
@@ -81,10 +81,10 @@ static void stdin_worker(slug_ffi_async_sender *out, void *context) {
 static int32_t read_lines(const slug_ffi_host_api *host, slug_ffi_call *call,
                           void *raw_state) {
   core_state *state = raw_state;
-  if (state != NULL && slug_ffi_async_stream_set_result(state->stdin, call)) {
+  if (state != NULL && slug_ffi_async_stream_set_result(state->input_stream, call)) {
     return SLUG_FFI_OK;
   }
-  host->set_error(call, TEXT("native.io"), TEXT("cannot create standard-input stream"));
+  host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("cannot create standard-input stream"));
   return SLUG_FFI_ERROR;
 }
 
@@ -96,7 +96,7 @@ static int32_t add(const slug_ffi_host_api *host, slug_ffi_call *call, void *sta
   }
   if ((right > 0 && left > INT64_MAX - right) ||
       (right < 0 && left < INT64_MIN - right)) {
-    host->set_error(call, TEXT("math.range"), TEXT("integer addition overflowed"));
+    host->set_error(call, SLUG_TEXT("math.range"), SLUG_TEXT("integer addition overflowed"));
     return SLUG_FFI_ERROR;
   }
   host->set_i64(call, left + right);
@@ -109,8 +109,8 @@ static int32_t square_root(const slug_ffi_host_api *host, slug_ffi_call *call,
   (void)state;
   if (!host->argument_f64(call, 0, &value)) return SLUG_FFI_ERROR;
   if (value < 0.0) {
-    host->set_error(call, TEXT("math.domain"),
-                    TEXT("sqrt requires a non-negative number"));
+    host->set_error(call, SLUG_TEXT("math.domain"),
+                    SLUG_TEXT("sqrt requires a non-negative number"));
     return SLUG_FFI_ERROR;
   }
   host->set_f64(call, sqrt(value));
@@ -118,33 +118,33 @@ static int32_t square_root(const slug_ffi_host_api *host, slug_ffi_call *call,
 }
 
 static const slug_ffi_function_descriptor STD_FUNCTIONS[] = {
-    {sizeof(slug_ffi_function_descriptor), TEXT("keys"), TEXT("std.keys/v1"), 1, 1, keys},
+    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("keys"), SLUG_TEXT("std.keys/v1"), 1, 1, keys},
 };
 
 static const slug_ffi_function_descriptor STDIN_FUNCTIONS[] = {
-    {sizeof(slug_ffi_function_descriptor), TEXT("readLines"),
-     TEXT("stdin.read_lines/v1"), 0, 0, read_lines},
+    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("readLines"),
+     SLUG_TEXT("stdin.read_lines/v1"), 0, 0, read_lines},
 };
 
 static const slug_ffi_function_descriptor MATH_FUNCTIONS[] = {
-    {sizeof(slug_ffi_function_descriptor), TEXT("add"), TEXT("math.add/v1"), 2, 2, add},
-    {sizeof(slug_ffi_function_descriptor), TEXT("sqrt"), TEXT("math.sqrt/v1"), 1, 1,
+    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("add"), SLUG_TEXT("math.add/v1"), 2, 2, add},
+    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("sqrt"), SLUG_TEXT("math.sqrt/v1"), 1, 1,
      square_root},
 };
 
 static const slug_ffi_module_descriptor MODULES[] = {
     {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
-     sizeof(slug_ffi_module_descriptor), TEXT("slug.std"), STD_FUNCTIONS, 1, NULL, 0},
+     sizeof(slug_ffi_module_descriptor), SLUG_TEXT("slug.std"), STD_FUNCTIONS, 1, NULL, 0},
     {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
-     sizeof(slug_ffi_module_descriptor), TEXT("slug.io.stdin"), STDIN_FUNCTIONS, 1, NULL, 0},
+     sizeof(slug_ffi_module_descriptor), SLUG_TEXT("slug.io.stdin"), STDIN_FUNCTIONS, 1, NULL, 0},
     {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
-     sizeof(slug_ffi_module_descriptor), TEXT("slug.math"), MATH_FUNCTIONS, 2, NULL, 0},
+     sizeof(slug_ffi_module_descriptor), SLUG_TEXT("slug.math"), MATH_FUNCTIONS, 2, NULL, 0},
 };
 
 static void destroy_library(void *raw_state) {
   core_state *state = raw_state;
   if (state == NULL) return;
-  slug_ffi_async_stream_destroy(state->stdin);
+  slug_ffi_async_stream_destroy(state->input_stream);
   free(state);
 }
 
@@ -164,9 +164,9 @@ SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_in
       host->table_size < sizeof(slug_ffi_host_api) || out_state == NULL) return NULL;
   state = calloc(1, sizeof(core_state));
   if (state == NULL) return NULL;
-  state->stdin = slug_ffi_async_stream_create(
+  state->input_stream = slug_ffi_async_stream_create(
       host, STDIN_CHANNEL_CAPACITY, stdin_worker, NULL, NULL);
-  if (state->stdin == NULL) {
+  if (state->input_stream == NULL) {
     free(state);
     return NULL;
   }
