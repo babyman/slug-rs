@@ -241,6 +241,44 @@ fn slim_retained_cells_share_committed_mutable_bindings() {
 
 #[test]
 #[cfg(not(feature = "concurrency"))]
+fn slim_submission_runs_later_binding_free_forms_after_a_stall() {
+    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let mut server = Server::new(Vm::with_module_loader(loader));
+    assert!(
+        server
+            .handle_line(
+                &request(
+                    1,
+                    "initialize",
+                    None,
+                    Some(serde_json::json!({ "protocol": 1 })),
+                )
+                .to_string(),
+            )
+            .ok
+    );
+    let session = open_session(&mut server);
+
+    let response = submit(
+        &mut server,
+        3,
+        &session,
+        "val {*} = import('slug.channel')\nvar n = 0\nvar gate = chan(1)\nval f = fn() { recv(gate); n = n + 1 }\nf()\nsend(gate, true)\nprintln(n)",
+    );
+
+    assert!(response.ok, "{response:?}");
+    assert_eq!(response.result, Some(serde_json::json!({ "value": null })));
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].data, serde_json::json!("1\n"));
+    assert_eq!(
+        submit(&mut server, 4, &session, "n").result,
+        Some(serde_json::json!({ "value": 1 }))
+    );
+}
+
+#[test]
+#[cfg(not(feature = "concurrency"))]
 fn closing_a_slim_session_removes_retained_channel_waiters() {
     let mut server = initialized_server();
     let waiting = open_session(&mut server);

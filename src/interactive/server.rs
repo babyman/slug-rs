@@ -460,6 +460,18 @@ impl Server {
             }
             let mut response = Response::success(request.id, Some(session.clone()), Value::Null);
             for compilation in compilations {
+                if !self.sessions[&session].executions.is_empty()
+                    && !compilation.program.bindings().is_empty()
+                {
+                    return Response::failure(
+                        Some(request.id),
+                        Some(session),
+                        Diagnostic::protocol(
+                            "background_bindings",
+                            "a session with suspended forms accepts only binding-free source until they settle",
+                        ),
+                    );
+                }
                 let (execution, runtime) = {
                     let (vm, sessions) = (&mut self.vm, &mut self.sessions);
                     let active = sessions
@@ -491,17 +503,15 @@ impl Server {
                         runtime,
                     });
                 response = self.drive_slim_session(request.id, session.clone());
-                if !response.ok
-                    || response
-                        .result
-                        .as_ref()
-                        .is_some_and(|result| result.get("state").is_some())
-                {
+                if !response.ok {
                     break;
                 }
-            }
-            if response.ok && !self.sessions[&session].executions.is_empty() {
-                response = self.pump_slim_session(request.id, &session);
+                if !self.sessions[&session].executions.is_empty() {
+                    response = self.pump_slim_session(request.id, &session);
+                    if !response.ok {
+                        break;
+                    }
+                }
             }
             response
         }
