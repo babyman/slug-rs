@@ -173,7 +173,9 @@ function imported from a Slug module, or retained from an earlier prompt, can
 suspend and later resume in its owning cell. New top-level bindings are
 committed only when their cell settles successfully; while a binding-producing
 cell waits, later input may use already committed bindings but may not declare
-new ones.
+new ones. The REPL prints the outcome of the source just entered: a completed
+expression still prints its value even if unrelated retained work remains in
+the session, while `[stalled]` means that entered cell itself suspended.
 
 The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with

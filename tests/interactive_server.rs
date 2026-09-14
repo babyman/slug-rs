@@ -32,6 +32,34 @@ fn request(
     request
 }
 
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn completed(value: serde_json::Value, session_state: &str) -> Option<serde_json::Value> {
+    Some(serde_json::json!({
+        "status": "completed",
+        "value": value,
+        "session_state": session_state,
+    }))
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn stalled() -> Option<serde_json::Value> {
+    Some(serde_json::json!({
+        "status": "stalled",
+        "session_state": "stalled",
+    }))
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn incomplete() -> Option<serde_json::Value> {
+    Some(serde_json::json!({ "status": "incomplete" }))
+}
+
+#[cfg(feature = "concurrency")]
+#[allow(clippy::unnecessary_wraps)]
+fn session_state(state: &str) -> Option<serde_json::Value> {
+    Some(serde_json::json!({ "session_state": state }))
+}
+
 #[test]
 fn engine_initializes_opens_and_closes_a_session() {
     let mut server = Server::default();
@@ -107,11 +135,11 @@ fn session_persists_compiler_and_runtime_bindings_across_submissions() {
 
     let defined = submit(&mut server, 3, &session, "val x = 10");
     assert!(defined.ok);
-    assert_eq!(defined.result, Some(serde_json::json!({ "value": null })));
+    assert_eq!(defined.result, completed(serde_json::Value::Null, "idle"));
 
     let evaluated = submit(&mut server, 4, &session, "x + 5");
     assert!(evaluated.ok);
-    assert_eq!(evaluated.result, Some(serde_json::json!({ "value": 15 })));
+    assert_eq!(evaluated.result, completed(serde_json::json!(15), "idle"));
 
     let function = submit(
         &mut server,
@@ -122,7 +150,7 @@ fn session_persists_compiler_and_runtime_bindings_across_submissions() {
     assert!(function.ok);
     let called = submit(&mut server, 6, &session, "add(7)");
     assert!(called.ok);
-    assert_eq!(called.result, Some(serde_json::json!({ "value": 17 })));
+    assert_eq!(called.result, completed(serde_json::json!(17), "idle"));
 }
 
 #[test]
@@ -148,7 +176,7 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
         "val builtin = import(\"slug.builtin\")\nbuiltin.len(\"hello\")",
     );
     assert!(imported.ok, "{imported:?}");
-    assert_eq!(imported.result, Some(serde_json::json!({ "value": 5 })));
+    assert_eq!(imported.result, completed(serde_json::json!(5), "idle"));
 
     let missing = submit(&mut server, 4, &session, "import(\"missing.module\")");
     assert!(!missing.ok);
@@ -184,10 +212,7 @@ fn imported_channel_calls_suspend_and_resume_in_an_interactive_task() {
         &session,
         "val {*} = import('slug.channel')\nvar msg = chan(8)\nrecv(msg) /> fn(value) { println('received', value) }",
     );
-    assert_eq!(
-        waiting.result,
-        Some(serde_json::json!({ "state": "stalled" }))
-    );
+    assert_eq!(waiting.result, stalled());
 
     let sent = submit(&mut server, 4, &session, "send(msg, 'hello')");
     assert!(sent.ok, "{sent:?}");
@@ -209,10 +234,7 @@ fn slim_server_accepts_a_sender_while_a_cell_is_stalled() {
         &session,
         "var msg = chan(8)\nselect { recv msg /> fn(value) { println(value) } }",
     );
-    assert_eq!(
-        waiting.result,
-        Some(serde_json::json!({ "state": "stalled" }))
-    );
+    assert_eq!(waiting.result, stalled());
 
     let sent = submit(&mut server, 4, &session, "select { send msg, 2 }");
     assert!(sent.ok, "{sent:?}");
@@ -230,13 +252,10 @@ fn slim_retained_cells_share_committed_mutable_bindings() {
         &session,
         "var n = 0\nvar gate = chan(1)\nval f = fn() { select { recv gate }; n = n + 1 }\nf()",
     );
-    assert_eq!(
-        waiting.result,
-        Some(serde_json::json!({ "state": "stalled" }))
-    );
+    assert_eq!(waiting.result, stalled());
     assert!(submit(&mut server, 4, &session, "select { send gate, true }").ok);
     let value = submit(&mut server, 5, &session, "n");
-    assert_eq!(value.result, Some(serde_json::json!({ "value": 1 })));
+    assert_eq!(value.result, completed(serde_json::json!(1), "idle"));
 }
 
 #[test]
@@ -266,13 +285,35 @@ fn submission_runs_later_binding_free_forms_after_a_stall() {
     );
 
     assert!(response.ok, "{response:?}");
-    assert_eq!(response.result, Some(serde_json::json!({ "value": null })));
+    assert_eq!(response.result, completed(serde_json::Value::Null, "idle"));
     let events = server.take_events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].data, serde_json::json!("1\n"));
     assert_eq!(
         submit(&mut server, 4, &session, "n").result,
-        Some(serde_json::json!({ "value": 1 }))
+        completed(serde_json::json!(1), "idle")
+    );
+}
+
+#[test]
+fn completed_submission_preserves_its_value_while_session_work_is_stalled() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    assert!(submit(&mut server, 3, &session, "var gate = chan(1)").ok);
+    assert_eq!(
+        submit(
+            &mut server,
+            4,
+            &session,
+            "val f = fn() { select { recv gate } }\nf()",
+        )
+        .result,
+        stalled()
+    );
+    assert_eq!(
+        submit(&mut server, 5, &session, "1 + 9").result,
+        completed(serde_json::json!(10), "stalled")
     );
 }
 
@@ -291,7 +332,7 @@ fn slim_pump_drives_each_retained_cell_once_per_cycle() {
 
     assert_eq!(
         response.result,
-        Some(serde_json::json!({ "state": "stalled" }))
+        completed(serde_json::Value::Null, "stalled")
     );
     let events = server.take_events();
     assert_eq!(events.len(), 1);
@@ -319,11 +360,11 @@ fn closing_a_slim_session_removes_retained_channel_waiters() {
     assert!(submit(&mut server, 3, &waiting, "val queue = shared_queue()").ok);
     assert_eq!(
         submit(&mut server, 4, &waiting, "select { recv queue }").result,
-        Some(serde_json::json!({ "state": "stalled" }))
+        stalled()
     );
     assert_eq!(
         submit(&mut server, 5, &waiting, "select { recv queue }").result,
-        Some(serde_json::json!({ "state": "stalled" }))
+        stalled()
     );
     assert!(
         server
@@ -335,7 +376,7 @@ fn closing_a_slim_session_removes_retained_channel_waiters() {
     assert!(submit(&mut server, 8, &sender, "select { send queue, 9 }").ok);
     assert_eq!(
         submit(&mut server, 9, &sender, "select { recv queue }").result,
-        Some(serde_json::json!({ "value": 9 }))
+        completed(serde_json::json!(9), "idle")
     );
 }
 
@@ -354,7 +395,7 @@ fn failed_slim_retained_cells_do_not_commit_their_bindings() {
             "var leaked = select { recv queue /> fn(_) { throw 42 } }",
         )
         .result,
-        Some(serde_json::json!({ "state": "stalled" }))
+        stalled()
     );
 
     let failure = submit(&mut server, 5, &session, "select { send queue, true }");
@@ -380,9 +421,10 @@ fn failed_slim_retained_cells_do_not_commit_their_bindings() {
     );
     assert_eq!(
         submit(&mut server, 7, &session, "queue").result,
-        Some(serde_json::json!({
-            "value": { "kind": "chan", "display": "<chan>" }
-        }))
+        completed(
+            serde_json::json!({ "kind": "chan", "display": "<chan>" }),
+            "idle",
+        )
     );
 }
 
@@ -394,11 +436,11 @@ fn dropping_a_slim_server_cancels_all_retained_cells() {
     assert!(submit(&mut server, 3, &session, "var queue = chan(1)").ok);
     assert_eq!(
         submit(&mut server, 4, &session, "select { recv queue }").result,
-        Some(serde_json::json!({ "state": "stalled" }))
+        stalled()
     );
     assert_eq!(
         submit(&mut server, 5, &session, "select { recv queue }").result,
-        Some(serde_json::json!({ "state": "stalled" }))
+        stalled()
     );
 
     drop(server);
@@ -427,25 +469,19 @@ fn session_accumulates_incomplete_source_without_affecting_other_sessions() {
     let second = open_session(&mut server);
 
     let opening = submit(&mut server, 3, &first, "val add = fn(a, b) {");
-    assert_eq!(
-        opening.result,
-        Some(serde_json::json!({ "state": "incomplete" }))
-    );
+    assert_eq!(opening.result, incomplete());
     assert!(opening.ok);
 
     let independent = submit(&mut server, 4, &second, "1 + 2");
-    assert_eq!(independent.result, Some(serde_json::json!({ "value": 3 })));
+    assert_eq!(independent.result, completed(serde_json::json!(3), "idle"));
 
     let body = submit(&mut server, 5, &first, "a + b");
-    assert_eq!(
-        body.result,
-        Some(serde_json::json!({ "state": "incomplete" }))
-    );
+    assert_eq!(body.result, incomplete());
     let complete = submit(&mut server, 6, &first, "}");
-    assert_eq!(complete.result, Some(serde_json::json!({ "value": null })));
+    assert_eq!(complete.result, completed(serde_json::Value::Null, "idle"));
 
     let called = submit(&mut server, 7, &first, "add(2, 3)");
-    assert_eq!(called.result, Some(serde_json::json!({ "value": 5 })));
+    assert_eq!(called.result, completed(serde_json::json!(5), "idle"));
 }
 
 #[test]
@@ -461,7 +497,7 @@ fn invalid_and_semantic_submissions_clear_pending_source() {
     );
 
     let reusable = submit(&mut server, 4, &session, "1 + 2");
-    assert_eq!(reusable.result, Some(serde_json::json!({ "value": 3 })));
+    assert_eq!(reusable.result, completed(serde_json::json!(3), "idle"));
 
     let semantic = submit(&mut server, 5, &session, "1 + true");
     assert!(!semantic.ok);
@@ -470,7 +506,7 @@ fn invalid_and_semantic_submissions_clear_pending_source() {
         Some("semantic")
     );
     let reusable = submit(&mut server, 6, &session, "3 + 4");
-    assert_eq!(reusable.result, Some(serde_json::json!({ "value": 7 })));
+    assert_eq!(reusable.result, completed(serde_json::json!(7), "idle"));
 }
 
 #[test]
@@ -481,25 +517,25 @@ fn session_completes_nested_blocks_and_delimited_source_incrementally() {
     for (id, source) in [(3, "val nested = fn() {"), (4, "{ { 42 } }")] {
         assert_eq!(
             submit(&mut server, id, &session, source).result,
-            Some(serde_json::json!({ "state": "incomplete" }))
+            incomplete()
         );
     }
     assert_eq!(
         submit(&mut server, 5, &session, "}").result,
-        Some(serde_json::json!({ "value": null }))
+        completed(serde_json::Value::Null, "idle")
     );
     assert_eq!(
         submit(&mut server, 6, &session, "nested()").result,
-        Some(serde_json::json!({ "value": 42 }))
+        completed(serde_json::json!(42), "idle")
     );
 
     assert_eq!(
         submit(&mut server, 7, &session, "val values = [").result,
-        Some(serde_json::json!({ "state": "incomplete" }))
+        incomplete()
     );
     assert_eq!(
         submit(&mut server, 8, &session, "1]").result,
-        Some(serde_json::json!({ "value": null }))
+        completed(serde_json::Value::Null, "idle")
     );
 }
 
@@ -510,20 +546,20 @@ fn session_retains_incomplete_strings_but_clears_complete_semantic_failures() {
 
     assert_eq!(
         submit(&mut server, 3, &session, "val text = \"hello").result,
-        Some(serde_json::json!({ "state": "incomplete" }))
+        incomplete()
     );
     assert_eq!(
         submit(&mut server, 4, &session, "world\"").result,
-        Some(serde_json::json!({ "value": null }))
+        completed(serde_json::Value::Null, "idle")
     );
 
     assert_eq!(
         submit(&mut server, 5, &session, "val invalid = fn() {").result,
-        Some(serde_json::json!({ "state": "incomplete" }))
+        incomplete()
     );
     assert_eq!(
         submit(&mut server, 6, &session, "1 + true").result,
-        Some(serde_json::json!({ "state": "incomplete" }))
+        incomplete()
     );
     let failed = submit(&mut server, 7, &session, "}");
     assert!(!failed.ok);
@@ -533,7 +569,7 @@ fn session_retains_incomplete_strings_but_clears_complete_semantic_failures() {
     );
     assert_eq!(
         submit(&mut server, 8, &session, "1 + 2").result,
-        Some(serde_json::json!({ "value": 3 }))
+        completed(serde_json::json!(3), "idle")
     );
 }
 
@@ -543,7 +579,7 @@ fn closing_a_session_discards_its_pending_source() {
     let session = open_session(&mut server);
     assert_eq!(
         submit(&mut server, 3, &session, "val pending = fn() {").result,
-        Some(serde_json::json!({ "state": "incomplete" }))
+        incomplete()
     );
 
     assert!(
@@ -554,7 +590,7 @@ fn closing_a_session_discards_its_pending_source() {
     let replacement = open_session(&mut server);
     assert_eq!(
         submit(&mut server, 5, &replacement, "1 + 2").result,
-        Some(serde_json::json!({ "value": 3 }))
+        completed(serde_json::json!(3), "idle")
     );
 }
 
@@ -573,7 +609,7 @@ fn compile_failures_do_not_commit_session_state() {
 
     let preserved = submit(&mut server, 5, &session, "x");
     assert!(preserved.ok);
-    assert_eq!(preserved.result, Some(serde_json::json!({ "value": 10 })));
+    assert_eq!(preserved.result, completed(serde_json::json!(10), "idle"));
     let absent = submit(&mut server, 6, &session, "broken");
     assert!(!absent.ok);
     assert_eq!(
@@ -598,7 +634,7 @@ fn closures_observe_later_mutations_in_their_session_environment() {
     );
     assert!(submit(&mut server, 5, &session, "increment()").ok);
     let count = submit(&mut server, 6, &session, "count");
-    assert_eq!(count.result, Some(serde_json::json!({ "value": 2 })));
+    assert_eq!(count.result, completed(serde_json::json!(2), "idle"));
 }
 
 #[test]
@@ -691,7 +727,7 @@ fn sessions_observe_host_bindings_registered_after_they_open() {
 
     let response = submit(&mut server, 3, &session, "host_answer()");
     assert!(response.ok);
-    assert_eq!(response.result, Some(serde_json::json!({ "value": 42 })));
+    assert_eq!(response.result, completed(serde_json::json!(42), "idle"));
 }
 
 #[test]
@@ -711,10 +747,10 @@ fn session_bindings_shadow_host_bindings_without_leaking_to_other_sessions() {
     let first_value = submit(&mut server, 4, &first, "shared_name");
     let second_value = submit(&mut server, 5, &second, "shared_name()");
 
-    assert_eq!(first_value.result, Some(serde_json::json!({ "value": 10 })));
+    assert_eq!(first_value.result, completed(serde_json::json!(10), "idle"));
     assert_eq!(
         second_value.result,
-        Some(serde_json::json!({ "value": 42 }))
+        completed(serde_json::json!(42), "idle")
     );
 }
 
@@ -733,10 +769,10 @@ fn sessions_retain_independent_bindings_and_closures() {
     let first_value = submit(&mut server, 8, &first, "read()");
     let second_value = submit(&mut server, 9, &second, "read()");
 
-    assert_eq!(first_value.result, Some(serde_json::json!({ "value": 11 })));
+    assert_eq!(first_value.result, completed(serde_json::json!(11), "idle"));
     assert_eq!(
         second_value.result,
-        Some(serde_json::json!({ "value": 20 }))
+        completed(serde_json::json!(20), "idle")
     );
 }
 
@@ -755,7 +791,7 @@ fn closing_a_session_preserves_the_other_session() {
         "unknown_session"
     );
     let surviving = submit(&mut server, 6, &second, "x");
-    assert_eq!(surviving.result, Some(serde_json::json!({ "value": 20 })));
+    assert_eq!(surviving.result, completed(serde_json::json!(20), "idle"));
 }
 
 #[test]
@@ -788,14 +824,14 @@ fn sessions_communicate_through_an_explicitly_shared_host_channel() {
     assert!(submit(&mut server, 5, &second, "val queue = shared_queue()").ok);
     let received = submit(&mut server, 6, &second, "select { recv queue }");
 
-    assert_eq!(received.result, Some(serde_json::json!({ "value": 99 })));
+    assert_eq!(received.result, completed(serde_json::json!(99), "idle"));
 }
 
 #[test]
 #[cfg(feature = "concurrency")]
 fn stalled_form_allows_a_later_binding_free_submission_to_resume_it() {
     let mut server = initialized_server();
-    let stalled = open_session(&mut server);
+    let stalled_session = open_session(&mut server);
     let runnable = open_session(&mut server);
     let state = Arc::new(ProducerState(Mutex::new(None)));
     let module = NativeModule::new("test.interactive_ingress", state.clone()).expect("module");
@@ -809,35 +845,41 @@ fn stalled_form_allows_a_later_binding_free_submission_to_resume_it() {
     let pending = submit(
         &mut server,
         3,
-        &stalled,
+        &stalled_session,
         "val inbox = session_input()\nselect { recv inbox /> fn(value) { println('resumed', value) } }",
     );
-    assert_eq!(
-        pending.result,
-        Some(serde_json::json!({ "state": "stalled" }))
-    );
-    let rejected = submit(&mut server, 4, &stalled, "val later = 1");
+    assert_eq!(pending.result, stalled());
+    let rejected = submit(&mut server, 4, &stalled_session, "val later = 1");
     assert_eq!(
         rejected.error.expect("background binding diagnostic").code,
         "background_bindings"
     );
-    let sent = submit(&mut server, 5, &stalled, "select { send inbox, 99 }");
-    assert_eq!(sent.result, Some(serde_json::json!({ "value": null })));
+    let sent = submit(
+        &mut server,
+        5,
+        &stalled_session,
+        "select { send inbox, 99 }",
+    );
+    assert_eq!(sent.result, completed(serde_json::Value::Null, "idle"));
     let events = server.take_events();
     assert_eq!(events.len(), 1);
     assert_eq!(
         events[0].origin,
         EventOrigin::Session {
-            session: stalled.clone()
+            session: stalled_session.clone()
         }
     );
     assert_eq!(events[0].data, serde_json::json!("resumed 99\n"));
 
-    let completed = submit(&mut server, 6, &runnable, "6 * 7");
-    assert_eq!(completed.result, Some(serde_json::json!({ "value": 42 })));
+    let completed_response = submit(&mut server, 6, &runnable, "6 * 7");
+    assert_eq!(
+        completed_response.result,
+        completed(serde_json::json!(42), "idle")
+    );
 
-    let resumed = server.handle_line(&request(7, "session.poll", Some(&stalled), None).to_string());
-    assert_eq!(resumed.result, Some(serde_json::json!({ "state": "idle" })));
+    let resumed =
+        server.handle_line(&request(7, "session.poll", Some(&stalled_session), None).to_string());
+    assert_eq!(resumed.result, session_state("idle"));
 }
 
 #[test]
@@ -876,10 +918,7 @@ fn pending_cell_bindings_are_not_visible_before_settlement() {
         &session,
         "val inbox = session_input()\nvar value = select { recv inbox }",
     );
-    assert_eq!(
-        pending.result,
-        Some(serde_json::json!({ "state": "stalled" }))
-    );
+    assert_eq!(pending.result, stalled());
 
     let unavailable = submit(&mut server, 4, &session, "value");
     assert_eq!(
@@ -902,10 +941,10 @@ fn pending_cell_bindings_are_not_visible_before_settlement() {
         slug_vm::NativeProducerStatus::Sent
     );
     let settled = server.handle_line(&request(5, "session.poll", Some(&session), None).to_string());
-    assert_eq!(settled.result, Some(serde_json::json!({ "state": "idle" })));
+    assert_eq!(settled.result, session_state("idle"));
 
     let value = submit(&mut server, 6, &session, "value");
-    assert_eq!(value.result, Some(serde_json::json!({ "value": 42 })));
+    assert_eq!(value.result, completed(serde_json::json!(42), "idle"));
 }
 
 #[test]
@@ -928,10 +967,7 @@ fn poll_delivers_a_background_task_failure() {
         &session,
         "val inbox = session_input()\nselect { recv inbox /> fn(_) { throw 42 } }",
     );
-    assert_eq!(
-        pending.result,
-        Some(serde_json::json!({ "state": "stalled" }))
-    );
+    assert_eq!(pending.result, stalled());
     let producer = state
         .0
         .lock()
@@ -1114,8 +1150,14 @@ fn server_binary_preserves_a_binding_between_ndjson_submissions() {
         .lines()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("NDJSON response"))
         .collect::<Vec<_>>();
-    assert_eq!(messages[2]["result"], serde_json::json!({ "value": null }));
-    assert_eq!(messages[3]["result"], serde_json::json!({ "value": 15 }));
+    assert_eq!(
+        messages[2]["result"],
+        serde_json::json!({ "status": "completed", "value": null, "session_state": "idle" })
+    );
+    assert_eq!(
+        messages[3]["result"],
+        serde_json::json!({ "status": "completed", "value": 15, "session_state": "idle" })
+    );
 }
 
 #[test]
@@ -1151,7 +1193,10 @@ fn server_binary_emits_program_output_only_as_ndjson_events() {
         messages[2],
         serde_json::json!({ "source": "session", "session": "s1", "event": "stdout", "data": "hello\n" })
     );
-    assert_eq!(messages[3]["result"], serde_json::json!({ "value": null }));
+    assert_eq!(
+        messages[3]["result"],
+        serde_json::json!({ "status": "completed", "value": null, "session_state": "idle" })
+    );
 }
 
 #[test]

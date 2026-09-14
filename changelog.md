@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Made interactive protocol responses report a submitted cell's outcome and
+  retained session state independently, so the REPL preserves completed values
+  while unrelated background cells remain stalled.
+
 - Made stalled interactive cells accept later binding-free input in both the
   scheduler-backed and slim host-driven runtimes, with retained-cell teardown
   on session close and server shutdown.

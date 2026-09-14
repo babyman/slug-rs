@@ -371,15 +371,17 @@ fn render_submission_response(
     let Some(result) = &response.result else {
         return Ok(false);
     };
-    if result.get("state").and_then(Value::as_str) == Some("incomplete") {
+    if result.get("status").and_then(Value::as_str) == Some("incomplete") {
         return Ok(true);
     }
-    if let Some(value) = result.get("value") {
-        if !value.is_null() {
-            writeln!(output, "{}", display_value(value))?;
+    match result.get("status").and_then(Value::as_str) {
+        Some("completed") => {
+            if let Some(value) = result.get("value").filter(|value| !value.is_null()) {
+                writeln!(output, "{}", display_value(value))?;
+            }
         }
-    } else if let Some(state) = result.get("state").and_then(Value::as_str) {
-        writeln!(output, "[{state}]")?;
+        Some("stalled") => writeln!(output, "[stalled]")?,
+        _ => {}
     }
     Ok(false)
 }

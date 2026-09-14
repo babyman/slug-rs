@@ -411,7 +411,7 @@ impl Server {
                     return Response::success(
                         request.id,
                         Some(session),
-                        json!({ "state": "incomplete" }),
+                        json!({ "status": "incomplete" }),
                     );
                 }
                 SourceReadiness::Invalid(error) => {
@@ -508,13 +508,31 @@ impl Server {
                     break;
                 }
                 if !self.sessions[&session].executions.is_empty() {
-                    response = self.pump_slim_session(request.id, &session);
-                    if !response.ok {
-                        break;
+                    let progress = self.pump_slim_session(request.id, &session);
+                    if !progress.ok {
+                        return progress;
                     }
                 }
             }
-            response
+            if !response.ok {
+                return response;
+            }
+            let foreground_stalled = response
+                .result
+                .as_ref()
+                .and_then(|result| result.get("state"))
+                .and_then(Value::as_str)
+                == Some("stalled");
+            let pending = !self.sessions[&session].executions.is_empty();
+            if foreground_stalled {
+                Response::success(request.id, Some(session), stalled_result(pending))
+            } else {
+                let value = response
+                    .result
+                    .and_then(|result| result.get("value").cloned())
+                    .unwrap_or(Value::Null);
+                Response::success(request.id, Some(session), completed_result(&value, pending))
+            }
         }
     }
 
@@ -574,6 +592,7 @@ impl Server {
             );
         }
         let mut last = SlugValue::Nil;
+        let mut foreground_stalled = false;
         for compilation in compilations {
             if !self.sessions[&session].executions.is_empty()
                 && !compilation.program.bindings().is_empty()
@@ -621,6 +640,7 @@ impl Server {
                     Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
                     active.compiler = compilation.state;
                     last = value;
+                    foreground_stalled = false;
                 }
                 VmProgress::Failed(error) => {
                     Vm::release_interactive_task(&task);
@@ -639,6 +659,7 @@ impl Server {
                             execution: task,
                             compilation,
                         });
+                    foreground_stalled = true;
                 }
             }
             if let Err(error) = self.pump_background(&session) {
@@ -650,9 +671,12 @@ impl Server {
             }
         }
         match self.pump_background(&session) {
-            Ok(true) => Response::success(id, Some(session), json!({ "state": "stalled" })),
-            Ok(false) => {
-                Response::success(id, Some(session), json!({ "value": protocol_value(&last) }))
+            Ok(pending) if foreground_stalled => {
+                Response::success(id, Some(session), stalled_result(pending))
+            }
+            Ok(pending) => {
+                let value = protocol_value(&last);
+                Response::success(id, Some(session), completed_result(&value, pending))
             }
             Err(error) => {
                 Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
@@ -663,15 +687,7 @@ impl Server {
     #[cfg(feature = "concurrency")]
     fn poll_session(&mut self, id: u64, session: String) -> Response {
         match self.pump_background(&session) {
-            Ok(pending) => Response::success(
-                id,
-                Some(session),
-                if pending {
-                    json!({ "state": "stalled" })
-                } else {
-                    json!({ "state": "idle" })
-                },
-            ),
+            Ok(pending) => Response::success(id, Some(session), session_result(pending)),
             Err(error) => {
                 Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
             }
@@ -749,11 +765,7 @@ impl Server {
         Response::success(
             id,
             Some(session.into()),
-            if self.sessions[session].executions.is_empty() {
-                json!({ "state": "idle" })
-            } else {
-                json!({ "state": "stalled" })
-            },
+            session_result(!self.sessions[session].executions.is_empty()),
         )
     }
 
@@ -1011,6 +1023,29 @@ struct InitializeParams {
 #[serde(deny_unknown_fields)]
 struct SubmitParams {
     source: String,
+}
+
+fn completed_result(value: &Value, pending: bool) -> Value {
+    json!({
+        "status": "completed",
+        "value": value,
+        "session_state": session_state(pending),
+    })
+}
+
+fn stalled_result(pending: bool) -> Value {
+    json!({
+        "status": "stalled",
+        "session_state": session_state(pending),
+    })
+}
+
+fn session_result(pending: bool) -> Value {
+    json!({ "session_state": session_state(pending) })
+}
+
+const fn session_state(pending: bool) -> &'static str {
+    if pending { "stalled" } else { "idle" }
 }
 
 fn protocol_value(value: &SlugValue) -> Value {

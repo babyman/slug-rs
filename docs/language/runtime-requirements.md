@@ -504,6 +504,15 @@ overtaking the suspended cell's eventual binding commit. Once all background
 cells settle, ordinary binding declarations are accepted again. Closing the
 session cancels every retained background cell.
 
+An interactive `submit` response MUST report the submitted cell's outcome
+independently from retained session work. A completed cell returns
+`{ "status": "completed", "value": ..., "session_state": "idle" | "stalled" }`.
+A submitted cell that itself suspends returns
+`{ "status": "stalled", "session_state": "stalled" }`. Incomplete source returns
+`{ "status": "incomplete" }`. `session.poll` reports only
+`{ "session_state": "idle" | "stalled" }`; it does not represent a submitted
+cell. Runtime and source failures remain structured protocol errors.
+
 ## Required implementation isolation
 
 The VM may use threads, goroutines, frames, environments, stacks, or slots
