@@ -240,8 +240,7 @@ fn slim_retained_cells_share_committed_mutable_bindings() {
 }
 
 #[test]
-#[cfg(not(feature = "concurrency"))]
-fn slim_submission_runs_later_binding_free_forms_after_a_stall() {
+fn submission_runs_later_binding_free_forms_after_a_stall() {
     let loader = ModuleLoader::new(".", Some("lib".into()));
     let mut server = Server::new(Vm::with_module_loader(loader));
     assert!(
@@ -275,6 +274,28 @@ fn slim_submission_runs_later_binding_free_forms_after_a_stall() {
         submit(&mut server, 4, &session, "n").result,
         Some(serde_json::json!({ "value": 1 }))
     );
+}
+
+#[test]
+#[cfg(not(feature = "concurrency"))]
+fn slim_pump_drives_each_retained_cell_once_per_cycle() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let response = submit(
+        &mut server,
+        3,
+        &session,
+        "var a = chan(1)\nvar b = chan(1)\nval wait_a = fn() { select { recv a }; println('A') }\nval wait_b = fn() { select { recv b }; println('B') }\nwait_a()\nwait_b()\nselect { send a, true }",
+    );
+
+    assert_eq!(
+        response.result,
+        Some(serde_json::json!({ "state": "stalled" }))
+    );
+    let events = server.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].data, serde_json::json!("A\n"));
 }
 
 #[test]

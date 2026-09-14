@@ -1,3 +1,5 @@
+#[cfg(not(feature = "concurrency"))]
+use std::collections::VecDeque;
 use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
 
 use serde::Deserialize;
@@ -83,7 +85,7 @@ struct Session {
     #[cfg(feature = "concurrency")]
     executions: Vec<InteractiveSubmission>,
     #[cfg(not(feature = "concurrency"))]
-    executions: Vec<InteractiveSlimSubmission>,
+    executions: VecDeque<InteractiveSlimSubmission>,
     pending_source: String,
 }
 
@@ -306,9 +308,9 @@ impl Server {
                 compiler: InteractiveCompilerState::default(),
                 runtime: self.vm.interactive_environment(),
                 #[cfg(feature = "concurrency")]
-                executions: Vec::new(),
+                executions: Vec::default(),
                 #[cfg(not(feature = "concurrency"))]
-                executions: Vec::new(),
+                executions: VecDeque::default(),
                 pending_source: String::new(),
             },
         );
@@ -493,16 +495,15 @@ impl Server {
                         }
                     }
                 };
-                self.sessions
-                    .get_mut(&session)
-                    .expect("validated session remains available during submission")
-                    .executions
-                    .push(InteractiveSlimSubmission {
+                response = self.drive_slim_submission(
+                    request.id,
+                    &session,
+                    InteractiveSlimSubmission {
                         execution,
                         compilation,
                         runtime,
-                    });
-                response = self.drive_slim_session(request.id, session.clone());
+                    },
+                );
                 if !response.ok {
                     break;
                 }
@@ -549,6 +550,7 @@ impl Server {
     }
 
     #[cfg(feature = "concurrency")]
+    #[allow(clippy::too_many_lines)]
     fn submit_forms(&mut self, id: u64, session: String, path: &str, source: &str) -> Response {
         let compiler = &self.sessions[&session].compiler;
         let compilations = match self.vm.compile_interactive_forms(path, source, compiler) {
@@ -573,6 +575,18 @@ impl Server {
         }
         let mut last = SlugValue::Nil;
         for compilation in compilations {
+            if !self.sessions[&session].executions.is_empty()
+                && !compilation.program.bindings().is_empty()
+            {
+                return Response::failure(
+                    Some(id),
+                    Some(session),
+                    Diagnostic::protocol(
+                        "background_bindings",
+                        "a session with suspended forms accepts only binding-free source until they settle",
+                    ),
+                );
+            }
             let task = {
                 let (vm, sessions) = (&mut self.vm, &mut self.sessions);
                 let active = sessions
@@ -625,12 +639,19 @@ impl Server {
                             execution: task,
                             compilation,
                         });
-                    return Response::success(id, Some(session), json!({ "state": "stalled" }));
                 }
+            }
+            if let Err(error) = self.pump_background(&session) {
+                return Response::failure(
+                    Some(id),
+                    Some(session),
+                    Diagnostic::from_runtime(&error),
+                );
             }
         }
         match self.pump_background(&session) {
-            Ok(_) => {
+            Ok(true) => Response::success(id, Some(session), json!({ "state": "stalled" })),
+            Ok(false) => {
                 Response::success(id, Some(session), json!({ "value": protocol_value(&last) }))
             }
             Err(error) => {
@@ -743,17 +764,27 @@ impl Server {
                 .sessions
                 .get_mut(&session)
                 .expect("validated session remains available during its poll");
-            active.executions.pop()
+            active.executions.pop_front()
         };
-        let Some(InteractiveSlimSubmission {
+        let Some(submission) = submission else {
+            return Response::success(id, Some(session), json!({ "state": "idle" }));
+        };
+        self.drive_slim_submission(id, &session, submission)
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    fn drive_slim_submission(
+        &mut self,
+        id: u64,
+        session: &str,
+        submission: InteractiveSlimSubmission,
+    ) -> Response {
+        let InteractiveSlimSubmission {
             mut execution,
             compilation,
             mut runtime,
-        }) = submission
-        else {
-            return Response::success(id, Some(session), json!({ "state": "idle" }));
-        };
-        self.output.borrow_mut().begin(session.clone());
+        } = submission;
+        self.output.borrow_mut().begin(session.into());
         let progress = {
             self.vm
                 .run_interactive_execution_until_stalled(&mut execution, &mut runtime)
@@ -763,7 +794,7 @@ impl Server {
             VmProgress::Completed(value) => {
                 let active = self
                     .sessions
-                    .get_mut(&session)
+                    .get_mut(session)
                     .expect("active session remains available during its poll");
                 Vm::synchronize_interactive_submission(
                     &runtime,
@@ -774,24 +805,26 @@ impl Server {
                 active.compiler = compilation.state;
                 Response::success(
                     id,
-                    Some(session),
+                    Some(session.into()),
                     json!({ "value": protocol_value(&value) }),
                 )
             }
-            VmProgress::Failed(error) => {
-                Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
-            }
+            VmProgress::Failed(error) => Response::failure(
+                Some(id),
+                Some(session.into()),
+                Diagnostic::from_runtime(&error),
+            ),
             VmProgress::MadeProgress | VmProgress::Stalled => {
                 self.sessions
-                    .get_mut(&session)
+                    .get_mut(session)
                     .expect("active session remains available during its poll")
                     .executions
-                    .push(InteractiveSlimSubmission {
+                    .push_back(InteractiveSlimSubmission {
                         execution,
                         compilation,
                         runtime,
                     });
-                Response::success(id, Some(session), json!({ "state": "stalled" }))
+                Response::success(id, Some(session.into()), json!({ "state": "stalled" }))
             }
         }
     }
