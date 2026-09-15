@@ -829,7 +829,7 @@ pub struct StructValue {
 
 impl StructValue {
     pub(crate) fn copy_fields(
-        &self,
+        self: Rc<Self>,
         names: &[String],
         replacements: &[Value],
     ) -> Result<Rc<Self>, String> {
@@ -846,20 +846,17 @@ impl StructValue {
                 return Err(format!("struct has no field '{name}'"));
             }
         }
-        let mut values = self.values.clone();
+        let StructValue { schema, mut values } =
+            Rc::try_unwrap(self).unwrap_or_else(|value| (*value).clone());
         for (name, replacement) in names.iter().zip(replacements) {
-            let index = self
-                .schema
+            let index = schema
                 .fields
                 .iter()
                 .position(|field| field.name.as_ref() == name)
                 .expect("field names were validated");
             values[index] = replacement.clone();
         }
-        Ok(Rc::new(Self {
-            schema: self.schema.clone(),
-            values,
-        }))
+        Ok(Rc::new(Self { schema, values }))
     }
 }
 
@@ -883,7 +880,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Str(Rc<str>),
-    Bytes(Rc<[u8]>),
+    Bytes(Rc<Vec<u8>>),
     List(Rc<Vec<Value>>),
     Map(Rc<Vec<(Value, Value)>>),
     StructSchema(Rc<StructSchema>),

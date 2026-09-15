@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Optimized immutable list, map, bytes, and struct updates to reuse uniquely
+  owned backing allocations while preserving copy-on-write aliases.
+
 - Added opt-in VM collection metrics, size-tiered collection benchmarks, and
   retained-map peak-RSS fixtures to guide the immutable collection redesign.
 

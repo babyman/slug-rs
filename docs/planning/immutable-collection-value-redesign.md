@@ -103,12 +103,12 @@ VM.
 
 ### 3. Optimize unique-owner persistent updates
 
-- [ ] Implement internal consume-or-copy update paths for lists, maps, bytes,
+- [x] Implement internal consume-or-copy update paths for lists, maps, bytes,
   and structs using `Rc::try_unwrap`/`Rc::make_mut` only behind immutable
   wrapper operations.
-- [ ] Preserve exact old-value behavior for shared aliases and retain existing
+- [x] Preserve exact old-value behavior for shared aliases and retain existing
   insertion-order rules for maps.
-- [ ] Measure copied elements and allocations for unique versus shared updates;
+- [x] Measure copied elements and allocations for unique versus shared updates;
   retain the optimization only if ordinary construction/update workloads
   improve without regressing retained-alias workloads materially.
 

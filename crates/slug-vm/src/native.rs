@@ -474,7 +474,9 @@ impl NativeOwnedValue {
 
     #[must_use]
     pub fn bytes(value: impl Into<Rc<[u8]>>) -> Self {
-        Self(Value::Bytes(Bytes::from_shared(value.into()).into_shared()))
+        Self(Value::Bytes(
+            Bytes::from_values(value.into().to_vec()).into_shared(),
+        ))
     }
 
     #[must_use]

@@ -62,6 +62,8 @@ fn records_map_construction_lookup_and_update_costs() {
     assert_eq!(metrics.map_entries_examined, 1);
     assert_eq!(metrics.collection_updates, 1);
     assert_eq!(metrics.collection_elements_copied, 2);
+    assert_eq!(metrics.collection_unique_owner_updates, 1);
+    assert_eq!(metrics.collection_shared_owner_updates, 0);
 }
 
 #[test]

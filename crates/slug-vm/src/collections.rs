@@ -57,22 +57,23 @@ impl List {
     }
 
     pub(crate) fn concat(self, other: &Self) -> Self {
-        let mut values = (*self.0).clone();
+        let mut values = self.into_values();
         values.extend(other.iter().cloned());
         Self(Rc::new(values))
     }
 
     pub(crate) fn append(self, value: Value) -> Self {
-        let mut values = (*self.0).clone();
+        let mut values = self.into_values();
         values.push(value);
         Self(Rc::new(values))
     }
 
     pub(crate) fn prepend(self, value: Value) -> Self {
-        let mut values = Vec::with_capacity(self.len() + 1);
-        values.push(value);
-        values.extend(self.iter().cloned());
-        Self(Rc::new(values))
+        let values = self.into_values();
+        let mut result = Vec::with_capacity(values.len() + 1);
+        result.push(value);
+        result.extend(values);
+        Self(Rc::new(result))
     }
 
     pub(crate) fn slice(&self, indexes: impl Iterator<Item = usize>) -> Self {
@@ -82,10 +83,14 @@ impl List {
                 .collect::<Vec<_>>(),
         ))
     }
+
+    fn into_values(self) -> Vec<Value> {
+        Rc::try_unwrap(self.0).unwrap_or_else(|values| (*values).clone())
+    }
 }
 
 #[derive(Clone)]
-pub(crate) struct Bytes(Rc<[u8]>);
+pub(crate) struct Bytes(Rc<Vec<u8>>);
 
 pub(crate) struct BytesView<'a>(&'a [u8]);
 
@@ -101,14 +106,14 @@ impl<'a> BytesView<'a> {
 
 impl Bytes {
     pub(crate) fn from_values(values: Vec<u8>) -> Self {
-        Self(values.into())
+        Self(Rc::new(values))
     }
 
-    pub(crate) fn from_shared(values: Rc<[u8]>) -> Self {
+    pub(crate) fn from_shared(values: Rc<Vec<u8>>) -> Self {
         Self(values)
     }
 
-    pub(crate) fn into_shared(self) -> Rc<[u8]> {
+    pub(crate) fn into_shared(self) -> Rc<Vec<u8>> {
         self.0
     }
 
@@ -125,31 +130,31 @@ impl Bytes {
     }
 
     pub(crate) fn concat(self, other: &Self) -> Self {
-        let mut values = self.0.to_vec();
+        let mut values = self.into_values();
         values.extend(other.iter());
-        Self(values.into())
+        Self(Rc::new(values))
     }
 
     pub(crate) fn append(self, value: u8) -> Self {
-        let mut values = self.0.to_vec();
+        let mut values = self.into_values();
         values.push(value);
-        Self(values.into())
+        Self(Rc::new(values))
     }
 
     pub(crate) fn prepend(self, value: u8) -> Self {
-        let mut values = Vec::with_capacity(self.len() + 1);
-        values.push(value);
-        values.extend(self.iter());
-        Self(values.into())
+        let values = self.into_values();
+        let mut result = Vec::with_capacity(values.len() + 1);
+        result.push(value);
+        result.extend(values);
+        Self(Rc::new(result))
     }
 
     pub(crate) fn slice(&self, indexes: impl Iterator<Item = usize>) -> Self {
-        Self(
-            indexes
-                .map(|index| self.0[index])
-                .collect::<Vec<_>>()
-                .into(),
-        )
+        Self(Rc::new(indexes.map(|index| self.0[index]).collect()))
+    }
+
+    fn into_values(self) -> Vec<u8> {
+        Rc::try_unwrap(self.0).unwrap_or_else(|values| (*values).clone())
     }
 }
 
@@ -206,7 +211,7 @@ impl Map {
     }
 
     pub(crate) fn merge(self, other: &Self) -> Self {
-        let mut entries = (*self.0).clone();
+        let mut entries = self.into_entries();
         for (key, value) in other.iter() {
             if let Some((_, existing)) = entries.iter_mut().find(|(candidate, _)| candidate == key)
             {
@@ -219,13 +224,9 @@ impl Map {
     }
 
     pub(crate) fn remove(self, key: &Value) -> Self {
-        Self(Rc::new(
-            self.0
-                .iter()
-                .filter(|(candidate, _)| candidate != key)
-                .cloned()
-                .collect(),
-        ))
+        let mut entries = self.into_entries();
+        entries.retain(|(candidate, _)| candidate != key);
+        Self(Rc::new(entries))
     }
 
     pub(crate) fn copy_string_fields(
@@ -233,7 +234,7 @@ impl Map {
         names: &[String],
         replacements: &[Value],
     ) -> Result<Self, String> {
-        let mut entries = (*self.0).clone();
+        let mut entries = self.into_entries();
         for (index, (name, replacement)) in names.iter().zip(replacements).enumerate() {
             if names[..index].contains(name) {
                 return Err(format!("duplicate map key '{name}'"));
@@ -254,5 +255,9 @@ impl Map {
             && self
                 .iter()
                 .all(|(key, value)| other.get(key).is_some_and(|other| other == value))
+    }
+
+    fn into_entries(self) -> Vec<(Value, Value)> {
+        Rc::try_unwrap(self.0).unwrap_or_else(|entries| (*entries).clone())
     }
 }

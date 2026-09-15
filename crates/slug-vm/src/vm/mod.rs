@@ -2250,7 +2250,10 @@ impl Vm {
                         );
                     }
                     (Value::Bytes(left), Value::Bytes(right)) => {
-                        self.record_collection_update(left.len() + right.len(), false);
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
                     }
                     _ => {}
                 }
@@ -2295,7 +2298,9 @@ impl Vm {
                     Value::List(values) => {
                         self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
                     }
-                    Value::Bytes(values) => self.record_collection_update(values.len(), false),
+                    Value::Bytes(values) => {
+                        self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
+                    }
                     _ => {}
                 }
                 self.stack.push(
@@ -2310,7 +2315,9 @@ impl Vm {
                     Value::List(values) => {
                         self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
                     }
-                    Value::Bytes(values) => self.record_collection_update(values.len(), false),
+                    Value::Bytes(values) => {
+                        self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
+                    }
                     _ => {}
                 }
                 self.stack.push(
