@@ -177,6 +177,7 @@ pub(crate) struct CompiledChunk {
     pub(crate) locals: usize,
     pub(crate) constants: Vec<Constant>,
     pub(crate) code: Vec<PackedInstruction>,
+    invalid_instructions: HashMap<usize, String>,
 }
 
 /// A literal embedded in a bytecode chunk.
@@ -546,10 +547,7 @@ impl Chunk {
 /// All code available to a VM invocation.
 #[derive(Clone, Debug, Default)]
 pub struct Program {
-    chunks: Vec<Chunk>,
-    /// Transitional executable form. The following commit makes this the only
-    /// installed code representation once validation consumes packed code.
-    compiled_chunks: Vec<CompiledChunk>,
+    chunks: Vec<CompiledChunk>,
     names: HashMap<String, usize>,
     bindings: Vec<String>,
     declarations: Vec<ModuleDeclaration>,
@@ -618,6 +616,14 @@ impl Program {
     }
 
     pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {
+        let invalid_instructions = chunk
+            .code
+            .iter()
+            .enumerate()
+            .filter_map(|(index, instruction)| {
+                Self::builder_limit_error(&instruction.op).map(|error| (index, error))
+            })
+            .collect();
         let span_remap = chunk
             .spans
             .drain(..)
@@ -636,26 +642,32 @@ impl Program {
             callable_identity: chunk.callable_identity,
             locals: chunk.locals,
             constants: chunk.constants.clone(),
-            code: chunk
-                .code
-                .iter()
-                .map(|instruction| self.pack_instruction(instruction))
-                .collect(),
+            code: chunk.code.iter().map(Self::pack_instruction).collect(),
+            invalid_instructions,
         };
         let index = self.chunks.len();
-        self.names.insert(chunk.name.clone(), index);
-        self.chunks.push(chunk);
-        self.compiled_chunks.push(compiled);
+        self.names.insert(compiled.name.clone(), index);
+        self.chunks.push(compiled);
         index
     }
 
-    #[must_use]
-    pub fn chunk(&self, index: usize) -> Option<&Chunk> {
-        self.chunks.get(index)
+    fn builder_limit_error(op: &Op) -> Option<String> {
+        match op {
+            Op::Call(count) if count.checked_add(1).is_none() => {
+                Some("call argument count is too large".into())
+            }
+            Op::TryMatch {
+                bindings, operands, ..
+            } if operands.checked_add(1).is_none() || bindings.checked_add(1).is_none() => {
+                Some("match stack count is too large".into())
+            }
+            _ => None,
+        }
     }
 
-    pub(crate) fn compiled_chunk(&self, index: usize) -> Option<&CompiledChunk> {
-        self.compiled_chunks.get(index)
+    #[must_use]
+    pub(crate) fn chunk(&self, index: usize) -> Option<&CompiledChunk> {
+        self.chunks.get(index)
     }
 
     #[must_use]
@@ -690,14 +702,14 @@ impl Program {
         let largest_metadata_pool = self.largest_metadata_pool();
         let span_runs = self.span_runs();
         let source_table_capacity_bytes = self.source_table_capacity_bytes();
-        let descriptor_capacity_bytes = self.descriptor_capacity_bytes();
+        let descriptor_capacity_bytes = Self::descriptor_capacity_bytes();
         let (largest_chunk_instructions, largest_constant_pool, largest_local_frame) =
             self.largest_chunk_metrics();
         BytecodeLayoutMetrics {
             program_inline_bytes: std::mem::size_of::<Self>(),
             instructions,
-            instruction_bytes: instructions * std::mem::size_of::<Instruction>(),
-            instruction_size_bytes: std::mem::size_of::<Instruction>(),
+            instruction_bytes: instructions * std::mem::size_of::<PackedInstruction>(),
+            instruction_size_bytes: std::mem::size_of::<PackedInstruction>(),
             chunk_storage_bytes,
             constant_pool_slots,
             constant_pool_capacity_bytes,
@@ -719,7 +731,7 @@ impl Program {
         self.chunks.iter().fold((0, 0, 0), |totals, chunk| {
             (
                 totals.0
-                    + chunk.code.capacity() * std::mem::size_of::<Instruction>()
+                    + chunk.code.capacity() * std::mem::size_of::<PackedInstruction>()
                     + chunk.constants.capacity() * std::mem::size_of::<Constant>()
                     + chunk.parameters.capacity() * std::mem::size_of::<ParameterSignature>()
                     + chunk.name.capacity(),
@@ -729,27 +741,8 @@ impl Program {
         })
     }
 
-    fn descriptor_capacity_bytes(&self) -> usize {
-        self.chunks
-            .iter()
-            .flat_map(|chunk| &chunk.code)
-            .map(|instruction| match &instruction.op {
-                Op::Interpolate(parts) => {
-                    parts.capacity() * std::mem::size_of::<String>()
-                        + parts.iter().map(String::capacity).sum::<usize>()
-                }
-                Op::ListSpread(spreads) => spreads.capacity() * std::mem::size_of::<bool>(),
-                Op::CallSpread(kinds)
-                | Op::PipelineCall(kinds)
-                | Op::Import(kinds)
-                | Op::Recur(kinds) => kinds.capacity() * std::mem::size_of::<CallArgumentKind>(),
-                Op::CallSelected { kinds, .. } | Op::PipelineCallSelected { kinds, .. } => {
-                    kinds.capacity() * std::mem::size_of::<CallArgumentKind>()
-                }
-                Op::Select(cases) => cases.capacity() * std::mem::size_of::<SelectCase>(),
-                _ => 0,
-            })
-            .sum()
+    const fn descriptor_capacity_bytes() -> usize {
+        0
     }
 
     fn metadata_pool_metrics(&self) -> (usize, usize) {
@@ -758,14 +751,24 @@ impl Program {
             + self.capture_lists.len()
             + self.schema_fields.len()
             + self.struct_fields.len()
-            + self.match_patterns.len();
+            + self.match_patterns.len()
+            + self.interpolations.len()
+            + self.list_spreads.len()
+            + self.call_arguments.len()
+            + self.selected_calls.len()
+            + self.select_cases.len();
         let capacity_bytes = self.callable_identities.capacity()
             * std::mem::size_of::<CallableIdentity>()
             + self.global_names.capacity() * std::mem::size_of::<String>()
             + self.capture_lists.capacity() * std::mem::size_of::<Vec<Capture>>()
             + self.schema_fields.capacity() * std::mem::size_of::<Vec<SchemaField>>()
             + self.struct_fields.capacity() * std::mem::size_of::<Vec<String>>()
-            + self.match_patterns.capacity() * std::mem::size_of::<MatchPattern>();
+            + self.match_patterns.capacity() * std::mem::size_of::<MatchPattern>()
+            + self.interpolations.capacity() * std::mem::size_of::<Vec<String>>()
+            + self.list_spreads.capacity() * std::mem::size_of::<Vec<bool>>()
+            + self.call_arguments.capacity() * std::mem::size_of::<Vec<CallArgumentKind>>()
+            + self.selected_calls.capacity() * std::mem::size_of::<(CallArgumentsId, usize)>()
+            + self.select_cases.capacity() * std::mem::size_of::<Vec<SelectCase>>();
         (slots, capacity_bytes)
     }
 
@@ -792,6 +795,11 @@ impl Program {
             self.schema_fields.len(),
             self.struct_fields.len(),
             self.match_patterns.len(),
+            self.interpolations.len(),
+            self.list_spreads.len(),
+            self.call_arguments.len(),
+            self.selected_calls.len(),
+            self.select_cases.len(),
         ]
         .into_iter()
         .max()
@@ -1040,10 +1048,11 @@ impl Program {
         id
     }
 
-    fn pack_instruction(&self, instruction: &Instruction) -> PackedInstruction {
+    #[allow(clippy::too_many_lines)]
+    fn pack_instruction(instruction: &Instruction) -> PackedInstruction {
         // Builder programs are intentionally malformed-testable; validation
         // still observes the builder form during this transition.
-        let operand = |value: usize| value as u32;
+        let operand = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
         let (opcode, a, b, c) = match &instruction.op {
             Op::Constant(v) => (PackedOpcode::Constant, operand(*v), 0, 0),
             Op::InterpolatePooled(v) => (PackedOpcode::Interpolate, v.0, 0, 0),
@@ -1167,6 +1176,135 @@ impl Program {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn unpack_instruction(
+        instruction: &PackedInstruction,
+    ) -> Result<Instruction, String> {
+        let n = |value: u32| value as usize;
+        let missing = |name: &str| Err(format!("packed instruction references missing {name}"));
+        let op = match instruction.opcode {
+            PackedOpcode::Constant => Op::Constant(n(instruction.a)),
+            PackedOpcode::Interpolate => Op::InterpolatePooled(InterpolationId(instruction.a)),
+            PackedOpcode::Nil => Op::Nil,
+            PackedOpcode::True => Op::True,
+            PackedOpcode::False => Op::False,
+            PackedOpcode::Pop => Op::Pop,
+            PackedOpcode::Duplicate => Op::Duplicate,
+            PackedOpcode::GetLocal => Op::GetLocal(n(instruction.a)),
+            PackedOpcode::SetLocal => Op::SetLocal(n(instruction.a)),
+            PackedOpcode::GetCapture => Op::GetCapture(n(instruction.a)),
+            PackedOpcode::SetCapture => Op::SetCapture(n(instruction.a)),
+            PackedOpcode::GetGlobal => Op::GetGlobalPooled(GlobalNameId(instruction.a)),
+            PackedOpcode::NotImplemented => Op::NotImplemented,
+            PackedOpcode::DefineGlobal => Op::DefineGlobalPooled(GlobalNameId(instruction.a)),
+            PackedOpcode::CombineOverloads => Op::CombineOverloads,
+            PackedOpcode::DefineMapGlobals => Op::DefineMapGlobals,
+            PackedOpcode::RecordModuleTag => Op::RecordModuleTag {
+                declaration: n(instruction.a),
+                tag: n(instruction.b),
+                arguments: n(instruction.c),
+            },
+            PackedOpcode::SetGlobal => Op::SetGlobalPooled(GlobalNameId(instruction.a)),
+            PackedOpcode::MakeClosure => Op::MakeClosurePooled {
+                chunk: n(instruction.a),
+                captures: CaptureListId(instruction.b),
+            },
+            PackedOpcode::List => Op::List(n(instruction.a)),
+            PackedOpcode::ListSpread => Op::ListSpreadPooled(ListSpreadId(instruction.a)),
+            PackedOpcode::Map => Op::Map(n(instruction.a)),
+            PackedOpcode::StructSchema => Op::StructSchemaPooled(SchemaFieldsId(instruction.a)),
+            PackedOpcode::Struct => Op::StructPooled(StructFieldsId(instruction.a)),
+            PackedOpcode::StructCopy => Op::StructCopyPooled(StructFieldsId(instruction.a)),
+            PackedOpcode::GetIndex => Op::GetIndex,
+            PackedOpcode::GetSlice => Op::GetSlice {
+                has_start: instruction.a != 0,
+                has_end: instruction.b != 0,
+                has_step: instruction.c != 0,
+            },
+            PackedOpcode::Add => Op::Add,
+            PackedOpcode::Subtract => Op::Subtract,
+            PackedOpcode::Multiply => Op::Multiply,
+            PackedOpcode::Divide => Op::Divide,
+            PackedOpcode::Modulo => Op::Modulo,
+            PackedOpcode::BitAnd => Op::BitAnd,
+            PackedOpcode::BitOr => Op::BitOr,
+            PackedOpcode::BitXor => Op::BitXor,
+            PackedOpcode::ShiftLeft => Op::ShiftLeft,
+            PackedOpcode::ShiftRight => Op::ShiftRight,
+            PackedOpcode::ListAppend => Op::ListAppend,
+            PackedOpcode::ListPrepend => Op::ListPrepend,
+            PackedOpcode::Negate => Op::Negate,
+            PackedOpcode::Not => Op::Not,
+            PackedOpcode::BitNot => Op::BitNot,
+            PackedOpcode::Equal => Op::Equal,
+            PackedOpcode::Greater => Op::Greater,
+            PackedOpcode::Less => Op::Less,
+            PackedOpcode::GuardGreater => Op::GuardGreater,
+            PackedOpcode::GuardLess => Op::GuardLess,
+            PackedOpcode::Jump => Op::Jump(n(instruction.a)),
+            PackedOpcode::JumpIfFalse => Op::JumpIfFalse(n(instruction.a)),
+            PackedOpcode::JumpIfProvided => Op::JumpIfProvided {
+                slot: n(instruction.a),
+                target: n(instruction.b),
+            },
+            PackedOpcode::Call => Op::Call(n(instruction.a)),
+            PackedOpcode::CallSpread => Op::CallSpreadPooled(CallArgumentsId(instruction.a)),
+            PackedOpcode::CallSelected => Op::CallSelectedPooled(SelectedCallId(instruction.a)),
+            PackedOpcode::PipelineCall => Op::PipelineCallPooled(CallArgumentsId(instruction.a)),
+            PackedOpcode::PipelineCallSelected => {
+                Op::PipelineCallSelectedPooled(SelectedCallId(instruction.a))
+            }
+            PackedOpcode::Import => Op::ImportPooled(CallArgumentsId(instruction.a)),
+            PackedOpcode::Spawn => Op::Spawn,
+            PackedOpcode::Nursery => Op::Nursery {
+                has_limit: instruction.a != 0,
+            },
+            PackedOpcode::Select => Op::SelectPooled(SelectCasesId(instruction.a)),
+            PackedOpcode::SelectApply => Op::SelectApply,
+            PackedOpcode::TryMatch => Op::TryMatchPooled {
+                pattern: MatchPatternId(instruction.a),
+                bindings: n(instruction.b),
+                operands: n(instruction.c),
+            },
+            PackedOpcode::MatchFailure => Op::MatchFailure,
+            PackedOpcode::Throw => Op::Throw,
+            PackedOpcode::EnterScope => Op::EnterScope,
+            PackedOpcode::LeaveScope => Op::LeaveScope,
+            PackedOpcode::Defer => Op::Defer {
+                mode: match instruction.a {
+                    0 => DeferMode::Always,
+                    1 => DeferMode::Success,
+                    2 => DeferMode::Error,
+                    _ => return missing("defer mode"),
+                },
+            },
+            PackedOpcode::Recur => Op::RecurPooled(CallArgumentsId(instruction.a)),
+            PackedOpcode::Return => Op::Return,
+        };
+        Ok(Instruction {
+            op,
+            span: instruction.span,
+        })
+    }
+
+    fn unpack_chunk(chunk: &CompiledChunk) -> Result<Chunk, String> {
+        Ok(Chunk {
+            name: chunk.name.clone(),
+            arity: chunk.arity,
+            parameters: chunk.parameters.clone(),
+            callable_identity: chunk.callable_identity,
+            locals: chunk.locals,
+            constants: chunk.constants.clone(),
+            code: chunk
+                .code
+                .iter()
+                .map(Self::unpack_instruction)
+                .collect::<Result<_, _>>()?,
+            spans: Vec::new(),
+            span_ids: HashMap::new(),
+        })
+    }
+
     /// Names declared for export by a compiled source module.
     #[must_use]
     pub fn exports(&self) -> &[String] {
@@ -1245,7 +1383,11 @@ impl Program {
         {
             return Err("program entrypoint references missing callable identity".into());
         }
-        for (chunk_index, chunk) in self.chunks.iter().enumerate() {
+        for (chunk_index, compiled) in self.chunks.iter().enumerate() {
+            if let Some(error) = compiled.invalid_instructions.values().next() {
+                return Err(error.clone());
+            }
+            let chunk = Self::unpack_chunk(compiled)?;
             if chunk.locals < chunk.arity {
                 return Err(format!(
                     "function `{}` has {} local slots for {} parameters",
@@ -1280,7 +1422,7 @@ impl Program {
                         span.index()
                     ));
                 }
-                self.validate_op(chunk_index, instruction_index, chunk, &instruction.op)?;
+                self.validate_op(chunk_index, instruction_index, &chunk, &instruction.op)?;
             }
             let initial_stack = if chunk_index == entry {
                 0
@@ -1290,7 +1432,7 @@ impl Program {
                     .checked_add(1)
                     .ok_or_else(|| format!("function `{}` has too many parameters", chunk.name))?
             };
-            self.validate_stack(chunk, initial_stack)?;
+            self.validate_stack(&chunk, initial_stack)?;
         }
         Ok(())
     }
@@ -1452,7 +1594,7 @@ impl Program {
                 Err(format!("{} has no select cases", location()))
             }
             Op::SelectPooled(id)
-                if self.select_cases(*id).is_some_and(|cases| cases.is_empty()) =>
+                if self.select_cases(*id).is_some_and(<[SelectCase]>::is_empty) =>
             {
                 Err(format!("{} has no select cases", location()))
             }

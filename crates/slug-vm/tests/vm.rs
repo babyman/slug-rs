@@ -439,10 +439,7 @@ fn reports_vm_runtime_layouts() {
     let layout = Vm::layout_metrics();
     assert_eq!(layout.value_size_bytes, std::mem::size_of::<Value>());
     assert_eq!(layout.value_alignment_bytes, std::mem::align_of::<Value>());
-    assert_eq!(
-        layout.instruction_size_bytes,
-        std::mem::size_of::<slug_vm::Instruction>()
-    );
+    assert!(layout.instruction_size_bytes < std::mem::size_of::<slug_vm::Instruction>());
     assert!(layout.local_slot_size_bytes >= layout.value_size_bytes);
     assert!(layout.frame_size_bytes > layout.local_slot_size_bytes);
     assert!(layout.closure_size_bytes > 0);

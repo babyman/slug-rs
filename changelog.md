@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Store installed VM bytecode as fixed-width packed instructions with pooled
+  variable metadata, while retaining the public builder types only until a
+  program is installed.
+
 - Replaced the scheduler's linear timer vector with an indexed min-heap.
   Timed `select` cancellation now removes exact registrations without scanning
   every pending deadline, while equal deadlines retain registration order.

@@ -591,7 +591,7 @@ impl Vm {
             task_execution_size_bytes: std::mem::size_of::<TaskExecution>(),
             #[cfg(feature = "concurrency")]
             task_execution_alignment_bytes: std::mem::align_of::<TaskExecution>(),
-            instruction_size_bytes: std::mem::size_of::<crate::Instruction>(),
+            instruction_size_bytes: std::mem::size_of::<crate::bytecode::PackedInstruction>(),
             instruction_alignment_bytes: std::mem::align_of::<crate::Instruction>(),
         }
     }
@@ -2806,10 +2806,7 @@ impl Vm {
         Ok(BorrowedSpanOpOutcome::Continue)
     }
 
-    fn next_instruction<'program>(
-        &mut self,
-        program: &'program Program,
-    ) -> VmResult<&'program crate::Instruction> {
+    fn next_instruction(&mut self, program: &Program) -> VmResult<crate::Instruction> {
         let (chunk_index, ip) = self
             .frames
             .last()
@@ -2841,10 +2838,14 @@ impl Vm {
             metrics.instructions_executed += 1;
         }
         self.frames.last_mut().expect("active frame was checked").ip += 1;
-        Ok(instruction)
+        Program::unpack_instruction(instruction)
+            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))
     }
 
-    fn current_chunk<'a>(&self, program: &'a Program) -> VmResult<&'a crate::Chunk> {
+    fn current_chunk<'a>(
+        &self,
+        program: &'a Program,
+    ) -> VmResult<&'a crate::bytecode::CompiledChunk> {
         let chunk = self
             .frames
             .last()

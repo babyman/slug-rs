@@ -442,26 +442,18 @@ Compact encoding is independent of whether expression temporaries use an
 operand stack or frame registers.
 
 The layout report now records maximum chunk length, constant-pool size, local
-frame size, and metadata-pool size alongside the 64-byte Rust `Instruction`
-layout. The representative corpus reaches at most 525 instructions in one
+frame size, and metadata-pool size. The representative corpus reaches at most 525 instructions in one
 chunk, 16 constants, one local frame slot, and 33 metadata entries. These are
 comfortably below 16-bit limits, but a future installed encoding adopts an
 8-bit opcode tag plus 32-bit operand/index fields: `u32` aligns with the
 existing checked metadata IDs and leaves room for larger real programs without
 making host pointer width part of the design.
 
-No second byte-stream encoding is installed yet. The current typed, verified
-private representation remains the executable form until the Stage 7
-stack/register experiment can compare total executable size, dispatch, and
-compiler complexity against it. Regular stack operations and the existing
-medium-grained semantic boundaries remain the selected instruction format; no
-benchmark has identified a stable sequence worth fusing. See [Select a future compact executable shape](../decisions/2026-08-30-select-future-compact-executable-shape.md).
-
-Accordingly, this stage records a field-width and instruction-shape direction;
-it does not claim that a compact executable representation has been installed.
-The current layout report counts inline Rust `Instruction` storage and pool
-limits, not heap storage owned by inline vectors and strings, constant and
-metadata pool contents, or copies of a program retained by task execution.
+Installed programs now lower builder instructions into a private 24-byte packed
+representation with three `u32` operands and pooled variable metadata. Regular
+stack operations and the existing medium-grained semantic boundaries remain
+the selected format; no benchmark has identified a stable sequence worth
+fusing. See [Pack installed bytecode](../decisions/2026-09-14-packed-installed-bytecode.md).
 
 ## Stage 7: stack-versus-register decision gate
 
