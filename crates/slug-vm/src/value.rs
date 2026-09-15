@@ -996,7 +996,14 @@ impl PartialEq for Value {
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::List(a), Self::List(b)) | (Self::Overloads(a), Self::Overloads(b)) => a == b,
-            (Self::Map(a), Self::Map(b)) => a == b,
+            (Self::Map(a), Self::Map(b)) => {
+                a.len() == b.len()
+                    && a.iter().all(|(key, value)| {
+                        b.iter()
+                            .find(|(other_key, _)| other_key == key)
+                            .is_some_and(|(_, other_value)| other_value == value)
+                    })
+            }
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
             (Self::Struct(a), Self::Struct(b)) => {
                 Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values

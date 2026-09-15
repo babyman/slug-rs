@@ -976,7 +976,7 @@ fn persistently_merges_removes_and_enumerates_maps() {
          val original = {first: 1, second: 2}\n\
          val merged = original + {second: 20, third: 3}\n\
          val removed = merged - \"second\"\n\
-         println(original.second, merged.first, merged.second, merged.third, removed.second, keys(merged), keys(removed), len(original))\n",
+         println(original.second, merged.first, merged.second, merged.third, removed.second, len(keys(merged)), len(keys(removed)), len(original))\n",
     )
     .expect("write persistent map update source");
     let output = slug()
@@ -991,7 +991,7 @@ fn persistently_merges_removes_and_enumerates_maps() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "2 1 20 3 nil [\"first\", \"second\", \"third\"] [\"first\", \"third\"] 2\n"
+        "2 1 20 3 nil 3 2 2\n"
     );
 }
 
@@ -1001,7 +1001,8 @@ fn standard_clutch_preserves_non_string_map_keys() {
     fs::write(
         &path,
         "val {keys} = import(\"slug.std\")\n\
-         println(keys({[1]: \"one\", [true]: \"yes\", name: \"Slug\"}))\n",
+         val values = {[1]: \"one\", [true]: \"yes\", name: \"Slug\"}\n\
+         println(values[1.0], values[true], values.name, len(keys(values)))\n",
     )
     .expect("write standard clutch source");
     let output = slug()
@@ -1016,7 +1017,7 @@ fn standard_clutch_preserves_non_string_map_keys() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "[1, true, \"name\"]\n"
+        "one yes Slug 3\n"
     );
 }
 

@@ -270,10 +270,11 @@ runtime type error. Recursive list and map constraints inspect every element
 or entry.
 
 Map merge, key removal, and map copy produce new map values; they do not
-modify either operand. A merge retains the left map's key order, replaces a
-shared key's value in that position, and appends keys introduced by the right
-map in source order. A map copy follows the same ordering rule for its
-string-key replacements. Map-key enumeration follows that resulting order.
+modify either operand. Maps are unordered: a runtime may choose any internal
+entry layout, and map-key enumeration has unspecified order. This does not
+relax source evaluation order for map-literal entries, merge operands, or map
+copy expressions. Map equality compares key/value membership rather than an
+entry sequence.
 
 String indexing and slicing operate on Unicode scalar values, never UTF-8 byte
 offsets. A string index yields a one-character string, and a string slice yields

@@ -47,14 +47,16 @@ followed by an ordinary call; no implicit map receiver is inserted.
 
 ## Persistent updates and keys
 
-Maps are immutable values. `+` merges two maps into a new map, and `-` removes
-one key into a new map. A right-hand merge value overwrites an existing key
-without moving that key; newly introduced right-hand keys append in their
-source order. Removing a missing key leaves the map unchanged.
+Maps are immutable, unordered values. `+` merges two maps into a new map, and
+`-` removes one key into a new map. A right-hand merge value overwrites an
+existing key. Removing a missing key leaves the map unchanged.
+
+Two maps are equal when they have the same keys with equal values, regardless
+of construction or enumeration order.
 
 `map copy { key: value }` is a convenient persistent update for string keys.
-It replaces existing keys in place and appends missing keys in source order.
-Each key may occur only once in the copy body.
+It replaces existing keys and adds missing keys. Each key may occur only once
+in the copy body.
 
 ```slug
 val base = {name: "Slug", status: "ready"}
@@ -63,11 +65,13 @@ val withoutName = updated - "name"
 val configured = withoutName copy { timeout: 5000, mode: "fast" }
 ```
 
-`keys(map)` is a `slug.std` foreign function that returns the current keys as a
-list in insertion order. Keys retain their language value types rather than
-being converted to strings.
+Maps are unordered. Map construction still evaluates entries in source order,
+but that order is not retained by the resulting value. `keys(map)` is a
+`slug.std` foreign function that returns the current keys in unspecified order.
+Programs that require an order must order the returned list explicitly. Keys
+retain their language value types rather than being converted to strings.
 
 ```slug
 val {keys} = import("slug.std")
-keys(updated) // ["name", "status", "version"]
+len(keys(updated)) // 3
 ```

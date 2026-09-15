@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Made Slug maps semantically unordered. Map key enumeration now has
+  unspecified order; programs requiring an order must order returned keys.
+
+- Added a staged plan for preserving immutable collection semantics while
+  redesigning VM values and collection storage.
+
 - Store installed VM bytecode as fixed-width packed instructions with pooled
   variable metadata, while retaining the public builder types only until a
   program is installed.

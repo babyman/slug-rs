@@ -20,6 +20,19 @@ fn constructs_and_indexes_collections() {
 }
 
 #[test]
+fn maps_compare_by_key_value_membership_not_entry_order() {
+    let first = Value::Map(std::rc::Rc::new(vec![
+        (Value::string("name"), Value::string("Slug")),
+        (Value::string("version"), Value::Int(1)),
+    ]));
+    let second = Value::Map(std::rc::Rc::new(vec![
+        (Value::string("version"), Value::Int(1)),
+        (Value::string("name"), Value::string("Slug")),
+    ]));
+    assert_eq!(first, second);
+}
+
+#[test]
 fn indexes_and_slices_bytes() {
     let mut main = Chunk::new("main", 0);
     let bytes = main.constant(Value::Bytes(vec![2, 3, 4].into()));
