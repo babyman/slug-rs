@@ -13,6 +13,7 @@ use std::cell::Cell;
 use std::rc::Weak;
 
 use crate::{
+    collections::Map,
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
     source::environment::CallableIdentity,
@@ -826,6 +827,42 @@ pub struct StructValue {
     pub(crate) values: Vec<Value>,
 }
 
+impl StructValue {
+    pub(crate) fn copy_fields(
+        &self,
+        names: &[String],
+        replacements: &[Value],
+    ) -> Result<Rc<Self>, String> {
+        for (index, name) in names.iter().enumerate() {
+            if names[..index].contains(name) {
+                return Err(format!("duplicate struct field '{name}'"));
+            }
+            if !self
+                .schema
+                .fields
+                .iter()
+                .any(|field| field.name.as_ref() == name)
+            {
+                return Err(format!("struct has no field '{name}'"));
+            }
+        }
+        let mut values = self.values.clone();
+        for (name, replacement) in names.iter().zip(replacements) {
+            let index = self
+                .schema
+                .fields
+                .iter()
+                .position(|field| field.name.as_ref() == name)
+                .expect("field names were validated");
+            values[index] = replacement.clone();
+        }
+        Ok(Rc::new(Self {
+            schema: self.schema.clone(),
+            values,
+        }))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnumValue {
     pub(crate) module: Rc<str>,
@@ -997,12 +1034,7 @@ impl PartialEq for Value {
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::List(a), Self::List(b)) | (Self::Overloads(a), Self::Overloads(b)) => a == b,
             (Self::Map(a), Self::Map(b)) => {
-                a.len() == b.len()
-                    && a.iter().all(|(key, value)| {
-                        b.iter()
-                            .find(|(other_key, _)| other_key == key)
-                            .is_some_and(|(_, other_value)| other_value == value)
-                    })
+                Map::from_shared(a.clone()).equals(&Map::from_shared(b.clone()))
             }
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
             (Self::Struct(a), Self::Struct(b)) => {

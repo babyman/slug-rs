@@ -3,7 +3,10 @@ use std::rc::Rc;
 #[cfg(feature = "metrics")]
 use std::cell::RefCell;
 
-use crate::{MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value};
+use crate::{
+    MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
+    collections::{Bytes, List, ListView, Map, MapView},
+};
 
 use super::RuntimeErrorKind;
 #[cfg(feature = "metrics")]
@@ -30,29 +33,21 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
             .map(Value::Int)
             .ok_or((RuntimeErrorKind::Type, "integer overflow".into())),
         (Value::Str(a), b) => Ok(Value::string(format!("{a}{b}"))),
-        (Value::List(a), Value::List(b)) => {
-            let mut values = (*a).clone();
-            values.extend(b.iter().cloned());
-            Ok(Value::List(Rc::new(values)))
-        }
-        (Value::Bytes(a), Value::Bytes(b)) => {
-            let mut values = a.to_vec();
-            values.extend(b.iter().copied());
-            Ok(Value::Bytes(values.into()))
-        }
-        (Value::Map(left), Value::Map(right)) => {
-            let mut entries = (*left).clone();
-            for (key, value) in right.iter() {
-                if let Some((_, existing)) =
-                    entries.iter_mut().find(|(existing, _)| existing == key)
-                {
-                    *existing = value.clone();
-                } else {
-                    entries.push((key.clone(), value.clone()));
-                }
-            }
-            Ok(Value::Map(Rc::new(entries)))
-        }
+        (Value::List(a), Value::List(b)) => Ok(Value::List(
+            List::from_shared(a)
+                .concat(&List::from_shared(b))
+                .into_shared(),
+        )),
+        (Value::Bytes(a), Value::Bytes(b)) => Ok(Value::Bytes(
+            Bytes::from_shared(a)
+                .concat(&Bytes::from_shared(b))
+                .into_shared(),
+        )),
+        (Value::Map(left), Value::Map(right)) => Ok(Value::Map(
+            Map::from_shared(left)
+                .merge(&Map::from_shared(right))
+                .into_shared(),
+        )),
         (a, b) => {
             let (a, b) = numbers(a, b).map_err(|message| (RuntimeErrorKind::Type, message))?;
             Ok(Value::Float(a + b))
@@ -67,13 +62,9 @@ pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeError
                 format!("{} cannot be used as a map key", right.type_name()),
             ));
         }
-        return Ok(Value::Map(Rc::new(
-            entries
-                .iter()
-                .filter(|(key, _)| key != &right)
-                .cloned()
-                .collect(),
-        )));
+        return Ok(Value::Map(
+            Map::from_shared(entries).remove(&right).into_shared(),
+        ));
     }
     integer_or_float(left, right, i64::checked_sub, |a, b| a - b)
 }
@@ -157,7 +148,7 @@ pub(super) fn bitwise(
     let left = bitwise_bytes(left)?;
     let right = bitwise_bytes(right)?;
     if left.is_empty() || right.is_empty() {
-        return Ok(Value::Bytes(Vec::new().into()));
+        return Ok(Value::Bytes(Bytes::from_values(Vec::new()).into_shared()));
     }
     let length = left.len().max(right.len());
     let values = (0..length)
@@ -169,12 +160,12 @@ pub(super) fn bitwise(
             .expect("bitwise byte operation remains in range")
         })
         .collect::<Vec<_>>();
-    Ok(Value::Bytes(values.into()))
+    Ok(Value::Bytes(Bytes::from_values(values).into_shared()))
 }
 
 fn bitwise_bytes(value: Value) -> Result<Vec<u8>, (RuntimeErrorKind, String)> {
     match value {
-        Value::Bytes(values) => Ok(values.to_vec()),
+        Value::Bytes(values) => Ok(Bytes::from_shared(values).iter().collect()),
         Value::Int(value) => u8::try_from(value).map_or_else(
             |_| {
                 Err((
@@ -215,23 +206,29 @@ pub(super) fn shift(
 pub(super) fn bit_not(value: &Value) -> Result<Value, String> {
     match value {
         Value::Int(value) => Ok(Value::Int(!value)),
-        Value::Bytes(values) => Ok(Value::Bytes(values.iter().map(|byte| !byte).collect())),
+        Value::Bytes(values) => Ok(Value::Bytes(
+            Bytes::from_values(
+                Bytes::from_shared(values.clone())
+                    .iter()
+                    .map(|byte| !byte)
+                    .collect(),
+            )
+            .into_shared(),
+        )),
         _ => Err("bitwise operators require integers or bytes".into()),
     }
 }
 
 pub(super) fn list_append(list: Value, value: Value) -> Result<Value, String> {
     match list {
-        Value::List(list) => {
-            let mut values = (*list).clone();
-            values.push(value);
-            Ok(Value::List(Rc::new(values)))
-        }
+        Value::List(list) => Ok(Value::List(
+            List::from_shared(list).append(value).into_shared(),
+        )),
         Value::Bytes(bytes) => {
             let byte = byte_collection_element(&value, ":+")?;
-            let mut values = bytes.to_vec();
-            values.push(byte);
-            Ok(Value::Bytes(values.into()))
+            Ok(Value::Bytes(
+                Bytes::from_shared(bytes).append(byte).into_shared(),
+            ))
         }
         _ => Err("left operand of :+ must be a list or bytes".into()),
     }
@@ -239,18 +236,14 @@ pub(super) fn list_append(list: Value, value: Value) -> Result<Value, String> {
 
 pub(super) fn list_prepend(value: Value, list: Value) -> Result<Value, String> {
     match list {
-        Value::List(list) => {
-            let mut values = Vec::with_capacity(list.len() + 1);
-            values.push(value);
-            values.extend(list.iter().cloned());
-            Ok(Value::List(Rc::new(values)))
-        }
+        Value::List(list) => Ok(Value::List(
+            List::from_shared(list).prepend(value).into_shared(),
+        )),
         Value::Bytes(bytes) => {
             let byte = byte_collection_element(&value, "+:")?;
-            let mut values = Vec::with_capacity(bytes.len() + 1);
-            values.push(byte);
-            values.extend(bytes.iter().copied());
-            Ok(Value::Bytes(values.into()))
+            Ok(Value::Bytes(
+                Bytes::from_shared(bytes).prepend(byte).into_shared(),
+            ))
         }
         _ => Err("right operand of +: must be a list or bytes".into()),
     }
@@ -322,6 +315,7 @@ pub(super) fn matches_pattern(
         }
         MatchPattern::List { items, rest } => match value {
             Value::List(values) => {
+                let values = List::from_shared(values.clone());
                 if values.len() < items.len()
                     || (*rest == MatchRest::None && values.len() != items.len())
                 {
@@ -335,11 +329,14 @@ pub(super) fn matches_pattern(
                     }
                 }
                 if *rest == MatchRest::Binding {
-                    bindings.push(Value::List(Rc::new(values[items.len()..].to_vec())));
+                    bindings.push(Value::List(
+                        values.slice(items.len()..values.len()).into_shared(),
+                    ));
                 }
                 Ok(true)
             }
             Value::Bytes(values) => {
+                let values = Bytes::from_shared(values.clone());
                 if values.len() < items.len()
                     || (*rest == MatchRest::None && values.len() != items.len())
                 {
@@ -347,13 +344,15 @@ pub(super) fn matches_pattern(
                 }
                 let binding_start = bindings.len();
                 for (item, byte) in items.iter().zip(values.iter()) {
-                    if !matches_pattern(item, &Value::Int(i64::from(*byte)), operands, bindings)? {
+                    if !matches_pattern(item, &Value::Int(i64::from(byte)), operands, bindings)? {
                         bindings.truncate(binding_start);
                         return Ok(false);
                     }
                 }
                 if *rest == MatchRest::Binding {
-                    bindings.push(Value::Bytes(values[items.len()..].to_vec().into()));
+                    bindings.push(Value::Bytes(
+                        values.slice(items.len()..values.len()).into_shared(),
+                    ));
                 }
                 Ok(true)
             }
@@ -368,6 +367,7 @@ pub(super) fn matches_pattern(
             let binding_start = bindings.len();
             match value {
                 Value::Map(entries) => {
+                    let entries = Map::from_shared(entries.clone());
                     if *exact && entries.len() != patterns.len() {
                         return Ok(false);
                     }
@@ -388,7 +388,7 @@ pub(super) fn matches_pattern(
                             .filter(|(key, _)| !keys.iter().any(|pattern_key| key == pattern_key))
                             .cloned()
                             .collect();
-                        bindings.push(Value::Map(Rc::new(rest_entries)));
+                        bindings.push(Value::Map(Map::new(rest_entries).into_shared()));
                     }
                     Ok(true)
                 }
@@ -428,7 +428,7 @@ pub(super) fn matches_pattern(
                             })
                             .map(|(field, value)| (Value::string(field.name.clone()), value.clone()))
                             .collect();
-                        bindings.push(Value::Map(Rc::new(rest_entries)));
+                        bindings.push(Value::Map(Map::new(rest_entries).into_shared()));
                     }
                     Ok(true)
                 }
@@ -470,7 +470,7 @@ fn matches_type(
                 return Ok(false);
             };
             element.as_deref().map_or(Ok(true), |element| {
-                values
+                ListView::new(values)
                     .iter()
                     .map(|value| matches_type(element, value, operands))
                     .try_fold(true, |matches, next| next.map(|next| matches && next))
@@ -481,7 +481,7 @@ fn matches_type(
                 return Ok(false);
             };
             entries.as_ref().map_or(Ok(true), |(key, value)| {
-                values
+                MapView::new(values)
                     .iter()
                     .try_fold(true, |matches, (entry_key, entry_value)| {
                         Ok(matches
@@ -577,6 +577,7 @@ pub(super) fn index_value(
             let Value::Int(index) = index else {
                 return Err("list index must be an integer".into());
             };
+            let values = List::from_shared(values);
             let length = i64::try_from(values.len()).map_err(|_| "list is too large".to_owned())?;
             let index = if *index < 0 { length + *index } else { *index };
             usize::try_from(index)
@@ -593,12 +594,12 @@ pub(super) fn index_value(
             let Value::Int(index) = index else {
                 return Err("bytes index must be an integer".into());
             };
+            let values = Bytes::from_shared(values);
             let length =
                 i64::try_from(values.len()).map_err(|_| "bytes are too large".to_owned())?;
             let index = if *index < 0 { length + *index } else { *index };
             values
                 .get(usize::try_from(index).map_err(|_| "bytes index is out of bounds")?)
-                .copied()
                 .map(i64::from)
                 .map(Value::Int)
                 .ok_or_else(|| "bytes index is out of bounds".into())
@@ -621,6 +622,7 @@ pub(super) fn index_value(
                 .ok_or_else(|| "string index is out of bounds".into())
         }
         Value::Map(entries) => {
+            let entries = Map::from_shared(entries);
             #[cfg(feature = "metrics")]
             let mut examined = 0usize;
             for (key, value) in entries.iter().rev() {
@@ -694,28 +696,34 @@ pub(super) fn slice_value(
     };
     match collection {
         Value::List(values) => {
-            let mut result = Vec::new();
+            let mut indexes = Vec::new();
             let mut index = start;
             while index < end {
-                result.push(
-                    values[usize::try_from(index).expect("slice bounds are non-negative")].clone(),
-                );
+                indexes.push(usize::try_from(index).expect("slice bounds are non-negative"));
                 index = index
                     .checked_add(step)
                     .ok_or_else(|| "list slice step is too large".to_owned())?;
             }
-            Ok(Value::List(Rc::new(result)))
+            Ok(Value::List(
+                List::from_shared(values)
+                    .slice(indexes.into_iter())
+                    .into_shared(),
+            ))
         }
         Value::Bytes(values) => {
-            let mut result = Vec::new();
+            let mut indexes = Vec::new();
             let mut index = start;
             while index < end {
-                result.push(values[usize::try_from(index).expect("slice bounds are non-negative")]);
+                indexes.push(usize::try_from(index).expect("slice bounds are non-negative"));
                 index = index
                     .checked_add(step)
                     .ok_or_else(|| "bytes slice step is too large".to_owned())?;
             }
-            Ok(Value::Bytes(result.into()))
+            Ok(Value::Bytes(
+                Bytes::from_shared(values)
+                    .slice(indexes.into_iter())
+                    .into_shared(),
+            ))
         }
         Value::Str(value) => {
             let values = value.chars().collect::<Vec<_>>();
@@ -793,52 +801,12 @@ pub(super) fn copy_value(
     replacements: &[Value],
 ) -> Result<Value, String> {
     match value {
-        Value::Struct(value) => {
-            for (index, name) in names.iter().enumerate() {
-                if names[..index].contains(name) {
-                    return Err(format!("duplicate struct field '{name}'"));
-                }
-                if !value
-                    .schema
-                    .fields
-                    .iter()
-                    .any(|field| field.name.as_ref() == name)
-                {
-                    return Err(format!("struct has no field '{name}'"));
-                }
-            }
-            let mut values = value.values.clone();
-            for (name, replacement) in names.iter().zip(replacements) {
-                let index = value
-                    .schema
-                    .fields
-                    .iter()
-                    .position(|field| field.name.as_ref() == name)
-                    .expect("field names were validated");
-                values[index] = replacement.clone();
-            }
-            Ok(Value::Struct(Rc::new(StructValue {
-                schema: value.schema.clone(),
-                values,
-            })))
-        }
-        Value::Map(value) => {
-            let mut entries = (*value).clone();
-            for (index, (name, replacement)) in names.iter().zip(replacements).enumerate() {
-                if names[..index].contains(name) {
-                    return Err(format!("duplicate map key '{name}'"));
-                }
-                let key = Value::string(name.as_str());
-                if let Some((_, existing)) =
-                    entries.iter_mut().rev().find(|(entry, _)| entry == &key)
-                {
-                    *existing = replacement.clone();
-                } else {
-                    entries.push((key, replacement.clone()));
-                }
-            }
-            Ok(Value::Map(Rc::new(entries)))
-        }
+        Value::Struct(value) => Ok(Value::Struct(value.copy_fields(names, replacements)?)),
+        Value::Map(value) => Ok(Value::Map(
+            Map::from_shared(value)
+                .copy_string_fields(names, replacements)?
+                .into_shared(),
+        )),
         _ => Err("cannot copy non-struct or map value".into()),
     }
 }

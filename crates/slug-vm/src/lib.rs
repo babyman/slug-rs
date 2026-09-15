@@ -8,6 +8,7 @@
 
 mod bytecode;
 mod clutch;
+mod collections;
 mod configuration;
 mod conformance;
 #[allow(unsafe_code)]

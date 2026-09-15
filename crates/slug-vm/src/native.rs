@@ -12,7 +12,12 @@ use std::{
     },
 };
 
-use crate::{Value, scheduler_signal::ProgressSignal, value::Channel};
+use crate::{
+    Value,
+    collections::{BytesView, ListView, MapView},
+    scheduler_signal::ProgressSignal,
+    value::Channel,
+};
 
 /// An owned value that a foreign thread may publish through a channel producer.
 #[derive(Clone, Debug, PartialEq)]
@@ -612,7 +617,7 @@ impl<'call> NativeValueRef<'call> {
         let Value::Bytes(value) = self.value else {
             return Err(self.type_error("bytes"));
         };
-        Ok(value)
+        Ok(BytesView::new(value).as_slice())
     }
 
     /// Borrows the declaration and case names of a fieldless enum value.
@@ -633,8 +638,8 @@ impl<'call> NativeValueRef<'call> {
     #[must_use]
     pub fn len(self) -> Option<usize> {
         match self.value {
-            Value::List(values) => Some(values.len()),
-            Value::Map(entries) => Some(entries.len()),
+            Value::List(values) => Some(ListView::new(values).len()),
+            Value::Map(entries) => Some(MapView::new(entries).len()),
             _ => None,
         }
     }
@@ -653,7 +658,9 @@ impl<'call> NativeValueRef<'call> {
         let Value::List(values) = self.value else {
             return Err(self.type_error("list"));
         };
-        Ok(values.get(index).map(|value| NativeValueRef { value }))
+        Ok(ListView::new(values)
+            .get(index)
+            .map(|value| NativeValueRef { value }))
     }
 
     /// Reads one map entry, borrowing it for the current call.
@@ -668,7 +675,7 @@ impl<'call> NativeValueRef<'call> {
         let Value::Map(entries) = self.value else {
             return Err(self.type_error("map"));
         };
-        Ok(entries
+        Ok(MapView::new(entries)
             .get(index)
             .map(|(key, value)| (NativeValueRef { value: key }, NativeValueRef { value })))
     }
