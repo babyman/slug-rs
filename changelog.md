@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added VM-owned immutable `InstalledProgram` objects. Hosts now install a
+  mutable program once, then reuse the checked executable without cloning or
+  revalidating bytecode; portable bytecode loading remains deferred.
+
 - Split the repository into a Cargo workspace with dedicated `slug-vm`,
   `slug-server`, and `slug-repl` crates. The terminal client now depends only
   on the server protocol crate, while VM and compiler dependencies remain

@@ -503,14 +503,14 @@ the non-target scheduler or execution counters remained stable.
 ### 1. Share installed programs across executions
 
 - [x] Replace per-task and per-nursery `Program::clone` operations with clones
-  of one installed `Rc<Program>`.
+  of one VM-owned installed program.
 - [x] Make the public root execution boundary establish that owner once, while
   preserving the checked direct-bytecode API and module-relative closure
   behavior.
 - [x] Record full-program clone count and estimated cloned bytes. The legacy
-  `&Program` entry points make one root installation copy; the installed
-  `Rc<Program>` entry points make no full-program copies on root, task, or
-  nursery paths.
+  `&Program` entry points make one root installation copy; VM-created
+  `InstalledProgram` entry points make no full-program copies on root, task,
+  or nursery paths.
 - [ ] Re-run scheduler measurements after removing program-copy cost from task
   creation.
 
@@ -537,9 +537,21 @@ inline instruction storage only, not heap-owned constants or metadata.
 The same run preserved the scheduler-work counters: many timers registered and
 woke 3,200 timers, while cancelled suspended waits registered 320 timers and
 woke 160 before cancellation. Elapsed time remains machine-dependent and is
-therefore not a plan threshold. Future scheduler measurements should use the
-installed `Rc<Program>` entry points when they need to exclude the remaining
+therefore not a plan threshold. Future scheduler measurements should use
+VM-created `InstalledProgram` values when they need to exclude the remaining
 compatibility installation copy as well.
+
+#### Measurement record: VM-owned installation (2026-09-14)
+
+Command: `cargo bench -p slug-vm --bench vm --features metrics`. The benchmark
+now installs each compiled program once, then executes its
+`InstalledProgram` repeatedly. In the prior compatibility-wrapper benchmark,
+the 1,000-run arithmetic workload reported 1,000 whole-program clones and
+1,000 validation passes. The installed benchmark reports zero whole-program
+clones and one installation validation for the same workload. The 1,000-run
+ordinary-call workload has the same 0/1 clone/validation result. Task, frame,
+and scheduler counters are unchanged by this ownership move; elapsed times are
+machine-local evidence only and are not compared as a threshold.
 
 ### 2. Close statically knowable verifier gaps
 
@@ -683,12 +695,12 @@ aggregate across the stated runs and is directional machine-local evidence.
 The remaining descriptor vectors are small in this corpus, so they stay inline
 to preserve straightforward source construction. Pool them only if a
 descriptor-specific allocation or dispatch measurement identifies a material
-cost. Repeated validation is now measured separately, but no `VerifiedProgram`
-owner is installed: the public private-bytecode entry boundary remains checked,
-and an immutable boundary would need a separate design that preserves that
-failure behavior. `Value` traffic accounting is deferred to the Stage 7
-prototype, where its scope can distinguish register-lowering traffic from the
-existing stack VM rather than imposing broad, non-actionable instrumentation.
+cost. Repeated validation is now measured separately and `Vm::install` owns
+the immutable `InstalledProgram` boundary; borrowed `&Program` entry points
+remain checked compatibility wrappers. `Value` traffic accounting is deferred
+to the Stage 7 prototype, where its scope can distinguish register-lowering
+traffic from the existing stack VM rather than imposing broad, non-actionable
+instrumentation.
 
 ### 6. Make optimization metrics a tested contract
 

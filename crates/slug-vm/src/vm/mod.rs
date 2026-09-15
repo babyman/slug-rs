@@ -159,10 +159,38 @@ pub struct VmMetrics {
     pub scheduler_wait_time: Duration,
     /// Time spent structurally validating private bytecode.
     pub verification_time: Duration,
+    /// Structural bytecode validations performed while installing programs.
+    pub program_validations: usize,
     /// Whole programs cloned to establish an installed execution owner.
     pub program_clones: usize,
     /// Estimated inline bytecode bytes copied by whole-program clones.
     pub program_clone_bytes: usize,
+}
+
+/// Immutable, checked bytecode installed by a [`Vm`].
+///
+/// A program is installed for one root entry. The VM validates that entry and
+/// takes ownership of the mutable [`Program`] before this value is created.
+/// Reusing an `InstalledProgram` therefore does not clone or revalidate its
+/// bytecode. It is an in-process execution object, not a portable artifact.
+#[derive(Clone, Debug)]
+pub struct InstalledProgram {
+    program: Rc<Program>,
+    entry: usize,
+}
+
+impl InstalledProgram {
+    /// Returns the immutable bytecode retained by this installed program.
+    #[must_use]
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
+
+    /// Returns the root chunk validated for this installed program.
+    #[must_use]
+    pub const fn entry(&self) -> usize {
+        self.entry
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -638,11 +666,11 @@ impl Vm {
         vm
     }
 
-    pub(crate) fn run_module(&mut self, program: &Rc<Program>) -> VmResult<Value> {
-        self.module_program = Some(program.clone());
-        self.install_implicit_builtins(program)?;
-        self.bind_foreign_declarations(program)?;
-        self.run_named_installed_execution(program, "main")
+    pub(crate) fn run_module(&mut self, program: &InstalledProgram) -> VmResult<Value> {
+        self.module_program = Some(program.program.clone());
+        self.install_implicit_builtins(&program.program)?;
+        self.bind_foreign_declarations(&program.program)?;
+        self.run_installed_execution(program)
     }
 
     /// Executes top-level code and then the program module's validated `main`.
@@ -656,14 +684,15 @@ impl Vm {
     /// call fails.
     pub fn run_program(&mut self, program: &Program) -> VmResult<Value> {
         self.reset_metrics();
-        let program = self.install_program(program);
-        self.install_implicit_builtins(&program)?;
-        self.bind_foreign_declarations(&program)?;
-        let top_level = self.run_named_installed_execution(&program, "main")?;
-        let Some(entrypoint_specification) = program.entrypoint() else {
+        let program = self.install_compat_named(program, "main")?;
+        self.install_implicit_builtins(&program.program)?;
+        self.bind_foreign_declarations(&program.program)?;
+        let top_level = self.run_installed_execution(&program)?;
+        let Some(entrypoint_specification) = program.program.entrypoint() else {
             return Ok(top_level);
         };
         let identity = program
+            .program
             .callable_identity(entrypoint_specification.callable_identity)
             .ok_or_else(|| {
                 self.error(
@@ -702,7 +731,7 @@ impl Vm {
         self.stack.push(entrypoint);
         self.stack.extend(arguments);
         let count = self.stack.len() - 1;
-        self.call(&program, count, None, None)?;
+        self.call(&program.program, count, None, None)?;
         self.run_root_execution()
     }
 
@@ -857,17 +886,9 @@ impl Vm {
             #[cfg(feature = "metrics")]
             self.metrics.clone(),
         ));
-        let program = self.install_program(program);
-        let entry = program.find_chunk(entry).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::Name,
-                format!("unknown entry `{entry}`"),
-                None,
-            )
-        })?;
-        program
-            .validate(entry)
-            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
+        let installed = self.install_compat_named(program, entry)?;
+        let program = installed.program;
+        let entry = installed.entry;
         let closure = Rc::new(Closure {
             chunk: entry,
             captures: Vec::new(),
@@ -1408,8 +1429,8 @@ impl Vm {
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run(&mut self, program: &Program, entry: usize) -> VmResult<Value> {
         self.reset_metrics();
-        let program = self.install_program(program);
-        self.run_installed_execution(&program, entry)
+        let program = self.install_compat(program, entry)?;
+        self.run_installed_execution(&program)
     }
 
     /// Starts a zero-argument entry for host-driven execution. Call
@@ -1422,20 +1443,63 @@ impl Vm {
     /// down VM, or an already active host-driven execution.
     pub fn start(&mut self, program: &Program, entry: usize) -> VmResult<()> {
         self.reset_metrics();
-        let program = self.install_program(program);
-        self.start_installed_execution(&program, entry)
+        let program = self.install_compat(program, entry)?;
+        self.start_installed_execution(&program)
     }
 
-    /// Executes an already installed zero-argument entry chunk without cloning
-    /// its immutable bytecode.
+    /// Validates and takes ownership of bytecode for one zero-argument entry.
+    ///
+    /// The resulting value may be reused by any VM without cloning or
+    /// revalidating the program. It retains no VM execution state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when the entry is invalid or the program's
+    /// private bytecode is malformed.
+    pub fn install(&mut self, program: Program, entry: usize) -> VmResult<InstalledProgram> {
+        #[cfg(feature = "metrics")]
+        let verification_started = Instant::now();
+        program
+            .validate(entry)
+            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.program_validations += 1;
+            metrics.verification_time += verification_started.elapsed();
+        }
+        Ok(InstalledProgram {
+            program: Rc::new(program),
+            entry,
+        })
+    }
+
+    /// Validates and takes ownership of bytecode selected by its chunk name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked name or bytecode error when the requested entry cannot
+    /// be installed.
+    pub fn install_named(&mut self, program: Program, entry: &str) -> VmResult<InstalledProgram> {
+        let index = program.find_chunk(entry).ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::Name,
+                format!("unknown entry `{entry}`"),
+                None,
+            )
+        })?;
+        self.install(program, index)
+    }
+
+    /// Executes an immutable program previously installed by a VM.
     ///
     /// # Errors
     ///
     /// Returns a Slug runtime error when the entry is invalid or evaluation
     /// encounters invalid bytecode or a language-level runtime fault.
-    pub fn run_installed(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<Value> {
+    pub fn run_installed(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.reset_metrics();
-        self.run_installed_execution(program, entry)
+        self.run_installed_execution(program)
     }
 
     /// Starts an already installed entry for host-driven execution.
@@ -1444,17 +1508,17 @@ impl Vm {
     ///
     /// Returns a checked error for invalid bytecode, an invalid entry, a shut
     /// down VM, or an already active host-driven execution.
-    pub fn start_installed(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<()> {
+    pub fn start_installed(&mut self, program: &InstalledProgram) -> VmResult<()> {
         self.reset_metrics();
-        self.start_installed_execution(program, entry)
+        self.start_installed_execution(program)
     }
 
-    fn run_installed_execution(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<Value> {
-        self.start_installed_execution(program, entry)?;
+    fn run_installed_execution(&mut self, program: &InstalledProgram) -> VmResult<Value> {
+        self.start_installed_execution(program)?;
         self.blocking_run()
     }
 
-    fn start_installed_execution(&mut self, program: &Rc<Program>, entry: usize) -> VmResult<()> {
+    fn start_installed_execution(&mut self, installed: &InstalledProgram) -> VmResult<()> {
         if self.host_execution.is_some() {
             return Err(self.error(
                 RuntimeErrorKind::InvalidCall,
@@ -1469,20 +1533,12 @@ impl Vm {
                 None,
             ));
         }
+        let program = &installed.program;
         self.module_program = Some(program.clone());
-        #[cfg(feature = "metrics")]
-        let verification_started = Instant::now();
-        program
-            .validate(entry)
-            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
-        #[cfg(feature = "metrics")]
-        {
-            self.metrics.borrow_mut().verification_time += verification_started.elapsed();
-        }
-        let chunk = program.chunk(entry).ok_or_else(|| {
+        let chunk = program.chunk(installed.entry).ok_or_else(|| {
             self.error(
                 RuntimeErrorKind::InvalidBytecode,
-                format!("entry chunk {entry} does not exist"),
+                format!("entry chunk {} does not exist", installed.entry),
                 None,
             )
         })?;
@@ -1519,7 +1575,7 @@ impl Vm {
             program: program.clone(),
             globals: self.globals.clone(),
             closure: Rc::new(Closure {
-                chunk: entry,
+                chunk: installed.entry,
                 captures: Vec::new(),
                 program: None,
                 globals: None,
@@ -1551,8 +1607,8 @@ impl Vm {
     /// encounters invalid bytecode or a language-level runtime fault.
     pub fn run_named(&mut self, program: &Program, entry: &str) -> VmResult<Value> {
         self.reset_metrics();
-        let program = self.install_program(program);
-        self.run_named_installed_execution(&program, entry)
+        let program = self.install_compat_named(program, entry)?;
+        self.run_installed_execution(&program)
     }
 
     /// Starts an entry selected by name for host-driven execution.
@@ -1563,15 +1619,8 @@ impl Vm {
     /// started for host-driven execution.
     pub fn start_named(&mut self, program: &Program, entry: &str) -> VmResult<()> {
         self.reset_metrics();
-        let program = self.install_program(program);
-        let index = program.find_chunk(entry).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::Name,
-                format!("unknown entry `{entry}`"),
-                None,
-            )
-        })?;
-        self.start_installed_execution(&program, index)
+        let program = self.install_compat_named(program, entry)?;
+        self.start_installed_execution(&program)
     }
 
     /// Executes an entry selected by name from an installed program.
@@ -1580,24 +1629,9 @@ impl Vm {
     ///
     /// Returns a Slug runtime error when the entry is absent or evaluation
     /// encounters invalid bytecode or a language-level runtime fault.
-    pub fn run_named_installed(&mut self, program: &Rc<Program>, entry: &str) -> VmResult<Value> {
+    pub fn run_named_installed(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.reset_metrics();
-        self.run_named_installed_execution(program, entry)
-    }
-
-    fn run_named_installed_execution(
-        &mut self,
-        program: &Rc<Program>,
-        entry: &str,
-    ) -> VmResult<Value> {
-        let index = program.find_chunk(entry).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::Name,
-                format!("unknown entry `{entry}`"),
-                None,
-            )
-        })?;
-        self.run_installed_execution(program, index)
+        self.run_installed_execution(program)
     }
 
     fn reset_metrics(&mut self) {
@@ -1772,14 +1806,28 @@ impl Vm {
     }
 
     #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
-    fn install_program(&mut self, program: &Program) -> Rc<Program> {
+    fn install_compat(&mut self, program: &Program, entry: usize) -> VmResult<InstalledProgram> {
         #[cfg(feature = "metrics")]
         {
             let mut metrics = self.metrics.borrow_mut();
             metrics.program_clones += 1;
             metrics.program_clone_bytes += program.layout_metrics().instruction_bytes;
         }
-        Rc::new(program.clone())
+        self.install(program.clone(), entry)
+    }
+
+    fn install_compat_named(
+        &mut self,
+        program: &Program,
+        entry: &str,
+    ) -> VmResult<InstalledProgram> {
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.program_clones += 1;
+            metrics.program_clone_bytes += program.layout_metrics().instruction_bytes;
+        }
+        self.install_named(program.clone(), entry)
     }
 
     #[allow(clippy::too_many_lines)]

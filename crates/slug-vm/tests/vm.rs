@@ -256,13 +256,13 @@ fn installed_program_is_shared_by_root_tasks_and_nested_nurseries() {
     program.add_chunk(main);
 
     let mut vm = Vm::new();
-    assert_eq!(
-        vm.run_named_installed(&Rc::new(program), "main").unwrap(),
-        Value::Nil
-    );
+    let program = vm.install_named(program, "main").unwrap();
+    assert_eq!(vm.metrics().program_validations, 1);
+    assert_eq!(vm.run_named_installed(&program).unwrap(), Value::Nil);
     let metrics = vm.metrics();
     assert_eq!(metrics.program_clones, 0);
     assert_eq!(metrics.program_clone_bytes, 0);
+    assert_eq!(metrics.program_validations, 0);
 }
 
 #[test]

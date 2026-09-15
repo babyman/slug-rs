@@ -21,7 +21,8 @@ implements a small source subset through a checked bytecode virtual machine.
 
 - `Program`, `Chunk`, `Instruction`, and `Op` are a public but unstable
   in-process Rust compiler-to-VM boundary. Rust hosts and integration tests may
-  construct and run them, but their layouts, variants, constructors, and
+  construct them, but only a `Vm` may turn an owned `Program` into an immutable
+  `InstalledProgram` for execution. Their layouts, variants, constructors, and
   semantics are not a stable Rust API or serialized format.
 - `.cslug` is the future portable compiled-module format.  It is a distinct,
   versioned contract and must not serialize private bytecode directly.

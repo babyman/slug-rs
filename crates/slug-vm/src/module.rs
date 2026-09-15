@@ -382,7 +382,7 @@ impl ModuleLoader {
         }
         let mut plugin = self.stage_clutch_plugin(&source)?;
         let program = match self.compile(importer, name) {
-            Ok(program) => Rc::new(program),
+            Ok(program) => program,
             Err(error) => {
                 Self::cleanup_plugin(&mut plugin);
                 return Err(error);
@@ -398,12 +398,25 @@ impl ModuleLoader {
             });
         }
         let mut vm = Vm::with_module_bindings(self, program.bindings());
+        let program = match vm.install_named(program, "main") {
+            Ok(program) => program,
+            Err(error) => {
+                if let Some(staged) = plugin.as_ref() {
+                    self.remove_foreign_batch(&staged.functions);
+                }
+                Self::cleanup_plugin(&mut plugin);
+                return Err(ModuleLoadError::Source {
+                    path: source.path.clone(),
+                    message: error.to_string(),
+                });
+            }
+        };
         let instance = ModuleInstance {
             path: source.path.clone(),
-            program: (*program).clone(),
+            program: program.program().clone(),
             exports: Value::Map(Rc::new(Vec::new())),
             metadata: vm.module_metadata().to_vec(),
-            live_exports: vm.live_exported_values(&program),
+            live_exports: vm.live_exported_values(program.program()),
         };
         self.state
             .instances
@@ -421,7 +434,7 @@ impl ModuleLoader {
             });
         }
         let instance = ModuleInstance {
-            exports: vm.exported_values(&program),
+            exports: vm.exported_values(program.program()),
             metadata: vm.module_metadata().to_vec(),
             ..instance
         };

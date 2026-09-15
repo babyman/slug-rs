@@ -69,10 +69,11 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations, workload.install);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             verification = metrics.verification_time,
+            validations = metrics.program_validations,
             instructions = metrics.instructions_executed,
             clones = metrics.instruction_clones,
             spans = metrics.source_span_clones,
@@ -119,13 +120,17 @@ fn main() {
 }
 
 fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration, VmMetrics) {
+    let mut installer = Vm::new();
+    let program = installer
+        .install_named(program.clone(), "main")
+        .expect("install benchmark program");
     let started = Instant::now();
-    let mut metrics = VmMetrics::default();
+    let mut metrics = installer.metrics();
     for _ in 0..iterations {
         let mut vm = Vm::new();
         install(&mut vm);
         black_box(
-            vm.run_named(program, "main")
+            vm.run_named_installed(&program)
                 .expect("run benchmark program"),
         );
         let run_metrics = vm.metrics();
@@ -160,6 +165,7 @@ fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration,
             metrics.scheduler_wait_time += run_metrics.scheduler_wait_time;
         }
         metrics.verification_time += run_metrics.verification_time;
+        metrics.program_validations += run_metrics.program_validations;
     }
     (started.elapsed(), metrics)
 }
