@@ -9,7 +9,7 @@ that repetition before additional native event sources multiplied it.
 
 ## Decision
 
-Provide `include/slug_ffi_helpers.h` as a header-only convenience layer over
+Provide `../../include` as a header-only convenience layer over
 the private prototype ABI. Its initial durable async-stream helper creates one
 channel on first callback use, returns cloned receivers for later calls, starts
 a native worker, closes its producer when that worker returns, and coordinates

@@ -1,6 +1,6 @@
 # Private FFI helper SDK
 
-`include/slug_ffi_helpers.h` is a header-only convenience layer over the
+`../../include` is a header-only convenience layer over the
 private `slug_ffi_prototype` ABI. It is not a released ABI, package API, or
 replacement for the primitive header. It exists so ordinary native Clutch
 event sources do not each reimplement thread startup, bounded retry, durable

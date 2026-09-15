@@ -56,5 +56,5 @@ test-library imports and assertion calls: each fixture isolates a language form
 that the Rust implementation currently supports. `tests/conformance/nominal-types/`
 covers public nominal declarations, transparent aliases, imported type paths,
 alias-cycle diagnostics, and observable enum behavior.
-`tests/legacy_syntax_conformance.rs` runs the complete `tests/conformance/`
+`crates/slug-vm/tests/legacy_syntax_conformance.rs` runs the complete `tests/conformance/`
 tree through `slug-fixtures` as part of `make test`.

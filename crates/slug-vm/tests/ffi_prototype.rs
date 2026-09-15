@@ -683,7 +683,11 @@ fn loads_math_through_the_native_core_clutch() {
 #[test]
 fn rejects_a_c_module_with_an_incompatible_abi_major() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/invalid_module.c", "invalid");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/invalid_module.c",
+        "invalid",
+    );
     let Err(error) = FfiPrototypeLibrary::load(library) else {
         panic!("incompatible ABI must fail");
     };
@@ -695,7 +699,7 @@ fn rejects_an_undersized_c_function_descriptor() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/undersized_function_module.c",
+        "crates/slug-vm/tests/ffi/undersized_function_module.c",
         "undersized",
     );
     let Err(error) = FfiPrototypeLibrary::load(library) else {
@@ -709,7 +713,7 @@ fn rejects_stale_c_collection_handles_without_corrupting_memory() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/invalid_collection_handle_module.c",
+        "crates/slug-vm/tests/ffi/invalid_collection_handle_module.c",
         "invalid_collection_handle",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -747,7 +751,7 @@ fn rejects_a_c_resource_type_without_a_destroy_callback() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/missing_resource_destroy_module.c",
+        "crates/slug-vm/tests/ffi/missing_resource_destroy_module.c",
         "missing_resource_destroy",
     );
     let Err(error) = FfiPrototypeLibrary::load(library) else {
@@ -759,7 +763,11 @@ fn rejects_a_c_resource_type_without_a_destroy_callback() {
 #[test]
 fn rejects_source_resource_types_missing_from_the_native_module() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/resource_module.c",
+        "resources",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/resources.slug"),
@@ -795,7 +803,11 @@ fn rejects_source_resource_types_missing_from_the_native_module() {
 #[test]
 fn rejects_native_resource_types_missing_from_the_source_module() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/resource_module.c",
+        "resources",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/resources.slug"),
@@ -832,7 +844,7 @@ fn turns_an_unknown_c_status_into_a_checked_contract_error() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/unknown_status_module.c",
+        "crates/slug-vm/tests/ffi/unknown_status_module.c",
         "unknown_status",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -862,7 +874,11 @@ fn turns_an_unknown_c_status_into_a_checked_contract_error() {
 #[test]
 fn dispatches_same_arity_c_functions_by_opaque_member_key() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/same_arity_module.c", "same_arity");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/same_arity_module.c",
+        "same_arity",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/same.slug"),
@@ -888,7 +904,11 @@ fn dispatches_same_arity_c_functions_by_opaque_member_key() {
 #[test]
 fn unloads_libraries_after_destroying_each_library_state() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/stateful_module.c", "stateful");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/stateful_module.c",
+        "stateful",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/stateful.slug"),
@@ -920,7 +940,7 @@ fn rejects_stale_native_functions_after_explicit_plugin_shutdown() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/stateful_module.c",
+        "crates/slug-vm/tests/ffi/stateful_module.c",
         "inactive_stateful",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -955,7 +975,11 @@ fn rejects_stale_native_functions_after_explicit_plugin_shutdown() {
 #[test]
 fn owns_c_resources_with_checked_borrow_and_close_semantics() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/resource_module.c",
+        "resources",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/resources.slug"),
@@ -1006,7 +1030,11 @@ fn owns_c_resources_with_checked_borrow_and_close_semantics() {
 #[test]
 fn validates_resource_arguments_through_dynamic_foreign_calls() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/resource_module.c", "resources");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/resource_module.c",
+        "resources",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/resources.slug"),
@@ -1046,7 +1074,7 @@ fn rejects_foreign_resource_results_with_the_wrong_declared_type() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/wrong_resource_result_module.c",
+        "crates/slug-vm/tests/ffi/wrong_resource_result_module.c",
         "wrong_resource_result",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -1087,7 +1115,7 @@ fn keeps_same_named_resources_in_distinct_module_namespaces() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/same_named_resource_modules.c",
+        "crates/slug-vm/tests/ffi/same_named_resource_modules.c",
         "same_named_resources",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -1136,7 +1164,7 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/resource_module.c",
+        "crates/slug-vm/tests/ffi/resource_module.c",
         "cleanup_resources",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -1212,7 +1240,11 @@ fn cleans_up_c_resources_during_error_unwinding_and_vm_teardown() {
 #[test]
 fn lets_a_c_thread_send_through_an_owned_producer_capability() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/async_module.c", "async");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/async_module.c",
+        "async",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/async.slug"),
@@ -1240,7 +1272,7 @@ fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/backpressure_module.c",
+        "crates/slug-vm/tests/ffi/backpressure_module.c",
         "backpressure",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -1274,7 +1306,11 @@ fn lets_a_c_producer_retain_and_retry_an_integer_after_backpressure() {
 #[test]
 fn reports_closed_when_slug_revokes_a_c_producer_receiver() {
     let directory = TemporaryDirectory::new();
-    let library = compile_fixture(&directory, "tests/ffi/revocation_module.c", "revocation");
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/revocation_module.c",
+        "revocation",
+    );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
     fs::write(
         directory.path().join("slug/revocation.slug"),
@@ -1307,7 +1343,7 @@ fn transfers_owned_c_text_only_after_a_backpressured_retry_succeeds() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/text_backpressure_module.c",
+        "crates/slug-vm/tests/ffi/text_backpressure_module.c",
         "text_backpressure",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");
@@ -1346,7 +1382,7 @@ fn producer_abi_013_sends_owned_scalar_and_byte_values_then_closes() {
     let directory = TemporaryDirectory::new();
     let library = compile_fixture(
         &directory,
-        "tests/ffi/producer_values_module.c",
+        "crates/slug-vm/tests/ffi/producer_values_module.c",
         "producer_values",
     );
     fs::create_dir_all(directory.path().join("slug")).expect("create Slug module directory");

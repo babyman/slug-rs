@@ -629,7 +629,7 @@
   with compact entry-point maps, preserving their existing test coverage.
 
 - Aligned contributor test routing and language-handoff documentation with the
-  versioned `tests/conformance` fixture suite, and made documentation checks
+  versioned `conformance` fixture suite, and made documentation checks
   verify its mandatory repository paths.
 
 - Added an AI-assisted development plan covering repository guidance accuracy,
