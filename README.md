@@ -1,6 +1,6 @@
 # Slug VM in Rust
 
-This repository is a clean-room Rust implementation of the Slug language.
+This repository is a clean-room Rust workspace implementing the Slug language.
 It starts with the execution boundary recommended by the language package: a
 small, checked VM with Slug-specific bytecode. The bytecode types are a public
 but unstable in-process Rust embedding and testing surface: they are not a file
@@ -143,16 +143,16 @@ val main = fn() {
 Run it from the repository root:
 
 ```sh
-cargo run --bin slug -- hello.slug
+cargo run -p slug-vm --bin slug -- hello.slug
 ```
 
 For a persistent interactive session, run the minimal terminal client:
 
 ```sh
-cargo build --bins
-cargo run --bin slug-repl
+cargo build --workspace --bins
+cargo run -p slug-repl
 # or seed the session from a source file
-cargo run --bin slug-repl -- session.slug
+cargo run -p slug-repl -- session.slug
 ```
 
 It launches the sibling `slug-server` executable, presents a `>` prompt, and
@@ -193,7 +193,7 @@ as the source-language reference.
 
 ```sh
 make check
-cargo run --bin slug -- --help
+cargo run -p slug-vm --bin slug -- --help
 ```
 
 `make check` runs formatting validation, strict Clippy, full tests, and the

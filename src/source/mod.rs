@@ -24,19 +24,22 @@ use self::environment::{ImportSnapshots, ModuleSnapshot, SessionSnapshot};
 
 /// Compiler state retained by an interactive source session.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct InteractiveCompilerState {
+#[doc(hidden)]
+pub struct InteractiveCompilerState {
     semantic: SessionSnapshot,
     globals: HashMap<String, bool>,
     callable_globals: HashSet<String>,
 }
 
-pub(crate) struct InteractiveCompilation {
-    pub(crate) program: Program,
-    pub(crate) state: InteractiveCompilerState,
+#[doc(hidden)]
+pub struct InteractiveCompilation {
+    pub program: Program,
+    pub state: InteractiveCompilerState,
 }
 
 /// Syntax readiness of source accumulated by an interactive session.
-pub(crate) enum SourceReadiness {
+#[doc(hidden)]
+pub enum SourceReadiness {
     Complete,
     Incomplete,
     Invalid(SourceError),
@@ -95,7 +98,9 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     compile_expressions(path, expressions, ImportSnapshots::new())
 }
 
-pub(crate) fn source_readiness(path: &str, source: &str) -> SourceReadiness {
+#[doc(hidden)]
+#[must_use]
+pub fn source_readiness(path: &str, source: &str) -> SourceReadiness {
     let tokens = match Lexer::new(path, source).tokens() {
         Ok(tokens) => tokens,
         Err(error) => {
@@ -142,7 +147,8 @@ fn incomplete_lexer_error(error: &SourceError, source: &str) -> bool {
 /// Each returned compilation is analysed against the state produced by the
 /// preceding form. This lets an interactive host commit completed forms before
 /// retaining a later form that suspends.
-pub(crate) fn compile_interactive_forms(
+#[doc(hidden)]
+pub fn compile_interactive_forms(
     path: &str,
     source: &str,
     state: &InteractiveCompilerState,

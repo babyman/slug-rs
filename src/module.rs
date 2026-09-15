@@ -297,7 +297,8 @@ impl ModuleLoader {
         self.compile_source_for_module(path, source, true)
     }
 
-    pub(crate) fn compile_interactive_forms(
+    #[doc(hidden)]
+    pub fn compile_interactive_forms(
         &self,
         path: &str,
         source: &str,

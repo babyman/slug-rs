@@ -14,7 +14,6 @@ mod conformance;
 mod ffi_prototype;
 mod fixture;
 pub mod host;
-pub mod interactive;
 mod module;
 mod native;
 mod scheduler_signal;
@@ -47,15 +46,25 @@ pub use native::{
     NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,
     NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
 };
+#[doc(hidden)]
+pub use source::{
+    InteractiveCompilation, InteractiveCompilerState, SourceReadiness, source_readiness,
+};
 pub use source::{SourceError, SourceErrorKind, compile};
 #[cfg(feature = "concurrency")]
 pub use value::Task;
 pub use value::{
     Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value,
 };
+#[cfg(not(feature = "concurrency"))]
+#[doc(hidden)]
+pub use vm::InteractiveExecution;
+#[cfg(feature = "concurrency")]
+#[doc(hidden)]
+pub use vm::InteractiveTask;
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
 pub use vm::{
-    CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress,
-    VmResult,
+    CallFrame, InteractiveEnvironment, NativeErrorDetails, RuntimeError, RuntimeErrorKind, Vm,
+    VmLayoutMetrics, VmProgress, VmResult,
 };

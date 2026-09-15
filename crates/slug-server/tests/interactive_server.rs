@@ -3,17 +3,20 @@ use std::sync::{Arc, Mutex};
 use std::{
     cell::RefCell,
     io::Write,
+    path::PathBuf,
     process::{Command, Stdio},
     rc::Rc,
 };
 
+use slug_server::interactive::{
+    Diagnostic, DiagnosticCategory, EventOrigin, OutputError, OutputStream, Server,
+};
 #[cfg(feature = "concurrency")]
 use slug_vm::NativeChannelProducer;
 use slug_vm::{ModuleLoader, Vm};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind,
     compile,
-    interactive::{Diagnostic, DiagnosticCategory, EventOrigin, OutputError, OutputStream, Server},
 };
 
 fn request(
@@ -30,6 +33,14 @@ fn request(
         request["params"] = params;
     }
     request
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf()
 }
 
 #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
@@ -155,7 +166,8 @@ fn session_persists_compiler_and_runtime_bindings_across_submissions() {
 
 #[test]
 fn configured_server_resolves_and_typechecks_builtin_imports() {
-    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let root = workspace_root();
+    let loader = ModuleLoader::new(&root, Some(root.join("lib")));
     let mut server = Server::new(Vm::with_module_loader(loader));
     let response = server.handle_line(
         &request(
@@ -189,7 +201,8 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
 #[test]
 #[cfg(feature = "concurrency")]
 fn imported_channel_calls_suspend_and_resume_in_an_interactive_task() {
-    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let root = workspace_root();
+    let loader = ModuleLoader::new(&root, Some(root.join("lib")));
     let mut server = Server::new(Vm::with_module_loader(loader));
     assert!(
         server
@@ -260,7 +273,8 @@ fn slim_retained_cells_share_committed_mutable_bindings() {
 
 #[test]
 fn submission_runs_later_binding_free_forms_after_a_stall() {
-    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let root = workspace_root();
+    let loader = ModuleLoader::new(&root, Some(root.join("lib")));
     let mut server = Server::new(Vm::with_module_loader(loader));
     assert!(
         server
@@ -448,7 +462,8 @@ fn dropping_a_slim_server_cancels_all_retained_cells() {
 
 #[test]
 fn launched_program_output_has_a_root_origin() {
-    let loader = ModuleLoader::new(".", Some("lib".into()));
+    let root = workspace_root();
+    let loader = ModuleLoader::new(&root, Some(root.join("lib")));
     let mut server = Server::new(Vm::with_module_loader(loader.clone()));
     let program = loader
         .compile_source("<root>", "println('worker started')")
@@ -1265,7 +1280,7 @@ fn submit(
     id: u64,
     session: &str,
     source: &str,
-) -> slug_vm::interactive::Response {
+) -> slug_server::interactive::Response {
     server.handle_line(
         &request(
             id,

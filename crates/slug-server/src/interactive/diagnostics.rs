@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{RuntimeError, RuntimeErrorKind, SourceError, SourceErrorKind, SourceSpan, Value};
+use slug_vm::{RuntimeError, RuntimeErrorKind, SourceError, SourceErrorKind, SourceSpan, Value};
 
 /// A versioned, wire-safe projection of a Slug or server failure.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

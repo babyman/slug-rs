@@ -6,8 +6,8 @@ use std::{
 };
 
 use serde::Serialize;
+use slug_server::interactive::Server;
 use slug_vm::host::build_default_host_vm;
-use slug_vm::interactive::Server;
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os();

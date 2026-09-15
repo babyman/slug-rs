@@ -5,16 +5,16 @@ use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{
-    NativeArity, NativeCall, NativeDescriptorError, NativeFunction, NativeModule, NativeOwnedValue,
-    NativeStatus, NativeValueKind, Program, Value as SlugValue, Vm, VmResult,
-    source::{InteractiveCompilerState, SourceReadiness, source_readiness},
-    vm::InteractiveEnvironment,
-};
 #[cfg(not(feature = "concurrency"))]
-use crate::{VmProgress, source::InteractiveCompilation, vm::InteractiveExecution};
+use slug_vm::{InteractiveCompilation, InteractiveExecution, VmProgress};
 #[cfg(feature = "concurrency")]
-use crate::{VmProgress, source::InteractiveCompilation, vm::InteractiveTask};
+use slug_vm::{InteractiveCompilation, InteractiveTask, VmProgress};
+use slug_vm::{
+    InteractiveCompilerState, InteractiveEnvironment, NativeArity, NativeCall,
+    NativeDescriptorError, NativeError, NativeFunction, NativeModule, NativeOwnedValue,
+    NativeStatus, NativeValueKind, NativeValueRef, Program, SourceReadiness, Value as SlugValue,
+    Vm, VmResult, source_readiness,
+};
 
 use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
 
@@ -695,7 +695,7 @@ impl Server {
     }
 
     #[cfg(feature = "concurrency")]
-    fn pump_background(&mut self, session: &str) -> Result<bool, crate::RuntimeError> {
+    fn pump_background(&mut self, session: &str) -> Result<bool, slug_vm::RuntimeError> {
         let tasks = self.sessions[session]
             .executions
             .iter()
@@ -936,14 +936,14 @@ fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
             value.len().expect("collection kind has a length")
         }
         kind => {
-            return call.raise(crate::NativeError::new(
+            return call.raise(NativeError::new(
                 "native.type",
                 format!("`len` expects str, bytes, list, or map, got {kind:?}"),
             ));
         }
     };
     let Ok(length) = i64::try_from(length) else {
-        return call.raise(crate::NativeError::new(
+        return call.raise(NativeError::new(
             "native.range",
             "`len` result exceeds the supported integer range",
         ));
@@ -954,11 +954,11 @@ fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
 fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
     let capacity = match call.argument_count() {
         0 => 0,
-        1 => match call.argument(0).and_then(crate::NativeValueRef::as_i64) {
+        1 => match call.argument(0).and_then(NativeValueRef::as_i64) {
             Ok(value) => match usize::try_from(value) {
                 Ok(value) => value,
                 Err(_) => {
-                    return call.raise(crate::NativeError::new(
+                    return call.raise(NativeError::new(
                         "native.type",
                         "channel capacity must not be negative or too large",
                     ));
@@ -967,7 +967,7 @@ fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
             Err(error) => return call.raise(error),
         },
         count => {
-            return call.raise(crate::NativeError::new(
+            return call.raise(NativeError::new(
                 "native.arity",
                 format!("`chan` expects at most 1 argument, got {count}"),
             ));
@@ -999,13 +999,13 @@ fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
         output
     };
     let Some(sink) = call.state::<Rc<RefCell<OutputSink>>>() else {
-        return call.raise(crate::NativeError::new(
+        return call.raise(NativeError::new(
             "native.output",
             "interactive output sink is unavailable",
         ));
     };
     if !sink.borrow_mut().write_active(OutputStream::Stdout, output) {
-        return call.raise(crate::NativeError::new(
+        return call.raise(NativeError::new(
             "native.output",
             "interactive output was produced outside a submission",
         ));

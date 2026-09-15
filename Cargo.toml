@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/slug-server", "crates/slug-repl"]
+resolver = "3"
+
 [package]
 name = "slug-vm"
 version = "0.1.0"
@@ -32,14 +36,16 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "deny"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
+[lints]
+workspace = true
+
 [dependencies]
-rustyline = "17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

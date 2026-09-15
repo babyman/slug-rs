@@ -260,10 +260,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "slug-vm"
+name = "slug-repl"
 version = "0.1.0"
 dependencies = [
  "rustyline",
+ "serde_json",
+ "slug-server",
+]
+
+[[package]]
+name = "slug-server"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "slug-vm",
+]
+
+[[package]]
+name = "slug-vm"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
  "toml",

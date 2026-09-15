@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Split the repository into a Cargo workspace with dedicated `slug-server` and
+  `slug-repl` crates. The terminal client now depends only on the server
+  protocol crate, while VM and compiler dependencies remain behind the server.
+
 - Fixed Windows native-clutch fixture builds and quoted Windows filesystem
   paths in generated Slug test programs.
 

@@ -7,7 +7,7 @@ use std::{
 
 use rustyline::{DefaultEditor, error::ReadlineError};
 use serde_json::{Value, json};
-use slug_vm::interactive::{
+use slug_server::interactive::{
     Diagnostic, DiagnosticCategory, Event, IncomingMessage, PROTOCOL_VERSION, Request, Response,
 };
 

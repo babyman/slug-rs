@@ -361,7 +361,8 @@ pub struct Vm {
 }
 
 /// Global bindings retained by one interactive session using a shared VM.
-pub(crate) struct InteractiveEnvironment {
+#[doc(hidden)]
+pub struct InteractiveEnvironment {
     globals: GlobalEnvironment,
     host_globals: GlobalEnvironment,
     local_bindings: HashSet<String>,
@@ -370,7 +371,8 @@ pub(crate) struct InteractiveEnvironment {
 
 /// Detached root-execution state for a slim interactive session.
 #[cfg(not(feature = "concurrency"))]
-pub(crate) struct InteractiveExecution {
+#[doc(hidden)]
+pub struct InteractiveExecution {
     module_program: Option<Rc<Program>>,
     imported_globals: HashSet<String>,
     module_metadata: Vec<ModuleDeclaration>,
@@ -389,7 +391,8 @@ pub(crate) struct InteractiveExecution {
 /// A scheduler-owned interactive submission running in the shared VM.
 #[cfg(feature = "concurrency")]
 #[derive(Clone)]
-pub(crate) struct InteractiveTask {
+#[doc(hidden)]
+pub struct InteractiveTask {
     task: Rc<Task>,
     nursery: Rc<Nursery>,
     globals: GlobalEnvironment,
@@ -398,11 +401,14 @@ pub(crate) struct InteractiveTask {
 
 #[cfg(feature = "concurrency")]
 impl InteractiveTask {
-    pub(crate) fn outcome(&self) -> Option<VmResult<Value>> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn outcome(&self) -> Option<VmResult<Value>> {
         self.task.outcome()
     }
 
-    pub(crate) fn synchronize_environment(
+    #[doc(hidden)]
+    pub fn synchronize_environment(
         &self,
         environment: &mut InteractiveEnvironment,
         program: &Program,
@@ -574,7 +580,8 @@ impl Vm {
         vm
     }
 
-    pub(crate) fn compile_interactive_forms(
+    #[doc(hidden)]
+    pub fn compile_interactive_forms(
         &self,
         path: &str,
         source: &str,
@@ -586,7 +593,9 @@ impl Vm {
         )
     }
 
-    pub(crate) fn has_module_loader(&self) -> bool {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_module_loader(&self) -> bool {
         self.module_loader.is_some()
     }
 
@@ -707,7 +716,9 @@ impl Vm {
         self.globals.borrow().get(name).cloned()
     }
 
-    pub(crate) fn interactive_environment(&self) -> InteractiveEnvironment {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn interactive_environment(&self) -> InteractiveEnvironment {
         InteractiveEnvironment {
             globals: global_environment(),
             host_globals: self.globals.clone(),
@@ -717,7 +728,8 @@ impl Vm {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    pub(crate) fn start_named_interactive_execution(
+    #[doc(hidden)]
+    pub fn start_named_interactive_execution(
         &mut self,
         program: &Program,
         entry: &str,
@@ -741,7 +753,8 @@ impl Vm {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    pub(crate) fn run_interactive_execution_until_stalled(
+    #[doc(hidden)]
+    pub fn run_interactive_execution_until_stalled(
         &mut self,
         execution: &mut InteractiveExecution,
         environment: &mut InteractiveEnvironment,
@@ -754,7 +767,8 @@ impl Vm {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    pub(crate) fn cancel_interactive_execution(
+    #[doc(hidden)]
+    pub fn cancel_interactive_execution(
         &mut self,
         execution: &mut InteractiveExecution,
         environment: &mut InteractiveEnvironment,
@@ -829,7 +843,8 @@ impl Vm {
     }
 
     #[cfg(feature = "concurrency")]
-    pub(crate) fn start_named_interactive_task(
+    #[doc(hidden)]
+    pub fn start_named_interactive_task(
         &mut self,
         program: &Program,
         entry: &str,
@@ -895,7 +910,8 @@ impl Vm {
     }
 
     #[cfg(feature = "concurrency")]
-    pub(crate) fn cancel_interactive_task(&self, task: &InteractiveTask) {
+    #[doc(hidden)]
+    pub fn cancel_interactive_task(&self, task: &InteractiveTask) {
         let error = self.error(
             RuntimeErrorKind::InvalidCall,
             "interactive session was closed".into(),
@@ -906,15 +922,14 @@ impl Vm {
     }
 
     #[cfg(feature = "concurrency")]
-    pub(crate) fn release_interactive_task(task: &InteractiveTask) {
+    #[doc(hidden)]
+    pub fn release_interactive_task(task: &InteractiveTask) {
         task.nursery.clear();
     }
 
     #[cfg(feature = "concurrency")]
-    pub(crate) fn run_interactive_task_until_stalled(
-        &mut self,
-        task: &InteractiveTask,
-    ) -> VmProgress {
+    #[doc(hidden)]
+    pub fn run_interactive_task_until_stalled(&mut self, task: &InteractiveTask) -> VmProgress {
         loop {
             if let Some(result) = task.outcome() {
                 let cancellation = self.error(
@@ -948,9 +963,8 @@ impl Vm {
         }
     }
 
-    pub(crate) fn interactive_overlay(
-        environment: &mut InteractiveEnvironment,
-    ) -> InteractiveEnvironment {
+    #[doc(hidden)]
+    pub fn interactive_overlay(environment: &mut InteractiveEnvironment) -> InteractiveEnvironment {
         Self::synchronize_host_interactive_environment(environment);
         InteractiveEnvironment {
             globals: Rc::new(RefCell::new(environment.globals.borrow().clone())),
@@ -960,7 +974,8 @@ impl Vm {
         }
     }
 
-    pub(crate) fn commit_interactive_bindings(
+    #[doc(hidden)]
+    pub fn commit_interactive_bindings(
         environment: &mut InteractiveEnvironment,
         program: &Program,
     ) {
@@ -970,7 +985,8 @@ impl Vm {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    pub(crate) fn synchronize_interactive_submission(
+    #[doc(hidden)]
+    pub fn synchronize_interactive_submission(
         source: &InteractiveEnvironment,
         destination: &mut InteractiveEnvironment,
         program: &Program,

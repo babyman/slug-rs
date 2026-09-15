@@ -12,6 +12,8 @@ guarantee when the language documents say otherwise.
 | `tests/conformance_runner.rs` | Fixture-sidecar parsing and process-level success or failure execution. | `cargo test --features metrics --test conformance_runner` |
 | `tests/conformance_metadata.rs` | Rejection of malformed or incompatible fixture metadata. | `cargo test --features metrics --test conformance_metadata` |
 | `tests/legacy_syntax_conformance.rs` | The repository's schema-1 fixtures in `tests/conformance/legacy-syntax/`. | `cargo test --features metrics --test legacy_syntax_conformance` |
+| `crates/slug-server/tests/interactive_server.rs` | Server protocol lifecycle, sessions, output events, and root execution. | `cargo test -p slug-server --features metrics --test interactive_server` |
+| `crates/slug-repl/tests/interactive_repl.rs` | Terminal client's process transport, prompts, and diagnostic rendering. | `cargo test -p slug-repl --features metrics --test interactive_repl` |
 
 The VM and CLI targets are common loops, so Make exposes them directly. Run the
 listed `cargo test --test …` command for the remaining focused integration
@@ -22,7 +24,7 @@ boundaries; `make test` runs all of them.
 `make check` validates the default scheduler runtime with metrics and invokes
 `make slim` for every supported no-default-features configuration. `make slim`
 runs tests and strict Clippy both without extra features and with `metrics`.
-Use `cargo test --no-default-features --test vm` for a focused slim VM loop.
+Use `cargo test -p slug-vm --no-default-features --test vm` for a focused slim VM loop.
 
 Add a regression test with every behavior change. Error behavior must assert a
 Slug error or CLI diagnostic rather than merely proving that execution did not
