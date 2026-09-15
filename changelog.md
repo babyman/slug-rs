@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added opt-in VM collection metrics, size-tiered collection benchmarks, and
+  retained-map peak-RSS fixtures to guide the immutable collection redesign.
+
 - Made Slug maps semantically unordered. Map key enumeration now has
   unspecified order; programs requiring an order must order returned keys.
 

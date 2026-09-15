@@ -33,6 +33,38 @@ fn maps_compare_by_key_value_membership_not_entry_order() {
 }
 
 #[test]
+#[cfg(feature = "metrics")]
+fn records_map_construction_lookup_and_update_costs() {
+    let mut main = Chunk::new("main", 0);
+    let key = main.constant(Value::string("name"));
+    let initial = main.constant(Value::string("Slug"));
+    let replacement = main.constant(Value::string("VM"));
+    main.emit(Op::Constant(key))
+        .emit(Op::Constant(initial))
+        .emit(Op::Map(1))
+        .emit(Op::Constant(key))
+        .emit(Op::Constant(replacement))
+        .emit(Op::Map(1))
+        .emit(Op::Add)
+        .emit(Op::Constant(key))
+        .emit(Op::GetIndex)
+        .emit(Op::Return);
+
+    let mut vm = Vm::new();
+    assert_eq!(
+        vm.run(&program_with_main(main), 0).unwrap(),
+        Value::string("VM")
+    );
+    let metrics = vm.metrics();
+    assert_eq!(metrics.collection_constructions, 2);
+    assert_eq!(metrics.collection_elements_constructed, 2);
+    assert_eq!(metrics.collection_lookups, 1);
+    assert_eq!(metrics.map_entries_examined, 1);
+    assert_eq!(metrics.collection_updates, 1);
+    assert_eq!(metrics.collection_elements_copied, 2);
+}
+
+#[test]
 fn indexes_and_slices_bytes() {
     let mut main = Chunk::new("main", 0);
     let bytes = main.constant(Value::Bytes(vec![2, 3, 4].into()));

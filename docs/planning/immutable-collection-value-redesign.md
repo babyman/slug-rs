@@ -37,19 +37,36 @@ internal storage improvement never becomes observable mutation.
 
 ### 0. Establish collection/value evidence
 
-- [ ] Add opt-in metrics for list/map construction, lookup, update, removal,
+- [x] Add opt-in metrics for list/map construction, lookup, update, removal,
   merge, slice, and struct-copy operations. Record collection length, whether
   an update had a unique owner, elements copied, and map entries inspected.
-- [ ] Add representative benchmarks for small (0--8), medium (32--128), and
+- [x] Add representative benchmarks for small (0--8), medium (32--128), and
   large (1,024+) collections. Include repeated persistent updates, read-heavy
   maps, list prepend/append, map merge/remove, struct copies, and retained
   aliases.
-- [ ] Add peak-RSS fixtures for retained collections and report `Value` layout,
+- [x] Add peak-RSS fixtures for retained collections and report `Value` layout,
   heap allocations, and reference-count traffic only behind the existing
   metrics feature.
 
 **Gate:** a proposed representation names the workload it improves and the
 allocation, copying, or lookup evidence that justifies its extra complexity.
+
+### Stage 0 baseline
+
+The first metrics-enabled run reports a 48-byte `Value`. The 8-element
+collection workload performs 8 persistent updates and copies 28 elements per
+invocation; the 64-element workload performs 64 updates and copies 2,016
+elements; the 1,024-element workload performs 1,024 updates and copies
+523,776 elements. All recorded updates are shared under the current
+reference-counted vector representation, so unique-owner reuse is the first
+candidate optimization to measure in Stage 3. The map workloads deliberately
+read an early key repeatedly: a 1,024-element workload inspects 1,048,577 map
+entries per invocation, exposing the linear scan cost without claiming an
+iteration order guarantee.
+
+On the baseline host, peak RSS was about 2.0 MiB for the minimal fixture, 2.7
+MiB for retained 128-map snapshots, and 3.4 MiB for retained 1,024-map
+snapshots. These host measurements are directional, not CI thresholds.
 
 ### 1. Lock down observable immutability contracts
 

@@ -118,6 +118,24 @@ pub struct VmMetrics {
     pub frames_created: usize,
     /// Frame-local binding cells allocated by the current representation.
     pub local_binding_cells_created: usize,
+    /// Lists, maps, bytes, and structs constructed by VM collection operations.
+    pub collection_constructions: usize,
+    /// Elements or fields supplied while constructing collection values.
+    pub collection_elements_constructed: usize,
+    /// Collection index operations, including map lookups.
+    pub collection_lookups: usize,
+    /// Slice operations over lists, bytes, or strings.
+    pub collection_slices: usize,
+    /// Map entries inspected by the current lookup representation.
+    pub map_entries_examined: usize,
+    /// Persistent collection update operations.
+    pub collection_updates: usize,
+    /// Elements or fields copied while producing a persistent update.
+    pub collection_elements_copied: usize,
+    /// Updates whose source collection had one reference-counted owner.
+    pub collection_unique_owner_updates: usize,
+    /// Updates whose source collection was shared by another value.
+    pub collection_shared_owner_updates: usize,
     /// Timed waits registered with nursery timer services.
     #[cfg(feature = "concurrency")]
     pub timer_registrations: usize,
@@ -2208,8 +2226,43 @@ impl Vm {
                     capture_sources,
                 })));
             }
-            Op::Add => self.binary_at(span, add)?,
-            Op::Subtract => self.binary_at(span, subtract)?,
+            Op::Add => {
+                let (left, right) = self.pop_pair_at(span)?;
+                #[cfg(feature = "metrics")]
+                match (&left, &right) {
+                    (Value::List(left), Value::List(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    (Value::Map(left), Value::Map(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    (Value::Bytes(left), Value::Bytes(right)) => {
+                        self.record_collection_update(left.len() + right.len(), false);
+                    }
+                    _ => {}
+                }
+                self.stack.push(
+                    add(left, right)
+                        .map_err(|(kind, message)| self.error_at(kind, message, span))?,
+                );
+            }
+            Op::Subtract => {
+                let (left, right) = self.pop_pair_at(span)?;
+                #[cfg(feature = "metrics")]
+                if let Value::Map(entries) = &left {
+                    self.record_collection_update(entries.len(), Rc::strong_count(entries) == 1);
+                }
+                self.stack.push(
+                    subtract(left, right)
+                        .map_err(|(kind, message)| self.error_at(kind, message, span))?,
+                );
+            }
             Op::Multiply => self.binary_at(span, multiply)?,
             Op::Divide => self.binary_at(span, divide)?,
             Op::Modulo => self.binary_at(span, modulo)?,
@@ -2228,14 +2281,40 @@ impl Vm {
             Op::ShiftRight => {
                 self.binary_at(span, |left, right| shift(left, right, i64::checked_shr))?;
             }
-            Op::ListAppend => self.binary_at(span, |list, value| {
-                list_append(list, value).map_err(|message| (RuntimeErrorKind::Type, message))
-            })?,
-            Op::ListPrepend => self.binary_at(span, |value, list| {
-                list_prepend(value, list).map_err(|message| (RuntimeErrorKind::Type, message))
-            })?,
+            Op::ListAppend => {
+                let (list, value) = self.pop_pair_at(span)?;
+                #[cfg(feature = "metrics")]
+                match &list {
+                    Value::List(values) => {
+                        self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
+                    }
+                    Value::Bytes(values) => self.record_collection_update(values.len(), false),
+                    _ => {}
+                }
+                self.stack.push(
+                    list_append(list, value)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
+            Op::ListPrepend => {
+                let (value, list) = self.pop_pair_at(span)?;
+                #[cfg(feature = "metrics")]
+                match &list {
+                    Value::List(values) => {
+                        self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
+                    }
+                    Value::Bytes(values) => self.record_collection_update(values.len(), false),
+                    _ => {}
+                }
+                self.stack.push(
+                    list_prepend(value, list)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
             Op::List(count) => {
                 let values = self.pop_values_at(*count, span)?;
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(values.len());
                 self.stack.push(Value::List(Rc::new(values)));
             }
             Op::ListSpread(spreads) => self.list_spread_at(spreads, span)?,
@@ -2262,6 +2341,8 @@ impl Vm {
                     }
                     entries.push((pair[0].clone(), pair[1].clone()));
                 }
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(entries.len());
                 self.stack.push(Value::Map(Rc::new(entries)));
             }
             Op::StructSchema(fields) => {
@@ -2296,6 +2377,8 @@ impl Vm {
             Op::Struct(fields) => {
                 let values = self.pop_values_at(fields.len(), span)?;
                 let schema = self.pop_at(span)?;
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(values.len());
                 self.stack.push(
                     construct_struct(schema, fields, &values)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
@@ -2304,6 +2387,10 @@ impl Vm {
             Op::StructCopy(fields) => {
                 let replacements = self.pop_values_at(fields.len(), span)?;
                 let value = self.pop_at(span)?;
+                #[cfg(feature = "metrics")]
+                if let Value::Struct(value) = &value {
+                    self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
+                }
                 self.stack.push(
                     copy_value(value, fields, &replacements)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
@@ -2320,6 +2407,8 @@ impl Vm {
                 let collection = values
                     .next()
                     .expect("slice operation includes a collection");
+                #[cfg(feature = "metrics")]
+                self.record_collection_slice();
                 let start = has_start.then(|| values.next().expect("slice start is present"));
                 let end = has_end.then(|| values.next().expect("slice end is present"));
                 let step = has_step.then(|| values.next().expect("slice step is present"));
@@ -2331,8 +2420,13 @@ impl Vm {
             Op::GetIndex => {
                 let (collection, index) = self.pop_pair_at(span)?;
                 self.stack.push(
-                    index_value(collection, &index)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                    index_value(
+                        collection,
+                        &index,
+                        #[cfg(feature = "metrics")]
+                        &self.metrics,
+                    )
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
                 );
             }
             Op::Negate => {
@@ -2759,6 +2853,8 @@ impl Vm {
                     .expect("validated struct field metadata");
                 let values = self.pop_values_at(fields.len(), span)?;
                 let schema = self.pop_at(span)?;
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(values.len());
                 self.stack.push(
                     construct_struct(schema, fields, &values)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
@@ -2770,6 +2866,10 @@ impl Vm {
                     .expect("validated struct field metadata");
                 let replacements = self.pop_values_at(fields.len(), span)?;
                 let value = self.pop_at(span)?;
+                #[cfg(feature = "metrics")]
+                if let Value::Struct(value) = &value {
+                    self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
+                }
                 self.stack.push(
                     copy_value(value, fields, &replacements)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
@@ -4599,6 +4699,30 @@ impl Vm {
     #[cfg(feature = "metrics")]
     fn record_local_cell(&self) {
         self.metrics.borrow_mut().local_binding_cells_created += 1;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_collection_construction(&self, elements: usize) {
+        let mut metrics = self.metrics.borrow_mut();
+        metrics.collection_constructions += 1;
+        metrics.collection_elements_constructed += elements;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_collection_update(&self, copied: usize, unique_owner: bool) {
+        let mut metrics = self.metrics.borrow_mut();
+        metrics.collection_updates += 1;
+        metrics.collection_elements_copied += copied;
+        if unique_owner {
+            metrics.collection_unique_owner_updates += 1;
+        } else {
+            metrics.collection_shared_owner_updates += 1;
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_collection_slice(&self) {
+        self.metrics.borrow_mut().collection_slices += 1;
     }
 
     fn error_at(

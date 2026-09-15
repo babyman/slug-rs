@@ -1,8 +1,13 @@
 use std::rc::Rc;
 
+#[cfg(feature = "metrics")]
+use std::cell::RefCell;
+
 use crate::{MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value};
 
 use super::RuntimeErrorKind;
+#[cfg(feature = "metrics")]
+use super::VmMetrics;
 
 #[allow(clippy::cast_precision_loss)]
 pub(super) fn numbers(left: Value, right: Value) -> Result<(f64, f64), String> {
@@ -558,9 +563,17 @@ pub(super) fn is_map_key(value: &Value) -> bool {
     )
 }
 
-pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, String> {
+pub(super) fn index_value(
+    collection: Value,
+    index: &Value,
+    #[cfg(feature = "metrics")] metrics: &Rc<RefCell<VmMetrics>>,
+) -> Result<Value, String> {
     match collection {
         Value::List(values) => {
+            #[cfg(feature = "metrics")]
+            {
+                metrics.borrow_mut().collection_lookups += 1;
+            }
             let Value::Int(index) = index else {
                 return Err("list index must be an integer".into());
             };
@@ -573,6 +586,10 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
                 .ok_or_else(|| "list index is out of bounds".into())
         }
         Value::Bytes(values) => {
+            #[cfg(feature = "metrics")]
+            {
+                metrics.borrow_mut().collection_lookups += 1;
+            }
             let Value::Int(index) = index else {
                 return Err("bytes index must be an integer".into());
             };
@@ -587,6 +604,10 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
                 .ok_or_else(|| "bytes index is out of bounds".into())
         }
         Value::Str(value) => {
+            #[cfg(feature = "metrics")]
+            {
+                metrics.borrow_mut().collection_lookups += 1;
+            }
             let Value::Int(index) = index else {
                 return Err("string index must be an integer".into());
             };
@@ -599,11 +620,32 @@ pub(super) fn index_value(collection: Value, index: &Value) -> Result<Value, Str
                 .map(|character| Value::string(character.to_string()))
                 .ok_or_else(|| "string index is out of bounds".into())
         }
-        Value::Map(entries) => Ok(entries
-            .iter()
-            .rev()
-            .find(|(key, _)| key == index)
-            .map_or(Value::Nil, |(_, value)| value.clone())),
+        Value::Map(entries) => {
+            #[cfg(feature = "metrics")]
+            let mut examined = 0usize;
+            for (key, value) in entries.iter().rev() {
+                #[cfg(feature = "metrics")]
+                {
+                    examined += 1;
+                }
+                if key == index {
+                    #[cfg(feature = "metrics")]
+                    {
+                        let mut metrics = metrics.borrow_mut();
+                        metrics.collection_lookups += 1;
+                        metrics.map_entries_examined += examined;
+                    }
+                    return Ok(value.clone());
+                }
+            }
+            #[cfg(feature = "metrics")]
+            {
+                let mut metrics = metrics.borrow_mut();
+                metrics.collection_lookups += 1;
+                metrics.map_entries_examined += examined;
+            }
+            Ok(Value::Nil)
+        }
         Value::Struct(value) => {
             let Value::Str(name) = index else {
                 return Err("struct index must be a string".into());

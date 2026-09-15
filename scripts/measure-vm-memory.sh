@@ -36,7 +36,9 @@ printf '%-30s %15s\n' 'workload' 'peak RSS (bytes)'
 for fixture in \
     crates/slug-vm/benches/memory/minimal.slug \
     crates/slug-vm/benches/memory/closures-retained-128.slug \
-    crates/slug-vm/benches/memory/closures-retained-1024.slug
+    crates/slug-vm/benches/memory/closures-retained-1024.slug \
+    crates/slug-vm/benches/memory/maps-retained-128.slug \
+    crates/slug-vm/benches/memory/maps-retained-1024.slug
 do
     rss=$(measure "$root_dir/$fixture")
     if [ -z "$rss" ]; then

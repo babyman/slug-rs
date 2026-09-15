@@ -39,6 +39,35 @@ fn install_native_increment(vm: &mut Vm) {
     .expect("native binding is unique");
 }
 
+fn collection_workload(size: usize) -> String {
+    let entries = (0..size)
+        .map(|index| format!("k{index}: {index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let updates = size.min(32);
+    format!(
+        "val append = fn(remaining, values) {{ if (remaining == 0) {{ values }} else {{ recur(remaining - 1, values :+ remaining) }} }}\n\
+         val update = fn(remaining, value) {{ if (remaining == 0) {{ value }} else {{ recur(remaining - 1, value copy {{ k0: remaining }}) }} }}\n\
+         val read = fn(remaining, total, value) {{ if (remaining == 0) {{ total }} else {{ recur(remaining - 1, total + value[\"k0\"], value) }} }}\n\
+         val values = append({size}, [])\n\
+         val mapped = update({updates}, {{{entries}}})\n\
+         read({size}, values[0], mapped) + mapped[\"k{}\"]\n",
+        size.saturating_sub(1),
+    )
+}
+
+fn collection_small() -> String {
+    collection_workload(8)
+}
+
+fn collection_medium() -> String {
+    collection_workload(64)
+}
+
+fn collection_large() -> String {
+    collection_workload(1_024)
+}
+
 fn main() {
     let vm_layout = Vm::layout_metrics();
     println!(
@@ -69,7 +98,7 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations, workload.install);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; collections constructed/elements {collection_constructions}/{collection_elements}; collection lookups/slices/map entries {collection_lookups}/{collection_slices}/{map_entries}; updates/copied/unique/shared {collection_updates}/{collection_copied}/{collection_unique}/{collection_shared}; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             verification = metrics.verification_time,
@@ -82,6 +111,15 @@ fn main() {
             program_clone_bytes = metrics.program_clone_bytes,
             frames = metrics.frames_created,
             cells = metrics.local_binding_cells_created,
+            collection_constructions = metrics.collection_constructions,
+            collection_elements = metrics.collection_elements_constructed,
+            collection_lookups = metrics.collection_lookups,
+            collection_slices = metrics.collection_slices,
+            map_entries = metrics.map_entries_examined,
+            collection_updates = metrics.collection_updates,
+            collection_copied = metrics.collection_elements_copied,
+            collection_unique = metrics.collection_unique_owner_updates,
+            collection_shared = metrics.collection_shared_owner_updates,
             removals = metrics.wait_registration_removals,
             channel_entries = metrics.channel_waiter_entries_examined,
             peak_channel = metrics.peak_channel_waiters,
@@ -142,6 +180,15 @@ fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration,
         metrics.program_clone_bytes += run_metrics.program_clone_bytes;
         metrics.frames_created += run_metrics.frames_created;
         metrics.local_binding_cells_created += run_metrics.local_binding_cells_created;
+        metrics.collection_constructions += run_metrics.collection_constructions;
+        metrics.collection_elements_constructed += run_metrics.collection_elements_constructed;
+        metrics.collection_lookups += run_metrics.collection_lookups;
+        metrics.collection_slices += run_metrics.collection_slices;
+        metrics.map_entries_examined += run_metrics.map_entries_examined;
+        metrics.collection_updates += run_metrics.collection_updates;
+        metrics.collection_elements_copied += run_metrics.collection_elements_copied;
+        metrics.collection_unique_owner_updates += run_metrics.collection_unique_owner_updates;
+        metrics.collection_shared_owner_updates += run_metrics.collection_shared_owner_updates;
         metrics.wait_registration_removals += run_metrics.wait_registration_removals;
         metrics.channel_waiter_entries_examined += run_metrics.channel_waiter_entries_examined;
         metrics.peak_channel_waiters = metrics
@@ -223,6 +270,24 @@ const WORKLOADS: &[Workload] = &[
         source: || {
             "val values = [1, 2, 3]\nval mapped = {first: values[0], last: values[2]}\nmapped[\"first\"] + mapped[\"last\"]\n".into()
         },
+        install: no_native_setup,
+    },
+    Workload {
+        name: "collections-small-8",
+        iterations: ITERATIONS,
+        source: collection_small,
+        install: no_native_setup,
+    },
+    Workload {
+        name: "collections-medium-64",
+        iterations: 100,
+        source: collection_medium,
+        install: no_native_setup,
+    },
+    Workload {
+        name: "collections-large-1024",
+        iterations: 10,
+        source: collection_large,
         install: no_native_setup,
     },
     Workload {
