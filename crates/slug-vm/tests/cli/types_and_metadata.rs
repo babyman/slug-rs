@@ -1458,7 +1458,7 @@ fn uses_the_builtin_channel_constructor_with_slug_channel_operations() {
     .expect("write slug.channel source");
     let output = slug()
         .arg(&path)
-        .env("SLUG_HOME", env!("CARGO_MANIFEST_DIR"))
+        .env("SLUG_HOME", workspace_root())
         .env_remove("SLUG_FIXTURE_LIBRARY_ROOT")
         .output()
         .expect("run slug.channel source");

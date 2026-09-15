@@ -1,8 +1,16 @@
 use std::{fs, process::Command};
 
+fn workspace_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
 fn slug() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_slug"));
-    command.env("SLUG_HOME", env!("CARGO_MANIFEST_DIR"));
+    command.env("SLUG_HOME", workspace_root());
     command
 }
 

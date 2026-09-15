@@ -4,85 +4,85 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 
 | Feature | Status | Evidence |
 |---|---|---|
-| Lexical bindings and assignment | implemented | `tests/cli.rs` |
-| List and map destructuring declarations | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Top-level `{*}` map selection declarations | implemented | `tests/cli.rs` |
-| Decimal integer literals with `_` separators | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Floating-point, hexadecimal, and byte literals | implemented | `tests/cli.rs` |
-| Double-quoted strings with basic escapes, Unicode-scalar indexing, and slicing | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Raw and triple-quoted strings with basic escapes | implemented | `tests/cli.rs` |
-| One-to-three-digit octal escapes | implemented | `tests/cli.rs` |
-| `$identifier` interpolated strings | implemented | `tests/cli.rs` |
-| Boolean and nil literals | implemented | `tests/cli.rs` |
-| Lists and maps, including persistent map merge/removal/copy and `slug.std.keys` | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Arithmetic, string concatenation/repetition, and list/bytes concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Equality and comparisons | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Integer bitwise, shift, and prefix `~` operators | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Directional list and bytes append/prepend (`:+`, `+:`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Pipeline operator (`/>`) | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Short-circuit logical-and and logical-or | implemented | `tests/cli.rs` |
-| Functions, blocks, conditionals, and captures | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Literal, list, and byte-sequence pattern matching | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| `name @ pattern` whole-value bindings | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Pinned `^name` patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Non-binding match-case alternatives | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Non-exact string-key map patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Computed map-pattern keys | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Named map rest captures | implemented | `tests/cli.rs` |
-| Anonymous list and map rest patterns | implemented | `tests/cli.rs` |
-| Exact map patterns | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Match guards | implemented | `tests/cli.rs` |
-| Function match bodies | implemented | `tests/cli.rs` |
-| Explicit function return | implemented | `tests/cli.rs` |
-| Language-level `throw` with checked payloads | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Plain `defer` cleanup on returns and errors | implemented | `tests/cli.rs` |
-| `defer onsuccess` cleanup | implemented | `tests/cli.rs` |
-| `defer onerror` cleanup and recovery | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Tail-position `recur(...)` with ordinary call binding | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| List, map, and dot indexing | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| List slicing | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Untyped struct schemas, construction, defaults, and field access | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Struct copies | implemented | `tests/cli.rs` |
-| Whole-case type constraints, schema matching, and type narrowing | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| `schema` types and nominal `struct<S>` construction inference | implemented | `tests/cli.rs`, `tests/module_loader.rs`, and `tests/vm.rs` |
-| Native function calls and `println` | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| `print` and `len` builtins | implemented | `tests/cli.rs` |
-| Implicit `slug.builtin` bindings and foundational Slug values | implemented | `tests/cli.rs` |
-| Positional call spreads and list-literal spreads | implemented | `tests/cli.rs` |
-| Named ordinary-function arguments | implemented | `tests/cli.rs` |
-| Final variadic parameters | implemented | `tests/cli.rs` |
-| Discard function parameters | implemented | `tests/cli.rs` |
-| Call-time default parameters | implemented | `tests/cli.rs` |
-| Type annotation syntax, function-value inference/calls, nil-control-flow narrowing, closed match coverage, schema field checking, mandatory resolution, and checked known operations | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
-| Generic call inference and explicit type applications | implemented | `tests/cli.rs` |
-| Lexically scoped local callable metadata and mandatory call resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
-| Cached exported callable snapshots across static imports | implemented | `tests/module_loader.rs` |
-| Canonical selected-overload lowering and live-binding dispatch | implemented | `tests/module_loader.rs` and `tests/vm.rs` |
-| Concrete-over-generic overload specificity | implemented | `tests/module_loader.rs` |
+| Lexical bindings and assignment | implemented | `crates/slug-vm/tests/cli.rs` |
+| List and map destructuring declarations | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Top-level `{*}` map selection declarations | implemented | `crates/slug-vm/tests/cli.rs` |
+| Decimal integer literals with `_` separators | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Floating-point, hexadecimal, and byte literals | implemented | `crates/slug-vm/tests/cli.rs` |
+| Double-quoted strings with basic escapes, Unicode-scalar indexing, and slicing | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Raw and triple-quoted strings with basic escapes | implemented | `crates/slug-vm/tests/cli.rs` |
+| One-to-three-digit octal escapes | implemented | `crates/slug-vm/tests/cli.rs` |
+| `$identifier` interpolated strings | implemented | `crates/slug-vm/tests/cli.rs` |
+| Boolean and nil literals | implemented | `crates/slug-vm/tests/cli.rs` |
+| Lists and maps, including persistent map merge/removal/copy and `slug.std.keys` | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Arithmetic, string concatenation/repetition, and list/bytes concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Equality and comparisons | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Integer bitwise, shift, and prefix `~` operators | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Directional list and bytes append/prepend (`:+`, `+:`) | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Pipeline operator (`/>`) | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Short-circuit logical-and and logical-or | implemented | `crates/slug-vm/tests/cli.rs` |
+| Functions, blocks, conditionals, and captures | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Literal, list, and byte-sequence pattern matching | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| `name @ pattern` whole-value bindings | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Pinned `^name` patterns | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Non-binding match-case alternatives | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Non-exact string-key map patterns | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Computed map-pattern keys | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Named map rest captures | implemented | `crates/slug-vm/tests/cli.rs` |
+| Anonymous list and map rest patterns | implemented | `crates/slug-vm/tests/cli.rs` |
+| Exact map patterns | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Match guards | implemented | `crates/slug-vm/tests/cli.rs` |
+| Function match bodies | implemented | `crates/slug-vm/tests/cli.rs` |
+| Explicit function return | implemented | `crates/slug-vm/tests/cli.rs` |
+| Language-level `throw` with checked payloads | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Plain `defer` cleanup on returns and errors | implemented | `crates/slug-vm/tests/cli.rs` |
+| `defer onsuccess` cleanup | implemented | `crates/slug-vm/tests/cli.rs` |
+| `defer onerror` cleanup and recovery | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Tail-position `recur(...)` with ordinary call binding | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| List, map, and dot indexing | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| List slicing | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Untyped struct schemas, construction, defaults, and field access | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Struct copies | implemented | `crates/slug-vm/tests/cli.rs` |
+| Whole-case type constraints, schema matching, and type narrowing | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| `schema` types and nominal `struct<S>` construction inference | implemented | `crates/slug-vm/tests/cli.rs`, `crates/slug-vm/tests/module_loader.rs`, and `crates/slug-vm/tests/vm.rs` |
+| Native function calls and `println` | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| `print` and `len` builtins | implemented | `crates/slug-vm/tests/cli.rs` |
+| Implicit `slug.builtin` bindings and foundational Slug values | implemented | `crates/slug-vm/tests/cli.rs` |
+| Positional call spreads and list-literal spreads | implemented | `crates/slug-vm/tests/cli.rs` |
+| Named ordinary-function arguments | implemented | `crates/slug-vm/tests/cli.rs` |
+| Final variadic parameters | implemented | `crates/slug-vm/tests/cli.rs` |
+| Discard function parameters | implemented | `crates/slug-vm/tests/cli.rs` |
+| Call-time default parameters | implemented | `crates/slug-vm/tests/cli.rs` |
+| Type annotation syntax, function-value inference/calls, nil-control-flow narrowing, closed match coverage, schema field checking, mandatory resolution, and checked known operations | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/module_loader.rs` |
+| Generic call inference and explicit type applications | implemented | `crates/slug-vm/tests/cli.rs` |
+| Lexically scoped local callable metadata and mandatory call resolution | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/module_loader.rs` |
+| Cached exported callable snapshots across static imports | implemented | `crates/slug-vm/tests/module_loader.rs` |
+| Canonical selected-overload lowering and live-binding dispatch | implemented | `crates/slug-vm/tests/module_loader.rs` and `crates/slug-vm/tests/vm.rs` |
+| Concrete-over-generic overload specificity | implemented | `crates/slug-vm/tests/module_loader.rs` |
 | Complete static checking | specified only | `language/language-specification.md` |
-| Tags on `val`/`var` declarations and function parameters | partial | `tests/cli.rs` |
-| Documentation blocks on top-level `val`/`var`/`foreign` declarations | partial | `tests/cli.rs` |
-| `???` checked runtime placeholder | implemented | `tests/cli.rs` |
-| Top-level `export` declaration metadata | partial | `tests/vm.rs` |
-| Source-level module imports and exported-value maps | partial | `tests/module_loader.rs` |
-| Predeclared module bindings and cyclic initialization | implemented | `tests/module_loader.rs` |
-| Live imported module bindings | implemented | `tests/module_loader.rs` |
-| Imported-name shadowing and non-callable conflict warnings | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
-| Callable import conflict warnings and overload sets | implemented | `tests/module_loader.rs` |
-| Retained top-level declaration, tag, and documentation metadata | implemented | `tests/module_loader.rs` |
-| Automatic local `main()`, `main(args:list)`, and `main(args:map)` entrypoint invocation | implemented | `tests/cli.rs` |
-| Immutable configuration store and source precedence | implemented | `tests/configuration.rs` |
-| `cfg` builtin | implemented | `tests/configuration.rs` |
-| Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `tests/cli.rs` |
-| Builtin `chan` construction and `close`, plus bounded FIFO channel operations through the `slug.channel` module and bounded thread-safe native producers | implemented | `tests/cli.rs` and `tests/vm.rs` |
-| Shared standard-input line stream and interactive helpers through core-Clutch `slug.io.stdin` | implemented | `tests/cli.rs` |
+| Tags on `val`/`var` declarations and function parameters | partial | `crates/slug-vm/tests/cli.rs` |
+| Documentation blocks on top-level `val`/`var`/`foreign` declarations | partial | `crates/slug-vm/tests/cli.rs` |
+| `???` checked runtime placeholder | implemented | `crates/slug-vm/tests/cli.rs` |
+| Top-level `export` declaration metadata | partial | `crates/slug-vm/tests/vm.rs` |
+| Source-level module imports and exported-value maps | partial | `crates/slug-vm/tests/module_loader.rs` |
+| Predeclared module bindings and cyclic initialization | implemented | `crates/slug-vm/tests/module_loader.rs` |
+| Live imported module bindings | implemented | `crates/slug-vm/tests/module_loader.rs` |
+| Imported-name shadowing and non-callable conflict warnings | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/module_loader.rs` |
+| Callable import conflict warnings and overload sets | implemented | `crates/slug-vm/tests/module_loader.rs` |
+| Retained top-level declaration, tag, and documentation metadata | implemented | `crates/slug-vm/tests/module_loader.rs` |
+| Automatic local `main()`, `main(args:list)`, and `main(args:map)` entrypoint invocation | implemented | `crates/slug-vm/tests/cli.rs` |
+| Immutable configuration store and source precedence | implemented | `crates/slug-vm/tests/configuration.rs` |
+| `cfg` builtin | implemented | `crates/slug-vm/tests/configuration.rs` |
+| Cooperative task handles with `spawn`, `slug.channel.await`, failure settlement, cancellation-safe waits, explicit nurseries, queued direct-task limits, and suspended task resumption | partial | `crates/slug-vm/tests/cli.rs` |
+| Builtin `chan` construction and `close`, plus bounded FIFO channel operations through the `slug.channel` module and bounded thread-safe native producers | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Shared standard-input line stream and interactive helpers through core-Clutch `slug.io.stdin` | implemented | `crates/slug-vm/tests/cli.rs` |
 | Broad `resource` source type | removed | `language/nominal-types.md` |
-| Nominal `resource Name` declarations, separate exported type paths, strongly typed source signatures, and whole-case match constraints | partial | `tests/cli.rs`, `tests/module_loader.rs`, and `language/nominal-types.md` |
-| Fieldless nominal enums with required qualified cases | implemented | `tests/cli.rs`, `tests/module_loader.rs`, and `language/nominal-types.md` |
+| Nominal `resource Name` declarations, separate exported type paths, strongly typed source signatures, and whole-case match constraints | partial | `crates/slug-vm/tests/cli.rs`, `crates/slug-vm/tests/module_loader.rs`, and `language/nominal-types.md` |
+| Fieldless nominal enums with required qualified cases | implemented | `crates/slug-vm/tests/cli.rs`, `crates/slug-vm/tests/module_loader.rs`, and `language/nominal-types.md` |
 | Transparent `type Name = Annotation` aliases | implemented | `language/nominal-types.md` |
-| Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `tests/cli.rs` |
-| Foreign declaration syntax, metadata retention, and module-qualified host resolution | implemented | `tests/cli.rs` and `tests/module_loader.rs` |
+| Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `crates/slug-vm/tests/cli.rs` |
+| Foreign declaration syntax, metadata retention, and module-qualified host resolution | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/module_loader.rs` |
 | Module metadata introspection | specified only | `language/language-specification.md` |
-| Checked source and runtime diagnostics with locations | implemented | `tests/cli.rs` and `tests/vm.rs` |
+| Checked source and runtime diagnostics with locations | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Full language specification | specified only | `language/language-specification.md` |
-| Standard library and remaining concurrency APIs | partial | `lib/slug/channel.slug` and `tests/cli.rs` |
+| Standard library and remaining concurrency APIs | partial | `lib/slug/channel.slug` and `crates/slug-vm/tests/cli.rs` |

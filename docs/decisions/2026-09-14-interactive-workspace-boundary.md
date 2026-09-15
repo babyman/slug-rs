@@ -9,10 +9,11 @@ and build surface.
 
 ## Decision
 
-Use a Cargo workspace with three members: `slug-vm`, `slug-server`, and
-`slug-repl`. `slug-server` owns the interactive protocol and session server and
-depends on `slug-vm`. `slug-repl` depends only on `slug-server` and its terminal
-client dependencies; it must not import VM or compiler implementation APIs.
+Use a virtual Cargo workspace with three members: `slug-vm`, `slug-server`, and
+`slug-repl`. The VM package lives at `crates/slug-vm`; `slug-server` owns the
+interactive protocol and session server and depends on `slug-vm`. `slug-repl`
+depends only on `slug-server` and its terminal client dependencies; it must not
+import VM or compiler implementation APIs.
 
 The VM provides the server's internal interactive execution bridge as hidden
 Rust API. It is not a stable embedding or protocol contract.

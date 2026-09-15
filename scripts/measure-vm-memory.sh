@@ -34,14 +34,14 @@ esac
 
 printf '%-30s %15s\n' 'workload' 'peak RSS (bytes)'
 for fixture in \
-    benches/memory/minimal.slug \
-    benches/memory/closures-retained-128.slug \
-    benches/memory/closures-retained-1024.slug
+    crates/slug-vm/benches/memory/minimal.slug \
+    crates/slug-vm/benches/memory/closures-retained-128.slug \
+    crates/slug-vm/benches/memory/closures-retained-1024.slug
 do
     rss=$(measure "$root_dir/$fixture")
     if [ -z "$rss" ]; then
         printf '%s\n' "could not read peak RSS for $fixture" >&2
         exit 1
     fi
-    printf '%-30s %15s\n' "${fixture#benches/memory/}" "$rss"
+    printf '%-30s %15s\n' "${fixture#crates/slug-vm/benches/memory/}" "$rss"
 done

@@ -629,7 +629,11 @@ fn filesystem_clutch_provides_nominal_files_and_cleans_up_after_error_unwinding(
     let root = root("clutch-filesystem");
     fs::create_dir_all(&root).expect("create filesystem clutch root");
     let repository = ClutchRepository::from_manifest(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("clutch"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("workspace root")
+            .join("clutch"),
     )
     .expect("load filesystem clutch repository manifest");
     let loader = ModuleLoader::with_clutch_repository(&root, None, repository);

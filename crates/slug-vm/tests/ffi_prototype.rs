@@ -9,6 +9,14 @@ use slug_vm::{ClutchRepository, FfiPrototypeLibrary, ModuleLoader, RuntimeErrorK
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
 struct TemporaryDirectory(PathBuf);
 
 impl TemporaryDirectory {
@@ -77,16 +85,19 @@ fn build_native_clutch(
     let native_file = Path::new(native_source)
         .file_name()
         .expect("native source has a file name");
-    fs::copy(module_source, clutch_root.join("modules").join(module_file))
-        .expect("copy clutch declaration");
+    fs::copy(
+        workspace_root().join(module_source),
+        clutch_root.join("modules").join(module_file),
+    )
+    .expect("copy clutch declaration");
     if module_name == "slug.db.sqlite" {
         fs::copy(
-            "clutch/slug.db.sqlite.clutch/modules/statement.slug",
+            workspace_root().join("clutch/slug.db.sqlite.clutch/modules/statement.slug"),
             clutch_root.join("modules/statement.slug"),
         )
         .expect("copy SQLite statement module");
         fs::copy(
-            "clutch/slug.db.sqlite.clutch/modules/transaction.slug",
+            workspace_root().join("clutch/slug.db.sqlite.clutch/modules/transaction.slug"),
             clutch_root.join("modules/transaction.slug"),
         )
         .expect("copy SQLite transaction module");
@@ -97,7 +108,7 @@ fn build_native_clutch(
     )
     .expect("write pure Slug companion module");
     fs::copy(
-        native_source,
+        workspace_root().join(native_source),
         clutch_root.join("native/source").join(native_file),
     )
     .expect("copy clutch native source");
@@ -173,7 +184,7 @@ fn build_core_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
         } else {
             clutch_root.join("modules").join(destination)
         };
-        fs::copy(source, destination).expect("copy core clutch source");
+        fs::copy(workspace_root().join(source), destination).expect("copy core clutch source");
     }
     let built = compile_fixture(
         directory,
@@ -411,7 +422,7 @@ fn compile_fixture_with_libraries(
             .arg(output.to_str().expect("temporary library path is UTF-8"));
         command
     };
-    command.current_dir(env!("CARGO_MANIFEST_DIR"));
+    command.current_dir(workspace_root());
     let status = command.status().expect("start C compiler");
     assert!(status.success(), "compile C fixture");
     output

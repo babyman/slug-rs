@@ -7,15 +7,15 @@ implements a small source subset through a checked bytecode virtual machine.
 
 | Area | Owner | Responsibility |
 |---|---|---|
-| Source front end | `src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
-| In-process bytecode | `src/bytecode.rs` | Public but unstable Rust instruction and program representation. |
+| Source front end | `crates/slug-vm/src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
+| In-process bytecode | `crates/slug-vm/src/bytecode.rs` | Public but unstable Rust instruction and program representation. |
 | Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
-| Experimental clutches | `src/clutch.rs`, `src/module.rs`, `src/ffi_prototype.rs` | Explicit local source-module providers, scoped plugins, manifest-selected native descriptors, and shutdown ownership. |
-| Filesystem capability | `src/filesystem.rs`, `clutch/manifest.toml`, `clutch/slug.io.fs.clutch/` | Native registrations and the installed experimental `slug.io.fs` clutch declaration. |
+| Experimental clutches | `crates/slug-vm/src/clutch.rs`, `crates/slug-vm/src/module.rs`, `crates/slug-vm/src/ffi_prototype.rs` | Explicit local source-module providers, scoped plugins, manifest-selected native descriptors, and shutdown ownership. |
+| Filesystem capability | `crates/slug-vm/src/filesystem.rs`, `clutch/manifest.toml`, `clutch/slug.io.fs.clutch/` | Native registrations and the installed experimental `slug.io.fs` clutch declaration. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
-| Runtime values | `src/value.rs` | Dynamic language values and operations. |
-| Execution | `src/vm/` | VM dispatch, checked errors, cleanup unwinding, and value operations. |
-| CLI | `src/main.rs` | Process boundary and public error presentation. |
+| Runtime values | `crates/slug-vm/src/value.rs` | Dynamic language values and operations. |
+| Execution | `crates/slug-vm/src/vm/` | VM dispatch, checked errors, cleanup unwinding, and value operations. |
+| CLI | `crates/slug-vm/src/main.rs` | Process boundary and public error presentation. |
 
 ## Invariants
 
