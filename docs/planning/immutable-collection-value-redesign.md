@@ -86,12 +86,12 @@ collection update applied through another alias.
 
 ### 2. Create private collection seams without changing storage
 
-- [ ] Introduce private `List`, `Map`, `Bytes`, and immutable struct-value
+- [x] Introduce private `List`, `Map`, `Bytes`, and immutable struct-value
   wrappers around the current reference-counted vector/slice storage.
-- [ ] Move indexing, iteration, equality, display, construction, update,
+- [x] Move indexing, iteration, equality, display, construction, update,
   merge, removal, slicing, pattern extraction, and native conversion behind
   those wrappers.
-- [ ] Remove direct collection-vector access from VM operations, source-facing
+- [x] Remove direct collection-vector access from VM operations, source-facing
   native helpers, FFI prototypes, and tests that do not intentionally inspect
   private bytecode builders.
 - [ ] Keep constructors and views borrowing where possible; do not expose a
