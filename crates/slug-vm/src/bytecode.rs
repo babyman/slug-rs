@@ -76,6 +76,108 @@ metadata_id!(CaptureListId);
 metadata_id!(SchemaFieldsId);
 metadata_id!(StructFieldsId);
 metadata_id!(MatchPatternId);
+metadata_id!(InterpolationId);
+metadata_id!(ListSpreadId);
+metadata_id!(CallArgumentsId);
+metadata_id!(SelectedCallId);
+metadata_id!(SelectCasesId);
+
+/// The installation-time bytecode form.  It deliberately keeps the source
+/// builder's rich `Op` values out of the executable instruction stream.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PackedOpcode {
+    Constant,
+    Interpolate,
+    Nil,
+    True,
+    False,
+    Pop,
+    Duplicate,
+    GetLocal,
+    SetLocal,
+    GetCapture,
+    SetCapture,
+    GetGlobal,
+    NotImplemented,
+    DefineGlobal,
+    CombineOverloads,
+    DefineMapGlobals,
+    RecordModuleTag,
+    SetGlobal,
+    MakeClosure,
+    List,
+    ListSpread,
+    Map,
+    StructSchema,
+    Struct,
+    StructCopy,
+    GetIndex,
+    GetSlice,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
+    ListAppend,
+    ListPrepend,
+    Negate,
+    Not,
+    BitNot,
+    Equal,
+    Greater,
+    Less,
+    GuardGreater,
+    GuardLess,
+    Jump,
+    JumpIfFalse,
+    JumpIfProvided,
+    Call,
+    CallSpread,
+    CallSelected,
+    PipelineCall,
+    PipelineCallSelected,
+    Import,
+    Spawn,
+    Nursery,
+    Select,
+    SelectApply,
+    TryMatch,
+    MatchFailure,
+    Throw,
+    EnterScope,
+    LeaveScope,
+    Defer,
+    Recur,
+    Return,
+}
+
+/// Fixed-width executable instruction. `a`, `b`, and `c` are opcode-specific
+/// private operands; rich data lives in `Program` pools.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedInstruction {
+    pub(crate) opcode: PackedOpcode,
+    pub(crate) a: u32,
+    pub(crate) b: u32,
+    pub(crate) c: u32,
+    pub(crate) span: Option<SpanId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CompiledChunk {
+    pub(crate) name: String,
+    pub(crate) arity: usize,
+    pub(crate) parameters: Vec<ParameterSignature>,
+    pub(crate) callable_identity: Option<usize>,
+    pub(crate) locals: usize,
+    pub(crate) constants: Vec<Constant>,
+    pub(crate) code: Vec<PackedInstruction>,
+}
 
 /// A literal embedded in a bytecode chunk.
 #[derive(Clone, Debug)]
@@ -229,6 +331,7 @@ impl Instruction {
 pub enum Op {
     Constant(usize),
     Interpolate(Vec<String>),
+    InterpolatePooled(InterpolationId),
     Nil,
     True,
     False,
@@ -264,6 +367,7 @@ pub enum Op {
     },
     List(usize),
     ListSpread(Vec<bool>),
+    ListSpreadPooled(ListSpreadId),
     Map(usize),
     StructSchema(Vec<SchemaField>),
     StructSchemaPooled(SchemaFieldsId),
@@ -305,21 +409,27 @@ pub enum Op {
     },
     Call(usize),
     CallSpread(Vec<CallArgumentKind>),
+    CallSpreadPooled(CallArgumentsId),
     CallSelected {
         kinds: Vec<CallArgumentKind>,
         identity: usize,
     },
+    CallSelectedPooled(SelectedCallId),
     PipelineCall(Vec<CallArgumentKind>),
+    PipelineCallPooled(CallArgumentsId),
     PipelineCallSelected {
         kinds: Vec<CallArgumentKind>,
         identity: usize,
     },
+    PipelineCallSelectedPooled(SelectedCallId),
     Import(Vec<CallArgumentKind>),
+    ImportPooled(CallArgumentsId),
     Spawn,
     Nursery {
         has_limit: bool,
     },
     Select(Vec<SelectCase>),
+    SelectPooled(SelectCasesId),
     /// Applies the selected case's optional handler to its result.
     SelectApply,
     TryMatch {
@@ -340,6 +450,7 @@ pub enum Op {
         mode: DeferMode,
     },
     Recur(Vec<CallArgumentKind>),
+    RecurPooled(CallArgumentsId),
     Return,
 }
 
@@ -436,6 +547,9 @@ impl Chunk {
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     chunks: Vec<Chunk>,
+    /// Transitional executable form. The following commit makes this the only
+    /// installed code representation once validation consumes packed code.
+    compiled_chunks: Vec<CompiledChunk>,
     names: HashMap<String, usize>,
     bindings: Vec<String>,
     declarations: Vec<ModuleDeclaration>,
@@ -453,6 +567,11 @@ pub struct Program {
     schema_fields: Vec<Vec<SchemaField>>,
     struct_fields: Vec<Vec<String>>,
     match_patterns: Vec<MatchPattern>,
+    interpolations: Vec<Vec<String>>,
+    list_spreads: Vec<Vec<bool>>,
+    call_arguments: Vec<Vec<CallArgumentKind>>,
+    selected_calls: Vec<(CallArgumentsId, usize)>,
+    select_cases: Vec<Vec<SelectCase>>,
 }
 
 /// Argument value supplied to a validated program entrypoint.
@@ -510,15 +629,33 @@ impl Program {
             }
             self.pool_instruction_metadata(&mut instruction.op);
         }
+        let compiled = CompiledChunk {
+            name: chunk.name.clone(),
+            arity: chunk.arity,
+            parameters: chunk.parameters.clone(),
+            callable_identity: chunk.callable_identity,
+            locals: chunk.locals,
+            constants: chunk.constants.clone(),
+            code: chunk
+                .code
+                .iter()
+                .map(|instruction| self.pack_instruction(instruction))
+                .collect(),
+        };
         let index = self.chunks.len();
         self.names.insert(chunk.name.clone(), index);
         self.chunks.push(chunk);
+        self.compiled_chunks.push(compiled);
         index
     }
 
     #[must_use]
     pub fn chunk(&self, index: usize) -> Option<&Chunk> {
         self.chunks.get(index)
+    }
+
+    pub(crate) fn compiled_chunk(&self, index: usize) -> Option<&CompiledChunk> {
+        self.compiled_chunks.get(index)
     }
 
     #[must_use]
@@ -732,6 +869,22 @@ impl Program {
         self.match_patterns.get(id.index())
     }
 
+    pub(crate) fn interpolation(&self, id: InterpolationId) -> Option<&[String]> {
+        self.interpolations.get(id.index()).map(Vec::as_slice)
+    }
+    pub(crate) fn list_spread(&self, id: ListSpreadId) -> Option<&[bool]> {
+        self.list_spreads.get(id.index()).map(Vec::as_slice)
+    }
+    pub(crate) fn call_arguments(&self, id: CallArgumentsId) -> Option<&[CallArgumentKind]> {
+        self.call_arguments.get(id.index()).map(Vec::as_slice)
+    }
+    pub(crate) fn selected_call(&self, id: SelectedCallId) -> Option<(CallArgumentsId, usize)> {
+        self.selected_calls.get(id.index()).copied()
+    }
+    pub(crate) fn select_cases(&self, id: SelectCasesId) -> Option<&[SelectCase]> {
+        self.select_cases.get(id.index()).map(Vec::as_slice)
+    }
+
     fn pool_instruction_metadata(&mut self, op: &mut Op) {
         let pooled = match op {
             Op::GetGlobal(name) => Some(Op::GetGlobalPooled(
@@ -765,6 +918,27 @@ impl Program {
                 bindings: *bindings,
                 operands: *operands,
             }),
+            Op::Interpolate(parts) => Some(Op::InterpolatePooled(
+                self.push_interpolation(mem::take(parts)),
+            )),
+            Op::ListSpread(spreads) => Some(Op::ListSpreadPooled(
+                self.push_list_spread(mem::take(spreads)),
+            )),
+            Op::CallSpread(kinds) => Some(Op::CallSpreadPooled(
+                self.push_call_arguments(mem::take(kinds)),
+            )),
+            Op::PipelineCall(kinds) => Some(Op::PipelineCallPooled(
+                self.push_call_arguments(mem::take(kinds)),
+            )),
+            Op::Import(kinds) => Some(Op::ImportPooled(self.push_call_arguments(mem::take(kinds)))),
+            Op::Recur(kinds) => Some(Op::RecurPooled(self.push_call_arguments(mem::take(kinds)))),
+            Op::CallSelected { kinds, identity } => Some(Op::CallSelectedPooled(
+                self.push_selected_call(mem::take(kinds), *identity),
+            )),
+            Op::PipelineCallSelected { kinds, identity } => Some(Op::PipelineCallSelectedPooled(
+                self.push_selected_call(mem::take(kinds), *identity),
+            )),
+            Op::Select(cases) => Some(Op::SelectPooled(self.push_select_cases(mem::take(cases)))),
             _ => None,
         };
         if let Some(pooled) = pooled {
@@ -821,6 +995,176 @@ impl Program {
         );
         self.match_patterns.push(pattern);
         id
+    }
+
+    fn push_interpolation(&mut self, values: Vec<String>) -> InterpolationId {
+        let id = InterpolationId(
+            u32::try_from(self.interpolations.len()).expect("too many interpolations"),
+        );
+        self.interpolations.push(values);
+        id
+    }
+
+    fn push_list_spread(&mut self, values: Vec<bool>) -> ListSpreadId {
+        let id =
+            ListSpreadId(u32::try_from(self.list_spreads.len()).expect("too many list spreads"));
+        self.list_spreads.push(values);
+        id
+    }
+
+    fn push_call_arguments(&mut self, values: Vec<CallArgumentKind>) -> CallArgumentsId {
+        let id = CallArgumentsId(
+            u32::try_from(self.call_arguments.len()).expect("too many call descriptors"),
+        );
+        self.call_arguments.push(values);
+        id
+    }
+
+    fn push_selected_call(
+        &mut self,
+        values: Vec<CallArgumentKind>,
+        identity: usize,
+    ) -> SelectedCallId {
+        let kinds = self.push_call_arguments(values);
+        let id = SelectedCallId(
+            u32::try_from(self.selected_calls.len()).expect("too many selected calls"),
+        );
+        self.selected_calls.push((kinds, identity));
+        id
+    }
+
+    fn push_select_cases(&mut self, values: Vec<SelectCase>) -> SelectCasesId {
+        let id =
+            SelectCasesId(u32::try_from(self.select_cases.len()).expect("too many select cases"));
+        self.select_cases.push(values);
+        id
+    }
+
+    fn pack_instruction(&self, instruction: &Instruction) -> PackedInstruction {
+        // Builder programs are intentionally malformed-testable; validation
+        // still observes the builder form during this transition.
+        let operand = |value: usize| value as u32;
+        let (opcode, a, b, c) = match &instruction.op {
+            Op::Constant(v) => (PackedOpcode::Constant, operand(*v), 0, 0),
+            Op::InterpolatePooled(v) => (PackedOpcode::Interpolate, v.0, 0, 0),
+            Op::Nil => (PackedOpcode::Nil, 0, 0, 0),
+            Op::True => (PackedOpcode::True, 0, 0, 0),
+            Op::False => (PackedOpcode::False, 0, 0, 0),
+            Op::Pop => (PackedOpcode::Pop, 0, 0, 0),
+            Op::Duplicate => (PackedOpcode::Duplicate, 0, 0, 0),
+            Op::GetLocal(v) => (PackedOpcode::GetLocal, operand(*v), 0, 0),
+            Op::SetLocal(v) => (PackedOpcode::SetLocal, operand(*v), 0, 0),
+            Op::GetCapture(v) => (PackedOpcode::GetCapture, operand(*v), 0, 0),
+            Op::SetCapture(v) => (PackedOpcode::SetCapture, operand(*v), 0, 0),
+            Op::GetGlobalPooled(v) => (PackedOpcode::GetGlobal, v.0, 0, 0),
+            Op::NotImplemented => (PackedOpcode::NotImplemented, 0, 0, 0),
+            Op::DefineGlobalPooled(v) => (PackedOpcode::DefineGlobal, v.0, 0, 0),
+            Op::CombineOverloads => (PackedOpcode::CombineOverloads, 0, 0, 0),
+            Op::DefineMapGlobals => (PackedOpcode::DefineMapGlobals, 0, 0, 0),
+            Op::RecordModuleTag {
+                declaration,
+                tag,
+                arguments,
+            } => (
+                PackedOpcode::RecordModuleTag,
+                operand(*declaration),
+                operand(*tag),
+                operand(*arguments),
+            ),
+            Op::SetGlobalPooled(v) => (PackedOpcode::SetGlobal, v.0, 0, 0),
+            Op::MakeClosurePooled { chunk, captures } => {
+                (PackedOpcode::MakeClosure, operand(*chunk), captures.0, 0)
+            }
+            Op::List(v) => (PackedOpcode::List, operand(*v), 0, 0),
+            Op::ListSpreadPooled(v) => (PackedOpcode::ListSpread, v.0, 0, 0),
+            Op::Map(v) => (PackedOpcode::Map, operand(*v), 0, 0),
+            Op::StructSchemaPooled(v) => (PackedOpcode::StructSchema, v.0, 0, 0),
+            Op::StructPooled(v) => (PackedOpcode::Struct, v.0, 0, 0),
+            Op::StructCopyPooled(v) => (PackedOpcode::StructCopy, v.0, 0, 0),
+            Op::GetIndex => (PackedOpcode::GetIndex, 0, 0, 0),
+            Op::GetSlice {
+                has_start,
+                has_end,
+                has_step,
+            } => (
+                PackedOpcode::GetSlice,
+                u32::from(*has_start),
+                u32::from(*has_end),
+                u32::from(*has_step),
+            ),
+            Op::Add => (PackedOpcode::Add, 0, 0, 0),
+            Op::Subtract => (PackedOpcode::Subtract, 0, 0, 0),
+            Op::Multiply => (PackedOpcode::Multiply, 0, 0, 0),
+            Op::Divide => (PackedOpcode::Divide, 0, 0, 0),
+            Op::Modulo => (PackedOpcode::Modulo, 0, 0, 0),
+            Op::BitAnd => (PackedOpcode::BitAnd, 0, 0, 0),
+            Op::BitOr => (PackedOpcode::BitOr, 0, 0, 0),
+            Op::BitXor => (PackedOpcode::BitXor, 0, 0, 0),
+            Op::ShiftLeft => (PackedOpcode::ShiftLeft, 0, 0, 0),
+            Op::ShiftRight => (PackedOpcode::ShiftRight, 0, 0, 0),
+            Op::ListAppend => (PackedOpcode::ListAppend, 0, 0, 0),
+            Op::ListPrepend => (PackedOpcode::ListPrepend, 0, 0, 0),
+            Op::Negate => (PackedOpcode::Negate, 0, 0, 0),
+            Op::Not => (PackedOpcode::Not, 0, 0, 0),
+            Op::BitNot => (PackedOpcode::BitNot, 0, 0, 0),
+            Op::Equal => (PackedOpcode::Equal, 0, 0, 0),
+            Op::Greater => (PackedOpcode::Greater, 0, 0, 0),
+            Op::Less => (PackedOpcode::Less, 0, 0, 0),
+            Op::GuardGreater => (PackedOpcode::GuardGreater, 0, 0, 0),
+            Op::GuardLess => (PackedOpcode::GuardLess, 0, 0, 0),
+            Op::Jump(v) => (PackedOpcode::Jump, operand(*v), 0, 0),
+            Op::JumpIfFalse(v) => (PackedOpcode::JumpIfFalse, operand(*v), 0, 0),
+            Op::JumpIfProvided { slot, target } => (
+                PackedOpcode::JumpIfProvided,
+                operand(*slot),
+                operand(*target),
+                0,
+            ),
+            Op::Call(v) => (PackedOpcode::Call, operand(*v), 0, 0),
+            Op::CallSpreadPooled(v) => (PackedOpcode::CallSpread, v.0, 0, 0),
+            Op::CallSelectedPooled(v) => (PackedOpcode::CallSelected, v.0, 0, 0),
+            Op::PipelineCallPooled(v) => (PackedOpcode::PipelineCall, v.0, 0, 0),
+            Op::PipelineCallSelectedPooled(v) => (PackedOpcode::PipelineCallSelected, v.0, 0, 0),
+            Op::ImportPooled(v) => (PackedOpcode::Import, v.0, 0, 0),
+            Op::Spawn => (PackedOpcode::Spawn, 0, 0, 0),
+            Op::Nursery { has_limit } => (PackedOpcode::Nursery, u32::from(*has_limit), 0, 0),
+            Op::SelectPooled(v) => (PackedOpcode::Select, v.0, 0, 0),
+            Op::SelectApply => (PackedOpcode::SelectApply, 0, 0, 0),
+            Op::TryMatchPooled {
+                pattern,
+                bindings,
+                operands,
+            } => (
+                PackedOpcode::TryMatch,
+                pattern.0,
+                operand(*bindings),
+                operand(*operands),
+            ),
+            Op::MatchFailure => (PackedOpcode::MatchFailure, 0, 0, 0),
+            Op::Throw => (PackedOpcode::Throw, 0, 0, 0),
+            Op::EnterScope => (PackedOpcode::EnterScope, 0, 0, 0),
+            Op::LeaveScope => (PackedOpcode::LeaveScope, 0, 0, 0),
+            Op::Defer { mode } => (
+                PackedOpcode::Defer,
+                match mode {
+                    DeferMode::Always => 0,
+                    DeferMode::Success => 1,
+                    DeferMode::Error => 2,
+                },
+                0,
+                0,
+            ),
+            Op::RecurPooled(v) => (PackedOpcode::Recur, v.0, 0, 0),
+            Op::Return => (PackedOpcode::Return, 0, 0, 0),
+            _ => unreachable!("all installed metadata must be pooled"),
+        };
+        PackedInstruction {
+            opcode,
+            a,
+            b,
+            c,
+            span: instruction.span,
+        }
     }
 
     /// Names declared for export by a compiled source module.
@@ -1056,6 +1400,37 @@ impl Program {
                     location()
                 ))
             }
+            Op::InterpolatePooled(id) if self.interpolation(*id).is_none() => Err(format!(
+                "{} references missing interpolation metadata",
+                location()
+            )),
+            Op::ListSpreadPooled(id) if self.list_spread(*id).is_none() => Err(format!(
+                "{} references missing list spread metadata",
+                location()
+            )),
+            Op::CallSpreadPooled(id)
+            | Op::PipelineCallPooled(id)
+            | Op::ImportPooled(id)
+            | Op::RecurPooled(id)
+                if self.call_arguments(*id).is_none() =>
+            {
+                Err(format!("{} references missing call metadata", location()))
+            }
+            Op::CallSelectedPooled(id) | Op::PipelineCallSelectedPooled(id) => {
+                let (kinds, identity) = self.selected_call(*id).ok_or_else(|| {
+                    format!("{} references missing selected call metadata", location())
+                })?;
+                if self.call_arguments(kinds).is_none() {
+                    return Err(format!("{} references missing call metadata", location()));
+                }
+                if self.callable_identity(identity).is_none() {
+                    return Err("selected callable identity does not exist".into());
+                }
+                Ok(())
+            }
+            Op::SelectPooled(id) if self.select_cases(*id).is_none() => {
+                Err(format!("{} references missing select metadata", location()))
+            }
             Op::CallSelected { identity, .. } | Op::PipelineCallSelected { identity, .. }
                 if self.callable_identity(*identity).is_none() =>
             {
@@ -1074,6 +1449,11 @@ impl Program {
                 ))
             }
             Op::Select(cases) if cases.is_empty() => {
+                Err(format!("{} has no select cases", location()))
+            }
+            Op::SelectPooled(id)
+                if self.select_cases(*id).is_some_and(|cases| cases.is_empty()) =>
+            {
                 Err(format!("{} has no select cases", location()))
             }
             Op::TryMatch {
@@ -1234,7 +1614,7 @@ impl Program {
             };
             let successors: Vec<usize> = match &instruction.op {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
-                Op::Recur(_) => vec![0],
+                Op::Recur(_) | Op::RecurPooled(_) => vec![0],
                 Op::Jump(target) => vec![*target],
                 Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. } => [
                     Some(*target),
@@ -1260,7 +1640,8 @@ impl Program {
                 ));
             }
             for successor in successors {
-                let successor_state = if matches!(instruction.op, Op::Recur(_)) {
+                let successor_state = if matches!(instruction.op, Op::Recur(_) | Op::RecurPooled(_))
+                {
                     VerificationState {
                         stack: vec![StackValue::Unknown; initial_stack],
                         scope_depth: 0,
@@ -1336,6 +1717,13 @@ impl Program {
             | Op::MakeClosure { .. }
             | Op::MakeClosurePooled { .. } => (0, 1),
             Op::Interpolate(parts) => (parts.len().saturating_sub(1), 1),
+            Op::InterpolatePooled(id) => (
+                self.interpolation(*id)
+                    .expect("validated interpolation metadata")
+                    .len()
+                    .saturating_sub(1),
+                1,
+            ),
             Op::Pop
             | Op::SetLocal(_)
             | Op::SetCapture(_)
@@ -1351,6 +1739,12 @@ impl Program {
             Op::RecordModuleTag { arguments, .. } => (*arguments, 0),
             Op::List(count) => (*count, 1),
             Op::ListSpread(spreads) => (spreads.len(), 1),
+            Op::ListSpreadPooled(id) => (
+                self.list_spread(*id)
+                    .expect("validated list spread metadata")
+                    .len(),
+                1,
+            ),
             Op::Map(count) => (count.saturating_mul(2), 1),
             Op::StructSchema(fields) => {
                 (fields.iter().filter(|field| field.has_default).count(), 1)
@@ -1408,13 +1802,69 @@ impl Program {
             | Op::NotImplemented => (0, 0),
             Op::Call(count) => (count.checked_add(1).unwrap_or(0), 1),
             Op::CallSpread(kinds) | Op::CallSelected { kinds, .. } => (kinds.len() + 1, 1),
+            Op::CallSpreadPooled(id) => (
+                self.call_arguments(*id)
+                    .expect("validated call metadata")
+                    .len()
+                    + 1,
+                1,
+            ),
+            Op::CallSelectedPooled(id) => (
+                self.call_arguments(
+                    self.selected_call(*id)
+                        .expect("validated selected call metadata")
+                        .0,
+                )
+                .expect("validated call metadata")
+                .len()
+                    + 1,
+                1,
+            ),
             Op::PipelineCall(kinds) | Op::PipelineCallSelected { kinds, .. } => {
                 (kinds.len() + 2, 1)
             }
+            Op::PipelineCallPooled(id) => (
+                self.call_arguments(*id)
+                    .expect("validated call metadata")
+                    .len()
+                    + 2,
+                1,
+            ),
+            Op::PipelineCallSelectedPooled(id) => (
+                self.call_arguments(
+                    self.selected_call(*id)
+                        .expect("validated selected call metadata")
+                        .0,
+                )
+                .expect("validated call metadata")
+                .len()
+                    + 2,
+                1,
+            ),
             Op::Import(kinds) => (kinds.len(), 1),
+            Op::ImportPooled(id) => (
+                self.call_arguments(*id)
+                    .expect("validated call metadata")
+                    .len(),
+                1,
+            ),
             Op::Nursery { has_limit } => (1 + usize::from(*has_limit), 1),
             Op::Select(cases) => (
                 cases
+                    .iter()
+                    .map(|case| match case {
+                        SelectCase::Receive { has_handler }
+                        | SelectCase::After { has_handler }
+                        | SelectCase::Await { has_handler } => 1 + usize::from(*has_handler),
+                        SelectCase::Send { has_handler } => 2 + usize::from(*has_handler),
+                        SelectCase::Default { has_handler } => usize::from(*has_handler),
+                    })
+                    .sum(),
+                1,
+            ),
+            Op::SelectPooled(id) => (
+                self.select_cases(*id)
+                    .expect("validated select metadata")
                     .iter()
                     .map(|case| match case {
                         SelectCase::Receive { has_handler }
@@ -1433,6 +1883,12 @@ impl Program {
                 bindings, operands, ..
             } => (operands + 1, bindings + 1),
             Op::Recur(kinds) => (kinds.len(), 0),
+            Op::RecurPooled(id) => (
+                self.call_arguments(*id)
+                    .expect("validated call metadata")
+                    .len(),
+                0,
+            ),
         }
     }
 }

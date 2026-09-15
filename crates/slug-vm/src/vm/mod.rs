@@ -1971,6 +1971,24 @@ impl Vm {
                 }
                 self.stack.push(Value::string(output));
             }
+            Op::InterpolatePooled(id) => {
+                let parts = program.interpolation(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "interpolation metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                let values = self.pop_values_at(parts.len().saturating_sub(1), span)?;
+                let mut output = String::new();
+                for (index, text) in parts.iter().enumerate() {
+                    output.push_str(text);
+                    if let Some(value) = values.get(index) {
+                        output.push_str(&value.to_string());
+                    }
+                }
+                self.stack.push(Value::string(output));
+            }
             Op::GetCapture(slot) => {
                 let value = self
                     .frames
@@ -2221,6 +2239,16 @@ impl Vm {
                 self.stack.push(Value::List(Rc::new(values)));
             }
             Op::ListSpread(spreads) => self.list_spread_at(spreads, span)?,
+            Op::ListSpreadPooled(id) => {
+                let spreads = program.list_spread(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "list spread metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.list_spread_at(spreads, span)?;
+            }
             Op::Map(count) => {
                 let values = self.pop_values_at(count.saturating_mul(2), span)?;
                 let mut entries = Vec::with_capacity(*count);
@@ -2351,8 +2379,28 @@ impl Vm {
                 }
             }
             Op::Recur(kinds) => self.recur_at(program, kinds, span)?,
+            Op::RecurPooled(id) => {
+                let kinds = program.call_arguments(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.recur_at(program, kinds, span)?;
+            }
             Op::Call(count) => self.call_at(program, *count, None, span)?,
             Op::CallSpread(kinds) => self.call_spread_at(program, kinds, None, span)?,
+            Op::CallSpreadPooled(id) => {
+                let kinds = program.call_arguments(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.call_spread_at(program, kinds, None, span)?;
+            }
             Op::CallSelected { kinds, identity } => {
                 let identity = program.callable_identity(*identity).ok_or_else(|| {
                     self.error_at(
@@ -2363,7 +2411,41 @@ impl Vm {
                 })?;
                 self.call_spread_at(program, kinds, Some(identity), span)?;
             }
+            Op::CallSelectedPooled(id) => {
+                let (kinds, identity) = program.selected_call(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "selected call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                let kinds = program.call_arguments(kinds).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                let identity = program.callable_identity(identity).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "selected callable identity does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.call_spread_at(program, kinds, Some(identity), span)?;
+            }
             Op::PipelineCall(kinds) => self.pipeline_call_at(program, kinds, None, span)?,
+            Op::PipelineCallPooled(id) => {
+                let kinds = program.call_arguments(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.pipeline_call_at(program, kinds, None, span)?;
+            }
             Op::PipelineCallSelected { kinds, identity } => {
                 let identity = program.callable_identity(*identity).ok_or_else(|| {
                     self.error_at(
@@ -2374,7 +2456,41 @@ impl Vm {
                 })?;
                 self.pipeline_call_at(program, kinds, Some(identity), span)?;
             }
+            Op::PipelineCallSelectedPooled(id) => {
+                let (kinds, identity) = program.selected_call(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "selected call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                let kinds = program.call_arguments(kinds).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                let identity = program.callable_identity(identity).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "selected callable identity does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.pipeline_call_at(program, kinds, Some(identity), span)?;
+            }
             Op::Import(kinds) => self.import_at(kinds, span)?,
+            Op::ImportPooled(id) => {
+                let kinds = program.call_arguments(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "call metadata does not exist".into(),
+                        span,
+                    )
+                })?;
+                self.import_at(kinds, span)?;
+            }
             Op::Select(cases) => {
                 #[cfg(not(feature = "concurrency"))]
                 if cases
@@ -2383,6 +2499,16 @@ impl Vm {
                 {
                     return Err(self.runtime_capability_error("select timer or task-await", span));
                 }
+                self.select_at(cases, span)?;
+            }
+            Op::SelectPooled(id) => {
+                let cases = program.select_cases(*id).ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "select metadata does not exist".into(),
+                        span,
+                    )
+                })?;
                 self.select_at(cases, span)?;
             }
             Op::SelectApply => self.select_apply_at(program, span)?,
