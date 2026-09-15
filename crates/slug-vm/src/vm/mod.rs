@@ -17,6 +17,7 @@ use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, SpanId, Value,
     bytecode::{EntrypointArguments, Op, SelectCase},
+    collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
         BindingCell, Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment,
@@ -1110,35 +1111,41 @@ impl Vm {
 
     #[must_use]
     pub fn exported_values(&self, program: &Program) -> Value {
-        Value::Map(Rc::new(
-            program
-                .exports()
-                .iter()
-                .filter_map(|name| {
-                    self.globals
-                        .borrow()
-                        .get(name)
-                        .and_then(|value| value.resolve().ok())
-                        .map(|value| (Value::string(name.as_str()), value))
-                })
-                .collect(),
-        ))
+        Value::Map(
+            Map::new(
+                program
+                    .exports()
+                    .iter()
+                    .filter_map(|name| {
+                        self.globals
+                            .borrow()
+                            .get(name)
+                            .and_then(|value| value.resolve().ok())
+                            .map(|value| (Value::string(name.as_str()), value))
+                    })
+                    .collect(),
+            )
+            .into_shared(),
+        )
     }
 
     pub(crate) fn live_exported_values(&self, program: &Program) -> Value {
-        Value::Map(Rc::new(
-            program
-                .exports()
-                .iter()
-                .filter_map(|name| {
-                    self.globals
-                        .borrow()
-                        .get(name)
-                        .cloned()
-                        .map(|value| (Value::string(name.as_str()), value))
-                })
-                .collect(),
-        ))
+        Value::Map(
+            Map::new(
+                program
+                    .exports()
+                    .iter()
+                    .filter_map(|name| {
+                        self.globals
+                            .borrow()
+                            .get(name)
+                            .cloned()
+                            .map(|value| (Value::string(name.as_str()), value))
+                    })
+                    .collect(),
+            )
+            .into_shared(),
+        )
     }
 
     /// Installs one validated native descriptor as a local VM global.
@@ -2315,7 +2322,8 @@ impl Vm {
                 let values = self.pop_values_at(*count, span)?;
                 #[cfg(feature = "metrics")]
                 self.record_collection_construction(values.len());
-                self.stack.push(Value::List(Rc::new(values)));
+                self.stack
+                    .push(Value::List(List::from_values(values).into_shared()));
             }
             Op::ListSpread(spreads) => self.list_spread_at(spreads, span)?,
             Op::ListSpreadPooled(id) => {
@@ -2343,7 +2351,7 @@ impl Vm {
                 }
                 #[cfg(feature = "metrics")]
                 self.record_collection_construction(entries.len());
-                self.stack.push(Value::Map(Rc::new(entries)));
+                self.stack.push(Value::Map(Map::new(entries).into_shared()));
             }
             Op::StructSchema(fields) => {
                 let default_count = fields.iter().filter(|field| field.has_default).count();
@@ -3683,7 +3691,7 @@ impl Vm {
                 }
             }
         }
-        self.stack.push(Value::Map(Rc::new(exports)));
+        self.stack.push(Value::Map(Map::new(exports).into_shared()));
         Ok(())
     }
 
@@ -3774,7 +3782,8 @@ impl Vm {
                 result.push(value);
             }
         }
-        self.stack.push(Value::List(Rc::new(result)));
+        self.stack
+            .push(Value::List(List::from_values(result).into_shared()));
         Ok(())
     }
 
@@ -4459,7 +4468,7 @@ impl Vm {
             bound[slot] = Some(value);
         }
         if variadic.is_some() && bound[fixed].is_none() {
-            bound[fixed] = Some(Value::List(Rc::new(rest)));
+            bound[fixed] = Some(Value::List(List::from_values(rest).into_shared()));
         }
         let provided = bound.iter().map(Option::is_some).collect::<Vec<_>>();
         let values = bound
@@ -4566,7 +4575,7 @@ impl Vm {
             bound[slot] = Some(value);
         }
         if variadic.is_some() && bound[fixed].is_none() {
-            bound[fixed] = Some(Value::List(Rc::new(rest)));
+            bound[fixed] = Some(Value::List(List::from_values(rest).into_shared()));
         }
         let provided = bound.iter().map(Option::is_some).collect::<Vec<_>>();
         let values = bound

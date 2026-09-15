@@ -32,6 +32,10 @@ impl<'a> ListView<'a> {
 }
 
 impl List {
+    pub(crate) fn from_values(values: Vec<Value>) -> Self {
+        Self(Rc::new(values))
+    }
+
     pub(crate) fn from_shared(values: Rc<Vec<Value>>) -> Self {
         Self(values)
     }

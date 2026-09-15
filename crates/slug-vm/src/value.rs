@@ -13,7 +13,7 @@ use std::cell::Cell;
 use std::rc::Weak;
 
 use crate::{
-    collections::Map,
+    collections::{BytesView, ListView, Map, MapView},
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
     source::environment::CallableIdentity,
@@ -1068,11 +1068,18 @@ impl fmt::Debug for Value {
             Self::Int(value) => write!(f, "{value}"),
             Self::Float(value) => write!(f, "{value}"),
             Self::Str(value) => write!(f, "{value:?}"),
-            Self::Bytes(value) => write!(f, "0x\"{}\"", hex(value)),
-            Self::List(values) => f.debug_list().entries(values.iter()).finish(),
+            Self::Bytes(value) => write!(f, "0x\"{}\"", hex(BytesView::new(value).as_slice())),
+            Self::List(values) => f
+                .debug_list()
+                .entries(ListView::new(values).iter())
+                .finish(),
             Self::Map(entries) => f
                 .debug_map()
-                .entries(entries.iter().map(|(key, value)| (key, value)))
+                .entries(
+                    MapView::new(entries)
+                        .iter()
+                        .map(|(key, value)| (key, value)),
+                )
                 .finish(),
             Self::StructSchema(_) => write!(f, "<struct schema>"),
             Self::Struct(value) => {

@@ -14,7 +14,7 @@ use std::{
 
 use crate::{
     Value,
-    collections::{BytesView, ListView, MapView},
+    collections::{Bytes, BytesView, List, ListView, Map, MapView},
     scheduler_signal::ProgressSignal,
     value::Channel,
 };
@@ -63,7 +63,7 @@ impl NativeSendValue {
             Self::Int(value) => Value::Int(value),
             Self::Float(value) => Value::Float(value),
             Self::String(value) => Value::string(value),
-            Self::Bytes(value) => Value::Bytes(value.into()),
+            Self::Bytes(value) => Value::Bytes(Bytes::from_values(value).into_shared()),
         }
     }
 }
@@ -474,24 +474,27 @@ impl NativeOwnedValue {
 
     #[must_use]
     pub fn bytes(value: impl Into<Rc<[u8]>>) -> Self {
-        Self(Value::Bytes(value.into()))
+        Self(Value::Bytes(Bytes::from_shared(value.into()).into_shared()))
     }
 
     #[must_use]
     pub fn list(values: Vec<Self>) -> Self {
-        Self(Value::List(Rc::new(
-            values.into_iter().map(|value| value.0).collect(),
-        )))
+        Self(Value::List(
+            List::from_values(values.into_iter().map(|value| value.0).collect()).into_shared(),
+        ))
     }
 
     #[must_use]
     pub fn map(entries: Vec<(Self, Self)>) -> Self {
-        Self(Value::Map(Rc::new(
-            entries
-                .into_iter()
-                .map(|(key, value)| (key.0, value.0))
-                .collect(),
-        )))
+        Self(Value::Map(
+            Map::new(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key.0, value.0))
+                    .collect(),
+            )
+            .into_shared(),
+        ))
     }
 
     pub(crate) fn into_value(self) -> Value {
