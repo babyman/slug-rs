@@ -70,13 +70,13 @@ snapshots. These host measurements are directional, not CI thresholds.
 
 ### 1. Lock down observable immutability contracts
 
-- [ ] Extend VM and CLI coverage for list, bytes, map, and struct updates with
+- [x] Extend VM and CLI coverage for list, bytes, map, and struct updates with
   aliases held in local bindings, closures, spawned tasks, module exports, and
   native round-trips.
-- [ ] Add map-unorderedness assertions for literals, merges, removals, `map
+- [x] Add map-unorderedness assertions for literals, merges, removals, `map
   copy`, display/debug formatting, and `slug.std.keys`; tests must not rely on
   an enumeration sequence.
-- [ ] Add map-key regression cases for `1`/`1.0`, strings, bytes, booleans,
+- [x] Add map-key regression cases for `1`/`1.0`, strings, bytes, booleans,
   missing keys, duplicate-update behavior, and invalid key categories.
 - [ ] Document any discovered observable rules in `docs/language/`; do not
   infer new semantics solely from a Rust data structure.

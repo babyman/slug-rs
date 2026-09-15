@@ -184,6 +184,49 @@ fn imports_exported_values_through_the_public_cli() {
 }
 
 #[test]
+fn imported_collection_exports_remain_immutable_after_updates() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-imported-collection-aliases-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create import fixture directory");
+    fs::write(
+        root.join("library.slug"),
+        "export val User = struct { name, active = true }\n\
+         export val list = [1, 2]\n\
+         export val bytes = 0x\"0203\"\n\
+         export val map = {name: \"Slug\", version: 1}\n\
+         export val user = User {name: \"Slug\"}\n",
+    )
+    .expect("write collection export module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val library = import(\"library\")\n\
+         val list = library.list :+ 3\n\
+         val bytes = library.bytes :+ 4\n\
+         val map = library.map copy {version: 2}\n\
+         val user = library.user copy {active: false}\n\
+         println(library.list, list, library.bytes, bytes, library.map.version, map.version, library.user.active, user.active)\n",
+    )
+    .expect("write collection import source");
+
+    let output = slug().arg(&path).output().expect("run importing source");
+    fs::remove_dir_all(root).expect("remove import fixture directory");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[1, 2] [1, 2, 3] 0x\"0203\" 0x\"020304\" 1 2 true false\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn makes_native_println_available_during_imported_module_initialization() {
     let root =
         std::env::temp_dir().join(format!("slug-cli-imported-native-{}", std::process::id()));

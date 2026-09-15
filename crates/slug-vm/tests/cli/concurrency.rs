@@ -294,6 +294,49 @@ fn spawned_tasks_share_root_globals() {
 }
 
 #[test]
+fn spawned_tasks_retain_immutable_collection_snapshots() {
+    let path = fixture_path("spawn-collection-snapshots");
+    fs::write(
+        &path,
+        "val { await } = import(\"slug.channel\")\n\
+         val User = struct { name, active = true }\n\
+         val list = [1, 2]\n\
+         val bytes = 0x\"0203\"\n\
+         val map = {name: \"Slug\", version: 1}\n\
+         val user = User {name: \"Slug\"}\n\
+         val listTask = spawn { list }\n\
+         val bytesTask = spawn { bytes }\n\
+         val mapTask = spawn { map }\n\
+         val userTask = spawn { user }\n\
+         val nextList = list :+ 3\n\
+         val nextBytes = bytes :+ 4\n\
+         val nextMap = map copy {version: 2}\n\
+         val nextUser = user copy {active: false}\n\
+         val oldList = await(listTask)\n\
+         val oldBytes = await(bytesTask)\n\
+         val oldMap = await(mapTask)\n\
+         val oldUser = await(userTask)\n\
+         println(oldList, nextList, oldBytes, nextBytes, oldMap.version, nextMap.version, oldUser.active, nextUser.active)\n",
+    )
+    .expect("write task collection snapshot source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run task collection snapshot source");
+    fs::remove_file(path).expect("remove task collection snapshot source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[1, 2] [1, 2, 3] 0x\"0203\" 0x\"020304\" 1 2 true false\n"
+    );
+}
+
+#[test]
 fn spawned_tasks_snapshot_immediate_captures_but_keep_outer_captures_live() {
     let path = fixture_path("spawn-capture-boundary");
     fs::write(

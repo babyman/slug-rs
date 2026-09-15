@@ -140,6 +140,58 @@ fn keeps_globals_across_runs_and_calls_explicit_native_functions() {
 }
 
 #[test]
+fn native_collection_round_trips_preserve_pre_update_values() {
+    fn identity(call: &mut NativeCall<'_>) -> NativeStatus {
+        let value = match call.argument(0) {
+            Ok(value) => value.to_owned(),
+            Err(error) => return call.raise(error),
+        };
+        call.return_value(value)
+    }
+
+    let program = compile(
+        "native-collection-round-trip.slug",
+        "val User = struct { name, active = true }\n\
+         val list = [1, 2]\n\
+         val bytes = 0x\"0203\"\n\
+         val map = {name: \"Slug\", version: 1}\n\
+         val user = User {name: \"Slug\"}\n\
+         val oldList = identity(list)\n\
+         val oldBytes = identity(bytes)\n\
+         val oldMap = identity(map)\n\
+         val oldUser = identity(user)\n\
+         val nextList = list :+ 3\n\
+         val nextBytes = bytes :+ 4\n\
+         val nextMap = map copy {version: 2}\n\
+         val nextUser = user copy {active: false}\n\
+         [oldList == list, oldList == nextList, oldBytes == bytes, oldBytes == nextBytes, oldMap.version, nextMap.version, oldUser.active, nextUser.active]\n",
+    )
+    .expect("compile native collection round-trip source");
+    let module = NativeModule::new("test.collection_identity", ()).unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(
+        module
+            .function("identity", NativeArity::Exact(1), identity)
+            .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        vm.run_named(&program, "main").unwrap(),
+        Value::List(Rc::new(vec![
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Bool(true),
+            Value::Bool(false),
+        ]))
+    );
+}
+
+#[test]
 fn reports_checked_native_conversion_and_structured_errors() {
     fn require_integer(call: &mut NativeCall<'_>) -> NativeStatus {
         let value = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {

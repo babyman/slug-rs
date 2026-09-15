@@ -968,6 +968,47 @@ fn appends_and_prepends_list_values_with_checked_operands() {
 }
 
 #[test]
+fn collection_updates_preserve_local_and_closure_aliases() {
+    let path = fixture_path("collection-aliases");
+    fs::write(
+        &path,
+        "val User = struct { name, active = true }\n\
+         val list = [1, 2]\n\
+         val bytes = 0x\"0203\"\n\
+         val map = {stable: 1, replace: 2}\n\
+         val user = User { name: \"Slug\" }\n\
+         val captureList = fn() { list }\n\
+         val captureBytes = fn() { bytes }\n\
+         val captureMap = fn() { map }\n\
+         val captureUser = fn() { user }\n\
+         val appended = list :+ 3\n\
+         val prepended = 0 +: list\n\
+         val changedBytes = 1 +: bytes :+ 4\n\
+         val merged = map + {replace: 20, added: 3}\n\
+         val removed = map - \"replace\"\n\
+         val copied = map copy {replace: 30, added: 4}\n\
+         val changedUser = user copy {active: false}\n\
+         println(list, appended, prepended, bytes, changedBytes, map.replace, merged.replace, removed.replace, copied.replace, user.active, changedUser.active, captureList(), captureBytes(), captureMap().replace, captureUser().active)\n",
+    )
+    .expect("write collection alias source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run collection alias source");
+    fs::remove_file(path).expect("remove collection alias source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[1, 2] [1, 2, 3] [0, 1, 2] 0x\"0203\" 0x\"01020304\" 2 20 nil 30 true false [1, 2] 0x\"0203\" 2 true\n"
+    );
+}
+
+#[test]
 fn persistently_merges_removes_and_enumerates_maps() {
     let path = fixture_path("persistent-map-updates");
     fs::write(
@@ -976,7 +1017,8 @@ fn persistently_merges_removes_and_enumerates_maps() {
          val original = {first: 1, second: 2}\n\
          val merged = original + {second: 20, third: 3}\n\
          val removed = merged - \"second\"\n\
-         println(original.second, merged.first, merged.second, merged.third, removed.second, len(keys(merged)), len(keys(removed)), len(original))\n",
+         val repeated = merged + {second: 30}\n\
+         println(original.second, merged.first, merged.second, merged.third, removed.second, repeated.second, merged == {third: 3, first: 1, second: 20}, len(keys(merged)), len(keys(removed)), len(original))\n",
     )
     .expect("write persistent map update source");
     let output = slug()
@@ -991,7 +1033,7 @@ fn persistently_merges_removes_and_enumerates_maps() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "2 1 20 3 nil 3 2 2\n"
+        "2 1 20 3 nil 30 true 3 2 2\n"
     );
 }
 
@@ -1001,8 +1043,10 @@ fn standard_clutch_preserves_non_string_map_keys() {
     fs::write(
         &path,
         "val {keys} = import(\"slug.std\")\n\
-         val values = {[1]: \"one\", [true]: \"yes\", name: \"Slug\"}\n\
-         println(values[1.0], values[true], values.name, len(keys(values)))\n",
+         val values = {[1]: \"one\", [true]: \"yes\", name: \"Slug\", [0x\"01\"]: \"byte\"}\n\
+         val updated = values + {[1.0]: \"one-point-zero\"}\n\
+         val missingRemoved = updated - \"missing\"\n\
+         println(updated[1], updated[1.0], updated[true], updated.name, updated[0x\"01\"], updated[\"missing\"], missingRemoved == updated, len(keys(updated)))\n",
     )
     .expect("write standard clutch source");
     let output = slug()
@@ -1017,8 +1061,38 @@ fn standard_clutch_preserves_non_string_map_keys() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "one yes Slug 3\n"
+        "one-point-zero one-point-zero yes Slug byte nil true 4\n"
     );
+}
+
+#[test]
+fn rejects_every_non_key_collection_value_from_source() {
+    let path = fixture_path("invalid-map-key-categories");
+    for (name, source, expected) in [
+        ("nil", "{[nil]: 1}\n", "nil cannot be used as a map key"),
+        ("list", "{[[]]: 1}\n", "list cannot be used as a map key"),
+        ("map", "{[{}]: 1}\n", "map cannot be used as a map key"),
+        (
+            "struct",
+            "val User = struct { name = \"Slug\" }\n{[User {}]: 1}\n",
+            "struct cannot be used as a map key",
+        ),
+    ] {
+        fs::write(&path, source).expect("write invalid map-key source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run invalid map-key source");
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        assert!(output.stdout.is_empty(), "{name}");
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with(&format!("slug: runtime error: {expected}")),
+            "{name}"
+        );
+    }
+    fs::remove_file(path).expect("remove invalid map-key source");
 }
 
 #[test]
@@ -1026,12 +1100,13 @@ fn parses_multiline_maps_with_raw_quoted_keys() {
     let path = fixture_path("multiline-raw-quoted-map");
     fs::write(
         &path,
-        "val ch = import(\"slug.std\")\n\
+        "val {keys} = import(\"slug.std\")\n\
          val m = {\n\
          'k1': 1,\n\
          'k2': 2\n\
          }\n\
-         println(m, m /> ch.keys)\n",
+         println(m)\n\
+         println(m.k1, m.k2, len(keys(m)))\n",
     )
     .expect("write multiline map source");
     let output = slug()
@@ -1045,10 +1120,17 @@ fn parses_multiline_maps_with_raw_quoted_keys() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "{\"k1\": 1, \"k2\": 2} [\"k1\", \"k2\"]\n"
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    let mut lines = stdout.lines();
+    let display = lines.next().expect("map display line");
+    assert!(
+        display.starts_with('{') && display.ends_with('}'),
+        "{display}"
     );
+    assert!(display.contains("\"k1\": 1"), "{display}");
+    assert!(display.contains("\"k2\": 2"), "{display}");
+    assert_eq!(lines.next(), Some("1 2 2"));
+    assert_eq!(lines.next(), None);
     assert!(output.stderr.is_empty());
 }
 
