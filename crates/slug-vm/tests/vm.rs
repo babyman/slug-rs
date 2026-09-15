@@ -317,8 +317,9 @@ fn records_timer_and_select_cleanup_metrics() {
     assert!(metrics.timer_deadline_lookups >= 1);
     assert_eq!(metrics.timer_wakeups, 1);
     assert!(metrics.wait_registration_removals >= 2);
-    assert!(metrics.timer_deadline_entries_examined >= 2);
-    assert!(metrics.timer_wakeup_entries_examined >= 2);
+    assert_eq!(metrics.timer_deadline_entries_examined, 1);
+    assert_eq!(metrics.timer_wakeup_entries_examined, 1);
+    assert_eq!(metrics.timer_waiter_entries_examined, 4);
     assert_eq!(metrics.peak_timer_waiters, 2);
     assert_eq!(metrics.source_span_clones, 1);
     assert_eq!(metrics.source_span_lookups, 1);

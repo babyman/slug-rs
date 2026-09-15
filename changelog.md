@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replaced the scheduler's linear timer vector with an indexed min-heap.
+  Timed `select` cancellation now removes exact registrations without scanning
+  every pending deadline, while equal deadlines retain registration order.
+
 - Added VM-owned immutable `InstalledProgram` objects. Hosts now install a
   mutable program once, then reuse the checked executable without cloning or
   revalidating bytecode; portable bytecode loading remains deferred.

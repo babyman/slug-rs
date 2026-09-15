@@ -140,7 +140,7 @@ pub struct VmMetrics {
     /// Task waiter entries examined while removing registrations.
     #[cfg(feature = "concurrency")]
     pub task_waiter_entries_examined: usize,
-    /// Timer waiter entries examined while removing registrations.
+    /// Indexed timer-registration lookups while removing registrations.
     #[cfg(feature = "concurrency")]
     pub timer_waiter_entries_examined: usize,
     /// Largest timer queue depth in the invocation.
@@ -3970,12 +3970,14 @@ impl Vm {
                 }
                 #[cfg(feature = "concurrency")]
                 RuntimeSelectCase::After { deadline, handler } => {
-                    self.nursery.timer_service().borrow_mut().register(
+                    let timers = self.nursery.timer_service();
+                    let timer = timers.borrow_mut().register(
                         deadline,
                         Waiter::select(select_state.clone(), SelectWake::Value { handler }),
                     );
                     registrations.push(WaitRegistration::Timer(timers::TimerRegistration::new(
-                        self.nursery.timer_service(),
+                        timers,
+                        timer,
                         #[cfg(feature = "metrics")]
                         self.metrics.clone(),
                     )));

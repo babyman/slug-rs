@@ -392,8 +392,8 @@ to its escaping capture. See [Use direct locals and promote escaping captures](.
   cancellation of suspended waits.
 - [x] Record timer registration, next-deadline lookup, wakeup, and loser-removal
   costs separately from ordinary VM dispatch.
-- [x] Retain the current vector-backed timer storage and FIFO queues unless the
-  measurements identify them as material costs.
+- [x] Retain FIFO ready queues and replace the timer vector only after the
+  measurements identify its scans as material costs.
 - [x] Do not replace the queues without evidence; if a replacement becomes justified, use a cancellation-safe timed-wait index
   (for example, a heap plus registration IDs), and preserve FIFO channel
   arbitration and winner-removes-losers semantics.
@@ -411,10 +411,10 @@ select records 16, one, one, and 32 respectively. The cancellation-shaped
 workload records 32 registrations and 64 removals while preserving the existing
 focused cancellation regressions.
 
-On the baseline machine these bounded workloads completed without evidence
-that vector scans or FIFO arbitration are material relative to the scheduler
-work itself. Keep the current representation and reconsider only if a future,
-larger supported workload changes that result. See [Retain measured scheduler queues](../decisions/2026-08-30-retain-measured-scheduler-queues.md).
+The initial bounded workloads retained the vector representation, but the later
+128-timer scaling result made its scan work material. Timers now use an indexed
+heap while FIFO arbitration remains unchanged. See [Use an indexed timer
+heap](../decisions/2026-09-14-indexed-timer-heap.md).
 
 This is a provisional bounded-workload decision, not a completed scaling
 result. The counters record registrations, lookup calls, wakeups, and requested
@@ -623,7 +623,7 @@ dead-code removal, so it has no independent allocation or byte estimate.
   and program ownership costs.
 
 After this audit, either reaffirm the vector-backed queues with stated
-supported limits or reopen the cancellation-safe timed-wait-index decision.
+supported limits or adopt the cancellation-safe timed-wait index.
 FIFO channel arbitration and winner-removes-losers behavior remain mandatory.
 
 #### Measurement record: scheduler scaling (2026-08-30)
@@ -650,9 +650,18 @@ Removal counters also now report channel, task, and timer entries examined and
 their observed queue peaks. The cancellation workload puts the failing task
 first: across 10 runs it registered and woke zero timers, spent 0 ns in the
 scheduler wait, and completed in about 1.1 ms total—there is no 50 ms timer
-floor. The existing FIFO queues are retained for the currently measured range;
-reopen the timed-wait-index decision if larger workload measurements show
-unacceptable growth.
+floor. The FIFO queues remain retained. The later 128-timer result reopened the
+timed-wait-index decision and led to the indexed heap described below.
+
+#### Measurement record: indexed timer heap (2026-09-14)
+
+Command: `cargo bench -p slug-vm --bench vm --features metrics`. The indexed
+heap preserves the 8/32/128-timer workloads' registration and wakeup counts,
+but reduces deadline-root accesses and due-entry work to one per pending or due
+timer. At 128 timers across 25 runs, deadline entries fell from 3,200 to 25 and
+wakeup entries from 219,858 to 3,200. Timer-registration lookups during loser
+removal were 3,200. Scheduler wait time remains machine-dependent and is not a
+threshold; source behavior and the focused cancellation tests are unchanged.
 
 ### 5. Complete executable and allocation accounting
 
