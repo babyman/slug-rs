@@ -22,6 +22,11 @@ pub(crate) enum MapKey {
 }
 
 impl MapKey {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        reason = "the range and integral-value checks make this conversion exact"
+    )]
     pub(crate) fn from_value(value: &Value) -> Option<Self> {
         match value {
             Value::Bool(value) => Some(Self::Bool(*value)),

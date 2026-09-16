@@ -1126,7 +1126,11 @@ fn hex(bytes: &[u8]) -> String {
     output
 }
 
-#[allow(clippy::cast_possible_truncation)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "the range and integral-value checks make the conversion exact"
+)]
 fn int_equals_float(integer: i64, float: f64) -> bool {
     float.is_finite()
         && float.fract() == 0.0

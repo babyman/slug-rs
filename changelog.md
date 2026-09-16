@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a no-alias collection-update benchmark and metrics coverage for map
+  `copy` operations, distinguishing unique-owner reuse from actual copying.
+
 - Made mixed integer/float equality exact, preventing large integers from
   comparing equal merely because binary64 rounded them during conversion.
 

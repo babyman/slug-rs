@@ -68,6 +68,18 @@ fn collection_large() -> String {
     collection_workload(1_024)
 }
 
+fn unique_collection_workload() -> String {
+    let values = (0..64)
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let entries = (0..64)
+        .map(|index| format!("k{index}: {index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("([{values}] :+ 64)[64]\n({{{entries}}} copy {{k0: -1}}).k0\n")
+}
+
 fn main() {
     let vm_layout = Vm::layout_metrics();
     println!(
@@ -288,6 +300,12 @@ const WORKLOADS: &[Workload] = &[
         name: "collections-large-1024",
         iterations: 10,
         source: collection_large,
+        install: no_native_setup,
+    },
+    Workload {
+        name: "collections-unique-owner-64",
+        iterations: ITERATIONS,
+        source: unique_collection_workload,
         install: no_native_setup,
     },
     Workload {

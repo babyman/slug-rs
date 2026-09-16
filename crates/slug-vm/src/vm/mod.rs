@@ -2403,8 +2403,17 @@ impl Vm {
                 let replacements = self.pop_values_at(fields.len(), span)?;
                 let value = self.pop_at(span)?;
                 #[cfg(feature = "metrics")]
-                if let Value::Struct(value) = &value {
-                    self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
+                match &value {
+                    Value::Map(value) => {
+                        self.record_collection_update(value.len(), Rc::strong_count(value) == 1);
+                    }
+                    Value::Struct(value) => {
+                        self.record_collection_update(
+                            value.values.len(),
+                            Rc::strong_count(value) == 1,
+                        );
+                    }
+                    _ => {}
                 }
                 self.stack.push(
                     copy_value(value, fields, &replacements)
@@ -2882,8 +2891,17 @@ impl Vm {
                 let replacements = self.pop_values_at(fields.len(), span)?;
                 let value = self.pop_at(span)?;
                 #[cfg(feature = "metrics")]
-                if let Value::Struct(value) = &value {
-                    self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
+                match &value {
+                    Value::Map(value) => {
+                        self.record_collection_update(value.len(), Rc::strong_count(value) == 1);
+                    }
+                    Value::Struct(value) => {
+                        self.record_collection_update(
+                            value.values.len(),
+                            Rc::strong_count(value) == 1,
+                        );
+                    }
+                    _ => {}
                 }
                 self.stack.push(
                     copy_value(value, fields, &replacements)
@@ -4728,10 +4746,10 @@ impl Vm {
     fn record_collection_update(&self, copied: usize, unique_owner: bool) {
         let mut metrics = self.metrics.borrow_mut();
         metrics.collection_updates += 1;
-        metrics.collection_elements_copied += copied;
         if unique_owner {
             metrics.collection_unique_owner_updates += 1;
         } else {
+            metrics.collection_elements_copied += copied;
             metrics.collection_shared_owner_updates += 1;
         }
     }
