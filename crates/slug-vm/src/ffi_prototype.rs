@@ -35,6 +35,13 @@ const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
 static NEXT_VALUE_SCOPE: AtomicUsize = AtomicUsize::new(1);
+// ABI 0.13 lets a C worker release its final producer capability from inside
+// that library's own thread. Its return path can still execute library code
+// after `producer_destroy`, so unloading at that point is unsafe. This ABI has
+// no worker-quiescence callback; keep libraries that export a producer loaded
+// for the process lifetime.
+static FOREIGN_WORKER_LIBRARIES: LazyLock<Mutex<Vec<Arc<LoadedLibrary>>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[repr(C)]
 struct HostApi {
@@ -229,6 +236,13 @@ fn library_lease(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError> {
     Ok(Arc::new(unsafe { LoadedLibrary::open(&path) }?))
 }
 
+fn retain_library_for_foreign_worker(library: Arc<LoadedLibrary>) {
+    FOREIGN_WORKER_LIBRARIES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(library);
+}
+
 #[derive(Clone, Debug)]
 struct RegisteredFunction {
     name: String,
@@ -258,10 +272,6 @@ struct FfiChannel {
 
 struct FfiProducer {
     producer: crate::NativeChannelProducer,
-    // A foreign worker may still execute this library after the runtime has
-    // revoked its producer. Keep the dynamic library loaded until the worker
-    // releases the producer capability.
-    _library_lease: Arc<LoadedLibrary>,
 }
 
 #[repr(C)]
@@ -1382,11 +1392,9 @@ unsafe extern "C" fn channel_create(
         ));
         return std::ptr::null_mut();
     };
+    retain_library_for_foreign_worker(library_lease);
     let (value, producer) = call.channel(capacity);
-    let producer = Box::into_raw(Box::new(FfiProducer {
-        producer,
-        _library_lease: library_lease,
-    }));
+    let producer = Box::into_raw(Box::new(FfiProducer { producer }));
     // SAFETY: checked non-null above; the C callback owns the returned producer.
     unsafe { *producer_output = producer };
     Box::into_raw(Box::new(FfiChannel { value }))

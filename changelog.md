@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed a Linux crash when a detached C worker released its final producer
+  capability while returning through its dynamically loaded library.
+
 - Fixed slim-runtime `select` capability diagnostics for compiler-produced
   pooled bytecode, matching direct bytecode execution.
 
