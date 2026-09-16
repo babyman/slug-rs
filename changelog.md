@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed slim-runtime `select` capability diagnostics for compiler-produced
+  pooled bytecode, matching direct bytecode execution.
+
 - Added a no-alias collection-update benchmark and metrics coverage for map
   `copy` operations, distinguishing unique-owner reuse from actual copying.
 

@@ -2610,13 +2610,6 @@ impl Vm {
                 self.import_at(kinds, span)?;
             }
             Op::Select(cases) => {
-                #[cfg(not(feature = "concurrency"))]
-                if cases
-                    .iter()
-                    .any(|case| matches!(case, SelectCase::After { .. } | SelectCase::Await { .. }))
-                {
-                    return Err(self.runtime_capability_error("select timer or task-await", span));
-                }
                 self.select_at(cases, span)?;
             }
             Op::SelectPooled(id) => {
@@ -4024,6 +4017,13 @@ impl Vm {
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::too_many_lines)]
     fn select_at(&mut self, cases: &[SelectCase], span: Option<&SourceSpan>) -> VmResult<()> {
+        #[cfg(not(feature = "concurrency"))]
+        if cases
+            .iter()
+            .any(|case| matches!(case, SelectCase::After { .. } | SelectCase::Await { .. }))
+        {
+            return Err(self.runtime_capability_error("select timer or task-await", span));
+        }
         if cases.is_empty() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidCall,
