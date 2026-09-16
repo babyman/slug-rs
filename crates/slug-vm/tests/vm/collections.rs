@@ -33,6 +33,32 @@ fn maps_compare_by_key_value_membership_not_entry_order() {
 }
 
 #[test]
+fn numeric_key_equality_is_exact_across_integer_and_float_representations() {
+    assert_eq!(Value::Int(1), Value::Float(1.0));
+    assert_eq!(Value::Int(0), Value::Float(-0.0));
+    assert_ne!(
+        Value::Int(9_007_199_254_740_993),
+        Value::Float(9_007_199_254_740_992.0)
+    );
+    assert_ne!(Value::Float(f64::NAN), Value::Float(f64::NAN));
+}
+
+#[test]
+fn rejects_nan_map_keys() {
+    let mut main = Chunk::new("main", 0);
+    let key = main.constant(Value::Float(f64::NAN));
+    let value = main.constant(Value::Int(1));
+    main.emit(Op::Constant(key))
+        .emit(Op::Constant(value))
+        .emit(Op::Map(1))
+        .emit(Op::Return);
+
+    let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(error.message, "num cannot be used as a map key");
+}
+
+#[test]
 #[cfg(feature = "metrics")]
 fn records_map_construction_lookup_and_update_costs() {
     let mut main = Chunk::new("main", 0);

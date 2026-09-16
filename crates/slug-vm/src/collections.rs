@@ -8,6 +8,41 @@ use std::rc::Rc;
 
 use crate::Value;
 
+/// Canonical, hashable map-key representation.
+///
+/// Equal Slug map keys always produce the same variant and payload. This is
+/// deliberately private until an indexed map consumes it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum MapKey {
+    Bool(bool),
+    Int(i64),
+    Float(u64),
+    Str(Rc<str>),
+    Bytes(Rc<Vec<u8>>),
+}
+
+impl MapKey {
+    pub(crate) fn from_value(value: &Value) -> Option<Self> {
+        match value {
+            Value::Bool(value) => Some(Self::Bool(*value)),
+            Value::Int(value) => Some(Self::Int(*value)),
+            Value::Float(value) if value.is_nan() => None,
+            Value::Float(value)
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= i64::MIN as f64
+                    && *value < -(i64::MIN as f64) =>
+            {
+                Some(Self::Int(*value as i64))
+            }
+            Value::Float(value) => Some(Self::Float(value.to_bits())),
+            Value::Str(value) => Some(Self::Str(value.clone())),
+            Value::Bytes(value) => Some(Self::Bytes(value.clone())),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct List(Rc<Vec<Value>>);
 

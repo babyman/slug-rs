@@ -1025,7 +1025,7 @@ impl PartialEq for Value {
             (Self::Int(a), Self::Int(b)) => a == b,
             (Self::Float(a), Self::Float(b)) => a == b,
             (Self::Int(a), Self::Float(b)) | (Self::Float(b), Self::Int(a)) => {
-                int_as_float(*a) == *b
+                int_equals_float(*a, *b)
             }
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
@@ -1126,7 +1126,11 @@ fn hex(bytes: &[u8]) -> String {
     output
 }
 
-#[allow(clippy::cast_precision_loss)]
-fn int_as_float(value: i64) -> f64 {
-    value as f64
+#[allow(clippy::cast_possible_truncation)]
+fn int_equals_float(integer: i64, float: f64) -> bool {
+    float.is_finite()
+        && float.fract() == 0.0
+        && float >= i64::MIN as f64
+        && float < -(i64::MIN as f64)
+        && float as i64 == integer
 }

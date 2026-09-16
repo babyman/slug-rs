@@ -117,15 +117,15 @@ instances, and native clients.
 
 ### 4. Resolve map-key equivalence before adding an index
 
-- [ ] Coordinate with the [numeric representation decision](numeric-representation-decision.md)
+- [x] Coordinate with the [numeric representation decision](numeric-representation-decision.md)
   to specify cross-representation numeric equality, signed zero, non-finite
   values if supported, and values outside exact binary64 integer range.
-- [ ] Specify an internal `MapKey` canonicalization/equality/hash contract such
+- [x] Specify an internal `MapKey` canonicalization/equality/hash contract such
   that equal Slug keys always hash equally. It must cover boolean, numeric,
   string, and bytes keys and reject every other current invalid key class.
-- [ ] Add conformance tests covering key equality, lookup, replacement, merge,
+- [x] Add conformance tests covering key equality, lookup, replacement, merge,
   removal, patterns, and native map conversion for every key family.
-- [ ] Record the adopted key contract in `docs/language/` and a decision record
+- [x] Record the adopted key contract in `docs/language/` and a decision record
   before replacing linear lookup with any hashed or indexed representation.
 
 **Gate:** no indexed map lands until the key-equivalence contract is complete.

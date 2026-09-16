@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use crate::{
     MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
-    collections::{Bytes, List, ListView, Map, MapView},
+    collections::{Bytes, List, ListView, Map, MapKey, MapView},
 };
 
 use super::RuntimeErrorKind;
@@ -557,10 +557,7 @@ fn resolve_map_pattern_keys(
 }
 
 pub(super) fn is_map_key(value: &Value) -> bool {
-    matches!(
-        value,
-        Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bytes(_)
-    )
+    MapKey::from_value(value).is_some()
 }
 
 pub(super) fn index_value(

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made mixed integer/float equality exact, preventing large integers from
+  comparing equal merely because binary64 rounded them during conversion.
+
 - Optimized immutable list, map, bytes, and struct updates to reuse uniquely
   owned backing allocations while preserving copy-on-write aliases.
 
