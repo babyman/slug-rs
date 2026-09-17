@@ -50,6 +50,7 @@ a specified feature is implemented.
 | [development.md](engineering/development.md) | Local workflow, validation ladder, and change process. |
 | [testing.md](engineering/testing.md) | Test-layer selection and regression policy. |
 | [benchmarking.md](engineering/benchmarking.md) | Internal and end-to-end benchmark layers. |
+| [benchmark-baseline-2026-09-16.md](engineering/benchmark-baseline-2026-09-16.md) | Initial local source-benchmark baseline. |
 | [vm-optimization.md](planning/vm-optimization.md) | Staged private VM and bytecode optimization plan. |
 
 ### Planning
