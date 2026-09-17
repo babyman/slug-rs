@@ -1,6 +1,6 @@
 use crate::{DeferMode, Program, SourceSpan, Value};
 
-use super::{Frame, RuntimeError, RuntimeErrorKind, Vm, VmResult, frame_locals};
+use super::{Frame, LocalSlot, RuntimeError, RuntimeErrorKind, Vm, VmResult, frame_locals};
 
 #[derive(Clone)]
 pub(super) struct Deferred {
@@ -149,8 +149,30 @@ impl Vm {
     ) {
         self.stack.truncate(stack_base);
         let argument_count = arguments.len();
+        let reusable = self.frames.last().is_some_and(|frame| {
+            frame.locals.len() == local_count
+                && frame
+                    .locals
+                    .iter()
+                    .all(|local| matches!(local, LocalSlot::Direct(_)))
+        });
+        if reusable {
+            // Captured locals are cells whose identity belongs to the prior
+            // iteration, so only direct slots may be overwritten in place.
+            let frame = self.frames.last_mut().expect("active frame was checked");
+            let mut arguments = arguments.into_iter();
+            for local in &mut frame.locals {
+                *local = LocalSlot::Direct(arguments.next().unwrap_or(Value::Nil));
+            }
+            frame.provided = provided;
+            frame.ip = 0;
+            self.record_local_argument_writes(argument_count);
+            self.record_recur_local_vector(true);
+            return;
+        }
         let locals = frame_locals(arguments, local_count);
         self.record_frame_locals(locals.capacity(), argument_count);
+        self.record_recur_local_vector(false);
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
         frame.provided = provided;

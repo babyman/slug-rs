@@ -225,6 +225,24 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
 }
 
 #[test]
+#[cfg(feature = "metrics")]
+fn records_direct_local_vector_reuse_across_recur() {
+    let program = compile(
+        "recur-local-reuse.slug",
+        "val count = fn(remaining, total) { if (remaining == 0) { total } else { recur(remaining - 1, total + 1) } }\nval main = fn() { count(2, 0) }\n",
+    )
+    .expect("compile recur workload");
+
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(2));
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.recur_local_vectors_reused, 2);
+    assert_eq!(metrics.recur_local_vectors_replaced, 0);
+    assert_eq!(metrics.argument_values_copied_to_locals, 6);
+}
+
+#[test]
 #[cfg(all(feature = "concurrency", feature = "metrics"))]
 fn installed_program_is_shared_by_root_tasks_and_nested_nurseries() {
     let mut child = Chunk::new("child", 0);

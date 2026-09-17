@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reused all-direct frame-local vectors across `recur` while preserving the
+  replacement path required for captured local bindings.
+
 - Added compact positional-call bytecode and frame-local allocation metrics to
   separate call-shape handling from frame and argument movement costs.
 

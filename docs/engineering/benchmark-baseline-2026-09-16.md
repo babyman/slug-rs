@@ -84,3 +84,28 @@ capacity 1,604,000 and 602,000 argument values placed into locals. The extra
 new frame. A stack-window or reusable-frame-local experiment should therefore
 measure whether it can eliminate that movement while preserving captures,
 cleanup, suspension, and diagnostic-frame semantics.
+
+## Direct-local `recur` reuse
+
+`recur` now reuses its existing local vector only when every slot remains a
+direct value. A frame whose local has been promoted to a captured binding cell
+still receives a replacement vector, preserving the earlier iteration's cell
+identity for an escaping closure.
+
+A 15-sample local run from the dirty worktree based on
+`152e535339ae5510e0d70ffeeaf2dc3a7967811f` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |  137.396 ms |      28.301 ms |          4.85x |
+| n-body        |   54.254 ms |      23.694 ms |          2.29x |
+| spectral-norm |   18.047 ms |      21.559 ms |          0.84x |
+| binary-trees  |  138.314 ms |      30.788 ms |          4.49x |
+
+The external figures remain within run-to-run variation, but the internal
+accounting demonstrates the representation change precisely. Across 1,000
+`ordinary-calls-200` runs, frame-local vectors fell from 402,000 to 202,000
+and their total capacity from 1,604,000 to 804,000. All 200,000 `recur`
+restarts reused direct locals; the 602,000 argument values written to locals
+were unchanged. Conversely, `closures-retained-128` recorded 12,800
+replacements and no reuse, demonstrating the captured-cell safety boundary.

@@ -123,8 +123,12 @@ pub struct VmMetrics {
     pub frame_local_vectors_created: usize,
     /// Total capacity reserved by newly constructed frame-local vectors.
     pub frame_local_capacity_total: usize,
-    /// Arguments placed into newly constructed frame-local vectors.
+    /// Argument values written into frame-local slots.
     pub argument_values_copied_to_locals: usize,
+    /// `recur` restarts that reused an all-direct frame-local vector.
+    pub recur_local_vectors_reused: usize,
+    /// `recur` restarts that replaced locals to preserve captured-cell identity.
+    pub recur_local_vectors_replaced: usize,
     /// Exact positional closure calls that bypassed generic argument binding.
     pub exact_positional_closure_calls: usize,
     /// Calls that entered generic argument expansion and binding.
@@ -4903,6 +4907,29 @@ impl Vm {
         }
         #[cfg(not(feature = "metrics"))]
         let _ = (capacity, arguments);
+    }
+
+    pub(super) fn record_local_argument_writes(&self, arguments: usize) {
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().argument_values_copied_to_locals += arguments;
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = arguments;
+    }
+
+    pub(super) fn record_recur_local_vector(&self, reused: bool) {
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            if reused {
+                metrics.recur_local_vectors_reused += 1;
+            } else {
+                metrics.recur_local_vectors_replaced += 1;
+            }
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = reused;
     }
 
     #[cfg(feature = "metrics")]
