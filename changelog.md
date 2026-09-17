@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made native owned-text and byte-send callbacks run before receivers can
+  observe an accepted value, eliminating a cross-thread ownership race.
+
 - Fixed a Linux crash when a detached C worker released its final producer
   capability while returning through its dynamically loaded library.
 

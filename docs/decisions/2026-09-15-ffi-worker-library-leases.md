@@ -25,7 +25,9 @@ Detached native producers remain safe to destroy from their final library-frame
 operation. A process may retain one loaded-image lease for every native library
 that has created a producer; the experimental ABI cannot reclaim those leases
 reliably. A future native ABI may replace this policy with explicit
-worker-quiescence ownership.
+worker-quiescence ownership. For owned text and byte producer sends, the host
+finalizes the C buffer after accepting the send but before publishing its copied
+value, so a receiver cannot observe a value before its ownership callback.
 
 ## Migration
 

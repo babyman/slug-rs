@@ -1491,12 +1491,14 @@ unsafe extern "C" fn producer_send_text(
     let Some(text) = (unsafe { text_from_ffi(text) }) else {
         return 3;
     };
-    match producer.producer.try_send(NativeSendValue::string(text)) {
-        NativeProducerStatus::Sent => {
-            // SAFETY: C transfers ownership of the buffer only after a successful send.
+    match producer
+        .producer
+        .try_send_after_accepting(NativeSendValue::string(text), || {
+            // SAFETY: the accepted send owns the copied value, so the C buffer
+            // can be finalized before a receiver observes that value.
             unsafe { destroy(data.cast_mut().cast()) };
-            0
-        }
+        }) {
+        NativeProducerStatus::Sent => 0,
         NativeProducerStatus::Full(_) => 1,
         NativeProducerStatus::Closed(_) => 2,
     }
@@ -1523,12 +1525,14 @@ unsafe extern "C" fn producer_send_bytes(
         // SAFETY: the C caller keeps this length-delimited buffer valid for the call.
         unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length) }.to_vec()
     };
-    match producer.producer.try_send(NativeSendValue::bytes(bytes)) {
-        NativeProducerStatus::Sent => {
-            // SAFETY: C transfers ownership of the buffer only after a successful send.
+    match producer
+        .producer
+        .try_send_after_accepting(NativeSendValue::bytes(bytes), || {
+            // SAFETY: the accepted send owns the copied value, so the C buffer
+            // can be finalized before a receiver observes that value.
             unsafe { destroy(data.cast_mut().cast()) };
-            0
-        }
+        }) {
+        NativeProducerStatus::Sent => 0,
         NativeProducerStatus::Full(_) => 1,
         NativeProducerStatus::Closed(_) => 2,
     }

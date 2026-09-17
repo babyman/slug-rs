@@ -109,6 +109,20 @@ impl NativeChannelProducer {
     }
     #[must_use]
     pub fn try_send(&self, value: NativeSendValue) -> NativeProducerStatus {
+        self.try_send_after_accepting(value, || {})
+    }
+
+    /// Publishes an owned value after its sender has finalized transferred
+    /// resources. The callback runs only for a send that has committed to the
+    /// channel, before a receiver can observe the value.
+    pub(crate) fn try_send_after_accepting<F>(
+        &self,
+        value: NativeSendValue,
+        finalize: F,
+    ) -> NativeProducerStatus
+    where
+        F: FnOnce(),
+    {
         if !self.reserve_slot() {
             return if self.is_closed() {
                 NativeProducerStatus::Closed(value)
@@ -128,6 +142,7 @@ impl NativeChannelProducer {
             self.release_slot();
             return NativeProducerStatus::Closed(value);
         }
+        finalize();
         queue.push_back(value);
         drop(queue);
         self.notify_progress();
