@@ -4955,6 +4955,7 @@ impl Vm {
         self.metrics.borrow_mut().local_binding_cells_created += 1;
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     pub(super) fn record_frame_locals(&self, capacity: usize, arguments: usize) {
         #[cfg(feature = "metrics")]
         {
@@ -4967,6 +4968,7 @@ impl Vm {
         let _ = (capacity, arguments);
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     pub(super) fn record_local_argument_writes(&self, arguments: usize) {
         #[cfg(feature = "metrics")]
         {
@@ -4989,6 +4991,7 @@ impl Vm {
         ProvidedArguments::Bitmap(provided)
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     fn record_provided_argument_bitmap(&self, capacity: usize) {
         #[cfg(feature = "metrics")]
         {
@@ -5000,6 +5003,7 @@ impl Vm {
         let _ = capacity;
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     fn record_closure_argument_vector(&self) {
         #[cfg(feature = "metrics")]
         {
@@ -5007,6 +5011,7 @@ impl Vm {
         }
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     fn record_exact_positional_stack_local_initialization(&self, arguments: usize) {
         #[cfg(feature = "metrics")]
         {
@@ -5018,6 +5023,7 @@ impl Vm {
         let _ = arguments;
     }
 
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
     pub(super) fn record_recur_local_vector(&self, reused: bool) {
         #[cfg(feature = "metrics")]
         {
