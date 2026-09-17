@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-ffi-prototype stage-native-clutches bench-vm measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim test-vm test-cli test-ffi-prototype stage-native-clutches bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -32,6 +32,10 @@ stage-native-clutches:
 
 bench-vm:
 	cargo bench -p slug-vm --bench vm --features metrics
+
+bench-source:
+	cargo build --release -p slug-vm --bin slug
+	cargo bench -p slug-vm --bench source
 
 measure-vm-memory:
 	sh scripts/measure-vm-memory.sh

@@ -1,0 +1,18 @@
+val column_sum = fn(row, column, remaining, total) {
+    if (remaining == 0) {
+        total
+    } else {
+        recur(row, column + 1, remaining - 1, total + 1.0 / (row + column + 1.0))
+    }
+}
+val rows = fn(row, remaining, total) {
+    if (remaining == 0) {
+        total
+    } else {
+        recur(row + 1, remaining - 1, total + column_sum(row, 0, 100, 0.0))
+    }
+}
+val main = fn() {
+    val norm = rows(0, 100, 0.0)
+    println(if (norm > 100.0) { "ok" } else { "unexpected" })
+}

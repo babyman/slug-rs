@@ -1,0 +1,5 @@
+val increment = fn(value) { value + 1 }
+val run = fn(remaining, value) {
+    if (remaining == 0) { value } else { recur(remaining - 1, increment(value)) }
+}
+val main = fn() { println(run(100_000, 0)) }

@@ -194,6 +194,8 @@ as the source-language reference.
 ```sh
 make check
 cargo run -p slug-vm --bin slug -- --help
+make bench-vm
+make bench-source
 ```
 
 `make check` runs formatting validation, strict Clippy, full tests, and the

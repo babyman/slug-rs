@@ -1,0 +1,8 @@
+val build = fn(depth) {
+    if (depth == 0) { 1 } else { [build(depth - 1), build(depth - 1)] }
+}
+val check = fn(tree) match {
+    1 => 1
+    [left, right] => 1 + check(left) + check(right)
+}
+val main = fn() { println(check(build(15))) }

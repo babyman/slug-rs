@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an end-to-end Slug-versus-local-CPython benchmark runner with checked
+  source workloads for calls, numeric loops, and allocation-heavy binary trees.
+
 - Made native owned-text and byte-send callbacks run before receivers can
   observe an accepted value, eliminating a cross-thread ownership race.
 

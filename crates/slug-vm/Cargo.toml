@@ -24,6 +24,10 @@ name = "vm"
 harness = false
 required-features = ["metrics"]
 
+[[bench]]
+name = "source"
+harness = false
+
 [lints]
 workspace = true
 
