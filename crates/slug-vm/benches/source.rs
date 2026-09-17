@@ -37,6 +37,7 @@ struct Workload {
 struct BenchmarkReport<'a> {
     schema_version: u8,
     revision: String,
+    worktree_dirty: bool,
     samples: usize,
     warmup_runs: usize,
     slug: Runtime<'a>,
@@ -79,6 +80,7 @@ fn main() {
     let report = BenchmarkReport {
         schema_version: 1,
         revision: git_revision(&root),
+        worktree_dirty: git_worktree_dirty(&root),
         samples,
         warmup_runs: WARMUP_RUNS,
         slug: Runtime {
@@ -230,8 +232,15 @@ fn command_version(executable: &Path, argument: &str) -> String {
 
 fn print_report(report: &BenchmarkReport<'_>) {
     println!(
-        "Slug source benchmarks: {} samples, {} warmups, revision {}",
-        report.samples, report.warmup_runs, report.revision
+        "Slug source benchmarks: {} samples, {} warmups, revision {}{}",
+        report.samples,
+        report.warmup_runs,
+        report.revision,
+        if report.worktree_dirty {
+            " (dirty)"
+        } else {
+            ""
+        },
     );
     println!("Slug: {} ({})", report.slug.executable, report.slug.version);
     println!(
@@ -268,4 +277,14 @@ fn git_revision(root: &Path) -> String {
             || "unknown".to_owned(),
             |output| String::from_utf8_lossy(&output.stdout).trim().to_owned(),
         )
+}
+
+fn git_worktree_dirty(root: &Path) -> bool {
+    Command::new("git")
+        .args(["-C"])
+        .arg(root)
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .ok()
+        .is_some_and(|output| output.status.success() && !output.stdout.is_empty())
 }

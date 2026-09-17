@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Optimized exact positional source calls to closures by bypassing generic
+  argument-binding intermediates while retaining selected-call live-binding
+  validation.
+
 - Added an end-to-end Slug-versus-local-CPython benchmark runner, documented
   its initial baseline, and checked source workloads for calls, numeric loops,
   and allocation-heavy binary trees.

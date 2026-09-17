@@ -17,8 +17,9 @@ against its expected output before timing it. It reports the median and the
 `Slug / Python` ratio, where values below `1.00x` mean Slug was faster.
 
 The default CPython reference is `/usr/bin/python3`. Its resolved path and
-version, the Slug executable/version, and the current Git revision appear in
-the report. Override either runtime only for an explicitly labelled comparison:
+version, the Slug executable/version, the current Git revision, and whether
+tracked local changes were present appear in the report. Override either runtime
+only for an explicitly labelled comparison:
 
 ```sh
 SLUG_BENCH_PYTHON=/path/to/python3 make bench-source

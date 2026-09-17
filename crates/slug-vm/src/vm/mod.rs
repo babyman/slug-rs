@@ -119,6 +119,10 @@ pub struct VmMetrics {
     pub frames_created: usize,
     /// Frame-local binding cells allocated by the current representation.
     pub local_binding_cells_created: usize,
+    /// Exact positional closure calls that bypassed generic argument binding.
+    pub exact_positional_closure_calls: usize,
+    /// Calls that entered generic argument expansion and binding.
+    pub generic_call_argument_bindings: usize,
     /// Lists, maps, bytes, and structs constructed by VM collection operations.
     pub collection_constructions: usize,
     /// Elements or fields supplied while constructing collection values.
@@ -3812,6 +3816,17 @@ impl Vm {
         selected: Option<&CallableIdentity>,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
+        if kinds
+            .iter()
+            .all(|kind| matches!(kind, CallArgumentKind::Positional))
+            && self.call_positional_closure_at(program, kinds.len(), selected, span)?
+        {
+            #[cfg(feature = "metrics")]
+            self.record_exact_positional_closure_call();
+            return Ok(());
+        }
+        #[cfg(feature = "metrics")]
+        self.record_generic_call_argument_binding();
         let required = kinds.len().checked_add(1).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
@@ -3866,6 +3881,79 @@ impl Vm {
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
         self.call_at(program, count, Some(provided), span)
+    }
+
+    /// Starts an exact positional closure call without constructing the generic
+    /// positional/named argument-binding intermediates.
+    ///
+    /// A selected call still verifies the identity against the current live
+    /// callee value before this path can run.
+    fn call_positional_closure_at(
+        &mut self,
+        program: &Program,
+        count: usize,
+        selected: Option<&CallableIdentity>,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<bool> {
+        let required = count.checked_add(1).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call argument count is too large".into(),
+                span,
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call has too few stack values".into(),
+                span,
+            )
+        })?;
+        let callee = self.stack[base]
+            .resolve()
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+        let callee = match callee {
+            Value::Overloads(overloads) => selected.and_then(|selected| {
+                overloads.iter().find_map(|candidate| {
+                    let candidate = candidate.resolve().ok()?;
+                    (Self::callable_signature(&candidate)
+                        .and_then(|signature| signature.identity)
+                        .as_ref()
+                        == Some(selected))
+                    .then_some(candidate)
+                })
+            }),
+            candidate => match selected {
+                None => Some(candidate),
+                Some(selected) => (Self::callable_signature(&candidate)
+                    .and_then(|signature| signature.identity)
+                    .as_ref()
+                    == Some(selected))
+                .then_some(candidate),
+            },
+        };
+        let Some(Value::Closure(closure)) = callee else {
+            return Ok(false);
+        };
+        let closure_program = closure.program.as_deref().unwrap_or(program);
+        let chunk = closure_program.chunk(closure.chunk).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "closure references missing chunk".into(),
+                span,
+            )
+        })?;
+        if chunk.arity != count
+            || chunk
+                .parameters
+                .iter()
+                .any(|parameter| parameter.has_default || parameter.variadic)
+        {
+            return Ok(false);
+        }
+        self.stack[base] = Value::Closure(closure);
+        self.call_at(program, count, None, span)?;
+        Ok(true)
     }
 
     fn pipeline_call_at(
@@ -4733,6 +4821,16 @@ impl Vm {
     #[cfg(feature = "metrics")]
     fn record_local_cell(&self) {
         self.metrics.borrow_mut().local_binding_cells_created += 1;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_exact_positional_closure_call(&self) {
+        self.metrics.borrow_mut().exact_positional_closure_calls += 1;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_generic_call_argument_binding(&self) {
+        self.metrics.borrow_mut().generic_call_argument_bindings += 1;
     }
 
     #[cfg(feature = "metrics")]

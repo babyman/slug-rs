@@ -110,7 +110,7 @@ fn main() {
         let (elapsed, metrics) = run(&program, workload.iterations, workload.install);
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; collections constructed/elements {collection_constructions}/{collection_elements}; collection lookups/slices/map entries {collection_lookups}/{collection_slices}/{map_entries}; updates/copied/unique/shared {collection_updates}/{collection_copied}/{collection_unique}/{collection_shared}; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_local_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; {cells} local cells; exact positional/generic call bindings {exact_calls}/{generic_bindings}; collections constructed/elements {collection_constructions}/{collection_elements}; collection lookups/slices/map entries {collection_lookups}/{collection_slices}/{map_entries}; updates/copied/unique/shared {collection_updates}/{collection_copied}/{collection_unique}/{collection_shared}; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             verification = metrics.verification_time,
@@ -123,6 +123,8 @@ fn main() {
             program_clone_bytes = metrics.program_clone_bytes,
             frames = metrics.frames_created,
             cells = metrics.local_binding_cells_created,
+            exact_calls = metrics.exact_positional_closure_calls,
+            generic_bindings = metrics.generic_call_argument_bindings,
             collection_constructions = metrics.collection_constructions,
             collection_elements = metrics.collection_elements_constructed,
             collection_lookups = metrics.collection_lookups,
@@ -145,7 +147,7 @@ fn main() {
             instruction_size_bytes = layout.instruction_size_bytes,
             largest_chunk_instructions = layout.largest_chunk_instructions,
             largest_constant_pool = layout.largest_constant_pool,
-            largest_local_frame = layout.largest_local_frame,
+            largest_frame = layout.largest_local_frame,
             largest_metadata_pool = layout.largest_metadata_pool,
             span_entries = layout.span_table_entries,
             inline_span_bytes = layout.inline_span_bytes,
@@ -192,6 +194,8 @@ fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration,
         metrics.program_clone_bytes += run_metrics.program_clone_bytes;
         metrics.frames_created += run_metrics.frames_created;
         metrics.local_binding_cells_created += run_metrics.local_binding_cells_created;
+        metrics.exact_positional_closure_calls += run_metrics.exact_positional_closure_calls;
+        metrics.generic_call_argument_bindings += run_metrics.generic_call_argument_bindings;
         metrics.collection_constructions += run_metrics.collection_constructions;
         metrics.collection_elements_constructed += run_metrics.collection_elements_constructed;
         metrics.collection_lookups += run_metrics.collection_lookups;
