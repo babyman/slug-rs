@@ -148,7 +148,9 @@ impl Vm {
         stack_base: usize,
     ) {
         self.stack.truncate(stack_base);
+        let argument_count = arguments.len();
         let locals = frame_locals(arguments, local_count);
+        self.record_frame_locals(locals.capacity(), argument_count);
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
         frame.provided = provided;
@@ -363,6 +365,17 @@ impl Vm {
                 }
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
+                let arguments = if recovers_error {
+                    let error = self
+                        .active_error()
+                        .expect("error cleanup has an active error");
+                    vec![Self::error_value(error)]
+                } else {
+                    Vec::new()
+                };
+                let argument_count = arguments.len();
+                let locals = frame_locals(arguments, chunk.locals);
+                self.record_frame_locals(locals.capacity(), argument_count);
                 self.frames.push(Frame {
                     program: closure.program.clone().unwrap_or(self.active_program()?),
                     globals: closure
@@ -374,14 +387,7 @@ impl Vm {
                     call_span: None,
                     ip: 0,
                     stack_base: self.stack.len(),
-                    locals: if recovers_error {
-                        let error = self
-                            .active_error()
-                            .expect("error cleanup has an active error");
-                        frame_locals(vec![Self::error_value(error)], chunk.locals)
-                    } else {
-                        frame_locals(Vec::new(), chunk.locals)
-                    },
+                    locals,
                     provided: vec![true; chunk.arity],
                     scopes: vec![Vec::new()],
                     cleanup_action: true,

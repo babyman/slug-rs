@@ -119,6 +119,12 @@ pub struct VmMetrics {
     pub frames_created: usize,
     /// Frame-local binding cells allocated by the current representation.
     pub local_binding_cells_created: usize,
+    /// Frame-local vectors constructed while entering or restarting frames.
+    pub frame_local_vectors_created: usize,
+    /// Total capacity reserved by newly constructed frame-local vectors.
+    pub frame_local_capacity_total: usize,
+    /// Arguments placed into newly constructed frame-local vectors.
+    pub argument_values_copied_to_locals: usize,
     /// Exact positional closure calls that bypassed generic argument binding.
     pub exact_positional_closure_calls: usize,
     /// Calls that entered generic argument expansion and binding.
@@ -1598,6 +1604,8 @@ impl Vm {
         self.nursery.clear();
         self.progress.clear();
         self.module_metadata = program.declarations().to_vec();
+        let locals = frame_locals(Vec::new(), chunk.locals);
+        self.record_frame_locals(locals.capacity(), 0);
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
         self.frames.push(Frame {
@@ -1615,7 +1623,7 @@ impl Vm {
             call_span: None,
             ip: 0,
             stack_base: 0,
-            locals: frame_locals(Vec::new(), chunk.locals),
+            locals,
             provided: vec![false; chunk.arity],
             scopes: vec![Vec::new()],
             cleanup_action: false,
@@ -2512,6 +2520,7 @@ impl Vm {
                 self.recur_at(program, kinds, span)?;
             }
             Op::Call(count) => self.call_at(program, *count, None, span)?,
+            Op::CallPositional(count) => self.call_positional_at(program, *count, span)?,
             Op::CallSpread(kinds) => self.call_spread_at(program, kinds, None, span)?,
             Op::CallSpreadPooled(id) => {
                 let kinds = program.call_arguments(*id).ok_or_else(|| {
@@ -3076,7 +3085,9 @@ impl Vm {
                         })
                     })
                     .collect::<VmResult<Vec<_>>>()?;
+                let argument_count = locals.len();
                 let locals = frame_locals(locals, chunk.locals);
+                self.record_frame_locals(locals.capacity(), argument_count);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
@@ -3246,7 +3257,9 @@ impl Vm {
                             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
+                let argument_count = locals.len();
                 let locals = frame_locals(locals, chunk.locals);
+                self.record_frame_locals(locals.capacity(), argument_count);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.frames.push(Frame {
@@ -3401,7 +3414,9 @@ impl Vm {
             #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
         };
+        let argument_count = arguments.len();
         let locals = frame_locals(arguments, chunk.locals);
+        vm.record_frame_locals(locals.capacity(), argument_count);
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
         vm.frames.push(Frame {
@@ -3875,6 +3890,61 @@ impl Vm {
             }
             let (arguments, provided) =
                 self.bind_call_arguments_at(program, &callee, positional, named, span)?;
+            (callee, arguments, provided)
+        };
+        self.stack.push(callee);
+        self.stack.extend(arguments);
+        let count = self.stack.len() - base - 1;
+        self.call_at(program, count, Some(provided), span)
+    }
+
+    /// Handles a source call whose compiler-provided argument shape is exactly
+    /// positional, retaining the generic binder only for closures that need it.
+    fn call_positional_at(
+        &mut self,
+        program: &Program,
+        count: usize,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        if self.call_positional_closure_at(program, count, None, span)? {
+            #[cfg(feature = "metrics")]
+            self.record_exact_positional_closure_call();
+            return Ok(());
+        }
+        #[cfg(feature = "metrics")]
+        self.record_generic_call_argument_binding();
+        let required = count.checked_add(1).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call argument count is too large".into(),
+                span,
+            )
+        })?;
+        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call has too few stack values".into(),
+                span,
+            )
+        })?;
+        let callee = self.stack[base]
+            .resolve()
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+        let positional = self.stack.split_off(base + 1);
+        self.stack.truncate(base);
+        let positional = positional
+            .into_iter()
+            .map(|value| {
+                value
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+            })
+            .collect::<VmResult<Vec<_>>>()?;
+        let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
+            self.bind_overload_arguments_at(program, overloads, &positional, &[], span)?
+        } else {
+            let (arguments, provided) =
+                self.bind_call_arguments_at(program, &callee, positional, Vec::new(), span)?;
             (callee, arguments, provided)
         };
         self.stack.push(callee);
@@ -4821,6 +4891,18 @@ impl Vm {
     #[cfg(feature = "metrics")]
     fn record_local_cell(&self) {
         self.metrics.borrow_mut().local_binding_cells_created += 1;
+    }
+
+    pub(super) fn record_frame_locals(&self, capacity: usize, arguments: usize) {
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.frame_local_vectors_created += 1;
+            metrics.frame_local_capacity_total += capacity;
+            metrics.argument_values_copied_to_locals += arguments;
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = (capacity, arguments);
     }
 
     #[cfg(feature = "metrics")]

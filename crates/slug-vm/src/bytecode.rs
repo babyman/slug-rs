@@ -138,6 +138,7 @@ pub(crate) enum PackedOpcode {
     JumpIfFalse,
     JumpIfProvided,
     Call,
+    CallPositional,
     CallSpread,
     CallSelected,
     PipelineCall,
@@ -409,6 +410,8 @@ pub enum Op {
         target: usize,
     },
     Call(usize),
+    /// A source call whose arguments are syntactically positional.
+    CallPositional(usize),
     CallSpread(Vec<CallArgumentKind>),
     CallSpreadPooled(CallArgumentsId),
     CallSelected {
@@ -1130,6 +1133,7 @@ impl Program {
                 0,
             ),
             Op::Call(v) => (PackedOpcode::Call, operand(*v), 0, 0),
+            Op::CallPositional(v) => (PackedOpcode::CallPositional, operand(*v), 0, 0),
             Op::CallSpreadPooled(v) => (PackedOpcode::CallSpread, v.0, 0, 0),
             Op::CallSelectedPooled(v) => (PackedOpcode::CallSelected, v.0, 0, 0),
             Op::PipelineCallPooled(v) => (PackedOpcode::PipelineCall, v.0, 0, 0),
@@ -1248,6 +1252,7 @@ impl Program {
                 target: n(instruction.b),
             },
             PackedOpcode::Call => Op::Call(n(instruction.a)),
+            PackedOpcode::CallPositional => Op::CallPositional(n(instruction.a)),
             PackedOpcode::CallSpread => Op::CallSpreadPooled(CallArgumentsId(instruction.a)),
             PackedOpcode::CallSelected => Op::CallSelectedPooled(SelectedCallId(instruction.a)),
             PackedOpcode::PipelineCall => Op::PipelineCallPooled(CallArgumentsId(instruction.a)),
@@ -1942,7 +1947,7 @@ impl Program {
             | Op::LeaveScope
             | Op::MatchFailure
             | Op::NotImplemented => (0, 0),
-            Op::Call(count) => (count.checked_add(1).unwrap_or(0), 1),
+            Op::Call(count) | Op::CallPositional(count) => (count.checked_add(1).unwrap_or(0), 1),
             Op::CallSpread(kinds) | Op::CallSelected { kinds, .. } => (kinds.len() + 1, 1),
             Op::CallSpreadPooled(id) => (
                 self.call_arguments(*id)

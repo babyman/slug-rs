@@ -751,6 +751,9 @@ impl Compiler {
             }
             ExprKind::Call { callee, arguments } => {
                 let import = matches!(&callee.kind, ExprKind::Name(name) if name == "import");
+                let positional = arguments
+                    .iter()
+                    .all(|argument| matches!(argument, CallArgument::Positional(_)));
                 if !import {
                     self.expression(state, callee)?;
                 }
@@ -776,6 +779,8 @@ impl Compiler {
                     Op::Import(kinds)
                 } else if let Some(identity) = self.selected_identity(&expression.span) {
                     Op::CallSelected { kinds, identity }
+                } else if positional {
+                    Op::CallPositional(arguments.len())
                 } else {
                     Op::CallSpread(kinds)
                 };

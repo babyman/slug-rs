@@ -6,8 +6,9 @@ recording portable performance claims.
 
 `make bench-vm` runs `crates/slug-vm/benches/vm.rs`. It executes representative
 source programs in-process and reports opt-in VM counters such as instruction
-dispatch, frames, collection operations, and executable layout. Use it to
-identify the implementation cost an internal representation change affects.
+dispatch, frame-local vector creation and capacity, argument-to-local movement,
+collection operations, and executable layout. Use it to identify the
+implementation cost an internal representation change affects.
 
 `make bench-source` builds the release `slug` executable and runs
 `crates/slug-vm/benches/source.rs`. The runner starts a fresh Slug or CPython

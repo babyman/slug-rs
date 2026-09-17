@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added compact positional-call bytecode and frame-local allocation metrics to
+  separate call-shape handling from frame and argument movement costs.
+
 - Optimized exact positional source calls to closures by bypassing generic
   argument-binding intermediates while retaining selected-call live-binding
   validation.

@@ -61,3 +61,26 @@ The ratio is sensitive to the independently measured CPython median; compare
 the absolute Slug medians as well. The internal `ordinary-calls-200` benchmark
 fell from approximately 329 ms to 303 ms for 1,000 runs, and all 201,000
 ordinary calls took the exact positional path.
+
+## Compact positional calls and frame-local metrics
+
+`CallPositional(argc)` now records the compiler's already-known positional
+shape directly in private bytecode. A 15-sample local run, again from a dirty
+worktree based on `7146ffa83786d8662694dcc7a6ffda02974ef6f4`, produced:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |  137.040 ms |      28.746 ms |          4.77x |
+| n-body        |   55.225 ms |      24.500 ms |          2.25x |
+| spectral-norm |   18.410 ms |      22.494 ms |          0.82x |
+| binary-trees  |  140.216 ms |      31.478 ms |          4.45x |
+
+The source-level timing change is within ordinary local variation, so this
+slice is primarily a representation cleanup and measurement boundary. Its
+new internal counters are more decisive: `ordinary-calls-200`, run 1,000
+times, creates 202,000 frames but 402,000 frame-local vectors with total
+capacity 1,604,000 and 602,000 argument values placed into locals. The extra
+200,000 local vectors come from `recur` replacing locals without allocating a
+new frame. A stack-window or reusable-frame-local experiment should therefore
+measure whether it can eliminate that movement while preserving captures,
+cleanup, suspension, and diagnostic-frame semantics.
