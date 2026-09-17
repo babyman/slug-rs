@@ -125,6 +125,10 @@ pub struct VmMetrics {
     pub frame_local_capacity_total: usize,
     /// Argument values written into frame-local slots.
     pub argument_values_copied_to_locals: usize,
+    /// Temporary argument vectors constructed before ordinary closure entry.
+    pub closure_argument_vectors_created: usize,
+    /// Exact positional argument values initialized directly from operand-stack slots.
+    pub exact_positional_stack_local_initializations: usize,
     /// `recur` restarts that reused an all-direct frame-local vector.
     pub recur_local_vectors_reused: usize,
     /// `recur` restarts that replaced locals to preserve captured-cell identity.
@@ -3081,6 +3085,7 @@ impl Vm {
                         span,
                     ));
                 }
+                self.record_closure_argument_vector();
                 let locals = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
@@ -3253,6 +3258,7 @@ impl Vm {
                         span,
                     ));
                 }
+                self.record_closure_argument_vector();
                 let locals = self.stack[base + 1..]
                     .iter()
                     .map(|value| {
@@ -3957,8 +3963,8 @@ impl Vm {
         self.call_at(program, count, Some(provided), span)
     }
 
-    /// Starts an exact positional closure call without constructing the generic
-    /// positional/named argument-binding intermediates.
+    /// Starts an exact positional closure call without constructing either the
+    /// generic argument-binding intermediates or a temporary argument vector.
     ///
     /// A selected call still verifies the identity against the current live
     /// callee value before this path can run.
@@ -4009,24 +4015,59 @@ impl Vm {
         let Some(Value::Closure(closure)) = callee else {
             return Ok(false);
         };
-        let closure_program = closure.program.as_deref().unwrap_or(program);
-        let chunk = closure_program.chunk(closure.chunk).ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "closure references missing chunk".into(),
-                span,
-            )
-        })?;
-        if chunk.arity != count
-            || chunk
-                .parameters
-                .iter()
-                .any(|parameter| parameter.has_default || parameter.variadic)
-        {
-            return Ok(false);
+        let frame_program = closure
+            .program
+            .clone()
+            .or_else(|| self.module_program.clone())
+            .unwrap_or_else(|| Rc::new(program.clone()));
+        let (arity, local_count, function) = {
+            let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
+                self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "closure references missing chunk".into(),
+                    span,
+                )
+            })?;
+            if chunk.arity != count
+                || chunk
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.has_default || parameter.variadic)
+            {
+                return Ok(false);
+            }
+            (chunk.arity, chunk.locals, chunk.name.clone())
+        };
+        let mut locals = Vec::with_capacity(local_count);
+        for value in &self.stack[base + 1..] {
+            let value = value
+                .resolve()
+                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            locals.push(LocalSlot::Direct(value));
         }
-        self.stack[base] = Value::Closure(closure);
-        self.call_at(program, count, None, span)?;
+        locals.resize_with(local_count, || LocalSlot::Direct(Value::Nil));
+        self.record_frame_locals(locals.capacity(), count);
+        self.record_exact_positional_stack_local_initialization(count);
+        #[cfg(feature = "metrics")]
+        self.record_frame(local_count);
+        self.frames.push(Frame {
+            program: frame_program,
+            globals: closure
+                .globals
+                .clone()
+                .unwrap_or_else(|| self.globals.clone()),
+            closure,
+            function,
+            call_span: self.owned_span(span),
+            ip: 0,
+            stack_base: base,
+            locals,
+            provided: vec![true; arity],
+            scopes: vec![Vec::new()],
+            cleanup_action: false,
+            cleanup_recovers: false,
+            cleanup_owner_depth: None,
+        });
         Ok(true)
     }
 
@@ -4913,6 +4954,24 @@ impl Vm {
         #[cfg(feature = "metrics")]
         {
             self.metrics.borrow_mut().argument_values_copied_to_locals += arguments;
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = arguments;
+    }
+
+    fn record_closure_argument_vector(&self) {
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().closure_argument_vectors_created += 1;
+        }
+    }
+
+    fn record_exact_positional_stack_local_initialization(&self, arguments: usize) {
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics
+                .borrow_mut()
+                .exact_positional_stack_local_initializations += arguments;
         }
         #[cfg(not(feature = "metrics"))]
         let _ = arguments;

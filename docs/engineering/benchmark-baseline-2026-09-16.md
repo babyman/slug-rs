@@ -109,3 +109,30 @@ and their total capacity from 1,604,000 to 804,000. All 200,000 `recur`
 restarts reused direct locals; the 602,000 argument values written to locals
 were unchanged. Conversely, `closures-retained-128` recorded 12,800
 replacements and no reuse, demonstrating the captured-cell safety boundary.
+
+## Exact positional stack-to-local initialization
+
+Exact positional closure calls now construct their final frame-local vector
+directly from the call's operand-stack values. This removes the temporary
+`Vec<Value>` previously built solely to feed `frame_locals`; generic calls,
+including defaults, named arguments, spreads, variadics, and native calls,
+retain their existing binder path. Exact selected closures retain their
+live-binding identity validation before taking this path.
+
+A 15-sample local run from the dirty worktree based on
+`548c35c140d376482e07c1eb5f69e3e6baca5ed8` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |  131.071 ms |      28.371 ms |          4.62x |
+| n-body        |   55.072 ms |      24.647 ms |          2.23x |
+| spectral-norm |   18.206 ms |      22.014 ms |          0.83x |
+| binary-trees  |  132.982 ms |      30.870 ms |          4.31x |
+
+The internal `ordinary-calls-200` benchmark now records zero temporary
+closure argument vectors and 202,000 exact stack-to-local initializations
+over 1,000 runs. Its final local-vector capacity falls from 804,000 to
+202,000 slots because the final vector is allocated at the chunk's actual
+local count, rather than inheriting and growing an intermediate vector's
+capacity. The source call workload improved from 137.396 ms to 131.071 ms in
+these samples; the allocation evidence is the more stable result.

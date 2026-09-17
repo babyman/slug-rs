@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Initialized exact positional closure locals directly from operand-stack
+  values, avoiding a temporary argument vector for each such call.
+
 - Reused all-direct frame-local vectors across `recur` while preserving the
   replacement path required for captured local bindings.
 
