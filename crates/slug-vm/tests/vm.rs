@@ -242,6 +242,8 @@ fn records_direct_local_vector_reuse_across_recur() {
     assert_eq!(metrics.argument_values_copied_to_locals, 6);
     assert_eq!(metrics.closure_argument_vectors_created, 1);
     assert_eq!(metrics.exact_positional_stack_local_initializations, 2);
+    assert_eq!(metrics.provided_argument_bitmaps_created, 3);
+    assert_eq!(metrics.provided_argument_bitmap_capacity_total, 4);
 }
 
 #[test]

@@ -129,6 +129,10 @@ pub struct VmMetrics {
     pub closure_argument_vectors_created: usize,
     /// Exact positional argument values initialized directly from operand-stack slots.
     pub exact_positional_stack_local_initializations: usize,
+    /// Non-uniform provided-argument bitmaps retained by frames.
+    pub provided_argument_bitmaps_created: usize,
+    /// Total capacity retained by non-uniform provided-argument bitmaps.
+    pub provided_argument_bitmap_capacity_total: usize,
     /// `recur` restarts that reused an all-direct frame-local vector.
     pub recur_local_vectors_reused: usize,
     /// `recur` restarts that replaced locals to preserve captured-cell identity.
@@ -250,11 +254,26 @@ struct Frame {
     ip: usize,
     stack_base: usize,
     locals: Vec<LocalSlot>,
-    provided: Vec<bool>,
+    provided: ProvidedArguments,
     scopes: Vec<Vec<Deferred>>,
     cleanup_action: bool,
     cleanup_recovers: bool,
     cleanup_owner_depth: Option<usize>,
+}
+
+#[derive(Clone)]
+pub(super) enum ProvidedArguments {
+    All,
+    Bitmap(Vec<bool>),
+}
+
+impl ProvidedArguments {
+    fn is_provided(&self, slot: usize) -> bool {
+        match self {
+            Self::All => true,
+            Self::Bitmap(provided) => provided.get(slot).copied().unwrap_or(false),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1632,7 +1651,7 @@ impl Vm {
             ip: 0,
             stack_base: 0,
             locals,
-            provided: vec![false; chunk.arity],
+            provided: self.frame_provided(Some(vec![false; chunk.arity])),
             scopes: vec![Vec::new()],
             cleanup_action: false,
             cleanup_recovers: false,
@@ -2509,9 +2528,7 @@ impl Vm {
                 if self
                     .frames
                     .last()
-                    .and_then(|frame| frame.provided.get(*slot))
-                    .copied()
-                    == Some(true)
+                    .is_some_and(|frame| frame.provided.is_provided(*slot))
                 {
                     self.jump_at(*target, span)?;
                 }
@@ -3111,7 +3128,7 @@ impl Vm {
                     ip: 0,
                     stack_base: base,
                     locals,
-                    provided: provided.unwrap_or_else(|| vec![true; chunk.arity]),
+                    provided: self.frame_provided(provided),
                     scopes: vec![Vec::new()],
                     cleanup_action: false,
                     cleanup_recovers: false,
@@ -3284,7 +3301,7 @@ impl Vm {
                     ip: 0,
                     stack_base: base,
                     locals,
-                    provided: provided.unwrap_or_else(|| vec![true; chunk.arity]),
+                    provided: self.frame_provided(provided),
                     scopes: vec![Vec::new()],
                     cleanup_action: false,
                     cleanup_recovers: false,
@@ -3438,7 +3455,7 @@ impl Vm {
             ip: 0,
             stack_base: 0,
             locals,
-            provided: provided.unwrap_or_else(|| vec![true; chunk.arity]),
+            provided: self.frame_provided(provided),
             scopes: vec![Vec::new()],
             cleanup_action: false,
             cleanup_recovers: false,
@@ -4020,7 +4037,7 @@ impl Vm {
             .clone()
             .or_else(|| self.module_program.clone())
             .unwrap_or_else(|| Rc::new(program.clone()));
-        let (arity, local_count, function) = {
+        let (local_count, function) = {
             let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                 self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
@@ -4036,7 +4053,7 @@ impl Vm {
             {
                 return Ok(false);
             }
-            (chunk.arity, chunk.locals, chunk.name.clone())
+            (chunk.locals, chunk.name.clone())
         };
         let mut locals = Vec::with_capacity(local_count);
         for value in &self.stack[base + 1..] {
@@ -4062,7 +4079,7 @@ impl Vm {
             ip: 0,
             stack_base: base,
             locals,
-            provided: vec![true; arity],
+            provided: ProvidedArguments::All,
             scopes: vec![Vec::new()],
             cleanup_action: false,
             cleanup_recovers: false,
@@ -4957,6 +4974,30 @@ impl Vm {
         }
         #[cfg(not(feature = "metrics"))]
         let _ = arguments;
+    }
+
+    fn frame_provided(&self, provided: Option<Vec<bool>>) -> ProvidedArguments {
+        let Some(provided) = provided else {
+            return ProvidedArguments::All;
+        };
+        self.record_provided_argument_bitmap(provided.capacity());
+        ProvidedArguments::Bitmap(provided)
+    }
+
+    pub(super) fn provided_bitmap(&self, provided: Vec<bool>) -> ProvidedArguments {
+        self.record_provided_argument_bitmap(provided.capacity());
+        ProvidedArguments::Bitmap(provided)
+    }
+
+    fn record_provided_argument_bitmap(&self, capacity: usize) {
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.provided_argument_bitmaps_created += 1;
+            metrics.provided_argument_bitmap_capacity_total += capacity;
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = capacity;
     }
 
     fn record_closure_argument_vector(&self) {

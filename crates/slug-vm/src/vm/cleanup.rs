@@ -159,6 +159,7 @@ impl Vm {
         if reusable {
             // Captured locals are cells whose identity belongs to the prior
             // iteration, so only direct slots may be overwritten in place.
+            let provided = self.provided_bitmap(provided);
             let frame = self.frames.last_mut().expect("active frame was checked");
             let mut arguments = arguments.into_iter();
             for local in &mut frame.locals {
@@ -173,6 +174,7 @@ impl Vm {
         let locals = frame_locals(arguments, local_count);
         self.record_frame_locals(locals.capacity(), argument_count);
         self.record_recur_local_vector(false);
+        let provided = self.provided_bitmap(provided);
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
         frame.provided = provided;
@@ -410,7 +412,7 @@ impl Vm {
                     ip: 0,
                     stack_base: self.stack.len(),
                     locals,
-                    provided: vec![true; chunk.arity],
+                    provided: super::ProvidedArguments::All,
                     scopes: vec![Vec::new()],
                     cleanup_action: true,
                     cleanup_recovers: recovers_error,

@@ -136,3 +136,28 @@ over 1,000 runs. Its final local-vector capacity falls from 804,000 to
 local count, rather than inheriting and growing an intermediate vector's
 capacity. The source call workload improved from 137.396 ms to 131.071 ms in
 these samples; the allocation evidence is the more stable result.
+
+## All-supplied frame parameters
+
+Frames now represent an ordinary exact call's parameter state as `All` rather
+than allocating `vec![true; arity]`. A bitmap remains only where argument
+binding can distinguish supplied from defaulted parameters, including the
+full-binding `recur` path. `JumpIfProvided` preserves its prior behavior by
+asking the representation whether its parameter was supplied.
+
+A 15-sample local run from the dirty worktree based on
+`c33f2ec796aafe7e7da0e161fef2635444fc94a3` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |  128.403 ms |      28.397 ms |          4.52x |
+| n-body        |   54.632 ms |      23.910 ms |          2.28x |
+| spectral-norm |   18.405 ms |      22.078 ms |          0.83x |
+| binary-trees  |  131.489 ms |      31.546 ms |          4.17x |
+
+The internal counters show no provided bitmap for exact calls. The
+`ordinary-calls-200` workload still records 201,000 bitmaps with total
+capacity 400,000 because its 200,000 `recur` restarts use the generic binding
+rules; this makes the remaining cost explicit rather than hiding it. Its
+elapsed time fell from about 297.5 ms to 283.2 ms for 1,000 runs in these
+local samples.

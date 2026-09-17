@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Represented all-supplied frame parameters without allocating a provided-value
+  bitmap, while retaining bitmaps for default-aware and `recur` binding paths.
+
 - Initialized exact positional closure locals directly from operand-stack
   values, avoiding a temporary argument vector for each such call.
 
