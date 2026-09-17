@@ -112,7 +112,10 @@ impl Vm {
                 .rev()
                 .filter(|frame| !frame.cleanup_action)
                 .map(|frame| CallFrame {
-                    function: frame.function.clone(),
+                    function: frame
+                        .program
+                        .chunk(frame.closure.chunk)
+                        .map_or_else(|| "<invalid frame>".to_owned(), |chunk| chunk.name.clone()),
                     span: frame.call_span.clone(),
                 })
                 .collect(),

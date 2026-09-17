@@ -161,3 +161,25 @@ capacity 400,000 because its 200,000 `recur` restarts use the generic binding
 rules; this makes the remaining cost explicit rather than hiding it. Its
 elapsed time fell from about 297.5 ms to 283.2 ms for 1,000 runs in these
 local samples.
+
+## Derived frame diagnostic names
+
+VM frames no longer retain a cloned function-name `String`. Each already owns
+the program and closure chunk needed to recover that name when constructing a
+runtime diagnostic, so the lookup now occurs only on the error path. Existing
+function-name and source-call-site diagnostic tests protect the behavior.
+
+A 15-sample local run from the dirty worktree based on
+`f251761af6736102d244b045bad11679f2bfa6e0` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |  125.684 ms |      27.902 ms |          4.50x |
+| n-body        |   54.309 ms |      23.346 ms |          2.33x |
+| spectral-norm |   18.021 ms |      21.673 ms |          0.83x |
+| binary-trees  |  125.912 ms |      30.567 ms |          4.12x |
+
+`Frame` shrank from 184 to 160 bytes. The internal `ordinary-calls-200`
+workload fell from about 283.2 ms to 278.4 ms for 1,000 runs in these local
+samples. This leaves eager defer-scope allocation as the next small
+frame-entry cost; compact call-site diagnostics need a separate design pass.

@@ -407,7 +407,6 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    function: chunk.name.clone(),
                     call_span: None,
                     ip: 0,
                     stack_base: self.stack.len(),

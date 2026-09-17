@@ -249,7 +249,6 @@ struct Frame {
     program: Rc<Program>,
     globals: GlobalEnvironment,
     closure: Rc<Closure>,
-    function: String,
     call_span: Option<SourceSpan>,
     ip: usize,
     stack_base: usize,
@@ -1646,7 +1645,6 @@ impl Vm {
                 #[cfg(feature = "concurrency")]
                 capture_sources: Vec::new(),
             }),
-            function: chunk.name.clone(),
             call_span: None,
             ip: 0,
             stack_base: 0,
@@ -3123,7 +3121,6 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    function: chunk.name.clone(),
                     call_span: span,
                     ip: 0,
                     stack_base: base,
@@ -3296,7 +3293,6 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    function: chunk.name.clone(),
                     call_span: self.owned_span(span),
                     ip: 0,
                     stack_base: base,
@@ -3450,7 +3446,6 @@ impl Vm {
             program: program.clone(),
             globals: vm.globals.clone(),
             closure,
-            function: chunk.name.clone(),
             call_span: span,
             ip: 0,
             stack_base: 0,
@@ -4037,7 +4032,7 @@ impl Vm {
             .clone()
             .or_else(|| self.module_program.clone())
             .unwrap_or_else(|| Rc::new(program.clone()));
-        let (local_count, function) = {
+        let local_count = {
             let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
                 self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
@@ -4053,7 +4048,7 @@ impl Vm {
             {
                 return Ok(false);
             }
-            (chunk.locals, chunk.name.clone())
+            chunk.locals
         };
         let mut locals = Vec::with_capacity(local_count);
         for value in &self.stack[base + 1..] {
@@ -4074,7 +4069,6 @@ impl Vm {
                 .clone()
                 .unwrap_or_else(|| self.globals.clone()),
             closure,
-            function,
             call_span: self.owned_span(span),
             ip: 0,
             stack_base: base,

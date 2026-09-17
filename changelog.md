@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Removed duplicated function-name strings from VM frames; runtime diagnostics
+  now recover names from the frame's existing program and closure chunk.
+
 - Represented all-supplied frame parameters without allocating a provided-value
   bitmap, while retaining bitmaps for default-aware and `recur` binding paths.
 
