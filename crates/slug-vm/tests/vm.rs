@@ -244,6 +244,25 @@ fn records_direct_local_vector_reuse_across_recur() {
     assert_eq!(metrics.exact_positional_stack_local_initializations, 2);
     assert_eq!(metrics.provided_argument_bitmaps_created, 3);
     assert_eq!(metrics.provided_argument_bitmap_capacity_total, 4);
+    assert_eq!(metrics.defer_scope_stacks_created, 0);
+    assert_eq!(metrics.defer_scope_entries_materialized, 0);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn materializes_defer_scope_storage_only_when_a_frame_registers_a_defer() {
+    let program = compile(
+        "lazy-defer-scope.slug",
+        "val main = fn() { defer { nil }; 1 }\n",
+    )
+    .expect("compile defer workload");
+
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(1));
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.defer_scope_stacks_created, 1);
+    assert_eq!(metrics.defer_scope_entries_materialized, 1);
 }
 
 #[test]

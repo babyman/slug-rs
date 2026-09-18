@@ -133,6 +133,10 @@ pub struct VmMetrics {
     pub provided_argument_bitmaps_created: usize,
     /// Total capacity retained by non-uniform provided-argument bitmaps.
     pub provided_argument_bitmap_capacity_total: usize,
+    /// Scope stacks materialized only after a frame registers a deferred action.
+    pub defer_scope_stacks_created: usize,
+    /// Scope entries initialized when lazy defer storage is materialized.
+    pub defer_scope_entries_materialized: usize,
     /// `recur` restarts that reused an all-direct frame-local vector.
     pub recur_local_vectors_reused: usize,
     /// `recur` restarts that replaced locals to preserve captured-cell identity.
@@ -257,6 +261,8 @@ struct Frame {
     scopes: Vec<Vec<Deferred>>,
     cleanup_action: bool,
     cleanup_recovers: bool,
+    /// Lexical scope depth, including the function's root scope.
+    scope_depth: u32,
     cleanup_owner_depth: Option<usize>,
 }
 
@@ -1650,7 +1656,8 @@ impl Vm {
             stack_base: 0,
             locals,
             provided: self.frame_provided(Some(vec![false; chunk.arity])),
-            scopes: vec![Vec::new()],
+            scope_depth: 1,
+            scopes: Vec::new(),
             cleanup_action: false,
             cleanup_recovers: false,
             cleanup_owner_depth: None,
@@ -2674,15 +2681,49 @@ impl Vm {
                     return Err(self.runtime_capability_error("nursery", span));
                 }
             }
-            Op::EnterScope => self.current_scopes_at(span)?.push(Vec::new()),
+            Op::EnterScope => {
+                if self.frames.is_empty() {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "no active call frame".into(),
+                        span,
+                    ));
+                }
+                if self
+                    .frames
+                    .last()
+                    .is_some_and(|frame| frame.scope_depth == u32::MAX)
+                {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "scope nesting is too deep".into(),
+                        span,
+                    ));
+                }
+                let frame = self.frames.last_mut().expect("frame was checked");
+                frame.scope_depth += 1;
+                if !frame.scopes.is_empty() {
+                    frame.scopes.push(Vec::new());
+                }
+            }
             Op::LeaveScope => {
-                let actions = self.current_scopes_at(span)?.pop().ok_or_else(|| {
-                    self.error_at(
+                if self.frames.is_empty() {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "no active call frame".into(),
+                        span,
+                    ));
+                }
+                let frame = self.frames.last_mut().expect("frame was checked");
+                if frame.scope_depth <= 1 {
+                    return Err(self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
                         "no active scope".into(),
                         span,
-                    )
-                })?;
+                    ));
+                }
+                frame.scope_depth -= 1;
+                let actions = frame.scopes.pop().unwrap_or_default();
                 if self.frames.last().is_some_and(|frame| frame.cleanup_action) {
                     self.cleanup.push(Cleanup::Resume);
                 }
@@ -2717,17 +2758,25 @@ impl Vm {
                         span,
                     ));
                 };
-                let Some(scope) = frame.scopes.last_mut() else {
+                if frame.scope_depth == 0 {
                     return Err(self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
                         "no active scope".into(),
                         span,
                     ));
-                };
+                }
+                let materialized_depth = frame.scopes.is_empty().then_some(frame.scope_depth);
+                if let Some(depth) = materialized_depth {
+                    frame.scopes.resize_with(depth as usize, Vec::new);
+                }
+                let scope = frame.scopes.last_mut().expect("scope depth was checked");
                 scope.push(Deferred {
                     action,
                     mode: *mode,
                 });
+                if let Some(depth) = materialized_depth {
+                    self.record_defer_scope_stack(depth as usize);
+                }
             }
             Op::TryMatch {
                 pattern,
@@ -3126,7 +3175,8 @@ impl Vm {
                     stack_base: base,
                     locals,
                     provided: self.frame_provided(provided),
-                    scopes: vec![Vec::new()],
+                    scope_depth: 1,
+                    scopes: Vec::new(),
                     cleanup_action: false,
                     cleanup_recovers: false,
                     cleanup_owner_depth: None,
@@ -3298,7 +3348,8 @@ impl Vm {
                     stack_base: base,
                     locals,
                     provided: self.frame_provided(provided),
-                    scopes: vec![Vec::new()],
+                    scope_depth: 1,
+                    scopes: Vec::new(),
                     cleanup_action: false,
                     cleanup_recovers: false,
                     cleanup_owner_depth: None,
@@ -3451,7 +3502,8 @@ impl Vm {
             stack_base: 0,
             locals,
             provided: self.frame_provided(provided),
-            scopes: vec![Vec::new()],
+            scope_depth: 1,
+            scopes: Vec::new(),
             cleanup_action: false,
             cleanup_recovers: false,
             cleanup_owner_depth: None,
@@ -4074,7 +4126,8 @@ impl Vm {
             stack_base: base,
             locals,
             provided: ProvidedArguments::All,
-            scopes: vec![Vec::new()],
+            scope_depth: 1,
+            scopes: Vec::new(),
             cleanup_action: false,
             cleanup_recovers: false,
             cleanup_owner_depth: None,
@@ -4995,6 +5048,18 @@ impl Vm {
         }
         #[cfg(not(feature = "metrics"))]
         let _ = capacity;
+    }
+
+    #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
+    fn record_defer_scope_stack(&self, entries: usize) {
+        #[cfg(feature = "metrics")]
+        {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.defer_scope_stacks_created += 1;
+            metrics.defer_scope_entries_materialized += entries;
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = entries;
     }
 
     #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]

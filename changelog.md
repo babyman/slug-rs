@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Materialized VM defer-scope storage only when a frame registers its first
+  deferred action, while retaining lexical-depth, `recur`, and error-unwind
+  behavior.
+
 - Removed duplicated function-name strings from VM frames; runtime diagnostics
   now recover names from the frame's existing program and closure chunk.
 

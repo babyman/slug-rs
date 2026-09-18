@@ -116,12 +116,15 @@ impl Vm {
                 span,
             ));
         }
-        let nested_scopes = self
-            .frames
-            .last_mut()
-            .expect("active frame was checked")
-            .scopes
-            .split_off(1);
+        let nested_scopes = {
+            let frame = self.frames.last_mut().expect("active frame was checked");
+            frame.scope_depth = 1;
+            if frame.scopes.len() > 1 {
+                frame.scopes.split_off(1)
+            } else {
+                Vec::new()
+            }
+        };
         if !nested_scopes.is_empty() {
             self.cleanup.push(Cleanup::Recur {
                 arguments,
@@ -179,20 +182,6 @@ impl Vm {
         frame.locals = locals;
         frame.provided = provided;
         frame.ip = 0;
-    }
-
-    pub(super) fn current_scopes_at(
-        &mut self,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<&mut Vec<Vec<Deferred>>> {
-        if self.frames.is_empty() {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "no active call frame".into(),
-                span,
-            ));
-        }
-        Ok(&mut self.frames.last_mut().expect("frame was checked").scopes)
     }
 
     pub(super) fn begin_error(&mut self, mut error: RuntimeError) {
@@ -412,7 +401,8 @@ impl Vm {
                     stack_base: self.stack.len(),
                     locals,
                     provided: super::ProvidedArguments::All,
-                    scopes: vec![Vec::new()],
+                    scope_depth: 1,
+                    scopes: Vec::new(),
                     cleanup_action: true,
                     cleanup_recovers: recovers_error,
                     cleanup_owner_depth: Some(frame_depth),

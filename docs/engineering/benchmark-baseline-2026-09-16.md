@@ -183,3 +183,28 @@ A 15-sample local run from the dirty worktree based on
 workload fell from about 283.2 ms to 278.4 ms for 1,000 runs in these local
 samples. This leaves eager defer-scope allocation as the next small
 frame-entry cost; compact call-site diagnostics need a separate design pass.
+
+## Lazy defer-scope storage
+
+Frames now track lexical scope depth without allocating cleanup storage. The
+first executed `defer` materializes entries for the active root and nested
+scopes; frames that never register a deferred action retain no scope stack.
+This preserves cleanup ordering through nested scopes, `recur`, and error
+recovery while removing an allocation from ordinary calls.
+
+A 15-sample local run from the dirty worktree based on
+`c680103d358f087e55901389b253e983b2e6af76` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |  114.994 ms |      27.206 ms |          4.23x |
+| n-body        |   50.996 ms |      22.998 ms |          2.22x |
+| spectral-norm |   17.091 ms |      21.328 ms |          0.80x |
+| binary-trees  |  117.304 ms |      30.055 ms |          3.90x |
+
+The internal counters report zero defer-scope stacks across ordinary call and
+collection workloads, while `deferred-cleanup` materializes exactly 1,000
+single-entry stacks in 1,000 runs. A compact `u32` depth field keeps `Frame`
+at 160 bytes. The external function-call workload improved from 125.684 ms to
+114.994 ms in these samples; as usual, repeated local runs are needed to
+separate the durable effect from system variation.
