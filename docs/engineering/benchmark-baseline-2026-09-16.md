@@ -208,3 +208,28 @@ single-entry stacks in 1,000 runs. A compact `u32` depth field keeps `Frame`
 at 160 bytes. The external function-call workload improved from 125.684 ms to
 114.994 ms in these samples; as usual, repeated local runs are needed to
 separate the durable effect from system variation.
+
+## Restricted positional `recur`
+
+The compiler now lowers a syntactically all-positional `recur(...)` to compact
+`RecurPositional` bytecode. At runtime, that opcode restarts directly when the
+active function's arity matches and it has neither defaults nor a variadic
+parameter. Otherwise it retains the existing generic binder, so omitted
+defaults, variadics, and malformed bytecode preserve their checked behavior.
+
+A 15-sample local run from the dirty worktree based on
+`47ccb3c018763a5549079fa85e548774a205ae71` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |  102.301 ms |      29.413 ms |          3.48x |
+| n-body        |   43.917 ms |      24.755 ms |          1.77x |
+| spectral-norm |   15.763 ms |      23.025 ms |          0.68x |
+| binary-trees  |  120.173 ms |      34.963 ms |          3.44x |
+
+The internal `ordinary-calls-200` workload recorded 200,000 exact positional
+restarts and zero generic recur bindings across 1,000 runs, while keeping its
+existing all-direct local-vector reuse. In these samples it completed in
+227.240 ms, compared with about 266.456 ms in the preceding lazy-scope run.
+The new counters separately expose exact and generic recur bindings, and a
+defaulted-parameter test protects the generic fallback.

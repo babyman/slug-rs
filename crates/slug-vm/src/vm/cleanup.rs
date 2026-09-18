@@ -97,6 +97,54 @@ impl Vm {
             })?;
         let (arguments, provided) =
             self.bind_call_arguments_at(program, &closure, positional, named, span)?;
+        self.restart_recur(arguments, Some(provided), program, span)
+    }
+
+    pub(super) fn recur_positional_at(
+        &mut self,
+        program: &Program,
+        count: usize,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let values = self.pop_values_at(count, span)?;
+        let closure = self
+            .frames
+            .last()
+            .map(|frame| crate::Value::Closure(frame.closure.clone()))
+            .ok_or_else(|| {
+                self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "no active call frame".into(),
+                    span,
+                )
+            })?;
+        let exact = {
+            let chunk = self.current_chunk(program)?;
+            chunk.arity == count
+                && !chunk
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.has_default || parameter.variadic)
+        };
+        if exact {
+            #[cfg(feature = "metrics")]
+            self.record_exact_positional_recur_restart();
+            return self.restart_recur(values, None, program, span);
+        }
+        #[cfg(feature = "metrics")]
+        self.record_generic_recur_argument_binding();
+        let (arguments, provided) =
+            self.bind_call_arguments_at(program, &closure, values, Vec::new(), span)?;
+        self.restart_recur(arguments, Some(provided), program, span)
+    }
+
+    fn restart_recur(
+        &mut self,
+        arguments: Vec<Value>,
+        provided: Option<Vec<bool>>,
+        program: &Program,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
         let arity = self.current_chunk(program)?.arity;
         let (_, local_count, stack_base) = self
             .frames
@@ -128,7 +176,7 @@ impl Vm {
         if !nested_scopes.is_empty() {
             self.cleanup.push(Cleanup::Recur {
                 arguments,
-                provided,
+                provided: provided.unwrap_or_else(|| vec![true; arity]),
             });
             self.cleanup
                 .extend(nested_scopes.into_iter().map(|actions| Cleanup::Actions {
@@ -139,7 +187,11 @@ impl Vm {
             self.drive_cleanup()?;
             return Ok(());
         }
-        self.finish_recur(arguments, provided, local_count, stack_base);
+        if let Some(provided) = provided {
+            self.finish_recur(arguments, provided, local_count, stack_base);
+        } else {
+            self.finish_recur_positional(arguments, local_count, stack_base);
+        }
         Ok(())
     }
 
@@ -147,6 +199,31 @@ impl Vm {
         &mut self,
         arguments: Vec<Value>,
         provided: Vec<bool>,
+        local_count: usize,
+        stack_base: usize,
+    ) {
+        let provided = self.provided_bitmap(provided);
+        self.finish_recur_with_provided(arguments, provided, local_count, stack_base);
+    }
+
+    pub(super) fn finish_recur_positional(
+        &mut self,
+        arguments: Vec<Value>,
+        local_count: usize,
+        stack_base: usize,
+    ) {
+        self.finish_recur_with_provided(
+            arguments,
+            super::ProvidedArguments::All,
+            local_count,
+            stack_base,
+        );
+    }
+
+    fn finish_recur_with_provided(
+        &mut self,
+        arguments: Vec<Value>,
+        provided: super::ProvidedArguments,
         local_count: usize,
         stack_base: usize,
     ) {
@@ -162,7 +239,6 @@ impl Vm {
         if reusable {
             // Captured locals are cells whose identity belongs to the prior
             // iteration, so only direct slots may be overwritten in place.
-            let provided = self.provided_bitmap(provided);
             let frame = self.frames.last_mut().expect("active frame was checked");
             let mut arguments = arguments.into_iter();
             for local in &mut frame.locals {
@@ -177,7 +253,6 @@ impl Vm {
         let locals = frame_locals(arguments, local_count);
         self.record_frame_locals(locals.capacity(), argument_count);
         self.record_recur_local_vector(false);
-        let provided = self.provided_bitmap(provided);
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
         frame.provided = provided;

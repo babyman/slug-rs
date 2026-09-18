@@ -155,6 +155,7 @@ pub(crate) enum PackedOpcode {
     LeaveScope,
     Defer,
     Recur,
+    RecurPositional,
     Return,
 }
 
@@ -455,6 +456,7 @@ pub enum Op {
     },
     Recur(Vec<CallArgumentKind>),
     RecurPooled(CallArgumentsId),
+    RecurPositional(usize),
     Return,
 }
 
@@ -1168,6 +1170,7 @@ impl Program {
                 0,
             ),
             Op::RecurPooled(v) => (PackedOpcode::Recur, v.0, 0, 0),
+            Op::RecurPositional(v) => (PackedOpcode::RecurPositional, operand(*v), 0, 0),
             Op::Return => (PackedOpcode::Return, 0, 0, 0),
             _ => unreachable!("all installed metadata must be pooled"),
         };
@@ -1284,6 +1287,7 @@ impl Program {
                 },
             },
             PackedOpcode::Recur => Op::RecurPooled(CallArgumentsId(instruction.a)),
+            PackedOpcode::RecurPositional => Op::RecurPositional(n(instruction.a)),
             PackedOpcode::Return => Op::Return,
         };
         Ok(Instruction {
@@ -1761,7 +1765,7 @@ impl Program {
             };
             let successors: Vec<usize> = match &instruction.op {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
-                Op::Recur(_) | Op::RecurPooled(_) => vec![0],
+                Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => vec![0],
                 Op::Jump(target) => vec![*target],
                 Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. } => [
                     Some(*target),
@@ -1787,8 +1791,10 @@ impl Program {
                 ));
             }
             for successor in successors {
-                let successor_state = if matches!(instruction.op, Op::Recur(_) | Op::RecurPooled(_))
-                {
+                let successor_state = if matches!(
+                    instruction.op,
+                    Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_)
+                ) {
                     VerificationState {
                         stack: vec![StackValue::Unknown; initial_stack],
                         scope_depth: 0,
@@ -2036,6 +2042,7 @@ impl Program {
                     .len(),
                 0,
             ),
+            Op::RecurPositional(count) => (*count, 0),
         }
     }
 }

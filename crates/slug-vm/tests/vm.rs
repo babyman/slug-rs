@@ -242,10 +242,29 @@ fn records_direct_local_vector_reuse_across_recur() {
     assert_eq!(metrics.argument_values_copied_to_locals, 6);
     assert_eq!(metrics.closure_argument_vectors_created, 1);
     assert_eq!(metrics.exact_positional_stack_local_initializations, 2);
-    assert_eq!(metrics.provided_argument_bitmaps_created, 3);
-    assert_eq!(metrics.provided_argument_bitmap_capacity_total, 4);
+    assert_eq!(metrics.provided_argument_bitmaps_created, 1);
+    assert_eq!(metrics.provided_argument_bitmap_capacity_total, 0);
+    assert_eq!(metrics.exact_positional_recur_restarts, 2);
+    assert_eq!(metrics.generic_recur_argument_bindings, 0);
     assert_eq!(metrics.defer_scope_stacks_created, 0);
     assert_eq!(metrics.defer_scope_entries_materialized, 0);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn positional_recur_uses_generic_binding_when_defaults_are_needed() {
+    let program = compile(
+        "recur-default-binding.slug",
+        "val count = fn(remaining, total = 0) { if (remaining == 0) { total } else { recur(remaining - 1) } }\nval main = fn() { count(2) }\n",
+    )
+    .expect("compile recur default workload");
+
+    let mut vm = Vm::new();
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(0));
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.exact_positional_recur_restarts, 0);
+    assert_eq!(metrics.generic_recur_argument_bindings, 2);
 }
 
 #[test]

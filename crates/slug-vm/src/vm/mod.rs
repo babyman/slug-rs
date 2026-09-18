@@ -141,6 +141,10 @@ pub struct VmMetrics {
     pub recur_local_vectors_reused: usize,
     /// `recur` restarts that replaced locals to preserve captured-cell identity.
     pub recur_local_vectors_replaced: usize,
+    /// Exact positional `recur` restarts that bypassed generic argument binding.
+    pub exact_positional_recur_restarts: usize,
+    /// `recur` restarts that entered generic argument binding.
+    pub generic_recur_argument_bindings: usize,
     /// Exact positional closure calls that bypassed generic argument binding.
     pub exact_positional_closure_calls: usize,
     /// Calls that entered generic argument expansion and binding.
@@ -2549,6 +2553,7 @@ impl Vm {
                 })?;
                 self.recur_at(program, kinds, span)?;
             }
+            Op::RecurPositional(count) => self.recur_positional_at(program, *count, span)?,
             Op::Call(count) => self.call_at(program, *count, None, span)?,
             Op::CallPositional(count) => self.call_positional_at(program, *count, span)?,
             Op::CallSpread(kinds) => self.call_spread_at(program, kinds, None, span)?,
@@ -5095,6 +5100,16 @@ impl Vm {
         }
         #[cfg(not(feature = "metrics"))]
         let _ = reused;
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(super) fn record_exact_positional_recur_restart(&self) {
+        self.metrics.borrow_mut().exact_positional_recur_restarts += 1;
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(super) fn record_generic_recur_argument_binding(&self) {
+        self.metrics.borrow_mut().generic_recur_argument_bindings += 1;
     }
 
     #[cfg(feature = "metrics")]

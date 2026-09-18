@@ -1299,25 +1299,43 @@ impl Compiler {
                         expression.span.clone(),
                     ));
                 }
-                let mut kinds = Vec::with_capacity(arguments.len());
+                let positional = arguments
+                    .iter()
+                    .all(|argument| matches!(argument, CallArgument::Positional(_)));
+                let mut kinds = (!positional).then(|| Vec::with_capacity(arguments.len()));
                 for argument in arguments {
                     let argument = match argument {
                         CallArgument::Positional(argument) => {
-                            kinds.push(CallArgumentKind::Positional);
+                            if let Some(kinds) = &mut kinds {
+                                kinds.push(CallArgumentKind::Positional);
+                            }
                             argument
                         }
                         CallArgument::Named { name, value } => {
-                            kinds.push(CallArgumentKind::Named(name.clone()));
+                            kinds
+                                .as_mut()
+                                .expect("non-positional recur needs argument metadata")
+                                .push(CallArgumentKind::Named(name.clone()));
                             value
                         }
                         CallArgument::Spread(argument) => {
-                            kinds.push(CallArgumentKind::Spread);
+                            kinds
+                                .as_mut()
+                                .expect("non-positional recur needs argument metadata")
+                                .push(CallArgumentKind::Spread);
                             argument
                         }
                     };
                     self.expression(state, argument)?;
                 }
-                state.emit(Op::Recur(kinds), &expression.span);
+                state.emit(
+                    if positional {
+                        Op::RecurPositional(arguments.len())
+                    } else {
+                        Op::Recur(kinds.expect("non-positional recur collected metadata"))
+                    },
+                    &expression.span,
+                );
             }
             ExprKind::Block(values) => {
                 state.enter_scope();

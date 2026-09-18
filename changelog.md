@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added restricted exact-positional `recur` bytecode that bypasses generic
+  argument expansion and binding when the active function has no defaults or
+  variadic parameter, while preserving the generic fallback and deferred
+  cleanup behavior.
+
 - Materialized VM defer-scope storage only when a frame registers its first
   deferred action, while retaining lexical-depth, `recur`, and error-unwind
   behavior.
