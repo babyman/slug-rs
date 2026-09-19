@@ -11,13 +11,16 @@ use crate::{Program, SourceSpan};
 #[path = "syntax/ast.rs"]
 mod ast;
 mod compiler;
+#[path = "semantics/environment.rs"]
 pub(crate) mod environment;
 #[path = "syntax/lexer.rs"]
 mod lexer;
 #[path = "syntax/parser.rs"]
 mod parser;
+#[path = "semantics/semantic.rs"]
 mod semantic;
 mod state;
+#[path = "semantics/typecheck.rs"]
 mod typecheck;
 use compiler::Compiler;
 use lexer::Lexer;

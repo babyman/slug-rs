@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Grouped the private source semantic environment, type model, and type checker
+  under the source semantics directory without changing analysis behavior.
+
 - Moved the private lexer, parser, and AST into the source syntax directory
   while retaining their source-stage visibility and behavior.
 
