@@ -49,7 +49,10 @@ Task 2 reorganized regression-test facades without changing assertions. Task 3
 split private bytecode ownership across metadata, operations, chunks, and
 program installation/validation; `make bench-vm` and `make check` passed after
 the relocation. These slices make no source-semantic, public-export,
-diagnostic, or bytecode-format change.
+diagnostic, or bytecode-format change. Task 4 made the existing syntax,
+semantic, lowering, and interactive orchestration boundaries visible without
+splitting cohesive analysis or lowering algorithms. Task 5 began by moving the
+shared frame representation and local-slot storage behind a private VM module.
 
 ## 0. Establish the baseline and guardrails
 
@@ -158,18 +161,18 @@ source/
   interactive.rs
 ```
 
-- [ ] Keep the `source/` name at the crate boundary initially; it is
+- [x] Keep the `source/` name at the crate boundary initially; it is
   established terminology and avoids a gratuitous rename.
 - [x] Move lexer, parser, and AST first, with no algorithm change.
 - [x] Extract semantic data/environment from the type checker before splitting
   analysis passes.
-- [ ] Split semantic analysis only by real responsibility: bindings,
+- [x] Split semantic analysis only by real responsibility: bindings,
   annotations/types, inference, narrowing, calls/generics, and diagnostics.
-- [ ] Extract lowering from `compiler.rs` only after semantic input APIs are
+- [x] Extract lowering from `compiler.rs` only after semantic input APIs are
   explicit; do not put semantic decisions into bytecode emission.
-- [ ] Isolate interactive compilation/session state while retaining resolver
+- [x] Isolate interactive compilation/session state while retaining resolver
   and commit behavior.
-- [ ] Update source-local guidance once names settle.
+- [x] Update source-local guidance once names settle.
 
 **Validate:** `make test-cli`, module-loader tests for import/semantic
 snapshots, server tests for interactive compilation, then `make check`.
@@ -198,9 +201,9 @@ vm/
   progress.rs
 ```
 
-- [ ] Identify helper clusters in `vm/mod.rs` by data ownership/lifecycle, not
+- [x] Identify helper clusters in `vm/mod.rs` by data ownership/lifecycle, not
   by individual opcode arms.
-- [ ] Extract frames/stack only if checked-error and source-span paths stay
+- [x] Extract frames/stack only if checked-error and source-span paths stay
   straightforward.
 - [ ] Extract call and global helpers only if closure capture and live binding
   behavior remain directly traceable.

@@ -8,7 +8,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Area | Owner | Responsibility |
 |---|---|---|
 | Crate export surface | `crates/slug-vm/src/lib.rs` | Declares the stable crate-level names currently exposed to Rust hosts; internal moves retain these re-exports unless a separate API change is approved. |
-| Source façade and interactive compilation | `crates/slug-vm/src/source/mod.rs` | Public `compile` boundary, source errors/readiness, and persistent compiler snapshots for interactive cells. |
+| Source façade and interactive compilation | `crates/slug-vm/src/source/{mod,interactive}.rs` | Public compile/error boundary plus source-readiness and persistent compiler snapshots for interactive cells. |
 | Source syntax | `crates/slug-vm/src/source/syntax/{lexer,parser,ast}.rs` | Turn source text into the private AST. Syntax does not depend on semantic analysis or bytecode. |
 | Source semantics | `crates/slug-vm/src/source/semantics/{typecheck,environment,semantic}.rs` | Resolve bindings, imports, annotations, inferred types, and compiler-facing semantic snapshots from the AST. |
 | Source lowering | `crates/slug-vm/src/source/lowering/{compiler,state}.rs` | Consume AST plus semantic analysis and construct the public-but-unstable bytecode representation. |
@@ -17,7 +17,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Modules and experimental clutches | `crates/slug-vm/src/{module,clutch,ffi_prototype}.rs` | Source-module resolution, isolated initialization, clutch discovery, scoped plugin/native descriptor loading, and shutdown ownership. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
 | Runtime values and collections | `crates/slug-vm/src/{value,collections}.rs` | Dynamic values plus their persistent collection storage and operations. |
-| Execution | `crates/slug-vm/src/vm/` | One VM owner for installation, dispatch, polling, errors, cleanup unwinding, scheduler state, timers, and progress. |
+| Execution | `crates/slug-vm/src/vm/` | One VM owner for installation, dispatch, and polling; focused modules own frames/local storage, checked operand-stack access, errors, cleanup unwinding, operations, scheduler state, timers, and progress. |
 | CLI | `crates/slug-vm/src/main.rs` | Process boundary and public error presentation. |
 | Interactive server | `crates/slug-server/src/interactive/` | Versioned NDJSON protocol, session ownership, source-cell lifecycle, and event projection over a VM. |
 | Terminal REPL | `crates/slug-repl/src/main.rs` | Terminal input/editing and transport to the sibling server process; it does not embed VM behavior. |

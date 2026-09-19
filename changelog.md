@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Moved VM call-frame, local-slot, supplied-argument, and checked operand-stack
+  helpers into focused private modules while retaining cleanup and diagnostic
+  paths.
+
+- Isolated interactive source readiness and per-cell compiler snapshots while
+  retaining resolver-backed compilation and commit-after-success behavior.
+
 - Grouped source bytecode lowering and its lexical compiler state under the
   source lowering directory without changing compilation behavior.
 

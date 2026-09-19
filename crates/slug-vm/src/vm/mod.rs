@@ -1,4 +1,4 @@
-use std::{cell::RefCell, cmp::Ordering, collections::HashSet, path::Path, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, path::Path, rc::Rc};
 
 #[cfg(feature = "concurrency")]
 use std::cell::Cell;
@@ -20,9 +20,9 @@ use crate::{
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
-        BindingCell, Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment,
-        RootWaiter, SelectWake, WaitRegistration, WaitSet, Waiter, binding_cell,
-        global_environment, module_binding,
+        Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment, RootWaiter,
+        SelectWake, WaitRegistration, WaitSet, Waiter, binding_cell, global_environment,
+        module_binding,
     },
 };
 
@@ -31,16 +31,19 @@ use crate::value::task_state_layout;
 
 mod cleanup;
 mod error;
+mod frames;
 mod operations;
 mod progress;
 #[cfg(feature = "concurrency")]
 mod scheduler;
+mod stack;
 #[cfg(feature = "concurrency")]
 pub(crate) mod timers;
 
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
+use frames::{Frame, LocalSlot, ProvidedArguments, frame_locals};
 use operations::{
     add, bit_not, bitwise, construct_struct, copy_value, divide, index_value, is_map_key,
     list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
@@ -246,58 +249,6 @@ impl InstalledProgram {
 struct CallableRuntimeSignature {
     identity: Option<CallableIdentity>,
     shape: Vec<(bool, bool)>,
-}
-
-#[derive(Clone)]
-struct Frame {
-    /// The code unit that owns this frame's instruction pointer and chunk.
-    ///
-    /// An execution can cross program boundaries through closures, so this
-    /// cannot be inferred from a VM-wide program owner.
-    program: Rc<Program>,
-    globals: GlobalEnvironment,
-    closure: Rc<Closure>,
-    call_span: Option<SourceSpan>,
-    ip: usize,
-    stack_base: usize,
-    locals: Vec<LocalSlot>,
-    provided: ProvidedArguments,
-    scopes: Vec<Vec<Deferred>>,
-    cleanup_action: bool,
-    cleanup_recovers: bool,
-    /// Lexical scope depth, including the function's root scope.
-    scope_depth: u32,
-    cleanup_owner_depth: Option<usize>,
-}
-
-#[derive(Clone)]
-pub(super) enum ProvidedArguments {
-    All,
-    Bitmap(Vec<bool>),
-}
-
-impl ProvidedArguments {
-    fn is_provided(&self, slot: usize) -> bool {
-        match self {
-            Self::All => true,
-            Self::Bitmap(provided) => provided.get(slot).copied().unwrap_or(false),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(super) enum LocalSlot {
-    Direct(Value),
-    Captured(BindingCell),
-}
-
-pub(super) fn frame_locals(arguments: Vec<Value>, local_count: usize) -> Vec<LocalSlot> {
-    let mut locals = arguments
-        .into_iter()
-        .map(LocalSlot::Direct)
-        .collect::<Vec<_>>();
-    locals.resize_with(local_count, || LocalSlot::Direct(Value::Nil));
-    locals
 }
 
 #[cfg(feature = "concurrency")]
@@ -2523,10 +2474,10 @@ impl Vm {
                 let (left, right) = self.pop_pair_at(span)?;
                 self.stack.push(Value::Bool(left == right));
             }
-            Op::Greater => self.compare_at(span, Ordering::Greater)?,
-            Op::Less => self.compare_at(span, Ordering::Less)?,
-            Op::GuardGreater => self.guard_compare_at(span, Ordering::Greater)?,
-            Op::GuardLess => self.guard_compare_at(span, Ordering::Less)?,
+            Op::Greater => self.compare_at(span, std::cmp::Ordering::Greater)?,
+            Op::Less => self.compare_at(span, std::cmp::Ordering::Less)?,
+            Op::GuardGreater => self.guard_compare_at(span, std::cmp::Ordering::Greater)?,
+            Op::GuardLess => self.guard_compare_at(span, std::cmp::Ordering::Less)?,
             Op::Jump(target) => self.jump_at(*target, span)?,
             Op::JumpIfFalse(target) => {
                 if !self.peek_at(span)?.is_truthy() {
@@ -5174,178 +5125,6 @@ impl Vm {
             self.metrics.borrow_mut().source_span_lookups += 1;
         }
         span
-    }
-
-    fn pop_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
-        self.pop_unresolved_at(span)?
-            .resolve()
-            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
-    }
-
-    fn pop_unresolved_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
-        self.stack.pop().ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "stack underflow".into(),
-                span,
-            )
-        })
-    }
-
-    fn pop_values_at(&mut self, count: usize, span: Option<&SourceSpan>) -> VmResult<Vec<Value>> {
-        if self.stack.len() < count {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "stack underflow".into(),
-                span,
-            ));
-        }
-        self.stack
-            .split_off(self.stack.len() - count)
-            .into_iter()
-            .map(|value| {
-                value
-                    .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
-            })
-            .collect()
-    }
-
-    fn peek_at(&self, span: Option<&SourceSpan>) -> VmResult<&Value> {
-        self.stack.last().ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "stack underflow".into(),
-                span,
-            )
-        })
-    }
-
-    fn local_value(&self, slot: usize, span: Option<&SourceSpan>) -> VmResult<Value> {
-        match self.frames.last().and_then(|frame| frame.locals.get(slot)) {
-            Some(LocalSlot::Direct(value)) => Ok(value.clone()),
-            Some(LocalSlot::Captured(cell)) => Ok(cell.borrow().clone()),
-            None => Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                format!("local {slot} does not exist"),
-                span,
-            )),
-        }
-    }
-
-    fn promote_local_at(
-        &mut self,
-        slot: usize,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<BindingCell> {
-        if self
-            .frames
-            .last()
-            .is_none_or(|frame| slot >= frame.locals.len())
-        {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                format!("local {slot} does not exist"),
-                span,
-            ));
-        }
-        let local = self
-            .frames
-            .last_mut()
-            .and_then(|frame| frame.locals.get_mut(slot))
-            .expect("local slot was checked");
-        match local {
-            LocalSlot::Direct(value) => {
-                let cell = binding_cell(value.clone());
-                *local = LocalSlot::Captured(cell.clone());
-                #[cfg(feature = "metrics")]
-                self.record_local_cell();
-                Ok(cell)
-            }
-            LocalSlot::Captured(cell) => Ok(cell.clone()),
-        }
-    }
-
-    fn set_local_at(
-        &mut self,
-        slot: usize,
-        value: Value,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<()> {
-        if self.frames.last().is_none() {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "no active call frame".into(),
-                span,
-            ));
-        }
-        if self
-            .frames
-            .last()
-            .is_none_or(|frame| slot >= frame.locals.len())
-        {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                format!("local {slot} does not exist"),
-                span,
-            ));
-        }
-        match &mut self
-            .frames
-            .last_mut()
-            .expect("active frame was checked")
-            .locals[slot]
-        {
-            LocalSlot::Direct(local) => *local = value,
-            LocalSlot::Captured(cell) => *cell.borrow_mut() = value,
-        }
-        Ok(())
-    }
-
-    fn pop_pair_at(&mut self, span: Option<&SourceSpan>) -> VmResult<(Value, Value)> {
-        let right = self.pop_at(span)?;
-        let left = self.pop_at(span)?;
-        Ok((left, right))
-    }
-
-    fn binary_at(
-        &mut self,
-        span: Option<&SourceSpan>,
-        operation: fn(Value, Value) -> Result<Value, (RuntimeErrorKind, String)>,
-    ) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at(span)?;
-        self.stack.push(
-            operation(left, right).map_err(|(kind, message)| self.error_at(kind, message, span))?,
-        );
-        Ok(())
-    }
-
-    fn compare_at(&mut self, span: Option<&SourceSpan>, expected: Ordering) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at(span)?;
-        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-            left.cmp(right) == expected
-        } else {
-            let (left, right) = numbers(left, right)
-                .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?;
-            left.partial_cmp(&right)
-                .is_some_and(|ordering| ordering == expected)
-        };
-        self.stack.push(Value::Bool(result));
-        Ok(())
-    }
-
-    fn guard_compare_at(&mut self, span: Option<&SourceSpan>, expected: Ordering) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at(span)?;
-        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-            left.cmp(right) == expected
-        } else {
-            numbers(left, right)
-                .ok()
-                .and_then(|(left, right)| left.partial_cmp(&right))
-                .is_some_and(|ordering| ordering == expected)
-        };
-        self.stack.push(Value::Bool(result));
-        Ok(())
     }
 
     fn jump_at(&mut self, target: usize, span: Option<&SourceSpan>) -> VmResult<()> {
