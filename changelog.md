@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a dependency-ordered plan for reorganizing Slug around discoverable
+  architectural responsibilities, local invariants, and focused validation.
+
 - Added restricted exact-positional `recur` bytecode that bypasses generic
   argument expansion and binding when the active function has no defaults or
   variadic parameter, while preserving the generic fallback and deferred
