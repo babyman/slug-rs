@@ -1,6 +1,7 @@
 use crate::{DeferMode, Program, SourceSpan, Value};
 
-use super::{Frame, LocalSlot, RuntimeError, RuntimeErrorKind, Vm, VmResult, frame_locals};
+use super::frames::{Frame, LocalSlot, ProvidedArguments, frame_locals};
+use super::{RuntimeError, RuntimeErrorKind, Vm, VmResult};
 
 #[derive(Clone)]
 pub(super) struct Deferred {
@@ -212,18 +213,13 @@ impl Vm {
         local_count: usize,
         stack_base: usize,
     ) {
-        self.finish_recur_with_provided(
-            arguments,
-            super::ProvidedArguments::All,
-            local_count,
-            stack_base,
-        );
+        self.finish_recur_with_provided(arguments, ProvidedArguments::All, local_count, stack_base);
     }
 
     fn finish_recur_with_provided(
         &mut self,
         arguments: Vec<Value>,
-        provided: super::ProvidedArguments,
+        provided: ProvidedArguments,
         local_count: usize,
         stack_base: usize,
     ) {
@@ -475,7 +471,7 @@ impl Vm {
                     ip: 0,
                     stack_base: self.stack.len(),
                     locals,
-                    provided: super::ProvidedArguments::All,
+                    provided: ProvidedArguments::All,
                     scope_depth: 1,
                     scopes: Vec::new(),
                     cleanup_action: true,

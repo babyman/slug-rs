@@ -17,7 +17,17 @@ guarantee when the language documents say otherwise.
 
 The VM and CLI targets are common loops, so Make exposes them directly. Run the
 listed `cargo test --test …` command for the remaining focused integration
-boundaries; `make test` runs all of them.
+boundaries; `make test` runs all of them. The corresponding Make aliases are
+`test-frontend`, `test-modules`, `test-server`, and `test-repl`.
+
+The stable `vm.rs` and `cli.rs` integration-test targets are facades, not one
+undifferentiated behavior bucket. Their child modules are the first place to
+add a regression when one applies: VM tests are grouped around bytecode,
+calls/native functions, collections, concurrency, host lifecycle, and runtime
+metrics/structural validation; CLI tests are grouped around basics, language
+core, modules, types, patterns/cleanup, concurrency, filesystem, standard
+input, and diagnostics. Keep the facade target name and existing assertions
+stable while reorganizing tests.
 
 ## Feature matrix
 

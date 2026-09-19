@@ -3,19 +3,49 @@
 Slug is a clean-room Rust implementation of the Slug language. It currently
 implements a small source subset through a checked bytecode virtual machine.
 
-## Ownership
+## Navigation and ownership
 
 | Area | Owner | Responsibility |
 |---|---|---|
-| Source front end | `crates/slug-vm/src/source/` | Source façade, AST, lexer, parser, compiler, and lexical state. |
-| In-process bytecode | `crates/slug-vm/src/bytecode.rs` | Public but unstable Rust instruction and program representation. |
+| Crate export surface | `crates/slug-vm/src/lib.rs` | Declares the stable crate-level names currently exposed to Rust hosts; internal moves retain these re-exports unless a separate API change is approved. |
+| Source façade and interactive compilation | `crates/slug-vm/src/source/{mod,interactive}.rs` | Public compile/error boundary plus source-readiness and persistent compiler snapshots for interactive cells. |
+| Source syntax | `crates/slug-vm/src/source/syntax/{lexer,parser,ast}.rs` | Turn source text into the private AST. Syntax does not depend on semantic analysis or bytecode. |
+| Source semantics | `crates/slug-vm/src/source/semantics/{typecheck,environment,semantic}.rs` | Resolve bindings, imports, annotations, inferred types, and compiler-facing semantic snapshots from the AST. |
+| Source lowering | `crates/slug-vm/src/source/lowering/{compiler,state}.rs` | Consume AST plus semantic analysis and construct the public-but-unstable bytecode representation. |
+| In-process bytecode | `crates/slug-vm/src/bytecode/` | Public but unstable Rust instruction/program representation: metadata, builder operations, chunks, and installation/validation. |
 | Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
-| Experimental clutches | `crates/slug-vm/src/clutch.rs`, `crates/slug-vm/src/module.rs`, `crates/slug-vm/src/ffi_prototype.rs` | Explicit local source-module providers, scoped plugins, manifest-selected native descriptors, and shutdown ownership. |
-| Filesystem capability | `crates/slug-vm/src/filesystem.rs`, `clutch/manifest.toml`, `clutch/slug.io.fs.clutch/` | Native registrations and the installed experimental `slug.io.fs` clutch declaration. |
+| Modules and experimental clutches | `crates/slug-vm/src/{module,clutch,ffi_prototype}.rs` | Source-module resolution owns compiler snapshots, isolated initialization, clutch discovery, scoped plugin/native descriptor loading, and shutdown. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
-| Runtime values | `crates/slug-vm/src/value.rs` | Dynamic language values and operations. |
-| Execution | `crates/slug-vm/src/vm/` | VM dispatch, checked errors, cleanup unwinding, and value operations. |
+| Runtime values and collections | `crates/slug-vm/src/{value,collections}.rs` | Dynamic values, channels, tasks, and persistent collection storage remain coupled by runtime lifecycle. |
+| Execution | `crates/slug-vm/src/vm/` | One VM owner for installation, dispatch, and polling; focused modules own frames/local storage, checked operand-stack access, errors, cleanup unwinding, operations, scheduler state, timers, and progress. |
 | CLI | `crates/slug-vm/src/main.rs` | Process boundary and public error presentation. |
+| Interactive server | `crates/slug-server/src/interactive/` | Versioned NDJSON protocol, session ownership, source-cell lifecycle, and event projection over a VM. |
+| Terminal REPL | `crates/slug-repl/src/main.rs` | Terminal input/editing and transport to the sibling server process; it does not embed VM behavior. |
+
+The current source files are intentionally a smaller set than the eventual
+stage-oriented directories described in the [agentic refactoring plan](../planning/completed/agentic-development-refactoring.md).
+Until a responsibility is moved, this table is the ownership map rather than a
+claim that a future directory already exists.
+
+## Dependency direction
+
+```text
+source text -> syntax -> semantics -> lowering -> bytecode -> VM
+                                     |              |
+                               module snapshots   runtime values
+
+CLI -> VM
+REPL -> server -> VM
+embedded Rust host -> VM
+```
+
+Syntax produces private ASTs. Semantic analysis consumes syntax and produces
+analysis/snapshot data. Lowering consumes both and creates `Program`; it is the
+only source stage that depends on bytecode. The VM may retain semantic module
+metadata needed for live module behavior, but semantic analysis must not depend
+on VM execution or bytecode encoding details. Module loading uses source
+compilation and installs the resulting programs through the VM; it must not
+make the source stages depend on runtime execution.
 
 ## Invariants
 

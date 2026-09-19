@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-ffi-prototype stage-native-clutches bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-modules test-server test-repl test-ffi-prototype stage-native-clutches bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -23,6 +23,18 @@ test-vm:
 
 test-cli:
 	cargo test -p slug-vm --features metrics --test cli
+
+# Focused subsystem aliases. Keep their integration-test target names stable.
+test-frontend: test-cli
+
+test-modules:
+	cargo test -p slug-vm --features metrics --test module_loader
+
+test-server:
+	cargo test -p slug-server --features metrics --test interactive_server
+
+test-repl:
+	cargo test -p slug-repl --features metrics --test interactive_repl
 
 test-ffi-prototype:
 	cargo test -p slug-vm --test ffi_prototype

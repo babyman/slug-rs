@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- Added crate-local contributor guidance for module loading, native ingress,
+  and coupled value/runtime ownership.
+
+- Documented the retained module-loader, runtime-value, and native-producer
+  ownership boundaries after the post-VM refactoring review.
+
+- Kept VM call/global execution, cleanup/error unwinding, and scheduler state
+  cohesive while documenting their focused supporting modules and invariants.
+
+- Grouped private VM call-shape metadata without fragmenting call execution,
+  preserving directly traceable live-binding validation and frame creation.
+
+- Moved VM call-frame, local-slot, supplied-argument, and checked operand-stack
+  helpers into focused private modules while retaining cleanup and diagnostic
+  paths.
+
+- Isolated interactive source readiness and per-cell compiler snapshots while
+  retaining resolver-backed compilation and commit-after-success behavior.
+
+- Grouped source bytecode lowering and its lexical compiler state under the
+  source lowering directory without changing compilation behavior.
+
+- Grouped the private source semantic environment, type model, and type checker
+  under the source semantics directory without changing analysis behavior.
+
+- Moved the private lexer, parser, and AST into the source syntax directory
+  while retaining their source-stage visibility and behavior.
+
+- Split private bytecode ownership into metadata, builder operations, chunk
+  storage, and program installation/validation modules while retaining the
+  existing Rust exports and packed executable representation.
+
+- Grouped VM integration cases by bytecode, calls/native behavior,
+  collections, concurrency, host lifecycle, and runtime validation while
+  retaining the `vm` integration-test target.
+
+- Added architecture navigation, focused subsystem test aliases, and local
+  contributor guidance for the staged organizational refactoring.
+
+- Added a dependency-ordered plan for reorganizing Slug around discoverable
+  architectural responsibilities, local invariants, and focused validation.
+
 - Added restricted exact-positional `recur` bytecode that bypasses generic
   argument expansion and binding when the active function has no defaults or
   variadic parameter, while preserving the generic fallback and deferred
