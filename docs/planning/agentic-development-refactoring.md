@@ -53,7 +53,9 @@ diagnostic, or bytecode-format change. Task 4 made the existing syntax,
 semantic, lowering, and interactive orchestration boundaries visible without
 splitting cohesive analysis or lowering algorithms. Task 5 began by moving the
 shared frame representation and local-slot storage behind a private VM module.
-Task 6 confirmed that module loading remains the owner of its compiler/native
+Task 5 retained `vm/mod.rs` as the execution owner while moving frame, stack,
+and call-shape support behind focused private modules; cleanup, errors, and
+scheduler state remain visible at their lifecycle boundaries. Task 6 confirmed that module loading remains the owner of its compiler/native
 resource lifecycle, dynamic values remain coupled to channels and tasks, and
 native producers remain an ingress-only boundary; no directory split is
 justified for those representations yet.
@@ -209,16 +211,16 @@ vm/
   by individual opcode arms.
 - [x] Extract frames/stack only if checked-error and source-span paths stay
   straightforward.
-- [ ] Extract call and global helpers only if closure capture and live binding
-  behavior remain directly traceable.
-- [ ] Keep cleanup/error unwinding explicit: `defer`, recovery, spans, and
+- [x] Extract call-shape helpers while retaining call/global execution in the
+  VM owner: closure capture and live-binding behavior remain directly traceable.
+- [x] Keep cleanup/error unwinding explicit: `defer`, recovery, spans, and
   call-frame retention.
-- [ ] Keep scheduler admission, task state, channels, wait registration,
+- [x] Keep scheduler admission, task state, channels, wait registration,
   select cancellation, and timers visibly grouped.
-- [ ] Verify native producers still only enqueue values and never mutate
+- [x] Verify native producers still only enqueue values and never mutate
   VM-owned state directly.
-- [ ] Reject `vm/opcodes/*` fragmentation unless profiling and ownership show
-  it improves the result.
+- [x] Reject `vm/opcodes/*` fragmentation: current ownership and hot-path
+  profiling provide no reason to split dispatch by opcode.
 
 **Validate:** `make test-vm`, focused slim-runtime VM coverage, relevant server
 tests for retained interactive work, `make bench-vm` for hot-path moves, then
@@ -235,12 +237,12 @@ responsibility boundary.
 - [x] Re-evaluate module loading, clutch discovery, native registration, FFI
   prototype support, dynamic values, collections, and configuration after
   Tasks 3--5.
-- [ ] Create a directory only when it does not introduce a `source <-> vm` or
+- [x] Create a directory only when it does not introduce a `source <-> vm` or
   `value <-> vm` dependency cycle.
-- [ ] Keep coupled value/task/runtime-state representations together unless an
+- [x] Keep coupled value/task/runtime-state representations together unless an
   extracted API has clear ownership and failure behavior.
 - [ ] Add local guidance only at settled boundaries.
-- [ ] Update architecture/testing maps with final paths.
+- [x] Update architecture/testing maps with final paths.
 
 **Validate:** every affected boundary's focused target, then `make check`.
 

@@ -10,9 +10,10 @@ VM owner until live-binding validation and frame creation have a clearer seam.
 Keep bytecode as the `Program`/`Chunk`/`Instruction`/`Op` compiler-to-VM
 boundary. Preserve checked `RuntimeError` failures with source spans and call
 frames; never replace an invalid program or runtime fault with a host panic.
-Do not split dispatch mechanically by opcode. Native producers may enqueue
-restricted owned values and signal progress, but may not execute Slug or mutate
-VM-owned execution state directly.
+Do not split dispatch mechanically by opcode: calls and global binding remain
+with the execution owner so closure capture and live-binding checks are visible.
+Native producers may enqueue restricted owned values and signal progress, but
+may not execute Slug or mutate VM-owned execution state directly.
 
 Add bytecode/runtime regressions under the stable `tests/vm.rs` facade, using
 its behavior modules: `bytecode`, `calls_and_native`, `collections`,

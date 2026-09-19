@@ -5,6 +5,9 @@
 - Documented the retained module-loader, runtime-value, and native-producer
   ownership boundaries after the post-VM refactoring review.
 
+- Kept VM call/global execution, cleanup/error unwinding, and scheduler state
+  cohesive while documenting their focused supporting modules and invariants.
+
 - Grouped private VM call-shape metadata without fragmenting call execution,
   preserving directly traceable live-binding validation and frame creation.
 
