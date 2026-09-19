@@ -53,6 +53,10 @@ diagnostic, or bytecode-format change. Task 4 made the existing syntax,
 semantic, lowering, and interactive orchestration boundaries visible without
 splitting cohesive analysis or lowering algorithms. Task 5 began by moving the
 shared frame representation and local-slot storage behind a private VM module.
+Task 6 confirmed that module loading remains the owner of its compiler/native
+resource lifecycle, dynamic values remain coupled to channels and tasks, and
+native producers remain an ingress-only boundary; no directory split is
+justified for those representations yet.
 
 ## 0. Establish the baseline and guardrails
 
@@ -228,7 +232,7 @@ responsibilities have focused modules, invariants, and test homes.
 **Goal:** Group remaining files only where completed work proves a stable
 responsibility boundary.
 
-- [ ] Re-evaluate module loading, clutch discovery, native registration, FFI
+- [x] Re-evaluate module loading, clutch discovery, native registration, FFI
   prototype support, dynamic values, collections, and configuration after
   Tasks 3--5.
 - [ ] Create a directory only when it does not introduce a `source <-> vm` or

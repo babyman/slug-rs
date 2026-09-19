@@ -14,9 +14,9 @@ implements a small source subset through a checked bytecode virtual machine.
 | Source lowering | `crates/slug-vm/src/source/lowering/{compiler,state}.rs` | Consume AST plus semantic analysis and construct the public-but-unstable bytecode representation. |
 | In-process bytecode | `crates/slug-vm/src/bytecode/` | Public but unstable Rust instruction/program representation: metadata, builder operations, chunks, and installation/validation. |
 | Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
-| Modules and experimental clutches | `crates/slug-vm/src/{module,clutch,ffi_prototype}.rs` | Source-module resolution, isolated initialization, clutch discovery, scoped plugin/native descriptor loading, and shutdown ownership. |
+| Modules and experimental clutches | `crates/slug-vm/src/{module,clutch,ffi_prototype}.rs` | Source-module resolution owns compiler snapshots, isolated initialization, clutch discovery, scoped plugin/native descriptor loading, and shutdown. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |
-| Runtime values and collections | `crates/slug-vm/src/{value,collections}.rs` | Dynamic values plus their persistent collection storage and operations. |
+| Runtime values and collections | `crates/slug-vm/src/{value,collections}.rs` | Dynamic values, channels, tasks, and persistent collection storage remain coupled by runtime lifecycle. |
 | Execution | `crates/slug-vm/src/vm/` | One VM owner for installation, dispatch, and polling; focused modules own frames/local storage, checked operand-stack access, errors, cleanup unwinding, operations, scheduler state, timers, and progress. |
 | CLI | `crates/slug-vm/src/main.rs` | Process boundary and public error presentation. |
 | Interactive server | `crates/slug-server/src/interactive/` | Versioned NDJSON protocol, session ownership, source-cell lifecycle, and event projection over a VM. |

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented the retained module-loader, runtime-value, and native-producer
+  ownership boundaries after the post-VM refactoring review.
+
 - Grouped private VM call-shape metadata without fragmenting call execution,
   preserving directly traceable live-binding validation and frame creation.
 
