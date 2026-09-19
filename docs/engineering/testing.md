@@ -23,10 +23,11 @@ boundaries; `make test` runs all of them. The corresponding Make aliases are
 The stable `vm.rs` and `cli.rs` integration-test targets are facades, not one
 undifferentiated behavior bucket. Their child modules are the first place to
 add a regression when one applies: VM tests are grouped around bytecode,
-calls/native functions, collections, and concurrency; CLI tests are grouped
-around basics, language core, modules, types, patterns/cleanup, concurrency,
-filesystem, standard input, and diagnostics. Keep the facade target name and
-existing assertions stable while reorganizing tests.
+calls/native functions, collections, concurrency, host lifecycle, and runtime
+metrics/structural validation; CLI tests are grouped around basics, language
+core, modules, types, patterns/cleanup, concurrency, filesystem, standard
+input, and diagnostics. Keep the facade target name and existing assertions
+stable while reorganizing tests.
 
 ## Feature matrix
 

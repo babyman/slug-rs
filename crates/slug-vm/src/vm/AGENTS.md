@@ -12,7 +12,9 @@ Do not split dispatch mechanically by opcode. Native producers may enqueue
 restricted owned values and signal progress, but may not execute Slug or mutate
 VM-owned execution state directly.
 
-Add bytecode/runtime regressions under the stable `tests/vm.rs` facade and run
-`make test-vm`; use `cargo test -p slug-vm --no-default-features --test vm`
-for a focused slim-runtime check. Run `make bench-vm` before and after a
-hot-path relocation, without treating timings as a threshold.
+Add bytecode/runtime regressions under the stable `tests/vm.rs` facade, using
+its behavior modules: `bytecode`, `calls_and_native`, `collections`,
+`concurrency`, `lifecycle`, or `runtime`. Run `make test-vm`; use
+`cargo test -p slug-vm --no-default-features --test vm` for a focused
+slim-runtime check. Run `make bench-vm` before and after a hot-path relocation,
+without treating timings as a threshold.

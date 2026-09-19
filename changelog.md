@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Grouped VM integration cases by bytecode, calls/native behavior,
+  collections, concurrency, host lifecycle, and runtime validation while
+  retaining the `vm` integration-test target.
+
 - Added architecture navigation, focused subsystem test aliases, and local
   contributor guidance for the staged organizational refactoring.
 

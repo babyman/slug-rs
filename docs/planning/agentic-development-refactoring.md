@@ -96,16 +96,16 @@ invariants without reading the root implementation files.
 **Goal:** Make the primary regression home visible before production-code
 reorganization.
 
-- [ ] Retain `crates/slug-vm/tests/vm.rs` and `crates/slug-vm/tests/cli.rs` as
+- [x] Retain `crates/slug-vm/tests/vm.rs` and `crates/slug-vm/tests/cli.rs` as
   stable Cargo integration-test facades.
-- [ ] Group child modules by observable behavior, not implementation history.
-- [ ] Use VM groups for bytecode, calls/closures, collections, cleanup/errors,
+- [x] Group child modules by observable behavior, not implementation history.
+- [x] Use VM groups for bytecode, calls/closures, collections, cleanup/errors,
   and concurrency; use CLI groups for syntax/bindings, functions, modules,
   types, patterns, concurrency, and diagnostics where existing tests fit.
-- [ ] Keep dedicated integration targets for module loading, configuration,
+- [x] Keep dedicated integration targets for module loading, configuration,
   conformance, FFI, server, and REPL behavior.
-- [ ] Move tests without duplication and preserve names/assertions initially.
-- [ ] Update `docs/engineering/testing.md` and local guidance with final
+- [x] Move tests without duplication and preserve names/assertions initially.
+- [x] Update `docs/engineering/testing.md` and local guidance with final
   locations and commands.
 
 **Validate:** the affected test target after each move, then `make check`.
