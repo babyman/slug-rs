@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added crate-local contributor guidance for module loading, native ingress,
+  and coupled value/runtime ownership.
+
 - Documented the retained module-loader, runtime-value, and native-producer
   ownership boundaries after the post-VM refactoring review.
 

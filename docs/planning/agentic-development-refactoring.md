@@ -91,7 +91,7 @@ without moving production code.
   `crates/slug-vm/src/vm/`.
 - [x] Add local guidance in `crates/slug-server/src/interactive/` for session
   ownership, protocol compatibility, and server-specific tests.
-- [ ] Add module/native guidance only after their final directory boundary is
+- [x] Add module/native guidance only after their final directory boundary is
   chosen; do not duplicate the root guidance.
 - [x] Add focused Make aliases for VM, frontend, modules, server, and REPL.
   Each must invoke existing narrow test/lint commands.
@@ -241,7 +241,7 @@ responsibility boundary.
   `value <-> vm` dependency cycle.
 - [x] Keep coupled value/task/runtime-state representations together unless an
   extracted API has clear ownership and failure behavior.
-- [ ] Add local guidance only at settled boundaries.
+- [x] Add local guidance only at settled boundaries.
 - [x] Update architecture/testing maps with final paths.
 
 **Validate:** every affected boundary's focused target, then `make check`.
