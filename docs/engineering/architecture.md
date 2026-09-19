@@ -23,7 +23,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Terminal REPL | `crates/slug-repl/src/main.rs` | Terminal input/editing and transport to the sibling server process; it does not embed VM behavior. |
 
 The current source files are intentionally a smaller set than the eventual
-stage-oriented directories described in the [agentic refactoring plan](../planning/agentic-development-refactoring.md).
+stage-oriented directories described in the [agentic refactoring plan](../planning/completed/agentic-development-refactoring.md).
 Until a responsibility is moved, this table is the ownership map rather than a
 claim that a future directory already exists.
 

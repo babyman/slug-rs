@@ -60,6 +60,11 @@ resource lifecycle, dynamic values remain coupled to channels and tasks, and
 native producers remain an ingress-only boundary; no directory split is
 justified for those representations yet.
 
+The organizational refactoring is complete. The remaining unchecked items are
+deliberate follow-ups: a separately scoped type-check target, benchmark
+measurement retention for future hot-path moves, and any later behavior change
+discovered outside this relocation work.
+
 ## 0. Establish the baseline and guardrails
 
 **Goal:** Make later moves reviewable as behavior-preserving changes.
@@ -82,14 +87,14 @@ changes and know the appropriate validation gate.
 **Goal:** Give contributors ownership, invariant, and test-selection answers
 without moving production code.
 
-- [x] Update `docs/engineering/architecture.md` with the actual source,
+- [x] Update `../../engineering/architecture.md` with the actual source,
   semantic, lowering, bytecode, VM, module, native, CLI, server, and REPL
   relationships shown above.
 - [x] Keep the map navigational and link to detailed documents rather than
   duplicating them.
-- [x] Add concise local `AGENTS.md` files in `crates/slug-vm/src/source/` and
+- [x] Add concise local `../../../AGENTS.md` files in `crates/slug-vm/src/source/` and
   `crates/slug-vm/src/vm/`.
-- [x] Add local guidance in `crates/slug-server/src/interactive/` for session
+- [x] Add local guidance in `../../../crates/slug-server/src/interactive` for session
   ownership, protocol compatibility, and server-specific tests.
 - [x] Add module/native guidance only after their final directory boundary is
   chosen; do not duplicate the root guidance.
@@ -107,7 +112,7 @@ invariants without reading the root implementation files.
 **Goal:** Make the primary regression home visible before production-code
 reorganization.
 
-- [x] Retain `crates/slug-vm/tests/vm.rs` and `crates/slug-vm/tests/cli.rs` as
+- [x] Retain `../../../crates/slug-vm/tests/vm.rs` and `crates/slug-vm/tests/cli.rs` as
   stable Cargo integration-test facades.
 - [x] Group child modules by observable behavior, not implementation history.
 - [x] Use VM groups for bytecode, calls/closures, collections, cleanup/errors,
@@ -116,7 +121,7 @@ reorganization.
 - [x] Keep dedicated integration targets for module loading, configuration,
   conformance, FFI, server, and REPL behavior.
 - [x] Move tests without duplication and preserve names/assertions initially.
-- [x] Update `docs/engineering/testing.md` and local guidance with final
+- [x] Update `../../engineering/testing.md` and local guidance with final
   locations and commands.
 
 **Validate:** the affected test target after each move, then `make check`.
