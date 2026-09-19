@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added architecture navigation, focused subsystem test aliases, and local
+  contributor guidance for the staged organizational refactoring.
+
 - Added a dependency-ordered plan for reorganizing Slug around discoverable
   architectural responsibilities, local invariants, and focused validation.
 

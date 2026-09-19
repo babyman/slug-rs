@@ -42,15 +42,22 @@ remain authoritative. This plan does not alter the portable `.cslug` contract.
 - Prefer modules and directories to new crates. A new crate needs an
   independent API/dependency reason outside this plan.
 
+## Implementation status
+
+Tasks 0 and 1 were completed on 2026-09-19 as a documentation-only baseline.
+`make check` passed on that revision. No production-code relocation, source
+semantic change, public-export change, diagnostic change, or benchmarked VM
+hot-path move is included in this slice.
+
 ## 0. Establish the baseline and guardrails
 
 **Goal:** Make later moves reviewable as behavior-preserving changes.
 
-- [ ] Record the current module tree, public exports, integration test targets,
+- [x] Record the current module tree, public exports, integration test targets,
   and dependency hotspots in the tracking issue or first implementation PR.
-- [ ] Record permitted dependency directions, including VM use of source
+- [x] Record permitted dependency directions, including VM use of source
   semantic metadata and source lowering's use of bytecode.
-- [ ] Run and retain a clean `make check` baseline.
+- [x] Run and retain a clean `make check` baseline.
 - [ ] For VM hot-path moves, record a `make bench-vm` measurement before and
   after the move, without adding timing thresholds.
 - [ ] Split any semantic, API, performance, or diagnostic change found during
@@ -64,18 +71,18 @@ changes and know the appropriate validation gate.
 **Goal:** Give contributors ownership, invariant, and test-selection answers
 without moving production code.
 
-- [ ] Update `docs/engineering/architecture.md` with the actual source,
+- [x] Update `docs/engineering/architecture.md` with the actual source,
   semantic, lowering, bytecode, VM, module, native, CLI, server, and REPL
   relationships shown above.
-- [ ] Keep the map navigational and link to detailed documents rather than
+- [x] Keep the map navigational and link to detailed documents rather than
   duplicating them.
-- [ ] Add concise local `AGENTS.md` files in `crates/slug-vm/src/source/` and
+- [x] Add concise local `AGENTS.md` files in `crates/slug-vm/src/source/` and
   `crates/slug-vm/src/vm/`.
-- [ ] Add local guidance in `crates/slug-server/src/interactive/` for session
+- [x] Add local guidance in `crates/slug-server/src/interactive/` for session
   ownership, protocol compatibility, and server-specific tests.
 - [ ] Add module/native guidance only after their final directory boundary is
   chosen; do not duplicate the root guidance.
-- [ ] Add focused Make aliases for VM, frontend, modules, server, and REPL.
+- [x] Add focused Make aliases for VM, frontend, modules, server, and REPL.
   Each must invoke existing narrow test/lint commands.
 - [ ] Defer `check-types` until its target is independently scoped and cheap.
 
