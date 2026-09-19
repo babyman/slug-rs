@@ -8,10 +8,13 @@ use std::{
 
 use crate::{Program, SourceSpan};
 
+#[path = "syntax/ast.rs"]
 mod ast;
 mod compiler;
 pub(crate) mod environment;
+#[path = "syntax/lexer.rs"]
 mod lexer;
+#[path = "syntax/parser.rs"]
 mod parser;
 mod semantic;
 mod state;

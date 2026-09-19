@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Moved the private lexer, parser, and AST into the source syntax directory
+  while retaining their source-stage visibility and behavior.
+
 - Split private bytecode ownership into metadata, builder operations, chunk
   storage, and program installation/validation modules while retaining the
   existing Rust exports and packed executable representation.

@@ -160,7 +160,7 @@ source/
 
 - [ ] Keep the `source/` name at the crate boundary initially; it is
   established terminology and avoids a gratuitous rename.
-- [ ] Move lexer, parser, and AST first, with no algorithm change.
+- [x] Move lexer, parser, and AST first, with no algorithm change.
 - [ ] Extract semantic data/environment from the type checker before splitting
   analysis passes.
 - [ ] Split semantic analysis only by real responsibility: bindings,

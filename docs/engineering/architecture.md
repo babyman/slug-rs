@@ -9,7 +9,7 @@ implements a small source subset through a checked bytecode virtual machine.
 |---|---|---|
 | Crate export surface | `crates/slug-vm/src/lib.rs` | Declares the stable crate-level names currently exposed to Rust hosts; internal moves retain these re-exports unless a separate API change is approved. |
 | Source façade and interactive compilation | `crates/slug-vm/src/source/mod.rs` | Public `compile` boundary, source errors/readiness, and persistent compiler snapshots for interactive cells. |
-| Source syntax | `crates/slug-vm/src/source/{lexer,parser,ast}.rs` | Turn source text into the private AST. Syntax does not depend on semantic analysis or bytecode. |
+| Source syntax | `crates/slug-vm/src/source/syntax/{lexer,parser,ast}.rs` | Turn source text into the private AST. Syntax does not depend on semantic analysis or bytecode. |
 | Source semantics | `crates/slug-vm/src/source/{typecheck,environment,semantic}.rs` | Resolve bindings, imports, annotations, inferred types, and compiler-facing semantic snapshots from the AST. |
 | Source lowering | `crates/slug-vm/src/source/compiler.rs` | Consume AST plus semantic analysis and construct the public-but-unstable bytecode representation. |
 | In-process bytecode | `crates/slug-vm/src/bytecode/` | Public but unstable Rust instruction/program representation: metadata, builder operations, chunks, and installation/validation. |
