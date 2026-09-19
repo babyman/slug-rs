@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Grouped private VM call-shape metadata without fragmenting call execution,
+  preserving directly traceable live-binding validation and frame creation.
+
 - Moved VM call-frame, local-slot, supplied-argument, and checked operand-stack
   helpers into focused private modules while retaining cleanup and diagnostic
   paths.

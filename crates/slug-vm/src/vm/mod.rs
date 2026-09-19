@@ -29,6 +29,7 @@ use crate::{
 #[cfg(feature = "concurrency")]
 use crate::value::task_state_layout;
 
+mod calls;
 mod cleanup;
 mod error;
 mod frames;
@@ -40,6 +41,9 @@ mod stack;
 #[cfg(feature = "concurrency")]
 pub(crate) mod timers;
 
+#[cfg(feature = "concurrency")]
+use calls::ClosureCallOptions;
+use calls::{CallableRuntimeSignature, ExpandedCallArguments, NamedArgument};
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
@@ -68,9 +72,6 @@ struct HostExecution {
     root: RootWaiter,
     result: Option<VmResult<Value>>,
 }
-
-type NamedArgument = (String, Value);
-type ExpandedCallArguments = (Vec<Value>, Vec<NamedArgument>);
 
 /// Deterministic Rust-layout measurements for the VM's hot data structures.
 ///
@@ -243,22 +244,6 @@ impl InstalledProgram {
     pub const fn entry(&self) -> usize {
         self.entry
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CallableRuntimeSignature {
-    identity: Option<CallableIdentity>,
-    shape: Vec<(bool, bool)>,
-}
-
-#[cfg(feature = "concurrency")]
-struct ClosureCallOptions {
-    #[cfg(feature = "concurrency")]
-    direct_task_limit: Option<usize>,
-    #[cfg(feature = "concurrency")]
-    direct_task_count: Option<Rc<Cell<usize>>>,
-    #[cfg(feature = "concurrency")]
-    nursery: Rc<Nursery>,
 }
 
 /// The independently owned interpreter state for a spawned task.

@@ -3,8 +3,9 @@
 This directory owns execution. `mod.rs` remains the single host-driving owner
 of installation, dispatch, execution orchestration, and polling. Supporting
 modules own focused runtime responsibilities: call-frame and local storage,
-operand-stack access, cleanup/unwinding, runtime errors, operations, scheduler
-state, timers, and progress.
+operand-stack access, call-shape metadata, cleanup/unwinding, runtime errors,
+operations, scheduler state, timers, and progress. Keep call execution in the
+VM owner until live-binding validation and frame creation have a clearer seam.
 
 Keep bytecode as the `Program`/`Chunk`/`Instruction`/`Op` compiler-to-VM
 boundary. Preserve checked `RuntimeError` failures with source spans and call
