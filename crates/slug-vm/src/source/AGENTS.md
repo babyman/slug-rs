@@ -9,8 +9,8 @@ source text -> lexer/parser/AST -> semantic analysis -> compiler lowering -> Pro
 `mod.rs` owns the public compile facade, `SourceError`, source-readiness
 classification, and interactive compiler state. `syntax/{lexer,parser,ast}.rs`
 own syntax only. `semantics/{typecheck,environment,semantic}.rs` own bindings,
-type information, imports, and semantic snapshots. `compiler.rs` lowers
-analyzed syntax to bytecode.
+type information, imports, and semantic snapshots.
+`lowering/{compiler,state}.rs` lower analyzed syntax to bytecode.
 
 Do not make syntax depend on semantic state, semantic analysis depend on
 bytecode encoding or VM execution, or lowering re-decide semantic rules. Keep

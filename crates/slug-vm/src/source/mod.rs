@@ -10,6 +10,7 @@ use crate::{Program, SourceSpan};
 
 #[path = "syntax/ast.rs"]
 mod ast;
+#[path = "lowering/compiler.rs"]
 mod compiler;
 #[path = "semantics/environment.rs"]
 pub(crate) mod environment;
@@ -19,6 +20,7 @@ mod lexer;
 mod parser;
 #[path = "semantics/semantic.rs"]
 mod semantic;
+#[path = "lowering/state.rs"]
 mod state;
 #[path = "semantics/typecheck.rs"]
 mod typecheck;

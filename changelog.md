@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Grouped source bytecode lowering and its lexical compiler state under the
+  source lowering directory without changing compilation behavior.
+
 - Grouped the private source semantic environment, type model, and type checker
   under the source semantics directory without changing analysis behavior.
 
