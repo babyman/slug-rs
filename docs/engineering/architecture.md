@@ -12,7 +12,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Source syntax | `crates/slug-vm/src/source/{lexer,parser,ast}.rs` | Turn source text into the private AST. Syntax does not depend on semantic analysis or bytecode. |
 | Source semantics | `crates/slug-vm/src/source/{typecheck,environment,semantic}.rs` | Resolve bindings, imports, annotations, inferred types, and compiler-facing semantic snapshots from the AST. |
 | Source lowering | `crates/slug-vm/src/source/compiler.rs` | Consume AST plus semantic analysis and construct the public-but-unstable bytecode representation. |
-| In-process bytecode | `crates/slug-vm/src/bytecode.rs` | Public but unstable Rust instruction and program representation. |
+| In-process bytecode | `crates/slug-vm/src/bytecode/` | Public but unstable Rust instruction/program representation: metadata, builder operations, chunks, and installation/validation. |
 | Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
 | Modules and experimental clutches | `crates/slug-vm/src/{module,clutch,ffi_prototype}.rs` | Source-module resolution, isolated initialization, clutch discovery, scoped plugin/native descriptor loading, and shutdown ownership. |
 | Native extensions | `docs/reference/native-abi.md` | Opaque host calls, values, resources, threading, and future module ABI. |

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Split private bytecode ownership into metadata, builder operations, chunk
+  storage, and program installation/validation modules while retaining the
+  existing Rust exports and packed executable representation.
+
 - Grouped VM integration cases by bytecode, calls/native behavior,
   collections, concurrency, host lifecycle, and runtime validation while
   retaining the `vm` integration-test target.

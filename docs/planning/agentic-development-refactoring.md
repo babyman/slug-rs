@@ -45,9 +45,11 @@ remain authoritative. This plan does not alter the portable `.cslug` contract.
 ## Implementation status
 
 Tasks 0 and 1 were completed on 2026-09-19 as a documentation-only baseline.
-`make check` passed on that revision. No production-code relocation, source
-semantic change, public-export change, diagnostic change, or benchmarked VM
-hot-path move is included in this slice.
+Task 2 reorganized regression-test facades without changing assertions. Task 3
+split private bytecode ownership across metadata, operations, chunks, and
+program installation/validation; `make bench-vm` and `make check` passed after
+the relocation. These slices make no source-semantic, public-export,
+diagnostic, or bytecode-format change.
 
 ## 0. Establish the baseline and guardrails
 
@@ -128,13 +130,13 @@ bytecode/
   verify.rs     # checked structural validation, if cohesive
 ```
 
-- [ ] Map type/function ownership before creating files and preserve existing
+- [x] Map type/function ownership before creating files and preserve existing
   public terminology.
-- [ ] Move one cohesive cluster at a time with the narrowest visibility.
-- [ ] Preserve `lib.rs` re-exports and malformed-bytecode checked failures.
-- [ ] Keep compact instruction representation and performance-sensitive
+- [x] Move one cohesive cluster at a time with the narrowest visibility.
+- [x] Preserve `lib.rs` re-exports and malformed-bytecode checked failures.
+- [x] Keep compact instruction representation and performance-sensitive
   encoding with the owning execution representation.
-- [ ] Do not add serialization or blur the `.cslug` distinction.
+- [x] Do not add serialization or blur the `.cslug` distinction.
 
 **Validate:** `make test-vm`, malformed-bytecode coverage, `make bench-vm`
 for hot-code moves, then `make check`.
