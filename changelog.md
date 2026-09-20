@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Retained ordinary VM call sites as compact installed-span references and
+  resolve them only while rendering an error, preserving diagnostics while
+  removing hot-path span cloning and shrinking call frames.
+
 - Added crate-local contributor guidance for module loading, native ingress,
   and coupled value/runtime ownership.
 

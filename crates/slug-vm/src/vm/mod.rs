@@ -47,7 +47,7 @@ use calls::{CallableRuntimeSignature, ExpandedCallArguments, NamedArgument};
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
-use frames::{Frame, LocalSlot, ProvidedArguments, frame_locals};
+use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments, frame_locals};
 use operations::{
     add, bit_not, bitwise, construct_struct, copy_value, divide, index_value, is_map_key,
     list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
@@ -3111,7 +3111,7 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    call_span: span,
+                    call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
                     ip: 0,
                     stack_base: base,
                     locals,
@@ -3284,7 +3284,7 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    call_span: self.owned_span(span),
+                    call_span: self.frame_call_span(span),
                     ip: 0,
                     stack_base: base,
                     locals,
@@ -3438,7 +3438,7 @@ impl Vm {
             program: program.clone(),
             globals: vm.globals.clone(),
             closure,
-            call_span: span,
+            call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
             ip: 0,
             stack_base: 0,
             locals,
@@ -4062,7 +4062,7 @@ impl Vm {
                 .clone()
                 .unwrap_or_else(|| self.globals.clone()),
             closure,
-            call_span: self.owned_span(span),
+            call_span: self.frame_call_span(span),
             ip: 0,
             stack_base: base,
             locals,
@@ -5099,6 +5099,16 @@ impl Vm {
             metrics.source_span_clones += 1;
         }
         span.cloned()
+    }
+
+    /// Retains a compact caller instruction reference whenever this call is
+    /// entered by the dispatch loop. The caller frame owns the corresponding
+    /// program until this frame returns, so diagnostics can resolve it lazily.
+    fn frame_call_span(&self, span: Option<&SourceSpan>) -> Option<CallSpan> {
+        match span {
+            Some(span) => Some(CallSpan::Owned(Box::new(span.clone()))),
+            None => self.active_span.map(CallSpan::Instruction),
+        }
     }
 
     fn active_span(&self) -> Option<&SourceSpan> {
