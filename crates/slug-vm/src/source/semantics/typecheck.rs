@@ -65,6 +65,308 @@ struct CheckedExpression {
     continuation: Continuation,
 }
 
+/// Requirements gathered for one function's unannotated parameters.
+///
+/// This state is intentionally scoped to the declaration currently being
+/// checked. In particular, a nested function gets its own state rather than
+/// contributing evidence to an enclosing parameter.
+#[derive(Debug)]
+struct ParameterConstraints {
+    requirements: HashMap<String, ParameterRequirement>,
+}
+
+#[derive(Clone, Debug)]
+struct ParameterRequirement {
+    value_type: Type,
+    span: crate::SourceSpan,
+}
+
+impl ParameterConstraints {
+    fn for_parameters(parameters: &[Parameter]) -> Self {
+        Self {
+            requirements: parameters
+                .iter()
+                .filter(|parameter| {
+                    !parameter.discard && !parameter.variadic && parameter.annotation.is_none()
+                })
+                .map(|parameter| {
+                    (
+                        parameter.name.clone(),
+                        ParameterRequirement {
+                            value_type: Type::Unknown,
+                            span: crate::SourceSpan::new("<parameter>", 0, 0),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// Records a requirement at the operand occurrence. If later inference
+    /// domains introduce incompatible requirements, the later occurrence is
+    /// the diagnostic span: it is where the function first becomes
+    /// contradictory.
+    fn require(&mut self, expression: &Expr, value_type: Type) -> Result<(), SourceError> {
+        let ExprKind::Name(name) = &expression.kind else {
+            return Ok(());
+        };
+        let Some(requirement) = self.requirements.get_mut(name) else {
+            return Ok(());
+        };
+        if matches!(requirement.value_type, Type::Unknown) {
+            requirement.value_type = value_type;
+            requirement.span = expression.span.clone();
+            return Ok(());
+        }
+        if requirement.value_type == value_type {
+            return Ok(());
+        }
+        Err(SourceError::semantic(
+            format!(
+                "parameter `{name}` has incompatible body requirements: {} and {}",
+                requirement.value_type, value_type
+            ),
+            expression.span.clone(),
+        ))
+    }
+
+    fn collect(&mut self, expression: &Expr) -> Result<(), SourceError> {
+        match &expression.kind {
+            ExprKind::Function { .. } => Ok(()),
+            ExprKind::Binary {
+                left,
+                operator:
+                    Binary::Divide
+                    | Binary::Modulo
+                    | Binary::Greater
+                    | Binary::GreaterEqual
+                    | Binary::Less
+                    | Binary::LessEqual,
+                right,
+            } => {
+                self.require(left, Type::Num)?;
+                self.require(right, Type::Num)?;
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Prefix { operators, value } => {
+                if operators
+                    .iter()
+                    .any(|(operator, _)| matches!(operator, Prefix::Negate))
+                {
+                    self.require(value, Type::Num)?;
+                }
+                self.collect(value)
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Declare {
+                pattern,
+                tags,
+                value,
+                ..
+            } => {
+                self.collect_pattern(pattern)?;
+                self.collect_tags(tags)?;
+                self.collect(value)
+            }
+            ExprKind::Assign { value, .. }
+            | ExprKind::Return { value }
+            | ExprKind::Throw { value }
+            | ExprKind::Defer { value, .. }
+            | ExprKind::Spawn(value)
+            | ExprKind::TypeApply { callee: value, .. } => self.collect(value),
+            ExprKind::Recur(arguments) => self.collect_arguments(arguments),
+            ExprKind::Nursery { limit, body } => {
+                if let Some(limit) = limit {
+                    self.collect(limit)?;
+                }
+                self.collect(body)
+            }
+            ExprKind::Select(cases) => {
+                for case in cases {
+                    match &case.kind {
+                        SelectCaseKind::Receive(value)
+                        | SelectCaseKind::After(value)
+                        | SelectCaseKind::Await(value) => self.collect(value)?,
+                        SelectCaseKind::Send { channel, value } => {
+                            self.collect(channel)?;
+                            self.collect(value)?;
+                        }
+                        SelectCaseKind::Default => {}
+                    }
+                    if let Some(handler) = &case.handler {
+                        self.collect(handler)?;
+                    }
+                }
+                Ok(())
+            }
+            ExprKind::Match { subject, cases } => {
+                if let Some(subject) = subject {
+                    self.collect(subject)?;
+                }
+                for case in cases {
+                    for pattern in &case.patterns {
+                        self.collect_pattern(&pattern.pattern)?;
+                    }
+                    if let Some(guard) = &case.guard {
+                        self.collect(guard)?;
+                    }
+                    self.collect(&case.value)?;
+                }
+                Ok(())
+            }
+            ExprKind::Call { callee, arguments } => {
+                self.collect(callee)?;
+                self.collect_arguments(arguments)
+            }
+            ExprKind::Block(values) => {
+                for value in values {
+                    self.collect(value)?;
+                }
+                Ok(())
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect(condition)?;
+                self.collect(then_branch)?;
+                if let Some(else_branch) = else_branch {
+                    self.collect(else_branch)?;
+                }
+                Ok(())
+            }
+            ExprKind::List(values) => {
+                for value in values {
+                    self.collect(match value {
+                        ListElement::Value(value) | ListElement::Spread(value) => value,
+                    })?;
+                }
+                Ok(())
+            }
+            ExprKind::Map(entries) => {
+                for (key, value) in entries {
+                    self.collect(key)?;
+                    self.collect(value)?;
+                }
+                Ok(())
+            }
+            ExprKind::StructSchema(fields) => {
+                for field in fields {
+                    if let Some(default) = &field.default {
+                        self.collect(default)?;
+                    }
+                }
+                Ok(())
+            }
+            ExprKind::StructInit { schema, fields } => {
+                self.collect(schema)?;
+                for (_, value) in fields {
+                    self.collect(value)?;
+                }
+                Ok(())
+            }
+            ExprKind::StructCopy { value, fields } => {
+                self.collect(value)?;
+                for (_, replacement) in fields {
+                    self.collect(replacement)?;
+                }
+                Ok(())
+            }
+            ExprKind::Index { collection, index } => {
+                self.collect(collection)?;
+                self.collect(index)
+            }
+            ExprKind::Slice {
+                collection,
+                start,
+                end,
+                step,
+            } => {
+                self.collect(collection)?;
+                for bound in [start, end, step].into_iter().flatten() {
+                    self.collect(bound)?;
+                }
+                Ok(())
+            }
+            ExprKind::Foreign { .. }
+            | ExprKind::Resource { .. }
+            | ExprKind::Enum { .. }
+            | ExprKind::TypeAlias { .. }
+            | ExprKind::Value(_)
+            | ExprKind::Interpolate(_)
+            | ExprKind::Documentation(_)
+            | ExprKind::NotImplemented
+            | ExprKind::Name(_) => Ok(()),
+        }
+    }
+
+    fn collect_tags(&mut self, tags: &[Tag]) -> Result<(), SourceError> {
+        for tag in tags {
+            for argument in &tag.arguments {
+                self.collect(argument)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_arguments(&mut self, arguments: &[CallArgument]) -> Result<(), SourceError> {
+        for argument in arguments {
+            self.collect(match argument {
+                CallArgument::Positional(value)
+                | CallArgument::Named { value, .. }
+                | CallArgument::Spread(value) => value,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn collect_pattern(&mut self, pattern: &Pattern) -> Result<(), SourceError> {
+        match pattern {
+            Pattern::At { pattern, .. } => self.collect_pattern(pattern),
+            Pattern::List { items, .. } => {
+                for item in items {
+                    self.collect_pattern(item)?;
+                }
+                Ok(())
+            }
+            Pattern::Map { entries, .. } => {
+                for (key, value) in entries {
+                    if let MapPatternKey::Computed(key) = key {
+                        self.collect(key)?;
+                    }
+                    self.collect_pattern(value)?;
+                }
+                Ok(())
+            }
+            Pattern::Literal(_)
+            | Pattern::Wildcard
+            | Pattern::Binding(_)
+            | Pattern::Pinned(_)
+            | Pattern::MapAll
+            | Pattern::EnumCase { .. } => Ok(()),
+        }
+    }
+}
+
+fn parameter_constraints(
+    parameters: &[Parameter],
+    body: &Expr,
+) -> Result<ParameterConstraints, SourceError> {
+    let mut constraints = ParameterConstraints::for_parameters(parameters);
+    for parameter in parameters {
+        if let Some(default) = &parameter.default {
+            constraints.collect(default)?;
+        }
+    }
+    constraints.collect(body)?;
+    Ok(constraints)
+}
+
 impl CheckedExpression {
     fn falls_through(value_type: Type) -> Self {
         Self {
@@ -741,6 +1043,7 @@ fn check_expression_inner(
             return_annotation,
             body,
         } => {
+            let _constraints = parameter_constraints(parameters, body)?;
             let mut signature = function_type(
                 function_type_parameters,
                 parameters,
@@ -3102,6 +3405,28 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
 mod tests {
     use super::*;
 
+    fn span() -> crate::SourceSpan {
+        crate::SourceSpan::new("test.slug", 1, 1)
+    }
+
+    fn name(name: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Name(name.into()),
+            span: span(),
+        }
+    }
+
+    fn parameter(name: &str) -> Parameter {
+        Parameter {
+            name: name.into(),
+            discard: false,
+            tags: Vec::new(),
+            annotation: None,
+            default: None,
+            variadic: false,
+        }
+    }
+
     fn candidate(bound_types: Vec<Type>) -> InstantiatedCandidate {
         InstantiatedCandidate {
             bound_types,
@@ -3116,6 +3441,115 @@ mod tests {
             }
             .identity(),
         }
+    }
+
+    #[test]
+    fn parameter_constraints_collect_direct_numeric_operands_through_control_flow() {
+        let body = Expr {
+            kind: ExprKind::If {
+                condition: Box::new(Expr {
+                    kind: ExprKind::Binary {
+                        left: Box::new(name("value")),
+                        operator: Binary::Less,
+                        right: Box::new(name("limit")),
+                    },
+                    span: span(),
+                }),
+                then_branch: Box::new(Expr {
+                    kind: ExprKind::Prefix {
+                        operators: vec![(Prefix::Negate, span())],
+                        value: Box::new(name("value")),
+                    },
+                    span: span(),
+                }),
+                else_branch: None,
+            },
+            span: span(),
+        };
+        let constraints = parameter_constraints(&[parameter("value"), parameter("limit")], &body)
+            .expect("numeric body requirements collect");
+
+        assert_eq!(constraints.requirements["value"].value_type, Type::Num);
+        assert_eq!(constraints.requirements["limit"].value_type, Type::Num);
+    }
+
+    #[test]
+    fn parameter_constraints_include_defaults_and_recur_arguments() {
+        let mut value = parameter("value");
+        value.default = Some(Expr {
+            kind: ExprKind::Binary {
+                left: Box::new(name("value")),
+                operator: Binary::Divide,
+                right: Box::new(name("other")),
+            },
+            span: span(),
+        });
+        let body = Expr {
+            kind: ExprKind::Recur(vec![CallArgument::Positional(Expr {
+                kind: ExprKind::Binary {
+                    left: Box::new(name("other")),
+                    operator: Binary::Modulo,
+                    right: Box::new(name("value")),
+                },
+                span: span(),
+            })]),
+            span: span(),
+        };
+        let constraints = parameter_constraints(&[value, parameter("other")], &body)
+            .expect("defaults and recur expressions collect");
+
+        assert_eq!(constraints.requirements["value"].value_type, Type::Num);
+        assert_eq!(constraints.requirements["other"].value_type, Type::Num);
+    }
+
+    #[test]
+    fn parameter_constraints_exclude_nested_and_ineligible_parameters() {
+        let mut explicit = parameter("explicit");
+        explicit.annotation = Some(TypeAnnotation::Name("str".into()));
+        let mut rest = parameter("rest");
+        rest.variadic = true;
+        let mut discard = parameter("_");
+        discard.discard = true;
+        let body = Expr {
+            kind: ExprKind::Block(vec![
+                Expr {
+                    kind: ExprKind::Binary {
+                        left: Box::new(name("explicit")),
+                        operator: Binary::Divide,
+                        right: Box::new(name("rest")),
+                    },
+                    span: span(),
+                },
+                Expr {
+                    kind: ExprKind::Function {
+                        type_parameters: Vec::new(),
+                        parameters: vec![parameter("outer")],
+                        return_annotation: None,
+                        body: Box::new(Expr {
+                            kind: ExprKind::Binary {
+                                left: Box::new(name("outer")),
+                                operator: Binary::Divide,
+                                right: Box::new(name("outer")),
+                            },
+                            span: span(),
+                        }),
+                    },
+                    span: span(),
+                },
+            ]),
+            span: span(),
+        };
+        let constraints =
+            parameter_constraints(&[parameter("outer"), explicit, rest, discard], &body)
+                .expect("ineligible and nested requirements are ignored");
+
+        assert!(matches!(
+            constraints.requirements["outer"].value_type,
+            Type::Unknown
+        ));
+        assert!(!constraints.requirements.contains_key("explicit"));
+        assert!(!constraints.requirements.contains_key("rest"));
+        assert!(!constraints.requirements.contains_key("_"));
     }
 
     #[test]
