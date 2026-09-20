@@ -81,6 +81,104 @@ fn executes_integer_arithmetic() {
 }
 
 #[test]
+fn executes_checked_numeric_addition_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let seven = main.constant(Value::Int(7));
+    let half = main.constant(Value::Float(0.5));
+    main.emit(Op::Constant(seven))
+        .emit(Op::Constant(half))
+        .emit(Op::AddNum)
+        .emit(Op::Return);
+
+    assert_eq!(
+        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        Value::Float(7.5)
+    );
+}
+
+#[test]
+fn rejects_non_numeric_numeric_addition_bytecode() {
+    let mut main = Chunk::new("main", 0);
+    let text = main.constant(Value::string("Slug"));
+    let number = main.constant(Value::Int(1));
+    main.emit(Op::Constant(text))
+        .emit(Op::Constant(number))
+        .emit(Op::AddNum)
+        .emit(Op::Return);
+
+    let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(error.message, "expected numbers, got str and num");
+}
+
+#[test]
+fn executes_checked_numeric_operator_bytecode() {
+    for (operation, left, right, expected) in [
+        (Op::SubtractNum, Value::Int(9), Value::Int(2), Value::Int(7)),
+        (
+            Op::MultiplyNum,
+            Value::Int(7),
+            Value::Int(6),
+            Value::Int(42),
+        ),
+        (Op::DivideNum, Value::Int(8), Value::Int(2), Value::Int(4)),
+        (Op::ModuloNum, Value::Int(8), Value::Int(3), Value::Int(2)),
+        (
+            Op::GreaterNum,
+            Value::Float(3.0),
+            Value::Int(2),
+            Value::Bool(true),
+        ),
+        (
+            Op::LessNum,
+            Value::Int(2),
+            Value::Float(3.0),
+            Value::Bool(true),
+        ),
+    ] {
+        let mut main = Chunk::new("main", 0);
+        let left = main.constant(left);
+        let right = main.constant(right);
+        main.emit(Op::Constant(left))
+            .emit(Op::Constant(right))
+            .emit(operation)
+            .emit(Op::Return);
+
+        assert_eq!(
+            Vm::new().run(&program_with_main(main), 0).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn numeric_operator_bytecode_preserves_checked_failures() {
+    let mut main = Chunk::new("main", 0);
+    let text = main.constant(Value::string("Slug"));
+    let number = main.constant(Value::Int(1));
+    main.emit(Op::Constant(text))
+        .emit(Op::Constant(number))
+        .emit(Op::MultiplyNum)
+        .emit(Op::Return);
+
+    let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(error.message, "expected numbers, got str and num");
+
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    let zero = main.constant(Value::Int(0));
+    main.emit(Op::Constant(one))
+        .emit(Op::Constant(zero))
+        .emit(Op::DivideNum)
+        .emit(Op::Return);
+
+    let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::DivideByZero);
+    assert_eq!(error.message, "division by zero");
+}
+
+#[test]
 fn concatenates_strings_with_values_through_private_add_bytecode() {
     let mut main = Chunk::new("main", 0);
     let prefix = main.constant(Value::string("list of two + "));

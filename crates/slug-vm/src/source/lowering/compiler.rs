@@ -33,6 +33,7 @@ pub(super) struct Compiler {
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_resource_signatures: HashMap<SourceSpan, super::environment::ForeignResourceSignature>,
     match_constraints: HashMap<SourceSpan, Vec<Option<super::semantic::Type>>>,
+    expression_types: HashMap<SourceSpan, super::semantic::Type>,
     callable_identities: Vec<CallableIdentity>,
     guard_comparisons: bool,
 }
@@ -67,6 +68,7 @@ impl Compiler {
             foreign_identities: analysis.foreign_identities.clone(),
             foreign_resource_signatures: analysis.foreign_resource_signatures.clone(),
             match_constraints: analysis.match_constraints.clone(),
+            expression_types: analysis.expression_types.clone(),
             callable_identities: Vec::new(),
             guard_comparisons: false,
         }
@@ -666,33 +668,68 @@ impl Compiler {
                     }
                     Binary::GreaterEqual => {
                         self.expression(state, right)?;
-                        state.emit(self.less_op(), &expression.span);
+                        state.emit(self.less_op(left, right), &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::LessEqual => {
                         self.expression(state, right)?;
-                        state.emit(self.greater_op(), &expression.span);
+                        state.emit(self.greater_op(left, right), &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::Add => {
                         self.expression(state, right)?;
-                        state.emit(Op::Add, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::AddNum
+                            } else {
+                                Op::Add
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Subtract => {
                         self.expression(state, right)?;
-                        state.emit(Op::Subtract, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::SubtractNum
+                            } else {
+                                Op::Subtract
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Multiply => {
                         self.expression(state, right)?;
-                        state.emit(Op::Multiply, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::MultiplyNum
+                            } else {
+                                Op::Multiply
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Divide => {
                         self.expression(state, right)?;
-                        state.emit(Op::Divide, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::DivideNum
+                            } else {
+                                Op::Divide
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Modulo => {
                         self.expression(state, right)?;
-                        state.emit(Op::Modulo, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::ModuloNum
+                            } else {
+                                Op::Modulo
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::BitAnd => {
                         self.expression(state, right)?;
@@ -728,11 +765,11 @@ impl Compiler {
                     }
                     Binary::Greater => {
                         self.expression(state, right)?;
-                        state.emit(self.greater_op(), &expression.span);
+                        state.emit(self.greater_op(left, right), &expression.span);
                     }
                     Binary::Less => {
                         self.expression(state, right)?;
-                        state.emit(self.less_op(), &expression.span);
+                        state.emit(self.less_op(left, right), &expression.span);
                     }
                 }
             }
@@ -1113,17 +1150,21 @@ impl Compiler {
         result
     }
 
-    fn greater_op(&self) -> Op {
+    fn greater_op(&self, left: &Expr, right: &Expr) -> Op {
         if self.guard_comparisons {
             Op::GuardGreater
+        } else if self.numeric_operands(left, right) {
+            Op::GreaterNum
         } else {
             Op::Greater
         }
     }
 
-    fn less_op(&self) -> Op {
+    fn less_op(&self, left: &Expr, right: &Expr) -> Op {
         if self.guard_comparisons {
             Op::GuardLess
+        } else if self.numeric_operands(left, right) {
+            Op::LessNum
         } else {
             Op::Less
         }
@@ -1172,6 +1213,19 @@ impl Compiler {
             state.emit(op, &expression.span);
         }
         Ok(())
+    }
+
+    fn numeric_operands(&self, left: &Expr, right: &Expr) -> bool {
+        matches!(
+            (
+                self.expression_types.get(&left.span),
+                self.expression_types.get(&right.span),
+            ),
+            (
+                Some(super::semantic::Type::Num),
+                Some(super::semantic::Type::Num),
+            )
+        )
     }
 
     fn selected_identity(&mut self, span: &SourceSpan) -> Option<usize> {

@@ -1,6 +1,219 @@
 use super::*;
 
 #[test]
+fn selects_body_derived_plus_alternatives_at_known_calls() {
+    let path = fixture_path("inferred-plus-alternatives");
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val decorate = fn(prefix = \">\", left, right) { prefix + left + right }\n\
+         val list_result:list<num|str> = combine([1], [\"x\"])\n\
+         val map_result:map<str, num|str> = combine({left: 1}, {right: \"x\"})\n\
+         val recurse = fn(left, right, count) { if (count == 0) { left + right } else { recur(left, right, count - 1) } }\n\
+         val nested = fn() { val inner = fn(left, right) { left + right }\ninner(20, 22) }\n\
+         val choose = fn(value:num) { \"number\" }\n\
+         val choose = fn(left, right) { left + right }\n\
+         println(combine(20, 22), combine(\"x\", 1), list_result, combine(0x\"01\", 0x\"02\"), map_result, decorate(right = \"b\", prefix = \"[\", left = \"a\"), recurse(20, 22, 2), nested(), choose(\"x\", 1))\n",
+    )
+    .expect("write inferred plus alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred plus alternatives source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "42 x1 [1, \"x\"] 0x\"0102\" {\"left\": 1, \"right\": \"x\"} [ab 42 42 x1\n"
+    );
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\ncombine(right = 0x\"01\", left = 1)\n",
+    )
+    .expect("write incompatible inferred plus source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible inferred plus source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
+    );
+    fs::remove_file(path).expect("remove inferred plus alternatives source");
+}
+
+#[test]
+fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
+    let path = fixture_path("inferred-plus-dynamic-boundary");
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val selected = if (true) { combine } else { combine }\n\
+         selected(1, 0x\"01\")\n",
+    )
+    .expect("write structural inferred plus source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run structural inferred plus source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val left:any|nil = 1\n\
+         combine(left, 0x\"01\")\n",
+    )
+    .expect("write dynamic inferred plus source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic inferred plus source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+    fs::remove_file(path).expect("remove dynamic inferred plus source");
+}
+
+#[test]
+fn infers_unannotated_parameter_types_from_numeric_function_bodies() {
+    let path = fixture_path("body-derived-parameter-inference");
+    fs::write(
+        &path,
+        "val divide = fn(value) { value / 2 }\n\
+         val ordered = fn(value) { value < 10 }\n\
+         val negate = fn(value) { -value }\n\
+         val broad = fn(value) { value + 10 }\n\
+         println(divide(8), ordered(8), negate(8), broad(\"x\"))\n",
+    )
+    .expect("write body-derived parameter inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred parameter source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "4 true -8 x10\n");
+
+    fs::write(
+        &path,
+        "val divide = fn(value) { value / 2 }\ndivide(\"x\")\n",
+    )
+    .expect("write incompatible inferred call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible inferred call source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+    fs::remove_file(path).expect("remove body-derived parameter inference source");
+}
+
+#[test]
+fn body_derived_parameter_types_cover_recursion_defaults_and_function_values() {
+    let path = fixture_path("body-derived-parameter-shapes");
+    fs::write(
+        &path,
+        "val countdown = fn(value) { if (value > 0) { recur(value - 1) } else { value } }\n\
+         val defaulted = fn(value, fallback = -value) { fallback }\n\
+         val divide = fn(value) { value / 2 }\n\
+         val outer = fn(value) { val inner = fn(item) { item / 2 }\ninner(4)\nvalue }\n\
+         val callback:fn<num, num> = divide\n\
+         println(countdown(3), defaulted(4), outer(\"broad\"), callback(8))\n",
+    )
+    .expect("write inferred parameter shape source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred parameter shape source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "0 -4 broad 4\n");
+
+    fs::write(
+        &path,
+        "val defaulted = fn(value, fallback = -value) { fallback }\ndefaulted(\"x\")\n",
+    )
+    .expect("write incompatible default-derived call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible default-derived call source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+
+    fs::write(
+        &path,
+        "val duplicate = fn(value) { value / 2 }\nval duplicate = fn(value:num) { value }\n",
+    )
+    .expect("write duplicate inferred overload source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run duplicate inferred overload source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: duplicate callable signature for `duplicate`")
+    );
+    fs::remove_file(path).expect("remove inferred parameter shape source");
+}
+
+#[test]
+fn inferred_parameter_calls_with_dynamic_values_retain_checked_runtime_failures() {
+    let path = fixture_path("body-derived-parameter-dynamic-call");
+    fs::write(
+        &path,
+        "val divide = fn(value) { value / 2 }\nval apply = fn(value, transform) { transform(value) }\napply(\"x\", divide)\n",
+    )
+    .expect("write dynamic inferred call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic inferred call source");
+    fs::remove_file(path).expect("remove dynamic inferred call source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:"),
+        "dynamic calls must fail through Slug runtime diagnostics"
+    );
+}
+
+#[test]
 fn infers_scalar_literal_types_through_bindings() {
     let path = fixture_path("scalar-literal-inference");
     fs::write(

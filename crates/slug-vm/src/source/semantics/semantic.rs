@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt,
     hash::{Hash, Hasher},
 };
@@ -111,6 +112,296 @@ pub(super) enum Type {
     Tuple(Vec<Type>),
     Generic(usize),
     Union(Vec<Type>),
+}
+
+/// A variable whose meaning is scoped to one inferred overload alternative.
+///
+/// This deliberately does not reuse [`Type::Generic`]: source generic
+/// parameters have callable-wide identity, while these variables describe a
+/// single body-derived relationship.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[allow(dead_code)] // Wired into callable metadata by the following plan step.
+pub(super) struct AlternativeVariable(usize);
+
+#[allow(dead_code)]
+impl AlternativeVariable {
+    pub(super) fn new(index: usize) -> Self {
+        Self(index)
+    }
+}
+
+/// A type expression in a body-derived overload alternative.
+///
+/// The recursive forms are kept separate from [`Type`] so an alternative can
+/// retain relationships such as `list<A> + list<B> -> list<A|B>` without
+/// introducing private symbols into ordinary source types or their unions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)] // The model precedes its first producer in this plan.
+pub(super) enum AlternativeType {
+    Concrete(Type),
+    Variable(AlternativeVariable),
+    List(Box<Self>),
+    Map(Box<Self>, Box<Self>),
+    Union(Vec<Self>),
+}
+
+#[allow(dead_code)]
+impl AlternativeType {
+    pub(super) fn concrete(value_type: Type) -> Self {
+        Self::Concrete(value_type)
+    }
+
+    pub(super) fn variable(variable: AlternativeVariable) -> Self {
+        Self::Variable(variable)
+    }
+
+    pub(super) fn list(element: Self) -> Self {
+        Self::List(Box::new(element))
+    }
+
+    pub(super) fn map(key: Self, value: Self) -> Self {
+        Self::Map(Box::new(key), Box::new(value))
+    }
+
+    pub(super) fn union(members: impl IntoIterator<Item = Self>) -> Self {
+        Self::normalized_union(members.into_iter().collect())
+    }
+
+    fn normalized_union(members: Vec<Self>) -> Self {
+        let mut flattened = Vec::new();
+        for member in members {
+            match member {
+                Self::Union(nested) => flattened.extend(nested),
+                member => flattened.push(member),
+            }
+        }
+        flattened.sort_by_key(ToString::to_string);
+        flattened.dedup();
+        match flattened.len() {
+            0 => Self::Concrete(Type::Never),
+            1 => flattened
+                .pop()
+                .expect("one normalized alternative union member"),
+            _ => Self::Union(flattened),
+        }
+    }
+
+    fn canonicalized(
+        self,
+        variables: &mut HashMap<AlternativeVariable, AlternativeVariable>,
+        next_variable: &mut usize,
+    ) -> Self {
+        match self {
+            Self::Concrete(value_type) => Self::Concrete(value_type),
+            Self::Variable(variable) => {
+                let variable = *variables.entry(variable).or_insert_with(|| {
+                    let canonical = AlternativeVariable(*next_variable);
+                    *next_variable += 1;
+                    canonical
+                });
+                Self::Variable(variable)
+            }
+            Self::List(element) => {
+                Self::List(Box::new(element.canonicalized(variables, next_variable)))
+            }
+            Self::Map(key, value) => Self::Map(
+                Box::new(key.canonicalized(variables, next_variable)),
+                Box::new(value.canonicalized(variables, next_variable)),
+            ),
+            Self::Union(members) => Self::normalized_union(
+                members
+                    .into_iter()
+                    .map(|member| member.canonicalized(variables, next_variable))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn substitute(&self, substitutions: &HashMap<AlternativeVariable, Type>) -> Type {
+        match self {
+            Self::Concrete(value_type) => value_type.clone(),
+            Self::Variable(variable) => substitutions
+                .get(variable)
+                .cloned()
+                .unwrap_or(Type::Unknown),
+            Self::List(element) => Type::List(Some(Box::new(element.substitute(substitutions)))),
+            Self::Map(key, value) => Type::Map(Some((
+                Box::new(key.substitute(substitutions)),
+                Box::new(value.substitute(substitutions)),
+            ))),
+            Self::Union(members) => Type::union(
+                members
+                    .iter()
+                    .map(|member| member.substitute(substitutions)),
+            ),
+        }
+    }
+
+    fn accepts_constraint(
+        &self,
+        actual: &Type,
+        substitutions: &mut HashMap<AlternativeVariable, Type>,
+    ) -> bool {
+        if is_dynamic_alternative_constraint(actual) {
+            return true;
+        }
+        match (self, actual) {
+            (Self::Concrete(expected), actual) => actual.is_assignable_to(expected),
+            (Self::Variable(variable), actual) => {
+                if let Some(previous) = substitutions.get(variable) {
+                    actual == previous
+                } else {
+                    substitutions.insert(*variable, actual.clone());
+                    true
+                }
+            }
+            (Self::List(expected), Type::List(Some(actual))) => {
+                expected.accepts_constraint(actual, substitutions)
+            }
+            (Self::List(_), Type::List(None)) | (Self::Map(_, _), Type::Map(None)) => true,
+            (
+                Self::Map(expected_key, expected_value),
+                Type::Map(Some((actual_key, actual_value))),
+            ) => {
+                expected_key.accepts_constraint(actual_key, substitutions)
+                    && expected_value.accepts_constraint(actual_value, substitutions)
+            }
+            (Self::Union(expected), actual) => expected.iter().any(|member| {
+                let mut trial = substitutions.clone();
+                if member.accepts_constraint(actual, &mut trial) {
+                    *substitutions = trial;
+                    true
+                } else {
+                    false
+                }
+            }),
+            _ => false,
+        }
+    }
+}
+
+fn is_dynamic_alternative_constraint(value_type: &Type) -> bool {
+    match value_type {
+        Type::Unknown | Type::Any => true,
+        Type::Union(members) => members.iter().any(is_dynamic_alternative_constraint),
+        _ => false,
+    }
+}
+
+impl fmt::Display for AlternativeType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Concrete(value_type) => formatter.write_str(&value_type.diagnostic_display()),
+            Self::Variable(variable) => write!(formatter, "A{}", variable.0),
+            Self::List(element) => write!(formatter, "list<{element}>"),
+            Self::Map(key, value) => write!(formatter, "map<{key}, {value}>"),
+            Self::Union(members) => write!(
+                formatter,
+                "{}",
+                members
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
+        }
+    }
+}
+
+/// A canonical parameter/result scheme inferred from one function body.
+///
+/// Its variables are local to this value. Constructing an alternative
+/// canonicalizes variable identity by first occurrence, which makes equality
+/// suitable for duplicate-signature identity without conflating it with
+/// ordinary [`Type`] equality.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)] // Published after body derivation is implemented.
+pub(super) struct InferredAlternative {
+    parameters: Vec<AlternativeType>,
+    result: AlternativeType,
+}
+
+#[allow(dead_code)]
+impl InferredAlternative {
+    pub(super) fn new(parameters: Vec<AlternativeType>, result: AlternativeType) -> Self {
+        let mut variables = HashMap::new();
+        let mut next_variable = 0;
+        let parameters = parameters
+            .into_iter()
+            .map(|parameter| parameter.canonicalized(&mut variables, &mut next_variable))
+            .collect();
+        let result = result.canonicalized(&mut variables, &mut next_variable);
+        Self { parameters, result }
+    }
+
+    pub(super) fn substitute(
+        &self,
+        substitutions: &HashMap<AlternativeVariable, Type>,
+    ) -> (Vec<Type>, Type) {
+        (
+            self.parameters
+                .iter()
+                .map(|parameter| parameter.substitute(substitutions))
+                .collect(),
+            self.result.substitute(substitutions),
+        )
+    }
+
+    pub(super) fn parameter_types(&self) -> &[AlternativeType] {
+        &self.parameters
+    }
+
+    pub(super) fn result_type(&self) -> &AlternativeType {
+        &self.result
+    }
+
+    /// Whether the known body facts are compatible with this symbolic scheme.
+    /// Missing facts deliberately remain dynamic and cannot remove a scheme.
+    pub(super) fn accepts_constraints(&self, constraints: &[Option<&Type>]) -> bool {
+        if self.parameters.len() != constraints.len() {
+            return false;
+        }
+        let mut substitutions = HashMap::new();
+        self.parameters
+            .iter()
+            .zip(constraints)
+            .all(|(parameter, constraint)| {
+                constraint.is_none_or(|constraint| {
+                    parameter.accepts_constraint(constraint, &mut substitutions)
+                })
+            })
+    }
+
+    pub(super) fn instantiate(&self, actuals: &[Type]) -> Option<(Vec<Type>, Type)> {
+        if self.parameters.len() != actuals.len() {
+            return None;
+        }
+        let mut substitutions = HashMap::new();
+        if !self
+            .parameters
+            .iter()
+            .zip(actuals)
+            .all(|(parameter, actual)| parameter.accepts_constraint(actual, &mut substitutions))
+        {
+            return None;
+        }
+        Some(self.substitute(&substitutions))
+    }
+}
+
+impl fmt::Display for InferredAlternative {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "({}) -> {}",
+            self.parameters
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.result
+        )
+    }
 }
 
 impl Type {
@@ -682,7 +973,64 @@ fn wrong_type_arity(name: &str, expected: &str, span: &SourceSpan) -> SourceErro
 
 #[cfg(test)]
 mod tests {
-    use super::{NominalIdentity, Type};
+    use std::collections::HashMap;
+
+    use super::{AlternativeType, AlternativeVariable, InferredAlternative, NominalIdentity, Type};
+
+    #[test]
+    fn inferred_alternatives_canonicalize_scoped_symbols() {
+        let first = InferredAlternative::new(
+            vec![
+                AlternativeType::list(AlternativeType::variable(AlternativeVariable::new(7))),
+                AlternativeType::list(AlternativeType::variable(AlternativeVariable::new(3))),
+            ],
+            AlternativeType::list(AlternativeType::union([
+                AlternativeType::variable(AlternativeVariable::new(3)),
+                AlternativeType::variable(AlternativeVariable::new(7)),
+            ])),
+        );
+        let equivalent = InferredAlternative::new(
+            vec![
+                AlternativeType::list(AlternativeType::variable(AlternativeVariable::new(42))),
+                AlternativeType::list(AlternativeType::variable(AlternativeVariable::new(99))),
+            ],
+            AlternativeType::list(AlternativeType::union([
+                AlternativeType::variable(AlternativeVariable::new(99)),
+                AlternativeType::variable(AlternativeVariable::new(42)),
+            ])),
+        );
+
+        assert_eq!(first, equivalent);
+        assert_eq!(first.to_string(), "(list<A0>, list<A1>) -> list<A0|A1>");
+    }
+
+    #[test]
+    fn inferred_alternatives_substitute_symbols_without_source_generics() {
+        let alternative = InferredAlternative::new(
+            vec![
+                AlternativeType::map(
+                    AlternativeType::variable(AlternativeVariable::new(4)),
+                    AlternativeType::variable(AlternativeVariable::new(5)),
+                ),
+                AlternativeType::concrete(Type::Generic(0)),
+            ],
+            AlternativeType::variable(AlternativeVariable::new(5)),
+        );
+
+        let (parameters, result) = alternative.substitute(&HashMap::from([
+            (AlternativeVariable::new(0), Type::Str),
+            (AlternativeVariable::new(1), Type::Num),
+        ]));
+
+        assert_eq!(
+            parameters,
+            vec![
+                Type::Map(Some((Box::new(Type::Str), Box::new(Type::Num)))),
+                Type::Generic(0),
+            ]
+        );
+        assert_eq!(result, Type::Num);
+    }
 
     #[test]
     fn any_excludes_nil_and_any_nil_is_universal() {

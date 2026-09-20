@@ -13,7 +13,8 @@ use super::{
         SemanticAnalysis, SemanticBinding, SessionSnapshot, function_value_type,
     },
     semantic::{
-        ResourceIdentity, SchemaIdentity, Type, resolve_annotation, resolve_resource_references,
+        AlternativeType, AlternativeVariable, InferredAlternative, ResourceIdentity,
+        SchemaIdentity, Type, resolve_annotation, resolve_resource_references,
         resolve_static_annotation,
     },
 };
@@ -63,6 +64,456 @@ enum Continuation {
 struct CheckedExpression {
     value_type: Type,
     continuation: Continuation,
+}
+
+/// Requirements gathered for one function's unannotated parameters.
+///
+/// This state is intentionally scoped to the declaration currently being
+/// checked. In particular, a nested function gets its own state rather than
+/// contributing evidence to an enclosing parameter.
+#[derive(Debug)]
+struct ParameterConstraints {
+    requirements: HashMap<String, ParameterRequirement>,
+    plus_operands: Vec<PlusOperands>,
+}
+
+#[derive(Clone, Debug)]
+struct ParameterRequirement {
+    value_type: Type,
+    span: crate::SourceSpan,
+}
+
+#[derive(Debug)]
+struct PlusOperands {
+    left: String,
+    right: String,
+    span: crate::SourceSpan,
+}
+
+impl ParameterConstraints {
+    fn for_parameters(parameters: &[Parameter]) -> Self {
+        Self {
+            requirements: parameters
+                .iter()
+                .filter(|parameter| {
+                    !parameter.discard && !parameter.variadic && parameter.annotation.is_none()
+                })
+                .map(|parameter| {
+                    (
+                        parameter.name.clone(),
+                        ParameterRequirement {
+                            value_type: Type::Unknown,
+                            span: crate::SourceSpan::new("<parameter>", 0, 0),
+                        },
+                    )
+                })
+                .collect(),
+            plus_operands: Vec::new(),
+        }
+    }
+
+    /// Records a requirement at the operand occurrence. If later inference
+    /// domains introduce incompatible requirements, the later occurrence is
+    /// the diagnostic span: it is where the function first becomes
+    /// contradictory.
+    fn require(&mut self, expression: &Expr, value_type: Type) -> Result<(), SourceError> {
+        let ExprKind::Name(name) = &expression.kind else {
+            return Ok(());
+        };
+        let Some(requirement) = self.requirements.get_mut(name) else {
+            return Ok(());
+        };
+        if matches!(requirement.value_type, Type::Unknown) {
+            requirement.value_type = value_type;
+            requirement.span = expression.span.clone();
+            return Ok(());
+        }
+        if requirement.value_type == value_type {
+            return Ok(());
+        }
+        Err(SourceError::semantic(
+            format!(
+                "parameter `{name}` has incompatible body requirements: {} and {}",
+                requirement.value_type, value_type
+            ),
+            expression.span.clone(),
+        ))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn collect(&mut self, expression: &Expr) -> Result<(), SourceError> {
+        match &expression.kind {
+            ExprKind::Binary {
+                left,
+                operator: Binary::Add,
+                right,
+            } => {
+                self.collect_plus_operands(left, right, &expression.span);
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Binary {
+                left,
+                operator:
+                    Binary::Divide
+                    | Binary::Modulo
+                    | Binary::Greater
+                    | Binary::GreaterEqual
+                    | Binary::Less
+                    | Binary::LessEqual,
+                right,
+            } => {
+                self.require(left, Type::Num)?;
+                self.require(right, Type::Num)?;
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Prefix { operators, value } => {
+                if operators
+                    .iter()
+                    .any(|(operator, _)| matches!(operator, Prefix::Negate))
+                {
+                    self.require(value, Type::Num)?;
+                }
+                self.collect(value)
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Declare {
+                pattern,
+                tags,
+                value,
+                ..
+            } => {
+                self.collect_pattern(pattern)?;
+                self.collect_tags(tags)?;
+                self.collect(value)
+            }
+            ExprKind::Assign { value, .. }
+            | ExprKind::Return { value }
+            | ExprKind::Throw { value }
+            | ExprKind::Defer { value, .. }
+            | ExprKind::Spawn(value)
+            | ExprKind::TypeApply { callee: value, .. } => self.collect(value),
+            ExprKind::Recur(arguments) => self.collect_arguments(arguments),
+            ExprKind::Nursery { limit, body } => {
+                if let Some(limit) = limit {
+                    self.collect(limit)?;
+                }
+                self.collect(body)
+            }
+            ExprKind::Select(cases) => {
+                for case in cases {
+                    match &case.kind {
+                        SelectCaseKind::Receive(value)
+                        | SelectCaseKind::After(value)
+                        | SelectCaseKind::Await(value) => self.collect(value)?,
+                        SelectCaseKind::Send { channel, value } => {
+                            self.collect(channel)?;
+                            self.collect(value)?;
+                        }
+                        SelectCaseKind::Default => {}
+                    }
+                    if let Some(handler) = &case.handler {
+                        self.collect(handler)?;
+                    }
+                }
+                Ok(())
+            }
+            ExprKind::Match { subject, cases } => {
+                if let Some(subject) = subject {
+                    self.collect(subject)?;
+                }
+                for case in cases {
+                    for pattern in &case.patterns {
+                        self.collect_pattern(&pattern.pattern)?;
+                    }
+                    if let Some(guard) = &case.guard {
+                        self.collect(guard)?;
+                    }
+                    self.collect(&case.value)?;
+                }
+                Ok(())
+            }
+            ExprKind::Call { callee, arguments } => {
+                self.collect(callee)?;
+                self.collect_arguments(arguments)
+            }
+            ExprKind::Block(values) => {
+                for value in values {
+                    self.collect(value)?;
+                }
+                Ok(())
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect(condition)?;
+                self.collect(then_branch)?;
+                if let Some(else_branch) = else_branch {
+                    self.collect(else_branch)?;
+                }
+                Ok(())
+            }
+            ExprKind::List(values) => {
+                for value in values {
+                    self.collect(match value {
+                        ListElement::Value(value) | ListElement::Spread(value) => value,
+                    })?;
+                }
+                Ok(())
+            }
+            ExprKind::Map(entries) => {
+                for (key, value) in entries {
+                    self.collect(key)?;
+                    self.collect(value)?;
+                }
+                Ok(())
+            }
+            ExprKind::StructSchema(fields) => {
+                for field in fields {
+                    if let Some(default) = &field.default {
+                        self.collect(default)?;
+                    }
+                }
+                Ok(())
+            }
+            ExprKind::StructInit { schema, fields } => {
+                self.collect(schema)?;
+                for (_, value) in fields {
+                    self.collect(value)?;
+                }
+                Ok(())
+            }
+            ExprKind::StructCopy { value, fields } => {
+                self.collect(value)?;
+                for (_, replacement) in fields {
+                    self.collect(replacement)?;
+                }
+                Ok(())
+            }
+            ExprKind::Index { collection, index } => {
+                self.collect(collection)?;
+                self.collect(index)
+            }
+            ExprKind::Slice {
+                collection,
+                start,
+                end,
+                step,
+            } => {
+                self.collect(collection)?;
+                for bound in [start, end, step].into_iter().flatten() {
+                    self.collect(bound)?;
+                }
+                Ok(())
+            }
+            ExprKind::Function { .. }
+            | ExprKind::Foreign { .. }
+            | ExprKind::Resource { .. }
+            | ExprKind::Enum { .. }
+            | ExprKind::TypeAlias { .. }
+            | ExprKind::Value(_)
+            | ExprKind::Interpolate(_)
+            | ExprKind::Documentation(_)
+            | ExprKind::NotImplemented
+            | ExprKind::Name(_) => Ok(()),
+        }
+    }
+
+    fn collect_plus_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
+        let (ExprKind::Name(left), ExprKind::Name(right)) = (&left.kind, &right.kind) else {
+            return;
+        };
+        if self.requirements.contains_key(left) && self.requirements.contains_key(right) {
+            self.plus_operands.push(PlusOperands {
+                left: left.clone(),
+                right: right.clone(),
+                span: span.clone(),
+            });
+        }
+    }
+
+    fn collect_tags(&mut self, tags: &[Tag]) -> Result<(), SourceError> {
+        for tag in tags {
+            for argument in &tag.arguments {
+                self.collect(argument)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_arguments(&mut self, arguments: &[CallArgument]) -> Result<(), SourceError> {
+        for argument in arguments {
+            self.collect(match argument {
+                CallArgument::Positional(value)
+                | CallArgument::Named { value, .. }
+                | CallArgument::Spread(value) => value,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn collect_pattern(&mut self, pattern: &Pattern) -> Result<(), SourceError> {
+        match pattern {
+            Pattern::At { pattern, .. } => self.collect_pattern(pattern),
+            Pattern::List { items, .. } => {
+                for item in items {
+                    self.collect_pattern(item)?;
+                }
+                Ok(())
+            }
+            Pattern::Map { entries, .. } => {
+                for (key, value) in entries {
+                    if let MapPatternKey::Computed(key) = key {
+                        self.collect(key)?;
+                    }
+                    self.collect_pattern(value)?;
+                }
+                Ok(())
+            }
+            Pattern::Literal(_)
+            | Pattern::Wildcard
+            | Pattern::Binding(_)
+            | Pattern::Pinned(_)
+            | Pattern::MapAll
+            | Pattern::EnumCase { .. } => Ok(()),
+        }
+    }
+}
+
+fn parameter_constraints(
+    parameters: &[Parameter],
+    body: &Expr,
+) -> Result<ParameterConstraints, SourceError> {
+    let mut constraints = ParameterConstraints::for_parameters(parameters);
+    for parameter in parameters {
+        if let Some(default) = &parameter.default {
+            constraints.collect(default)?;
+        }
+    }
+    constraints.collect(body)?;
+    Ok(constraints)
+}
+
+fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String, Type> {
+    constraints
+        .requirements
+        .iter()
+        .filter(|(_, requirement)| !matches!(requirement.value_type, Type::Unknown))
+        .map(|(name, requirement)| (name.clone(), requirement.value_type.clone()))
+        .collect()
+}
+
+/// Derives the finite `+` schemes for a direct pair of unannotated parameters.
+///
+/// The schemes are created from the body, then narrowed only with other
+/// body-derived singleton facts. They remain private here; callable metadata
+/// publishes them in the following implementation stage.
+fn inferred_plus_alternatives(
+    parameters: &[Parameter],
+    constraints: &ParameterConstraints,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    let Some(first) = constraints.plus_operands.first() else {
+        return Ok(Vec::new());
+    };
+    let mut alternatives = plus_alternatives();
+    for operands in &constraints.plus_operands {
+        let left = constraints.requirements[&operands.left].value_type.clone();
+        let right = constraints.requirements[&operands.right].value_type.clone();
+        let compatible = plus_alternatives()
+            .into_iter()
+            .filter(|alternative| {
+                alternative.accepts_constraints(&[
+                    (!matches!(left, Type::Unknown)).then_some(&left),
+                    (!matches!(right, Type::Unknown)).then_some(&right),
+                ])
+            })
+            .collect::<Vec<_>>();
+        if compatible.is_empty() {
+            return Err(SourceError::semantic(
+                "no inferred `+` alternative satisfies the function body requirements",
+                operands.span.clone(),
+            ));
+        }
+        if operands.left == first.left && operands.right == first.right {
+            alternatives.retain(|alternative| compatible.contains(alternative));
+        }
+    }
+    let left_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.left)
+        .expect("collected plus operand is a function parameter");
+    let right_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.right)
+        .expect("collected plus operand is a function parameter");
+    Ok(alternatives
+        .into_iter()
+        .map(|alternative| {
+            InferredAlternative::new(
+                parameters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        if index == left_index {
+                            alternative.parameter_types()[0].clone()
+                        } else if index == right_index {
+                            alternative.parameter_types()[1].clone()
+                        } else {
+                            AlternativeType::concrete(Type::universal())
+                        }
+                    })
+                    .collect(),
+                alternative.result_type().clone(),
+            )
+        })
+        .collect())
+}
+
+fn plus_alternatives() -> Vec<InferredAlternative> {
+    let variable = |index| AlternativeType::variable(AlternativeVariable::new(index));
+    vec![
+        InferredAlternative::new(
+            vec![
+                AlternativeType::concrete(Type::Num),
+                AlternativeType::concrete(Type::Num),
+            ],
+            AlternativeType::concrete(Type::Num),
+        ),
+        InferredAlternative::new(
+            vec![AlternativeType::concrete(Type::Str), variable(0)],
+            AlternativeType::concrete(Type::Str),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::list(variable(0)),
+                AlternativeType::list(variable(1)),
+            ],
+            AlternativeType::list(AlternativeType::union([variable(0), variable(1)])),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::concrete(Type::Bytes),
+                AlternativeType::concrete(Type::Bytes),
+            ],
+            AlternativeType::concrete(Type::Bytes),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::map(variable(0), variable(1)),
+                AlternativeType::map(variable(2), variable(3)),
+            ],
+            AlternativeType::map(
+                AlternativeType::union([variable(0), variable(2)]),
+                AlternativeType::union([variable(1), variable(3)]),
+            ),
+        ),
+    ]
 }
 
 impl CheckedExpression {
@@ -478,6 +929,7 @@ fn function_type(
     result: Option<&TypeAnnotation>,
     span: &crate::SourceSpan,
     environment: &Environment,
+    inferred_parameters: Option<&HashMap<String, Type>>,
 ) -> Result<CallableSignature, SourceError> {
     Ok(CallableSignature {
         generic_arity: type_parameters.len(),
@@ -498,6 +950,15 @@ fn function_type(
                             )
                         })
                         .transpose()?
+                        .or_else(|| {
+                            (!parameter.discard && !parameter.variadic)
+                                .then(|| {
+                                    inferred_parameters
+                                        .and_then(|parameters| parameters.get(&parameter.name))
+                                        .cloned()
+                                })
+                                .flatten()
+                        })
                         .unwrap_or_else(Type::universal),
                     has_default: parameter.default.is_some(),
                     variadic: parameter.variadic,
@@ -510,6 +971,7 @@ fn function_type(
             })
             .transpose()?
             .unwrap_or(Type::Unknown),
+        inferred_alternatives: Vec::new(),
     })
 }
 
@@ -522,19 +984,58 @@ fn callable_signature(
         type_parameters,
         parameters,
         return_annotation,
-        ..
+        body,
     } = &expression.kind
     else {
         return Ok(None);
     };
-    function_type(
+    let constraints = parameter_constraints(parameters, body)?;
+    let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
+    let inferred_parameters = solved_parameter_types(&constraints);
+    let mut signature = function_type(
         type_parameters,
         parameters,
         return_annotation.as_ref(),
         span,
         environment,
-    )
-    .map(Some)
+        Some(&inferred_parameters),
+    )?;
+    signature.inferred_alternatives = inferred_alternatives;
+    Ok(Some(signature))
+}
+
+fn check_function_body(
+    parameters: &[Parameter],
+    signature: &CallableSignature,
+    return_annotation: Option<&TypeAnnotation>,
+    body: &Expr,
+    environment: &Environment,
+    type_parameters: &[String],
+) -> Result<Type, SourceError> {
+    let mut scoped = environment.clone();
+    scoped.enter_scope();
+    for (parameter, signature_parameter) in parameters.iter().zip(&signature.parameters) {
+        let parameter_type = &signature_parameter.value_type;
+        if !parameter.discard {
+            let binding_type = if parameter.variadic {
+                Type::List(Some(Box::new(parameter_type.clone())))
+            } else {
+                parameter_type.clone()
+            };
+            scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
+        }
+        if let Some(default) = &parameter.default {
+            let actual = check_expression(default, &mut scoped, type_parameters)?;
+            require(parameter_type, &actual, &default.span)?;
+        }
+    }
+    let actual = check_expression_with_flow(body, &mut scoped, type_parameters)?.value_type;
+    if let Some(return_annotation) = return_annotation {
+        let expected =
+            resolve_static_annotation(return_annotation, type_parameters, &body.span, environment)?;
+        require(&expected, &actual, &body.span)?;
+    }
+    Ok(actual)
 }
 
 fn record_exports(
@@ -633,8 +1134,18 @@ fn pattern_binding_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a String>) 
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn check_expression(
+    expression: &Expr,
+    environment: &mut Environment,
+    type_parameters: &[String],
+) -> Result<Type, SourceError> {
+    let value_type = check_expression_inner(expression, environment, type_parameters)?;
+    environment.record_expression_type(expression.span.clone(), value_type.clone());
+    Ok(value_type)
+}
+
+#[allow(clippy::too_many_lines)]
+fn check_expression_inner(
     expression: &Expr,
     environment: &mut Environment,
     type_parameters: &[String],
@@ -700,6 +1211,7 @@ fn check_expression(
                 signature.return_annotation.as_ref(),
                 &expression.span,
                 environment,
+                None,
             )?;
             environment.record_foreign(
                 expression.span.clone(),
@@ -731,54 +1243,43 @@ fn check_expression(
             return_annotation,
             body,
         } => {
+            let provisional = function_type(
+                function_type_parameters,
+                parameters,
+                return_annotation.as_ref(),
+                &expression.span,
+                environment,
+                None,
+            )?;
+            let _ = check_function_body(
+                parameters,
+                &provisional,
+                return_annotation.as_ref(),
+                body,
+                environment,
+                function_type_parameters,
+            )?;
+            let constraints = parameter_constraints(parameters, body)?;
+            let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
+            let inferred_parameters = solved_parameter_types(&constraints);
             let mut signature = function_type(
                 function_type_parameters,
                 parameters,
                 return_annotation.as_ref(),
                 &expression.span,
                 environment,
+                Some(&inferred_parameters),
             )?;
+            signature.inferred_alternatives = inferred_alternatives;
             environment.record_function(expression.span.clone(), signature.identity());
-            let mut scoped = environment.clone();
-            scoped.enter_scope();
-            for parameter in parameters {
-                let parameter_type = parameter
-                    .annotation
-                    .as_ref()
-                    .map(|annotation| {
-                        resolve_static_annotation(
-                            annotation,
-                            function_type_parameters,
-                            &body.span,
-                            environment,
-                        )
-                    })
-                    .transpose()?
-                    .unwrap_or_else(Type::universal);
-                if !parameter.discard {
-                    let binding_type = if parameter.variadic {
-                        Type::List(Some(Box::new(parameter_type.clone())))
-                    } else {
-                        parameter_type.clone()
-                    };
-                    scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
-                }
-                if let Some(default) = &parameter.default {
-                    let actual = check_expression(default, &mut scoped, function_type_parameters)?;
-                    require(&parameter_type, &actual, &default.span)?;
-                }
-            }
-            let actual =
-                check_expression_with_flow(body, &mut scoped, function_type_parameters)?.value_type;
-            if let Some(return_annotation) = return_annotation {
-                let expected = resolve_static_annotation(
-                    return_annotation,
-                    function_type_parameters,
-                    &body.span,
-                    environment,
-                )?;
-                require(&expected, &actual, &body.span)?;
-            }
+            let actual = check_function_body(
+                parameters,
+                &signature,
+                return_annotation.as_ref(),
+                body,
+                environment,
+                function_type_parameters,
+            )?;
             signature.result = return_annotation
                 .as_ref()
                 .map(|annotation| {
@@ -2378,7 +2879,7 @@ enum ArgumentShape<'a> {
     Spread,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn instantiate_candidate(
     signature: &CallableSignature,
     arguments: &[ArgumentShape<'_>],
@@ -2414,7 +2915,49 @@ fn instantiate_candidate(
     let Some(bound) = bind_arguments(&signature.parameters, arguments, actuals) else {
         return Ok(None);
     };
-    for (parameter, actual) in &bound.values {
+    if !signature.inferred_alternatives.is_empty()
+        && bound.values.len() == signature.parameters.len()
+        && !bound
+            .values
+            .iter()
+            .any(|(_, _, actual)| is_dynamic_operation_type(actual))
+    {
+        let mut alternative_actuals = vec![Type::Unknown; signature.parameters.len()];
+        for (index, _, actual) in &bound.values {
+            alternative_actuals[*index] = (*actual).clone();
+        }
+        let alternatives = signature
+            .inferred_alternatives
+            .iter()
+            .filter_map(|alternative| alternative.instantiate(&alternative_actuals))
+            .collect::<Vec<_>>();
+        if alternatives.len() != 1 {
+            if report_mismatch {
+                return Err(SourceError::semantic(
+                    if alternatives.is_empty() {
+                        "no inferred overload alternative matches the call"
+                    } else {
+                        "ambiguous inferred overload alternative"
+                    },
+                    span.clone(),
+                ));
+            }
+            return Ok(None);
+        }
+        let (bound_types, result) = alternatives.into_iter().next().expect("one alternative");
+        return Ok(Some(InstantiatedCandidate {
+            bound_types,
+            generic_arity: signature.generic_arity,
+            non_variadic: !signature
+                .parameters
+                .last()
+                .is_some_and(|parameter| parameter.variadic),
+            uses_empty_variadic: bound.uses_empty_variadic,
+            result,
+            identity: signature.identity(),
+        }));
+    }
+    for (_, parameter, actual) in &bound.values {
         let actual = (*actual).clone();
         if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
             if report_mismatch {
@@ -2438,7 +2981,7 @@ fn instantiate_candidate(
     let bound_types = bound
         .values
         .iter()
-        .map(|(parameter, _)| substitute(&parameter.value_type, &substitutions).widen_unknown())
+        .map(|(_, parameter, _)| substitute(&parameter.value_type, &substitutions).widen_unknown())
         .collect();
     Ok(Some(InstantiatedCandidate {
         bound_types,
@@ -2486,7 +3029,7 @@ fn first_generic_parameter(value_type: &Type) -> Option<usize> {
 }
 
 struct BoundArguments<'a> {
-    values: Vec<(&'a CallableParameter, &'a Type)>,
+    values: Vec<(usize, &'a CallableParameter, &'a Type)>,
     uses_empty_variadic: bool,
 }
 
@@ -2505,7 +3048,7 @@ fn bind_arguments<'a>(
             && let Type::List(Some(element)) = &actuals[0]
         {
             return Some(BoundArguments {
-                values: vec![(&parameters[0], element.as_ref())],
+                values: vec![(0, &parameters[0], element.as_ref())],
                 uses_empty_variadic: false,
             });
         }
@@ -2520,7 +3063,7 @@ fn bind_arguments<'a>(
     let mut positional = 0usize;
     let mut variadic_supplied = false;
     for (argument, actual) in arguments.iter().zip(actuals) {
-        let parameter = match argument {
+        let index = match argument {
             ArgumentShape::Positional => {
                 let index = if positional < fixed {
                     positional
@@ -2535,7 +3078,7 @@ fn bind_arguments<'a>(
                 } else {
                     variadic_supplied = true;
                 }
-                &parameters[index]
+                index
             }
             ArgumentShape::Named(name) => {
                 let index = parameters
@@ -2548,11 +3091,11 @@ fn bind_arguments<'a>(
                 if parameters[index].variadic {
                     variadic_supplied = true;
                 }
-                &parameters[index]
+                index
             }
             ArgumentShape::Spread => unreachable!("spread calls were handled above"),
         };
-        bound.push((parameter, actual));
+        bound.push((index, &parameters[index], actual));
     }
     if parameters
         .iter()
@@ -3092,6 +3635,39 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
 mod tests {
     use super::*;
 
+    fn span() -> crate::SourceSpan {
+        crate::SourceSpan::new("test.slug", 1, 1)
+    }
+
+    fn name(name: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Name(name.into()),
+            span: span(),
+        }
+    }
+
+    fn parameter(name: &str) -> Parameter {
+        Parameter {
+            name: name.into(),
+            discard: false,
+            tags: Vec::new(),
+            annotation: None,
+            default: None,
+            variadic: false,
+        }
+    }
+
+    fn binary(left: Expr, operator: Binary, right: Expr) -> Expr {
+        Expr {
+            kind: ExprKind::Binary {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            },
+            span: span(),
+        }
+    }
+
     fn candidate(bound_types: Vec<Type>) -> InstantiatedCandidate {
         InstantiatedCandidate {
             bound_types,
@@ -3103,9 +3679,201 @@ mod tests {
                 generic_arity: 0,
                 parameters: Vec::new(),
                 result: Type::Unknown,
+                inferred_alternatives: Vec::new(),
             }
             .identity(),
         }
+    }
+
+    #[test]
+    fn parameter_constraints_collect_direct_numeric_operands_through_control_flow() {
+        let body = Expr {
+            kind: ExprKind::If {
+                condition: Box::new(Expr {
+                    kind: ExprKind::Binary {
+                        left: Box::new(name("value")),
+                        operator: Binary::Less,
+                        right: Box::new(name("limit")),
+                    },
+                    span: span(),
+                }),
+                then_branch: Box::new(Expr {
+                    kind: ExprKind::Prefix {
+                        operators: vec![(Prefix::Negate, span())],
+                        value: Box::new(name("value")),
+                    },
+                    span: span(),
+                }),
+                else_branch: None,
+            },
+            span: span(),
+        };
+        let constraints = parameter_constraints(&[parameter("value"), parameter("limit")], &body)
+            .expect("numeric body requirements collect");
+
+        assert_eq!(constraints.requirements["value"].value_type, Type::Num);
+        assert_eq!(constraints.requirements["limit"].value_type, Type::Num);
+    }
+
+    #[test]
+    fn inferred_plus_alternatives_cover_the_five_runtime_families() {
+        let body = binary(name("left"), Binary::Add, name("right"));
+        let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
+            .expect("plus operands collect");
+        let alternatives =
+            inferred_plus_alternatives(&[parameter("left"), parameter("right")], &constraints)
+                .expect("unconstrained plus body retains every family");
+
+        assert_eq!(
+            alternatives
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec![
+                "(num, num) -> num",
+                "(str, A0) -> str",
+                "(list<A0>, list<A1>) -> list<A0|A1>",
+                "(bytes, bytes) -> bytes",
+                "(map<A0, A1>, map<A2, A3>) -> map<A0|A2, A1|A3>",
+            ]
+        );
+    }
+
+    #[test]
+    fn inferred_plus_alternatives_intersect_numeric_body_facts() {
+        let body = Expr {
+            kind: ExprKind::Block(vec![
+                binary(name("left"), Binary::Add, name("right")),
+                binary(name("left"), Binary::Divide, name("right")),
+            ]),
+            span: span(),
+        };
+        let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
+            .expect("numeric body requirements collect");
+        let alternatives =
+            inferred_plus_alternatives(&[parameter("left"), parameter("right")], &constraints)
+                .expect("numeric requirement retains the numeric alternative");
+
+        assert_eq!(
+            alternatives
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["(num, num) -> num"]
+        );
+    }
+
+    #[test]
+    fn parameter_constraints_include_defaults_and_recur_arguments() {
+        let mut value = parameter("value");
+        value.default = Some(Expr {
+            kind: ExprKind::Binary {
+                left: Box::new(name("value")),
+                operator: Binary::Divide,
+                right: Box::new(name("other")),
+            },
+            span: span(),
+        });
+        let body = Expr {
+            kind: ExprKind::Recur(vec![CallArgument::Positional(Expr {
+                kind: ExprKind::Binary {
+                    left: Box::new(name("other")),
+                    operator: Binary::Modulo,
+                    right: Box::new(name("value")),
+                },
+                span: span(),
+            })]),
+            span: span(),
+        };
+        let constraints = parameter_constraints(&[value, parameter("other")], &body)
+            .expect("defaults and recur expressions collect");
+
+        assert_eq!(constraints.requirements["value"].value_type, Type::Num);
+        assert_eq!(constraints.requirements["other"].value_type, Type::Num);
+    }
+
+    #[test]
+    fn parameter_constraints_exclude_nested_and_ineligible_parameters() {
+        let mut explicit = parameter("explicit");
+        explicit.annotation = Some(TypeAnnotation::Name("str".into()));
+        let mut rest = parameter("rest");
+        rest.variadic = true;
+        let mut discard = parameter("_");
+        discard.discard = true;
+        let body = Expr {
+            kind: ExprKind::Block(vec![
+                Expr {
+                    kind: ExprKind::Binary {
+                        left: Box::new(name("explicit")),
+                        operator: Binary::Divide,
+                        right: Box::new(name("rest")),
+                    },
+                    span: span(),
+                },
+                Expr {
+                    kind: ExprKind::Function {
+                        type_parameters: Vec::new(),
+                        parameters: vec![parameter("outer")],
+                        return_annotation: None,
+                        body: Box::new(Expr {
+                            kind: ExprKind::Binary {
+                                left: Box::new(name("outer")),
+                                operator: Binary::Divide,
+                                right: Box::new(name("outer")),
+                            },
+                            span: span(),
+                        }),
+                    },
+                    span: span(),
+                },
+            ]),
+            span: span(),
+        };
+        let constraints =
+            parameter_constraints(&[parameter("outer"), explicit, rest, discard], &body)
+                .expect("ineligible and nested requirements are ignored");
+
+        assert!(matches!(
+            constraints.requirements["outer"].value_type,
+            Type::Unknown
+        ));
+        assert!(!constraints.requirements.contains_key("explicit"));
+        assert!(!constraints.requirements.contains_key("rest"));
+        assert!(!constraints.requirements.contains_key("_"));
+    }
+
+    #[test]
+    fn solved_parameter_signature_rejects_an_incompatible_direct_call() {
+        let error = super::super::compile(
+            "test.slug",
+            "val divide = fn(value) { value / 10 }\ndivide(\"no\")",
+        )
+        .expect_err("a known string argument cannot satisfy the inferred num parameter");
+
+        assert_eq!(error.kind, super::super::SourceErrorKind::Semantic);
+        assert!(error.message.contains("expected num, got str"));
+    }
+
+    #[test]
+    fn solved_parameter_facts_select_numeric_lowering_opcodes() {
+        let program = super::super::compile(
+            "test.slug",
+            "val divide = fn(value) { value / 10 }\nval before = fn(value) { value < 10 }",
+        )
+        .expect("numeric body constraints compile");
+        let opcodes = (0..program.chunk_count())
+            .flat_map(|index| {
+                program
+                    .chunk(index)
+                    .expect("existing chunk")
+                    .code
+                    .iter()
+                    .map(|instruction| instruction.opcode)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(opcodes.contains(&crate::bytecode::PackedOpcode::DivideNum));
+        assert!(opcodes.contains(&crate::bytecode::PackedOpcode::LessNum));
     }
 
     #[test]
@@ -3144,6 +3912,7 @@ mod tests {
                 variadic: false,
             }],
             result: Type::union([Type::Generic(0), Type::Nil]),
+            inferred_alternatives: Vec::new(),
         };
         let database = Type::Resource(ResourceIdentity::declared("db.slug", "Database"));
         let status = Type::Enum(super::super::semantic::EnumIdentity::declared(
@@ -3306,6 +4075,7 @@ mod tests {
                 variadic: false,
             }],
             result: Type::union([Type::Generic(0), Type::Nil]),
+            inferred_alternatives: Vec::new(),
         };
         let actual = Type::List(Some(Box::new(Type::Str)));
         let mut inferred = HashMap::new();
@@ -3338,8 +4108,8 @@ mod tests {
             .expect("known spread binds");
         let mut substitutions = HashMap::new();
         infer(
-            &bound.values[0].0.value_type,
-            bound.values[0].1,
+            &bound.values[0].1.value_type,
+            bound.values[0].2,
             &mut substitutions,
             &SourceSpan::new("test", 1, 1),
         )
@@ -3403,8 +4173,8 @@ mod tests {
             .expect("named required argument binds with omitted default");
         let mut substitutions = HashMap::new();
         infer(
-            &bound.values[0].0.value_type,
-            bound.values[0].1,
+            &bound.values[0].1.value_type,
+            bound.values[0].2,
             &mut substitutions,
             &SourceSpan::new("test", 1, 1),
         )
@@ -3445,6 +4215,7 @@ mod tests {
                 },
             ],
             result: Type::Generic(0),
+            inferred_alternatives: Vec::new(),
         };
         let result = instantiate_candidate(
             &signature,

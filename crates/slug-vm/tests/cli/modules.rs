@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn imports_body_derived_parameter_signatures_without_reinferring_them() {
+    let root = std::env::temp_dir().join(format!(
+        "slug-cli-imported-inferred-parameters-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create inferred parameter fixture directory");
+    fs::write(
+        root.join("numeric.slug"),
+        "export val divide = fn(value) { value / 2 }\n",
+    )
+    .expect("write inferred export module");
+    let path = root.join("main.slug");
+    fs::write(
+        &path,
+        "val numeric = import(\"numeric\")\nprintln(numeric.divide(8))\n",
+    )
+    .expect("write compatible importing source");
+    let output = slug().arg(&path).output().expect("run compatible import");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "4\n");
+
+    fs::write(
+        &path,
+        "val numeric = import(\"numeric\")\nnumeric.divide(\"x\")\n",
+    )
+    .expect("write incompatible importing source");
+    let output = slug().arg(&path).output().expect("run incompatible import");
+    fs::remove_dir_all(root).expect("remove inferred parameter fixture directory");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+}
+
+#[test]
 fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
     let path = fixture_path("program-entrypoint");
     fs::write(

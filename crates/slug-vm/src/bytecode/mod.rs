@@ -18,5 +18,5 @@ pub use metadata::{
 pub use op::{CallArgumentKind, DeferMode, Instruction, Op};
 pub use program::{BytecodeLayoutMetrics, Program};
 
-pub(crate) use chunk::{CompiledChunk, PackedInstruction};
+pub(crate) use chunk::{CompiledChunk, PackedInstruction, PackedOpcode};
 pub(crate) use program::{Entrypoint, EntrypointArguments};

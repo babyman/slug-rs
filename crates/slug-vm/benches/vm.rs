@@ -277,6 +277,14 @@ const WORKLOADS: &[Workload] = &[
         install: no_native_setup,
     },
     Workload {
+        name: "typed-arithmetic-and-branches",
+        iterations: ITERATIONS,
+        source: || {
+            "val sum = fn(n:num, total:num) { if (n == 0) { total } else { recur(n - 1, total + n) } }\nsum(200, 0)\n".into()
+        },
+        install: no_native_setup,
+    },
+    Workload {
         name: "calls-and-closures",
         iterations: ITERATIONS,
         source: || {

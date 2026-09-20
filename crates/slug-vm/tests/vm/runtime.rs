@@ -54,6 +54,33 @@ fn records_direct_local_vector_reuse_across_recur() {
 
 #[test]
 #[cfg(feature = "metrics")]
+fn resolves_ordinary_call_sites_only_while_rendering_an_error() {
+    let program = compile(
+        "lazy-call-span.slug",
+        "val fail = fn() { 1 / 0 }\nval main = fn() { fail() }\n",
+    )
+    .expect("compile call-site diagnostic workload");
+
+    let mut vm = Vm::new();
+    let error = vm
+        .run_program(&program)
+        .expect_err("division by zero must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::DivideByZero);
+    assert_eq!(error.frames.len(), 2);
+    assert!(error.frames.iter().any(|frame| {
+        frame
+            .span
+            .as_ref()
+            .is_some_and(|span| span.path.as_ref() == "lazy-call-span.slug")
+    }));
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.source_span_clones, 1);
+    assert_eq!(metrics.source_span_lookups, 1);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
 fn positional_recur_uses_generic_binding_when_defaults_are_needed() {
     let program = compile(
         "recur-default-binding.slug",

@@ -19,7 +19,15 @@ const WORKLOADS: &[Workload] = &[
         expected_stdout: "ok\n",
     },
     Workload {
+        name: "typed-n-body",
+        expected_stdout: "ok\n",
+    },
+    Workload {
         name: "spectral-norm",
+        expected_stdout: "ok\n",
+    },
+    Workload {
+        name: "typed-spectral-norm",
         expected_stdout: "ok\n",
     },
     Workload {

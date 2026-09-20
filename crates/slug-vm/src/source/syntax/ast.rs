@@ -131,7 +131,7 @@ pub(super) struct SelectCase {
 #[derive(Clone, Debug)]
 pub(super) enum SelectCaseKind {
     Receive(Expr),
-    Send { channel: Expr, value: Expr },
+    Send { channel: Expr, value: Box<Expr> },
     After(Expr),
     Await(Expr),
     Default,

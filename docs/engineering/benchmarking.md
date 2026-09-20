@@ -30,7 +30,8 @@ cargo bench -p slug-vm --bench source -- --json
 ```
 
 The initial workload corpus is Benchmark-Game-inspired, rather than a port of
-the upstream corpus: function calls, a small n-body-style floating-point loop,
-a spectral-norm-style nested numeric loop, and binary trees. Each pair is
-intentionally written in the idioms currently supported by Slug and Python;
-keep output checks and workload intent aligned when adding a pair.
+the upstream corpus: function calls, untyped and `num`-annotated pairs of
+small n-body-style floating-point loops and spectral-norm-style nested numeric
+loops, and binary trees. Each pair is intentionally written in the idioms
+currently supported by Slug and Python; keep output checks and workload intent
+aligned when adding a pair.

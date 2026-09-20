@@ -16,7 +16,7 @@ use crate::value::TaskAdmission;
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, SpanId, Value,
-    bytecode::{EntrypointArguments, Op, SelectCase},
+    bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
@@ -47,11 +47,11 @@ use calls::{CallableRuntimeSignature, ExpandedCallArguments, NamedArgument};
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
-use frames::{Frame, LocalSlot, ProvidedArguments, frame_locals};
+use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments, frame_locals};
 use operations::{
-    add, bit_not, bitwise, construct_struct, copy_value, divide, index_value, is_map_key,
-    list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
-    slice_value, subtract,
+    add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, divide_num, index_value,
+    is_map_key, list_append, list_prepend, matches_pattern, modulo, modulo_num, multiply,
+    multiply_num, negate, numbers, shift, slice_value, subtract, subtract_num,
 };
 use progress::ProgressDriver;
 #[cfg(feature = "concurrency")]
@@ -1931,12 +1931,204 @@ impl Vm {
                 .clone();
             let instruction = self.next_instruction(&frame_program)?;
             self.active_span = instruction.span;
-            if let BorrowedSpanOpOutcome::Settled(value) =
-                self.execute_borrowed_span_op(&frame_program, &instruction.op, None)?
+            let outcome = if let Some(outcome) =
+                self.execute_packed_hot_op(&frame_program, &instruction)?
             {
+                outcome
+            } else {
+                let instruction = Program::unpack_instruction(&instruction).map_err(|message| {
+                    self.error(RuntimeErrorKind::InvalidBytecode, message, None)
+                })?;
+                self.execute_borrowed_span_op(&frame_program, &instruction.op, None)?
+            };
+            if let BorrowedSpanOpOutcome::Settled(value) = outcome {
                 return Ok(ExecutionOutcome::Settled(Ok(value)));
             }
         }
+    }
+
+    /// Dispatches the common packed instructions without reconstructing a
+    /// builder-facing `Op`. Less frequent instructions retain the checked
+    /// fallback while this representation transition is measured.
+    #[allow(clippy::too_many_lines)]
+    fn execute_packed_hot_op(
+        &mut self,
+        program: &Program,
+        instruction: &PackedInstruction,
+    ) -> VmResult<Option<BorrowedSpanOpOutcome>> {
+        let operand = instruction.a as usize;
+        match instruction.opcode {
+            PackedOpcode::Constant => {
+                let chunk = self.current_chunk(program)?;
+                let value = match chunk.constants.get(operand) {
+                    Some(crate::Constant::Value(value)) => value.clone(),
+                    Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
+                        chunk: *function,
+                        captures: Vec::new(),
+                        program: Some(self.active_program()?),
+                        globals: Some(self.globals.clone()),
+                        #[cfg(feature = "concurrency")]
+                        capture_sources: Vec::new(),
+                    })),
+                    None => {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("constant {operand} does not exist"),
+                            None,
+                        ));
+                    }
+                };
+                self.stack.push(value);
+            }
+            PackedOpcode::Nil => self.stack.push(Value::Nil),
+            PackedOpcode::True => self.stack.push(Value::Bool(true)),
+            PackedOpcode::False => self.stack.push(Value::Bool(false)),
+            PackedOpcode::Pop => {
+                self.pop_at(None)?;
+            }
+            PackedOpcode::Duplicate => self.stack.push(self.peek_at(None)?.clone()),
+            PackedOpcode::GetLocal => self.stack.push(self.local_value(operand, None)?),
+            PackedOpcode::SetLocal => {
+                let value = self.pop_at(None)?;
+                self.set_local_at(operand, value, None)?;
+            }
+            PackedOpcode::GetGlobal => {
+                let name = program
+                    .global_name(crate::GlobalNameId::new(instruction.a))
+                    .expect("validated global name metadata");
+                let value = self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::Name,
+                            format!("unknown name `{name}`"),
+                            None,
+                        )
+                    })?
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, None))?;
+                self.stack.push(value);
+            }
+            PackedOpcode::List => {
+                let values = self.pop_values_at(operand, None)?;
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(values.len());
+                self.stack
+                    .push(Value::List(List::from_values(values).into_shared()));
+            }
+            PackedOpcode::Map => {
+                let values = self.pop_values_at(operand.saturating_mul(2), None)?;
+                let mut entries = Vec::with_capacity(operand);
+                for pair in values.chunks_exact(2) {
+                    if !is_map_key(&pair[0]) {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            format!("{} cannot be used as a map key", pair[0].type_name()),
+                            None,
+                        ));
+                    }
+                    entries.push((pair[0].clone(), pair[1].clone()));
+                }
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(entries.len());
+                self.stack.push(Value::Map(Map::new(entries).into_shared()));
+            }
+            PackedOpcode::GetIndex => {
+                let (collection, index) = self.pop_pair_at(None)?;
+                self.stack.push(
+                    index_value(
+                        collection,
+                        &index,
+                        #[cfg(feature = "metrics")]
+                        &self.metrics,
+                    )
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, None))?,
+                );
+            }
+            PackedOpcode::Add => {
+                let (left, right) = self.pop_pair_at(None)?;
+                #[cfg(feature = "metrics")]
+                match (&left, &right) {
+                    (Value::List(left), Value::List(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    (Value::Map(left), Value::Map(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    (Value::Bytes(left), Value::Bytes(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    _ => {}
+                }
+                self.stack.push(
+                    add(left, right)
+                        .map_err(|(kind, message)| self.error_at(kind, message, None))?,
+                );
+            }
+            PackedOpcode::AddNum => {
+                let (left, right) = self.pop_pair_at(None)?;
+                self.stack.push(
+                    add_num(left, right)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, None))?,
+                );
+            }
+            PackedOpcode::Subtract => {
+                let (left, right) = self.pop_pair_at(None)?;
+                #[cfg(feature = "metrics")]
+                if let Value::Map(entries) = &left {
+                    self.record_collection_update(entries.len(), Rc::strong_count(entries) == 1);
+                }
+                self.stack.push(
+                    subtract(left, right)
+                        .map_err(|(kind, message)| self.error_at(kind, message, None))?,
+                );
+            }
+            PackedOpcode::SubtractNum => self.binary_at(None, subtract_num)?,
+            PackedOpcode::Multiply => self.binary_at(None, multiply)?,
+            PackedOpcode::MultiplyNum => self.binary_at(None, multiply_num)?,
+            PackedOpcode::Divide => self.binary_at(None, divide)?,
+            PackedOpcode::DivideNum => self.binary_at(None, divide_num)?,
+            PackedOpcode::Modulo => self.binary_at(None, modulo)?,
+            PackedOpcode::ModuloNum => self.binary_at(None, modulo_num)?,
+            PackedOpcode::Equal => {
+                let (left, right) = self.pop_pair_at(None)?;
+                self.stack.push(Value::Bool(left == right));
+            }
+            PackedOpcode::Greater => self.compare_at(None, std::cmp::Ordering::Greater)?,
+            PackedOpcode::GreaterNum => {
+                self.numeric_compare_at(None, std::cmp::Ordering::Greater)?;
+            }
+            PackedOpcode::Less => self.compare_at(None, std::cmp::Ordering::Less)?,
+            PackedOpcode::LessNum => self.numeric_compare_at(None, std::cmp::Ordering::Less)?,
+            PackedOpcode::Jump => self.jump_at(operand, None)?,
+            PackedOpcode::JumpIfFalse => {
+                if !self.peek_at(None)?.is_truthy() {
+                    self.jump_at(operand, None)?;
+                }
+            }
+            PackedOpcode::CallPositional => self.call_positional_at(program, operand, None)?,
+            PackedOpcode::RecurPositional => self.recur_positional_at(program, operand, None)?,
+            PackedOpcode::Return => {
+                let value = self.pop_at(None)?;
+                if let Some(value) = self.begin_return(value)? {
+                    return Ok(Some(BorrowedSpanOpOutcome::Settled(value)));
+                }
+            }
+            _ => return Ok(None),
+        }
+        Ok(Some(BorrowedSpanOpOutcome::Continue))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2246,6 +2438,13 @@ impl Vm {
                         .map_err(|(kind, message)| self.error_at(kind, message, span))?,
                 );
             }
+            Op::AddNum => {
+                let (left, right) = self.pop_pair_at(span)?;
+                self.stack.push(
+                    add_num(left, right)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                );
+            }
             Op::Subtract => {
                 let (left, right) = self.pop_pair_at(span)?;
                 #[cfg(feature = "metrics")]
@@ -2257,9 +2456,13 @@ impl Vm {
                         .map_err(|(kind, message)| self.error_at(kind, message, span))?,
                 );
             }
+            Op::SubtractNum => self.binary_at(span, subtract_num)?,
             Op::Multiply => self.binary_at(span, multiply)?,
+            Op::MultiplyNum => self.binary_at(span, multiply_num)?,
             Op::Divide => self.binary_at(span, divide)?,
+            Op::DivideNum => self.binary_at(span, divide_num)?,
             Op::Modulo => self.binary_at(span, modulo)?,
+            Op::ModuloNum => self.binary_at(span, modulo_num)?,
             Op::BitAnd => {
                 self.binary_at(span, |left, right| bitwise(left, right, |a, b| a & b))?;
             }
@@ -2460,7 +2663,9 @@ impl Vm {
                 self.stack.push(Value::Bool(left == right));
             }
             Op::Greater => self.compare_at(span, std::cmp::Ordering::Greater)?,
+            Op::GreaterNum => self.numeric_compare_at(span, std::cmp::Ordering::Greater)?,
             Op::Less => self.compare_at(span, std::cmp::Ordering::Less)?,
+            Op::LessNum => self.numeric_compare_at(span, std::cmp::Ordering::Less)?,
             Op::GuardGreater => self.guard_compare_at(span, std::cmp::Ordering::Greater)?,
             Op::GuardLess => self.guard_compare_at(span, std::cmp::Ordering::Less)?,
             Op::Jump(target) => self.jump_at(*target, span)?,
@@ -2958,7 +3163,7 @@ impl Vm {
         Ok(BorrowedSpanOpOutcome::Continue)
     }
 
-    fn next_instruction(&mut self, program: &Program) -> VmResult<crate::Instruction> {
+    fn next_instruction(&mut self, program: &Program) -> VmResult<PackedInstruction> {
         let (chunk_index, ip) = self
             .frames
             .last()
@@ -2990,8 +3195,7 @@ impl Vm {
             metrics.instructions_executed += 1;
         }
         self.frames.last_mut().expect("active frame was checked").ip += 1;
-        Program::unpack_instruction(instruction)
-            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))
+        Ok(*instruction)
     }
 
     fn current_chunk<'a>(
@@ -3111,7 +3315,7 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    call_span: span,
+                    call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
                     ip: 0,
                     stack_base: base,
                     locals,
@@ -3284,7 +3488,7 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    call_span: self.owned_span(span),
+                    call_span: self.frame_call_span(span),
                     ip: 0,
                     stack_base: base,
                     locals,
@@ -3438,7 +3642,7 @@ impl Vm {
             program: program.clone(),
             globals: vm.globals.clone(),
             closure,
-            call_span: span,
+            call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
             ip: 0,
             stack_base: 0,
             locals,
@@ -4033,12 +4237,7 @@ impl Vm {
                     span,
                 )
             })?;
-            if chunk.arity != count
-                || chunk
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.has_default || parameter.variadic)
-            {
+            if chunk.arity != count || !chunk.exact_positional_parameters {
                 return Ok(false);
             }
             chunk.locals
@@ -4062,7 +4261,7 @@ impl Vm {
                 .clone()
                 .unwrap_or_else(|| self.globals.clone()),
             closure,
-            call_span: self.owned_span(span),
+            call_span: self.frame_call_span(span),
             ip: 0,
             stack_base: base,
             locals,
@@ -5099,6 +5298,16 @@ impl Vm {
             metrics.source_span_clones += 1;
         }
         span.cloned()
+    }
+
+    /// Retains a compact caller instruction reference whenever this call is
+    /// entered by the dispatch loop. The caller frame owns the corresponding
+    /// program until this frame returns, so diagnostics can resolve it lazily.
+    fn frame_call_span(&self, span: Option<&SourceSpan>) -> Option<CallSpan> {
+        match span {
+            Some(span) => Some(CallSpan::Owned(Box::new(span.clone()))),
+            None => self.active_span.map(CallSpan::Instruction),
+        }
     }
 
     fn active_span(&self) -> Option<&SourceSpan> {

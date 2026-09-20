@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use crate::{
-    Program, SourceSpan, Value,
+    Program, SourceSpan, SpanId, Value,
     value::{BindingCell, Closure, GlobalEnvironment},
 };
 
@@ -21,7 +21,7 @@ pub(super) struct Frame {
     pub(super) program: Rc<Program>,
     pub(super) globals: GlobalEnvironment,
     pub(super) closure: Rc<Closure>,
-    pub(super) call_span: Option<SourceSpan>,
+    pub(super) call_span: Option<CallSpan>,
     pub(super) ip: usize,
     pub(super) stack_base: usize,
     pub(super) locals: Vec<LocalSlot>,
@@ -32,6 +32,17 @@ pub(super) struct Frame {
     /// Lexical scope depth, including the function's root scope.
     pub(super) scope_depth: u32,
     pub(super) cleanup_owner_depth: Option<usize>,
+}
+
+/// The call site retained for an eventual stack trace.
+///
+/// Ordinary source calls refer to the caller's installed span table. The
+/// caller frame remains live while its callee runs, so the owned span only
+/// remains necessary for host-initiated and cross-execution calls.
+#[derive(Clone)]
+pub(super) enum CallSpan {
+    Instruction(SpanId),
+    Owned(Box<SourceSpan>),
 }
 
 #[derive(Clone)]

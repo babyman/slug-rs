@@ -233,3 +233,66 @@ existing all-direct local-vector reuse. In these samples it completed in
 227.240 ms, compared with about 266.456 ms in the preceding lazy-scope run.
 The new counters separately expose exact and generic recur bindings, and a
 defaulted-parameter test protects the generic fallback.
+
+## Packed hot-op dispatch — 2026-09-19
+
+Installed bytecode remains validated before execution, but the execution loop
+now dispatches the common fixed-width instructions directly from
+`PackedInstruction`, including pooled global loads and fixed-size lists. The
+rich builder-facing `Op` is reconstructed only for the less common fallback
+instructions while that transition is measured.
+
+A 15-sample local run from the dirty worktree based on
+`67071af698bb26e4cb9b7b62e024d2869a480fc0` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |   94.079 ms |      26.546 ms |          3.54x |
+| n-body        |   39.863 ms |      22.158 ms |          1.80x |
+| spectral-norm |   14.331 ms |      20.228 ms |          0.71x |
+| binary-trees  |  107.960 ms |      29.421 ms |          3.67x |
+
+The accompanying in-process benchmark recorded `ordinary-calls-200` at
+210.427 ms for 1,000 runs, down from roughly 227 ms before the direct
+hot-op path. This result also includes the preceding compact call-site
+diagnostic representation, so it is a directional comparison rather than an
+isolated attribution. The workload continues to preserve checked arithmetic,
+collection-update metrics, and call-frame diagnostics; fallback instructions
+retain the existing rich-op dispatcher.
+
+## Type-informed numeric operator family — 2026-09-20
+
+Semantic analysis now retains each checked expression's type for lowering.
+When both operands of arithmetic or ordinary relational comparisons are proven
+`num`, lowering emits private numeric bytecode. The family covers `+`, `-`,
+`*`, `/`, `%`, `<`, `>`, `<=`, and `>=`. Every opcode still validates its
+values at runtime because hosts may construct private bytecode directly. It
+preserves integer overflow, division-by-zero, and mixed integer/float behavior.
+Equality, bitwise operations, and match-guard comparisons retain their generic
+opcodes because their semantics or accepted operands differ.
+
+The in-process benchmark compares equivalent 200-step recursive sum programs.
+The typed form declares both parameters as `num`; each workload executes
+2,623,000 instructions over 1,000 runs.
+
+| Workload                      |    Elapsed |
+|-------------------------------|-----------:|
+| arithmetic-and-branches       | 167.664 ms |
+| typed-arithmetic-and-branches | 137.026 ms |
+
+The paired source workloads give the full-process result below. The Python
+implementations are identical within each pair; each typed Slug version adds
+only established `num` annotations. Each value is the median of three
+independent 15-sample benchmark medians.
+
+| Workload            | Slug median | Python median | Slug / Python |
+|---------------------|------------:|--------------:|--------------:|
+| n-body              |   38.431 ms |     21.011 ms |         1.83x |
+| typed-n-body        |   38.267 ms |     21.192 ms |         1.81x |
+| spectral-norm       |   13.950 ms |     19.607 ms |         0.71x |
+| typed-spectral-norm |   13.260 ms |     19.444 ms |         0.68x |
+
+The n-body difference is within local variation, but typed spectral-norm is
+about 5% faster. Keep these paired workloads as the gate for subsequent
+type-informed optimizations; do not infer a general source-versus-CPython
+improvement from this narrow result.

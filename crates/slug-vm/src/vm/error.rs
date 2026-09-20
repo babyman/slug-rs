@@ -109,14 +109,23 @@ impl Vm {
             frames: self
                 .frames
                 .iter()
+                .enumerate()
                 .rev()
-                .filter(|frame| !frame.cleanup_action)
-                .map(|frame| CallFrame {
+                .filter(|(_, frame)| !frame.cleanup_action)
+                .map(|(index, frame)| CallFrame {
                     function: frame
                         .program
                         .chunk(frame.closure.chunk)
                         .map_or_else(|| "<invalid frame>".to_owned(), |chunk| chunk.name.clone()),
-                    span: frame.call_span.clone(),
+                    span: match &frame.call_span {
+                        Some(super::frames::CallSpan::Instruction(span)) => self
+                            .frames
+                            .get(index.saturating_sub(1))
+                            .and_then(|caller| caller.program.span(*span))
+                            .cloned(),
+                        Some(super::frames::CallSpan::Owned(span)) => Some((**span).clone()),
+                        None => None,
+                    },
                 })
                 .collect(),
             cause: None,

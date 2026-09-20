@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Implemented finite body-derived `+` overload alternatives for known local
+  and imported callables. Static calls preserve numeric, string, list, bytes,
+  and map relationships; structural and dynamic calls retain checked runtime
+  dispatch.
+
+- Specified finite body-derived overload alternatives for known overloaded
+  operator families, starting with `+`, and recorded their implementation plan.
+
+- Implemented body-derived `num` inference for unannotated function parameters
+  used by division, modulo, unary negation, and ordering comparisons. Solved
+  signatures now drive static calls, overload identity, function values,
+  exports, imports, and checked numeric lowering without adding runtime
+  annotation validation.
+
+- Retained semantic expression types through lowering and added checked numeric
+  arithmetic and relational bytecode for source operands proven to be `num`.
+
+- Retained ordinary VM call sites as compact installed-span references and
+  resolve them only while rendering an error, preserving diagnostics while
+  removing hot-path span cloning and shrinking call frames.
+
+- Dispatched common installed VM instructions directly from their packed
+  representation, retaining the checked rich-bytecode fallback for less
+  frequent operations.
+
 - Added crate-local contributor guidance for module loading, native ingress,
   and coupled value/runtime ownership.
 
