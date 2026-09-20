@@ -275,10 +275,10 @@ The in-process benchmark compares equivalent 200-step recursive sum programs.
 The typed form declares both parameters as `num`; each workload executes
 2,623,000 instructions over 1,000 runs.
 
-| Workload                       | Elapsed |
-|--------------------------------|--------:|
-| arithmetic-and-branches        | 167.664 ms |
-| typed-arithmetic-and-branches  | 137.026 ms |
+| Workload                      |    Elapsed |
+|-------------------------------|-----------:|
+| arithmetic-and-branches       | 167.664 ms |
+| typed-arithmetic-and-branches | 137.026 ms |
 
 The paired source workloads give the full-process result below. The Python
 implementations are identical within each pair; each typed Slug version adds
