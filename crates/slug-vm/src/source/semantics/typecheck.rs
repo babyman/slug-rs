@@ -358,6 +358,207 @@ impl ParameterConstraints {
         Ok(())
     }
 
+    /// Adds facts from calls whose callee metadata is already available in the
+    /// lexical environment. The ordinary collector deliberately remains
+    /// environment-free so its operator facts cannot accidentally depend on
+    /// declaration order.
+    fn collect_known_calls(
+        &mut self,
+        expression: &Expr,
+        environment: &Environment,
+    ) -> Result<(), SourceError> {
+        match &expression.kind {
+            ExprKind::Call { callee, arguments } => {
+                if let ExprKind::Name(name) = &callee.kind
+                    && let Some(binding) = environment.lookup(name)
+                    && let [signature] = binding.callables.as_slice()
+                    && signature.generic_arity == 0
+                    && signature.inferred_alternatives.is_empty()
+                {
+                    let shapes = arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            CallArgument::Positional(_) => ArgumentShape::Positional,
+                            CallArgument::Named { name, .. } => ArgumentShape::Named(name),
+                            CallArgument::Spread(_) => ArgumentShape::Spread,
+                        })
+                        .collect::<Vec<_>>();
+                    let actuals = vec![Type::Unknown; arguments.len()];
+                    if let Some(bound) = bind_arguments(&signature.parameters, &shapes, &actuals) {
+                        for ((_, parameter, _), argument) in bound.values.iter().zip(arguments) {
+                            let argument = match argument {
+                                CallArgument::Positional(argument)
+                                | CallArgument::Named {
+                                    value: argument, ..
+                                } => argument,
+                                CallArgument::Spread(_) => continue,
+                            };
+                            self.require(argument, parameter.value_type.clone())?;
+                        }
+                    }
+                }
+                self.collect_known_calls(callee, environment)?;
+                self.collect_known_call_arguments(arguments, environment)
+            }
+            ExprKind::Declare { value, tags, .. } => {
+                self.collect_known_calls(value, environment)?;
+                for tag in tags {
+                    for argument in &tag.arguments {
+                        self.collect_known_calls(argument, environment)?;
+                    }
+                }
+                Ok(())
+            }
+            ExprKind::Assign { value, .. }
+            | ExprKind::Return { value }
+            | ExprKind::Throw { value }
+            | ExprKind::Defer { value, .. }
+            | ExprKind::Spawn(value)
+            | ExprKind::Prefix { value, .. }
+            | ExprKind::TypeApply { callee: value, .. } => {
+                self.collect_known_calls(value, environment)
+            }
+            ExprKind::Recur(arguments) => self.collect_known_call_arguments(arguments, environment),
+            ExprKind::Nursery { limit, body } => {
+                if let Some(limit) = limit {
+                    self.collect_known_calls(limit, environment)?;
+                }
+                self.collect_known_calls(body, environment)
+            }
+            ExprKind::Select(cases) => {
+                for case in cases {
+                    match &case.kind {
+                        SelectCaseKind::Receive(value)
+                        | SelectCaseKind::After(value)
+                        | SelectCaseKind::Await(value) => {
+                            self.collect_known_calls(value, environment)?;
+                        }
+                        SelectCaseKind::Send { channel, value } => {
+                            self.collect_known_calls(channel, environment)?;
+                            self.collect_known_calls(value, environment)?;
+                        }
+                        SelectCaseKind::Default => {}
+                    }
+                    if let Some(handler) = &case.handler {
+                        self.collect_known_calls(handler, environment)?;
+                    }
+                }
+                Ok(())
+            }
+            ExprKind::Match { subject, cases } => {
+                if let Some(subject) = subject {
+                    self.collect_known_calls(subject, environment)?;
+                }
+                for case in cases {
+                    if let Some(guard) = &case.guard {
+                        self.collect_known_calls(guard, environment)?;
+                    }
+                    self.collect_known_calls(&case.value, environment)?;
+                }
+                Ok(())
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.collect_known_calls(left, environment)?;
+                self.collect_known_calls(right, environment)
+            }
+            ExprKind::Block(values) => {
+                for value in values {
+                    self.collect_known_calls(value, environment)?;
+                }
+                Ok(())
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_known_calls(condition, environment)?;
+                self.collect_known_calls(then_branch, environment)?;
+                if let Some(else_branch) = else_branch {
+                    self.collect_known_calls(else_branch, environment)?;
+                }
+                Ok(())
+            }
+            ExprKind::List(values) => {
+                for value in values {
+                    self.collect_known_calls(
+                        match value {
+                            ListElement::Value(value) | ListElement::Spread(value) => value,
+                        },
+                        environment,
+                    )?;
+                }
+                Ok(())
+            }
+            ExprKind::Map(entries) => {
+                for (key, value) in entries {
+                    self.collect_known_calls(key, environment)?;
+                    self.collect_known_calls(value, environment)?;
+                }
+                Ok(())
+            }
+            ExprKind::StructInit { schema, fields } => {
+                self.collect_known_calls(schema, environment)?;
+                for (_, value) in fields {
+                    self.collect_known_calls(value, environment)?;
+                }
+                Ok(())
+            }
+            ExprKind::StructCopy { value, fields } => {
+                self.collect_known_calls(value, environment)?;
+                for (_, replacement) in fields {
+                    self.collect_known_calls(replacement, environment)?;
+                }
+                Ok(())
+            }
+            ExprKind::Index { collection, index } => {
+                self.collect_known_calls(collection, environment)?;
+                self.collect_known_calls(index, environment)
+            }
+            ExprKind::Slice {
+                collection,
+                start,
+                end,
+                step,
+            } => {
+                self.collect_known_calls(collection, environment)?;
+                for bound in [start, end, step].into_iter().flatten() {
+                    self.collect_known_calls(bound, environment)?;
+                }
+                Ok(())
+            }
+            ExprKind::Function { .. }
+            | ExprKind::Foreign { .. }
+            | ExprKind::StructSchema(_)
+            | ExprKind::Resource { .. }
+            | ExprKind::Enum { .. }
+            | ExprKind::TypeAlias { .. }
+            | ExprKind::Value(_)
+            | ExprKind::Interpolate(_)
+            | ExprKind::Documentation(_)
+            | ExprKind::NotImplemented
+            | ExprKind::Name(_) => Ok(()),
+        }
+    }
+
+    fn collect_known_call_arguments(
+        &mut self,
+        arguments: &[CallArgument],
+        environment: &Environment,
+    ) -> Result<(), SourceError> {
+        for argument in arguments {
+            self.collect_known_calls(
+                match argument {
+                    CallArgument::Positional(value)
+                    | CallArgument::Named { value, .. }
+                    | CallArgument::Spread(value) => value,
+                },
+                environment,
+            )?;
+        }
+        Ok(())
+    }
+
     fn collect_pattern(&mut self, pattern: &Pattern) -> Result<(), SourceError> {
         match pattern {
             Pattern::At { pattern, .. } => self.collect_pattern(pattern),
@@ -389,14 +590,17 @@ impl ParameterConstraints {
 fn parameter_constraints(
     parameters: &[Parameter],
     body: &Expr,
+    environment: &Environment,
 ) -> Result<ParameterConstraints, SourceError> {
     let mut constraints = ParameterConstraints::for_parameters(parameters);
     for parameter in parameters {
         if let Some(default) = &parameter.default {
             constraints.collect(default)?;
+            constraints.collect_known_calls(default, environment)?;
         }
     }
     constraints.collect(body)?;
+    constraints.collect_known_calls(body, environment)?;
     Ok(constraints)
 }
 
@@ -989,7 +1193,7 @@ fn callable_signature(
     else {
         return Ok(None);
     };
-    let constraints = parameter_constraints(parameters, body)?;
+    let constraints = parameter_constraints(parameters, body, environment)?;
     let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
     let inferred_parameters = solved_parameter_types(&constraints);
     let mut signature = function_type(
@@ -1243,23 +1447,7 @@ fn check_expression_inner(
             return_annotation,
             body,
         } => {
-            let provisional = function_type(
-                function_type_parameters,
-                parameters,
-                return_annotation.as_ref(),
-                &expression.span,
-                environment,
-                None,
-            )?;
-            let _ = check_function_body(
-                parameters,
-                &provisional,
-                return_annotation.as_ref(),
-                body,
-                environment,
-                function_type_parameters,
-            )?;
-            let constraints = parameter_constraints(parameters, body)?;
+            let constraints = parameter_constraints(parameters, body, environment)?;
             let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
             let inferred_parameters = solved_parameter_types(&constraints);
             let mut signature = function_type(
@@ -2959,6 +3147,9 @@ fn instantiate_candidate(
     }
     for (_, parameter, actual) in &bound.values {
         let actual = (*actual).clone();
+        if is_dynamic_operation_type(&actual) {
+            continue;
+        }
         if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
             if report_mismatch {
                 if let Some(index) = first_generic_parameter(&parameter.value_type)
@@ -3681,12 +3872,10 @@ mod tests {
     }
 
     #[test]
-    fn inferred_signatures_propagate_direct_calls_and_nil_partitions() {
+    fn inferred_signatures_propagate_direct_calls() {
         let signatures = analyzed_signatures(
             "export val divide = fn(value) { value / 10 }\n\
-             export val apply = fn(value) { divide(value) }\n\
-             export val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\n\
-             export val non_nil_first = fn(value) { if (value != nil) { value / 10 } else { 0 } }\n",
+             export val apply = fn(value) { divide(value) }\n",
         );
 
         for name in ["divide", "apply"] {
@@ -3694,6 +3883,15 @@ mod tests {
             assert_eq!(signature.parameters[0].value_type, Type::Num);
             assert_eq!(signature.result, Type::Num);
         }
+    }
+
+    #[test]
+    fn inferred_signatures_join_nil_partitions() {
+        let signatures = analyzed_signatures(
+            "export val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\n\
+             export val non_nil_first = fn(value) { if (value != nil) { value / 10 } else { 0 } }\n",
+        );
+
         for name in ["nil_first", "non_nil_first"] {
             let signature = &signatures[name];
             assert_eq!(
@@ -3755,8 +3953,12 @@ mod tests {
             },
             span: span(),
         };
-        let constraints = parameter_constraints(&[parameter("value"), parameter("limit")], &body)
-            .expect("numeric body requirements collect");
+        let constraints = parameter_constraints(
+            &[parameter("value"), parameter("limit")],
+            &body,
+            &Environment::new(),
+        )
+        .expect("numeric body requirements collect");
 
         assert_eq!(constraints.requirements["value"].value_type, Type::Num);
         assert_eq!(constraints.requirements["limit"].value_type, Type::Num);
@@ -3765,8 +3967,12 @@ mod tests {
     #[test]
     fn inferred_plus_alternatives_cover_the_five_runtime_families() {
         let body = binary(name("left"), Binary::Add, name("right"));
-        let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
-            .expect("plus operands collect");
+        let constraints = parameter_constraints(
+            &[parameter("left"), parameter("right")],
+            &body,
+            &Environment::new(),
+        )
+        .expect("plus operands collect");
         let alternatives =
             inferred_plus_alternatives(&[parameter("left"), parameter("right")], &constraints)
                 .expect("unconstrained plus body retains every family");
@@ -3795,8 +4001,12 @@ mod tests {
             ]),
             span: span(),
         };
-        let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
-            .expect("numeric body requirements collect");
+        let constraints = parameter_constraints(
+            &[parameter("left"), parameter("right")],
+            &body,
+            &Environment::new(),
+        )
+        .expect("numeric body requirements collect");
         let alternatives =
             inferred_plus_alternatives(&[parameter("left"), parameter("right")], &constraints)
                 .expect("numeric requirement retains the numeric alternative");
@@ -3832,8 +4042,9 @@ mod tests {
             })]),
             span: span(),
         };
-        let constraints = parameter_constraints(&[value, parameter("other")], &body)
-            .expect("defaults and recur expressions collect");
+        let constraints =
+            parameter_constraints(&[value, parameter("other")], &body, &Environment::new())
+                .expect("defaults and recur expressions collect");
 
         assert_eq!(constraints.requirements["value"].value_type, Type::Num);
         assert_eq!(constraints.requirements["other"].value_type, Type::Num);
@@ -3876,9 +4087,12 @@ mod tests {
             ]),
             span: span(),
         };
-        let constraints =
-            parameter_constraints(&[parameter("outer"), explicit, rest, discard], &body)
-                .expect("ineligible and nested requirements are ignored");
+        let constraints = parameter_constraints(
+            &[parameter("outer"), explicit, rest, discard],
+            &body,
+            &Environment::new(),
+        )
+        .expect("ineligible and nested requirements are ignored");
 
         assert!(matches!(
             constraints.requirements["outer"].value_type,
