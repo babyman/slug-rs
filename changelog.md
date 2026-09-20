@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented finite body-derived `+` overload alternatives for known local
+  and imported callables. Static calls preserve numeric, string, list, bytes,
+  and map relationships; structural and dynamic calls retain checked runtime
+  dispatch.
+
 - Specified finite body-derived overload alternatives for known overloaded
   operator families, starting with `+`, and recorded their implementation plan.
 

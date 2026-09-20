@@ -78,7 +78,8 @@ contract is documented separately as `.cslug`.
   collection results, checks fields through known schemas, and retains inferred
   function-value input and result types for higher-order positional calls,
   including body-derived `num` parameter types from division, modulo, unary
-  negation, and ordering comparisons.
+  negation, and ordering comparisons, plus finite body-derived `+` overload
+  alternatives for numeric, string, list, bytes, and map relationships.
 - Lexically scoped semantic bindings retain ordered callable signatures through
   local declarations, aliases, parameters, and nested blocks. Calls to locally
   known callables undergo mandatory shape, generic, and parameter-type

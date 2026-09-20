@@ -947,8 +947,9 @@ and map alternatives, but it must not admit `num` and `bytes` merely because
 both categories occur in different alternatives. Calls through structural or
 otherwise dynamic function values retain ordinary dynamic behavior when those
 alternatives are unavailable. The current Rust subset implements singleton
-body-derived `num` signatures; finite inferred overload alternatives remain
-future work.
+body-derived `num` signatures and the five finite `+` alternatives described
+above. Their metadata is retained for statically known local and imported
+callables; structural calls and calls with dynamic operands remain dynamic.
 
 An inferred `var` binding fixes its static type from its initializer; later
 known assignments must conform to that type and do not widen it. A dynamically
