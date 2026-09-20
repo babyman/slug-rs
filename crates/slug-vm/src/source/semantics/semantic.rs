@@ -347,6 +347,14 @@ impl InferredAlternative {
         )
     }
 
+    pub(super) fn parameter_types(&self) -> &[AlternativeType] {
+        &self.parameters
+    }
+
+    pub(super) fn result_type(&self) -> &AlternativeType {
+        &self.result
+    }
+
     /// Whether the known body facts are compatible with this symbolic scheme.
     /// Missing facts deliberately remain dynamic and cannot remove a scheme.
     pub(super) fn accepts_constraints(&self, constraints: &[Option<&Type>]) -> bool {

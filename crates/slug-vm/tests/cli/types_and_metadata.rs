@@ -6,7 +6,8 @@ fn selects_body_derived_plus_alternatives_at_known_calls() {
     fs::write(
         &path,
         "val combine = fn(left, right) { left + right }\n\
-         println(combine(20, 22), combine(\"x\", 1), combine([1], [\"x\"]), combine(0x\"01\", 0x\"02\"), combine({left: 1}, {right: \"x\"}))\n",
+         val decorate = fn(prefix = \">\", left, right) { prefix + left + right }\n\
+         println(combine(20, 22), combine(\"x\", 1), combine([1], [\"x\"]), combine(0x\"01\", 0x\"02\"), combine({left: 1}, {right: \"x\"}), decorate(right = \"b\", prefix = \"[\", left = \"a\"))\n",
     )
     .expect("write inferred plus alternatives source");
     let output = slug()
@@ -20,12 +21,12 @@ fn selects_body_derived_plus_alternatives_at_known_calls() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "42 x1 [1, \"x\"] 0x\"0102\" {\"left\": 1, \"right\": \"x\"}\n"
+        "42 x1 [1, \"x\"] 0x\"0102\" {\"left\": 1, \"right\": \"x\"} [ab\n"
     );
 
     fs::write(
         &path,
-        "val combine = fn(left, right) { left + right }\ncombine(1, 0x\"01\")\n",
+        "val combine = fn(left, right) { left + right }\ncombine(right = 0x\"01\", left = 1)\n",
     )
     .expect("write incompatible inferred plus source");
     let output = slug()

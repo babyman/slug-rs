@@ -418,13 +418,6 @@ fn inferred_plus_alternatives(
     parameters: &[Parameter],
     constraints: &ParameterConstraints,
 ) -> Result<Vec<InferredAlternative>, SourceError> {
-    if parameters.len() != 2
-        || parameters
-            .iter()
-            .any(|parameter| parameter.default.is_some() || parameter.variadic || parameter.discard)
-    {
-        return Ok(Vec::new());
-    }
     let Some(first) = constraints.plus_operands.first() else {
         return Ok(Vec::new());
     };
@@ -451,7 +444,35 @@ fn inferred_plus_alternatives(
             alternatives.retain(|alternative| compatible.contains(alternative));
         }
     }
-    Ok(alternatives)
+    let left_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.left)
+        .expect("collected plus operand is a function parameter");
+    let right_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.right)
+        .expect("collected plus operand is a function parameter");
+    Ok(alternatives
+        .into_iter()
+        .map(|alternative| {
+            InferredAlternative::new(
+                parameters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        if index == left_index {
+                            alternative.parameter_types()[0].clone()
+                        } else if index == right_index {
+                            alternative.parameter_types()[1].clone()
+                        } else {
+                            AlternativeType::concrete(Type::universal())
+                        }
+                    })
+                    .collect(),
+                alternative.result_type().clone(),
+            )
+        })
+        .collect())
 }
 
 fn plus_alternatives() -> Vec<InferredAlternative> {
@@ -2894,26 +2915,20 @@ fn instantiate_candidate(
         return Ok(None);
     };
     if !signature.inferred_alternatives.is_empty()
-        && arguments
-            .iter()
-            .all(|argument| matches!(argument, ArgumentShape::Positional))
+        && bound.values.len() == signature.parameters.len()
         && !bound
             .values
             .iter()
-            .any(|(_, actual)| is_dynamic_operation_type(actual))
+            .any(|(_, _, actual)| is_dynamic_operation_type(actual))
     {
+        let mut alternative_actuals = vec![Type::Unknown; signature.parameters.len()];
+        for (index, _, actual) in &bound.values {
+            alternative_actuals[*index] = (*actual).clone();
+        }
         let alternatives = signature
             .inferred_alternatives
             .iter()
-            .filter_map(|alternative| {
-                alternative.instantiate(
-                    &bound
-                        .values
-                        .iter()
-                        .map(|(_, actual)| (*actual).clone())
-                        .collect::<Vec<_>>(),
-                )
-            })
+            .filter_map(|alternative| alternative.instantiate(&alternative_actuals))
             .collect::<Vec<_>>();
         if alternatives.len() != 1 {
             if report_mismatch {
@@ -2941,7 +2956,7 @@ fn instantiate_candidate(
             identity: signature.identity(),
         }));
     }
-    for (parameter, actual) in &bound.values {
+    for (_, parameter, actual) in &bound.values {
         let actual = (*actual).clone();
         if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
             if report_mismatch {
@@ -2965,7 +2980,7 @@ fn instantiate_candidate(
     let bound_types = bound
         .values
         .iter()
-        .map(|(parameter, _)| substitute(&parameter.value_type, &substitutions).widen_unknown())
+        .map(|(_, parameter, _)| substitute(&parameter.value_type, &substitutions).widen_unknown())
         .collect();
     Ok(Some(InstantiatedCandidate {
         bound_types,
@@ -3013,7 +3028,7 @@ fn first_generic_parameter(value_type: &Type) -> Option<usize> {
 }
 
 struct BoundArguments<'a> {
-    values: Vec<(&'a CallableParameter, &'a Type)>,
+    values: Vec<(usize, &'a CallableParameter, &'a Type)>,
     uses_empty_variadic: bool,
 }
 
@@ -3032,7 +3047,7 @@ fn bind_arguments<'a>(
             && let Type::List(Some(element)) = &actuals[0]
         {
             return Some(BoundArguments {
-                values: vec![(&parameters[0], element.as_ref())],
+                values: vec![(0, &parameters[0], element.as_ref())],
                 uses_empty_variadic: false,
             });
         }
@@ -3047,7 +3062,7 @@ fn bind_arguments<'a>(
     let mut positional = 0usize;
     let mut variadic_supplied = false;
     for (argument, actual) in arguments.iter().zip(actuals) {
-        let parameter = match argument {
+        let index = match argument {
             ArgumentShape::Positional => {
                 let index = if positional < fixed {
                     positional
@@ -3062,7 +3077,7 @@ fn bind_arguments<'a>(
                 } else {
                     variadic_supplied = true;
                 }
-                &parameters[index]
+                index
             }
             ArgumentShape::Named(name) => {
                 let index = parameters
@@ -3075,11 +3090,11 @@ fn bind_arguments<'a>(
                 if parameters[index].variadic {
                     variadic_supplied = true;
                 }
-                &parameters[index]
+                index
             }
             ArgumentShape::Spread => unreachable!("spread calls were handled above"),
         };
-        bound.push((parameter, actual));
+        bound.push((index, &parameters[index], actual));
     }
     if parameters
         .iter()
@@ -3734,11 +3749,9 @@ mod tests {
         };
         let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
             .expect("numeric body requirements collect");
-        let alternatives = inferred_plus_alternatives(
-            &[parameter("left"), parameter("right"), parameter("limit")],
-            &constraints,
-        )
-        .expect("numeric requirement retains the numeric alternative");
+        let alternatives =
+            inferred_plus_alternatives(&[parameter("left"), parameter("right")], &constraints)
+                .expect("numeric requirement retains the numeric alternative");
 
         assert_eq!(
             alternatives
@@ -4094,8 +4107,8 @@ mod tests {
             .expect("known spread binds");
         let mut substitutions = HashMap::new();
         infer(
-            &bound.values[0].0.value_type,
-            bound.values[0].1,
+            &bound.values[0].1.value_type,
+            bound.values[0].2,
             &mut substitutions,
             &SourceSpan::new("test", 1, 1),
         )
@@ -4159,8 +4172,8 @@ mod tests {
             .expect("named required argument binds with omitted default");
         let mut substitutions = HashMap::new();
         infer(
-            &bound.values[0].0.value_type,
-            bound.values[0].1,
+            &bound.values[0].1.value_type,
+            bound.values[0].2,
             &mut substitutions,
             &SourceSpan::new("test", 1, 1),
         )
