@@ -6,6 +6,11 @@ implemented in
 It does not reopen the rule that function bodies, rather than callers, derive
 their alternatives.
 
+Known-direct-call constraints and nil-partitioned parameter inference are
+tracked separately in [Body-Derived Inference Follow-Up](body-derived-inference-follow-up.md).
+They may supply singleton body facts to a future alternative family, but do not
+expand structural-call preservation or introduce specialization.
+
 ## Scope and invariants
 
 - Extend one operator family at a time, with a normative operand/result rule

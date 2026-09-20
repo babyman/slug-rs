@@ -919,16 +919,35 @@ val names:list<str|nil> = ["Ada", nil]
 val scores:map<str, num|nil> = {ada: 10, bob: nil}
 ```
 
-An unannotated parameter derives its type only from constraints in its declaring
+An unannotated parameter derives its type from constraints in its declaring
 function body; callers validate the completed signature but never contribute to
-its inference. Division, modulo, unary negation, and ordinary ordering
-comparisons infer `num` when they require an unannotated parameter to be
-numeric. If the body supplies no unique type, the parameter widens to
-`any|nil`; `fn(value)` and `fn(value:any|nil)` therefore have identical input
-signatures only in that fallback case. An unannotated binding is inferred from
-its initializer, and an unannotated function result is inferred from all
-reachable result expressions. An explicit annotation remains the declaration's
-public type even when its value is inferred more narrowly:
+its inference. A direct call in that body may use an already-known, uniquely
+resolved callee signature to constrain a parameter passed to one of its bound
+argument positions. This is still body-derived inference: the call does not
+derive or alter the callee's signature. Dynamic or structural calls, spreads,
+ambiguous alternatives, and unsupported recursive inference cycles do not add
+such a constraint and retain dynamic behavior. Division, modulo, unary
+negation, and ordinary ordering comparisons infer `num` when they require an
+unannotated parameter to be numeric.
+
+A direct `value == nil` or `value != nil` test for an unannotated parameter
+partitions its body requirements by reachable branch. The nil branch contributes
+`nil`; the opposite branch contributes its non-nil requirements. Joining those
+partitions may therefore infer `num|nil`:
+
+```slug
+val divideOrZero = fn(value) {
+  if (value == nil) { 0 } else { value / 10 }
+}
+```
+
+This direct-comparison rule does not extend to aliases, arbitrary predicates,
+or mutation-sensitive facts. If the body supplies no unique type, the parameter
+widens to `any|nil`; `fn(value)` and `fn(value:any|nil)` therefore have
+identical input signatures only in that fallback case. An unannotated binding
+is inferred from its initializer, and an unannotated function result is inferred
+from all reachable result expressions. An explicit annotation remains the
+declaration's public type even when its value is inferred more narrowly:
 
 ```slug
 val inferred = fn() { 1 }             // fn():num
@@ -936,6 +955,11 @@ val widened = fn():any|nil { 1 }      // fn():any|nil
 val nonNil = fn():any { "ready" }     // cannot return nil
 val divided = fn(value) { value / 10 } // fn<num, num>
 ```
+
+The current Rust subset implements direct numeric facts and finite `+`
+alternatives. Known-callee parameter propagation and nil-partitioned parameter
+inference are specified above but remain unimplemented; consult the language
+support matrix for implementation status.
 
 An overloaded operator may instead derive finite inferred overload alternatives.
 Each alternative is a symbolic parameter tuple and result relationship; it is
