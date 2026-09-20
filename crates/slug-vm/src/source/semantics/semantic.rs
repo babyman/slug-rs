@@ -363,6 +363,22 @@ impl InferredAlternative {
                 })
             })
     }
+
+    pub(super) fn instantiate(&self, actuals: &[Type]) -> Option<(Vec<Type>, Type)> {
+        if self.parameters.len() != actuals.len() {
+            return None;
+        }
+        let mut substitutions = HashMap::new();
+        if !self
+            .parameters
+            .iter()
+            .zip(actuals)
+            .all(|(parameter, actual)| parameter.accepts_constraint(actual, &mut substitutions))
+        {
+            return None;
+        }
+        Some(self.substitute(&substitutions))
+    }
 }
 
 impl fmt::Display for InferredAlternative {

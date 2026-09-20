@@ -42,13 +42,13 @@ derive or mutate a function's alternatives.
 
 ### 3. Publish and select alternatives
 
-- [ ] Retain a single source callable implementation with its alternative set;
+- [x] Retain a single source callable implementation with its alternative set;
   do not synthesize duplicate source declarations or bytecode chunks.
-- [ ] Extend callable metadata and exported module snapshots to retain the set.
-- [ ] At a statically known direct call, instantiate alternatives against actual
+- [x] Extend callable metadata and exported module snapshots to retain the set.
+- [x] At a statically known direct call, instantiate alternatives against actual
   argument types and use existing applicability/specificity rules to require a
   unique match.
-- [ ] Define duplicate identity and ambiguity behavior when explicit overloads
+- [x] Define duplicate identity and ambiguity behavior when explicit overloads
   overlap inferred alternatives.
 
 ### 4. Preserve dynamic execution boundaries

@@ -415,8 +415,16 @@ fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String,
 /// body-derived singleton facts. They remain private here; callable metadata
 /// publishes them in the following implementation stage.
 fn inferred_plus_alternatives(
+    parameters: &[Parameter],
     constraints: &ParameterConstraints,
 ) -> Result<Vec<InferredAlternative>, SourceError> {
+    if parameters.len() != 2
+        || parameters
+            .iter()
+            .any(|parameter| parameter.default.is_some() || parameter.variadic || parameter.discard)
+    {
+        return Ok(Vec::new());
+    }
     let Some(first) = constraints.plus_operands.first() else {
         return Ok(Vec::new());
     };
@@ -942,6 +950,7 @@ fn function_type(
             })
             .transpose()?
             .unwrap_or(Type::Unknown),
+        inferred_alternatives: Vec::new(),
     })
 }
 
@@ -960,17 +969,18 @@ fn callable_signature(
         return Ok(None);
     };
     let constraints = parameter_constraints(parameters, body)?;
-    let _ = inferred_plus_alternatives(&constraints)?;
+    let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
     let inferred_parameters = solved_parameter_types(&constraints);
-    function_type(
+    let mut signature = function_type(
         type_parameters,
         parameters,
         return_annotation.as_ref(),
         span,
         environment,
         Some(&inferred_parameters),
-    )
-    .map(Some)
+    )?;
+    signature.inferred_alternatives = inferred_alternatives;
+    Ok(Some(signature))
 }
 
 fn check_function_body(
@@ -1229,7 +1239,7 @@ fn check_expression_inner(
                 function_type_parameters,
             )?;
             let constraints = parameter_constraints(parameters, body)?;
-            let _ = inferred_plus_alternatives(&constraints)?;
+            let _ = inferred_plus_alternatives(parameters, &constraints)?;
             let inferred_parameters = solved_parameter_types(&constraints);
             let mut signature = function_type(
                 function_type_parameters,
@@ -2847,7 +2857,7 @@ enum ArgumentShape<'a> {
     Spread,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn instantiate_candidate(
     signature: &CallableSignature,
     arguments: &[ArgumentShape<'_>],
@@ -2883,6 +2893,54 @@ fn instantiate_candidate(
     let Some(bound) = bind_arguments(&signature.parameters, arguments, actuals) else {
         return Ok(None);
     };
+    if !signature.inferred_alternatives.is_empty()
+        && arguments
+            .iter()
+            .all(|argument| matches!(argument, ArgumentShape::Positional))
+        && !bound
+            .values
+            .iter()
+            .any(|(_, actual)| is_dynamic_operation_type(actual))
+    {
+        let alternatives = signature
+            .inferred_alternatives
+            .iter()
+            .filter_map(|alternative| {
+                alternative.instantiate(
+                    &bound
+                        .values
+                        .iter()
+                        .map(|(_, actual)| (*actual).clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        if alternatives.len() != 1 {
+            if report_mismatch {
+                return Err(SourceError::semantic(
+                    if alternatives.is_empty() {
+                        "no inferred overload alternative matches the call"
+                    } else {
+                        "ambiguous inferred overload alternative"
+                    },
+                    span.clone(),
+                ));
+            }
+            return Ok(None);
+        }
+        let (bound_types, result) = alternatives.into_iter().next().expect("one alternative");
+        return Ok(Some(InstantiatedCandidate {
+            bound_types,
+            generic_arity: signature.generic_arity,
+            non_variadic: !signature
+                .parameters
+                .last()
+                .is_some_and(|parameter| parameter.variadic),
+            uses_empty_variadic: bound.uses_empty_variadic,
+            result,
+            identity: signature.identity(),
+        }));
+    }
     for (parameter, actual) in &bound.values {
         let actual = (*actual).clone();
         if let Err(error) = infer(&parameter.value_type, &actual, &mut substitutions, span) {
@@ -3605,6 +3663,7 @@ mod tests {
                 generic_arity: 0,
                 parameters: Vec::new(),
                 result: Type::Unknown,
+                inferred_alternatives: Vec::new(),
             }
             .identity(),
         }
@@ -3645,8 +3704,9 @@ mod tests {
         let body = binary(name("left"), Binary::Add, name("right"));
         let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
             .expect("plus operands collect");
-        let alternatives = inferred_plus_alternatives(&constraints)
-            .expect("unconstrained plus body retains every family");
+        let alternatives =
+            inferred_plus_alternatives(&[parameter("left"), parameter("right")], &constraints)
+                .expect("unconstrained plus body retains every family");
 
         assert_eq!(
             alternatives
@@ -3668,17 +3728,17 @@ mod tests {
         let body = Expr {
             kind: ExprKind::Block(vec![
                 binary(name("left"), Binary::Add, name("right")),
-                binary(name("left"), Binary::Divide, name("limit")),
+                binary(name("left"), Binary::Divide, name("right")),
             ]),
             span: span(),
         };
-        let constraints = parameter_constraints(
+        let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
+            .expect("numeric body requirements collect");
+        let alternatives = inferred_plus_alternatives(
             &[parameter("left"), parameter("right"), parameter("limit")],
-            &body,
+            &constraints,
         )
-        .expect("numeric body requirements collect");
-        let alternatives = inferred_plus_alternatives(&constraints)
-            .expect("numeric requirement retains the numeric alternative");
+        .expect("numeric requirement retains the numeric alternative");
 
         assert_eq!(
             alternatives
@@ -3838,6 +3898,7 @@ mod tests {
                 variadic: false,
             }],
             result: Type::union([Type::Generic(0), Type::Nil]),
+            inferred_alternatives: Vec::new(),
         };
         let database = Type::Resource(ResourceIdentity::declared("db.slug", "Database"));
         let status = Type::Enum(super::super::semantic::EnumIdentity::declared(
@@ -4000,6 +4061,7 @@ mod tests {
                 variadic: false,
             }],
             result: Type::union([Type::Generic(0), Type::Nil]),
+            inferred_alternatives: Vec::new(),
         };
         let actual = Type::List(Some(Box::new(Type::Str)));
         let mut inferred = HashMap::new();
@@ -4139,6 +4201,7 @@ mod tests {
                 },
             ],
             result: Type::Generic(0),
+            inferred_alternatives: Vec::new(),
         };
         let result = instantiate_candidate(
             &signature,

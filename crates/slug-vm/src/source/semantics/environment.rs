@@ -6,7 +6,7 @@ use std::{
 
 use crate::SourceSpan;
 
-use super::semantic::{EnumIdentity, ResourceIdentity, SchemaIdentity, Type};
+use super::semantic::{EnumIdentity, InferredAlternative, ResourceIdentity, SchemaIdentity, Type};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CallableParameter {
@@ -21,17 +21,21 @@ pub(super) struct CallableSignature {
     pub(super) generic_arity: usize,
     pub(super) parameters: Vec<CallableParameter>,
     pub(super) result: Type,
+    pub(super) inferred_alternatives: Vec<InferredAlternative>,
 }
 
 impl CallableSignature {
     pub(super) fn has_same_input(&self, other: &Self) -> bool {
-        self.generic_arity == other.generic_arity && self.parameters == other.parameters
+        self.generic_arity == other.generic_arity
+            && self.parameters == other.parameters
+            && self.inferred_alternatives == other.inferred_alternatives
     }
 
     pub(super) fn identity(&self) -> CallableIdentity {
         CallableIdentity {
             generic_arity: self.generic_arity,
             parameters: self.parameters.clone(),
+            inferred_alternatives: self.inferred_alternatives.clone(),
         }
     }
 }
@@ -82,6 +86,7 @@ impl ForeignResourceSignature {
 pub struct CallableIdentity {
     generic_arity: usize,
     parameters: Vec<CallableParameter>,
+    inferred_alternatives: Vec<InferredAlternative>,
 }
 
 #[derive(Clone, Debug)]
@@ -600,6 +605,7 @@ mod tests {
                 variadic: false,
             }],
             result,
+            inferred_alternatives: Vec::new(),
         }
     }
 

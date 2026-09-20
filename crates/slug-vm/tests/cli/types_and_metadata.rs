@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn selects_body_derived_plus_alternatives_at_known_calls() {
+    let path = fixture_path("inferred-plus-alternatives");
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         println(combine(20, 22), combine(\"x\", 1), combine([1], [\"x\"]), combine(0x\"01\", 0x\"02\"), combine({left: 1}, {right: \"x\"}))\n",
+    )
+    .expect("write inferred plus alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred plus alternatives source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "42 x1 [1, \"x\"] 0x\"0102\" {\"left\": 1, \"right\": \"x\"}\n"
+    );
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\ncombine(1, 0x\"01\")\n",
+    )
+    .expect("write incompatible inferred plus source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible inferred plus source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
+    );
+    fs::remove_file(path).expect("remove inferred plus alternatives source");
+}
+
+#[test]
 fn infers_unannotated_parameter_types_from_numeric_function_bodies() {
     let path = fixture_path("body-derived-parameter-inference");
     fs::write(
