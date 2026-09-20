@@ -33,6 +33,7 @@ pub(super) struct Compiler {
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_resource_signatures: HashMap<SourceSpan, super::environment::ForeignResourceSignature>,
     match_constraints: HashMap<SourceSpan, Vec<Option<super::semantic::Type>>>,
+    expression_types: HashMap<SourceSpan, super::semantic::Type>,
     callable_identities: Vec<CallableIdentity>,
     guard_comparisons: bool,
 }
@@ -67,6 +68,7 @@ impl Compiler {
             foreign_identities: analysis.foreign_identities.clone(),
             foreign_resource_signatures: analysis.foreign_resource_signatures.clone(),
             match_constraints: analysis.match_constraints.clone(),
+            expression_types: analysis.expression_types.clone(),
             callable_identities: Vec::new(),
             guard_comparisons: false,
         }
@@ -676,7 +678,14 @@ impl Compiler {
                     }
                     Binary::Add => {
                         self.expression(state, right)?;
-                        state.emit(Op::Add, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::AddNum
+                            } else {
+                                Op::Add
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Subtract => {
                         self.expression(state, right)?;
@@ -1172,6 +1181,19 @@ impl Compiler {
             state.emit(op, &expression.span);
         }
         Ok(())
+    }
+
+    fn numeric_operands(&self, left: &Expr, right: &Expr) -> bool {
+        matches!(
+            (
+                self.expression_types.get(&left.span),
+                self.expression_types.get(&right.span),
+            ),
+            (
+                Some(super::semantic::Type::Num),
+                Some(super::semantic::Type::Num),
+            )
+        )
     }
 
     fn selected_identity(&mut self, span: &SourceSpan) -> Option<usize> {

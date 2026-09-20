@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Retained semantic expression types through lowering and added checked
+  numeric-addition bytecode for source operands proven to be `num`.
+
 - Retained ordinary VM call sites as compact installed-span references and
   resolve them only while rendering an error, preserving diagnostics while
   removing hot-path span cloning and shrinking call frames.

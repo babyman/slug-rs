@@ -40,6 +40,7 @@ pub(crate) enum PackedOpcode {
     GetIndex,
     GetSlice,
     Add,
+    AddNum,
     Subtract,
     Multiply,
     Divide,

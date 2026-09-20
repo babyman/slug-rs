@@ -49,7 +49,7 @@ use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
 use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments, frame_locals};
 use operations::{
-    add, bit_not, bitwise, construct_struct, copy_value, divide, index_value, is_map_key,
+    add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, index_value, is_map_key,
     list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
     slice_value, subtract,
 };
@@ -2077,6 +2077,13 @@ impl Vm {
                         .map_err(|(kind, message)| self.error_at(kind, message, None))?,
                 );
             }
+            PackedOpcode::AddNum => {
+                let (left, right) = self.pop_pair_at(None)?;
+                self.stack.push(
+                    add_num(left, right)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, None))?,
+                );
+            }
             PackedOpcode::Subtract => {
                 let (left, right) = self.pop_pair_at(None)?;
                 #[cfg(feature = "metrics")]
@@ -2421,6 +2428,13 @@ impl Vm {
                 self.stack.push(
                     add(left, right)
                         .map_err(|(kind, message)| self.error_at(kind, message, span))?,
+                );
+            }
+            Op::AddNum => {
+                let (left, right) = self.pop_pair_at(span)?;
+                self.stack.push(
+                    add_num(left, right)
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
                 );
             }
             Op::Subtract => {

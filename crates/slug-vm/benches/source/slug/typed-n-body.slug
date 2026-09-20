@@ -1,0 +1,11 @@
+val advance = fn(remaining: num, position: num, velocity: num) {
+    if (remaining == 0) {
+        position
+    } else {
+        recur(remaining - 1, position + velocity, velocity + 0.000_001)
+    }
+}
+val main = fn() {
+    val position = advance(50_000, 0.0, 0.01)
+    println(if (position > 1_000.0) { "ok" } else { "unexpected" })
+}

@@ -633,8 +633,18 @@ fn pattern_binding_names<'a>(pattern: &'a Pattern, names: &mut Vec<&'a String>) 
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn check_expression(
+    expression: &Expr,
+    environment: &mut Environment,
+    type_parameters: &[String],
+) -> Result<Type, SourceError> {
+    let value_type = check_expression_inner(expression, environment, type_parameters)?;
+    environment.record_expression_type(expression.span.clone(), value_type.clone());
+    Ok(value_type)
+}
+
+#[allow(clippy::too_many_lines)]
+fn check_expression_inner(
     expression: &Expr,
     environment: &mut Environment,
     type_parameters: &[String],

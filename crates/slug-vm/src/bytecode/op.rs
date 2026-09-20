@@ -80,6 +80,8 @@ pub enum Op {
         has_step: bool,
     },
     Add,
+    /// Numeric-only addition selected from compiler type facts.
+    AddNum,
     Subtract,
     Multiply,
     Divide,

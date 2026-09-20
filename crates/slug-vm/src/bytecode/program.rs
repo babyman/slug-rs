@@ -592,6 +592,7 @@ impl Program {
                 u32::from(*has_step),
             ),
             Op::Add => (PackedOpcode::Add, 0, 0, 0),
+            Op::AddNum => (PackedOpcode::AddNum, 0, 0, 0),
             Op::Subtract => (PackedOpcode::Subtract, 0, 0, 0),
             Op::Multiply => (PackedOpcode::Multiply, 0, 0, 0),
             Op::Divide => (PackedOpcode::Divide, 0, 0, 0),
@@ -714,6 +715,7 @@ impl Program {
                 has_step: instruction.c != 0,
             },
             PackedOpcode::Add => Op::Add,
+            PackedOpcode::AddNum => Op::AddNum,
             PackedOpcode::Subtract => Op::Subtract,
             PackedOpcode::Multiply => Op::Multiply,
             PackedOpcode::Divide => Op::Divide,
@@ -1406,6 +1408,7 @@ impl Program {
             Op::CombineOverloads
             | Op::GetIndex
             | Op::Add
+            | Op::AddNum
             | Op::Subtract
             | Op::Multiply
             | Op::Divide

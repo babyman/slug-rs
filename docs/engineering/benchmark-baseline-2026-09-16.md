@@ -259,3 +259,35 @@ diagnostic representation, so it is a directional comparison rather than an
 isolated attribution. The workload continues to preserve checked arithmetic,
 collection-update metrics, and call-frame diagnostics; fallback instructions
 retain the existing rich-op dispatcher.
+
+## Type-informed numeric addition — 2026-09-20
+
+Semantic analysis now retains each checked expression's type for lowering.
+When both operands of `+` are proven `num`, lowering emits private `AddNum`
+bytecode. The opcode still validates its values at runtime because hosts may
+construct private bytecode directly; it preserves integer overflow behavior
+and mixed integer/float results while skipping string and collection addition
+dispatch.
+
+The in-process benchmark compares equivalent 200-step recursive sum programs.
+The typed form declares both parameters as `num`; each workload executes
+2,623,000 instructions over 1,000 runs.
+
+| Workload                       | Elapsed |
+|--------------------------------|--------:|
+| arithmetic-and-branches        | 167.664 ms |
+| typed-arithmetic-and-branches  | 137.026 ms |
+
+The paired source workload gives the full-process result below. The Python
+implementation is identical for both rows; the typed Slug version adds only
+the established `num` annotations.
+
+| Workload     | Slug median | Python median | Slug / Python |
+|--------------|------------:|--------------:|--------------:|
+| n-body       |   39.671 ms |     23.436 ms |         1.69x |
+| typed-n-body |   40.474 ms |     23.690 ms |         1.71x |
+
+The single specialized addition does not produce an end-to-end improvement:
+the remaining arithmetic and comparison operations still use generic dispatch.
+Keep this paired workload as the gate for any coherent numeric-operator family,
+rather than adding isolated type-specialized opcodes.

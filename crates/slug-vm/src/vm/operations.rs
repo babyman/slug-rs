@@ -54,6 +54,27 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
         }
     }
 }
+
+/// Adds values whose source operands were proven to be numbers.
+///
+/// The value checks remain because private bytecode can be host-constructed.
+#[allow(clippy::cast_precision_loss)]
+pub(super) fn add_num(left: Value, right: Value) -> Result<Value, String> {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => a
+            .checked_add(b)
+            .map(Value::Int)
+            .ok_or_else(|| "integer overflow".into()),
+        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
+        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
+        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+        (left, right) => Err(format!(
+            "expected numbers, got {} and {}",
+            left.type_name(),
+            right.type_name()
+        )),
+    }
+}
 pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let Value::Map(entries) = left {
         if !is_map_key(&right) {
