@@ -757,10 +757,11 @@ arity and use by declaration-order position, each parameter's call-visible
 label, normalized annotation, default-presence, and variadic status. Generic
 parameter names do not participate. Union annotations are flattened,
 deduplicated, and canonically ordered; tuple elements and type arguments remain
-ordered. An unannotated parameter canonicalizes to `any|nil`, and a discard
-parameter has no call label. Default expressions and return annotations do not
-participate in identity. Signature equality is distinct from assignability,
-which is used only to determine overload applicability and specificity.
+ordered. An unannotated parameter canonicalizes to its body-derived type when
+one is uniquely inferred, otherwise to `any|nil`; a discard parameter has no
+call label. Default expressions and return annotations do not participate in
+identity. Signature equality is distinct from assignability, which is used
+only to determine overload applicability and specificity.
 
 When applicable candidates have equivalent instantiated parameter types, the
 candidate with lower generic arity is more specific. A non-generic concrete
@@ -800,10 +801,11 @@ line. Documentation and tags are observable through `slug.meta` introspection.
 Slug always performs semantic validation, including `recur` tail-position
 validation, struct-schema checks, program-entrypoint signature validation,
 and resolution of statically known overloads. Type annotations do not introduce
-runtime validation or coercion. Parameter annotations participate in mandatory
-resolution of statically known overloads. Semantic analysis uses annotations
-for additional diagnostics during every compilation. Those diagnostics prevent
-execution; they do not change overload selection.
+runtime validation or coercion. Parameter annotations and body-derived
+parameter types participate in mandatory resolution of statically known
+overloads. Semantic analysis uses these facts for additional diagnostics during
+every compilation. Those diagnostics prevent execution; they do not change
+runtime coercion or validation.
 
 Because a call spread has runtime-determined arity, a call to a statically known
 overload set with one or more `...spread` arguments is a semantic error. This
@@ -814,9 +816,10 @@ binding.
 The current Rust subset parses and retains declaration, parameter, return, and
 struct-field annotations. Its semantic analysis rejects directly provable
 annotation mismatches in declarations, parameter defaults, function returns,
-struct defaults, and calls to statically known annotated functions. Function
+struct defaults, and calls to statically known annotated functions. It does not
+yet implement body-derived parameter inference; until that work lands, function
 expressions infer structural `fn<R, P...>` value types from their parameter
-annotations and declared or inferred result; that precision is retained through
+annotations and declared or inferred results. That precision is retained through
 ordinary bindings and collection inference. It infers generic arguments from
 annotated call positions and supports explicit type applications. Successful
 match type constraints narrow case-local bindings. Semantic analysis tracks an
@@ -913,18 +916,22 @@ val names:list<str|nil> = ["Ada", nil]
 val scores:map<str, num|nil> = {ada: 10, bob: nil}
 ```
 
-An unannotated parameter has type `any|nil`; `fn(value)` and
-`fn(value:any|nil)` therefore have identical input signatures. An unannotated
-binding is inferred from its initializer, and an unannotated function result is
-inferred from all reachable result expressions. If no more precise type can be
-inferred, its type widens to `any|nil` before it is retained or used in overload
-resolution. An explicit annotation remains the declaration's public type even
-when its value is inferred more narrowly:
+An unannotated parameter derives its type only from constraints in its declaring
+function body; callers validate the completed signature but never contribute to
+its inference. Division, modulo, unary negation, and ordinary ordering
+comparisons infer `num` when they require an unannotated parameter to be
+numeric. If the body supplies no unique type, the parameter widens to
+`any|nil`; `fn(value)` and `fn(value:any|nil)` therefore have identical input
+signatures only in that fallback case. An unannotated binding is inferred from
+its initializer, and an unannotated function result is inferred from all
+reachable result expressions. An explicit annotation remains the declaration's
+public type even when its value is inferred more narrowly:
 
 ```slug
 val inferred = fn() { 1 }             // fn():num
 val widened = fn():any|nil { 1 }      // fn():any|nil
 val nonNil = fn():any { "ready" }     // cannot return nil
+val divided = fn(value) { value / 10 } // fn<num, num>
 ```
 
 An inferred `var` binding fixes its static type from its initializer; later

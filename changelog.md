@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Specified body-derived inference for unannotated function parameters and
+  recorded its implementation plan; callers validate solved signatures but do
+  not contribute inference facts.
+
 - Retained semantic expression types through lowering and added checked numeric
   arithmetic and relational bytecode for source operands proven to be `num`.
 
