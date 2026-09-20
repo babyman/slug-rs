@@ -338,6 +338,34 @@ fn body_derived_nil_guards_preserve_static_and_dynamic_boundaries() {
 }
 
 #[test]
+fn cyclic_unannotated_calls_retain_dynamic_signatures() {
+    let path = fixture_path("body-derived-inference-cycles");
+    fs::write(
+        &path,
+        "val self = fn(value) { self(value) }\n\
+         val left = fn(value) { right(value) }\n\
+         val right = fn(value) { left(value) }\n\
+         println(\"ok\")\n",
+    )
+    .expect("write cyclic inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run cyclic inference source");
+    fs::remove_file(path).expect("remove cyclic inference source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "ok\n"
+    );
+}
+
+#[test]
 fn infers_scalar_literal_types_through_bindings() {
     let path = fixture_path("scalar-literal-inference");
     fs::write(

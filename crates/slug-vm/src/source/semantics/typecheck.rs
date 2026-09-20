@@ -3999,6 +3999,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn cyclic_unannotated_calls_do_not_create_body_derived_constraints() {
+        let signatures = analyzed_signatures(
+            "export val self = fn(value) { self(value) }\n\
+             export val left = fn(value) { right(value) }\n\
+             export val right = fn(value) { left(value) }\n",
+        );
+
+        for name in ["self", "left", "right"] {
+            let signature = &signatures[name];
+            assert_eq!(signature.parameters[0].value_type, Type::universal());
+            assert_eq!(signature.result, Type::Unknown);
+        }
+    }
+
     fn binary(left: Expr, operator: Binary, right: Expr) -> Expr {
         Expr {
             kind: ExprKind::Binary {
