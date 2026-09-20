@@ -140,6 +140,15 @@ impl ParameterConstraints {
         ))
     }
 
+    fn include_nil_partition(&mut self, name: &str) {
+        let Some(requirement) = self.requirements.get_mut(name) else {
+            return;
+        };
+        if !matches!(requirement.value_type, Type::Unknown) {
+            requirement.value_type = Type::union([requirement.value_type.clone(), Type::Nil]);
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn collect(&mut self, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
@@ -559,6 +568,91 @@ impl ParameterConstraints {
         Ok(())
     }
 
+    fn collect_nil_partitions(&mut self, expression: &Expr) {
+        match &expression.kind {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if let ExprKind::Binary {
+                    left,
+                    operator: Binary::Equal | Binary::NotEqual,
+                    right,
+                } = &condition.kind
+                    && let (ExprKind::Name(name), ExprKind::Value(Value::Nil)) =
+                        (&left.kind, &right.kind)
+                {
+                    self.include_nil_partition(name);
+                }
+                self.collect_nil_partitions(condition);
+                self.collect_nil_partitions(then_branch);
+                if let Some(else_branch) = else_branch {
+                    self.collect_nil_partitions(else_branch);
+                }
+            }
+            ExprKind::Block(values) => {
+                for value in values {
+                    self.collect_nil_partitions(value);
+                }
+            }
+            ExprKind::Declare { value, .. }
+            | ExprKind::Assign { value, .. }
+            | ExprKind::Return { value }
+            | ExprKind::Throw { value }
+            | ExprKind::Defer { value, .. }
+            | ExprKind::Spawn(value)
+            | ExprKind::Prefix { value, .. }
+            | ExprKind::TypeApply { callee: value, .. } => self.collect_nil_partitions(value),
+            ExprKind::Call { callee, arguments } => {
+                self.collect_nil_partitions(callee);
+                for argument in arguments {
+                    self.collect_nil_partitions(match argument {
+                        CallArgument::Positional(value)
+                        | CallArgument::Named { value, .. }
+                        | CallArgument::Spread(value) => value,
+                    });
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.collect_nil_partitions(left);
+                self.collect_nil_partitions(right);
+            }
+            ExprKind::List(values) => {
+                for value in values {
+                    self.collect_nil_partitions(match value {
+                        ListElement::Value(value) | ListElement::Spread(value) => value,
+                    });
+                }
+            }
+            ExprKind::Map(entries) => {
+                for (key, value) in entries {
+                    self.collect_nil_partitions(key);
+                    self.collect_nil_partitions(value);
+                }
+            }
+            ExprKind::Function { .. }
+            | ExprKind::Foreign { .. }
+            | ExprKind::Recur(_)
+            | ExprKind::Nursery { .. }
+            | ExprKind::Select(_)
+            | ExprKind::Match { .. }
+            | ExprKind::StructSchema(_)
+            | ExprKind::StructInit { .. }
+            | ExprKind::StructCopy { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::Resource { .. }
+            | ExprKind::Enum { .. }
+            | ExprKind::TypeAlias { .. }
+            | ExprKind::Value(_)
+            | ExprKind::Interpolate(_)
+            | ExprKind::Documentation(_)
+            | ExprKind::NotImplemented
+            | ExprKind::Name(_) => {}
+        }
+    }
+
     fn collect_pattern(&mut self, pattern: &Pattern) -> Result<(), SourceError> {
         match pattern {
             Pattern::At { pattern, .. } => self.collect_pattern(pattern),
@@ -601,6 +695,7 @@ fn parameter_constraints(
     }
     constraints.collect(body)?;
     constraints.collect_known_calls(body, environment)?;
+    constraints.collect_nil_partitions(body);
     Ok(constraints)
 }
 
@@ -3888,11 +3983,13 @@ mod tests {
     #[test]
     fn inferred_signatures_join_nil_partitions() {
         let signatures = analyzed_signatures(
-            "export val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\n\
-             export val non_nil_first = fn(value) { if (value != nil) { value / 10 } else { 0 } }\n",
+            "export val divide = fn(value) { value / 10 }\n\
+             export val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\n\
+             export val non_nil_first = fn(value) { if (value != nil) { value / 10 } else { 0 } }\n\
+             export val wrapped = fn(value) { if (value == nil) { 0 } else { divide(value) } }\n",
         );
 
-        for name in ["nil_first", "non_nil_first"] {
+        for name in ["nil_first", "non_nil_first", "wrapped"] {
             let signature = &signatures[name];
             assert_eq!(
                 signature.parameters[0].value_type,
