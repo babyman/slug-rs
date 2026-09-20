@@ -3657,6 +3657,53 @@ mod tests {
         }
     }
 
+    fn analyzed_signatures(source: &str) -> HashMap<String, CallableSignature> {
+        let tokens = super::super::Lexer::new("test.slug", source)
+            .tokens()
+            .expect("source lexes");
+        let expressions = super::super::Parser::new(tokens)
+            .parse()
+            .expect("source parses");
+        analyze_with_imports(&expressions, HashMap::new())
+            .expect("source analyzes")
+            .snapshot
+            .exports
+            .into_iter()
+            .map(|(name, binding)| {
+                let signature = binding
+                    .callables
+                    .into_iter()
+                    .next()
+                    .expect("exported function has one signature");
+                (name, signature)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn inferred_signatures_propagate_direct_calls_and_nil_partitions() {
+        let signatures = analyzed_signatures(
+            "export val divide = fn(value) { value / 10 }\n\
+             export val apply = fn(value) { divide(value) }\n\
+             export val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\n\
+             export val non_nil_first = fn(value) { if (value != nil) { value / 10 } else { 0 } }\n",
+        );
+
+        for name in ["divide", "apply"] {
+            let signature = &signatures[name];
+            assert_eq!(signature.parameters[0].value_type, Type::Num);
+            assert_eq!(signature.result, Type::Num);
+        }
+        for name in ["nil_first", "non_nil_first"] {
+            let signature = &signatures[name];
+            assert_eq!(
+                signature.parameters[0].value_type,
+                Type::union([Type::Nil, Type::Num])
+            );
+            assert_eq!(signature.result, Type::Num);
+        }
+    }
+
     fn binary(left: Expr, operator: Binary, right: Expr) -> Expr {
         Expr {
             kind: ExprKind::Binary {

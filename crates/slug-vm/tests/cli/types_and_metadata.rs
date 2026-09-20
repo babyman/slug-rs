@@ -214,6 +214,73 @@ fn inferred_parameter_calls_with_dynamic_values_retain_checked_runtime_failures(
 }
 
 #[test]
+fn body_derived_calls_and_nil_guards_preserve_static_and_dynamic_boundaries() {
+    let path = fixture_path("body-derived-call-and-nil-inference");
+    fs::write(
+        &path,
+        "val divide = fn(value) { value / 10 }\n\
+         val apply = fn(value) { divide(value) }\n\
+         val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\n\
+         val non_nil_first = fn(value) { if (value != nil) { value / 10 } else { 0 } }\n\
+         println(apply(20), nil_first(nil), nil_first(20), non_nil_first(nil), non_nil_first(20))\n",
+    )
+    .expect("write body-derived call and nil-guard source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run body-derived call and nil-guard source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "2 0 2 0 2\n"
+    );
+
+    for source in [
+        "val divide = fn(value) { value / 10 }\nval apply = fn(value) { divide(value) }\napply(\"text\")\n",
+        "val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\nnil_first(\"text\")\n",
+        "val non_nil_first = fn(value) { if (value != nil) { value / 10 } else { 0 } }\nnon_nil_first(\"text\")\n",
+    ] {
+        fs::write(&path, source).expect("write statically incompatible inferred call");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run statically incompatible inferred call");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with("slug: semantic error: expected num, got str")
+        );
+    }
+
+    for source in [
+        "val divide = fn(value) { value / 10 }\nval apply = fn(value) { divide(value) }\nval input:any|nil = \"text\"\napply(input)\n",
+        "val nil_first = fn(value) { if (value == nil) { 0 } else { value / 10 } }\nval input:any|nil = \"text\"\nnil_first(input)\n",
+    ] {
+        fs::write(&path, source).expect("write dynamic inferred call");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run dynamic inferred call");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8(output.stderr)
+                .expect("stderr is UTF-8")
+                .starts_with("slug: runtime error:"),
+            "dynamic calls must retain checked runtime diagnostics"
+        );
+    }
+
+    fs::remove_file(path).expect("remove body-derived call and nil-guard source");
+}
+
+#[test]
 fn infers_scalar_literal_types_through_bindings() {
     let path = fixture_path("scalar-literal-inference");
     fs::write(
