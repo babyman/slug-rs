@@ -1,7 +1,7 @@
 # Body-Derived Parameter Inference
 
 This is the implementation task list for the rule adopted in
-[Infer unannotated parameters from function bodies](../decisions/2026-09-20-body-derived-parameter-inference.md).
+[Infer unannotated parameters from function bodies](../../decisions/2026-09-20-body-derived-parameter-inference.md).
 It does not permit caller-derived inference or function specialization by call
 site.
 
@@ -78,7 +78,7 @@ site.
 
 ### 6. Complete the language change
 
-- [x] Update `docs/language-support.tsv`, regenerate the support matrix, and
+- [x] Update `../../language-support.tsv`, regenerate the support matrix, and
   update the README capability statement when implementation lands.
 - [x] Add a changelog entry for the implemented semantics, not merely this
   plan.
