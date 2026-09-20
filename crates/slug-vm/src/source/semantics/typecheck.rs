@@ -845,18 +845,19 @@ fn callable_signature(
         type_parameters,
         parameters,
         return_annotation,
-        ..
+        body,
     } = &expression.kind
     else {
         return Ok(None);
     };
+    let inferred_parameters = solved_parameter_types(&parameter_constraints(parameters, body)?);
     function_type(
         type_parameters,
         parameters,
         return_annotation.as_ref(),
         span,
         environment,
-        None,
+        Some(&inferred_parameters),
     )
     .map(Some)
 }
@@ -3593,6 +3594,18 @@ mod tests {
         assert!(!constraints.requirements.contains_key("explicit"));
         assert!(!constraints.requirements.contains_key("rest"));
         assert!(!constraints.requirements.contains_key("_"));
+    }
+
+    #[test]
+    fn solved_parameter_signature_rejects_an_incompatible_direct_call() {
+        let error = super::super::compile(
+            "test.slug",
+            "val divide = fn(value) { value / 10 }\ndivide(\"no\")",
+        )
+        .expect_err("a known string argument cannot satisfy the inferred num parameter");
+
+        assert_eq!(error.kind, super::super::SourceErrorKind::Semantic);
+        assert!(error.message.contains("expected num, got str"));
     }
 
     #[test]
