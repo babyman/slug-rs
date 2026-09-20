@@ -121,11 +121,7 @@ impl Vm {
             })?;
         let exact = {
             let chunk = self.current_chunk(program)?;
-            chunk.arity == count
-                && !chunk
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.has_default || parameter.variadic)
+            chunk.arity == count && chunk.exact_positional_parameters
         };
         if exact {
             #[cfg(feature = "metrics")]

@@ -238,21 +238,22 @@ defaulted-parameter test protects the generic fallback.
 
 Installed bytecode remains validated before execution, but the execution loop
 now dispatches the common fixed-width instructions directly from
-`PackedInstruction`. The rich builder-facing `Op` is reconstructed only for
-the less common fallback instructions while that transition is measured.
+`PackedInstruction`, including pooled global loads and fixed-size lists. The
+rich builder-facing `Op` is reconstructed only for the less common fallback
+instructions while that transition is measured.
 
 A 15-sample local run from the dirty worktree based on
-`ea0a0f5bdb5615299891c3c4d77c943bcbcfd3fc` reported:
+`67071af698bb26e4cb9b7b62e024d2869a480fc0` reported:
 
 | Workload      | Slug median | CPython median | Slug / CPython |
 |---------------|------------:|---------------:|---------------:|
-| function-call |   96.005 ms |      26.612 ms |          3.61x |
-| n-body        |   39.682 ms |      22.347 ms |          1.78x |
-| spectral-norm |   14.000 ms |      20.427 ms |          0.69x |
-| binary-trees  |  109.669 ms |      29.396 ms |          3.73x |
+| function-call |   94.079 ms |      26.546 ms |          3.54x |
+| n-body        |   39.863 ms |      22.158 ms |          1.80x |
+| spectral-norm |   14.331 ms |      20.228 ms |          0.71x |
+| binary-trees  |  107.960 ms |      29.421 ms |          3.67x |
 
 The accompanying in-process benchmark recorded `ordinary-calls-200` at
-211.420 ms for 1,000 runs, down from roughly 227 ms before the direct
+210.427 ms for 1,000 runs, down from roughly 227 ms before the direct
 hot-op path. This result also includes the preceding compact call-site
 diagnostic representation, so it is a directional comparison rather than an
 isolated attribution. The workload continues to preserve checked arithmetic,

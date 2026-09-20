@@ -100,6 +100,8 @@ pub(crate) struct CompiledChunk {
     pub(crate) name: String,
     pub(crate) arity: usize,
     pub(crate) parameters: Vec<ParameterSignature>,
+    /// Whether all parameters are required positional values.
+    pub(crate) exact_positional_parameters: bool,
     pub(crate) callable_identity: Option<usize>,
     pub(crate) locals: usize,
     pub(crate) constants: Vec<Constant>,

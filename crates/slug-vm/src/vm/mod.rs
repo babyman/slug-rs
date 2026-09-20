@@ -1992,6 +1992,62 @@ impl Vm {
                 let value = self.pop_at(None)?;
                 self.set_local_at(operand, value, None)?;
             }
+            PackedOpcode::GetGlobal => {
+                let name = program
+                    .global_name(crate::GlobalNameId::new(instruction.a))
+                    .expect("validated global name metadata");
+                let value = self
+                    .globals
+                    .borrow()
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::Name,
+                            format!("unknown name `{name}`"),
+                            None,
+                        )
+                    })?
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, None))?;
+                self.stack.push(value);
+            }
+            PackedOpcode::List => {
+                let values = self.pop_values_at(operand, None)?;
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(values.len());
+                self.stack
+                    .push(Value::List(List::from_values(values).into_shared()));
+            }
+            PackedOpcode::Map => {
+                let values = self.pop_values_at(operand.saturating_mul(2), None)?;
+                let mut entries = Vec::with_capacity(operand);
+                for pair in values.chunks_exact(2) {
+                    if !is_map_key(&pair[0]) {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::Type,
+                            format!("{} cannot be used as a map key", pair[0].type_name()),
+                            None,
+                        ));
+                    }
+                    entries.push((pair[0].clone(), pair[1].clone()));
+                }
+                #[cfg(feature = "metrics")]
+                self.record_collection_construction(entries.len());
+                self.stack.push(Value::Map(Map::new(entries).into_shared()));
+            }
+            PackedOpcode::GetIndex => {
+                let (collection, index) = self.pop_pair_at(None)?;
+                self.stack.push(
+                    index_value(
+                        collection,
+                        &index,
+                        #[cfg(feature = "metrics")]
+                        &self.metrics,
+                    )
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, None))?,
+                );
+            }
             PackedOpcode::Add => {
                 let (left, right) = self.pop_pair_at(None)?;
                 #[cfg(feature = "metrics")]
@@ -4153,12 +4209,7 @@ impl Vm {
                     span,
                 )
             })?;
-            if chunk.arity != count
-                || chunk
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.has_default || parameter.variadic)
-            {
+            if chunk.arity != count || !chunk.exact_positional_parameters {
                 return Ok(false);
             }
             chunk.locals
