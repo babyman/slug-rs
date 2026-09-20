@@ -53,11 +53,11 @@ derive or mutate a function's alternatives.
 
 ### 4. Preserve dynamic execution boundaries
 
-- [ ] Widen alternatives deliberately when a function is used as a structural
+- [x] Widen alternatives deliberately when a function is used as a structural
   or otherwise dynamically selected function value.
-- [ ] Keep VM call binding shape-only and lower the shared body with generic
+- [x] Keep VM call binding shape-only and lower the shared body with generic
   `Add` until a separate runtime-safe specialization decision exists.
-- [ ] Ensure imports use exported alternatives rather than re-inference from
+- [x] Ensure imports use exported alternatives rather than re-inference from
   importing call sites.
 
 ### 5. Prove the feature

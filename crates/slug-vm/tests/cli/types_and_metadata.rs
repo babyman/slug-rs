@@ -42,6 +42,47 @@ fn selects_body_derived_plus_alternatives_at_known_calls() {
 }
 
 #[test]
+fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
+    let path = fixture_path("inferred-plus-dynamic-boundary");
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val selected = if (true) { combine } else { combine }\n\
+         selected(1, 0x\"01\")\n",
+    )
+    .expect("write structural inferred plus source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run structural inferred plus source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val left:any|nil = 1\n\
+         combine(left, 0x\"01\")\n",
+    )
+    .expect("write dynamic inferred plus source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic inferred plus source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+    fs::remove_file(path).expect("remove dynamic inferred plus source");
+}
+
+#[test]
 fn infers_unannotated_parameter_types_from_numeric_function_bodies() {
     let path = fixture_path("body-derived-parameter-inference");
     fs::write(
