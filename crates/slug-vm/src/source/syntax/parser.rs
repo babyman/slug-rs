@@ -881,7 +881,7 @@ impl Parser {
                     self.consume(&TokenKind::Comma, "expected , after select send channel")?;
                     SelectCaseKind::Send {
                         channel,
-                        value: self.select_header_expression()?,
+                        value: Box::new(self.select_header_expression()?),
                     }
                 }
                 TokenKind::Name(name) if name == "after" => {

@@ -1,7 +1,7 @@
 # Finite Inferred Overload Alternatives
 
 This plan implements
-[Infer finite overload alternatives from operator bodies](../decisions/2026-09-20-finite-inferred-overload-alternatives.md).
+[Infer finite overload alternatives from operator bodies](../../decisions/2026-09-20-finite-inferred-overload-alternatives.md).
 It extends completed body-derived numeric inference without allowing callers to
 derive or mutate a function's alternatives.
 
@@ -74,5 +74,11 @@ derive or mutate a function's alternatives.
 
 - [x] Update the language specification, language-support inventory, generated
   support matrix, README capability statement, and changelog when implemented.
-- [ ] Run focused semantic, CLI, module-loader, and VM tests during the work;
+- [x] Run focused semantic, CLI, module-loader, and VM tests during the work;
   run `make check` before handoff.
+
+## Deferred follow-up
+
+The next stages are tracked in
+[Inferred overload alternative follow-up](../inferred-overload-alternatives-follow-up.md).
+They intentionally do not block completion of the finite `+` alternative set.
