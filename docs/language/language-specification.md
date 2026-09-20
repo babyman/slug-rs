@@ -956,10 +956,12 @@ val nonNil = fn():any { "ready" }     // cannot return nil
 val divided = fn(value) { value / 10 } // fn<num, num>
 ```
 
-The current Rust subset implements direct numeric facts and finite `+`
-alternatives. Known-callee parameter propagation and nil-partitioned parameter
-inference are specified above but remain unimplemented; consult the language
-support matrix for implementation status.
+The current Rust subset implements direct numeric facts, finite `+`
+alternatives, known-callee parameter propagation from uniquely resolved
+non-generic direct calls, and direct nil-partitioned parameter inference.
+Dynamic/structural calls, spreads, ambiguous overloads, and unsupported
+recursive cycles retain ordinary dynamic behavior; consult the language support
+matrix for implementation status.
 
 An overloaded operator may instead derive finite inferred overload alternatives.
 Each alternative is a symbolic parameter tuple and result relationship; it is

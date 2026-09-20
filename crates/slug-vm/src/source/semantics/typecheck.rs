@@ -371,6 +371,7 @@ impl ParameterConstraints {
     /// lexical environment. The ordinary collector deliberately remains
     /// environment-free so its operator facts cannot accidentally depend on
     /// declaration order.
+    #[allow(clippy::too_many_lines)]
     fn collect_known_calls(
         &mut self,
         expression: &Expr,

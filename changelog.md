@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented body-derived parameter inference from uniquely known direct
+  local, imported, and retained-session callables, plus direct `== nil` and
+  `!= nil` input partitions. Dynamic, structural, spread, ambiguous, and
+  cyclic call boundaries retain checked runtime behavior.
+
 - Implemented finite body-derived `+` overload alternatives for known local
   and imported callables. Static calls preserve numeric, string, list, bytes,
   and map relationships; structural and dynamic calls retain checked runtime

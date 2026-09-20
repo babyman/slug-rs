@@ -219,7 +219,7 @@ fn body_derived_known_calls_preserve_static_and_dynamic_boundaries() {
     fs::write(
         &path,
         "val divide = fn(value) { value / 10 }\n\
-         val apply = fn(value) { divide(value) }\n\
+         val apply = fn(value) { divide(value = value) }\n\
          println(apply(20))\n",
     )
     .expect("write body-derived call and nil-guard source");
@@ -248,11 +248,9 @@ fn body_derived_known_calls_preserve_static_and_dynamic_boundaries() {
         .expect("run statically incompatible inferred call");
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8(output.stderr)
-            .expect("stderr is UTF-8")
-            .starts_with("slug: semantic error: expected num, got str")
-    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(stderr.starts_with("slug: semantic error: expected num, got str"));
+    assert!(stderr.contains(&format!("--> {}:3:1", path.display())));
 
     fs::write(
         &path,
