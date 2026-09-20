@@ -24,11 +24,11 @@ derive or mutate a function's alternatives.
 
 ### 1. Model symbolic alternatives
 
-- [ ] Add private semantic types for an inferred alternative, scoped symbolic
+- [x] Add private semantic types for an inferred alternative, scoped symbolic
   variables, and parameter/result relationships.
-- [ ] Keep those variables distinct from `unknown`, `any`, source generics,
+- [x] Keep those variables distinct from `unknown`, `any`, source generics,
   and ordinary `Type` unions.
-- [ ] Define substitution, canonicalization, equality, and diagnostic rendering
+- [x] Define substitution, canonicalization, equality, and diagnostic rendering
   for alternatives without making them bytecode or source syntax.
 
 ### 2. Derive `+` alternatives from function bodies
