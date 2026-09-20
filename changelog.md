@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Specified finite body-derived overload alternatives for known overloaded
+  operator families, starting with `+`, and recorded their implementation plan.
+
 - Implemented body-derived `num` inference for unannotated function parameters
   used by division, modulo, unary negation, and ordering comparisons. Solved
   signatures now drive static calls, overload identity, function values,
