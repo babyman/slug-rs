@@ -28,19 +28,16 @@ Neither work expands structural-call preservation or introduces specialization.
 
 ### Direct inferred-alternative propagation
 
-- [ ] When a direct known call has ordinary bound arguments and exactly one
+- [x] When a direct known call has ordinary bound arguments and exactly one
   inferred alternative applies, propagate that alternative's parameter
-  constraints and result fact into the enclosing function body. This permits a
-  wrapper around an inferred callable to retain its correlation.
-- [ ] Keep the current boundary explicit until this stage is implemented:
-  known-call parameter propagation supports only non-generic signatures with no
-  inferred alternatives. Calls to an alternative-bearing callable remain
-  dynamic for body-derived inference even when their runtime behavior is
-  otherwise valid.
-- [ ] Preserve dynamic behavior when the callee is structural or dynamic, an
+  constraints and result fact into the enclosing function body. Selection uses
+  only independently established body facts; it does not use the propagated
+  constraints themselves.
+- [x] Preserve dynamic behavior when the callee is structural or dynamic, an
   argument is spread, argument binding is incomplete, or zero/multiple
-  alternatives apply. Do not derive a wrapper signature from caller history.
-- [ ] Add CLI and module-loader coverage for a valid wrapper, a rejected mixed
+  alternatives apply. A bare unannotated wrapper does not forward the callee's
+  correlated alternative set; that is deferred composition work.
+- [x] Add CLI and module-loader coverage for a valid wrapper, a rejected mixed
   pair at a known wrapper call, and a dynamic wrapper call that retains its
   checked runtime failure.
 

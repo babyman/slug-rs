@@ -928,6 +928,42 @@ fn imported_callables_preserve_inferred_plus_alternatives() {
 }
 
 #[test]
+fn imported_inferred_alternatives_propagate_after_independent_selection() {
+    let root = root("imported-inferred-alternative-wrapper");
+    fs::create_dir_all(&root).expect("create inferred alternative wrapper module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val combine = fn(left, right) { left + right }\n",
+    )
+    .expect("write inferred alternative export module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\n\
+             val wrap = fn(left, right) { left / 10\napi.combine(left, right) }\n\
+             export val result = wrap(20, 22)\n",
+        )
+        .expect("compile imported inferred alternative wrapper");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run imported inferred alternative wrapper");
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 42}");
+
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\n\
+             val wrap = fn(left, right) { left / 10\napi.combine(left, right) }\n\
+             wrap(20, 0x\"01\")\n",
+        )
+        .expect_err("selected imported alternative constrains wrapper inputs");
+    assert!(error.to_string().starts_with("expected num, got bytes"));
+    fs::remove_dir_all(root).expect("remove inferred alternative wrapper module directory");
+}
+
+#[test]
 fn source_imports_return_cached_export_maps_in_module_order() {
     let root = root("source-import");
     fs::create_dir_all(root.join("local")).expect("create module directory");

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Implemented body-derived propagation from a uniquely selected inferred
+  overload alternative at a direct known call. Selection uses independent body
+  facts; ambiguous, structural, dynamic, and spread calls retain checked
+  runtime behavior without forwarding an alternative set through a wrapper.
+
 - Implemented body-derived parameter inference from uniquely known direct
   local, imported, and retained-session callables, plus direct `== nil` and
   `!= nil` input partitions. Dynamic, structural, spread, ambiguous, and

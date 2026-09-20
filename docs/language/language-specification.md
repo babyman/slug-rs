@@ -977,6 +977,17 @@ body-derived `num` signatures and the five finite `+` alternatives described
 above. Their metadata is retained for statically known local and imported
 callables; structural calls and calls with dynamic operands remain dynamic.
 
+Within a function body, an ordinary direct call to one known non-generic
+callable may propagate an inferred alternative's input constraints and result
+only after facts established independently of that call select exactly one
+alternative. For example, `left / 10` establishes `left:num`, so a later
+`combine(left, right)` call to a `left + right` callable selects its numeric
+alternative and establishes `right:num`. The call's alternatives do not help
+select themselves: `fn(left, right) { combine(left, right) }` does not forward
+the complete correlated alternative set. Dynamic or structural callees,
+spreads, incomplete argument binding, and zero or multiple applicable
+alternatives remain dynamic body-inference boundaries.
+
 An inferred `var` binding fixes its static type from its initializer; later
 known assignments must conform to that type and do not widen it. A dynamically
 unknown assignment remains valid and preserves the retained static fact. An

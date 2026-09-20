@@ -382,7 +382,6 @@ impl ParameterConstraints {
                 if let Some(binding) = expression_binding(callee, environment)
                     && let [signature] = binding.callables.as_slice()
                     && signature.generic_arity == 0
-                    && signature.inferred_alternatives.is_empty()
                 {
                     let shapes = arguments
                         .iter()
@@ -392,17 +391,63 @@ impl ParameterConstraints {
                             CallArgument::Spread(_) => ArgumentShape::Spread,
                         })
                         .collect::<Vec<_>>();
-                    let actuals = vec![Type::Unknown; arguments.len()];
+                    let actuals = arguments
+                        .iter()
+                        .map(|argument| match argument {
+                            CallArgument::Positional(argument)
+                            | CallArgument::Named {
+                                value: argument, ..
+                            }
+                            | CallArgument::Spread(argument) => self.body_fact_type(argument),
+                        })
+                        .collect::<Vec<_>>();
                     if let Some(bound) = bind_arguments(&signature.parameters, &shapes, &actuals) {
-                        for ((_, parameter, _), argument) in bound.values.iter().zip(arguments) {
-                            let argument = match argument {
-                                CallArgument::Positional(argument)
-                                | CallArgument::Named {
-                                    value: argument, ..
-                                } => argument,
-                                CallArgument::Spread(_) => continue,
-                            };
-                            self.require(argument, parameter.value_type.clone())?;
+                        let selected = signature
+                            .inferred_alternatives
+                            .is_empty()
+                            .then(|| {
+                                bound
+                                    .values
+                                    .iter()
+                                    .map(|(_, parameter, _)| parameter.value_type.clone())
+                                    .collect::<Vec<_>>()
+                            })
+                            .or_else(|| {
+                                (bound.values.len() == signature.parameters.len())
+                                    .then(|| {
+                                        let mut alternative_actuals =
+                                            vec![Type::Unknown; signature.parameters.len()];
+                                        for (index, _, actual) in &bound.values {
+                                            alternative_actuals[*index] = (*actual).clone();
+                                        }
+                                        let alternatives = signature
+                                            .inferred_alternatives
+                                            .iter()
+                                            .filter_map(|alternative| {
+                                                alternative.instantiate(&alternative_actuals)
+                                            })
+                                            .collect::<Vec<_>>();
+                                        (alternatives.len() == 1).then(|| {
+                                            alternatives
+                                                .into_iter()
+                                                .next()
+                                                .expect("one alternative")
+                                                .0
+                                        })
+                                    })
+                                    .flatten()
+                            });
+                        if let Some(selected) = selected {
+                            for ((index, _, _), argument) in bound.values.iter().zip(arguments) {
+                                let argument = match argument {
+                                    CallArgument::Positional(argument)
+                                    | CallArgument::Named {
+                                        value: argument, ..
+                                    } => argument,
+                                    CallArgument::Spread(_) => continue,
+                                };
+                                self.require(argument, selected[*index].clone())?;
+                            }
                         }
                     }
                 }
@@ -548,6 +593,18 @@ impl ParameterConstraints {
             | ExprKind::NotImplemented
             | ExprKind::Name(_) => Ok(()),
         }
+    }
+
+    /// Returns only a fact collected independently from known-call
+    /// propagation. In particular, an inferred alternative cannot select
+    /// itself by first constraining one of this function's parameters.
+    fn body_fact_type(&self, expression: &Expr) -> Type {
+        let ExprKind::Name(name) = &expression.kind else {
+            return Type::Unknown;
+        };
+        self.requirements
+            .get(name)
+            .map_or(Type::Unknown, |requirement| requirement.value_type.clone())
     }
 
     fn collect_known_call_arguments(

@@ -90,6 +90,85 @@ fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
 }
 
 #[test]
+fn known_wrappers_propagate_only_independently_selected_inferred_alternatives() {
+    let path = fixture_path("inferred-alternative-wrapper");
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val wrap = fn(left, right) { left / 10\ncombine(left, right) }\n\
+         println(wrap(20, 22))\n",
+    )
+    .expect("write uniquely selected inferred alternative wrapper source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run uniquely selected inferred alternative wrapper source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42\n");
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val wrap = fn(left, right) { left / 10\ncombine(left, right) }\n\
+         wrap(20, 0x\"01\")\n",
+    )
+    .expect("write mixed inferred alternative wrapper source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run mixed inferred alternative wrapper source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got bytes")
+    );
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val wrap = fn(left, right) { left / 10\ncombine(left, right) }\n\
+         val left:any|nil = \"text\"\n\
+         wrap(left, 1)\n",
+    )
+    .expect("write dynamic inferred alternative wrapper source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic inferred alternative wrapper source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) { left + right }\n\
+         val wrap = fn(left, right) { combine(left, right) }\n\
+         wrap(1, 0x\"01\")\n",
+    )
+    .expect("write ambiguous inferred alternative wrapper source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run ambiguous inferred alternative wrapper source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:"),
+        "unselected alternatives must not become wrapper constraints"
+    );
+    fs::remove_file(path).expect("remove inferred alternative wrapper source");
+}
+
+#[test]
 fn infers_unannotated_parameter_types_from_numeric_function_bodies() {
     let path = fixture_path("body-derived-parameter-inference");
     fs::write(

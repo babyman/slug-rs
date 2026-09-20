@@ -81,6 +81,9 @@ contract is documented separately as `.cslug`.
   negation, ordering comparisons, uniquely known direct callees, and direct
   `nil` guards, plus finite body-derived `+` overload alternatives for numeric,
   string, list, bytes, and map relationships.
+  Independently selected alternatives also propagate through direct known
+  calls during body-derived inference; dynamic and ambiguous calls remain
+  checked at runtime.
 - Lexically scoped semantic bindings retain ordered callable signatures through
   local declarations, aliases, parameters, and nested blocks. Calls to locally
   known callables undergo mandatory shape, generic, and parameter-type
