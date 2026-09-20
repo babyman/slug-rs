@@ -367,6 +367,17 @@ fn parameter_constraints(
     Ok(constraints)
 }
 
+fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String, Type> {
+    constraints
+        .requirements
+        .iter()
+        .filter_map(|(name, requirement)| {
+            (!matches!(requirement.value_type, Type::Unknown))
+                .then(|| (name.clone(), requirement.value_type.clone()))
+        })
+        .collect()
+}
+
 impl CheckedExpression {
     fn falls_through(value_type: Type) -> Self {
         Self {
@@ -780,6 +791,7 @@ fn function_type(
     result: Option<&TypeAnnotation>,
     span: &crate::SourceSpan,
     environment: &Environment,
+    inferred_parameters: Option<&HashMap<String, Type>>,
 ) -> Result<CallableSignature, SourceError> {
     Ok(CallableSignature {
         generic_arity: type_parameters.len(),
@@ -800,6 +812,15 @@ fn function_type(
                             )
                         })
                         .transpose()?
+                        .or_else(|| {
+                            (!parameter.discard && !parameter.variadic)
+                                .then(|| {
+                                    inferred_parameters
+                                        .and_then(|parameters| parameters.get(&parameter.name))
+                                        .cloned()
+                                })
+                                .flatten()
+                        })
                         .unwrap_or_else(Type::universal),
                     has_default: parameter.default.is_some(),
                     variadic: parameter.variadic,
@@ -835,8 +856,43 @@ fn callable_signature(
         return_annotation.as_ref(),
         span,
         environment,
+        None,
     )
     .map(Some)
+}
+
+fn check_function_body(
+    parameters: &[Parameter],
+    signature: &CallableSignature,
+    return_annotation: &Option<TypeAnnotation>,
+    body: &Expr,
+    environment: &Environment,
+    type_parameters: &[String],
+) -> Result<Type, SourceError> {
+    let mut scoped = environment.clone();
+    scoped.enter_scope();
+    for (parameter, signature_parameter) in parameters.iter().zip(&signature.parameters) {
+        let parameter_type = &signature_parameter.value_type;
+        if !parameter.discard {
+            let binding_type = if parameter.variadic {
+                Type::List(Some(Box::new(parameter_type.clone())))
+            } else {
+                parameter_type.clone()
+            };
+            scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
+        }
+        if let Some(default) = &parameter.default {
+            let actual = check_expression(default, &mut scoped, type_parameters)?;
+            require(parameter_type, &actual, &default.span)?;
+        }
+    }
+    let actual = check_expression_with_flow(body, &mut scoped, type_parameters)?.value_type;
+    if let Some(return_annotation) = return_annotation {
+        let expected =
+            resolve_static_annotation(return_annotation, type_parameters, &body.span, environment)?;
+        require(&expected, &actual, &body.span)?;
+    }
+    Ok(actual)
 }
 
 fn record_exports(
@@ -1012,6 +1068,7 @@ fn check_expression_inner(
                 signature.return_annotation.as_ref(),
                 &expression.span,
                 environment,
+                None,
             )?;
             environment.record_foreign(
                 expression.span.clone(),
@@ -1043,55 +1100,41 @@ fn check_expression_inner(
             return_annotation,
             body,
         } => {
-            let _constraints = parameter_constraints(parameters, body)?;
+            let provisional = function_type(
+                function_type_parameters,
+                parameters,
+                return_annotation.as_ref(),
+                &expression.span,
+                environment,
+                None,
+            )?;
+            let _ = check_function_body(
+                parameters,
+                &provisional,
+                return_annotation,
+                body,
+                environment,
+                function_type_parameters,
+            )?;
+            let inferred_parameters =
+                solved_parameter_types(&parameter_constraints(parameters, body)?);
             let mut signature = function_type(
                 function_type_parameters,
                 parameters,
                 return_annotation.as_ref(),
                 &expression.span,
                 environment,
+                Some(&inferred_parameters),
             )?;
             environment.record_function(expression.span.clone(), signature.identity());
-            let mut scoped = environment.clone();
-            scoped.enter_scope();
-            for parameter in parameters {
-                let parameter_type = parameter
-                    .annotation
-                    .as_ref()
-                    .map(|annotation| {
-                        resolve_static_annotation(
-                            annotation,
-                            function_type_parameters,
-                            &body.span,
-                            environment,
-                        )
-                    })
-                    .transpose()?
-                    .unwrap_or_else(Type::universal);
-                if !parameter.discard {
-                    let binding_type = if parameter.variadic {
-                        Type::List(Some(Box::new(parameter_type.clone())))
-                    } else {
-                        parameter_type.clone()
-                    };
-                    scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
-                }
-                if let Some(default) = &parameter.default {
-                    let actual = check_expression(default, &mut scoped, function_type_parameters)?;
-                    require(&parameter_type, &actual, &default.span)?;
-                }
-            }
-            let actual =
-                check_expression_with_flow(body, &mut scoped, function_type_parameters)?.value_type;
-            if let Some(return_annotation) = return_annotation {
-                let expected = resolve_static_annotation(
-                    return_annotation,
-                    function_type_parameters,
-                    &body.span,
-                    environment,
-                )?;
-                require(&expected, &actual, &body.span)?;
-            }
+            let actual = check_function_body(
+                parameters,
+                &signature,
+                return_annotation,
+                body,
+                environment,
+                function_type_parameters,
+            )?;
             signature.result = return_annotation
                 .as_ref()
                 .map(|annotation| {
