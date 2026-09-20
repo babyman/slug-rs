@@ -7,7 +7,13 @@ fn selects_body_derived_plus_alternatives_at_known_calls() {
         &path,
         "val combine = fn(left, right) { left + right }\n\
          val decorate = fn(prefix = \">\", left, right) { prefix + left + right }\n\
-         println(combine(20, 22), combine(\"x\", 1), combine([1], [\"x\"]), combine(0x\"01\", 0x\"02\"), combine({left: 1}, {right: \"x\"}), decorate(right = \"b\", prefix = \"[\", left = \"a\"))\n",
+         val list_result:list<num|str> = combine([1], [\"x\"])\n\
+         val map_result:map<str, num|str> = combine({left: 1}, {right: \"x\"})\n\
+         val recurse = fn(left, right, count) { if (count == 0) { left + right } else { recur(left, right, count - 1) } }\n\
+         val nested = fn() { val inner = fn(left, right) { left + right }\ninner(20, 22) }\n\
+         val choose = fn(value:num) { \"number\" }\n\
+         val choose = fn(left, right) { left + right }\n\
+         println(combine(20, 22), combine(\"x\", 1), list_result, combine(0x\"01\", 0x\"02\"), map_result, decorate(right = \"b\", prefix = \"[\", left = \"a\"), recurse(20, 22, 2), nested(), choose(\"x\", 1))\n",
     )
     .expect("write inferred plus alternatives source");
     let output = slug()
@@ -21,7 +27,7 @@ fn selects_body_derived_plus_alternatives_at_known_calls() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "42 x1 [1, \"x\"] 0x\"0102\" {\"left\": 1, \"right\": \"x\"} [ab\n"
+        "42 x1 [1, \"x\"] 0x\"0102\" {\"left\": 1, \"right\": \"x\"} [ab 42 42 x1\n"
     );
 
     fs::write(

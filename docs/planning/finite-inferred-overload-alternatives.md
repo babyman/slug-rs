@@ -62,17 +62,17 @@ derive or mutate a function's alternatives.
 
 ### 5. Prove the feature
 
-- [ ] Add CLI tests for numeric, string, list, bytes, and map `+` calls through
+- [x] Add CLI tests for numeric, string, list, bytes, and map `+` calls through
   one inferred callable body.
-- [ ] Prove correlated rejection of invalid mixed pairs such as `(num, bytes)`.
-- [ ] Cover intersections with body-derived numeric constraints, recursive
+- [x] Prove correlated rejection of invalid mixed pairs such as `(num, bytes)`.
+- [x] Cover intersections with body-derived numeric constraints, recursive
   bodies, nested functions, explicit overloads, imports, and live bindings.
-- [ ] Cover generic-variable result precision for lists and maps.
-- [ ] Cover structural/dynamic fallback and checked runtime failures.
+- [x] Cover generic-variable result precision for lists and maps.
+- [x] Cover structural/dynamic fallback and checked runtime failures.
 
 ### 6. Complete the change
 
-- [ ] Update the language specification, language-support inventory, generated
+- [x] Update the language specification, language-support inventory, generated
   support matrix, README capability statement, and changelog when implemented.
 - [ ] Run focused semantic, CLI, module-loader, and VM tests during the work;
   run `make check` before handoff.

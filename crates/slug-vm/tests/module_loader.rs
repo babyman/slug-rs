@@ -849,6 +849,47 @@ fn imported_bindings_preserve_inferred_value_and_function_results() {
 }
 
 #[test]
+fn imported_callables_preserve_inferred_plus_alternatives() {
+    let root = root("imported-inferred-plus-alternatives");
+    fs::create_dir_all(&root).expect("create inferred plus module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val combine = fn(left, right) { left + right }\n",
+    )
+    .expect("write inferred plus export module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\n\
+             export val list:list<num|str> = api.combine([1], [\"x\"])\n\
+             export val map:map<str, num|str> = api.combine({left: 1}, {right: \"x\"})\n",
+        )
+        .expect("compile imported inferred plus calls");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run imported inferred plus calls");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"list\": [1, \"x\"], \"map\": {\"left\": 1, \"right\": \"x\"}}"
+    );
+
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\napi.combine(1, 0x\"01\")\n",
+        )
+        .expect_err("imported inferred alternatives reject mixed pairs");
+    assert!(
+        error
+            .to_string()
+            .starts_with("no inferred overload alternative matches the call")
+    );
+    fs::remove_dir_all(root).expect("remove inferred plus module directory");
+}
+
+#[test]
 fn source_imports_return_cached_export_maps_in_module_order() {
     let root = root("source-import");
     fs::create_dir_all(root.join("local")).expect("create module directory");
@@ -1762,6 +1803,37 @@ fn selected_defaulted_pipeline_rejects_a_replaced_live_binding() {
             .contains("expected fn<str, str, str>, got fn<num, num, num>")
     );
     fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
+fn selected_inferred_alternative_rejects_a_replaced_live_binding() {
+    let root = root("live-inferred-alternative");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("mutable.slug"),
+        "export var combine = fn(left, right) { left + right }\n\
+         export val combine = fn(left:num, right:num):num { left + right }\n\
+         export val replace = fn() { combine = fn(left, right) { left - right } }\n",
+    )
+    .expect("write mutable inferred alternative module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"mutable\")\napi.replace()\napi.combine(\"stale\", \"value\")\n",
+        )
+        .expect("compile live inferred alternative call");
+    let error = Vm::with_module_loader(loader)
+        .run_named(&program, "main")
+        .expect_err("changed live inferred alternative rejects stale selection");
+    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert!(
+        error
+            .message
+            .contains("expected fn<num, num, num>, got fn<num, any|nil, any|nil>")
+    );
+    fs::remove_dir_all(root).expect("remove module directory");
 }
 
 #[test]

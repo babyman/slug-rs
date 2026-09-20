@@ -1260,7 +1260,7 @@ fn check_expression_inner(
                 function_type_parameters,
             )?;
             let constraints = parameter_constraints(parameters, body)?;
-            let _ = inferred_plus_alternatives(parameters, &constraints)?;
+            let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
             let inferred_parameters = solved_parameter_types(&constraints);
             let mut signature = function_type(
                 function_type_parameters,
@@ -1270,6 +1270,7 @@ fn check_expression_inner(
                 environment,
                 Some(&inferred_parameters),
             )?;
+            signature.inferred_alternatives = inferred_alternatives;
             environment.record_function(expression.span.clone(), signature.identity());
             let actual = check_function_body(
                 parameters,
