@@ -668,12 +668,12 @@ impl Compiler {
                     }
                     Binary::GreaterEqual => {
                         self.expression(state, right)?;
-                        state.emit(self.less_op(), &expression.span);
+                        state.emit(self.less_op(left, right), &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::LessEqual => {
                         self.expression(state, right)?;
-                        state.emit(self.greater_op(), &expression.span);
+                        state.emit(self.greater_op(left, right), &expression.span);
                         state.emit(Op::Not, &expression.span);
                     }
                     Binary::Add => {
@@ -689,19 +689,47 @@ impl Compiler {
                     }
                     Binary::Subtract => {
                         self.expression(state, right)?;
-                        state.emit(Op::Subtract, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::SubtractNum
+                            } else {
+                                Op::Subtract
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Multiply => {
                         self.expression(state, right)?;
-                        state.emit(Op::Multiply, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::MultiplyNum
+                            } else {
+                                Op::Multiply
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Divide => {
                         self.expression(state, right)?;
-                        state.emit(Op::Divide, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::DivideNum
+                            } else {
+                                Op::Divide
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::Modulo => {
                         self.expression(state, right)?;
-                        state.emit(Op::Modulo, &expression.span);
+                        state.emit(
+                            if self.numeric_operands(left, right) {
+                                Op::ModuloNum
+                            } else {
+                                Op::Modulo
+                            },
+                            &expression.span,
+                        );
                     }
                     Binary::BitAnd => {
                         self.expression(state, right)?;
@@ -737,11 +765,11 @@ impl Compiler {
                     }
                     Binary::Greater => {
                         self.expression(state, right)?;
-                        state.emit(self.greater_op(), &expression.span);
+                        state.emit(self.greater_op(left, right), &expression.span);
                     }
                     Binary::Less => {
                         self.expression(state, right)?;
-                        state.emit(self.less_op(), &expression.span);
+                        state.emit(self.less_op(left, right), &expression.span);
                     }
                 }
             }
@@ -1122,17 +1150,21 @@ impl Compiler {
         result
     }
 
-    fn greater_op(&self) -> Op {
+    fn greater_op(&self, left: &Expr, right: &Expr) -> Op {
         if self.guard_comparisons {
             Op::GuardGreater
+        } else if self.numeric_operands(left, right) {
+            Op::GreaterNum
         } else {
             Op::Greater
         }
     }
 
-    fn less_op(&self) -> Op {
+    fn less_op(&self, left: &Expr, right: &Expr) -> Op {
         if self.guard_comparisons {
             Op::GuardLess
+        } else if self.numeric_operands(left, right) {
+            Op::LessNum
         } else {
             Op::Less
         }

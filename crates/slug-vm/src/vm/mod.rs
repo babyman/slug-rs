@@ -49,9 +49,9 @@ use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
 use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments, frame_locals};
 use operations::{
-    add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, index_value, is_map_key,
-    list_append, list_prepend, matches_pattern, modulo, multiply, negate, numbers, shift,
-    slice_value, subtract,
+    add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, divide_num, index_value,
+    is_map_key, list_append, list_prepend, matches_pattern, modulo, modulo_num, multiply,
+    multiply_num, negate, numbers, shift, slice_value, subtract, subtract_num,
 };
 use progress::ProgressDriver;
 #[cfg(feature = "concurrency")]
@@ -2095,15 +2095,23 @@ impl Vm {
                         .map_err(|(kind, message)| self.error_at(kind, message, None))?,
                 );
             }
+            PackedOpcode::SubtractNum => self.binary_at(None, subtract_num)?,
             PackedOpcode::Multiply => self.binary_at(None, multiply)?,
+            PackedOpcode::MultiplyNum => self.binary_at(None, multiply_num)?,
             PackedOpcode::Divide => self.binary_at(None, divide)?,
+            PackedOpcode::DivideNum => self.binary_at(None, divide_num)?,
             PackedOpcode::Modulo => self.binary_at(None, modulo)?,
+            PackedOpcode::ModuloNum => self.binary_at(None, modulo_num)?,
             PackedOpcode::Equal => {
                 let (left, right) = self.pop_pair_at(None)?;
                 self.stack.push(Value::Bool(left == right));
             }
             PackedOpcode::Greater => self.compare_at(None, std::cmp::Ordering::Greater)?,
+            PackedOpcode::GreaterNum => {
+                self.numeric_compare_at(None, std::cmp::Ordering::Greater)?;
+            }
             PackedOpcode::Less => self.compare_at(None, std::cmp::Ordering::Less)?,
+            PackedOpcode::LessNum => self.numeric_compare_at(None, std::cmp::Ordering::Less)?,
             PackedOpcode::Jump => self.jump_at(operand, None)?,
             PackedOpcode::JumpIfFalse => {
                 if !self.peek_at(None)?.is_truthy() {
@@ -2448,9 +2456,13 @@ impl Vm {
                         .map_err(|(kind, message)| self.error_at(kind, message, span))?,
                 );
             }
+            Op::SubtractNum => self.binary_at(span, subtract_num)?,
             Op::Multiply => self.binary_at(span, multiply)?,
+            Op::MultiplyNum => self.binary_at(span, multiply_num)?,
             Op::Divide => self.binary_at(span, divide)?,
+            Op::DivideNum => self.binary_at(span, divide_num)?,
             Op::Modulo => self.binary_at(span, modulo)?,
+            Op::ModuloNum => self.binary_at(span, modulo_num)?,
             Op::BitAnd => {
                 self.binary_at(span, |left, right| bitwise(left, right, |a, b| a & b))?;
             }
@@ -2651,7 +2663,9 @@ impl Vm {
                 self.stack.push(Value::Bool(left == right));
             }
             Op::Greater => self.compare_at(span, std::cmp::Ordering::Greater)?,
+            Op::GreaterNum => self.numeric_compare_at(span, std::cmp::Ordering::Greater)?,
             Op::Less => self.compare_at(span, std::cmp::Ordering::Less)?,
+            Op::LessNum => self.numeric_compare_at(span, std::cmp::Ordering::Less)?,
             Op::GuardGreater => self.guard_compare_at(span, std::cmp::Ordering::Greater)?,
             Op::GuardLess => self.guard_compare_at(span, std::cmp::Ordering::Less)?,
             Op::Jump(target) => self.jump_at(*target, span)?,

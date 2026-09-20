@@ -27,6 +27,10 @@ const WORKLOADS: &[Workload] = &[
         expected_stdout: "ok\n",
     },
     Workload {
+        name: "typed-spectral-norm",
+        expected_stdout: "ok\n",
+    },
+    Workload {
         name: "binary-trees",
         expected_stdout: "65535\n",
     },

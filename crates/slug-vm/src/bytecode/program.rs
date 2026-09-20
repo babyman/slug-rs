@@ -594,9 +594,13 @@ impl Program {
             Op::Add => (PackedOpcode::Add, 0, 0, 0),
             Op::AddNum => (PackedOpcode::AddNum, 0, 0, 0),
             Op::Subtract => (PackedOpcode::Subtract, 0, 0, 0),
+            Op::SubtractNum => (PackedOpcode::SubtractNum, 0, 0, 0),
             Op::Multiply => (PackedOpcode::Multiply, 0, 0, 0),
+            Op::MultiplyNum => (PackedOpcode::MultiplyNum, 0, 0, 0),
             Op::Divide => (PackedOpcode::Divide, 0, 0, 0),
+            Op::DivideNum => (PackedOpcode::DivideNum, 0, 0, 0),
             Op::Modulo => (PackedOpcode::Modulo, 0, 0, 0),
+            Op::ModuloNum => (PackedOpcode::ModuloNum, 0, 0, 0),
             Op::BitAnd => (PackedOpcode::BitAnd, 0, 0, 0),
             Op::BitOr => (PackedOpcode::BitOr, 0, 0, 0),
             Op::BitXor => (PackedOpcode::BitXor, 0, 0, 0),
@@ -609,7 +613,9 @@ impl Program {
             Op::BitNot => (PackedOpcode::BitNot, 0, 0, 0),
             Op::Equal => (PackedOpcode::Equal, 0, 0, 0),
             Op::Greater => (PackedOpcode::Greater, 0, 0, 0),
+            Op::GreaterNum => (PackedOpcode::GreaterNum, 0, 0, 0),
             Op::Less => (PackedOpcode::Less, 0, 0, 0),
+            Op::LessNum => (PackedOpcode::LessNum, 0, 0, 0),
             Op::GuardGreater => (PackedOpcode::GuardGreater, 0, 0, 0),
             Op::GuardLess => (PackedOpcode::GuardLess, 0, 0, 0),
             Op::Jump(v) => (PackedOpcode::Jump, operand(*v), 0, 0),
@@ -717,9 +723,13 @@ impl Program {
             PackedOpcode::Add => Op::Add,
             PackedOpcode::AddNum => Op::AddNum,
             PackedOpcode::Subtract => Op::Subtract,
+            PackedOpcode::SubtractNum => Op::SubtractNum,
             PackedOpcode::Multiply => Op::Multiply,
+            PackedOpcode::MultiplyNum => Op::MultiplyNum,
             PackedOpcode::Divide => Op::Divide,
+            PackedOpcode::DivideNum => Op::DivideNum,
             PackedOpcode::Modulo => Op::Modulo,
+            PackedOpcode::ModuloNum => Op::ModuloNum,
             PackedOpcode::BitAnd => Op::BitAnd,
             PackedOpcode::BitOr => Op::BitOr,
             PackedOpcode::BitXor => Op::BitXor,
@@ -732,7 +742,9 @@ impl Program {
             PackedOpcode::BitNot => Op::BitNot,
             PackedOpcode::Equal => Op::Equal,
             PackedOpcode::Greater => Op::Greater,
+            PackedOpcode::GreaterNum => Op::GreaterNum,
             PackedOpcode::Less => Op::Less,
+            PackedOpcode::LessNum => Op::LessNum,
             PackedOpcode::GuardGreater => Op::GuardGreater,
             PackedOpcode::GuardLess => Op::GuardLess,
             PackedOpcode::Jump => Op::Jump(n(instruction.a)),
@@ -1410,9 +1422,13 @@ impl Program {
             | Op::Add
             | Op::AddNum
             | Op::Subtract
+            | Op::SubtractNum
             | Op::Multiply
+            | Op::MultiplyNum
             | Op::Divide
+            | Op::DivideNum
             | Op::Modulo
+            | Op::ModuloNum
             | Op::BitAnd
             | Op::BitOr
             | Op::BitXor
@@ -1422,7 +1438,9 @@ impl Program {
             | Op::ListPrepend
             | Op::Equal
             | Op::Greater
+            | Op::GreaterNum
             | Op::Less
+            | Op::LessNum
             | Op::GuardGreater
             | Op::GuardLess => (2, 1),
             Op::GetSlice {

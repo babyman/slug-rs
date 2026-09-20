@@ -10,7 +10,7 @@ use crate::{
     value::{BindingCell, binding_cell},
 };
 
-use super::{RuntimeErrorKind, Vm, VmResult, frames::LocalSlot, numbers};
+use super::{RuntimeErrorKind, Vm, VmResult, frames::LocalSlot, numbers, operations::compare_num};
 
 impl Vm {
     pub(super) fn pop_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
@@ -176,6 +176,19 @@ impl Vm {
                 .is_some_and(|ordering| ordering == expected)
         };
         self.stack.push(Value::Bool(result));
+        Ok(())
+    }
+
+    pub(super) fn numeric_compare_at(
+        &mut self,
+        span: Option<&SourceSpan>,
+        expected: Ordering,
+    ) -> VmResult<()> {
+        let (left, right) = self.pop_pair_at(span)?;
+        self.stack
+            .push(Value::Bool(compare_num(left, right, expected).map_err(
+                |message| self.error_at(RuntimeErrorKind::Type, message, span),
+            )?));
         Ok(())
     }
 

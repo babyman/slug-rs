@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cmp::Ordering, rc::Rc};
 
 #[cfg(feature = "metrics")]
 use std::cell::RefCell;
@@ -89,6 +89,12 @@ pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeError
     }
     integer_or_float(left, right, i64::checked_sub, |a, b| a - b)
 }
+
+/// Subtracts values whose source operands were proven to be numbers.
+pub(super) fn subtract_num(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    integer_or_float(left, right, i64::checked_sub, |a, b| a - b)
+}
+
 pub(super) fn multiply(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let (Value::Str(value), Value::Int(count)) = (&left, &right) {
         let count = usize::try_from(*count).map_err(|_| {
@@ -120,6 +126,12 @@ pub(super) fn multiply(left: Value, right: Value) -> Result<Value, (RuntimeError
     }
     integer_or_float(left, right, i64::checked_mul, |a, b| a * b)
 }
+
+/// Multiplies values whose source operands were proven to be numbers.
+pub(super) fn multiply_num(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    integer_or_float(left, right, i64::checked_mul, |a, b| a * b)
+}
+
 pub(super) fn divide(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
         if *right == 0 {
@@ -140,6 +152,12 @@ pub(super) fn divide(left: Value, right: Value) -> Result<Value, (RuntimeErrorKi
         Ok(Value::Float(a / b))
     }
 }
+
+/// Divides values whose source operands were proven to be numbers.
+pub(super) fn divide_num(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    divide(left, right)
+}
+
 pub(super) fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
         return left.checked_rem(*right).map(Value::Int).ok_or_else(|| {
@@ -156,6 +174,22 @@ pub(super) fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKi
     } else {
         Ok(Value::Float(a % b))
     }
+}
+
+/// Takes the remainder of values whose source operands were proven to be numbers.
+pub(super) fn modulo_num(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
+    modulo(left, right)
+}
+
+/// Compares values whose source operands were proven to be numbers.
+pub(super) fn compare_num(left: Value, right: Value, expected: Ordering) -> Result<bool, String> {
+    if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+        return Ok(left.cmp(right) == expected);
+    }
+    let (left, right) = numbers(left, right)?;
+    Ok(left
+        .partial_cmp(&right)
+        .is_some_and(|ordering| ordering == expected))
 }
 
 pub(super) fn bitwise(
