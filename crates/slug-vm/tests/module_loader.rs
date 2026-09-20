@@ -849,6 +849,44 @@ fn imported_bindings_preserve_inferred_value_and_function_results() {
 }
 
 #[test]
+fn imported_callable_snapshots_constrain_local_wrapper_signatures() {
+    let root = root("imported-callable-wrapper-inference");
+    fs::create_dir_all(&root).expect("create callable module directory");
+    fs::write(
+        root.join("numeric.slug"),
+        "export val divide = fn(value) { value / 10 }\n",
+    )
+    .expect("write numeric export module");
+
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val numeric = import(\"numeric\")\n\
+             val apply = fn(value) { numeric.divide(value) }\n\
+             export val result = apply(20)\n",
+        )
+        .expect("compile wrapper around imported numeric callable");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run wrapper around imported numeric callable");
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 2}");
+
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val numeric = import(\"numeric\")\n\
+             val apply = fn(value) { numeric.divide(value) }\n\
+             apply(\"text\")\n",
+        )
+        .expect_err("wrapper retains the imported numeric input requirement");
+    assert!(error.to_string().starts_with("expected num, got str"));
+
+    fs::remove_dir_all(root).expect("remove callable module directory");
+}
+
+#[test]
 fn imported_callables_preserve_inferred_plus_alternatives() {
     let root = root("imported-inferred-plus-alternatives");
     fs::create_dir_all(&root).expect("create inferred plus module directory");

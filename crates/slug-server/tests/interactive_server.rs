@@ -165,6 +165,38 @@ fn session_persists_compiler_and_runtime_bindings_across_submissions() {
 }
 
 #[test]
+fn session_infers_wrappers_from_retained_callable_signatures() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    assert!(
+        submit(
+            &mut server,
+            3,
+            &session,
+            "val divide = fn(value) { value / 10 }",
+        )
+        .ok
+    );
+    assert!(
+        submit(
+            &mut server,
+            4,
+            &session,
+            "val apply = fn(value) { divide(value) }",
+        )
+        .ok
+    );
+
+    let rejected = submit(&mut server, 5, &session, "apply(\"text\")");
+    assert!(!rejected.ok);
+    assert_eq!(
+        rejected.error.expect("semantic diagnostic").kind.as_deref(),
+        Some("semantic")
+    );
+}
+
+#[test]
 fn configured_server_resolves_and_typechecks_builtin_imports() {
     let root = workspace_root();
     let loader = ModuleLoader::new(&root, Some(root.join("lib")));

@@ -378,8 +378,7 @@ impl ParameterConstraints {
     ) -> Result<(), SourceError> {
         match &expression.kind {
             ExprKind::Call { callee, arguments } => {
-                if let ExprKind::Name(name) = &callee.kind
-                    && let Some(binding) = environment.lookup(name)
+                if let Some(binding) = expression_binding(callee, environment)
                     && let [signature] = binding.callables.as_slice()
                     && signature.generic_arity == 0
                     && signature.inferred_alternatives.is_empty()
