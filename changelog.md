@@ -6,6 +6,10 @@
   resolve them only while rendering an error, preserving diagnostics while
   removing hot-path span cloning and shrinking call frames.
 
+- Dispatched common installed VM instructions directly from their packed
+  representation, retaining the checked rich-bytecode fallback for less
+  frequent operations.
+
 - Added crate-local contributor guidance for module loading, native ingress,
   and coupled value/runtime ownership.
 

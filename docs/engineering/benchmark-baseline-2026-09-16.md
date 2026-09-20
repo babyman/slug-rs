@@ -233,3 +233,28 @@ existing all-direct local-vector reuse. In these samples it completed in
 227.240 ms, compared with about 266.456 ms in the preceding lazy-scope run.
 The new counters separately expose exact and generic recur bindings, and a
 defaulted-parameter test protects the generic fallback.
+
+## Packed hot-op dispatch — 2026-09-19
+
+Installed bytecode remains validated before execution, but the execution loop
+now dispatches the common fixed-width instructions directly from
+`PackedInstruction`. The rich builder-facing `Op` is reconstructed only for
+the less common fallback instructions while that transition is measured.
+
+A 15-sample local run from the dirty worktree based on
+`ea0a0f5bdb5615299891c3c4d77c943bcbcfd3fc` reported:
+
+| Workload      | Slug median | CPython median | Slug / CPython |
+|---------------|------------:|---------------:|---------------:|
+| function-call |   96.005 ms |      26.612 ms |          3.61x |
+| n-body        |   39.682 ms |      22.347 ms |          1.78x |
+| spectral-norm |   14.000 ms |      20.427 ms |          0.69x |
+| binary-trees  |  109.669 ms |      29.396 ms |          3.73x |
+
+The accompanying in-process benchmark recorded `ordinary-calls-200` at
+211.420 ms for 1,000 runs, down from roughly 227 ms before the direct
+hot-op path. This result also includes the preceding compact call-site
+diagnostic representation, so it is a directional comparison rather than an
+isolated attribution. The workload continues to preserve checked arithmetic,
+collection-update metrics, and call-frame diagnostics; fallback instructions
+retain the existing rich-op dispatcher.

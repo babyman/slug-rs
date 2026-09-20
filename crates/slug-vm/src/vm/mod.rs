@@ -16,7 +16,7 @@ use crate::value::TaskAdmission;
 use crate::{
     CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
     NativeFunction, Program, SourceSpan, SpanId, Value,
-    bytecode::{EntrypointArguments, Op, SelectCase},
+    bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
@@ -1931,12 +1931,133 @@ impl Vm {
                 .clone();
             let instruction = self.next_instruction(&frame_program)?;
             self.active_span = instruction.span;
-            if let BorrowedSpanOpOutcome::Settled(value) =
-                self.execute_borrowed_span_op(&frame_program, &instruction.op, None)?
+            let outcome = if let Some(outcome) =
+                self.execute_packed_hot_op(&frame_program, &instruction)?
             {
+                outcome
+            } else {
+                let instruction = Program::unpack_instruction(&instruction).map_err(|message| {
+                    self.error(RuntimeErrorKind::InvalidBytecode, message, None)
+                })?;
+                self.execute_borrowed_span_op(&frame_program, &instruction.op, None)?
+            };
+            if let BorrowedSpanOpOutcome::Settled(value) = outcome {
                 return Ok(ExecutionOutcome::Settled(Ok(value)));
             }
         }
+    }
+
+    /// Dispatches the common packed instructions without reconstructing a
+    /// builder-facing `Op`. Less frequent instructions retain the checked
+    /// fallback while this representation transition is measured.
+    #[allow(clippy::too_many_lines)]
+    fn execute_packed_hot_op(
+        &mut self,
+        program: &Program,
+        instruction: &PackedInstruction,
+    ) -> VmResult<Option<BorrowedSpanOpOutcome>> {
+        let operand = instruction.a as usize;
+        match instruction.opcode {
+            PackedOpcode::Constant => {
+                let chunk = self.current_chunk(program)?;
+                let value = match chunk.constants.get(operand) {
+                    Some(crate::Constant::Value(value)) => value.clone(),
+                    Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
+                        chunk: *function,
+                        captures: Vec::new(),
+                        program: Some(self.active_program()?),
+                        globals: Some(self.globals.clone()),
+                        #[cfg(feature = "concurrency")]
+                        capture_sources: Vec::new(),
+                    })),
+                    None => {
+                        return Err(self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("constant {operand} does not exist"),
+                            None,
+                        ));
+                    }
+                };
+                self.stack.push(value);
+            }
+            PackedOpcode::Nil => self.stack.push(Value::Nil),
+            PackedOpcode::True => self.stack.push(Value::Bool(true)),
+            PackedOpcode::False => self.stack.push(Value::Bool(false)),
+            PackedOpcode::Pop => {
+                self.pop_at(None)?;
+            }
+            PackedOpcode::Duplicate => self.stack.push(self.peek_at(None)?.clone()),
+            PackedOpcode::GetLocal => self.stack.push(self.local_value(operand, None)?),
+            PackedOpcode::SetLocal => {
+                let value = self.pop_at(None)?;
+                self.set_local_at(operand, value, None)?;
+            }
+            PackedOpcode::Add => {
+                let (left, right) = self.pop_pair_at(None)?;
+                #[cfg(feature = "metrics")]
+                match (&left, &right) {
+                    (Value::List(left), Value::List(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    (Value::Map(left), Value::Map(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    (Value::Bytes(left), Value::Bytes(right)) => {
+                        self.record_collection_update(
+                            left.len() + right.len(),
+                            Rc::strong_count(left) == 1,
+                        );
+                    }
+                    _ => {}
+                }
+                self.stack.push(
+                    add(left, right)
+                        .map_err(|(kind, message)| self.error_at(kind, message, None))?,
+                );
+            }
+            PackedOpcode::Subtract => {
+                let (left, right) = self.pop_pair_at(None)?;
+                #[cfg(feature = "metrics")]
+                if let Value::Map(entries) = &left {
+                    self.record_collection_update(entries.len(), Rc::strong_count(entries) == 1);
+                }
+                self.stack.push(
+                    subtract(left, right)
+                        .map_err(|(kind, message)| self.error_at(kind, message, None))?,
+                );
+            }
+            PackedOpcode::Multiply => self.binary_at(None, multiply)?,
+            PackedOpcode::Divide => self.binary_at(None, divide)?,
+            PackedOpcode::Modulo => self.binary_at(None, modulo)?,
+            PackedOpcode::Equal => {
+                let (left, right) = self.pop_pair_at(None)?;
+                self.stack.push(Value::Bool(left == right));
+            }
+            PackedOpcode::Greater => self.compare_at(None, std::cmp::Ordering::Greater)?,
+            PackedOpcode::Less => self.compare_at(None, std::cmp::Ordering::Less)?,
+            PackedOpcode::Jump => self.jump_at(operand, None)?,
+            PackedOpcode::JumpIfFalse => {
+                if !self.peek_at(None)?.is_truthy() {
+                    self.jump_at(operand, None)?;
+                }
+            }
+            PackedOpcode::CallPositional => self.call_positional_at(program, operand, None)?,
+            PackedOpcode::RecurPositional => self.recur_positional_at(program, operand, None)?,
+            PackedOpcode::Return => {
+                let value = self.pop_at(None)?;
+                if let Some(value) = self.begin_return(value)? {
+                    return Ok(Some(BorrowedSpanOpOutcome::Settled(value)));
+                }
+            }
+            _ => return Ok(None),
+        }
+        Ok(Some(BorrowedSpanOpOutcome::Continue))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2958,7 +3079,7 @@ impl Vm {
         Ok(BorrowedSpanOpOutcome::Continue)
     }
 
-    fn next_instruction(&mut self, program: &Program) -> VmResult<crate::Instruction> {
+    fn next_instruction(&mut self, program: &Program) -> VmResult<PackedInstruction> {
         let (chunk_index, ip) = self
             .frames
             .last()
@@ -2990,8 +3111,7 @@ impl Vm {
             metrics.instructions_executed += 1;
         }
         self.frames.last_mut().expect("active frame was checked").ip += 1;
-        Program::unpack_instruction(instruction)
-            .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))
+        Ok(*instruction)
     }
 
     fn current_chunk<'a>(
