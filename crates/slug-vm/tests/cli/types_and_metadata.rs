@@ -105,7 +105,7 @@ fn inferred_parameter_calls_with_dynamic_values_retain_checked_runtime_failures(
     let path = fixture_path("body-derived-parameter-dynamic-call");
     fs::write(
         &path,
-        "val divide = fn(value) { value / 2 }\nval dynamic:any = \"x\"\ndivide(dynamic)\n",
+        "val divide = fn(value) { value / 2 }\nval apply = fn(value, transform) { transform(value) }\napply(\"x\", divide)\n",
     )
     .expect("write dynamic inferred call source");
     let output = slug()

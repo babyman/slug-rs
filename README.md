@@ -76,7 +76,9 @@ contract is documented separately as `.cslug`.
   operator and collection-access operands, narrows direct nil checks in
   control-flow paths, diagnoses closed typed-match coverage, preserves precise
   collection results, checks fields through known schemas, and retains inferred
-  function-value input and result types for higher-order positional calls.
+  function-value input and result types for higher-order positional calls,
+  including body-derived `num` parameter types from division, modulo, unary
+  negation, and ordering comparisons.
 - Lexically scoped semantic bindings retain ordered callable signatures through
   local declarations, aliases, parameters, and nested blocks. Calls to locally
   known callables undergo mandatory shape, generic, and parameter-type

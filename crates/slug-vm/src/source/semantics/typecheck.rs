@@ -130,9 +130,9 @@ impl ParameterConstraints {
         ))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn collect(&mut self, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
-            ExprKind::Function { .. } => Ok(()),
             ExprKind::Binary {
                 left,
                 operator:
@@ -293,7 +293,8 @@ impl ParameterConstraints {
                 }
                 Ok(())
             }
-            ExprKind::Foreign { .. }
+            ExprKind::Function { .. }
+            | ExprKind::Foreign { .. }
             | ExprKind::Resource { .. }
             | ExprKind::Enum { .. }
             | ExprKind::TypeAlias { .. }
@@ -371,10 +372,8 @@ fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String,
     constraints
         .requirements
         .iter()
-        .filter_map(|(name, requirement)| {
-            (!matches!(requirement.value_type, Type::Unknown))
-                .then(|| (name.clone(), requirement.value_type.clone()))
-        })
+        .filter(|(_, requirement)| !matches!(requirement.value_type, Type::Unknown))
+        .map(|(name, requirement)| (name.clone(), requirement.value_type.clone()))
         .collect()
 }
 
@@ -865,7 +864,7 @@ fn callable_signature(
 fn check_function_body(
     parameters: &[Parameter],
     signature: &CallableSignature,
-    return_annotation: &Option<TypeAnnotation>,
+    return_annotation: Option<&TypeAnnotation>,
     body: &Expr,
     environment: &Environment,
     type_parameters: &[String],
@@ -1112,7 +1111,7 @@ fn check_expression_inner(
             let _ = check_function_body(
                 parameters,
                 &provisional,
-                return_annotation,
+                return_annotation.as_ref(),
                 body,
                 environment,
                 function_type_parameters,
@@ -1131,7 +1130,7 @@ fn check_expression_inner(
             let actual = check_function_body(
                 parameters,
                 &signature,
-                return_annotation,
+                return_annotation.as_ref(),
                 body,
                 environment,
                 function_type_parameters,

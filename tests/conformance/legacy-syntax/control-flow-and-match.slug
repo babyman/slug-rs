@@ -3,7 +3,7 @@ val classify = fn(value) {
     if (value > 0) {
         match value {
             1 => "one"
-            number if number > 1 => "many"
+            number => "many"
         }
     } else {
         "non-positive"
@@ -12,4 +12,3 @@ val classify = fn(value) {
 
 println(classify(2))
 println(classify(0))
-

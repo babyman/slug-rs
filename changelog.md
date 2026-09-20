@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Specified body-derived inference for unannotated function parameters and
-  recorded its implementation plan; callers validate solved signatures but do
-  not contribute inference facts.
+- Implemented body-derived `num` inference for unannotated function parameters
+  used by division, modulo, unary negation, and ordering comparisons. Solved
+  signatures now drive static calls, overload identity, function values,
+  exports, imports, and checked numeric lowering without adding runtime
+  annotation validation.
 
 - Retained semantic expression types through lowering and added checked numeric
   arithmetic and relational bytecode for source operands proven to be `num`.
