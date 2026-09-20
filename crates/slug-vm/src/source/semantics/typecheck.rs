@@ -3609,6 +3609,28 @@ mod tests {
     }
 
     #[test]
+    fn solved_parameter_facts_select_numeric_lowering_opcodes() {
+        let program = super::super::compile(
+            "test.slug",
+            "val divide = fn(value) { value / 10 }\nval before = fn(value) { value < 10 }",
+        )
+        .expect("numeric body constraints compile");
+        let opcodes = (0..program.chunk_count())
+            .flat_map(|index| {
+                program
+                    .chunk(index)
+                    .expect("existing chunk")
+                    .code
+                    .iter()
+                    .map(|instruction| instruction.opcode)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(opcodes.contains(&crate::bytecode::PackedOpcode::DivideNum));
+        assert!(opcodes.contains(&crate::bytecode::PackedOpcode::LessNum));
+    }
+
+    #[test]
     fn narrower_parameter_types_are_more_specific() {
         let narrow = candidate(vec![Type::Str]);
         let broad = candidate(vec![Type::universal()]);
