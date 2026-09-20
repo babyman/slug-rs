@@ -1,6 +1,130 @@
 use super::*;
 
 #[test]
+fn infers_unannotated_parameter_types_from_numeric_function_bodies() {
+    let path = fixture_path("body-derived-parameter-inference");
+    fs::write(
+        &path,
+        "val divide = fn(value) { value / 2 }\n\
+         val ordered = fn(value) { value < 10 }\n\
+         val negate = fn(value) { -value }\n\
+         val broad = fn(value) { value + 10 }\n\
+         println(divide(8), ordered(8), negate(8), broad(\"x\"))\n",
+    )
+    .expect("write body-derived parameter inference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred parameter source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "4 true -8 x10\n");
+
+    fs::write(
+        &path,
+        "val divide = fn(value) { value / 2 }\ndivide(\"x\")\n",
+    )
+    .expect("write incompatible inferred call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible inferred call source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+    fs::remove_file(path).expect("remove body-derived parameter inference source");
+}
+
+#[test]
+fn body_derived_parameter_types_cover_recursion_defaults_and_function_values() {
+    let path = fixture_path("body-derived-parameter-shapes");
+    fs::write(
+        &path,
+        "val countdown = fn(value) { if (value > 0) { recur(value - 1) } else { value } }\n\
+         val defaulted = fn(value, fallback = -value) { fallback }\n\
+         val divide = fn(value) { value / 2 }\n\
+         val outer = fn(value) { val inner = fn(item) { item / 2 }\ninner(4)\nvalue }\n\
+         val callback:fn<num, num> = divide\n\
+         println(countdown(3), defaulted(4), outer(\"broad\"), callback(8))\n",
+    )
+    .expect("write inferred parameter shape source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred parameter shape source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "0 -4 broad 4\n");
+
+    fs::write(
+        &path,
+        "val defaulted = fn(value, fallback = -value) { fallback }\ndefaulted(\"x\")\n",
+    )
+    .expect("write incompatible default-derived call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible default-derived call source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+
+    fs::write(
+        &path,
+        "val duplicate = fn(value) { value / 2 }\nval duplicate = fn(value:num) { value }\n",
+    )
+    .expect("write duplicate inferred overload source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run duplicate inferred overload source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: duplicate callable signature for `duplicate`")
+    );
+    fs::remove_file(path).expect("remove inferred parameter shape source");
+}
+
+#[test]
+fn inferred_parameter_calls_with_dynamic_values_retain_checked_runtime_failures() {
+    let path = fixture_path("body-derived-parameter-dynamic-call");
+    fs::write(
+        &path,
+        "val divide = fn(value) { value / 2 }\nval dynamic:any = \"x\"\ndivide(dynamic)\n",
+    )
+    .expect("write dynamic inferred call source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic inferred call source");
+    fs::remove_file(path).expect("remove dynamic inferred call source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:"),
+        "dynamic calls must fail through Slug runtime diagnostics"
+    );
+}
+
+#[test]
 fn infers_scalar_literal_types_through_bindings() {
     let path = fixture_path("scalar-literal-inference");
     fs::write(
