@@ -13,7 +13,8 @@ use super::{
         SemanticAnalysis, SemanticBinding, SessionSnapshot, function_value_type,
     },
     semantic::{
-        ResourceIdentity, SchemaIdentity, Type, resolve_annotation, resolve_resource_references,
+        AlternativeType, AlternativeVariable, InferredAlternative, ResourceIdentity,
+        SchemaIdentity, Type, resolve_annotation, resolve_resource_references,
         resolve_static_annotation,
     },
 };
@@ -73,11 +74,19 @@ struct CheckedExpression {
 #[derive(Debug)]
 struct ParameterConstraints {
     requirements: HashMap<String, ParameterRequirement>,
+    plus_operands: Vec<PlusOperands>,
 }
 
 #[derive(Clone, Debug)]
 struct ParameterRequirement {
     value_type: Type,
+    span: crate::SourceSpan,
+}
+
+#[derive(Debug)]
+struct PlusOperands {
+    left: String,
+    right: String,
     span: crate::SourceSpan,
 }
 
@@ -99,6 +108,7 @@ impl ParameterConstraints {
                     )
                 })
                 .collect(),
+            plus_operands: Vec::new(),
         }
     }
 
@@ -133,6 +143,15 @@ impl ParameterConstraints {
     #[allow(clippy::too_many_lines)]
     fn collect(&mut self, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
+            ExprKind::Binary {
+                left,
+                operator: Binary::Add,
+                right,
+            } => {
+                self.collect_plus_operands(left, right, &expression.span);
+                self.collect(left)?;
+                self.collect(right)
+            }
             ExprKind::Binary {
                 left,
                 operator:
@@ -306,6 +325,19 @@ impl ParameterConstraints {
         }
     }
 
+    fn collect_plus_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
+        let (ExprKind::Name(left), ExprKind::Name(right)) = (&left.kind, &right.kind) else {
+            return;
+        };
+        if self.requirements.contains_key(left) && self.requirements.contains_key(right) {
+            self.plus_operands.push(PlusOperands {
+                left: left.clone(),
+                right: right.clone(),
+                span: span.clone(),
+            });
+        }
+    }
+
     fn collect_tags(&mut self, tags: &[Tag]) -> Result<(), SourceError> {
         for tag in tags {
             for argument in &tag.arguments {
@@ -375,6 +407,84 @@ fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String,
         .filter(|(_, requirement)| !matches!(requirement.value_type, Type::Unknown))
         .map(|(name, requirement)| (name.clone(), requirement.value_type.clone()))
         .collect()
+}
+
+/// Derives the finite `+` schemes for a direct pair of unannotated parameters.
+///
+/// The schemes are created from the body, then narrowed only with other
+/// body-derived singleton facts. They remain private here; callable metadata
+/// publishes them in the following implementation stage.
+fn inferred_plus_alternatives(
+    constraints: &ParameterConstraints,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    let Some(first) = constraints.plus_operands.first() else {
+        return Ok(Vec::new());
+    };
+    let mut alternatives = plus_alternatives();
+    for operands in &constraints.plus_operands {
+        let left = constraints.requirements[&operands.left].value_type.clone();
+        let right = constraints.requirements[&operands.right].value_type.clone();
+        let compatible = plus_alternatives()
+            .into_iter()
+            .filter(|alternative| {
+                alternative.accepts_constraints(&[
+                    (!matches!(left, Type::Unknown)).then_some(&left),
+                    (!matches!(right, Type::Unknown)).then_some(&right),
+                ])
+            })
+            .collect::<Vec<_>>();
+        if compatible.is_empty() {
+            return Err(SourceError::semantic(
+                "no inferred `+` alternative satisfies the function body requirements",
+                operands.span.clone(),
+            ));
+        }
+        if operands.left == first.left && operands.right == first.right {
+            alternatives.retain(|alternative| compatible.contains(alternative));
+        }
+    }
+    Ok(alternatives)
+}
+
+fn plus_alternatives() -> Vec<InferredAlternative> {
+    let variable = |index| AlternativeType::variable(AlternativeVariable::new(index));
+    vec![
+        InferredAlternative::new(
+            vec![
+                AlternativeType::concrete(Type::Num),
+                AlternativeType::concrete(Type::Num),
+            ],
+            AlternativeType::concrete(Type::Num),
+        ),
+        InferredAlternative::new(
+            vec![AlternativeType::concrete(Type::Str), variable(0)],
+            AlternativeType::concrete(Type::Str),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::list(variable(0)),
+                AlternativeType::list(variable(1)),
+            ],
+            AlternativeType::list(AlternativeType::union([variable(0), variable(1)])),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::concrete(Type::Bytes),
+                AlternativeType::concrete(Type::Bytes),
+            ],
+            AlternativeType::concrete(Type::Bytes),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::map(variable(0), variable(1)),
+                AlternativeType::map(variable(2), variable(3)),
+            ],
+            AlternativeType::map(
+                AlternativeType::union([variable(0), variable(2)]),
+                AlternativeType::union([variable(1), variable(3)]),
+            ),
+        ),
+    ]
 }
 
 impl CheckedExpression {
@@ -849,7 +959,9 @@ fn callable_signature(
     else {
         return Ok(None);
     };
-    let inferred_parameters = solved_parameter_types(&parameter_constraints(parameters, body)?);
+    let constraints = parameter_constraints(parameters, body)?;
+    let _ = inferred_plus_alternatives(&constraints)?;
+    let inferred_parameters = solved_parameter_types(&constraints);
     function_type(
         type_parameters,
         parameters,
@@ -1116,8 +1228,9 @@ fn check_expression_inner(
                 environment,
                 function_type_parameters,
             )?;
-            let inferred_parameters =
-                solved_parameter_types(&parameter_constraints(parameters, body)?);
+            let constraints = parameter_constraints(parameters, body)?;
+            let _ = inferred_plus_alternatives(&constraints)?;
+            let inferred_parameters = solved_parameter_types(&constraints);
             let mut signature = function_type(
                 function_type_parameters,
                 parameters,
@@ -3470,6 +3583,17 @@ mod tests {
         }
     }
 
+    fn binary(left: Expr, operator: Binary, right: Expr) -> Expr {
+        Expr {
+            kind: ExprKind::Binary {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            },
+            span: span(),
+        }
+    }
+
     fn candidate(bound_types: Vec<Type>) -> InstantiatedCandidate {
         InstantiatedCandidate {
             bound_types,
@@ -3514,6 +3638,55 @@ mod tests {
 
         assert_eq!(constraints.requirements["value"].value_type, Type::Num);
         assert_eq!(constraints.requirements["limit"].value_type, Type::Num);
+    }
+
+    #[test]
+    fn inferred_plus_alternatives_cover_the_five_runtime_families() {
+        let body = binary(name("left"), Binary::Add, name("right"));
+        let constraints = parameter_constraints(&[parameter("left"), parameter("right")], &body)
+            .expect("plus operands collect");
+        let alternatives = inferred_plus_alternatives(&constraints)
+            .expect("unconstrained plus body retains every family");
+
+        assert_eq!(
+            alternatives
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec![
+                "(num, num) -> num",
+                "(str, A0) -> str",
+                "(list<A0>, list<A1>) -> list<A0|A1>",
+                "(bytes, bytes) -> bytes",
+                "(map<A0, A1>, map<A2, A3>) -> map<A0|A2, A1|A3>",
+            ]
+        );
+    }
+
+    #[test]
+    fn inferred_plus_alternatives_intersect_numeric_body_facts() {
+        let body = Expr {
+            kind: ExprKind::Block(vec![
+                binary(name("left"), Binary::Add, name("right")),
+                binary(name("left"), Binary::Divide, name("limit")),
+            ]),
+            span: span(),
+        };
+        let constraints = parameter_constraints(
+            &[parameter("left"), parameter("right"), parameter("limit")],
+            &body,
+        )
+        .expect("numeric body requirements collect");
+        let alternatives = inferred_plus_alternatives(&constraints)
+            .expect("numeric requirement retains the numeric alternative");
+
+        assert_eq!(
+            alternatives
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["(num, num) -> num"]
+        );
     }
 
     #[test]

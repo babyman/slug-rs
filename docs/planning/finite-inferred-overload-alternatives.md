@@ -33,11 +33,11 @@ derive or mutate a function's alternatives.
 
 ### 2. Derive `+` alternatives from function bodies
 
-- [ ] Add the five `+` schemes recorded in the ADR.
-- [ ] Instantiate fresh symbols for every operator occurrence.
-- [ ] Intersect an operator's schemes with solved singleton body facts and with
+- [x] Add the five `+` schemes recorded in the ADR.
+- [x] Instantiate fresh symbols for every operator occurrence.
+- [x] Intersect an operator's schemes with solved singleton body facts and with
   constraints from other operations in the same function.
-- [ ] Diagnose a body only when all alternatives are impossible; retain a broad
+- [x] Diagnose a body only when all alternatives are impossible; retain a broad
   dynamic signature when more than one unsupported relationship remains.
 
 ### 3. Publish and select alternatives

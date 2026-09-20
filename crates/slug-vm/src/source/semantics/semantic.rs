@@ -236,6 +236,56 @@ impl AlternativeType {
             ),
         }
     }
+
+    fn accepts_constraint(
+        &self,
+        actual: &Type,
+        substitutions: &mut HashMap<AlternativeVariable, Type>,
+    ) -> bool {
+        if is_dynamic_alternative_constraint(actual) {
+            return true;
+        }
+        match (self, actual) {
+            (Self::Concrete(expected), actual) => actual.is_assignable_to(expected),
+            (Self::Variable(variable), actual) => {
+                if let Some(previous) = substitutions.get(variable) {
+                    actual == previous
+                } else {
+                    substitutions.insert(*variable, actual.clone());
+                    true
+                }
+            }
+            (Self::List(expected), Type::List(Some(actual))) => {
+                expected.accepts_constraint(actual, substitutions)
+            }
+            (Self::List(_), Type::List(None)) | (Self::Map(_, _), Type::Map(None)) => true,
+            (
+                Self::Map(expected_key, expected_value),
+                Type::Map(Some((actual_key, actual_value))),
+            ) => {
+                expected_key.accepts_constraint(actual_key, substitutions)
+                    && expected_value.accepts_constraint(actual_value, substitutions)
+            }
+            (Self::Union(expected), actual) => expected.iter().any(|member| {
+                let mut trial = substitutions.clone();
+                if member.accepts_constraint(actual, &mut trial) {
+                    *substitutions = trial;
+                    true
+                } else {
+                    false
+                }
+            }),
+            _ => false,
+        }
+    }
+}
+
+fn is_dynamic_alternative_constraint(value_type: &Type) -> bool {
+    match value_type {
+        Type::Unknown | Type::Any => true,
+        Type::Union(members) => members.iter().any(is_dynamic_alternative_constraint),
+        _ => false,
+    }
 }
 
 impl fmt::Display for AlternativeType {
@@ -295,6 +345,23 @@ impl InferredAlternative {
                 .collect(),
             self.result.substitute(substitutions),
         )
+    }
+
+    /// Whether the known body facts are compatible with this symbolic scheme.
+    /// Missing facts deliberately remain dynamic and cannot remove a scheme.
+    pub(super) fn accepts_constraints(&self, constraints: &[Option<&Type>]) -> bool {
+        if self.parameters.len() != constraints.len() {
+            return false;
+        }
+        let mut substitutions = HashMap::new();
+        self.parameters
+            .iter()
+            .zip(constraints)
+            .all(|(parameter, constraint)| {
+                constraint.is_none_or(|constraint| {
+                    parameter.accepts_constraint(constraint, &mut substitutions)
+                })
+            })
     }
 }
 
