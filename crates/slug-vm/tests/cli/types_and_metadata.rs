@@ -183,6 +183,29 @@ fn selects_body_derived_multiply_alternatives_at_known_calls() {
 }
 
 #[test]
+fn distinct_inferred_operator_families_do_not_compose() {
+    let path = fixture_path("non-composed-inferred-alternatives");
+    fs::write(
+        &path,
+        "val mixed = fn(left, right) { left + right\nleft - right }\n\
+         mixed(1, 0x\"01\")\n",
+    )
+    .expect("write non-composed inferred alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run non-composed inferred alternatives source");
+    fs::remove_file(path).expect("remove non-composed inferred alternatives source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:"),
+        "mixed operator families must not infer an unsound static signature"
+    );
+}
+
+#[test]
 fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
     let path = fixture_path("inferred-plus-dynamic-boundary");
     fs::write(

@@ -57,10 +57,9 @@ Neither work expands structural-call preservation or introduces specialization.
 
 - [ ] Define composition when several overloaded operations constrain the same
   parameters across branches, nested functions, defaults, and `recur`.
-- [ ] Make the current composition boundary explicit in tests: alternatives are
-  initially derived from one direct parameter pair and do not yet compose
-  independent parameter relationships. Do not silently approximate those
-  relationships with unions.
+- [x] Make the current composition boundary explicit in tests: alternatives are
+  initially derived from one operator family and direct parameter pair; distinct
+  families do not compose or silently approximate relationships with unions.
 - [ ] Preserve widening at structural and dynamically selected function-value
   boundaries. Reconsider retention of alternatives there only through a new
   decision record with a concrete callable representation.
