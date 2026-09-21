@@ -2121,6 +2121,7 @@ impl Vm {
                 }
             }
             PackedOpcode::CallPositional => self.call_positional_at(program, operand, None)?,
+            PackedOpcode::EnterScope => self.enter_scope_at(None)?,
             PackedOpcode::RecurPositional => self.recur_positional_at(program, operand, None)?,
             PackedOpcode::Return => {
                 let value = self.pop_at(None)?;
@@ -2829,31 +2830,7 @@ impl Vm {
                     return Err(self.runtime_capability_error("nursery", span));
                 }
             }
-            Op::EnterScope => {
-                if self.frames.is_empty() {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "no active call frame".into(),
-                        span,
-                    ));
-                }
-                if self
-                    .frames
-                    .last()
-                    .is_some_and(|frame| frame.scope_depth == u32::MAX)
-                {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "scope nesting is too deep".into(),
-                        span,
-                    ));
-                }
-                let frame = self.frames.last_mut().expect("frame was checked");
-                frame.scope_depth += 1;
-                if !frame.scopes.is_empty() {
-                    frame.scopes.push(Vec::new());
-                }
-            }
+            Op::EnterScope => self.enter_scope_at(span)?,
             Op::LeaveScope => {
                 if self.frames.is_empty() {
                     return Err(self.error_at(
@@ -3163,6 +3140,33 @@ impl Vm {
             }
         }
         Ok(BorrowedSpanOpOutcome::Continue)
+    }
+
+    fn enter_scope_at(&mut self, span: Option<&SourceSpan>) -> VmResult<()> {
+        if self.frames.is_empty() {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active call frame".into(),
+                span,
+            ));
+        }
+        if self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.scope_depth == u32::MAX)
+        {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "scope nesting is too deep".into(),
+                span,
+            ));
+        }
+        let frame = self.frames.last_mut().expect("frame was checked");
+        frame.scope_depth += 1;
+        if !frame.scopes.is_empty() {
+            frame.scopes.push(Vec::new());
+        }
+        Ok(())
     }
 
     pub(in crate::vm) fn push_frame(&mut self, frame: Frame) {

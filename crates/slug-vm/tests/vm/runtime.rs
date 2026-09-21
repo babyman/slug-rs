@@ -48,6 +48,23 @@ fn records_rich_op_fallback_dispatches_separately_from_packed_dispatches() {
 
 #[test]
 #[cfg(feature = "metrics")]
+fn dispatches_scope_entry_without_rich_op_unpacking() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::EnterScope)
+        .emit(Op::Nil)
+        .emit(Op::LeaveScope)
+        .emit(Op::Return);
+    let mut vm = Vm::new();
+    assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Nil);
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.instructions_executed, 4);
+    assert_eq!(metrics.packed_direct_dispatches, 3);
+    assert_eq!(metrics.rich_op_fallback_dispatches, 1);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
 fn records_direct_local_vector_reuse_across_recur() {
     let program = compile(
         "recur-local-reuse.slug",

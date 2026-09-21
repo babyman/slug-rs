@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Dispatched packed VM scope entry directly while retaining checked scope-depth
+  validation and rich-bytecode fallback behavior.
+
 - Synchronized the VM's active global environment at frame transitions instead
   of on every instruction while preserving frame-owned closure environments.
 

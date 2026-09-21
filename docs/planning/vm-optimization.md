@@ -975,3 +975,24 @@ fallback instructions across ten runs. Those aggregate counters do not show a
 dominant two-element-list construction or match-dispatch cost, so this plan
 does not add either specialized fast path. The existing packed dispatch and
 collection instrumentation remain the decision evidence.
+
+#### Measurement record: packed scope entry (2026-09-21)
+
+`EnterScope` was the dominant remaining rich-op fallback in the source-aligned
+call workload: each non-terminal `recur` iteration enters its `if` branch and
+restarts before its matching `LeaveScope` executes. The packed dispatcher now
+performs the same checked scope-depth update directly; the rich-op path
+retains the shared helper for builder-facing execution. A focused metrics test
+proves a packed `EnterScope` no longer unpacks while a following `LeaveScope`
+remains a fallback.
+
+On `cargo bench -p slug-vm --bench vm --features metrics`, direct/fallback
+dispatch changed from 16,000,230 / 1,000,080 to 17,000,240 / 70 across ten
+`function-call` runs, and from 17,694,500 / 2,293,780 to 18,349,850 /
+1,638,430 across ten `binary-trees` runs. The in-process elapsed samples were
+498.787 ms to 477.552 ms for calls and 548.682 ms to 532.710 ms for trees.
+Three independent 15-sample `make bench-source` runs reported function-call
+medians of 45.026, 44.489, and 44.641 ms and binary-tree medians of 49.890,
+49.130, and 49.406 ms. Source-level timing is within ordinary local variation,
+so the retained evidence is the eliminated hot-path fallback and the
+in-process result, not a portable end-to-end performance claim.

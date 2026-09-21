@@ -319,3 +319,38 @@ comparison, not attribution to a single VM change. The remaining source-level
 targets are ordinary calls and binary-tree construction/matching; their
 measurement and preservation gates are recorded in the
 [VM optimization plan](../planning/vm-optimization.md).
+
+## Packed scope entry — 2026-09-21
+
+`EnterScope` was the dominant rich-op fallback in the source-aligned
+function-call workload. The packed dispatcher now runs the same checked
+scope-depth update without reconstructing the builder-facing opcode. This is a
+private VM representation change; source semantics and diagnostics are
+unchanged.
+
+The in-process benchmark compiles each source workload once, then executes it
+ten times through an installed program. The before and after figures below are
+single local samples and show the intended runtime cost directly.
+
+| Workload      |     Before |      After | Change |
+|---------------|-----------:|-----------:|-------:|
+| function-call | 498.787 ms | 477.552 ms |  -4.3% |
+| binary-trees  | 548.682 ms | 532.710 ms |  -2.9% |
+
+| Workload      | Direct / fallback before | Direct / fallback after |
+|---------------|-------------------------:|------------------------:|
+| function-call |   16,000,230 / 1,000,080 |         17,000,240 / 70 |
+| binary-trees  |   17,694,500 / 2,293,780 |  18,349,850 / 1,638,430 |
+
+Three independent `make bench-source` runs used three warmups and 15 timed
+samples per runtime/workload. Their source-level medians remain within normal
+local variation, so they do not establish an end-to-end improvement claim.
+
+| Workload      |     Run 1 |     Run 2 |     Run 3 |
+|---------------|----------:|----------:|----------:|
+| function-call | 45.026 ms | 44.489 ms | 44.641 ms |
+| binary-trees  | 49.890 ms | 49.130 ms | 49.406 ms |
+
+The remaining binary-tree fallback work is approximately 98,302 `TryMatch`
+instructions and 65,535 `LeaveScope` instructions per workload execution.
+Evaluate those paths independently before retaining another packed fast path.
