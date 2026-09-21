@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added metrics-enabled in-process `function-call` and `binary-trees`
+  benchmarks aligned with the source benchmark inputs and checked results.
+
 - Recorded the desktop `opt-level = 3` source-benchmark result and a measured
   private-VM task sequence for ordinary-call and binary-tree bottlenecks;
   Slug source semantics and portable bytecode remain unchanged.

@@ -17,6 +17,7 @@ struct Workload {
     iterations: usize,
     source: fn() -> String,
     install: fn(&mut Vm),
+    expected_result: Option<&'static str>,
 }
 
 fn no_native_setup(_: &mut Vm) {}
@@ -81,33 +82,17 @@ fn unique_collection_workload() -> String {
 }
 
 fn main() {
-    let vm_layout = Vm::layout_metrics();
-    println!(
-        "VM layout: Value {}/{}, LocalSlot {}/{}, Frame {}/{}, Closure {}/{} bytes/alignment",
-        vm_layout.value_size_bytes,
-        vm_layout.value_alignment_bytes,
-        vm_layout.local_slot_size_bytes,
-        vm_layout.local_slot_alignment_bytes,
-        vm_layout.frame_size_bytes,
-        vm_layout.frame_alignment_bytes,
-        vm_layout.closure_size_bytes,
-        vm_layout.closure_alignment_bytes,
-    );
-    #[cfg(feature = "concurrency")]
-    println!(
-        "Scheduler layout: Task {}/{}, TaskState {}/{}, TaskExecution {}/{} bytes/alignment",
-        vm_layout.task_size_bytes,
-        vm_layout.task_alignment_bytes,
-        vm_layout.task_state_size_bytes,
-        vm_layout.task_state_alignment_bytes,
-        vm_layout.task_execution_size_bytes,
-        vm_layout.task_execution_alignment_bytes,
-    );
+    print_vm_layout();
     for workload in WORKLOADS {
         let source = (workload.source)();
         let program = compile(workload.name, &source)
             .unwrap_or_else(|error| panic!("compile {}: {error}", workload.name));
-        let (elapsed, metrics) = run(&program, workload.iterations, workload.install);
+        let (elapsed, metrics) = run(
+            &program,
+            workload.iterations,
+            workload.install,
+            workload.expected_result,
+        );
         let layout = program.layout_metrics();
         println!(
             "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; local vectors/capacity/arguments {local_vectors}/{local_capacity}/{local_arguments}; closure argument vectors/exact stack-local values {argument_vectors}/{stack_local_values}; provided bitmaps/capacity {provided_bitmaps}/{provided_capacity}; defer scope stacks/entries {defer_scope_stacks}/{defer_scope_entries}; recur locals reused/replaced {recur_reused}/{recur_replaced}; exact positional/generic recur bindings {recur_bindings:?}; {cells} local cells; exact positional/generic call bindings {exact_calls}/{generic_bindings}; collections constructed/elements {collection_constructions}/{collection_elements}; collection lookups/slices/map entries {collection_lookups}/{collection_slices}/{map_entries}; updates/copied/unique/shared {collection_updates}/{collection_copied}/{collection_unique}/{collection_shared}; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
@@ -183,6 +168,31 @@ fn main() {
     }
 }
 
+fn print_vm_layout() {
+    let vm_layout = Vm::layout_metrics();
+    println!(
+        "VM layout: Value {}/{}, LocalSlot {}/{}, Frame {}/{}, Closure {}/{} bytes/alignment",
+        vm_layout.value_size_bytes,
+        vm_layout.value_alignment_bytes,
+        vm_layout.local_slot_size_bytes,
+        vm_layout.local_slot_alignment_bytes,
+        vm_layout.frame_size_bytes,
+        vm_layout.frame_alignment_bytes,
+        vm_layout.closure_size_bytes,
+        vm_layout.closure_alignment_bytes,
+    );
+    #[cfg(feature = "concurrency")]
+    println!(
+        "Scheduler layout: Task {}/{}, TaskState {}/{}, TaskExecution {}/{} bytes/alignment",
+        vm_layout.task_size_bytes,
+        vm_layout.task_alignment_bytes,
+        vm_layout.task_state_size_bytes,
+        vm_layout.task_state_alignment_bytes,
+        vm_layout.task_execution_size_bytes,
+        vm_layout.task_execution_alignment_bytes,
+    );
+}
+
 fn recur_bindings(metrics: &VmMetrics) -> (usize, usize) {
     (
         metrics.exact_positional_recur_restarts,
@@ -190,7 +200,12 @@ fn recur_bindings(metrics: &VmMetrics) -> (usize, usize) {
     )
 }
 
-fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration, VmMetrics) {
+fn run(
+    program: &Program,
+    iterations: usize,
+    install: fn(&mut Vm),
+    expected_result: Option<&str>,
+) -> (Duration, VmMetrics) {
     let mut installer = Vm::new();
     let program = installer
         .install_named(program.clone(), "main")
@@ -200,10 +215,17 @@ fn run(program: &Program, iterations: usize, install: fn(&mut Vm)) -> (Duration,
     for _ in 0..iterations {
         let mut vm = Vm::new();
         install(&mut vm);
-        black_box(
-            vm.run_named_installed(&program)
-                .expect("run benchmark program"),
-        );
+        let result = vm
+            .run_named_installed(&program)
+            .expect("run benchmark program");
+        if let Some(expected_result) = expected_result {
+            assert_eq!(
+                result.to_string(),
+                expected_result,
+                "benchmark program produced an unexpected result"
+            );
+        }
+        black_box(result);
         let run_metrics = vm.metrics();
         metrics.instructions_executed += run_metrics.instructions_executed;
         metrics.instruction_clones += run_metrics.instruction_clones;
@@ -275,6 +297,7 @@ const WORKLOADS: &[Workload] = &[
             "val sum = fn(n, total) { if (n == 0) { total } else { recur(n - 1, total + n) } }\nsum(200, 0)\n".into()
         },
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "typed-arithmetic-and-branches",
@@ -283,6 +306,7 @@ const WORKLOADS: &[Workload] = &[
             "val sum = fn(n:num, total:num) { if (n == 0) { total } else { recur(n - 1, total + n) } }\nsum(200, 0)\n".into()
         },
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "calls-and-closures",
@@ -291,6 +315,7 @@ const WORKLOADS: &[Workload] = &[
             "val makeAdder = fn(base) { fn(value) { base + value } }\nval add = makeAdder(1)\nadd(41)\n".into()
         },
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "ordinary-calls-200",
@@ -299,6 +324,25 @@ const WORKLOADS: &[Workload] = &[
             "val increment = fn(value) { value + 1 }\nval apply = fn(remaining, value) { if (remaining == 0) { value } else { recur(remaining - 1, increment(value)) } }\napply(200, 0)\n".into()
         },
         install: no_native_setup,
+        expected_result: None,
+    },
+    Workload {
+        name: "function-call",
+        iterations: 10,
+        source: || {
+            "val increment = fn(value) { value + 1 }\nval run = fn(remaining, value) {\n    if (remaining == 0) { value } else { recur(remaining - 1, increment(value)) }\n}\nrun(100_000, 0)\n".into()
+        },
+        install: no_native_setup,
+        expected_result: Some("100000"),
+    },
+    Workload {
+        name: "binary-trees",
+        iterations: 10,
+        source: || {
+            "val build = fn(depth) {\n    if (depth == 0) { 1 } else { [build(depth - 1), build(depth - 1)] }\n}\nval check = fn(tree) match {\n    1 => 1\n    [left, right] => 1 + check(left) + check(right)\n}\ncheck(build(15))\n".into()
+        },
+        install: no_native_setup,
+        expected_result: Some("65535"),
     },
     Workload {
         name: "closures-retained-128",
@@ -307,6 +351,7 @@ const WORKLOADS: &[Workload] = &[
             "val build = fn(remaining, values) { if (remaining == 0) { values } else { recur(remaining - 1, [...values, fn(value) { value + remaining }]) } }\nbuild(128, [])\n".into()
         },
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "pattern-matching",
@@ -315,12 +360,14 @@ const WORKLOADS: &[Workload] = &[
             "val describe = fn(value) match { [head, second, ...] => head + second; _ => 0 }\ndescribe([1, 2, 3])\n".into()
         },
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "deferred-cleanup",
         iterations: ITERATIONS,
         source: || "val work = fn(value) { defer { nil }; value + 1 }\nwork(41)\n".into(),
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "lists-and-maps",
@@ -329,30 +376,35 @@ const WORKLOADS: &[Workload] = &[
             "val values = [1, 2, 3]\nval mapped = {first: values[0], last: values[2]}\nmapped[\"first\"] + mapped[\"last\"]\n".into()
         },
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "collections-small-8",
         iterations: ITERATIONS,
         source: collection_small,
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "collections-medium-64",
         iterations: 100,
         source: collection_medium,
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "collections-large-1024",
         iterations: 10,
         source: collection_large,
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "collections-unique-owner-64",
         iterations: ITERATIONS,
         source: unique_collection_workload,
         install: no_native_setup,
+        expected_result: None,
     },
     Workload {
         name: "native-calls",
@@ -361,6 +413,7 @@ const WORKLOADS: &[Workload] = &[
             "val sum = fn(remaining, total) { if (remaining == 0) { total } else { recur(remaining - 1, increment(total)) } }\nsum(200, 0)\n".into()
         },
         install: install_native_increment,
+        expected_result: None,
     },
     #[cfg(feature = "concurrency")]
     Workload {
@@ -368,6 +421,7 @@ const WORKLOADS: &[Workload] = &[
         iterations: 100,
         source: many_timers_8,
         install: no_native_setup,
+        expected_result: None,
     },
     #[cfg(feature = "concurrency")]
     Workload {
@@ -375,6 +429,7 @@ const WORKLOADS: &[Workload] = &[
         iterations: 100,
         source: many_timers_32,
         install: no_native_setup,
+        expected_result: None,
     },
     #[cfg(feature = "concurrency")]
     Workload {
@@ -382,6 +437,7 @@ const WORKLOADS: &[Workload] = &[
         iterations: 25,
         source: many_timers_128,
         install: no_native_setup,
+        expected_result: None,
     },
     #[cfg(feature = "concurrency")]
     Workload {
@@ -389,6 +445,7 @@ const WORKLOADS: &[Workload] = &[
         iterations: 100,
         source: many_select_cases,
         install: no_native_setup,
+        expected_result: None,
     },
     #[cfg(feature = "concurrency")]
     Workload {
@@ -396,6 +453,7 @@ const WORKLOADS: &[Workload] = &[
         iterations: 10,
         source: cancel_suspended_waits,
         install: no_native_setup,
+        expected_result: None,
     },
 ];
 

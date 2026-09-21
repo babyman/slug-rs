@@ -840,7 +840,7 @@ private-runtime sequence governed by
 It does not change Slug syntax, semantics, diagnostics, or the portable
 `.cslug` contract.
 
-- [ ] Add in-process `function-call` and `binary-trees` workloads equivalent
+- [x] Add in-process `function-call` and `binary-trees` workloads equivalent
   to the checked-in source benchmarks. Retain their output assertions and
   compile each program once before repeated VM execution.
 - [ ] Record packed direct-dispatch and rich-op fallback instruction counts.
@@ -895,3 +895,21 @@ exact positional closure calls, and uses no generic call binding. Existing
 benchmarks do not yet make the equivalent binary-tree call, list, and match
 cost visible; that is the first checklist item above. These timing figures are
 host-local evidence, not performance assertions.
+
+#### Measurement record: source-aligned in-process workloads (2026-09-20)
+
+Command: `cargo bench -p slug-vm --bench vm --features metrics`, after adding
+the two workloads at the checked-in source sizes and compiling each one once
+before its repeated executions. The benchmark asserts the direct evaluation
+results on every run: `100000` for `function-call` and `65535` for
+`binary-trees`.
+
+| Workload | Runs | Instructions | Frames | Local vectors / capacity | Exact calls | Collections / elements |
+|---|---:|---:|---:|---:|---:|---:|
+| function-call | 10 | 17,000,310 | 1,000,020 | 1,000,020 / 1,000,020 | 1,000,010 | 0 / 0 |
+| binary-trees | 10 | 19,988,280 | 1,310,710 | 1,310,710 / 2,621,400 | 1,310,700 | 327,670 / 655,340 |
+
+The benchmark still uses the existing installed-program boundary, so both
+workloads performed one installation validation and no whole-program clones.
+No runtime representation changed in this slice; source diagnostics, capture
+behavior, and scheduler counters remain outside these synchronous workloads.
