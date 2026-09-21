@@ -1584,7 +1584,7 @@ impl Vm {
         self.record_frame_locals(locals.capacity(), 0);
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
-        self.frames.push(Frame {
+        self.push_frame(Frame {
             program: program.clone(),
             globals: self.globals.clone(),
             closure: Rc::new(Closure {
@@ -1927,12 +1927,6 @@ impl Vm {
                 return Ok(ExecutionOutcome::Suspended);
             }
             let frame_program = self.active_program()?;
-            self.globals = self
-                .frames
-                .last()
-                .expect("active frame was checked")
-                .globals
-                .clone();
             let instruction = self.next_instruction(&frame_program)?;
             self.active_span = instruction.span;
             let outcome = if let Some(outcome) =
@@ -3171,6 +3165,19 @@ impl Vm {
         Ok(BorrowedSpanOpOutcome::Continue)
     }
 
+    pub(in crate::vm) fn push_frame(&mut self, frame: Frame) {
+        self.globals = frame.globals.clone();
+        self.frames.push(frame);
+    }
+
+    pub(in crate::vm) fn pop_frame(&mut self) -> Option<Frame> {
+        let frame = self.frames.pop();
+        if let Some(active) = self.frames.last() {
+            self.globals = active.globals.clone();
+        }
+        frame
+    }
+
     fn next_instruction(&mut self, program: &Program) -> VmResult<PackedInstruction> {
         let (chunk_index, ip) = self
             .frames
@@ -3316,7 +3323,7 @@ impl Vm {
                 self.record_frame_locals(locals.capacity(), argument_count);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
-                self.frames.push(Frame {
+                self.push_frame(Frame {
                     program: frame_program.clone(),
                     globals: closure
                         .globals
@@ -3489,7 +3496,7 @@ impl Vm {
                 self.record_frame_locals(locals.capacity(), argument_count);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
-                self.frames.push(Frame {
+                self.push_frame(Frame {
                     program: frame_program.clone(),
                     globals: closure
                         .globals
@@ -3646,7 +3653,7 @@ impl Vm {
         vm.record_frame_locals(locals.capacity(), argument_count);
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
-        vm.frames.push(Frame {
+        vm.push_frame(Frame {
             program: program.clone(),
             globals: vm.globals.clone(),
             closure,
@@ -4262,7 +4269,7 @@ impl Vm {
         self.record_exact_positional_stack_local_initialization(count);
         #[cfg(feature = "metrics")]
         self.record_frame(local_count);
-        self.frames.push(Frame {
+        self.push_frame(Frame {
             program: frame_program,
             globals: closure
                 .globals

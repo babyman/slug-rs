@@ -347,7 +347,7 @@ impl Vm {
                     let Cleanup::Return(value) = self.cleanup.pop().expect("cleanup exists") else {
                         unreachable!();
                     };
-                    let frame = self.frames.pop().ok_or_else(|| {
+                    let frame = self.pop_frame().ok_or_else(|| {
                         self.error(
                             RuntimeErrorKind::InvalidBytecode,
                             "return cleanup has no frame".into(),
@@ -369,7 +369,7 @@ impl Vm {
                     else {
                         unreachable!();
                     };
-                    let frame = self.frames.pop().ok_or_else(|| {
+                    let frame = self.pop_frame().ok_or_else(|| {
                         self.error(
                             RuntimeErrorKind::InvalidBytecode,
                             "recovery cleanup has no frame".into(),
@@ -456,7 +456,7 @@ impl Vm {
                 let argument_count = arguments.len();
                 let locals = frame_locals(arguments, chunk.locals);
                 self.record_frame_locals(locals.capacity(), argument_count);
-                self.frames.push(Frame {
+                self.push_frame(Frame {
                     program: closure.program.clone().unwrap_or(self.active_program()?),
                     globals: closure
                         .globals

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Synchronized the VM's active global environment at frame transitions instead
+  of on every instruction while preserving frame-owned closure environments.
+
 - Added opt-in metrics distinguishing direct packed-bytecode dispatch from
   rich-op fallback dispatch, with focused ownership checks.
 

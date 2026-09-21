@@ -853,7 +853,7 @@ It does not change Slug syntax, semantics, diagnostics, or the portable
   temporary scoped experiment for `Value` cloning and `Rc` retain/release
   traffic. Do not retain broad production accounting without an actionable
   representation decision.
-- [ ] Prototype frame-transition-only synchronization of the VM's current
+- [x] Prototype frame-transition-only synchronization of the VM's current
   global environment. Update it on frame push, return, recovery, and other
   frame-stack changes rather than at every instruction. Preserve frame-owned
   globals for imported and retained interactive closures, cleanup actions,
@@ -946,3 +946,12 @@ tree workload's collection construction and element counts are substantial,
 whereas collection lookup is absent; the next decision therefore needs to
 separate construction/match work from the rich-op fallback before adding
 value-traffic instrumentation.
+
+#### Measurement record: frame-transition global synchronization (2026-09-20)
+
+The VM now synchronizes its current global environment when a root, call, or
+cleanup frame is pushed and when a return or recovery pops a frame. The
+per-instruction synchronization assignment was removed. `make bench-source`,
+`make bench-vm`, and `make check` passed; elapsed times remain host-local and
+were not used as a retention threshold. The VM, module, interactive, cleanup,
+and scheduler suites preserve frame-owned imported and retained closures.
