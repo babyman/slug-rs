@@ -77,6 +77,7 @@ struct ParameterConstraints {
     plus_operands: Vec<PlusOperands>,
     subtract_operands: Vec<PlusOperands>,
     multiply_operands: Vec<PlusOperands>,
+    nil_partitions: Vec<NilGuardPartition>,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +91,16 @@ struct PlusOperands {
     left: String,
     right: String,
     span: crate::SourceSpan,
+}
+
+/// A direct nil guard whose two branch bodies must be inferred as separate
+/// correlated relations before their disjoint input domains can be joined.
+#[derive(Debug)]
+#[allow(dead_code)] // Consumed by the following guarded-relation inference stage.
+struct NilGuardPartition {
+    parameter: String,
+    nil_branch: Expr,
+    non_nil_branch: Expr,
 }
 
 impl ParameterConstraints {
@@ -113,6 +124,7 @@ impl ParameterConstraints {
             plus_operands: Vec::new(),
             subtract_operands: Vec::new(),
             multiply_operands: Vec::new(),
+            nil_partitions: Vec::new(),
         }
     }
 
@@ -283,6 +295,7 @@ impl ParameterConstraints {
                 then_branch,
                 else_branch,
             } => {
+                self.collect_nil_guard_partition(condition, then_branch, else_branch.as_deref());
                 self.collect(condition)?;
                 self.collect(then_branch)?;
                 if let Some(else_branch) = else_branch {
@@ -354,6 +367,45 @@ impl ParameterConstraints {
             | ExprKind::NotImplemented
             | ExprKind::Name(_) => Ok(()),
         }
+    }
+
+    fn collect_nil_guard_partition(
+        &mut self,
+        condition: &Expr,
+        then_branch: &Expr,
+        else_branch: Option<&Expr>,
+    ) {
+        let Some(else_branch) = else_branch else {
+            return;
+        };
+        let ExprKind::Binary {
+            left,
+            operator,
+            right,
+        } = &condition.kind
+        else {
+            return;
+        };
+        let ((ExprKind::Name(parameter), ExprKind::Value(Value::Nil))
+        | (ExprKind::Value(Value::Nil), ExprKind::Name(parameter))) = (&left.kind, &right.kind)
+        else {
+            return;
+        };
+        if !self.requirements.contains_key(parameter) {
+            return;
+        }
+        let (nil_branch, non_nil_branch) = if matches!(operator, Binary::Equal) {
+            (then_branch.clone(), else_branch.clone())
+        } else if matches!(operator, Binary::NotEqual) {
+            (else_branch.clone(), then_branch.clone())
+        } else {
+            return;
+        };
+        self.nil_partitions.push(NilGuardPartition {
+            parameter: parameter.clone(),
+            nil_branch,
+            non_nil_branch,
+        });
     }
 
     fn collect_plus_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
