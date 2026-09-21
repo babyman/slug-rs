@@ -53,7 +53,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Final variadic parameters | implemented | `crates/slug-vm/tests/cli.rs` |
 | Discard function parameters | implemented | `crates/slug-vm/tests/cli.rs` |
 | Call-time default parameters | implemented | `crates/slug-vm/tests/cli.rs` |
-| Type annotation syntax, direct body-derived unannotated parameter inference (including finite `+` and `-` overload alternatives, uniquely known direct callees, uniquely selected direct inferred alternatives, and direct nil guards), function-value inference/calls, nil-control-flow narrowing, closed match coverage, schema field checking, mandatory resolution, and checked known operations | implemented | `crates/slug-vm/tests/cli.rs`, `crates/slug-vm/tests/module_loader.rs`, and `crates/slug-server/tests/interactive_server.rs` |
+| Type annotation syntax, direct body-derived unannotated parameter inference (including finite `+`, `-`, and `*` overload alternatives, uniquely known direct callees, uniquely selected direct inferred alternatives, and direct nil guards), function-value inference/calls, nil-control-flow narrowing, closed match coverage, schema field checking, mandatory resolution, and checked known operations | implemented | `crates/slug-vm/tests/cli.rs`, `crates/slug-vm/tests/module_loader.rs`, and `crates/slug-server/tests/interactive_server.rs` |
 | Generic call inference and explicit type applications | implemented | `crates/slug-vm/tests/cli.rs` |
 | Lexically scoped local callable metadata and mandatory call resolution | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/module_loader.rs` |
 | Cached exported callable snapshots across static imports | implemented | `crates/slug-vm/tests/module_loader.rs` |

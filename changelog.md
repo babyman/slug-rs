@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Implemented finite body-derived `*` overload alternatives for numeric
+  multiplication and string repetition while retaining checked runtime counts.
+
 - Implemented finite body-derived `-` overload alternatives for numeric
   subtraction and map-key removal. Known hashable map-key unions preserve map
   key/value types; dynamic operands retain generic checked runtime behavior.

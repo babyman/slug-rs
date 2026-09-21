@@ -46,8 +46,8 @@ Neither work expands structural-call preservation or introduces specialization.
 - [x] Specify and implement subtraction alternatives: numeric subtraction and
   map-key removal, including the static hashable map-key domain. Map removal
   preserves `map<K,V>` without unifying `K` with the removal operand.
-- [ ] Specify and implement multiplication alternatives: numeric multiplication
-  and string repetition, including the VM's checked integral repetition rule.
+- [x] Specify and implement multiplication alternatives: numeric multiplication
+  and string repetition, retaining the VM's checked integral repetition rule.
 - [ ] Evaluate whether any other existing overloaded operations have a finite,
   useful relational scheme set. Do not add alternatives merely because an
   operator has more than one runtime branch.

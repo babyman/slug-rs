@@ -127,6 +127,62 @@ fn selects_body_derived_subtract_alternatives_at_known_calls() {
 }
 
 #[test]
+fn selects_body_derived_multiply_alternatives_at_known_calls() {
+    let path = fixture_path("inferred-multiply-alternatives");
+    fs::write(
+        &path,
+        "val multiply = fn(left, right) { left * right }\n\
+         val numeric:num = multiply(6, 7)\n\
+         val repeated:str = multiply(\"ha\", 3)\n\
+         println(numeric, repeated)\n",
+    )
+    .expect("write inferred multiply alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred multiply alternatives source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42 hahaha\n");
+
+    fs::write(
+        &path,
+        "val multiply = fn(left, right) { left * right }\nmultiply(\"x\", \"y\")\n",
+    )
+    .expect("write mixed multiplication source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run mixed multiplication source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
+    );
+
+    fs::write(
+        &path,
+        "val multiply = fn(left, right) { left * right }\nmultiply(\"x\", -1)\n",
+    )
+    .expect("write negative repetition source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run negative repetition source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+    fs::remove_file(path).expect("remove inferred multiply alternatives source");
+}
+
+#[test]
 fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
     let path = fixture_path("inferred-plus-dynamic-boundary");
     fs::write(

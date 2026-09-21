@@ -76,6 +76,7 @@ struct ParameterConstraints {
     requirements: HashMap<String, ParameterRequirement>,
     plus_operands: Vec<PlusOperands>,
     subtract_operands: Vec<PlusOperands>,
+    multiply_operands: Vec<PlusOperands>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +112,7 @@ impl ParameterConstraints {
                 .collect(),
             plus_operands: Vec::new(),
             subtract_operands: Vec::new(),
+            multiply_operands: Vec::new(),
         }
     }
 
@@ -169,6 +171,15 @@ impl ParameterConstraints {
                 right,
             } => {
                 self.collect_subtract_operands(left, right, &expression.span);
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Binary {
+                left,
+                operator: Binary::Multiply,
+                right,
+            } => {
+                self.collect_multiply_operands(left, right, &expression.span);
                 self.collect(left)?;
                 self.collect(right)
             }
@@ -364,6 +375,19 @@ impl ParameterConstraints {
         };
         if self.requirements.contains_key(left) && self.requirements.contains_key(right) {
             self.subtract_operands.push(PlusOperands {
+                left: left.clone(),
+                right: right.clone(),
+                span: span.clone(),
+            });
+        }
+    }
+
+    fn collect_multiply_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
+        let (ExprKind::Name(left), ExprKind::Name(right)) = (&left.kind, &right.kind) else {
+            return;
+        };
+        if self.requirements.contains_key(left) && self.requirements.contains_key(right) {
+            self.multiply_operands.push(PlusOperands {
                 left: left.clone(),
                 right: right.clone(),
                 span: span.clone(),
@@ -795,13 +819,24 @@ fn inferred_overload_alternatives(
 ) -> Result<Vec<InferredAlternative>, SourceError> {
     // Combining operator families would require composing their correlated
     // schemes. Until that rule exists, retain the dynamic boundary instead.
-    if !constraints.plus_operands.is_empty() && !constraints.subtract_operands.is_empty() {
+    let operator_families = [
+        !constraints.plus_operands.is_empty(),
+        !constraints.subtract_operands.is_empty(),
+        !constraints.multiply_operands.is_empty(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if operator_families > 1 {
         return Ok(Vec::new());
     }
     if !constraints.plus_operands.is_empty() {
         return inferred_plus_alternatives(parameters, constraints);
     }
-    inferred_subtract_alternatives(parameters, constraints)
+    if !constraints.subtract_operands.is_empty() {
+        return inferred_subtract_alternatives(parameters, constraints);
+    }
+    inferred_multiply_alternatives(parameters, constraints)
 }
 
 /// Derives the finite `+` schemes for a direct pair of unannotated parameters.
@@ -988,6 +1023,86 @@ fn subtract_alternatives() -> Vec<InferredAlternative> {
                 AlternativeType::hashable_map_key(),
             ],
             AlternativeType::map(variable(0), variable(1)),
+        ),
+    ]
+}
+
+fn inferred_multiply_alternatives(
+    parameters: &[Parameter],
+    constraints: &ParameterConstraints,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    let Some(first) = constraints.multiply_operands.first() else {
+        return Ok(Vec::new());
+    };
+    let mut alternatives = multiply_alternatives();
+    for operands in &constraints.multiply_operands {
+        let left = constraints.requirements[&operands.left].value_type.clone();
+        let right = constraints.requirements[&operands.right].value_type.clone();
+        let compatible = multiply_alternatives()
+            .into_iter()
+            .filter(|alternative| {
+                alternative.accepts_constraints(&[
+                    (!matches!(left, Type::Unknown)).then_some(&left),
+                    (!matches!(right, Type::Unknown)).then_some(&right),
+                ])
+            })
+            .collect::<Vec<_>>();
+        if compatible.is_empty() {
+            return Err(SourceError::semantic(
+                "no inferred `*` alternative satisfies the function body requirements",
+                operands.span.clone(),
+            ));
+        }
+        if operands.left == first.left && operands.right == first.right {
+            alternatives.retain(|alternative| compatible.contains(alternative));
+        }
+    }
+    let left_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.left)
+        .expect("collected multiply operand is a function parameter");
+    let right_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.right)
+        .expect("collected multiply operand is a function parameter");
+    Ok(alternatives
+        .into_iter()
+        .map(|alternative| {
+            InferredAlternative::new(
+                parameters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        if index == left_index {
+                            alternative.parameter_types()[0].clone()
+                        } else if index == right_index {
+                            alternative.parameter_types()[1].clone()
+                        } else {
+                            AlternativeType::concrete(Type::universal())
+                        }
+                    })
+                    .collect(),
+                alternative.result_type().clone(),
+            )
+        })
+        .collect())
+}
+
+fn multiply_alternatives() -> Vec<InferredAlternative> {
+    vec![
+        InferredAlternative::new(
+            vec![
+                AlternativeType::concrete(Type::Num),
+                AlternativeType::concrete(Type::Num),
+            ],
+            AlternativeType::concrete(Type::Num),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::concrete(Type::Str),
+                AlternativeType::concrete(Type::Num),
+            ],
+            AlternativeType::concrete(Type::Str),
         ),
     ]
 }

@@ -997,6 +997,10 @@ Known `nil`, collections, functions, and structs do not match; `unknown`,
 `any`, and unions containing them retain dynamic behavior. The hashable-key
 domain is private semantic metadata, not source syntax.
 
+The finite multiplication alternatives are `(num, num) -> num` and `(str, num)
+-> str`. Numeric type facts do not prove that a repetition count is integral or
+non-negative, so string repetition retains the VM's checked runtime rule.
+
 An inferred `var` binding fixes its static type from its initializer; later
 known assignments must conform to that type and do not widen it. A dynamically
 unknown assignment remains valid and preserves the retained static fact. An
