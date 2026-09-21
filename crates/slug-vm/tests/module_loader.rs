@@ -969,6 +969,47 @@ fn imported_callables_preserve_inferred_subtract_alternatives() {
 }
 
 #[test]
+fn imported_callables_preserve_inferred_multiply_alternatives() {
+    let root = root("imported-inferred-multiply-alternatives");
+    fs::create_dir_all(&root).expect("create inferred multiply module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val multiply = fn(left, right) { left * right }\n",
+    )
+    .expect("write inferred multiply export module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\n\
+             export val numeric:num = api.multiply(6, 7)\n\
+             export val repeated:str = api.multiply(\"ha\", 3)\n",
+        )
+        .expect("compile imported inferred multiply calls");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run imported inferred multiply calls");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"numeric\": 42, \"repeated\": \"hahaha\"}"
+    );
+
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\napi.multiply(\"x\", \"y\")\n",
+        )
+        .expect_err("imported inferred multiplication rejects non-numeric counts");
+    assert!(
+        error
+            .to_string()
+            .starts_with("no inferred overload alternative matches the call")
+    );
+    fs::remove_dir_all(root).expect("remove inferred multiply module directory");
+}
+
+#[test]
 fn imported_inferred_alternatives_propagate_after_independent_selection() {
     let root = root("imported-inferred-alternative-wrapper");
     fs::create_dir_all(&root).expect("create inferred alternative wrapper module directory");

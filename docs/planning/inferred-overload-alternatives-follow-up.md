@@ -83,7 +83,7 @@ Neither work expands structural-call preservation or introduces specialization.
 
 ### Verification and documentation
 
-- [ ] Add CLI, module-loader, and VM coverage for each accepted operator family
+- [x] Add CLI, module-loader, and VM coverage for each accepted operator family
   and for rejected mixed operand pairs.
 - [ ] Update the language specification, support inventory, generated matrix,
   README, changelog, and any required decision record with every new family.

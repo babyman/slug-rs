@@ -267,6 +267,32 @@ fn repeats_strings_through_private_multiply_bytecode() {
 }
 
 #[test]
+fn overloaded_operator_bytecode_retains_checked_mixed_failures() {
+    for (operation, left, right) in [
+        (
+            Op::Add,
+            Value::Int(1),
+            Value::Bytes(std::rc::Rc::new(vec![1])),
+        ),
+        (Op::Subtract, Value::Int(1), Value::string("one")),
+        (Op::Multiply, Value::string("one"), Value::string("two")),
+    ] {
+        let mut main = Chunk::new("main", 0);
+        let left = main.constant(left);
+        let right = main.constant(right);
+        main.emit(Op::Constant(left))
+            .emit(Op::Constant(right))
+            .emit(operation)
+            .emit(Op::Return);
+
+        let error = Vm::new()
+            .run(&program_with_main(main), 0)
+            .expect_err("mixed overloaded operands fail through checked runtime errors");
+        assert_eq!(error.kind, RuntimeErrorKind::Type);
+    }
+}
+
+#[test]
 fn pipes_values_through_private_call_bytecode() {
     fn add(call: &mut NativeCall<'_>) -> NativeStatus {
         let left = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
