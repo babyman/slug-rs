@@ -846,7 +846,7 @@ It does not change Slug syntax, semantics, diagnostics, or the portable
 - [x] Record packed direct-dispatch and rich-op fallback instruction counts.
   Keep the counters behind `metrics`, assert their intended ownership in VM
   tests, and remove them if they stop distinguishing a decision.
-- [ ] Use the two workloads to establish frames, frame-local vector capacity,
+- [x] Use the two workloads to establish frames, frame-local vector capacity,
   exact/generic call binding, collection construction, collection elements,
   and collection lookup baselines.
 - [ ] If those counters cannot distinguish the binary-tree cost, add a
@@ -929,3 +929,20 @@ rich-op fallback.
 
 The two categories sum to the executed-instruction count in both workloads.
 They are opt-in metrics only: ordinary builds retain no counter updates.
+
+#### Measurement record: call and collection baseline (2026-09-20)
+
+Command: `cargo bench -p slug-vm --bench vm --features metrics`. The existing
+frame, binding, and collection counters distinguish the two target shapes, so
+this slice does not add broad `Value` or reference-count accounting.
+
+| Workload | Frames | Local vectors / capacity | Exact / generic calls | Collections / elements | Lookups |
+|---|---:|---:|---:|---:|---:|
+| function-call (10 runs) | 1,000,020 | 1,000,020 / 1,000,020 | 1,000,010 / 0 | 0 / 0 | 0 |
+| binary-trees (10 runs) | 1,310,710 | 1,310,710 / 2,621,400 | 1,310,700 / 0 | 327,670 / 655,340 | 0 |
+
+All calls in both source-aligned programs use exact positional binding. The
+tree workload's collection construction and element counts are substantial,
+whereas collection lookup is absent; the next decision therefore needs to
+separate construction/match work from the rich-op fallback before adding
+value-traffic instrumentation.
