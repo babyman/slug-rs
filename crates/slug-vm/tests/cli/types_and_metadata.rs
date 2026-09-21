@@ -123,6 +123,24 @@ fn selects_body_derived_subtract_alternatives_at_known_calls() {
             .unwrap()
             .starts_with("slug: runtime error:")
     );
+
+    fs::write(
+        &path,
+        "val remove = fn(map, key) { map - key }\n\
+         val remove = fn(map:map<num, str>, key:num):str { \"specific\" }\n\
+         println(remove({[1]: \"one\"}, 1))\n",
+    )
+    .expect("write specific inferred subtract overload source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run specific inferred subtract overload source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "specific\n");
     fs::remove_file(path).expect("remove inferred subtract alternatives source");
 }
 
@@ -178,6 +196,24 @@ fn selects_body_derived_multiply_alternatives_at_known_calls() {
         String::from_utf8(output.stderr)
             .unwrap()
             .starts_with("slug: runtime error:")
+    );
+
+    fs::write(
+        &path,
+        "val repeat = fn(value, count) { value * count }\n\
+         val repeat = fn(value:str, count:num):str { value }\n\
+         repeat(\"text\", 2)\n",
+    )
+    .expect("write ambiguous inferred multiply overload source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run ambiguous inferred multiply overload source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: ambiguous overload for `repeat`")
     );
     fs::remove_file(path).expect("remove inferred multiply alternatives source");
 }

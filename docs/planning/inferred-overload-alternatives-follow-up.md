@@ -64,7 +64,7 @@ Neither work expands structural-call preservation or introduces specialization.
 - [x] Preserve widening at structural and dynamically selected function-value
   boundaries. Reconsider retention of alternatives there only through a new
   decision record with a concrete callable representation.
-- [ ] Apply the existing canonical identity, specificity, and ambiguity rules
+- [x] Apply the existing canonical identity, specificity, and ambiguity rules
   to every added family; add a new rule only when a concrete overlap cannot be
   resolved by those rules.
 - [ ] Establish practical limits, widening behavior, and diagnostics for
