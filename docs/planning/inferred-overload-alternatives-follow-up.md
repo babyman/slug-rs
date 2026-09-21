@@ -55,8 +55,9 @@ Neither work expands structural-call preservation or introduces specialization.
 
 ### Alternative composition and callable precision
 
-- [ ] Define composition when several overloaded operations constrain the same
-  parameters across branches, nested functions, defaults, and `recur`.
+- [x] Define composition when several overloaded operations constrain the same
+  parameters across branches, nested functions, defaults, and `recur`; see
+  `2026-09-20-inferred-alternative-composition.md`.
 - [x] Make the current composition boundary explicit in tests: alternatives are
   initially derived from one operator family and direct parameter pair; distinct
   families do not compose or silently approximate relationships with unions.

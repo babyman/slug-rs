@@ -817,26 +817,45 @@ fn inferred_overload_alternatives(
     parameters: &[Parameter],
     constraints: &ParameterConstraints,
 ) -> Result<Vec<InferredAlternative>, SourceError> {
-    // Combining operator families would require composing their correlated
-    // schemes. Until that rule exists, retain the dynamic boundary instead.
-    let operator_families = [
-        !constraints.plus_operands.is_empty(),
-        !constraints.subtract_operands.is_empty(),
-        !constraints.multiply_operands.is_empty(),
-    ]
-    .into_iter()
-    .filter(|present| *present)
-    .count();
-    if operator_families > 1 {
-        return Ok(Vec::new());
-    }
     if !constraints.plus_operands.is_empty() {
-        return inferred_plus_alternatives(parameters, constraints);
+        let alternatives = inferred_plus_alternatives(parameters, constraints)?;
+        return compose_inferred_alternatives(
+            alternatives,
+            parameters,
+            constraints,
+            !constraints.subtract_operands.is_empty(),
+            !constraints.multiply_operands.is_empty(),
+        );
     }
     if !constraints.subtract_operands.is_empty() {
         return inferred_subtract_alternatives(parameters, constraints);
     }
     inferred_multiply_alternatives(parameters, constraints)
+}
+
+fn compose_inferred_alternatives(
+    mut alternatives: Vec<InferredAlternative>,
+    parameters: &[Parameter],
+    constraints: &ParameterConstraints,
+    include_subtract: bool,
+    include_multiply: bool,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    let mut requirements = Vec::new();
+    if include_subtract {
+        requirements.push(inferred_subtract_alternatives(parameters, constraints)?);
+    }
+    if include_multiply {
+        requirements.push(inferred_multiply_alternatives(parameters, constraints)?);
+    }
+    for required in requirements {
+        alternatives.retain(|candidate| {
+            let (actuals, _) = candidate.substitute(&HashMap::new());
+            required.iter().any(|alternative| {
+                alternative.accepts_constraints(&actuals.iter().map(Some).collect::<Vec<_>>())
+            })
+        });
+    }
+    Ok(alternatives)
 }
 
 /// Derives the finite `+` schemes for a direct pair of unannotated parameters.

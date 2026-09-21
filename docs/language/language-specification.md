@@ -1001,9 +1001,10 @@ The finite multiplication alternatives are `(num, num) -> num` and `(str, num)
 -> str`. Numeric type facts do not prove that a repetition count is integral or
 non-negative, so string repetition retains the VM's checked runtime rule.
 
-Alternatives from distinct overloaded operator families do not compose yet. A
-body that directly uses more than one such family retains dynamic callable
-metadata rather than approximating their relationships with independent unions.
+Sequential reachable expressions intersect alternatives from distinct
+overloaded operator families. A body with `left + right` followed by `left -
+right` therefore retains only `(num, num) -> num`; composition never uses
+independent unions.
 
 An inferred `var` binding fixes its static type from its initializer; later
 known assignments must conform to that type and do not widen it. A dynamically

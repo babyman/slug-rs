@@ -183,25 +183,41 @@ fn selects_body_derived_multiply_alternatives_at_known_calls() {
 }
 
 #[test]
-fn distinct_inferred_operator_families_do_not_compose() {
+fn sequential_inferred_operator_families_intersect() {
     let path = fixture_path("non-composed-inferred-alternatives");
+    fs::write(
+        &path,
+        "val mixed = fn(left, right) { left + right\nleft - right }\n\
+         println(mixed(20, 2))\n",
+    )
+    .expect("write composed inferred alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run composed inferred alternatives source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "18\n");
+
     fs::write(
         &path,
         "val mixed = fn(left, right) { left + right\nleft - right }\n\
          mixed(1, 0x\"01\")\n",
     )
-    .expect("write non-composed inferred alternatives source");
+    .expect("write incompatible composed inferred alternatives source");
     let output = slug()
         .arg(&path)
         .output()
-        .expect("run non-composed inferred alternatives source");
-    fs::remove_file(path).expect("remove non-composed inferred alternatives source");
+        .expect("run incompatible composed inferred alternatives source");
+    fs::remove_file(path).expect("remove composed inferred alternatives source");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("slug: runtime error:"),
-        "mixed operator families must not infer an unsound static signature"
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
     );
 }
 
