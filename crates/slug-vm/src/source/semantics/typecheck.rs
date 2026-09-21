@@ -871,18 +871,61 @@ fn inferred_overload_alternatives(
 ) -> Result<Vec<InferredAlternative>, SourceError> {
     if !constraints.plus_operands.is_empty() {
         let alternatives = inferred_plus_alternatives(parameters, constraints)?;
-        return compose_inferred_alternatives(
+        let alternatives = compose_inferred_alternatives(
             alternatives,
             parameters,
             constraints,
             !constraints.subtract_operands.is_empty(),
             !constraints.multiply_operands.is_empty(),
-        );
+        )?;
+        return add_simple_nil_guard_alternatives(alternatives, parameters, constraints);
     }
     if !constraints.subtract_operands.is_empty() {
         return inferred_subtract_alternatives(parameters, constraints);
     }
     inferred_multiply_alternatives(parameters, constraints)
+}
+
+fn add_simple_nil_guard_alternatives(
+    mut alternatives: Vec<InferredAlternative>,
+    parameters: &[Parameter],
+    constraints: &ParameterConstraints,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    for partition in &constraints.nil_partitions {
+        let Some(result) = alternative_branch_result(&partition.nil_branch, parameters) else {
+            continue;
+        };
+        let inputs = parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                if parameter.name == partition.parameter {
+                    AlternativeType::concrete(Type::Nil)
+                } else {
+                    AlternativeType::variable(AlternativeVariable::new(index))
+                }
+            })
+            .collect();
+        alternatives.push(InferredAlternative::new(inputs, result));
+    }
+    Ok(alternatives)
+}
+
+fn alternative_branch_result(
+    expression: &Expr,
+    parameters: &[Parameter],
+) -> Option<AlternativeType> {
+    match &expression.kind {
+        ExprKind::Value(value) => Some(AlternativeType::concrete(value_type(value))),
+        ExprKind::Name(name) => parameters
+            .iter()
+            .position(|parameter| parameter.name == *name)
+            .map(|index| AlternativeType::variable(AlternativeVariable::new(index))),
+        ExprKind::Block(values) if values.len() == 1 => {
+            alternative_branch_result(&values[0], parameters)
+        }
+        _ => None,
+    }
 }
 
 fn compose_inferred_alternatives(

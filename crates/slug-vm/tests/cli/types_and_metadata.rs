@@ -265,6 +265,28 @@ fn unguarded_branch_inferred_operator_families_intersect() {
 }
 
 #[test]
+fn nil_guarded_alternatives_retain_branch_local_results() {
+    let path = fixture_path("nil-guarded-inferred-alternatives");
+    fs::write(
+        &path,
+        "val valueOrSum = fn(left, right) { if (left == nil) { right } else { left + right } }\n\
+         println(valueOrSum(nil, \"x\"), valueOrSum(20, 22))\n",
+    )
+    .expect("write nil guarded alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nil guarded alternatives source");
+    fs::remove_file(path).expect("remove nil guarded alternatives source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "x 42\n");
+}
+
+#[test]
 fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
     let path = fixture_path("inferred-plus-dynamic-boundary");
     fs::write(
