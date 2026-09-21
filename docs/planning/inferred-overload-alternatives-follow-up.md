@@ -48,9 +48,10 @@ Neither work expands structural-call preservation or introduces specialization.
   preserves `map<K,V>` without unifying `K` with the removal operand.
 - [x] Specify and implement multiplication alternatives: numeric multiplication
   and string repetition, retaining the VM's checked integral repetition rule.
-- [ ] Evaluate whether any other existing overloaded operations have a finite,
-  useful relational scheme set. Do not add alternatives merely because an
-  operator has more than one runtime branch.
+- [x] Evaluate other existing overloaded operations. Division, modulo,
+  comparisons, and shifts are numeric-only; bitwise byte coercion and
+  directional collection updates depend on runtime value bounds. None adds a
+  useful finite correlated scheme beyond `+`, `-`, and `*` at this stage.
 
 ### Alternative composition and callable precision
 
