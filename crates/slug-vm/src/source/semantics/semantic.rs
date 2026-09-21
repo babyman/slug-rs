@@ -139,6 +139,7 @@ impl AlternativeVariable {
 #[allow(dead_code)] // The model precedes its first producer in this plan.
 pub(super) enum AlternativeType {
     Concrete(Type),
+    HashableMapKey,
     Variable(AlternativeVariable),
     List(Box<Self>),
     Map(Box<Self>, Box<Self>),
@@ -153,6 +154,10 @@ impl AlternativeType {
 
     pub(super) fn variable(variable: AlternativeVariable) -> Self {
         Self::Variable(variable)
+    }
+
+    pub(super) fn hashable_map_key() -> Self {
+        Self::HashableMapKey
     }
 
     pub(super) fn list(element: Self) -> Self {
@@ -193,6 +198,7 @@ impl AlternativeType {
     ) -> Self {
         match self {
             Self::Concrete(value_type) => Self::Concrete(value_type),
+            Self::HashableMapKey => Self::HashableMapKey,
             Self::Variable(variable) => {
                 let variable = *variables.entry(variable).or_insert_with(|| {
                     let canonical = AlternativeVariable(*next_variable);
@@ -220,6 +226,7 @@ impl AlternativeType {
     fn substitute(&self, substitutions: &HashMap<AlternativeVariable, Type>) -> Type {
         match self {
             Self::Concrete(value_type) => value_type.clone(),
+            Self::HashableMapKey => Type::union([Type::Bool, Type::Num, Type::Str, Type::Bytes]),
             Self::Variable(variable) => substitutions
                 .get(variable)
                 .cloned()
@@ -247,6 +254,7 @@ impl AlternativeType {
         }
         match (self, actual) {
             (Self::Concrete(expected), actual) => actual.is_assignable_to(expected),
+            (Self::HashableMapKey, actual) => is_hashable_map_key_type(actual),
             (Self::Variable(variable), actual) => {
                 if let Some(previous) = substitutions.get(variable) {
                     actual == previous
@@ -280,6 +288,14 @@ impl AlternativeType {
     }
 }
 
+fn is_hashable_map_key_type(value_type: &Type) -> bool {
+    match value_type {
+        Type::Bool | Type::Num | Type::Str | Type::Bytes => true,
+        Type::Union(members) => members.iter().all(is_hashable_map_key_type),
+        _ => false,
+    }
+}
+
 fn is_dynamic_alternative_constraint(value_type: &Type) -> bool {
     match value_type {
         Type::Unknown | Type::Any => true,
@@ -292,6 +308,7 @@ impl fmt::Display for AlternativeType {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Concrete(value_type) => formatter.write_str(&value_type.diagnostic_display()),
+            Self::HashableMapKey => formatter.write_str("map-key"),
             Self::Variable(variable) => write!(formatter, "A{}", variable.0),
             Self::List(element) => write!(formatter, "list<{element}>"),
             Self::Map(key, value) => write!(formatter, "map<{key}, {value}>"),

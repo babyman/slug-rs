@@ -75,6 +75,7 @@ struct CheckedExpression {
 struct ParameterConstraints {
     requirements: HashMap<String, ParameterRequirement>,
     plus_operands: Vec<PlusOperands>,
+    subtract_operands: Vec<PlusOperands>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +110,7 @@ impl ParameterConstraints {
                 })
                 .collect(),
             plus_operands: Vec::new(),
+            subtract_operands: Vec::new(),
         }
     }
 
@@ -158,6 +160,15 @@ impl ParameterConstraints {
                 right,
             } => {
                 self.collect_plus_operands(left, right, &expression.span);
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Binary {
+                left,
+                operator: Binary::Subtract,
+                right,
+            } => {
+                self.collect_subtract_operands(left, right, &expression.span);
                 self.collect(left)?;
                 self.collect(right)
             }
@@ -340,6 +351,19 @@ impl ParameterConstraints {
         };
         if self.requirements.contains_key(left) && self.requirements.contains_key(right) {
             self.plus_operands.push(PlusOperands {
+                left: left.clone(),
+                right: right.clone(),
+                span: span.clone(),
+            });
+        }
+    }
+
+    fn collect_subtract_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
+        let (ExprKind::Name(left), ExprKind::Name(right)) = (&left.kind, &right.kind) else {
+            return;
+        };
+        if self.requirements.contains_key(left) && self.requirements.contains_key(right) {
+            self.subtract_operands.push(PlusOperands {
                 left: left.clone(),
                 right: right.clone(),
                 span: span.clone(),
@@ -765,6 +789,21 @@ fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String,
         .collect()
 }
 
+fn inferred_overload_alternatives(
+    parameters: &[Parameter],
+    constraints: &ParameterConstraints,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    // Combining operator families would require composing their correlated
+    // schemes. Until that rule exists, retain the dynamic boundary instead.
+    if !constraints.plus_operands.is_empty() && !constraints.subtract_operands.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !constraints.plus_operands.is_empty() {
+        return inferred_plus_alternatives(parameters, constraints);
+    }
+    inferred_subtract_alternatives(parameters, constraints)
+}
+
 /// Derives the finite `+` schemes for a direct pair of unannotated parameters.
 ///
 /// The schemes are created from the body, then narrowed only with other
@@ -868,6 +907,87 @@ fn plus_alternatives() -> Vec<InferredAlternative> {
                 AlternativeType::union([variable(0), variable(2)]),
                 AlternativeType::union([variable(1), variable(3)]),
             ),
+        ),
+    ]
+}
+
+fn inferred_subtract_alternatives(
+    parameters: &[Parameter],
+    constraints: &ParameterConstraints,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    let Some(first) = constraints.subtract_operands.first() else {
+        return Ok(Vec::new());
+    };
+    let mut alternatives = subtract_alternatives();
+    for operands in &constraints.subtract_operands {
+        let left = constraints.requirements[&operands.left].value_type.clone();
+        let right = constraints.requirements[&operands.right].value_type.clone();
+        let compatible = subtract_alternatives()
+            .into_iter()
+            .filter(|alternative| {
+                alternative.accepts_constraints(&[
+                    (!matches!(left, Type::Unknown)).then_some(&left),
+                    (!matches!(right, Type::Unknown)).then_some(&right),
+                ])
+            })
+            .collect::<Vec<_>>();
+        if compatible.is_empty() {
+            return Err(SourceError::semantic(
+                "no inferred `-` alternative satisfies the function body requirements",
+                operands.span.clone(),
+            ));
+        }
+        if operands.left == first.left && operands.right == first.right {
+            alternatives.retain(|alternative| compatible.contains(alternative));
+        }
+    }
+    let left_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.left)
+        .expect("collected subtract operand is a function parameter");
+    let right_index = parameters
+        .iter()
+        .position(|parameter| parameter.name == first.right)
+        .expect("collected subtract operand is a function parameter");
+    Ok(alternatives
+        .into_iter()
+        .map(|alternative| {
+            InferredAlternative::new(
+                parameters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        if index == left_index {
+                            alternative.parameter_types()[0].clone()
+                        } else if index == right_index {
+                            alternative.parameter_types()[1].clone()
+                        } else {
+                            AlternativeType::concrete(Type::universal())
+                        }
+                    })
+                    .collect(),
+                alternative.result_type().clone(),
+            )
+        })
+        .collect())
+}
+
+fn subtract_alternatives() -> Vec<InferredAlternative> {
+    let variable = |index| AlternativeType::variable(AlternativeVariable::new(index));
+    vec![
+        InferredAlternative::new(
+            vec![
+                AlternativeType::concrete(Type::Num),
+                AlternativeType::concrete(Type::Num),
+            ],
+            AlternativeType::concrete(Type::Num),
+        ),
+        InferredAlternative::new(
+            vec![
+                AlternativeType::map(variable(0), variable(1)),
+                AlternativeType::hashable_map_key(),
+            ],
+            AlternativeType::map(variable(0), variable(1)),
         ),
     ]
 }
@@ -1346,7 +1466,7 @@ fn callable_signature(
         return Ok(None);
     };
     let constraints = parameter_constraints(parameters, body, environment)?;
-    let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
+    let inferred_alternatives = inferred_overload_alternatives(parameters, &constraints)?;
     let inferred_parameters = solved_parameter_types(&constraints);
     let mut signature = function_type(
         type_parameters,
@@ -1600,7 +1720,7 @@ fn check_expression_inner(
             body,
         } => {
             let constraints = parameter_constraints(parameters, body, environment)?;
-            let inferred_alternatives = inferred_plus_alternatives(parameters, &constraints)?;
+            let inferred_alternatives = inferred_overload_alternatives(parameters, &constraints)?;
             let inferred_parameters = solved_parameter_types(&constraints);
             let mut signature = function_type(
                 function_type_parameters,
@@ -4186,6 +4306,39 @@ mod tests {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
             vec!["(num, num) -> num"]
+        );
+    }
+
+    #[test]
+    fn inferred_subtract_alternatives_preserve_map_keys_without_unifying_them() {
+        let body = binary(name("map"), Binary::Subtract, name("key"));
+        let constraints = parameter_constraints(
+            &[parameter("map"), parameter("key")],
+            &body,
+            &Environment::new(),
+        )
+        .expect("subtract operands collect");
+        let alternatives =
+            inferred_subtract_alternatives(&[parameter("map"), parameter("key")], &constraints)
+                .expect("unconstrained subtraction body retains both families");
+
+        assert_eq!(
+            alternatives
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["(num, num) -> num", "(map<A0, A1>, map-key) -> map<A0, A1>"]
+        );
+        let map = Type::Map(Some((Box::new(Type::Num), Box::new(Type::Str))));
+        assert!(
+            alternatives[1]
+                .instantiate(&[map.clone(), Type::union([Type::Num, Type::Str])])
+                .is_some()
+        );
+        assert!(
+            alternatives[1]
+                .instantiate(&[map, Type::List(Some(Box::new(Type::Num)))])
+                .is_none()
         );
     }
 

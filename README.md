@@ -79,8 +79,8 @@ contract is documented separately as `.cslug`.
   function-value input and result types for higher-order positional calls,
   including body-derived `num` parameter types from division, modulo, unary
   negation, ordering comparisons, uniquely known direct callees, and direct
-  `nil` guards, plus finite body-derived `+` overload alternatives for numeric,
-  string, list, bytes, and map relationships.
+  `nil` guards, plus finite body-derived `+` and `-` overload alternatives for
+  numeric, string, list, bytes, map merge, and map-key removal relationships.
   Independently selected alternatives also propagate through direct known
   calls during body-derived inference; dynamic and ambiguous calls remain
   checked at runtime.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Implemented finite body-derived `-` overload alternatives for numeric
+  subtraction and map-key removal. Known hashable map-key unions preserve map
+  key/value types; dynamic operands retain generic checked runtime behavior.
+
 - Implemented body-derived propagation from a uniquely selected inferred
   overload alternative at a direct known call. Selection uses independent body
   facts; ambiguous, structural, dynamic, and spread calls retain checked

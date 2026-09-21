@@ -43,8 +43,9 @@ Neither work expands structural-call preservation or introduces specialization.
 
 ### Additional built-in operator families
 
-- [ ] Specify and implement subtraction alternatives: numeric subtraction and
-  map-key removal, including the static map-key domain.
+- [x] Specify and implement subtraction alternatives: numeric subtraction and
+  map-key removal, including the static hashable map-key domain. Map removal
+  preserves `map<K,V>` without unifying `K` with the removal operand.
 - [ ] Specify and implement multiplication alternatives: numeric multiplication
   and string repetition, including the VM's checked integral repetition rule.
 - [ ] Evaluate whether any other existing overloaded operations have a finite,

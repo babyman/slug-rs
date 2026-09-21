@@ -928,6 +928,47 @@ fn imported_callables_preserve_inferred_plus_alternatives() {
 }
 
 #[test]
+fn imported_callables_preserve_inferred_subtract_alternatives() {
+    let root = root("imported-inferred-subtract-alternatives");
+    fs::create_dir_all(&root).expect("create inferred subtract module directory");
+    fs::write(
+        root.join("api.slug"),
+        "export val remove = fn(map, key) { map - key }\n",
+    )
+    .expect("write inferred subtract export module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\n\
+             val numeric_keys:map<num, str> = {[1]: \"one\"}\n\
+             export val result:map<num, str> = api.remove(numeric_keys, \"missing\")\n",
+        )
+        .expect("compile imported inferred subtract call");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run imported inferred subtract call");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": {1: \"one\"}}"
+    );
+
+    let error = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val api = import(\"api\")\napi.remove({[1]: \"one\"}, [])\n",
+        )
+        .expect_err("imported inferred subtraction rejects unhashable keys");
+    assert!(
+        error
+            .to_string()
+            .starts_with("no inferred overload alternative matches the call")
+    );
+    fs::remove_dir_all(root).expect("remove inferred subtract module directory");
+}
+
+#[test]
 fn imported_inferred_alternatives_propagate_after_independent_selection() {
     let root = root("imported-inferred-alternative-wrapper");
     fs::create_dir_all(&root).expect("create inferred alternative wrapper module directory");

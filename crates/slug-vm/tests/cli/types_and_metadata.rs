@@ -49,6 +49,84 @@ fn selects_body_derived_plus_alternatives_at_known_calls() {
 }
 
 #[test]
+fn selects_body_derived_subtract_alternatives_at_known_calls() {
+    let path = fixture_path("inferred-subtract-alternatives");
+    fs::write(
+        &path,
+        "val subtract = fn(left, right) { left - right }\n\
+         val remove = fn(map, key) { map - key }\n\
+         val numeric:num = subtract(44, 2)\n\
+         val numeric_keys:map<num, str> = {[1]: \"one\"}\n\
+         val removed:map<num, str> = remove(numeric_keys, \"missing\")\n\
+         val key:str|num = if (true) { \"also-missing\" } else { 2 }\n\
+         val union_removed:map<num, str> = remove(numeric_keys, key)\n\
+         println(numeric, removed[1], union_removed[1])\n",
+    )
+    .expect("write inferred subtract alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run inferred subtract alternatives source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42 one one\n");
+
+    fs::write(
+        &path,
+        "val subtract = fn(left, right) { left - right }\nsubtract(1, \"x\")\n",
+    )
+    .expect("write mixed numeric subtraction source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run mixed numeric subtraction source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
+    );
+
+    fs::write(
+        &path,
+        "val remove = fn(map, key) { map - key }\nremove({[1]: \"one\"}, [])\n",
+    )
+    .expect("write invalid map-key subtraction source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run invalid map-key subtraction source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
+    );
+
+    fs::write(
+        &path,
+        "val remove = fn(map, key) { map - key }\n\
+         val key:any|nil = []\n\
+         remove({[1]: \"one\"}, key)\n",
+    )
+    .expect("write dynamic map-key subtraction source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic map-key subtraction source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+    fs::remove_file(path).expect("remove inferred subtract alternatives source");
+}
+
+#[test]
 fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
     let path = fixture_path("inferred-plus-dynamic-boundary");
     fs::write(

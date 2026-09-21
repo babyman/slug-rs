@@ -988,6 +988,15 @@ the complete correlated alternative set. Dynamic or structural callees,
 spreads, incomplete argument binding, and zero or multiple applicable
 alternatives remain dynamic body-inference boundaries.
 
+The finite subtraction alternatives are `(num, num) -> num` and
+`(map<K,V>, bool|num|str|bytes) -> map<K,V>`. The latter uses the hashable
+map-key domain rather than the map's `K`: removal of a missing key is valid,
+so `map<num,str> - "missing"` remains `map<num,str>`. A known union operand is
+accepted only if every member is a boolean, number, string, or bytes value.
+Known `nil`, collections, functions, and structs do not match; `unknown`,
+`any`, and unions containing them retain dynamic behavior. The hashable-key
+domain is private semantic metadata, not source syntax.
+
 An inferred `var` binding fixes its static type from its initializer; later
 known assignments must conform to that type and do not widen it. A dynamically
 unknown assignment remains valid and preserves the retained static fact. An
