@@ -81,6 +81,8 @@ contract is documented separately as `.cslug`.
   negation, ordering comparisons, uniquely known direct callees, and direct
   `nil` guards, plus finite body-derived `+`, `-`, and `*` overload alternatives for
   numeric, string, list, bytes, map merge, and map-key removal relationships.
+  Private alternative metadata is capped at 16 canonical schemes per callable;
+  excess schemes widen only that metadata to checked dynamic behavior.
   Independently selected alternatives also propagate through direct known
   calls during body-derived inference; dynamic and ambiguous calls remain
   checked at runtime.

@@ -85,6 +85,6 @@ Neither work expands structural-call preservation or introduces specialization.
 
 - [x] Add CLI, module-loader, and VM coverage for each accepted operator family
   and for rejected mixed operand pairs.
-- [ ] Update the language specification, support inventory, generated matrix,
+- [x] Update the language specification, support inventory, generated matrix,
   README, changelog, and any required decision record with every new family.
-- [ ] Run `make check` before closing each follow-up stage.
+- [x] Run `make check` before closing each follow-up stage.
