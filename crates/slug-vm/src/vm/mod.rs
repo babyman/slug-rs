@@ -47,7 +47,7 @@ use calls::{CallableRuntimeSignature, ExpandedCallArguments, NamedArgument};
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
-use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments, frame_locals};
+use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments};
 use operations::{
     add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, divide_num, index_value,
     is_map_key, list_append, list_prepend, matches_pattern, modulo, modulo_num, multiply,
@@ -129,6 +129,8 @@ pub struct VmMetrics {
     pub local_binding_cells_created: usize,
     /// Frame-local vectors constructed while entering or restarting frames.
     pub frame_local_vectors_created: usize,
+    /// Frame-local vectors supplied by the VM-local recycler.
+    pub frame_local_vectors_reused: usize,
     /// Total capacity reserved by newly constructed frame-local vectors.
     pub frame_local_capacity_total: usize,
     /// Argument values written into frame-local slots.
@@ -373,6 +375,7 @@ pub struct Vm {
     module_metadata: Vec<ModuleDeclaration>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
+    local_slot_pool: Vec<Vec<LocalSlot>>,
     cleanup: Vec<Cleanup>,
     progress: Rc<ProgressDriver>,
     #[cfg(feature = "concurrency")]
@@ -536,6 +539,7 @@ impl Default for Vm {
             module_metadata: Vec::new(),
             stack: Vec::new(),
             frames: Vec::new(),
+            local_slot_pool: Vec::new(),
             cleanup: Vec::new(),
             progress: progress.clone(),
             #[cfg(feature = "concurrency")]
@@ -1580,7 +1584,7 @@ impl Vm {
         self.nursery.clear();
         self.progress.clear();
         self.module_metadata = program.declarations().to_vec();
-        let locals = frame_locals(Vec::new(), chunk.locals);
+        let locals = self.take_frame_locals(Vec::new(), chunk.locals);
         self.record_frame_locals(locals.capacity(), 0);
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
@@ -3178,6 +3182,26 @@ impl Vm {
         frame
     }
 
+    fn take_frame_locals(&mut self, arguments: Vec<Value>, local_count: usize) -> Vec<LocalSlot> {
+        let reused = !self.local_slot_pool.is_empty();
+        let mut locals = self.local_slot_pool.pop().unwrap_or_default();
+        #[cfg(feature = "metrics")]
+        if reused {
+            self.metrics.borrow_mut().frame_local_vectors_reused += 1;
+        }
+        #[cfg(not(feature = "metrics"))]
+        let _ = reused;
+        locals.clear();
+        locals.extend(arguments.into_iter().map(LocalSlot::Direct));
+        locals.resize_with(local_count, || LocalSlot::Direct(Value::Nil));
+        locals
+    }
+
+    pub(in crate::vm) fn recycle_frame_locals(&mut self, mut locals: Vec<LocalSlot>) {
+        locals.clear();
+        self.local_slot_pool.push(locals);
+    }
+
     fn next_instruction(&mut self, program: &Program) -> VmResult<PackedInstruction> {
         let (chunk_index, ip) = self
             .frames
@@ -3319,7 +3343,7 @@ impl Vm {
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let argument_count = locals.len();
-                let locals = frame_locals(locals, chunk.locals);
+                let locals = self.take_frame_locals(locals, chunk.locals);
                 self.record_frame_locals(locals.capacity(), argument_count);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
@@ -3492,7 +3516,7 @@ impl Vm {
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let argument_count = locals.len();
-                let locals = frame_locals(locals, chunk.locals);
+                let locals = self.take_frame_locals(locals, chunk.locals);
                 self.record_frame_locals(locals.capacity(), argument_count);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
@@ -3629,6 +3653,7 @@ impl Vm {
             module_metadata: Vec::new(),
             stack: Vec::new(),
             frames: Vec::new(),
+            local_slot_pool: Vec::new(),
             cleanup: Vec::new(),
             progress: self.progress.clone(),
             #[cfg(feature = "concurrency")]
@@ -3649,7 +3674,7 @@ impl Vm {
             metrics: self.metrics.clone(),
         };
         let argument_count = arguments.len();
-        let locals = frame_locals(arguments, chunk.locals);
+        let locals = vm.take_frame_locals(arguments, chunk.locals);
         vm.record_frame_locals(locals.capacity(), argument_count);
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
@@ -4257,14 +4282,15 @@ impl Vm {
             }
             chunk.locals
         };
-        let mut locals = Vec::with_capacity(local_count);
-        for value in &self.stack[base + 1..] {
-            let value = value
-                .resolve()
-                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
-            locals.push(LocalSlot::Direct(value));
-        }
-        locals.resize_with(local_count, || LocalSlot::Direct(Value::Nil));
+        let arguments = self.stack[base + 1..]
+            .iter()
+            .map(|value| {
+                value
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+            })
+            .collect::<VmResult<Vec<_>>>()?;
+        let locals = self.take_frame_locals(arguments, local_count);
         self.record_frame_locals(locals.capacity(), count);
         self.record_exact_positional_stack_local_initialization(count);
         #[cfg(feature = "metrics")]
