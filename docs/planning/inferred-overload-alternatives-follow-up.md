@@ -73,7 +73,7 @@ Neither work expands structural-call preservation or introduces specialization.
 
 ### Deferred runtime and performance research
 
-- [ ] Do not begin this section as a consequence of semantic alternative
+- [x] Do not begin this section as a consequence of semantic alternative
   propagation. A selected alternative is not a specialization proof.
 - [ ] If a concrete performance hypothesis remains after composition is stable,
   establish a separate runtime-safe design that preserves live bindings and
