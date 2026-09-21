@@ -67,7 +67,7 @@ Neither work expands structural-call preservation or introduces specialization.
 - [x] Apply the existing canonical identity, specificity, and ambiguity rules
   to every added family; add a new rule only when a concrete overlap cannot be
   resolved by those rules.
-- [ ] Establish practical limits, widening behavior, and diagnostics for
+- [x] Establish practical limits, widening behavior, and diagnostics for
   alternative-set growth when cross-expression composition can actually grow
   a set beyond one operator family's finite schemes.
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Capped private inferred overload alternatives at 16 canonical schemes per
+  callable. Exhausting the cap widens only alternative metadata without a
+  source error, while independently proven singleton facts remain precise.
+
 - Implemented finite body-derived `*` overload alternatives for numeric
   multiplication and string repetition while retaining checked runtime counts.
 

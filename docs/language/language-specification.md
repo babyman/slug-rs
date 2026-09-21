@@ -1009,6 +1009,15 @@ independent unions.
 Every reachable branch without a proven type-discriminating guard contributes
 the same intersecting requirement: any branch may run for the same inputs.
 
+Inferred alternatives are private compiler metadata and are capped at sixteen
+canonical schemes per callable. The compiler canonicalizes and deduplicates at
+each construction step; a seventeenth scheme discards the callable's entire
+alternative set rather than retaining an arbitrary source-order-dependent
+subset. This widens only inferred-alternative metadata to ordinary dynamic or
+structural callable behavior: independently proven annotations and singleton
+body facts remain, and no source diagnostic is emitted. Calls that lose this
+precision remain valid and use checked runtime behavior.
+
 An inferred `var` binding fixes its static type from its initializer; later
 known assignments must conform to that type and do not widen it. A dynamically
 unknown assignment remains valid and preserves the retained static fact. An

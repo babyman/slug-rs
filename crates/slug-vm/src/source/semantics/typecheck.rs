@@ -865,12 +865,28 @@ fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String,
         .collect()
 }
 
+/// A private inference budget prevents control-flow composition from creating
+/// an unbounded number of correlated callable schemes.
+const MAX_INFERRED_ALTERNATIVES: usize = 16;
+
+fn canonical_inferred_alternatives(
+    mut alternatives: Vec<InferredAlternative>,
+) -> Option<Vec<InferredAlternative>> {
+    alternatives.sort_by_key(ToString::to_string);
+    alternatives.dedup();
+    (alternatives.len() <= MAX_INFERRED_ALTERNATIVES).then_some(alternatives)
+}
+
 fn inferred_overload_alternatives(
     parameters: &[Parameter],
     constraints: &ParameterConstraints,
 ) -> Result<Vec<InferredAlternative>, SourceError> {
     if !constraints.plus_operands.is_empty() {
-        let alternatives = inferred_plus_alternatives(parameters, constraints)?;
+        let Some(alternatives) =
+            canonical_inferred_alternatives(inferred_plus_alternatives(parameters, constraints)?)
+        else {
+            return Ok(Vec::new());
+        };
         let alternatives = compose_inferred_alternatives(
             alternatives,
             parameters,
@@ -878,19 +894,32 @@ fn inferred_overload_alternatives(
             !constraints.subtract_operands.is_empty(),
             !constraints.multiply_operands.is_empty(),
         )?;
-        return add_simple_nil_guard_alternatives(alternatives, parameters, constraints);
+        return Ok(add_simple_nil_guard_alternatives(
+            alternatives,
+            parameters,
+            constraints,
+        ));
     }
     if !constraints.subtract_operands.is_empty() {
-        return inferred_subtract_alternatives(parameters, constraints);
+        return Ok(
+            canonical_inferred_alternatives(inferred_subtract_alternatives(
+                parameters,
+                constraints,
+            )?)
+            .unwrap_or_default(),
+        );
     }
-    inferred_multiply_alternatives(parameters, constraints)
+    Ok(
+        canonical_inferred_alternatives(inferred_multiply_alternatives(parameters, constraints)?)
+            .unwrap_or_default(),
+    )
 }
 
 fn add_simple_nil_guard_alternatives(
     mut alternatives: Vec<InferredAlternative>,
     parameters: &[Parameter],
     constraints: &ParameterConstraints,
-) -> Result<Vec<InferredAlternative>, SourceError> {
+) -> Vec<InferredAlternative> {
     for partition in &constraints.nil_partitions {
         let Some(result) = alternative_branch_result(&partition.nil_branch, parameters) else {
             continue;
@@ -907,8 +936,12 @@ fn add_simple_nil_guard_alternatives(
             })
             .collect();
         alternatives.push(InferredAlternative::new(inputs, result));
+        let Some(canonical) = canonical_inferred_alternatives(alternatives) else {
+            return Vec::new();
+        };
+        alternatives = canonical;
     }
-    Ok(alternatives)
+    alternatives
 }
 
 fn alternative_branch_result(
@@ -949,6 +982,10 @@ fn compose_inferred_alternatives(
                 alternative.accepts_constraints(&actuals.iter().map(Some).collect::<Vec<_>>())
             })
         });
+        let Some(canonical) = canonical_inferred_alternatives(alternatives) else {
+            return Ok(Vec::new());
+        };
+        alternatives = canonical;
     }
     Ok(alternatives)
 }

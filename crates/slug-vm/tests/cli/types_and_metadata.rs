@@ -323,6 +323,79 @@ fn nil_guarded_alternatives_retain_branch_local_results() {
 }
 
 #[test]
+fn inferred_alternative_budget_widens_without_losing_singleton_facts() {
+    let path = fixture_path("inferred-alternative-budget");
+    let source = |guard_count: usize, reverse_guards: bool, value: &str| {
+        let mut guard_names = (0..guard_count)
+            .map(|index| format!("guard{index}"))
+            .collect::<Vec<_>>();
+        if reverse_guards {
+            guard_names.reverse();
+        }
+        let parameters = std::iter::once("left".to_owned())
+            .chain(std::iter::once("right".to_owned()))
+            .chain(std::iter::once("value".to_owned()))
+            .chain((0..guard_count).map(|index| format!("guard{index}")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let guards = guard_names
+            .iter()
+            .map(|name| format!("if ({name} == nil) {{ 0 }} else {{ 0 }}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let arguments = std::iter::once("1".to_owned())
+            .chain(std::iter::once("0x\"01\"".to_owned()))
+            .chain(std::iter::once(value.to_owned()))
+            .chain((0..guard_count).map(|_| "0".to_owned()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "val combine = fn({parameters}) {{\n{guards}\nvalue / 2\nleft + right\n}}\ncombine({arguments})\n"
+        )
+    };
+
+    fs::write(&path, source(11, false, "10")).expect("write sixteen alternative source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run sixteen alternative source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
+    );
+
+    for reverse_guards in [false, true] {
+        fs::write(&path, source(12, reverse_guards, "10"))
+            .expect("write overflowing alternative source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run overflowing alternative source");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .starts_with("slug: runtime error:")
+        );
+    }
+
+    fs::write(&path, source(12, false, "\"text\"")).expect("write singleton fact source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run singleton fact source");
+    fs::remove_file(path).expect("remove inferred alternative budget source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: expected num, got str")
+    );
+}
+
+#[test]
 fn inferred_alternatives_widen_at_dynamic_call_boundaries() {
     let path = fixture_path("inferred-alternative-dynamic-boundary");
     fs::write(
