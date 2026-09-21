@@ -61,7 +61,7 @@ Neither work expands structural-call preservation or introduces specialization.
 - [x] Make the current composition boundary explicit in tests: alternatives are
   initially derived from one operator family and direct parameter pair; distinct
   families do not compose or silently approximate relationships with unions.
-- [ ] Preserve widening at structural and dynamically selected function-value
+- [x] Preserve widening at structural and dynamically selected function-value
   boundaries. Reconsider retention of alternatives there only through a new
   decision record with a concrete callable representation.
 - [ ] Apply the existing canonical identity, specificity, and ambiguity rules

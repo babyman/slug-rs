@@ -287,8 +287,8 @@ fn nil_guarded_alternatives_retain_branch_local_results() {
 }
 
 #[test]
-fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
-    let path = fixture_path("inferred-plus-dynamic-boundary");
+fn inferred_alternatives_widen_at_dynamic_call_boundaries() {
+    let path = fixture_path("inferred-alternative-dynamic-boundary");
     fs::write(
         &path,
         "val combine = fn(left, right) { left + right }\n\
@@ -318,6 +318,42 @@ fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
         .arg(&path)
         .output()
         .expect("run dynamic inferred plus source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+
+    fs::write(
+        &path,
+        "val remove = fn(map, key) { map - key }\n\
+         val selected = if (true) { remove } else { remove }\n\
+         selected({[1]: \"one\"}, [])\n",
+    )
+    .expect("write structural inferred subtract source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run structural inferred subtract source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error:")
+    );
+
+    fs::write(
+        &path,
+        "val repeat = fn(value, count) { value * count }\n\
+         val value:any|nil = \"text\"\n\
+         repeat(value, \"one\")\n",
+    )
+    .expect("write dynamic inferred multiply source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic inferred multiply source");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8(output.stderr)
