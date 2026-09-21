@@ -95,12 +95,14 @@ fn main() {
         );
         let layout = program.layout_metrics();
         println!(
-            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; local vectors/capacity/arguments {local_vectors}/{local_capacity}/{local_arguments}; closure argument vectors/exact stack-local values {argument_vectors}/{stack_local_values}; provided bitmaps/capacity {provided_bitmaps}/{provided_capacity}; defer scope stacks/entries {defer_scope_stacks}/{defer_scope_entries}; recur locals reused/replaced {recur_reused}/{recur_replaced}; exact positional/generic recur bindings {recur_bindings:?}; {cells} local cells; exact positional/generic call bindings {exact_calls}/{generic_bindings}; collections constructed/elements {collection_constructions}/{collection_elements}; collection lookups/slices/map entries {collection_lookups}/{collection_slices}/{map_entries}; updates/copied/unique/shared {collection_updates}/{collection_copied}/{collection_unique}/{collection_shared}; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
+            "{name}: {iterations} runs in {elapsed:?} ({verification:?} verification, {validations} installation validations); {instructions} instructions; packed direct/rich fallback {packed_direct}/{rich_fallback}; {clones} instruction clones; {spans} source-span clones/{span_lookups} table lookups; {program_clones} whole-program clones ({program_clone_bytes} estimated instruction bytes); {frames} frames; local vectors/capacity/arguments {local_vectors}/{local_capacity}/{local_arguments}; closure argument vectors/exact stack-local values {argument_vectors}/{stack_local_values}; provided bitmaps/capacity {provided_bitmaps}/{provided_capacity}; defer scope stacks/entries {defer_scope_stacks}/{defer_scope_entries}; recur locals reused/replaced {recur_reused}/{recur_replaced}; exact positional/generic recur bindings {recur_bindings:?}; {cells} local cells; exact positional/generic call bindings {exact_calls}/{generic_bindings}; collections constructed/elements {collection_constructions}/{collection_elements}; collection lookups/slices/map entries {collection_lookups}/{collection_slices}/{map_entries}; updates/copied/unique/shared {collection_updates}/{collection_copied}/{collection_unique}/{collection_shared}; {removals} wait-registration removals; removal entries channel {channel_entries}; peak channel {peak_channel}; layout inline/chunk/constants/descriptors/metadata/sources {program_inline}/{chunk_storage}/{constant_bytes}/{descriptor_bytes}/{metadata_bytes}/{source_bytes}; {instruction_bytes} instruction bytes ({instruction_size_bytes} each); max chunk/constants/locals/metadata {largest_chunk_instructions}/{largest_constant_pool}/{largest_frame}/{largest_metadata_pool}; {span_entries} span entries; {inline_span_bytes} inline span bytes; {compressed_span_map_bytes} compressed span-map bytes",
             name = workload.name,
             iterations = workload.iterations,
             verification = metrics.verification_time,
             validations = metrics.program_validations,
             instructions = metrics.instructions_executed,
+            packed_direct = metrics.packed_direct_dispatches,
+            rich_fallback = metrics.rich_op_fallback_dispatches,
             clones = metrics.instruction_clones,
             spans = metrics.source_span_clones,
             span_lookups = metrics.source_span_lookups,
@@ -228,6 +230,8 @@ fn run(
         black_box(result);
         let run_metrics = vm.metrics();
         metrics.instructions_executed += run_metrics.instructions_executed;
+        metrics.packed_direct_dispatches += run_metrics.packed_direct_dispatches;
+        metrics.rich_op_fallback_dispatches += run_metrics.rich_op_fallback_dispatches;
         metrics.instruction_clones += run_metrics.instruction_clones;
         metrics.source_span_clones += run_metrics.source_span_clones;
         metrics.source_span_lookups += run_metrics.source_span_lookups;

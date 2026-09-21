@@ -843,7 +843,7 @@ It does not change Slug syntax, semantics, diagnostics, or the portable
 - [x] Add in-process `function-call` and `binary-trees` workloads equivalent
   to the checked-in source benchmarks. Retain their output assertions and
   compile each program once before repeated VM execution.
-- [ ] Record packed direct-dispatch and rich-op fallback instruction counts.
+- [x] Record packed direct-dispatch and rich-op fallback instruction counts.
   Keep the counters behind `metrics`, assert their intended ownership in VM
   tests, and remove them if they stop distinguishing a decision.
 - [ ] Use the two workloads to establish frames, frame-local vector capacity,
@@ -913,3 +913,19 @@ The benchmark still uses the existing installed-program boundary, so both
 workloads performed one installation validation and no whole-program clones.
 No runtime representation changed in this slice; source diagnostics, capture
 behavior, and scheduler counters remain outside these synchronous workloads.
+
+#### Measurement record: packed-dispatch accounting (2026-09-20)
+
+Command: `cargo bench -p slug-vm --bench vm --features metrics`, after adding
+the feature-gated counters. Focused VM coverage asserts that a four-instruction
+packed-only program records four direct dispatches and no fallback, while a
+program with one pooled `DefineGlobal` records three direct dispatches and one
+rich-op fallback.
+
+| Workload | Instructions | Packed direct | Rich-op fallback |
+|---|---:|---:|---:|
+| function-call (10 runs) | 17,000,310 | 16,000,230 | 1,000,080 |
+| binary-trees (10 runs) | 19,988,280 | 17,694,500 | 2,293,780 |
+
+The two categories sum to the executed-instruction count in both workloads.
+They are opt-in metrics only: ordinary builds retain no counter updates.

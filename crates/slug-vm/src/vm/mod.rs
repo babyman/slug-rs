@@ -113,6 +113,10 @@ pub struct VmLayoutMetrics {
 pub struct VmMetrics {
     /// Instructions fetched by the dispatch loop, including spawned tasks.
     pub instructions_executed: usize,
+    /// Instructions completed by the direct packed-bytecode dispatcher.
+    pub packed_direct_dispatches: usize,
+    /// Instructions completed through unpacking and the rich-op fallback.
+    pub rich_op_fallback_dispatches: usize,
     /// Whole instructions cloned while fetching them for dispatch.
     pub instruction_clones: usize,
     /// Source spans cloned because execution needs an owned diagnostic or state.
@@ -1934,8 +1938,12 @@ impl Vm {
             let outcome = if let Some(outcome) =
                 self.execute_packed_hot_op(&frame_program, &instruction)?
             {
+                #[cfg(feature = "metrics")]
+                self.record_packed_direct_dispatch();
                 outcome
             } else {
+                #[cfg(feature = "metrics")]
+                self.record_rich_op_fallback_dispatch();
                 let instruction = Program::unpack_instruction(&instruction).map_err(|message| {
                     self.error(RuntimeErrorKind::InvalidBytecode, message, None)
                 })?;
@@ -5250,6 +5258,16 @@ impl Vm {
     #[cfg(feature = "metrics")]
     fn record_exact_positional_closure_call(&self) {
         self.metrics.borrow_mut().exact_positional_closure_calls += 1;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_packed_direct_dispatch(&self) {
+        self.metrics.borrow_mut().packed_direct_dispatches += 1;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_rich_op_fallback_dispatch(&self) {
+        self.metrics.borrow_mut().rich_op_fallback_dispatches += 1;
     }
 
     #[cfg(feature = "metrics")]

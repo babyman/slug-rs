@@ -17,6 +17,8 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instruction_clones, 0);
+    assert_eq!(metrics.packed_direct_dispatches, 4);
+    assert_eq!(metrics.rich_op_fallback_dispatches, 0);
     assert_eq!(metrics.source_span_clones, 0);
     assert_eq!(metrics.source_span_lookups, 0);
     assert!(metrics.instructions_executed >= 4);
@@ -24,6 +26,24 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
     assert_eq!(metrics.local_binding_cells_created, 0);
     assert_eq!(metrics.program_clones, 1);
     assert!(metrics.program_clone_bytes > 0);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn records_rich_op_fallback_dispatches_separately_from_packed_dispatches() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::DefineGlobal("answer".into()))
+        .emit(Op::Nil)
+        .emit(Op::Return);
+
+    let mut vm = Vm::new();
+    assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Nil);
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.instructions_executed, 4);
+    assert_eq!(metrics.packed_direct_dispatches, 3);
+    assert_eq!(metrics.rich_op_fallback_dispatches, 1);
 }
 
 #[test]

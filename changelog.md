@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added opt-in metrics distinguishing direct packed-bytecode dispatch from
+  rich-op fallback dispatch, with focused ownership checks.
+
 - Added metrics-enabled in-process `function-call` and `binary-trees`
   benchmarks aligned with the source benchmark inputs and checked results.
 
