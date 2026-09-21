@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Recorded the desktop `opt-level = 3` source-benchmark result and a measured
+  private-VM task sequence for ordinary-call and binary-tree bottlenecks;
+  Slug source semantics and portable bytecode remain unchanged.
+
 - Capped private inferred overload alternatives at 16 canonical schemes per
   callable. Exhausting the cap widens only alternative metadata without a
   source error, while independently proven singleton facts remain precise.

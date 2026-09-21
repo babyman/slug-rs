@@ -830,3 +830,68 @@ Only begin a production register lowering after the shared-program,
 verification, scheduler-measurement, full-layout, and hot-data-locality audits
 above are closed. A prototype may proceed earlier only as an isolated
 experiment whose results do not determine the production operand model.
+
+### 9. Optimize the remaining source-level call and tree bottlenecks
+
+The 2026-09-20 release-profile measurement makes ordinary calls and
+binary-tree construction/matching the next source-level targets. This is a
+private-runtime sequence governed by
+[Measure call and tree VM costs before changing representations](../decisions/2026-09-20-measure-call-and-tree-vm-costs.md).
+It does not change Slug syntax, semantics, diagnostics, or the portable
+`.cslug` contract.
+
+- [ ] Add in-process `function-call` and `binary-trees` workloads equivalent
+  to the checked-in source benchmarks. Retain their output assertions and
+  compile each program once before repeated VM execution.
+- [ ] Record packed direct-dispatch and rich-op fallback instruction counts.
+  Keep the counters behind `metrics`, assert their intended ownership in VM
+  tests, and remove them if they stop distinguishing a decision.
+- [ ] Use the two workloads to establish frames, frame-local vector capacity,
+  exact/generic call binding, collection construction, collection elements,
+  and collection lookup baselines.
+- [ ] If those counters cannot distinguish the binary-tree cost, add a
+  temporary scoped experiment for `Value` cloning and `Rc` retain/release
+  traffic. Do not retain broad production accounting without an actionable
+  representation decision.
+- [ ] Prototype frame-transition-only synchronization of the VM's current
+  global environment. Update it on frame push, return, recovery, and other
+  frame-stack changes rather than at every instruction. Preserve frame-owned
+  globals for imported and retained interactive closures, cleanup actions,
+  suspension, and diagnostics.
+- [ ] Re-run the source-aligned call benchmark. If frame-local allocation is
+  still material, compare a VM-local local-vector recycler with the planned
+  contiguous local-slot arena; retain capture identity and `recur` behavior
+  in either experiment.
+- [ ] Use the binary-tree result to decide whether a two-element-list
+  construction fast path or additional packed match dispatch is justified.
+  Do not add either merely because it is common in this one synthetic shape.
+- [ ] Re-run `make bench-source`, `make bench-vm`, and `make check` after each
+  retained slice. Append a dated measurement record here with command,
+  revision, profile, workload sizes, counter deltas, and diagnostic/capture
+  regression coverage.
+
+#### Measurement record: source benchmark and task selection (2026-09-20)
+
+Command: `make bench-source`, on revision
+`465d7d39bcdb2c180bbc1222f0b054cce5cc4717`, with a clean worktree, three
+warmups, and 15 timed samples per runtime/workload. The release profile uses
+`opt-level = 3`, LTO, one codegen unit, stripped symbols, and aborting panics.
+The earlier packed-dispatch figures used the size-optimized release profile,
+so this is a profile comparison rather than isolated VM-change attribution.
+
+| Workload | Slug median | CPython median | Slug / CPython |
+|---|---:|---:|---:|
+| function-call | 44.678 ms | 25.953 ms | 1.72x |
+| n-body | 18.913 ms | 21.500 ms | 0.88x |
+| typed-n-body | 18.490 ms | 21.370 ms | 0.87x |
+| spectral-norm | 7.680 ms | 19.986 ms | 0.38x |
+| typed-spectral-norm | 7.110 ms | 20.031 ms | 0.35x |
+| binary-trees | 49.839 ms | 29.049 ms | 1.72x |
+
+`make bench-vm` on the same revision reports `ordinary-calls-200` completing
+1,000 runs in 101.709 ms while creating 202,000 frames and 202,000
+frame-local vectors. It executes 3,431,000 instructions, performs 201,000
+exact positional closure calls, and uses no generic call binding. Existing
+benchmarks do not yet make the equivalent binary-tree call, list, and match
+cost visible; that is the first checklist item above. These timing figures are
+host-local evidence, not performance assertions.

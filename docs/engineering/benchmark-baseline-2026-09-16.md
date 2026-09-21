@@ -296,3 +296,26 @@ The n-body difference is within local variation, but typed spectral-norm is
 about 5% faster. Keep these paired workloads as the gate for subsequent
 type-informed optimizations; do not infer a general source-versus-CPython
 improvement from this narrow result.
+
+## Desktop release profile (`opt-level = 3`) — 2026-09-20
+
+The desktop release profile now uses `opt-level = 3`; its former
+size-optimized setting remains available through the separate `embedded`
+profile. On revision `465d7d39bcdb2c180bbc1222f0b054cce5cc4717`, a clean
+15-sample run with three warmups reported:
+
+| Workload            | Slug median | CPython median | Slug / CPython |
+|---------------------|------------:|---------------:|---------------:|
+| function-call       |   44.678 ms |      25.953 ms |          1.72x |
+| n-body              |   18.913 ms |      21.500 ms |          0.88x |
+| typed-n-body        |   18.490 ms |      21.370 ms |          0.87x |
+| spectral-norm       |    7.680 ms |      19.986 ms |          0.38x |
+| typed-spectral-norm |    7.110 ms |      20.031 ms |          0.35x |
+| binary-trees        |   49.839 ms |      29.049 ms |          1.72x |
+
+Compared with the earlier size-optimized packed-dispatch result, the four
+shared Slug workloads improved by roughly 46--54%. This is a release-profile
+comparison, not attribution to a single VM change. The remaining source-level
+targets are ordinary calls and binary-tree construction/matching; their
+measurement and preservation gates are recorded in the
+[VM optimization plan](../planning/vm-optimization.md).
