@@ -65,3 +65,12 @@ pub(super) enum LocalSlot {
     Direct(Value),
     Captured(BindingCell),
 }
+
+pub(super) fn frame_locals(arguments: Vec<Value>, local_count: usize) -> Vec<LocalSlot> {
+    let mut locals = arguments
+        .into_iter()
+        .map(LocalSlot::Direct)
+        .collect::<Vec<_>>();
+    locals.resize_with(local_count, || LocalSlot::Direct(Value::Nil));
+    locals
+}

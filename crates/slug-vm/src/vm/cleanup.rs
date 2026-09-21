@@ -1,6 +1,6 @@
 use crate::{DeferMode, Program, SourceSpan, Value};
 
-use super::frames::{Frame, LocalSlot, ProvidedArguments};
+use super::frames::{Frame, LocalSlot, ProvidedArguments, frame_locals};
 use super::{RuntimeError, RuntimeErrorKind, Vm, VmResult};
 
 #[derive(Clone)]
@@ -242,7 +242,7 @@ impl Vm {
             self.record_recur_local_vector(true);
             return;
         }
-        let locals = self.take_frame_locals(arguments, local_count);
+        let locals = frame_locals(arguments, local_count);
         self.record_frame_locals(locals.capacity(), argument_count);
         self.record_recur_local_vector(false);
         let frame = self.frames.last_mut().expect("active frame was checked");
@@ -355,9 +355,7 @@ impl Vm {
                         )
                     })?;
                     self.stack.truncate(frame.stack_base);
-                    let cleanup_action = frame.cleanup_action;
-                    self.recycle_frame_locals(frame.locals);
-                    if cleanup_action {
+                    if frame.cleanup_action {
                         continue;
                     }
                     if self.frames.is_empty() {
@@ -379,7 +377,6 @@ impl Vm {
                         )
                     })?;
                     self.stack.truncate(frame.stack_base);
-                    self.recycle_frame_locals(frame.locals);
                     return self.recover_from_error(value, frame_depth);
                 }
                 Some(Cleanup::Resume) => {
@@ -457,7 +454,7 @@ impl Vm {
                     Vec::new()
                 };
                 let argument_count = arguments.len();
-                let locals = self.take_frame_locals(arguments, chunk.locals);
+                let locals = frame_locals(arguments, chunk.locals);
                 self.record_frame_locals(locals.capacity(), argument_count);
                 self.push_frame(Frame {
                     program: closure.program.clone().unwrap_or(self.active_program()?),
