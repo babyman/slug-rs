@@ -14,8 +14,8 @@ use crate::value::Task;
 #[cfg(feature = "concurrency")]
 use crate::value::TaskAdmission;
 use crate::{
-    CallArgumentKind, Capture, ModuleDeclaration, ModuleLoader, NativeDescriptorError,
-    NativeFunction, Program, SourceSpan, SpanId, Value,
+    CallArgumentKind, Capture, MatchPatternId, ModuleDeclaration, ModuleLoader,
+    NativeDescriptorError, NativeFunction, Program, SourceSpan, SpanId, Value,
     bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
@@ -2126,6 +2126,18 @@ impl Vm {
             }
             PackedOpcode::CallPositional => self.call_positional_at(program, operand, None)?,
             PackedOpcode::EnterScope => self.enter_scope_at(None)?,
+            PackedOpcode::LeaveScope => {
+                if !self.leave_scope_without_cleanup_at(None)? {
+                    return Ok(None);
+                }
+            }
+            PackedOpcode::TryMatch => self.try_match_at(
+                program,
+                MatchPatternId::new(instruction.a),
+                instruction.b as usize,
+                instruction.c as usize,
+                None,
+            )?,
             PackedOpcode::RecurPositional => self.recur_positional_at(program, operand, None)?,
             PackedOpcode::Return => {
                 let value = self.pop_at(None)?;
@@ -3119,29 +3131,7 @@ impl Vm {
                 pattern,
                 bindings,
                 operands,
-            } => {
-                let pattern = program
-                    .match_pattern(*pattern)
-                    .expect("validated match pattern metadata");
-                let operands = self.pop_values_at(*operands, span)?;
-                let value = self.pop_at(span)?;
-                let mut values = Vec::new();
-                let matched = matches_pattern(pattern, &value, &operands, &mut values)
-                    .map_err(|(kind, message)| self.error_at(kind, message, span))?;
-                if matched && values.len() != *bindings {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "match pattern binding count is invalid".into(),
-                        span,
-                    ));
-                }
-                if matched {
-                    self.stack.extend(values);
-                } else {
-                    self.stack.extend((0..*bindings).map(|_| Value::Nil));
-                }
-                self.stack.push(Value::Bool(matched));
-            }
+            } => self.try_match_at(program, *pattern, *bindings, *operands, span)?,
         }
         Ok(BorrowedSpanOpOutcome::Continue)
     }
@@ -3170,6 +3160,62 @@ impl Vm {
         if !frame.scopes.is_empty() {
             frame.scopes.push(Vec::new());
         }
+        Ok(())
+    }
+
+    /// Exits a scope directly only when it has no deferred work and cannot
+    /// resume a cleanup action. All other exits retain the cleanup dispatcher.
+    fn leave_scope_without_cleanup_at(&mut self, span: Option<&SourceSpan>) -> VmResult<bool> {
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active call frame".into(),
+                span,
+            ));
+        };
+        if frame.scope_depth <= 1 {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active scope".into(),
+                span,
+            ));
+        }
+        if frame.cleanup_action || !frame.scopes.is_empty() {
+            return Ok(false);
+        }
+        frame.scope_depth -= 1;
+        Ok(true)
+    }
+
+    fn try_match_at(
+        &mut self,
+        program: &Program,
+        pattern: MatchPatternId,
+        bindings: usize,
+        operands: usize,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let pattern = program
+            .match_pattern(pattern)
+            .expect("validated match pattern metadata");
+        let operands = self.pop_values_at(operands, span)?;
+        let value = self.pop_at(span)?;
+        let mut values = Vec::new();
+        let matched = matches_pattern(pattern, &value, &operands, &mut values)
+            .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+        if matched && values.len() != bindings {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "match pattern binding count is invalid".into(),
+                span,
+            ));
+        }
+        if matched {
+            self.stack.extend(values);
+        } else {
+            self.stack.extend((0..bindings).map(|_| Value::Nil));
+        }
+        self.stack.push(Value::Bool(matched));
         Ok(())
     }
 

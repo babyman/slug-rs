@@ -354,3 +354,57 @@ local variation, so they do not establish an end-to-end improvement claim.
 The remaining binary-tree fallback work is approximately 98,302 `TryMatch`
 instructions and 65,535 `LeaveScope` instructions per workload execution.
 Evaluate those paths independently before retaining another packed fast path.
+
+## Packed match execution — 2026-09-21
+
+`TryMatch` now reads the already-validated pattern metadata directly from the
+packed instruction, while sharing the same matching, binding-count validation,
+and diagnostic path as the rich opcode. The local-vector recycler was
+reapplied between the preceding scope-entry measurements and this slice, so
+the timing figures below are a new combined-representation checkpoint, not an
+isolated before/after comparison.
+
+| Workload              | Packed direct | Rich fallback | Change from prior dispatch accounting |
+|-----------------------|--------------:|--------------:|--------------------------------------:|
+| binary-trees, 10 runs |    19,332,890 |       655,390 |               983,040 fewer fallbacks |
+
+The remaining fallback count corresponds to the 65,535 `LeaveScope`
+instructions per tree execution plus setup work. The packed-match change has a
+focused VM metrics test; source match semantics and runtime error behavior are
+unchanged.
+
+| Workload            | Slug median | CPython median | Slug / CPython |
+|---------------------|------------:|---------------:|---------------:|
+| function-call       |   48.108 ms |      26.587 ms |          1.81x |
+| n-body              |   19.299 ms |      22.258 ms |          0.87x |
+| typed-n-body        |   18.766 ms |      22.440 ms |          0.84x |
+| spectral-norm       |    7.804 ms |      20.431 ms |          0.38x |
+| typed-spectral-norm |    7.133 ms |      20.332 ms |          0.35x |
+| binary-trees        |   53.581 ms |      29.519 ms |          1.82x |
+
+This is one 15-sample source run with three warmups, on a dirty worktree based
+on `bda82a7d36f537a9d2dcc8c8f723580784fec367`. Repeat it after the next
+isolated slice; do not treat it as evidence for or against either the recycler
+or packed match execution by itself.
+
+## Packed empty-scope exit — 2026-09-21
+
+`LeaveScope` now exits directly only when the frame has no materialized defer
+scopes and is not a cleanup-action frame. Deferred and recovery paths still
+use the existing cleanup dispatcher. This removes the final recurring
+binary-tree fallback without changing source cleanup semantics.
+
+| Workload              | Packed direct | Rich fallback | Change from packed match checkpoint |
+|-----------------------|--------------:|--------------:|------------------------------------:|
+| binary-trees, 10 runs |    19,988,240 |            40 |             655,350 fewer fallbacks |
+
+| Workload      | In-process checkpoint | Source median |
+|---------------|----------------------:|--------------:|
+| function-call |  514.828 ms / 10 runs |     47.816 ms |
+| binary-trees  |  556.865 ms / 10 runs |     50.638 ms |
+
+The preceding packed-match and current empty-scope-exit measurements both run
+with the reapplied recycler. Each checkpoint is a single local sample; the
+source timing should be repeated before assigning the apparent binary-tree
+improvement to one slice. The key retained measurement is that only setup
+instructions, not recursive call/tree execution, remain on rich fallback.

@@ -48,7 +48,7 @@ fn records_rich_op_fallback_dispatches_separately_from_packed_dispatches() {
 
 #[test]
 #[cfg(feature = "metrics")]
-fn dispatches_scope_entry_without_rich_op_unpacking() {
+fn dispatches_empty_scope_entry_and_exit_without_rich_op_unpacking() {
     let mut main = Chunk::new("main", 0);
     main.emit(Op::EnterScope)
         .emit(Op::Nil)
@@ -59,8 +59,31 @@ fn dispatches_scope_entry_without_rich_op_unpacking() {
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instructions_executed, 4);
-    assert_eq!(metrics.packed_direct_dispatches, 3);
-    assert_eq!(metrics.rich_op_fallback_dispatches, 1);
+    assert_eq!(metrics.packed_direct_dispatches, 4);
+    assert_eq!(metrics.rich_op_fallback_dispatches, 0);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn dispatches_pooled_match_without_rich_op_unpacking() {
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    main.emit(Op::Constant(one))
+        .emit(Op::TryMatch {
+            pattern: MatchPattern::Literal(Value::Int(1)),
+            bindings: 0,
+            operands: 0,
+        })
+        .emit(Op::Pop)
+        .emit(Op::Nil)
+        .emit(Op::Return);
+    let mut vm = Vm::new();
+    assert_eq!(vm.run(&program_with_main(main), 0).unwrap(), Value::Nil);
+
+    let metrics = vm.metrics();
+    assert_eq!(metrics.instructions_executed, 5);
+    assert_eq!(metrics.packed_direct_dispatches, 5);
+    assert_eq!(metrics.rich_op_fallback_dispatches, 0);
 }
 
 #[test]

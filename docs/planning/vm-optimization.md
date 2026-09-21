@@ -996,3 +996,27 @@ medians of 45.026, 44.489, and 44.641 ms and binary-tree medians of 49.890,
 49.130, and 49.406 ms. Source-level timing is within ordinary local variation,
 so the retained evidence is the eliminated hot-path fallback and the
 in-process result, not a portable end-to-end performance claim.
+
+#### Measurement record: packed match execution (2026-09-21)
+
+`TryMatch` now uses the packed instruction's validated pattern ID directly and
+shares the existing binding-count and checked-error logic with the rich opcode.
+Across ten binary-tree runs, packed direct dispatch rose from 18,349,850 to
+19,332,890 while rich fallback fell from 1,638,430 to 655,390: 983,040 match
+instructions no longer unpack a rich opcode. The local-vector recycler was
+reapplied between these measurements, so its 623.400 ms combined in-process
+tree checkpoint and the accompanying source benchmark are not an isolated
+timing comparison for packed matching. The remaining recurring fallback is
+`LeaveScope`; measure its no-defer path separately before changing it.
+
+#### Measurement record: packed empty-scope exit (2026-09-21)
+
+The packed dispatcher now exits a scope directly only when no defer scopes
+have been materialized and the frame is not a cleanup action. Other exits
+return to the rich-op cleanup path unchanged. Across ten binary-tree runs,
+direct/fallback dispatch changed from 19,332,890 / 655,390 to 19,988,240 / 40,
+eliminating the 65,535 ordinary `LeaveScope` operations per execution. With
+the recycler active, the one in-process checkpoint was 556.865 ms for trees
+and the 15-sample source median was 50.638 ms. Those are combined-representation
+measurements, not an isolated performance claim; repeat them before selecting
+another runtime representation change.

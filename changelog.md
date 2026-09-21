@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Dispatched empty packed VM scope exits directly while preserving deferred and
+  cleanup-action scope handling through the checked cleanup path.
+
+- Dispatched packed VM match instructions directly while retaining checked
+  pattern binding and runtime-error behavior.
+
 - Dispatched packed VM scope entry directly while retaining checked scope-depth
   validation and rich-bytecode fallback behavior.
 
