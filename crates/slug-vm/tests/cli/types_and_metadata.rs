@@ -222,6 +222,49 @@ fn sequential_inferred_operator_families_intersect() {
 }
 
 #[test]
+fn unguarded_branch_inferred_operator_families_intersect() {
+    let path = fixture_path("branch-inferred-alternatives");
+    fs::write(
+        &path,
+        "val mixed = fn(left, right, choose) {\n\
+           if (choose) { left + right } else { left - right }\n\
+         }\n\
+         println(mixed(20, 2, true), mixed(20, 2, false))\n",
+    )
+    .expect("write branch inferred alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run branch inferred alternatives source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "22 18\n");
+
+    fs::write(
+        &path,
+        "val mixed = fn(left, right, choose) {\n\
+           if (choose) { left + right } else { left - right }\n\
+         }\n\
+         mixed(1, 0x\"01\", true)\n",
+    )
+    .expect("write incompatible branch inferred alternatives source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run incompatible branch inferred alternatives source");
+    fs::remove_file(path).expect("remove branch inferred alternatives source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: semantic error: no inferred overload alternative matches the call")
+    );
+}
+
+#[test]
 fn inferred_plus_alternatives_widen_at_dynamic_call_boundaries() {
     let path = fixture_path("inferred-plus-dynamic-boundary");
     fs::write(

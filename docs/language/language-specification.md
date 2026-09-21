@@ -1006,6 +1006,9 @@ overloaded operator families. A body with `left + right` followed by `left -
 right` therefore retains only `(num, num) -> num`; composition never uses
 independent unions.
 
+Every reachable branch without a proven type-discriminating guard contributes
+the same intersecting requirement: any branch may run for the same inputs.
+
 An inferred `var` binding fixes its static type from its initializer; later
 known assignments must conform to that type and do not widen it. A dynamically
 unknown assignment remains valid and preserves the retained static fact. An
