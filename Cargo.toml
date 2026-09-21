@@ -2,12 +2,18 @@
 members = ["crates/slug-vm", "crates/slug-server", "crates/slug-repl"]
 resolver = "3"
 
+# Normal desktop/server Slug
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
+
+# Embedded/size-constrained Slug
+[profile.embedded]
+inherits = "release"
+opt-level = "z"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
