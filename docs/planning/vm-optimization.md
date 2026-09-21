@@ -1020,3 +1020,25 @@ the recycler active, the one in-process checkpoint was 556.865 ms for trees
 and the 15-sample source median was 50.638 ms. Those are combined-representation
 measurements, not an isolated performance claim; repeat them before selecting
 another runtime representation change.
+
+#### Measurement record: exact-call stack-to-local entry (2026-09-21)
+
+Exact positional closure entry previously resolved stack arguments into a
+transient `Vec<Value>` before immediately copying them into a recycled
+frame-local vector. The direct path now resolves each operand-stack argument
+into its final local slot, retaining the checked name-resolution failure and
+the frame-owned closure/global behavior. The frame-local recycler records
+reuse only after a frame actually enters, so a failed resolution cannot be
+counted as a successful reuse.
+
+On `cargo bench -p slug-vm --bench vm --features metrics`, the source-aligned
+workloads recorded zero exact temporary argument vectors. One ten-run local
+checkpoint changed `function-call` from 513.175 ms to 471.000 ms and
+`binary-trees` from 553.175 ms to 491.750 ms; their instruction, call, frame,
+and collection counts were unchanged. A subsequent 15-sample
+`make bench-source` run on a dirty worktree reported 44.438 ms for
+`function-call` (1.56x Slug / CPython) and 46.857 ms for `binary-trees`
+(1.48x), compared with the immediately preceding baseline of 46.877 ms
+(1.72x) and 50.912 ms (1.64x). CPython medians vary locally, so the retained
+evidence is the removed per-call allocation plus the paired VM checkpoints;
+these source ratios are not portable claims.

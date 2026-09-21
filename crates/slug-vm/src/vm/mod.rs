@@ -137,6 +137,11 @@ pub struct VmMetrics {
     pub argument_values_copied_to_locals: usize,
     /// Temporary argument vectors constructed before ordinary closure entry.
     pub closure_argument_vectors_created: usize,
+    /// Temporary vectors constructed by an exact positional closure call.
+    ///
+    /// The direct stack-to-local path keeps this at zero; retaining the
+    /// counter makes an accidental reintroduction observable in VM tests.
+    pub exact_positional_temporary_argument_vectors_created: usize,
     /// Exact positional argument values initialized directly from operand-stack slots.
     pub exact_positional_stack_local_initializations: usize,
     /// Non-uniform provided-argument bitmaps retained by frames.
@@ -1584,8 +1589,8 @@ impl Vm {
         self.nursery.clear();
         self.progress.clear();
         self.module_metadata = program.declarations().to_vec();
-        let locals = self.take_frame_locals(Vec::new(), chunk.locals);
-        self.record_frame_locals(locals.capacity(), 0);
+        let (locals, reused) = self.take_frame_locals(Vec::new(), chunk.locals);
+        self.record_frame_locals(locals.capacity(), 0, reused);
         #[cfg(feature = "metrics")]
         self.record_frame(chunk.locals);
         self.push_frame(Frame {
@@ -3232,19 +3237,17 @@ impl Vm {
         frame
     }
 
-    fn take_frame_locals(&mut self, arguments: Vec<Value>, local_count: usize) -> Vec<LocalSlot> {
+    fn take_frame_locals(
+        &mut self,
+        arguments: Vec<Value>,
+        local_count: usize,
+    ) -> (Vec<LocalSlot>, bool) {
         let reused = !self.local_slot_pool.is_empty();
         let mut locals = self.local_slot_pool.pop().unwrap_or_default();
-        #[cfg(feature = "metrics")]
-        if reused {
-            self.metrics.borrow_mut().frame_local_vectors_reused += 1;
-        }
-        #[cfg(not(feature = "metrics"))]
-        let _ = reused;
         locals.clear();
         locals.extend(arguments.into_iter().map(LocalSlot::Direct));
         locals.resize_with(local_count, || LocalSlot::Direct(Value::Nil));
-        locals
+        (locals, reused)
     }
 
     pub(in crate::vm) fn recycle_frame_locals(&mut self, mut locals: Vec<LocalSlot>) {
@@ -3393,8 +3396,8 @@ impl Vm {
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let argument_count = locals.len();
-                let locals = self.take_frame_locals(locals, chunk.locals);
-                self.record_frame_locals(locals.capacity(), argument_count);
+                let (locals, reused) = self.take_frame_locals(locals, chunk.locals);
+                self.record_frame_locals(locals.capacity(), argument_count, reused);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.push_frame(Frame {
@@ -3566,8 +3569,8 @@ impl Vm {
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let argument_count = locals.len();
-                let locals = self.take_frame_locals(locals, chunk.locals);
-                self.record_frame_locals(locals.capacity(), argument_count);
+                let (locals, reused) = self.take_frame_locals(locals, chunk.locals);
+                self.record_frame_locals(locals.capacity(), argument_count, reused);
                 #[cfg(feature = "metrics")]
                 self.record_frame(chunk.locals);
                 self.push_frame(Frame {
@@ -3724,8 +3727,8 @@ impl Vm {
             metrics: self.metrics.clone(),
         };
         let argument_count = arguments.len();
-        let locals = vm.take_frame_locals(arguments, chunk.locals);
-        vm.record_frame_locals(locals.capacity(), argument_count);
+        let (locals, reused) = vm.take_frame_locals(arguments, chunk.locals);
+        vm.record_frame_locals(locals.capacity(), argument_count, reused);
         #[cfg(feature = "metrics")]
         vm.record_frame(chunk.locals);
         vm.push_frame(Frame {
@@ -4262,8 +4265,8 @@ impl Vm {
         self.call_at(program, count, Some(provided), span)
     }
 
-    /// Starts an exact positional closure call without constructing either the
-    /// generic argument-binding intermediates or a temporary argument vector.
+    /// Starts an exact positional closure call without constructing generic
+    /// argument-binding intermediates or a temporary argument vector.
     ///
     /// A selected call still verifies the identity against the current live
     /// callee value before this path can run.
@@ -4330,18 +4333,27 @@ impl Vm {
             if chunk.arity != count || !chunk.exact_positional_parameters {
                 return Ok(false);
             }
+            if chunk.locals < chunk.arity {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!(
+                        "function `{}` has {} local slots for {} parameters",
+                        chunk.name, chunk.locals, chunk.arity
+                    ),
+                    span,
+                ));
+            }
             chunk.locals
         };
-        let arguments = self.stack[base + 1..]
-            .iter()
-            .map(|value| {
+        let (mut locals, reused) = self.take_frame_locals(Vec::new(), local_count);
+        for (local, value) in locals.iter_mut().take(count).zip(&self.stack[base + 1..]) {
+            *local = LocalSlot::Direct(
                 value
                     .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
-            })
-            .collect::<VmResult<Vec<_>>>()?;
-        let locals = self.take_frame_locals(arguments, local_count);
-        self.record_frame_locals(locals.capacity(), count);
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?,
+            );
+        }
+        self.record_frame_locals(locals.capacity(), count, reused);
         self.record_exact_positional_stack_local_initialization(count);
         #[cfg(feature = "metrics")]
         self.record_frame(local_count);
@@ -5234,16 +5246,17 @@ impl Vm {
     }
 
     #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]
-    pub(super) fn record_frame_locals(&self, capacity: usize, arguments: usize) {
+    pub(super) fn record_frame_locals(&self, capacity: usize, arguments: usize, reused: bool) {
         #[cfg(feature = "metrics")]
         {
             let mut metrics = self.metrics.borrow_mut();
             metrics.frame_local_vectors_created += 1;
+            metrics.frame_local_vectors_reused += usize::from(reused);
             metrics.frame_local_capacity_total += capacity;
             metrics.argument_values_copied_to_locals += arguments;
         }
         #[cfg(not(feature = "metrics"))]
-        let _ = (capacity, arguments);
+        let _ = (capacity, arguments, reused);
     }
 
     #[cfg_attr(not(feature = "metrics"), allow(clippy::unused_self))]

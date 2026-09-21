@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Initialized exact positional closure parameters directly in recycled frame
+  locals, removing the transient argument vector while retaining checked
+  binding resolution and VM metrics coverage.
+
 - Dispatched empty packed VM scope exits directly while preserving deferred and
   cleanup-action scope handling through the checked cleanup path.
 

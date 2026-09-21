@@ -242,8 +242,8 @@ impl Vm {
             self.record_recur_local_vector(true);
             return;
         }
-        let locals = self.take_frame_locals(arguments, local_count);
-        self.record_frame_locals(locals.capacity(), argument_count);
+        let (locals, reused) = self.take_frame_locals(arguments, local_count);
+        self.record_frame_locals(locals.capacity(), argument_count, reused);
         self.record_recur_local_vector(false);
         let frame = self.frames.last_mut().expect("active frame was checked");
         frame.locals = locals;
@@ -457,8 +457,8 @@ impl Vm {
                     Vec::new()
                 };
                 let argument_count = arguments.len();
-                let locals = self.take_frame_locals(arguments, chunk.locals);
-                self.record_frame_locals(locals.capacity(), argument_count);
+                let (locals, reused) = self.take_frame_locals(arguments, chunk.locals);
+                self.record_frame_locals(locals.capacity(), argument_count, reused);
                 self.push_frame(Frame {
                     program: closure.program.clone().unwrap_or(self.active_program()?),
                     globals: closure
