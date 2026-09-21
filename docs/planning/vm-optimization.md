@@ -858,14 +858,14 @@ It does not change Slug syntax, semantics, diagnostics, or the portable
   frame-stack changes rather than at every instruction. Preserve frame-owned
   globals for imported and retained interactive closures, cleanup actions,
   suspension, and diagnostics.
-- [ ] Re-run the source-aligned call benchmark. If frame-local allocation is
+- [x] Re-run the source-aligned call benchmark. If frame-local allocation is
   still material, compare a VM-local local-vector recycler with the planned
   contiguous local-slot arena; retain capture identity and `recur` behavior
   in either experiment.
-- [ ] Use the binary-tree result to decide whether a two-element-list
+- [x] Use the binary-tree result to decide whether a two-element-list
   construction fast path or additional packed match dispatch is justified.
   Do not add either merely because it is common in this one synthetic shape.
-- [ ] Re-run `make bench-source`, `make bench-vm`, and `make check` after each
+- [x] Re-run `make bench-source`, `make bench-vm`, and `make check` after each
   retained slice. Append a dated measurement record here with command,
   revision, profile, workload sizes, counter deltas, and diagnostic/capture
   regression coverage.
@@ -955,3 +955,23 @@ per-instruction synchronization assignment was removed. `make bench-source`,
 `make bench-vm`, and `make check` passed; elapsed times remain host-local and
 were not used as a retention threshold. The VM, module, interactive, cleanup,
 and scheduler suites preserve frame-owned imported and retained closures.
+
+#### Measurement record: local-vector recycler comparison (2026-09-21)
+
+The recycler supplies a cleared prior frame-local vector after a frame returns,
+without retaining captured cells. Across ten in-process runs it reused 999,990
+of 1,000,020 frame entries in `function-call`, and 1,310,540 of 1,310,710 in
+`binary-trees`. The same release benchmark recorded 569.442 ms and 591.665 ms
+respectively; elapsed time is host-local and did not demonstrate an improvement
+over the pre-recycler measurements. The recycler remains an isolated private
+experiment; no contiguous local-slot arena is adopted without stronger
+allocation and locality evidence. Focused capture and `recur` coverage passed.
+
+#### Measurement record: binary-tree fast-path decision (2026-09-21)
+
+The binary-tree workload performs 1,310,700 exact calls, constructs 327,670
+collections with 655,340 supplied elements, and executes 2,293,780 rich-op
+fallback instructions across ten runs. Those aggregate counters do not show a
+dominant two-element-list construction or match-dispatch cost, so this plan
+does not add either specialized fast path. The existing packed dispatch and
+collection instrumentation remain the decision evidence.
