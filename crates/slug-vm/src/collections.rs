@@ -55,7 +55,7 @@ impl MapKey {
 /// operations, and every value-producing operation materializes an independent
 /// result before it can be changed.
 #[doc(hidden)]
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct List {
     values: Rc<Vec<Value>>,
     start: usize,
@@ -86,10 +86,6 @@ impl List {
         self.values[self.start..self.end].iter()
     }
 
-    #[allow(
-        dead_code,
-        reason = "runtime producers are introduced by the following incremental refactor"
-    )]
     pub(crate) fn view(&self, start: usize, end: usize) -> Self {
         assert!(start <= end && end <= self.len(), "list view is in bounds");
         Self {
@@ -145,6 +141,12 @@ impl Deref for List {
 
     fn deref(&self) -> &Self::Target {
         &self.values[self.start..self.end]
+    }
+}
+
+impl PartialEq for List {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().eq(other.iter())
     }
 }
 

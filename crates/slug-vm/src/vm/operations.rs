@@ -376,7 +376,7 @@ pub(super) fn matches_pattern(
                     }
                 }
                 if *rest == MatchRest::Binding {
-                    bindings.push(Value::List(values.slice(items.len()..values.len())));
+                    bindings.push(Value::List(values.view(items.len(), values.len())));
                 }
                 Ok(true)
             }
