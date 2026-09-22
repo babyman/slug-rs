@@ -1009,6 +1009,36 @@ fn collection_updates_preserve_local_and_closure_aliases() {
 }
 
 #[test]
+fn list_rest_views_preserve_aliases_through_closures_and_updates() {
+    let path = fixture_path("list-rest-view-aliases");
+    fs::write(
+        &path,
+        "val original = [1, 2, 3, 4]\n\
+         val [head, ...tail] = original\n\
+         val capture = fn() { tail }\n\
+         val changed = tail :+ 5\n\
+         val sliced = original[1:3]\n\
+         println(head, tail, capture(), changed, sliced, tail == [2, 3, 4], tail[1])\n",
+    )
+    .expect("write list rest-view alias source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run list rest-view alias source");
+    fs::remove_file(path).expect("remove list rest-view alias source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "1 [2, 3, 4] [2, 3, 4] [2, 3, 4, 5] [2, 3] true 3\n"
+    );
+}
+
+#[test]
 fn persistently_merges_removes_and_enumerates_maps() {
     let path = fixture_path("persistent-map-updates");
     fs::write(
