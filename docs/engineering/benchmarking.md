@@ -35,7 +35,9 @@ small n-body-style floating-point loops and spectral-norm-style nested numeric
 loops, binary trees, and a single-threaded fannkuch-redux port. Fannkuch-redux
 adds permutation generation, indexed list reads, prefix reversal, and
 persistent list construction; it is not a claim of Benchmarks Game result
-comparability. Each pair is intentionally written in the idioms currently
+comparability. It evaluates all 5,040 permutations of seven values, enough to
+make list transformation materially outweigh fresh-process startup. Each pair
+is intentionally written in the idioms currently
 supported by Slug and Python; keep output checks and workload intent aligned
 when adding a pair.
 

@@ -22,5 +22,5 @@ def generate(choices, prefix, checksum, maximum, sign):
     return checksum, maximum, sign
 
 
-checksum, maximum, _ = generate(list(range(1, 6)), [], 0, 0, 1)
+checksum, maximum, _ = generate(list(range(1, 8)), [], 0, 0, 1)
 print(checksum, maximum)

@@ -36,7 +36,7 @@ const WORKLOADS: &[Workload] = &[
     },
     Workload {
         name: "fannkuch-redux",
-        expected_stdout: "-7 7\n",
+        expected_stdout: "-488 16\n",
     },
 ];
 
