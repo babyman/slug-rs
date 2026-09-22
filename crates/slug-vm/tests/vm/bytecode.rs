@@ -184,7 +184,7 @@ fn concatenates_strings_with_values_through_private_add_bytecode() {
     let prefix = main.constant(Value::string("list of two + "));
     let data = main.constant(Value::Map(std::rc::Rc::new(vec![(
         Value::string("k"),
-        Value::List(std::rc::Rc::new(vec![Value::Int(1)])),
+        Value::list(vec![Value::Int(1)]),
     )])));
     main.emit(Op::Constant(prefix))
         .emit(Op::Constant(data))
@@ -419,7 +419,7 @@ fn appends_values_through_private_list_bytecode() {
         .emit(Op::Return);
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::List(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        Value::list(vec![Value::Int(1), Value::Int(2)])
     );
 
     let mut main = Chunk::new("main", 0);
@@ -432,7 +432,7 @@ fn appends_values_through_private_list_bytecode() {
         .emit(Op::Return);
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::List(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        Value::list(vec![Value::Int(1), Value::Int(2)])
     );
 }
 
@@ -450,7 +450,7 @@ fn concatenates_lists_through_private_add_bytecode() {
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::List(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        Value::list(vec![Value::Int(1), Value::Int(2)])
     );
 }
 
@@ -470,7 +470,7 @@ fn turns_destructuring_match_failure_into_a_source_located_runtime_error() {
 #[test]
 fn preserves_the_value_and_location_of_a_thrown_error() {
     let mut main = Chunk::new("main", 0);
-    let value = main.constant(Value::List(std::rc::Rc::new(vec![Value::Int(42)])));
+    let value = main.constant(Value::list(vec![Value::Int(42)]));
     main.emit_at(Op::Constant(value), SourceSpan::new("throw.slug", 3, 7))
         .emit_at(Op::Throw, SourceSpan::new("throw.slug", 3, 1));
 
@@ -481,7 +481,7 @@ fn preserves_the_value_and_location_of_a_thrown_error() {
     assert_eq!(error.kind, RuntimeErrorKind::Thrown);
     assert_eq!(
         error.thrown.as_deref(),
-        Some(&Value::List(std::rc::Rc::new(vec![Value::Int(42)])))
+        Some(&Value::list(vec![Value::Int(42)]))
     );
     assert_eq!(error.span, Some(SourceSpan::new("throw.slug", 3, 1)));
     assert_eq!(error.message, "uncaught throw: [42]");
@@ -570,11 +570,11 @@ fn recur_preserves_cells_captured_by_an_earlier_iteration() {
 #[test]
 fn matches_list_patterns_and_exposes_bindings() {
     let mut main = Chunk::new("main", 0);
-    let values = main.constant(Value::List(std::rc::Rc::new(vec![
+    let values = main.constant(Value::list(vec![
         Value::Int(1),
         Value::Int(2),
         Value::Int(3),
-    ])));
+    ]));
     main.emit(Op::Constant(values))
         .emit(Op::Duplicate)
         .emit(Op::TryMatch {
@@ -603,20 +603,16 @@ fn matches_list_patterns_and_exposes_bindings() {
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::List(std::rc::Rc::new(vec![
+        Value::list(vec![
             Value::Int(1),
-            Value::List(std::rc::Rc::new(vec![Value::Int(2), Value::Int(3)])),
-        ]))
+            Value::list(vec![Value::Int(2), Value::Int(3)]),
+        ])
     );
 }
 
 #[test]
 fn at_patterns_bind_whole_values_before_nested_bindings() {
-    let whole = Value::List(std::rc::Rc::new(vec![
-        Value::Int(1),
-        Value::Int(2),
-        Value::Int(3),
-    ]));
+    let whole = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
     let mut main = Chunk::new("main", 0);
     let values = main.constant(whole.clone());
     main.emit(Op::Constant(values))
@@ -650,18 +646,18 @@ fn at_patterns_bind_whole_values_before_nested_bindings() {
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::List(std::rc::Rc::new(vec![
+        Value::list(vec![
             whole,
             Value::Int(1),
-            Value::List(std::rc::Rc::new(vec![Value::Int(2), Value::Int(3)])),
-        ]))
+            Value::list(vec![Value::Int(2), Value::Int(3)]),
+        ])
     );
 }
 
 #[test]
 fn match_alternatives_rollback_before_retrying() {
     let mut main = Chunk::new("main", 0);
-    let value = main.constant(Value::List(std::rc::Rc::new(vec![Value::Int(1)])));
+    let value = main.constant(Value::list(vec![Value::Int(1)]));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
         .emit(Op::TryMatch {
@@ -749,7 +745,7 @@ fn computed_map_pattern_keys_use_dynamic_operands() {
 fn rejects_unhashable_computed_map_pattern_keys() {
     let mut main = Chunk::new("main", 0);
     let value = main.constant(Value::Map(std::rc::Rc::new(Vec::new())));
-    let key = main.constant(Value::List(std::rc::Rc::new(Vec::new())));
+    let key = main.constant(Value::list(Vec::new()));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
         .emit(Op::Constant(key))
@@ -913,7 +909,7 @@ fn preserves_integer_precision_and_rejects_oversized_calls() {
         .emit(Op::Return);
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::List(std::rc::Rc::new(vec![Value::Bool(true), Value::Int(1)]))
+        Value::list(vec![Value::Bool(true), Value::Int(1)])
     );
 
     let mut invalid = Chunk::new("main", 0);

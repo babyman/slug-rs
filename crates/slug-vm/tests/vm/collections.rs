@@ -206,7 +206,7 @@ fn slices_lists_with_omitted_bounds_in_private_bytecode() {
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::List(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        Value::list(vec![Value::Int(1), Value::Int(2)])
     );
 }
 

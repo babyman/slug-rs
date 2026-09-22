@@ -14,7 +14,7 @@ use std::{
 
 use crate::{
     Value,
-    collections::{Bytes, BytesView, List, ListView, Map, MapView},
+    collections::{Bytes, BytesView, List, Map, MapView},
     scheduler_signal::ProgressSignal,
     value::Channel,
 };
@@ -496,9 +496,9 @@ impl NativeOwnedValue {
 
     #[must_use]
     pub fn list(values: Vec<Self>) -> Self {
-        Self(Value::List(
-            List::from_values(values.into_iter().map(|value| value.0).collect()).into_shared(),
-        ))
+        Self(Value::List(List::from_values(
+            values.into_iter().map(|value| value.0).collect(),
+        )))
     }
 
     #[must_use]
@@ -658,7 +658,7 @@ impl<'call> NativeValueRef<'call> {
     #[must_use]
     pub fn len(self) -> Option<usize> {
         match self.value {
-            Value::List(values) => Some(ListView::new(values).len()),
+            Value::List(values) => Some(values.len()),
             Value::Map(entries) => Some(MapView::new(entries).len()),
             _ => None,
         }
@@ -678,9 +678,7 @@ impl<'call> NativeValueRef<'call> {
         let Value::List(values) = self.value else {
             return Err(self.type_error("list"));
         };
-        Ok(ListView::new(values)
-            .get(index)
-            .map(|value| NativeValueRef { value }))
+        Ok(values.get(index).map(|value| NativeValueRef { value }))
     }
 
     /// Reads one map entry, borrowing it for the current call.

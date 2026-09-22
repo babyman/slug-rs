@@ -4,7 +4,7 @@
 //! collection redesign. This module is the only place that needs to know the
 //! concrete backing containers for ordinary collection transformations.
 
-use std::rc::Rc;
+use std::{ops::Deref, rc::Rc};
 
 use crate::Value;
 
@@ -54,31 +54,12 @@ impl MapKey {
 /// deliberately private: callers can only observe it through logical list
 /// operations, and every value-producing operation materializes an independent
 /// result before it can be changed.
-#[derive(Clone)]
-pub(crate) struct List {
+#[doc(hidden)]
+#[derive(Clone, PartialEq)]
+pub struct List {
     values: Rc<Vec<Value>>,
     start: usize,
     end: usize,
-}
-
-pub(crate) struct ListView<'a>(&'a [Value]);
-
-impl<'a> ListView<'a> {
-    pub(crate) fn new(values: &'a [Value]) -> Self {
-        Self(values)
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub(crate) fn get(&self, index: usize) -> Option<&'a Value> {
-        self.0.get(index)
-    }
-
-    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &'a Value> {
-        self.0.iter()
-    }
 }
 
 impl List {
@@ -88,23 +69,6 @@ impl List {
             values: Rc::new(values),
             start: 0,
             end,
-        }
-    }
-
-    pub(crate) fn from_shared(values: Rc<Vec<Value>>) -> Self {
-        let end = values.len();
-        Self {
-            values,
-            start: 0,
-            end,
-        }
-    }
-
-    pub(crate) fn into_shared(self) -> Rc<Vec<Value>> {
-        if self.start == 0 && self.end == self.values.len() {
-            self.values
-        } else {
-            Rc::new(self.iter().cloned().collect())
         }
     }
 
@@ -133,6 +97,10 @@ impl List {
             start: self.start + start,
             end: self.start + end,
         }
+    }
+
+    pub(crate) fn is_uniquely_owned(&self) -> bool {
+        Rc::strong_count(&self.values) == 1
     }
 
     pub(crate) fn concat(self, other: &Self) -> Self {
@@ -172,6 +140,14 @@ impl List {
     }
 }
 
+impl Deref for List {
+    type Target = [Value];
+
+    fn deref(&self) -> &Self::Target {
+        &self.values[self.start..self.end]
+    }
+}
+
 #[cfg(test)]
 mod list_tests {
     use super::List;
@@ -192,11 +168,12 @@ mod list_tests {
     }
 
     #[test]
-    fn ranged_view_materializes_when_shared_storage_is_requested() {
+    fn ranged_view_keeps_its_backing_storage_alive() {
         let list = List::from_values(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
         let view = list.view(1, 3);
 
-        assert_eq!(&*view.into_shared(), &[Value::Int(2), Value::Int(3)]);
+        assert!(!list.is_uniquely_owned());
+        assert!(!view.is_uniquely_owned());
     }
 }
 

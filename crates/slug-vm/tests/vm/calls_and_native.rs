@@ -178,7 +178,7 @@ fn native_collection_round_trips_preserve_pre_update_values() {
 
     assert_eq!(
         vm.run_named(&program, "main").unwrap(),
-        Value::List(Rc::new(vec![
+        Value::list(vec![
             Value::Bool(true),
             Value::Bool(false),
             Value::Bool(true),
@@ -187,7 +187,7 @@ fn native_collection_round_trips_preserve_pre_update_values() {
             Value::Int(2),
             Value::Bool(true),
             Value::Bool(false),
-        ]))
+        ])
     );
 }
 

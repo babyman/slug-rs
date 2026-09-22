@@ -89,14 +89,7 @@ impl Configuration {
                 (Value::string("options"), Value::Map(options.into())),
                 (
                     Value::string("positional"),
-                    Value::List(
-                        parsed
-                            .positional
-                            .into_iter()
-                            .map(Value::string)
-                            .collect::<Vec<_>>()
-                            .into(),
-                    ),
+                    Value::list(parsed.positional.into_iter().map(Value::string).collect()),
                 ),
             ]
             .into(),
@@ -108,12 +101,11 @@ fn resolve_value(value: &ConfigurationValue, fallback: &Value) -> Value {
     match value {
         ConfigurationValue::Value(value) => value.clone(),
         ConfigurationValue::Text(value) => convert_text(value, fallback),
-        ConfigurationValue::TextList(values) => Value::List(
+        ConfigurationValue::TextList(values) => Value::list(
             values
                 .iter()
                 .map(|value| Value::string(value.as_str()))
-                .collect::<Vec<_>>()
-                .into(),
+                .collect(),
         ),
     }
 }
@@ -122,13 +114,9 @@ fn stored_value(value: ConfigurationValue) -> Value {
     match value {
         ConfigurationValue::Value(value) => value,
         ConfigurationValue::Text(value) => Value::string(value),
-        ConfigurationValue::TextList(values) => Value::List(
-            values
-                .into_iter()
-                .map(Value::string)
-                .collect::<Vec<_>>()
-                .into(),
-        ),
+        ConfigurationValue::TextList(values) => {
+            Value::list(values.into_iter().map(Value::string).collect())
+        }
     }
 }
 
@@ -143,7 +131,7 @@ fn convert_text(value: &str, fallback: &Value) -> Value {
         Value::Bool(_) => value
             .parse::<bool>()
             .map_or_else(|_| Value::string(value), Value::Bool),
-        Value::List(_) => Value::List(vec![Value::string(value)].into()),
+        Value::List(_) => Value::list(vec![Value::string(value)]),
         _ => Value::string(value),
     }
 }
@@ -192,7 +180,7 @@ fn toml_value(value: &toml::Value) -> Option<Value> {
             .iter()
             .map(toml_value)
             .collect::<Option<Vec<_>>>()
-            .map(|values| Value::List(values.into())),
+            .map(Value::list),
         toml::Value::Datetime(_) | toml::Value::Table(_) => None,
     }
 }

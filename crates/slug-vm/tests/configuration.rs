@@ -48,9 +48,10 @@ fn merges_toml_environment_and_options_in_precedence_order() {
     );
     assert_eq!(
         configuration.get("server.values"),
-        Some(&ConfigurationValue::Value(Value::List(
-            vec![Value::Int(1), Value::Int(2)].into()
-        )))
+        Some(&ConfigurationValue::Value(Value::list(vec![
+            Value::Int(1),
+            Value::Int(2)
+        ])))
     );
     assert_eq!(
         configuration.get("feature.enabled"),
@@ -138,7 +139,7 @@ fn exposes_cfg_to_program_and_imported_modules() {
         [
             Value::Int(3002),
             Value::Bool(true),
-            Value::List(vec![Value::string("fallback")].into()),
+            Value::list(vec![Value::string("fallback")]),
             Value::Int(4000),
         ]
     );

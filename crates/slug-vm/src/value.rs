@@ -13,7 +13,7 @@ use std::cell::Cell;
 use std::rc::Weak;
 
 use crate::{
-    collections::{BytesView, ListView, Map, MapView},
+    collections::{BytesView, List, Map, MapView},
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
     source::environment::CallableIdentity,
@@ -144,9 +144,7 @@ impl Waiter {
                 }
                 let handler = wake.selected();
                 waiter.resume(
-                    result.map(|value| {
-                        Value::List(vec![value, handler.unwrap_or(Value::Nil)].into())
-                    }),
+                    result.map(|value| Value::list(vec![value, handler.unwrap_or(Value::Nil)])),
                 );
             }),
             reject_closed_send: Rc::new({
@@ -881,7 +879,7 @@ pub enum Value {
     Float(f64),
     Str(Rc<str>),
     Bytes(Rc<Vec<u8>>),
-    List(Rc<Vec<Value>>),
+    List(List),
     Map(Rc<Vec<(Value, Value)>>),
     StructSchema(Rc<StructSchema>),
     Struct(Rc<StructValue>),
@@ -959,6 +957,12 @@ impl Value {
         Self::Str(value.into())
     }
 
+    /// Creates an immutable list value from its logical elements.
+    #[must_use]
+    pub fn list(values: Vec<Value>) -> Self {
+        Self::List(List::from_values(values))
+    }
+
     #[must_use]
     pub fn is_truthy(&self) -> bool {
         !matches!(self, Self::Nil | Self::Bool(false))
@@ -1029,7 +1033,8 @@ impl PartialEq for Value {
             }
             (Self::Str(a), Self::Str(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
-            (Self::List(a), Self::List(b)) | (Self::Overloads(a), Self::Overloads(b)) => a == b,
+            (Self::List(a), Self::List(b)) => a == b,
+            (Self::Overloads(a), Self::Overloads(b)) => a == b,
             (Self::Map(a), Self::Map(b)) => {
                 Map::from_shared(a.clone()).equals(&Map::from_shared(b.clone()))
             }
@@ -1066,10 +1071,7 @@ impl fmt::Debug for Value {
             Self::Float(value) => write!(f, "{value}"),
             Self::Str(value) => write!(f, "{value:?}"),
             Self::Bytes(value) => write!(f, "0x\"{}\"", hex(BytesView::new(value).as_slice())),
-            Self::List(values) => f
-                .debug_list()
-                .entries(ListView::new(values).iter())
-                .finish(),
+            Self::List(values) => f.debug_list().entries(values.iter()).finish(),
             Self::Map(entries) => f
                 .debug_map()
                 .entries(

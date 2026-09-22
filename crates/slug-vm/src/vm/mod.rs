@@ -731,13 +731,12 @@ impl Vm {
         let entrypoint = self.entrypoint_callable(entrypoint, identity)?;
         let arguments = match entrypoint_specification.arguments {
             EntrypointArguments::None => Vec::new(),
-            EntrypointArguments::List => vec![Value::List(
+            EntrypointArguments::List => vec![Value::list(
                 self.configuration(None)?
                     .arguments()
                     .iter()
                     .map(|argument| Value::string(argument.as_str()))
-                    .collect::<Vec<_>>()
-                    .into(),
+                    .collect(),
             )],
             EntrypointArguments::Map => vec![self.configuration(None)?.argument_map()],
         };
@@ -2027,8 +2026,7 @@ impl Vm {
                 let values = self.pop_values_at(operand, None)?;
                 #[cfg(feature = "metrics")]
                 self.record_collection_construction(values.len());
-                self.stack
-                    .push(Value::List(List::from_values(values).into_shared()));
+                self.stack.push(Value::List(List::from_values(values)));
             }
             PackedOpcode::Map => {
                 let values = self.pop_values_at(operand.saturating_mul(2), None)?;
@@ -2066,7 +2064,7 @@ impl Vm {
                     (Value::List(left), Value::List(right)) => {
                         self.record_collection_update(
                             left.len() + right.len(),
-                            Rc::strong_count(left) == 1,
+                            left.is_uniquely_owned(),
                         );
                     }
                     (Value::Map(left), Value::Map(right)) => {
@@ -2440,7 +2438,7 @@ impl Vm {
                     (Value::List(left), Value::List(right)) => {
                         self.record_collection_update(
                             left.len() + right.len(),
-                            Rc::strong_count(left) == 1,
+                            left.is_uniquely_owned(),
                         );
                     }
                     (Value::Map(left), Value::Map(right)) => {
@@ -2507,7 +2505,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
-                        self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
+                        self.record_collection_update(values.len(), values.is_uniquely_owned());
                     }
                     Value::Bytes(values) => {
                         self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
@@ -2524,7 +2522,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
-                        self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
+                        self.record_collection_update(values.len(), values.is_uniquely_owned());
                     }
                     Value::Bytes(values) => {
                         self.record_collection_update(values.len(), Rc::strong_count(values) == 1);
@@ -2540,8 +2538,7 @@ impl Vm {
                 let values = self.pop_values_at(*count, span)?;
                 #[cfg(feature = "metrics")]
                 self.record_collection_construction(values.len());
-                self.stack
-                    .push(Value::List(List::from_values(values).into_shared()));
+                self.stack.push(Value::List(List::from_values(values)));
             }
             Op::ListSpread(spreads) => self.list_spread_at(spreads, span)?,
             Op::ListSpreadPooled(id) => {
@@ -4131,8 +4128,7 @@ impl Vm {
                 result.push(value);
             }
         }
-        self.stack
-            .push(Value::List(List::from_values(result).into_shared()));
+        self.stack.push(Value::List(List::from_values(result)));
         Ok(())
     }
 
@@ -4772,9 +4768,8 @@ impl Vm {
     }
 
     fn push_select_result(&mut self, value: Value, handler: Option<Value>) {
-        self.stack.push(Value::List(
-            vec![value, handler.unwrap_or(Value::Nil)].into(),
-        ));
+        self.stack
+            .push(Value::list(vec![value, handler.unwrap_or(Value::Nil)]));
     }
 
     fn select_apply_at(&mut self, program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
@@ -4793,8 +4788,14 @@ impl Vm {
                 span,
             ));
         }
-        let value = values[0].clone();
-        let handler = values[1].clone();
+        let value = values
+            .get(0)
+            .expect("select result arity was checked")
+            .clone();
+        let handler = values
+            .get(1)
+            .expect("select result arity was checked")
+            .clone();
         if matches!(handler, Value::Nil) {
             self.stack.push(value);
         } else {
@@ -5003,7 +5004,7 @@ impl Vm {
             bound[slot] = Some(value);
         }
         if variadic.is_some() && bound[fixed].is_none() {
-            bound[fixed] = Some(Value::List(List::from_values(rest).into_shared()));
+            bound[fixed] = Some(Value::List(List::from_values(rest)));
         }
         let provided = bound.iter().map(Option::is_some).collect::<Vec<_>>();
         let values = bound
@@ -5110,7 +5111,7 @@ impl Vm {
             bound[slot] = Some(value);
         }
         if variadic.is_some() && bound[fixed].is_none() {
-            bound[fixed] = Some(Value::List(List::from_values(rest).into_shared()));
+            bound[fixed] = Some(Value::List(List::from_values(rest)));
         }
         let provided = bound.iter().map(Option::is_some).collect::<Vec<_>>();
         let values = bound

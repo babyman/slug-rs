@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 use crate::{
     MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
-    collections::{Bytes, List, ListView, Map, MapKey, MapView},
+    collections::{Bytes, Map, MapKey, MapView},
 };
 
 use super::RuntimeErrorKind;
@@ -33,11 +33,7 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
             .map(Value::Int)
             .ok_or((RuntimeErrorKind::Type, "integer overflow".into())),
         (Value::Str(a), b) => Ok(Value::string(format!("{a}{b}"))),
-        (Value::List(a), Value::List(b)) => Ok(Value::List(
-            List::from_shared(a)
-                .concat(&List::from_shared(b))
-                .into_shared(),
-        )),
+        (Value::List(a), Value::List(b)) => Ok(Value::List(a.concat(&b))),
         (Value::Bytes(a), Value::Bytes(b)) => Ok(Value::Bytes(
             Bytes::from_shared(a)
                 .concat(&Bytes::from_shared(b))
@@ -276,9 +272,7 @@ pub(super) fn bit_not(value: &Value) -> Result<Value, String> {
 
 pub(super) fn list_append(list: Value, value: Value) -> Result<Value, String> {
     match list {
-        Value::List(list) => Ok(Value::List(
-            List::from_shared(list).append(value).into_shared(),
-        )),
+        Value::List(list) => Ok(Value::List(list.append(value))),
         Value::Bytes(bytes) => {
             let byte = byte_collection_element(&value, ":+")?;
             Ok(Value::Bytes(
@@ -291,9 +285,7 @@ pub(super) fn list_append(list: Value, value: Value) -> Result<Value, String> {
 
 pub(super) fn list_prepend(value: Value, list: Value) -> Result<Value, String> {
     match list {
-        Value::List(list) => Ok(Value::List(
-            List::from_shared(list).prepend(value).into_shared(),
-        )),
+        Value::List(list) => Ok(Value::List(list.prepend(value))),
         Value::Bytes(bytes) => {
             let byte = byte_collection_element(&value, "+:")?;
             Ok(Value::Bytes(
@@ -370,7 +362,7 @@ pub(super) fn matches_pattern(
         }
         MatchPattern::List { items, rest } => match value {
             Value::List(values) => {
-                let values = List::from_shared(values.clone());
+                let values = values.clone();
                 if values.len() < items.len()
                     || (*rest == MatchRest::None && values.len() != items.len())
                 {
@@ -384,9 +376,7 @@ pub(super) fn matches_pattern(
                     }
                 }
                 if *rest == MatchRest::Binding {
-                    bindings.push(Value::List(
-                        values.slice(items.len()..values.len()).into_shared(),
-                    ));
+                    bindings.push(Value::List(values.slice(items.len()..values.len())));
                 }
                 Ok(true)
             }
@@ -525,7 +515,7 @@ fn matches_type(
                 return Ok(false);
             };
             element.as_deref().map_or(Ok(true), |element| {
-                ListView::new(values)
+                values
                     .iter()
                     .map(|value| matches_type(element, value, operands))
                     .try_fold(true, |matches, next| next.map(|next| matches && next))
@@ -629,7 +619,6 @@ pub(super) fn index_value(
             let Value::Int(index) = index else {
                 return Err("list index must be an integer".into());
             };
-            let values = List::from_shared(values);
             let length = i64::try_from(values.len()).map_err(|_| "list is too large".to_owned())?;
             let index = if *index < 0 { length + *index } else { *index };
             usize::try_from(index)
@@ -756,11 +745,7 @@ pub(super) fn slice_value(
                     .checked_add(step)
                     .ok_or_else(|| "list slice step is too large".to_owned())?;
             }
-            Ok(Value::List(
-                List::from_shared(values)
-                    .slice(indexes.into_iter())
-                    .into_shared(),
-            ))
+            Ok(Value::List(values.slice(indexes.into_iter())))
         }
         Value::Bytes(values) => {
             let mut indexes = Vec::new();
