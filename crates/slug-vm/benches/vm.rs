@@ -464,6 +464,14 @@ const WORKLOADS: &[Workload] = &[
         install: no_native_setup,
         expected_result: None,
     },
+    #[cfg(feature = "concurrency")]
+    Workload {
+        name: "nested-task-tree-7",
+        iterations: 100,
+        source: nested_task_tree,
+        install: no_native_setup,
+        expected_result: Some("128"),
+    },
 ];
 
 #[cfg(feature = "concurrency")]
@@ -516,4 +524,19 @@ fn cancel_suspended_waits() -> String {
     }
     source.push_str("}\n}\nattempt()\n");
     source
+}
+
+#[cfg(feature = "concurrency")]
+fn nested_task_tree() -> String {
+    "val walk = fn(depth) {\n\
+       if (depth == 0) { 1 } else {\n\
+         nursery {\n\
+           val left = spawn { walk(depth - 1) }\n\
+           val right = spawn { walk(depth - 1) }\n\
+           select { await left } + select { await right }\n\
+         }\n\
+       }\n\
+     }\n\
+     walk(7)\n"
+        .into()
 }
