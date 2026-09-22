@@ -90,8 +90,9 @@ fn executes_checked_numeric_addition_bytecode() {
         .emit(Op::AddNum)
         .emit(Op::Return);
 
+    let mut vm = Vm::new();
     assert_eq!(
-        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        vm.run(&program_with_main(main), 0).unwrap(),
         Value::Float(7.5)
     );
 }
@@ -601,13 +602,15 @@ fn matches_list_patterns_and_exposes_bindings() {
         .emit(Op::Nil)
         .emit(Op::Return);
 
+    let mut vm = Vm::new();
     assert_eq!(
-        Vm::new().run(&program_with_main(main), 0).unwrap(),
+        vm.run(&program_with_main(main), 0).unwrap(),
         Value::list(vec![
             Value::Int(1),
             Value::list(vec![Value::Int(2), Value::Int(3)]),
         ])
     );
+    assert_eq!(vm.metrics().list_views_created, 1);
 }
 
 #[test]

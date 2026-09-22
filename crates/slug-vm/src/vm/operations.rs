@@ -314,6 +314,7 @@ pub(super) fn matches_pattern(
     value: &Value,
     operands: &[Value],
     bindings: &mut Vec<Value>,
+    list_views_created: &mut usize,
 ) -> Result<bool, (RuntimeErrorKind, String)> {
     match pattern {
         MatchPattern::Literal(expected) => Ok(value == expected),
@@ -343,7 +344,7 @@ pub(super) fn matches_pattern(
         MatchPattern::At(pattern) => {
             let binding_start = bindings.len();
             bindings.push(value.clone());
-            if matches_pattern(pattern, value, operands, bindings)? {
+            if matches_pattern(pattern, value, operands, bindings, list_views_created)? {
                 Ok(true)
             } else {
                 bindings.truncate(binding_start);
@@ -353,7 +354,7 @@ pub(super) fn matches_pattern(
         MatchPattern::Alternatives(patterns) => {
             let binding_start = bindings.len();
             for pattern in patterns {
-                if matches_pattern(pattern, value, operands, bindings)? {
+                if matches_pattern(pattern, value, operands, bindings, list_views_created)? {
                     return Ok(true);
                 }
                 bindings.truncate(binding_start);
@@ -370,12 +371,13 @@ pub(super) fn matches_pattern(
                 }
                 let binding_start = bindings.len();
                 for (item, value) in items.iter().zip(values.iter()) {
-                    if !matches_pattern(item, value, operands, bindings)? {
+                    if !matches_pattern(item, value, operands, bindings, list_views_created)? {
                         bindings.truncate(binding_start);
                         return Ok(false);
                     }
                 }
                 if *rest == MatchRest::Binding {
+                    *list_views_created += 1;
                     bindings.push(Value::List(values.view(items.len(), values.len())));
                 }
                 Ok(true)
@@ -389,7 +391,13 @@ pub(super) fn matches_pattern(
                 }
                 let binding_start = bindings.len();
                 for (item, byte) in items.iter().zip(values.iter()) {
-                    if !matches_pattern(item, &Value::Int(i64::from(byte)), operands, bindings)? {
+                    if !matches_pattern(
+                        item,
+                        &Value::Int(i64::from(byte)),
+                        operands,
+                        bindings,
+                        list_views_created,
+                    )? {
                         bindings.truncate(binding_start);
                         return Ok(false);
                     }
@@ -422,7 +430,8 @@ pub(super) fn matches_pattern(
                             bindings.truncate(binding_start);
                             return Ok(false);
                         };
-                        if !matches_pattern(pattern, value, operands, bindings)? {
+                        if !matches_pattern(pattern, value, operands, bindings, list_views_created)?
+                        {
                             bindings.truncate(binding_start);
                             return Ok(false);
                         }
@@ -455,7 +464,13 @@ pub(super) fn matches_pattern(
                             bindings.truncate(binding_start);
                             return Ok(false);
                         };
-                        if !matches_pattern(pattern, &value.values[index], operands, bindings)? {
+                        if !matches_pattern(
+                            pattern,
+                            &value.values[index],
+                            operands,
+                            bindings,
+                            list_views_created,
+                        )? {
                             bindings.truncate(binding_start);
                             return Ok(false);
                         }
@@ -487,7 +502,7 @@ pub(super) fn matches_pattern(
             if !matches_type(constraint, value, operands)? {
                 return Ok(false);
             }
-            matches_pattern(pattern, value, operands, bindings)
+            matches_pattern(pattern, value, operands, bindings, list_views_created)
         }
     }
 }

@@ -182,6 +182,8 @@ pub struct VmMetrics {
     pub collection_unique_owner_updates: usize,
     /// Updates whose source collection was shared by another value.
     pub collection_shared_owner_updates: usize,
+    /// Logical list ranges retained by list-pattern rest bindings.
+    pub list_views_created: usize,
     /// Timed waits registered with nursery timer services.
     #[cfg(feature = "concurrency")]
     pub timer_registrations: usize,
@@ -2929,8 +2931,19 @@ impl Vm {
                 let operands = self.pop_values_at(*operands, span)?;
                 let value = self.pop_at(span)?;
                 let mut values = Vec::new();
-                let matched = matches_pattern(pattern, &value, &operands, &mut values)
-                    .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+                let mut list_views_created = 0;
+                let matched = matches_pattern(
+                    pattern,
+                    &value,
+                    &operands,
+                    &mut values,
+                    &mut list_views_created,
+                )
+                .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+                #[cfg(feature = "metrics")]
+                {
+                    self.metrics.borrow_mut().list_views_created += list_views_created;
+                }
                 if matched && values.len() != *bindings {
                     return Err(self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
@@ -3203,8 +3216,19 @@ impl Vm {
         let operands = self.pop_values_at(operands, span)?;
         let value = self.pop_at(span)?;
         let mut values = Vec::new();
-        let matched = matches_pattern(pattern, &value, &operands, &mut values)
-            .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+        let mut list_views_created = 0;
+        let matched = matches_pattern(
+            pattern,
+            &value,
+            &operands,
+            &mut values,
+            &mut list_views_created,
+        )
+        .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.borrow_mut().list_views_created += list_views_created;
+        }
         if matched && values.len() != bindings {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
