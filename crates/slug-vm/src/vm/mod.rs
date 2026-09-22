@@ -184,6 +184,10 @@ pub struct VmMetrics {
     pub collection_shared_owner_updates: usize,
     /// Logical list ranges retained by list-pattern rest bindings.
     pub list_views_created: usize,
+    /// Retained list views materialized by persistent list operations.
+    pub list_views_materialized: usize,
+    /// Logical elements copied while materializing retained list views.
+    pub list_view_elements_materialized: usize,
     /// Timed waits registered with nursery timer services.
     #[cfg(feature = "concurrency")]
     pub timer_registrations: usize,
@@ -2064,6 +2068,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 match (&left, &right) {
                     (Value::List(left), Value::List(right)) => {
+                        self.record_list_view_materialization(left);
                         self.record_collection_update(
                             left.len() + right.len(),
                             left.is_uniquely_owned(),
@@ -2438,6 +2443,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 match (&left, &right) {
                     (Value::List(left), Value::List(right)) => {
+                        self.record_list_view_materialization(left);
                         self.record_collection_update(
                             left.len() + right.len(),
                             left.is_uniquely_owned(),
@@ -2507,6 +2513,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
+                        self.record_list_view_materialization(values);
                         self.record_collection_update(values.len(), values.is_uniquely_owned());
                     }
                     Value::Bytes(values) => {
@@ -2524,6 +2531,7 @@ impl Vm {
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
+                        self.record_list_view_materialization(values);
                         self.record_collection_update(values.len(), values.is_uniquely_owned());
                     }
                     Value::Bytes(values) => {
@@ -5418,6 +5426,15 @@ impl Vm {
     #[cfg(feature = "metrics")]
     fn record_collection_slice(&self) {
         self.metrics.borrow_mut().collection_slices += 1;
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_list_view_materialization(&self, list: &List) {
+        if list.is_view() {
+            let mut metrics = self.metrics.borrow_mut();
+            metrics.list_views_materialized += 1;
+            metrics.list_view_elements_materialized += list.len();
+        }
     }
 
     fn error_at(

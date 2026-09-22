@@ -99,6 +99,10 @@ impl List {
         Rc::strong_count(&self.values) == 1
     }
 
+    pub(crate) fn is_view(&self) -> bool {
+        self.start != 0 || self.end != self.values.len()
+    }
+
     pub(crate) fn concat(self, other: &Self) -> Self {
         let mut values = self.into_values();
         values.extend(other.iter().cloned());
