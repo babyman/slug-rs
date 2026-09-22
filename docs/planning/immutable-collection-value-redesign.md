@@ -115,6 +115,41 @@ VM.
 **Gate:** the optimization is invisible to Slug code, closures, tasks, module
 instances, and native clients.
 
+### 3a. Evaluate immutable list-rest views
+
+The metrics-enabled `fannkuch-redux-7` workload is the entry evidence for this
+stage. Across ten local runs it executed 57,681,060 instructions, performed
+2,062,600 collection updates, copied 4,015,940 elements on 1,877,520
+shared-owner updates, and used the unique-owner update path only 185,080
+times. Its repeated `[head, ...tail]` matching, prefix reversal, and
+concatenation make eager rest-list materialization a credible target.
+
+- [ ] Define a private immutable list-view representation with shared backing
+  storage and a logical element range. Views must retain their backing storage
+  and must not expose mutable access.
+- [ ] Route list length, indexing, iteration, equality, display, native list
+  access, source slicing, and list-pattern rest bindings through the logical
+  range. A view must be observationally indistinguishable from a separately
+  allocated list containing that range.
+- [ ] Keep list construction, append, prepend, concatenation, spread, and
+  every persistent update value-producing: an operation on a view must produce
+  an independent logical result, and an operation on one alias must never
+  alter another alias or its backing view.
+- [ ] Add VM and CLI coverage for rest bindings and slices retained through
+  local bindings, closures, spawned tasks, module exports, native calls,
+  equality, indexing, rendering, and subsequent list updates.
+- [ ] Add opt-in metrics that distinguish view creation from materialization
+  only if the aggregate copy counters cannot establish the result.
+- [ ] Compare Fannkuch-7, the existing small/medium/large collection
+  workloads, retained-alias workloads, and peak-RSS fixtures before retaining
+  the representation.
+
+**Gate:** no source-language, native, diagnostic, or portable-bytecode
+behavior changes. Retain the view only if it reduces Fannkuch shared-copy work
+without a material retained-memory regression or a regression in existing
+collection workloads. Record the adopted private representation in a decision
+record when this stage is implemented.
+
 ### 4. Resolve map-key equivalence before adding an index
 
 - [x] Coordinate with the [numeric representation decision](numeric-representation-decision.md)
