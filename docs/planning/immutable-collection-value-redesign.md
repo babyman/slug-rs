@@ -124,21 +124,21 @@ shared-owner updates, and used the unique-owner update path only 185,080
 times. Its repeated `[head, ...tail]` matching, prefix reversal, and
 concatenation make eager rest-list materialization a credible target.
 
-- [ ] Define a private immutable list-view representation with shared backing
+- [x] Define a private immutable list-view representation with shared backing
   storage and a logical element range. Views must retain their backing storage
   and must not expose mutable access.
-- [ ] Route list length, indexing, iteration, equality, display, native list
+- [x] Route list length, indexing, iteration, equality, display, native list
   access, source slicing, and list-pattern rest bindings through the logical
   range. A view must be observationally indistinguishable from a separately
   allocated list containing that range.
-- [ ] Keep list construction, append, prepend, concatenation, spread, and
+- [x] Keep list construction, append, prepend, concatenation, spread, and
   every persistent update value-producing: an operation on a view must produce
   an independent logical result, and an operation on one alias must never
   alter another alias or its backing view.
 - [ ] Add VM and CLI coverage for rest bindings and slices retained through
   local bindings, closures, spawned tasks, module exports, native calls,
   equality, indexing, rendering, and subsequent list updates.
-- [ ] Add opt-in metrics that distinguish view creation from materialization
+- [x] Add opt-in metrics that distinguish view creation from materialization
   only if the aggregate copy counters cannot establish the result.
 - [ ] Compare Fannkuch-7, the existing small/medium/large collection
   workloads, retained-alias workloads, and peak-RSS fixtures before retaining
