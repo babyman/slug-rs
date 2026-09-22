@@ -737,6 +737,11 @@ pub(super) fn slice_value(
     };
     match collection {
         Value::List(values) => {
+            if step == 1 {
+                let start = usize::try_from(start).expect("slice bounds are non-negative");
+                let end = usize::try_from(end).expect("slice bounds are non-negative");
+                return Ok(Value::List(values.view(start, end)));
+            }
             let mut indexes = Vec::new();
             let mut index = start;
             while index < end {
