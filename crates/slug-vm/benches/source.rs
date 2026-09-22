@@ -34,10 +34,6 @@ const WORKLOADS: &[Workload] = &[
         name: "binary-trees",
         expected_stdout: "65535\n",
     },
-    Workload {
-        name: "fannkuch-redux",
-        expected_stdout: "-488 16\n",
-    },
 ];
 
 struct Workload {

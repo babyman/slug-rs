@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-- Added a Fannkuch-redux-inspired source benchmark and a nested task-tree VM
-  benchmark, extending optimization coverage to persistent list permutation
-  work and structured scheduler fanout.
+- Added a nested task-tree VM benchmark, extending optimization coverage to
+  structured scheduler fanout.
 
 - Initialized exact positional closure parameters directly in recycled frame
   locals, removing the transient argument vector while retaining checked
