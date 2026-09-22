@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Restored the Fannkuch-redux-inspired source benchmark with its list reversal
+  expressed as an explicit match on the list parameter, rather than a
+  multi-parameter function match.
+
 - Added a nested task-tree VM benchmark, extending optimization coverage to
   structured scheduler fanout.
 

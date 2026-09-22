@@ -32,9 +32,12 @@ cargo bench -p slug-vm --bench source -- --json
 The initial workload corpus is Benchmark-Game-inspired, rather than a port of
 the upstream corpus: function calls, untyped and `num`-annotated pairs of
 small n-body-style floating-point loops and spectral-norm-style nested numeric
-loops and binary trees. Each pair is intentionally written in the idioms
-currently supported by Slug and Python; keep output checks and workload intent
-aligned when adding a pair.
+loops, binary trees, and a single-threaded fannkuch-redux port. Fannkuch-redux
+adds permutation generation, indexed list reads, prefix reversal, and
+persistent list construction; it is not a claim of Benchmarks Game result
+comparability. Each pair is intentionally written in the idioms currently
+supported by Slug and Python; keep output checks and workload intent aligned
+when adding a pair.
 
 The in-process suite also includes a nested task tree. Unlike the timer and
 large-`select` pressure cases, it measures structured task fanout, nested
