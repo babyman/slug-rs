@@ -150,6 +150,16 @@ without a material retained-memory regression or a regression in existing
 collection workloads. Record the adopted private representation in a decision
 record when this stage is implemented.
 
+### Stage 3a measurement
+
+The post-view benchmark run created 1,740,530 list views in ten
+`fannkuch-redux-7` executions, materializing 136,990 of them (136,920 logical
+elements) during persistent updates. The same run completed in about 1.61 s,
+compared with the 1.82 s pre-view reference. Small, medium, large, unique-owner,
+and retained-closure collection workloads created no views and showed no new
+copy path. Retained-alias and peak-RSS fixture coverage remains required before
+closing this stage's final gate.
+
 ### 4. Resolve map-key equivalence before adding an index
 
 - [x] Coordinate with the [numeric representation decision](numeric-representation-decision.md)
