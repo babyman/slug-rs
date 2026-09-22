@@ -48,8 +48,18 @@ impl MapKey {
     }
 }
 
+/// An immutable logical list backed by shared storage.
+///
+/// A list may expose a contiguous range of its backing vector.  The range is
+/// deliberately private: callers can only observe it through logical list
+/// operations, and every value-producing operation materializes an independent
+/// result before it can be changed.
 #[derive(Clone)]
-pub(crate) struct List(Rc<Vec<Value>>);
+pub(crate) struct List {
+    values: Rc<Vec<Value>>,
+    start: usize,
+    end: usize,
+}
 
 pub(crate) struct ListView<'a>(&'a [Value]);
 
@@ -73,39 +83,68 @@ impl<'a> ListView<'a> {
 
 impl List {
     pub(crate) fn from_values(values: Vec<Value>) -> Self {
-        Self(Rc::new(values))
+        let end = values.len();
+        Self {
+            values: Rc::new(values),
+            start: 0,
+            end,
+        }
     }
 
     pub(crate) fn from_shared(values: Rc<Vec<Value>>) -> Self {
-        Self(values)
+        let end = values.len();
+        Self {
+            values,
+            start: 0,
+            end,
+        }
     }
 
     pub(crate) fn into_shared(self) -> Rc<Vec<Value>> {
-        self.0
+        if self.start == 0 && self.end == self.values.len() {
+            self.values
+        } else {
+            Rc::new(self.iter().cloned().collect())
+        }
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.end - self.start
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<&Value> {
-        self.0.get(index)
+        self.values
+            .get(self.start + index)
+            .filter(|_| index < self.len())
     }
 
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &Value> {
-        self.0.iter()
+        self.values[self.start..self.end].iter()
+    }
+
+    #[allow(
+        dead_code,
+        reason = "runtime producers are introduced by the following incremental refactor"
+    )]
+    pub(crate) fn view(&self, start: usize, end: usize) -> Self {
+        assert!(start <= end && end <= self.len(), "list view is in bounds");
+        Self {
+            values: self.values.clone(),
+            start: self.start + start,
+            end: self.start + end,
+        }
     }
 
     pub(crate) fn concat(self, other: &Self) -> Self {
         let mut values = self.into_values();
         values.extend(other.iter().cloned());
-        Self(Rc::new(values))
+        Self::from_values(values)
     }
 
     pub(crate) fn append(self, value: Value) -> Self {
         let mut values = self.into_values();
         values.push(value);
-        Self(Rc::new(values))
+        Self::from_values(values)
     }
 
     pub(crate) fn prepend(self, value: Value) -> Self {
@@ -113,19 +152,51 @@ impl List {
         let mut result = Vec::with_capacity(values.len() + 1);
         result.push(value);
         result.extend(values);
-        Self(Rc::new(result))
+        Self::from_values(result)
     }
 
     pub(crate) fn slice(&self, indexes: impl Iterator<Item = usize>) -> Self {
-        Self(Rc::new(
+        Self::from_values(
             indexes
-                .map(|index| self.0[index].clone())
-                .collect::<Vec<_>>(),
-        ))
+                .map(|index| self.get(index).unwrap().clone())
+                .collect(),
+        )
     }
 
     fn into_values(self) -> Vec<Value> {
-        Rc::try_unwrap(self.0).unwrap_or_else(|values| (*values).clone())
+        if self.start == 0 && self.end == self.values.len() {
+            Rc::try_unwrap(self.values).unwrap_or_else(|values| (*values).clone())
+        } else {
+            self.iter().cloned().collect()
+        }
+    }
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::List;
+    use crate::Value;
+
+    #[test]
+    fn ranged_view_exposes_only_its_logical_elements() {
+        let list = List::from_values(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let view = list.view(1, 3);
+
+        assert_eq!(view.len(), 2);
+        assert_eq!(view.get(0), Some(&Value::Int(2)));
+        assert_eq!(view.get(2), None);
+        assert_eq!(
+            view.iter().cloned().collect::<Vec<_>>(),
+            vec![Value::Int(2), Value::Int(3)]
+        );
+    }
+
+    #[test]
+    fn ranged_view_materializes_when_shared_storage_is_requested() {
+        let list = List::from_values(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let view = list.view(1, 3);
+
+        assert_eq!(&*view.into_shared(), &[Value::Int(2), Value::Int(3)]);
     }
 }
 
