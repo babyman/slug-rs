@@ -40,6 +40,36 @@ fn install_native_increment(vm: &mut Vm) {
     .expect("native binding is unique");
 }
 
+fn native_list_len(call: &mut NativeCall<'_>) -> NativeStatus {
+    let value = match call.argument(0) {
+        Ok(value) => value,
+        Err(error) => return call.raise(error),
+    };
+    let Some(length) = value.len() else {
+        return call.raise(slug_vm::NativeError::new(
+            "native.type",
+            "`len` expects a list in this benchmark",
+        ));
+    };
+    let Ok(length) = i64::try_from(length) else {
+        return call.raise(slug_vm::NativeError::new(
+            "native.range",
+            "`len` result exceeds the supported integer range",
+        ));
+    };
+    call.return_value(NativeOwnedValue::integer(length))
+}
+
+fn install_fannkuch_support(vm: &mut Vm) {
+    let module = NativeModule::new("benchmark.builtin", ()).expect("native module is valid");
+    vm.define_native(
+        module
+            .function("len", NativeArity::Exact(1), native_list_len)
+            .expect("native function is valid"),
+    )
+    .expect("native binding is unique");
+}
+
 fn collection_workload(size: usize) -> String {
     let entries = (0..size)
         .map(|index| format!("k{index}: {index}"))
@@ -79,6 +109,44 @@ fn unique_collection_workload() -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("([{values}] :+ 64)[64]\n({{{entries}}} copy {{k0: -1}}).k0\n")
+}
+
+fn fannkuch_redux() -> String {
+    "val flip = fn(values, count) {\n\
+       val take = fn(remaining, needed, prefix) {\n\
+         if (needed == 0) { [prefix, remaining] } else {\n\
+           match remaining { [head, ...tail] => recur(tail, needed - 1, prefix :+ head) }\n\
+         }\n\
+       }\n\
+       val reverse = fn(remaining, result) {\n\
+         match remaining { [] => result; [head, ...tail] => recur(tail, head +: result) }\n\
+       }\n\
+       val parts = take(values, count, [])\n\
+       reverse(parts[0], []) + parts[1]\n\
+     }\n\
+     val flipCount = fn(values, total) {\n\
+       if (values[0] == 1) { total } else { recur(flip(values, values[0]), total + 1) }\n\
+     }\n\
+     val generate = fn(choices, prefix, checksum, maximum, sign) {\n\
+       if (len(choices) == 0) {\n\
+         val flips = flipCount(prefix, 0)\n\
+         [checksum + sign * flips, if (flips > maximum) { flips } else { maximum }, -sign]\n\
+       } else {\n\
+         val visit = fn(remaining, rotations, state) {\n\
+           if (rotations == 0) { state } else {\n\
+             match remaining {\n\
+               [head, ...tail] => {\n\
+                 val next = generate(tail, prefix :+ head, state[0], state[1], state[2])\n\
+                 recur(tail :+ head, rotations - 1, next)\n\
+               }\n\
+             }\n\
+           }\n\
+         }\n\
+         visit(choices, len(choices), [checksum, maximum, sign])\n\
+       }\n\
+     }\n\
+     generate([1, 2, 3, 4, 5, 6, 7], [], 0, 0, 1)\n"
+        .into()
 }
 
 fn main() {
@@ -414,6 +482,13 @@ const WORKLOADS: &[Workload] = &[
         source: unique_collection_workload,
         install: no_native_setup,
         expected_result: None,
+    },
+    Workload {
+        name: "fannkuch-redux-7",
+        iterations: 10,
+        source: fannkuch_redux,
+        install: install_fannkuch_support,
+        expected_result: Some("[-488, 16, 1]"),
     },
     Workload {
         name: "native-calls",

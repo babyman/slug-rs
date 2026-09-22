@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a metrics-enabled in-process Fannkuch-redux benchmark to expose
+  persistent-list allocation and ownership costs alongside the source timing.
+
 - Restored the Fannkuch-redux-inspired source benchmark with its list reversal
   expressed as an explicit match on the list parameter, rather than a
   multi-parameter function match.

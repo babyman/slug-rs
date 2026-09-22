@@ -45,3 +45,8 @@ The in-process suite also includes a nested task tree. Unlike the timer and
 large-`select` pressure cases, it measures structured task fanout, nested
 nursery settlement, and task-await resumption together. It is a scheduler
 coverage workload, not an asynchronous I/O throughput claim.
+
+`fannkuch-redux-7` in the in-process suite runs the same seven-value program
+and checks its final checksum, while exposing its list-construction, update,
+and ownership counters. Use those counters to evaluate persistent-list changes
+before interpreting end-to-end timing changes.
