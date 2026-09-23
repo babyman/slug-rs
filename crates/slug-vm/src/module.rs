@@ -17,6 +17,50 @@ use crate::{
     },
 };
 
+/// Opaque host-defined identity for one resolved module.
+///
+/// The VM compares identities for module ownership and cache lookup but does
+/// not interpret their storage-specific representation.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ModuleKey(String);
+
+impl ModuleKey {
+    #[must_use]
+    pub fn new(identity: impl Into<String>) -> Self {
+        Self(identity.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A logical module request issued by source compilation or runtime import.
+#[derive(Clone, Copy, Debug)]
+pub struct ModuleRequest<'a> {
+    pub importer: Option<&'a ModuleKey>,
+    pub name: &'a str,
+}
+
+impl<'a> ModuleRequest<'a> {
+    #[must_use]
+    pub const fn new(importer: Option<&'a ModuleKey>, name: &'a str) -> Self {
+        Self { importer, name }
+    }
+}
+
+/// Resolves logical module identities into host-provided source.
+pub trait ModuleResolver {
+    /// Resolves one requested module without exposing host storage to the VM.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked failure when the name is invalid, unavailable, or its
+    /// host-provided source cannot be read.
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError>;
+}
+
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
 pub struct ModuleLoader {
@@ -191,9 +235,21 @@ impl ModuleLoader {
         importer: Option<&Path>,
         name: &str,
     ) -> Result<ModuleSource, ModuleLoadError> {
-        let relative = module_path(name)?;
+        let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
+        self.resolve(ModuleRequest::new(importer.as_ref(), name))
+    }
+}
+
+impl ModuleResolver for ModuleLoader {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        let relative = module_path(request.name)?;
         let mut candidates = Vec::new();
-        if let Some(importer) = importer.and_then(Path::parent) {
+        if let Some(importer) = request
+            .importer
+            .map(ModuleKey::as_str)
+            .map(Path::new)
+            .and_then(Path::parent)
+        {
             candidates.push(importer.join(&relative));
         }
         candidates.push(self.state.source_root.join(&relative));
@@ -218,12 +274,13 @@ impl ModuleLoader {
                 }
             }
         }
-        if let Some(root) = self.state.clutch_repository.provider(name) {
-            let module =
-                clutch::load_module(root, name).map_err(|message| ModuleLoadError::Clutch {
+        if let Some(root) = self.state.clutch_repository.provider(request.name) {
+            let module = clutch::load_module(root, request.name).map_err(|message| {
+                ModuleLoadError::Clutch {
                     path: root.clone(),
                     message,
-                })?;
+                }
+            })?;
             let text = fs::read_to_string(&module.path).map_err(|error| ModuleLoadError::Read {
                 path: module.path.clone(),
                 message: error.to_string(),
@@ -235,7 +292,7 @@ impl ModuleLoader {
                     (Some(entry), None) => Some(ClutchPluginSource::Host {
                         root: module.root,
                         entry,
-                        module_names: vec![name.into()],
+                        module_names: vec![request.name.into()],
                     }),
                     (None, Some(native)) => Some(ClutchPluginSource::Native {
                         root: module.root,
@@ -251,11 +308,13 @@ impl ModuleLoader {
             });
         }
         Err(ModuleLoadError::NotFound {
-            name: name.into(),
+            name: request.name.into(),
             searched: candidates,
         })
     }
+}
 
+impl ModuleLoader {
     /// Loads and compiles a module, returning a cached program for repeat requests.
     ///
     /// # Errors

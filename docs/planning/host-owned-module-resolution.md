@@ -61,7 +61,7 @@ registration failure.
 
 ## 1. Define the filesystem-free resolver contract
 
-- [ ] Introduce a private or deliberately narrow `ModuleResolver` interface
+- [x] Introduce a private or deliberately narrow `ModuleResolver` interface
   accepting a logical requested name and an optional opaque importer identity.
 - [ ] Define resolved-module data with an opaque cache key, diagnostic label,
   source payload, and optional module activation lease.

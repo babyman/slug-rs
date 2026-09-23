@@ -41,7 +41,10 @@ pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
 pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeLibrary};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
-pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
+pub use module::{
+    ModuleInstance, ModuleKey, ModuleLoadError, ModuleLoader, ModuleRequest, ModuleResolver,
+    ModuleSource,
+};
 pub use native::{
     NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeEnumCase,
     NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,

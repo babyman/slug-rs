@@ -5,8 +5,8 @@ use std::{
 
 use slug_vm::{
     ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader,
-    NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue, NativeStatus,
-    RuntimeErrorKind, Value, Vm, compile,
+    ModuleRequest, ModuleResolver, NativeArity, NativeCall, NativeDescriptorError, NativeModule,
+    NativeOwnedValue, NativeStatus, RuntimeErrorKind, Value, Vm, compile,
 };
 
 fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -721,7 +721,7 @@ fn resolves_importer_relative_source_and_library_roots() {
     let loader = ModuleLoader::new(&source, Some(library.clone()));
     assert_eq!(
         loader
-            .load(None, "local.math")
+            .resolve(ModuleRequest::new(None, "local.math"))
             .expect("load source module")
             .text,
         "export val value = 1\n"
