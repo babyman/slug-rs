@@ -135,7 +135,7 @@ concatenation make eager rest-list materialization a credible target.
   every persistent update value-producing: an operation on a view must produce
   an independent logical result, and an operation on one alias must never
   alter another alias or its backing view.
-- [ ] Add VM and CLI coverage for rest bindings and slices retained through
+- [x] Add VM and CLI coverage for rest bindings and slices retained through
   local bindings, closures, spawned tasks, module exports, native calls,
   equality, indexing, rendering, and subsequent list updates.
 - [x] Add opt-in metrics that distinguish view creation from materialization
