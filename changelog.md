@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Recorded the host-owned module-resolution boundary and a staged plan for
+  filesystem-free desktop and embedded module loading; Slug source behavior is
+  unchanged.
+
 - Added a metrics-enabled in-process Fannkuch-redux benchmark to expose
   persistent-list allocation and ownership costs alongside the source timing.
 

@@ -134,8 +134,8 @@ optimization.
 The evaluator operates in a module environment and needs a small host-services
 boundary. A conforming host MUST provide:
 
-- source loading and a stable path for diagnostics;
-- module loading using the fixture-environment rules above;
+- entry-program and module resolution using the fixture-environment rules
+  above, with a stable diagnostic identity for each loaded source;
 - standard output and standard error streams;
 - a process standard-input stream for `slug.io.stdin` when that module is
   available;
@@ -148,6 +148,14 @@ boundary. A conforming host MUST provide:
 The evaluator MUST keep these host capabilities separate from Slug bindings.
 Host services cannot become names visible to a Slug program except through a
 `slug.builtin` export, imported library module, or declared foreign function.
+
+The host MAY obtain an entry program or imported module from a filesystem, a
+compiled artifact, or statically embedded data. Resolution policy is a host
+service: the evaluator requests a logical module identity and MUST NOT require
+filesystem paths, environment variables, package layout, or storage access in
+order to execute an import. A host may use paths as private cache keys or
+diagnostic labels when it has a filesystem, but that choice must not alter the
+module-resolution and error behavior required above.
 
 Foreign functions are not required for the portable fixture set unless a
 fixture imports a library that declares one. A declared function resolves by
@@ -520,7 +528,9 @@ The VM may use threads, goroutines, frames, environments, stacks, or slots
 internally. Those choices are conforming only when they preserve the contracts
 above. The VM must not import a concrete host runtime merely to acquire runtime
 services. Keep the dependency direction from runtime orchestration into VM
-execution, with host services injected at the boundary.
+execution, with host services injected at the boundary. In particular, module
+resolution and entry-program loading belong to the host boundary; VM execution
+must not depend on filesystem or package-layout assumptions.
 
 ## Topics pending requirements
 
