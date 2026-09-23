@@ -72,7 +72,7 @@ registration failure.
   requiring a filesystem search-path type.
 - [x] Pass the owning program/module identity to runtime `import()`; do not
   infer it from a span path.
-- [ ] Preserve source paths as diagnostic metadata, not resolution inputs.
+- [x] Preserve source paths as diagnostic metadata, not resolution inputs.
 
 **Gate:** a test resolver with no filesystem access can resolve a source module
 and produce the same source and module errors expected by the shared graph.

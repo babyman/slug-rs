@@ -327,7 +327,8 @@ impl ModuleLoader {
         }
         let mut program = self
             .compile_source_for_module(
-                &source.path.to_string_lossy(),
+                &source.key,
+                &source.diagnostic_name,
                 &source.text,
                 name != "slug.builtin",
             )
@@ -353,7 +354,7 @@ impl ModuleLoader {
     ///
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
-        self.compile_source_for_module(path, source, true)
+        self.compile_source_for_module(&ModuleKey::new(path), path, source, true)
     }
 
     #[doc(hidden)]
@@ -363,24 +364,26 @@ impl ModuleLoader {
         source: &str,
         state: &InteractiveCompilerState,
     ) -> Result<Vec<InteractiveCompilation>, SourceError> {
+        let importer = ModuleKey::new(path);
         crate::source::compile_interactive_forms_with_resolver(path, source, state, |name| {
-            self.semantic_snapshot(None, name)
+            self.semantic_snapshot(ModuleRequest::new(Some(&importer), name))
         })
     }
 
     fn compile_source_for_module(
         &self,
-        path: &str,
+        key: &ModuleKey,
+        diagnostic_name: &str,
         source: &str,
         include_implicit_builtins: bool,
     ) -> Result<Program, SourceError> {
-        compile_with_resolver(path, source, include_implicit_builtins, |name| {
-            self.semantic_snapshot(Some(Path::new(path)), name)
+        compile_with_resolver(diagnostic_name, source, include_implicit_builtins, |name| {
+            self.semantic_snapshot(ModuleRequest::new(Some(key), name))
         })
     }
 
-    fn semantic_snapshot(&self, importer: Option<&Path>, name: &str) -> Option<ModuleSnapshot> {
-        let source = self.load(importer, name).ok()?;
+    fn semantic_snapshot(&self, request: ModuleRequest<'_>) -> Option<ModuleSnapshot> {
+        let source = self.resolve(request).ok()?;
         if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.key) {
             return Some(snapshot.clone());
         }
@@ -394,9 +397,10 @@ impl ModuleLoader {
         }
         let snapshot = self
             .compile_source_for_module(
-                &source.path.to_string_lossy(),
+                &source.key,
+                &source.diagnostic_name,
                 &source.text,
-                name != "slug.builtin",
+                request.name != "slug.builtin",
             )
             .ok()
             .map(|program| program.semantic_snapshot().clone());
@@ -452,6 +456,7 @@ impl ModuleLoader {
             program.clone()
         } else {
             let mut program = match self.compile_source_for_module(
+                &source.key,
                 &source.diagnostic_name,
                 &source.text,
                 request.name != "slug.builtin",
