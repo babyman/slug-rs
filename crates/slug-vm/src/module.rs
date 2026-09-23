@@ -73,16 +73,43 @@ struct ModuleLoaderState {
     library_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
     configuration: Configuration,
-    compiled: RefCell<HashMap<ModuleKey, Program>>,
-    semantic_snapshots: RefCell<HashMap<ModuleKey, ModuleSnapshot>>,
-    resolving_snapshots: RefCell<HashSet<ModuleKey>>,
-    instances: RefCell<HashMap<ModuleKey, ModuleInstance>>,
+    runtime: ModuleRuntime,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     active_clutch_plugins: RefCell<HashMap<PathBuf, StagedClutchPlugin>>,
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
+}
+
+/// The storage-independent state shared by all requests for one module graph.
+///
+/// Resolver and host services remain on `ModuleLoader` while this type is
+/// extracted; keeping the graph caches together makes that boundary explicit.
+#[derive(Clone, Debug)]
+struct ModuleRuntime {
+    state: Rc<ModuleRuntimeState>,
+}
+
+#[derive(Debug)]
+struct ModuleRuntimeState {
+    compiled: RefCell<HashMap<ModuleKey, Program>>,
+    semantic_snapshots: RefCell<HashMap<ModuleKey, ModuleSnapshot>>,
+    resolving_snapshots: RefCell<HashSet<ModuleKey>>,
+    instances: RefCell<HashMap<ModuleKey, ModuleInstance>>,
+}
+
+impl ModuleRuntime {
+    fn new() -> Self {
+        Self {
+            state: Rc::new(ModuleRuntimeState {
+                compiled: RefCell::new(HashMap::new()),
+                semantic_snapshots: RefCell::new(HashMap::new()),
+                resolving_snapshots: RefCell::new(HashSet::new()),
+                instances: RefCell::new(HashMap::new()),
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -198,10 +225,7 @@ impl ModuleLoader {
                 library_root,
                 clutch_repository,
                 configuration,
-                compiled: RefCell::new(HashMap::new()),
-                semantic_snapshots: RefCell::new(HashMap::new()),
-                resolving_snapshots: RefCell::new(HashSet::new()),
-                instances: RefCell::new(HashMap::new()),
+                runtime: ModuleRuntime::new(),
                 native_globals: RefCell::new(HashMap::new()),
                 foreign_functions: RefCell::new(HashMap::new()),
                 active_clutch_plugins: RefCell::new(HashMap::new()),
@@ -322,7 +346,7 @@ impl ModuleLoader {
     /// Returns an error for loader failures or invalid module source.
     pub fn compile(&self, importer: Option<&Path>, name: &str) -> Result<Program, ModuleLoadError> {
         let source = self.load(importer, name)?;
-        if let Some(program) = self.state.compiled.borrow().get(&source.key) {
+        if let Some(program) = self.state.runtime.state.compiled.borrow().get(&source.key) {
             return Ok(program.clone());
         }
         let mut program = self
@@ -338,10 +362,14 @@ impl ModuleLoader {
             })?;
         program.set_module_name(name);
         self.state
+            .runtime
+            .state
             .semantic_snapshots
             .borrow_mut()
             .insert(source.key.clone(), program.semantic_snapshot().clone());
         self.state
+            .runtime
+            .state
             .compiled
             .borrow_mut()
             .insert(source.key, program.clone());
@@ -384,10 +412,19 @@ impl ModuleLoader {
 
     fn semantic_snapshot(&self, request: ModuleRequest<'_>) -> Option<ModuleSnapshot> {
         let source = self.resolve(request).ok()?;
-        if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.key) {
+        if let Some(snapshot) = self
+            .state
+            .runtime
+            .state
+            .semantic_snapshots
+            .borrow()
+            .get(&source.key)
+        {
             return Some(snapshot.clone());
         }
         if !self
+            .state
+            .runtime
             .state
             .resolving_snapshots
             .borrow_mut()
@@ -405,11 +442,15 @@ impl ModuleLoader {
             .ok()
             .map(|program| program.semantic_snapshot().clone());
         self.state
+            .runtime
+            .state
             .resolving_snapshots
             .borrow_mut()
             .remove(&source.key);
         let snapshot = snapshot?;
         self.state
+            .runtime
+            .state
             .semantic_snapshots
             .borrow_mut()
             .insert(source.key, snapshot.clone());
@@ -418,7 +459,7 @@ impl ModuleLoader {
 
     #[must_use]
     pub fn cached_module_count(&self) -> usize {
-        self.state.compiled.borrow().len()
+        self.state.runtime.state.compiled.borrow().len()
     }
 
     /// Compiles and initializes one isolated module instance.
@@ -448,40 +489,45 @@ impl ModuleLoader {
             }
             Err(error) => return Err(error),
         };
-        if let Some(instance) = self.state.instances.borrow().get(&source.key) {
+        if let Some(instance) = self.state.runtime.state.instances.borrow().get(&source.key) {
             return Ok(instance.clone());
         }
         let mut plugin = self.stage_clutch_plugin(&source)?;
-        let program = if let Some(program) = self.state.compiled.borrow().get(&source.key) {
-            program.clone()
-        } else {
-            let mut program = match self.compile_source_for_module(
-                &source.key,
-                &source.diagnostic_name,
-                &source.text,
-                request.name != "slug.builtin",
-            ) {
-                Ok(program) => program,
-                Err(error) => {
-                    Self::cleanup_plugin(&mut plugin);
-                    return Err(ModuleLoadError::Source {
-                        location: source.diagnostic_name.clone(),
-                        message: error.to_string(),
-                    });
-                }
+        let program =
+            if let Some(program) = self.state.runtime.state.compiled.borrow().get(&source.key) {
+                program.clone()
+            } else {
+                let mut program = match self.compile_source_for_module(
+                    &source.key,
+                    &source.diagnostic_name,
+                    &source.text,
+                    request.name != "slug.builtin",
+                ) {
+                    Ok(program) => program,
+                    Err(error) => {
+                        Self::cleanup_plugin(&mut plugin);
+                        return Err(ModuleLoadError::Source {
+                            location: source.diagnostic_name.clone(),
+                            message: error.to_string(),
+                        });
+                    }
+                };
+                program.set_module_name(request.name);
+                program.set_module_key(source.key.clone());
+                self.state
+                    .runtime
+                    .state
+                    .semantic_snapshots
+                    .borrow_mut()
+                    .insert(source.key.clone(), program.semantic_snapshot().clone());
+                self.state
+                    .runtime
+                    .state
+                    .compiled
+                    .borrow_mut()
+                    .insert(source.key.clone(), program.clone());
+                program
             };
-            program.set_module_name(request.name);
-            program.set_module_key(source.key.clone());
-            self.state
-                .semantic_snapshots
-                .borrow_mut()
-                .insert(source.key.clone(), program.semantic_snapshot().clone());
-            self.state
-                .compiled
-                .borrow_mut()
-                .insert(source.key.clone(), program.clone());
-            program
-        };
         if let Some(staged) = plugin.as_ref()
             && let Err(error) = self.define_foreign_batch(staged.functions.clone())
         {
@@ -514,11 +560,18 @@ impl ModuleLoader {
             live_exports: vm.live_exported_values(program.program()),
         };
         self.state
+            .runtime
+            .state
             .instances
             .borrow_mut()
             .insert(source.key.clone(), instance.clone());
         if let Err(error) = vm.run_module(&program) {
-            self.state.instances.borrow_mut().remove(&source.key);
+            self.state
+                .runtime
+                .state
+                .instances
+                .borrow_mut()
+                .remove(&source.key);
             if let Some(staged) = plugin.as_ref() {
                 self.remove_foreign_batch(&staged.functions);
             }
@@ -534,6 +587,8 @@ impl ModuleLoader {
             ..instance
         };
         self.state
+            .runtime
+            .state
             .instances
             .borrow_mut()
             .insert(source.key.clone(), instance.clone());
@@ -552,7 +607,7 @@ impl ModuleLoader {
 
     #[must_use]
     pub fn initialized_module_count(&self) -> usize {
-        self.state.instances.borrow().len()
+        self.state.runtime.state.instances.borrow().len()
     }
 
     /// Returns and clears module warnings accumulated during evaluation.
@@ -671,7 +726,7 @@ impl ModuleLoader {
 
     fn virtual_builtin_module(&self) -> ModuleInstance {
         let key = ModuleKey::new("<slug.builtin>");
-        if let Some(instance) = self.state.instances.borrow().get(&key) {
+        if let Some(instance) = self.state.runtime.state.instances.borrow().get(&key) {
             return instance.clone();
         }
         let exports = Value::Map(Rc::new(
@@ -691,6 +746,8 @@ impl ModuleLoader {
             live_exports: exports,
         };
         self.state
+            .runtime
+            .state
             .instances
             .borrow_mut()
             .insert(key, instance.clone());
