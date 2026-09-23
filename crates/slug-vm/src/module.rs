@@ -110,6 +110,104 @@ impl ModuleRuntime {
             }),
         }
     }
+
+    fn compile(
+        &self,
+        resolver: &dyn ModuleResolver,
+        request: ModuleRequest<'_>,
+    ) -> Result<Program, ModuleLoadError> {
+        let source = resolver.resolve(request)?;
+        if let Some(program) = self.state.compiled.borrow().get(&source.key) {
+            return Ok(program.clone());
+        }
+        let mut program = self
+            .compile_source_for_module(
+                resolver,
+                &source.key,
+                &source.diagnostic_name,
+                &source.text,
+                request.name != "slug.builtin",
+            )
+            .map_err(|error| ModuleLoadError::Source {
+                location: source.diagnostic_name.clone(),
+                message: error.to_string(),
+            })?;
+        program.set_module_name(request.name);
+        self.state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(source.key.clone(), program.semantic_snapshot().clone());
+        self.state
+            .compiled
+            .borrow_mut()
+            .insert(source.key, program.clone());
+        Ok(program)
+    }
+
+    fn compile_interactive_forms(
+        &self,
+        resolver: &dyn ModuleResolver,
+        path: &str,
+        source: &str,
+        state: &InteractiveCompilerState,
+    ) -> Result<Vec<InteractiveCompilation>, SourceError> {
+        let importer = ModuleKey::new(path);
+        crate::source::compile_interactive_forms_with_resolver(path, source, state, |name| {
+            self.semantic_snapshot(resolver, ModuleRequest::new(Some(&importer), name))
+        })
+    }
+
+    fn compile_source_for_module(
+        &self,
+        resolver: &dyn ModuleResolver,
+        key: &ModuleKey,
+        diagnostic_name: &str,
+        source: &str,
+        include_implicit_builtins: bool,
+    ) -> Result<Program, SourceError> {
+        compile_with_resolver(diagnostic_name, source, include_implicit_builtins, |name| {
+            self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name))
+        })
+    }
+
+    fn semantic_snapshot(
+        &self,
+        resolver: &dyn ModuleResolver,
+        request: ModuleRequest<'_>,
+    ) -> Option<ModuleSnapshot> {
+        let source = resolver.resolve(request).ok()?;
+        if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.key) {
+            return Some(snapshot.clone());
+        }
+        if !self
+            .state
+            .resolving_snapshots
+            .borrow_mut()
+            .insert(source.key.clone())
+        {
+            return None;
+        }
+        let snapshot = self
+            .compile_source_for_module(
+                resolver,
+                &source.key,
+                &source.diagnostic_name,
+                &source.text,
+                request.name != "slug.builtin",
+            )
+            .ok()
+            .map(|program| program.semantic_snapshot().clone());
+        self.state
+            .resolving_snapshots
+            .borrow_mut()
+            .remove(&source.key);
+        let snapshot = snapshot?;
+        self.state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(source.key, snapshot.clone());
+        Some(snapshot)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -345,35 +443,10 @@ impl ModuleLoader {
     ///
     /// Returns an error for loader failures or invalid module source.
     pub fn compile(&self, importer: Option<&Path>, name: &str) -> Result<Program, ModuleLoadError> {
-        let source = self.load(importer, name)?;
-        if let Some(program) = self.state.runtime.state.compiled.borrow().get(&source.key) {
-            return Ok(program.clone());
-        }
-        let mut program = self
-            .compile_source_for_module(
-                &source.key,
-                &source.diagnostic_name,
-                &source.text,
-                name != "slug.builtin",
-            )
-            .map_err(|error| ModuleLoadError::Source {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
-            })?;
-        program.set_module_name(name);
+        let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
         self.state
             .runtime
-            .state
-            .semantic_snapshots
-            .borrow_mut()
-            .insert(source.key.clone(), program.semantic_snapshot().clone());
-        self.state
-            .runtime
-            .state
-            .compiled
-            .borrow_mut()
-            .insert(source.key, program.clone());
-        Ok(program)
+            .compile(self, ModuleRequest::new(importer.as_ref(), name))
     }
 
     /// Compiles source while resolving cached semantic snapshots for static imports.
@@ -382,7 +455,13 @@ impl ModuleLoader {
     ///
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
-        self.compile_source_for_module(&ModuleKey::new(path), path, source, true)
+        self.state.runtime.compile_source_for_module(
+            self,
+            &ModuleKey::new(path),
+            path,
+            source,
+            true,
+        )
     }
 
     #[doc(hidden)]
@@ -392,10 +471,9 @@ impl ModuleLoader {
         source: &str,
         state: &InteractiveCompilerState,
     ) -> Result<Vec<InteractiveCompilation>, SourceError> {
-        let importer = ModuleKey::new(path);
-        crate::source::compile_interactive_forms_with_resolver(path, source, state, |name| {
-            self.semantic_snapshot(ModuleRequest::new(Some(&importer), name))
-        })
+        self.state
+            .runtime
+            .compile_interactive_forms(self, path, source, state)
     }
 
     fn compile_source_for_module(
@@ -405,56 +483,13 @@ impl ModuleLoader {
         source: &str,
         include_implicit_builtins: bool,
     ) -> Result<Program, SourceError> {
-        compile_with_resolver(diagnostic_name, source, include_implicit_builtins, |name| {
-            self.semantic_snapshot(ModuleRequest::new(Some(key), name))
-        })
-    }
-
-    fn semantic_snapshot(&self, request: ModuleRequest<'_>) -> Option<ModuleSnapshot> {
-        let source = self.resolve(request).ok()?;
-        if let Some(snapshot) = self
-            .state
-            .runtime
-            .state
-            .semantic_snapshots
-            .borrow()
-            .get(&source.key)
-        {
-            return Some(snapshot.clone());
-        }
-        if !self
-            .state
-            .runtime
-            .state
-            .resolving_snapshots
-            .borrow_mut()
-            .insert(source.key.clone())
-        {
-            return None;
-        }
-        let snapshot = self
-            .compile_source_for_module(
-                &source.key,
-                &source.diagnostic_name,
-                &source.text,
-                request.name != "slug.builtin",
-            )
-            .ok()
-            .map(|program| program.semantic_snapshot().clone());
-        self.state
-            .runtime
-            .state
-            .resolving_snapshots
-            .borrow_mut()
-            .remove(&source.key);
-        let snapshot = snapshot?;
-        self.state
-            .runtime
-            .state
-            .semantic_snapshots
-            .borrow_mut()
-            .insert(source.key, snapshot.clone());
-        Some(snapshot)
+        self.state.runtime.compile_source_for_module(
+            self,
+            key,
+            diagnostic_name,
+            source,
+            include_implicit_builtins,
+        )
     }
 
     #[must_use]
