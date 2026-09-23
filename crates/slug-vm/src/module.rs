@@ -124,22 +124,10 @@ pub struct ModuleInstance {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleLoadError {
     InvalidName(String),
-    NotFound {
-        name: String,
-        searched: Vec<PathBuf>,
-    },
-    Read {
-        path: PathBuf,
-        message: String,
-    },
-    Source {
-        path: PathBuf,
-        message: String,
-    },
-    Clutch {
-        path: PathBuf,
-        message: String,
-    },
+    NotFound { name: String, searched: Vec<String> },
+    Read { location: String, message: String },
+    Source { location: String, message: String },
+    Clutch { location: String, message: String },
 }
 
 impl fmt::Display for ModuleLoadError {
@@ -147,12 +135,12 @@ impl fmt::Display for ModuleLoadError {
         match self {
             Self::InvalidName(name) => write!(f, "invalid module name `{name}`"),
             Self::NotFound { name, .. } => write!(f, "module `{name}` was not found"),
-            Self::Read { path, message } => write!(f, "cannot read {}: {message}", path.display()),
-            Self::Source { path, message } => {
-                write!(f, "cannot compile {}: {message}", path.display())
+            Self::Read { location, message } => write!(f, "cannot read {location}: {message}"),
+            Self::Source { location, message } => {
+                write!(f, "cannot compile {location}: {message}")
             }
-            Self::Clutch { path, message } => {
-                write!(f, "cannot load clutch {}: {message}", path.display())
+            Self::Clutch { location, message } => {
+                write!(f, "cannot load clutch {location}: {message}")
             }
         }
     }
@@ -275,7 +263,7 @@ impl ModuleResolver for ModuleLoader {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
                     return Err(ModuleLoadError::Read {
-                        path: path.clone(),
+                        location: path.to_string_lossy().into_owned(),
                         message: error.to_string(),
                     });
                 }
@@ -284,12 +272,12 @@ impl ModuleResolver for ModuleLoader {
         if let Some(root) = self.state.clutch_repository.provider(request.name) {
             let module = clutch::load_module(root, request.name).map_err(|message| {
                 ModuleLoadError::Clutch {
-                    path: root.clone(),
+                    location: root.to_string_lossy().into_owned(),
                     message,
                 }
             })?;
             let text = fs::read_to_string(&module.path).map_err(|error| ModuleLoadError::Read {
-                path: module.path.clone(),
+                location: module.path.to_string_lossy().into_owned(),
                 message: error.to_string(),
             })?;
             return Ok(ModuleSource {
@@ -318,7 +306,10 @@ impl ModuleResolver for ModuleLoader {
         }
         Err(ModuleLoadError::NotFound {
             name: request.name.into(),
-            searched: candidates,
+            searched: candidates
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
         })
     }
 }
@@ -341,7 +332,7 @@ impl ModuleLoader {
                 name != "slug.builtin",
             )
             .map_err(|error| ModuleLoadError::Source {
-                path: source.path.clone(),
+                location: source.diagnostic_name.clone(),
                 message: error.to_string(),
             })?;
         program.set_module_name(name);
@@ -461,7 +452,7 @@ impl ModuleLoader {
         {
             Self::cleanup_plugin(&mut plugin);
             return Err(ModuleLoadError::Clutch {
-                path: source.path.clone(),
+                location: source.diagnostic_name.clone(),
                 message: error.to_string(),
             });
         }
@@ -474,7 +465,7 @@ impl ModuleLoader {
                 }
                 Self::cleanup_plugin(&mut plugin);
                 return Err(ModuleLoadError::Source {
-                    path: source.path.clone(),
+                    location: source.diagnostic_name.clone(),
                     message: error.to_string(),
                 });
             }
@@ -498,7 +489,7 @@ impl ModuleLoader {
             }
             Self::cleanup_plugin(&mut plugin);
             return Err(ModuleLoadError::Source {
-                path: source.path.clone(),
+                location: source.diagnostic_name.clone(),
                 message: error.to_string(),
             });
         }
@@ -691,12 +682,12 @@ impl ModuleLoader {
             ClutchPluginSource::Host { root, entry, .. } => {
                 let initializer = self.state.clutch_repository.plugin(entry).ok_or_else(|| {
                     ModuleLoadError::Clutch {
-                        path: root.clone(),
+                        location: root.to_string_lossy().into_owned(),
                         message: format!("plugin entry `{entry}` is not configured by the host"),
                     }
                 })?;
                 initializer(&mut registrar).map_err(|error| ModuleLoadError::Clutch {
-                    path: root.clone(),
+                    location: root.to_string_lossy().into_owned(),
                     message: format!("plugin initialization failed: {error}"),
                 })
             }
@@ -706,14 +697,14 @@ impl ModuleLoader {
                 if abi == crate::ffi_prototype::ABI_PROFILE {
                     let module = FfiPrototypeLibrary::load(library).map_err(|error| {
                         ModuleLoadError::Clutch {
-                            path: library.clone(),
+                            location: library.to_string_lossy().into_owned(),
                             message: format!("cannot load native plugin: {error}"),
                         }
                     })?;
                     module
                         .stage(&mut registrar)
                         .map_err(|error| ModuleLoadError::Clutch {
-                            path: root.clone(),
+                            location: root.to_string_lossy().into_owned(),
                             message: format!("native plugin initialization failed: {error}"),
                         })?;
                     registrar
@@ -722,12 +713,12 @@ impl ModuleLoader {
                             Ok(())
                         })
                         .map_err(|error| ModuleLoadError::Clutch {
-                            path: root.clone(),
+                            location: root.to_string_lossy().into_owned(),
                             message: format!("cannot retain native plugin cleanup: {error}"),
                         })
                 } else {
                     Err(ModuleLoadError::Clutch {
-                        path: root.clone(),
+                        location: root.to_string_lossy().into_owned(),
                         message: format!("unsupported native ABI `{abi}`"),
                     })
                 }
