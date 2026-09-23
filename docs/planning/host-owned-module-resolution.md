@@ -28,19 +28,36 @@ desktop diagnostics. It does not implement the portable `.cslug` format.
 
 ## 0. Establish a compatibility baseline
 
-- [ ] Inventory every `ModuleLoader` call site, including CLI entry loading,
+- [x] Inventory every `ModuleLoader` call site, including CLI entry loading,
   interactive compilation, configuration, native registration, warnings,
   shutdown, Clutch staging, static snapshots, and runtime import.
-- [ ] Record the existing desktop resolution candidates, success behavior, and
+- [x] Record the existing desktop resolution candidates, success behavior, and
   error text in focused module-loader and CLI tests before moving code.
-- [ ] Add a small shared module graph covering relative imports, library
+- [x] Add a small shared module graph covering relative imports, library
   fallback, repeated imports, failed initialization and retry, cycles, exports,
   live bindings, and a static imported callable snapshot.
-- [ ] Identify the existing native-Clutch lifecycle tests that must continue to
+- [x] Identify the existing native-Clutch lifecycle tests that must continue to
   run only in the desktop configuration.
 
 **Gate:** current desktop module-loader, CLI, configuration, interactive, and
 native-Clutch tests pass without behavioral changes.
+
+### Baseline inventory
+
+| Concern | Current owner | Baseline evidence |
+|---|---|---|
+| Entry lookup | `src/main.rs::read_entry_source` | CLI module tests preserve explicit-path and library fallback behavior. |
+| Desktop import candidates | `src/module.rs::ModuleLoader::load` | `resolves_importer_relative_source_and_library_roots`, `source_imports_use_the_configured_library_fallback`, and `source_imports_check_module_name_values_and_loader_failures`. |
+| Shared source graph | `ModuleLoader` compiler, snapshot, and instance caches | `baseline_graph_preserves_resolution_cache_liveness_and_import_snapshots`; `cyclic_imports_resolve_predeclared_function_bindings`. |
+| Retry and native lifecycle | Clutch staging and loader shutdown | `clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations`, the Clutch tests in `module_loader.rs`, and `ffi_prototype.rs`. |
+| Configuration and interactive compilation | `ModuleLoader` and `Vm` | `configuration.rs::exposes_cfg_to_program_and_imported_modules` and server interactive-session tests. |
+| VM integration | `Vm::import_at` and module-binding construction | `module_loader.rs` import tests and `vm/calls_and_native.rs` shared-loader coverage. |
+
+The baseline graph covers importer-relative source lookup, library fallback,
+repeated imports, live exports, and static callable snapshots. The existing
+cyclic-import and Clutch retry tests cover the remaining graph requirements;
+they remain independent because retry currently requires a staged native
+registration failure.
 
 ## 1. Define the filesystem-free resolver contract
 

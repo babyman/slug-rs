@@ -790,6 +790,61 @@ fn source_imports_use_the_configured_library_fallback() {
 }
 
 #[test]
+fn baseline_graph_preserves_resolution_cache_liveness_and_import_snapshots() {
+    let root = root("baseline-graph");
+    let source = root.join("source");
+    let library = root.join("library");
+    fs::create_dir_all(source.join("feature")).expect("create feature module directory");
+    fs::create_dir_all(library.join("slug")).expect("create library module directory");
+    fs::write(source.join("feature/local.slug"), "export val base = 30\n")
+        .expect("write importer-relative module");
+    fs::write(
+        source.join("feature/bridge.slug"),
+        "val local = import(\"local\")\n\
+         val standard = import(\"slug.std\")\n\
+         export var count = 1\n\
+         export val advance = fn() { count = count + 1; local.base + standard.offset + count }\n\
+         export val divide = fn(value) { value / 10 }\n",
+    )
+    .expect("write bridge module");
+    fs::write(library.join("slug/std.slug"), "export val offset = 10\n")
+        .expect("write library fallback module");
+
+    let main_path = source.join("main.slug");
+    let loader = ModuleLoader::new(&source, Some(library));
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val bridge = import(\"feature.bridge\")\n\
+             val again = import(\"feature.bridge\")\n\
+             val apply = fn(value) { bridge.divide(value) }\n\
+             export val result = [bridge.advance(), again.advance(), apply(20)]\n",
+        )
+        .expect("compile baseline module graph");
+    let invalid = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val bridge = import(\"feature.bridge\")\n\
+             val apply = fn(value) { bridge.divide(value) }\n\
+             apply(\"text\")\n",
+        )
+        .expect_err("imported callable snapshot constrains local calls");
+    assert!(invalid.to_string().starts_with("expected num, got str"));
+
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run baseline module graph");
+
+    assert_eq!(loader.cached_module_count(), 3);
+    assert_eq!(loader.initialized_module_count(), 3);
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"result\": [42, 43, 2]}"
+    );
+    fs::remove_dir_all(root).expect("remove baseline module graph");
+}
+
+#[test]
 fn imported_schema_bindings_preserve_nominal_construction_types() {
     let root = root("imported-schema-types");
     fs::create_dir_all(&root).expect("create schema module directory");
