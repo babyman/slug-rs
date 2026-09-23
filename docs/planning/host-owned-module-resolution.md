@@ -104,7 +104,7 @@ with a test resolver, including static type snapshots and module cycles.
   the entry module rather than calling `fs::read_to_string` directly.
 - [x] Preserve explicit entry paths, `SLUG_FIXTURE_MODULE_ROOT`, `SLUG_HOME`
   library fallback, source locations, JSON diagnostics, and exit behavior.
-- [ ] Implement importer-relative, project-root, and library-root resolution
+- [x] Implement importer-relative, project-root, and library-root resolution
   using `DesktopLoader`, then retain indexed Clutch lookup as the final
   provider.
 - [ ] Keep canonical filesystem identity private to the desktop implementation

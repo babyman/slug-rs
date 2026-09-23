@@ -3,6 +3,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use slug_vm::host::DesktopLoader;
 use slug_vm::{
     ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader,
     ModuleRequest, ModuleResolver, NativeArity, NativeCall, NativeDescriptorError, NativeModule,
@@ -718,7 +719,7 @@ fn resolves_importer_relative_source_and_library_roots() {
         .expect("write local module");
     fs::write(library.join("slug/std.slug"), "val value = 2\n").expect("write library module");
 
-    let loader = ModuleLoader::new(&source, Some(library.clone()));
+    let loader = DesktopLoader::new(ModuleLoader::new(&source, Some(library.clone())));
     assert_eq!(
         loader
             .resolve(ModuleRequest::new(None, "local.math"))
