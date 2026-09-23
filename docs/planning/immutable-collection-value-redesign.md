@@ -140,7 +140,7 @@ concatenation make eager rest-list materialization a credible target.
   equality, indexing, rendering, and subsequent list updates.
 - [x] Add opt-in metrics that distinguish view creation from materialization
   only if the aggregate copy counters cannot establish the result.
-- [ ] Compare Fannkuch-7, the existing small/medium/large collection
+- [x] Compare Fannkuch-7, the existing small/medium/large collection
   workloads, retained-alias workloads, and peak-RSS fixtures before retaining
   the representation.
 
@@ -157,8 +157,13 @@ The post-view benchmark run created 1,740,530 list views in ten
 elements) during persistent updates. The same run completed in about 1.61 s,
 compared with the 1.82 s pre-view reference. Small, medium, large, unique-owner,
 and retained-closure collection workloads created no views and showed no new
-copy path. Retained-alias and peak-RSS fixture coverage remains required before
-closing this stage's final gate.
+copy path.
+
+The retained-memory fixture run reported 2.34 MiB for the minimal program,
+3.42 MiB for retained 128 closures and maps, and 4.37 MiB/4.31 MiB for retained
+1,024 closures/maps. These host-local RSS readings include process startup and
+allocator state; alongside the retained-alias tests, they found no unbounded
+view-retention behavior.
 
 ### 4. Resolve map-key equivalence before adding an index
 

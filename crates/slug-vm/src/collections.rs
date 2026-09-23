@@ -95,10 +95,12 @@ impl List {
         }
     }
 
+    #[cfg(feature = "metrics")]
     pub(crate) fn is_uniquely_owned(&self) -> bool {
         Rc::strong_count(&self.values) == 1
     }
 
+    #[cfg(feature = "metrics")]
     pub(crate) fn is_view(&self) -> bool {
         self.start != 0 || self.end != self.values.len()
     }
