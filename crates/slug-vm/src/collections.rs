@@ -95,7 +95,7 @@ impl List {
         }
     }
 
-    #[cfg(feature = "metrics")]
+    #[cfg(any(feature = "metrics", test))]
     pub(crate) fn is_uniquely_owned(&self) -> bool {
         Rc::strong_count(&self.values) == 1
     }

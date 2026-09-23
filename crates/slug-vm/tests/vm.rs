@@ -9,11 +9,14 @@ use std::{
 use slug_vm::SelectCase;
 use slug_vm::VmProgress;
 use slug_vm::{
-    CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPattern,
-    MatchPatternId, MatchRest, ModuleLoader, NativeArity, NativeCall, NativeError, NativeModule,
-    NativeOwnedValue, NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField,
-    SchemaFieldsId, SourceSpan, SpanId, StructFieldsId, Value, Vm, compile,
+    CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPatternId,
+    MatchRest, ModuleLoader, NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue,
+    NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField, SchemaFieldsId,
+    SourceSpan, SpanId, StructFieldsId, Value, Vm, compile,
 };
+
+#[cfg(feature = "metrics")]
+use slug_vm::MatchPattern;
 
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
