@@ -427,10 +427,18 @@ impl ModuleLoader {
         importer: Option<&Path>,
         name: &str,
     ) -> Result<ModuleInstance, ModuleLoadError> {
-        let source = match self.load(importer, name) {
+        let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
+        self.initialize_request(ModuleRequest::new(importer.as_ref(), name))
+    }
+
+    pub(crate) fn initialize_request(
+        &self,
+        request: ModuleRequest<'_>,
+    ) -> Result<ModuleInstance, ModuleLoadError> {
+        let source = match self.resolve(request) {
             Ok(source) => source,
             Err(ModuleLoadError::NotFound { .. })
-                if name == "slug.builtin" && !self.builtin_globals().is_empty() =>
+                if request.name == "slug.builtin" && !self.builtin_globals().is_empty() =>
             {
                 return Ok(self.virtual_builtin_module());
             }
@@ -440,12 +448,34 @@ impl ModuleLoader {
             return Ok(instance.clone());
         }
         let mut plugin = self.stage_clutch_plugin(&source)?;
-        let program = match self.compile(importer, name) {
-            Ok(program) => program,
-            Err(error) => {
-                Self::cleanup_plugin(&mut plugin);
-                return Err(error);
-            }
+        let program = if let Some(program) = self.state.compiled.borrow().get(&source.key) {
+            program.clone()
+        } else {
+            let mut program = match self.compile_source_for_module(
+                &source.diagnostic_name,
+                &source.text,
+                request.name != "slug.builtin",
+            ) {
+                Ok(program) => program,
+                Err(error) => {
+                    Self::cleanup_plugin(&mut plugin);
+                    return Err(ModuleLoadError::Source {
+                        location: source.diagnostic_name.clone(),
+                        message: error.to_string(),
+                    });
+                }
+            };
+            program.set_module_name(request.name);
+            program.set_module_key(source.key.clone());
+            self.state
+                .semantic_snapshots
+                .borrow_mut()
+                .insert(source.key.clone(), program.semantic_snapshot().clone());
+            self.state
+                .compiled
+                .borrow_mut()
+                .insert(source.key.clone(), program.clone());
+            program
         };
         if let Some(staged) = plugin.as_ref()
             && let Err(error) = self.define_foreign_batch(staged.functions.clone())

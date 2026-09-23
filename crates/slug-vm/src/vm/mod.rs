@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashSet, path::Path, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 #[cfg(feature = "concurrency")]
 use std::cell::Cell;
@@ -14,7 +14,7 @@ use crate::value::Task;
 #[cfg(feature = "concurrency")]
 use crate::value::TaskAdmission;
 use crate::{
-    CallArgumentKind, Capture, MatchPatternId, ModuleDeclaration, ModuleLoader,
+    CallArgumentKind, Capture, MatchPatternId, ModuleDeclaration, ModuleLoader, ModuleRequest,
     NativeDescriptorError, NativeFunction, Program, SourceSpan, SpanId, Value,
     bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
@@ -4010,9 +4010,10 @@ impl Vm {
                 span,
             )
         })?;
-        let importer = span
-            .or_else(|| self.active_span())
-            .map(|span| Path::new(span.path.as_ref()));
+        let importer = self
+            .module_program
+            .as_ref()
+            .and_then(|program| program.module_key());
         let mut exports = Vec::new();
         for name in names {
             let Value::Str(name) = name else {
@@ -4025,9 +4026,11 @@ impl Vm {
                     span,
                 ));
             };
-            let instance = loader.initialize(importer, &name).map_err(|error| {
-                self.error_at(RuntimeErrorKind::Module, error.to_string(), span)
-            })?;
+            let instance = loader
+                .initialize_request(ModuleRequest::new(importer, &name))
+                .map_err(|error| {
+                    self.error_at(RuntimeErrorKind::Module, error.to_string(), span)
+                })?;
             let Value::Map(module_exports) = instance.live_exports else {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,

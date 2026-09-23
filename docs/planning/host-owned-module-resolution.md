@@ -70,7 +70,7 @@ registration failure.
 - [x] Redesign resolution errors so a resolver can report an invalid name,
   absence, unreadable payload, or host-specific provider failure without
   requiring a filesystem search-path type.
-- [ ] Pass the owning program/module identity to runtime `import()`; do not
+- [x] Pass the owning program/module identity to runtime `import()`; do not
   infer it from a span path.
 - [ ] Preserve source paths as diagnostic metadata, not resolution inputs.
 

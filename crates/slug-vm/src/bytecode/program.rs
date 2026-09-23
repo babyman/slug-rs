@@ -4,7 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use crate::source::environment::{CallableIdentity, ModuleSnapshot};
+use crate::{
+    ModuleKey,
+    source::environment::{CallableIdentity, ModuleSnapshot},
+};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
@@ -40,6 +43,7 @@ pub struct Program {
     exports: Vec<String>,
     entrypoint: Option<Entrypoint>,
     module_name: String,
+    module_key: Option<ModuleKey>,
     semantic_snapshot: ModuleSnapshot,
     callable_identities: Vec<CallableIdentity>,
     sources: Vec<Arc<str>>,
@@ -842,6 +846,10 @@ impl Program {
         &self.module_name
     }
 
+    pub(crate) fn module_key(&self) -> Option<&ModuleKey> {
+        self.module_key.as_ref()
+    }
+
     pub(crate) fn set_bindings(&mut self, bindings: Vec<String>) {
         self.bindings = bindings;
     }
@@ -881,6 +889,10 @@ impl Program {
     /// Sets the module name used by module-relative host services.
     pub fn set_module_name(&mut self, module_name: impl Into<String>) {
         self.module_name = module_name.into();
+    }
+
+    pub(crate) fn set_module_key(&mut self, module_key: ModuleKey) {
+        self.module_key = Some(module_key);
     }
 
     pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {

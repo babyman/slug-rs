@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, fmt};
 
-use crate::{Program, SourceSpan};
+use crate::{ModuleKey, Program, SourceSpan};
 
 #[path = "syntax/ast.rs"]
 mod ast;
@@ -82,7 +82,9 @@ impl std::error::Error for SourceError {}
 pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    compile_expressions(path, expressions, ImportSnapshots::new())
+    let mut program = compile_expressions(path, expressions, ImportSnapshots::new())?;
+    program.set_module_key(ModuleKey::new(path));
+    Ok(program)
 }
 
 pub(crate) fn compile_with_resolver(
@@ -104,7 +106,9 @@ pub(crate) fn compile_with_resolver(
     {
         entry.insert(snapshot);
     }
-    compile_expressions(path, expressions, imports)
+    let mut program = compile_expressions(path, expressions, imports)?;
+    program.set_module_key(ModuleKey::new(path));
+    Ok(program)
 }
 
 fn compile_expressions(
