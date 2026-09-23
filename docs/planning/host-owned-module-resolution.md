@@ -63,7 +63,7 @@ registration failure.
 
 - [x] Introduce a private or deliberately narrow `ModuleResolver` interface
   accepting a logical requested name and an optional opaque importer identity.
-- [ ] Define resolved-module data with an opaque cache key, diagnostic label,
+- [x] Define resolved-module data with an opaque cache key, diagnostic label,
   source payload, and optional module activation lease.
 - [ ] Replace `PathBuf` in core cache, cycle, and instance keys with the opaque
   identity. Keep paths confined to the desktop implementation and diagnostics.

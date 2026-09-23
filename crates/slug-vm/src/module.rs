@@ -87,9 +87,13 @@ struct ModuleLoaderState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModuleSource {
-    pub path: PathBuf,
+    /// Stable host identity used by future filesystem-free module caches.
+    pub key: ModuleKey,
+    /// Host-provided label used in source and module diagnostics.
+    pub diagnostic_name: String,
     pub text: String,
-    clutch_plugin: Option<ClutchPluginSource>,
+    path: PathBuf,
+    activation: Option<ClutchPluginSource>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -260,9 +264,11 @@ impl ModuleResolver for ModuleLoader {
             match fs::read_to_string(path) {
                 Ok(text) => {
                     return Ok(ModuleSource {
+                        key: ModuleKey::new(path.to_string_lossy()),
+                        diagnostic_name: path.to_string_lossy().into_owned(),
                         path: path.clone(),
                         text,
-                        clutch_plugin: None,
+                        activation: None,
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -286,9 +292,11 @@ impl ModuleResolver for ModuleLoader {
                 message: error.to_string(),
             })?;
             return Ok(ModuleSource {
+                key: ModuleKey::new(module.path.to_string_lossy()),
+                diagnostic_name: module.path.to_string_lossy().into_owned(),
                 path: module.path,
                 text,
-                clutch_plugin: match (module.plugin_entry, module.native_plugin) {
+                activation: match (module.plugin_entry, module.native_plugin) {
                     (Some(entry), None) => Some(ClutchPluginSource::Host {
                         root: module.root,
                         entry,
@@ -502,7 +510,7 @@ impl ModuleLoader {
             .borrow_mut()
             .insert(source.path, instance.clone());
         if let Some(plugin) = plugin {
-            let root = source.clutch_plugin.as_ref().map_or_else(
+            let root = source.activation.as_ref().map_or_else(
                 || instance.path.clone(),
                 |plugin| plugin.root().to_path_buf(),
             );
@@ -664,7 +672,7 @@ impl ModuleLoader {
         &self,
         source: &ModuleSource,
     ) -> Result<Option<StagedClutchPlugin>, ModuleLoadError> {
-        let Some(plugin) = &source.clutch_plugin else {
+        let Some(plugin) = &source.activation else {
             return Ok(None);
         };
         if self
