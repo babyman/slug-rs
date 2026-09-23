@@ -8,7 +8,7 @@ use std::{
 };
 
 use serde::Serialize;
-use slug_vm::host::{build_default_host_vm, default_library_root};
+use slug_vm::host::{DesktopLoader, build_default_host_vm, default_library_root};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
     RuntimeErrorKind, SourceError, SourceErrorKind, SourceSpan, Vm,
@@ -199,7 +199,7 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let library_root = default_library_root(slug_home.as_deref());
-    let (resolved_path, source) = match read_entry_source(
+    let (resolved_path, source) = match DesktopLoader::load_entry(
         path,
         configured_source_root.as_deref(),
         library_root.as_deref(),
@@ -263,45 +263,6 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
             ExitCode::from(1)
         }
     }
-}
-
-/// Reads an entry program by explicit path, module root, or installed library name.
-///
-/// The library fallback accepts a bare name such as `hello` and reads
-/// `lib/hello.slug`; explicit paths retain their supplied extension.
-fn read_entry_source(
-    path: &str,
-    source_root: Option<&Path>,
-    library_root: Option<&Path>,
-) -> Result<(PathBuf, String), (PathBuf, std::io::Error)> {
-    let requested = Path::new(path);
-    let mut candidates = vec![requested.to_path_buf()];
-    if let Some(source_root) = source_root {
-        let candidate = source_root.join(requested);
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
-    }
-    if let Some(library_root) = library_root {
-        let library_entry = if requested.extension().is_some() {
-            requested.to_path_buf()
-        } else {
-            requested.with_extension("slug")
-        };
-        candidates.push(library_root.join(library_entry));
-    }
-
-    for candidate in candidates {
-        match fs::read_to_string(&candidate) {
-            Ok(source) => return Ok((candidate, source)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err((candidate, error)),
-        }
-    }
-    Err((
-        requested.to_path_buf(),
-        std::io::Error::from(std::io::ErrorKind::NotFound),
-    ))
 }
 
 #[derive(Serialize)]

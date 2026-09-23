@@ -97,12 +97,12 @@ with a test resolver, including static type snapshots and module cycles.
 
 ## 3. Reunify desktop entry and import loading
 
-- [ ] Implement `DesktopLoader` as the desktop resolver and entry-program
+- [x] Implement `DesktopLoader` as the desktop resolver and entry-program
   loader, owning source root, library root, configuration inputs, and desktop
   diagnostic labels.
-- [ ] Move `main.rs` entry lookup into `DesktopLoader`; make the CLI ask it for
+- [x] Move `main.rs` entry lookup into `DesktopLoader`; make the CLI ask it for
   the entry module rather than calling `fs::read_to_string` directly.
-- [ ] Preserve explicit entry paths, `SLUG_FIXTURE_MODULE_ROOT`, `SLUG_HOME`
+- [x] Preserve explicit entry paths, `SLUG_FIXTURE_MODULE_ROOT`, `SLUG_HOME`
   library fallback, source locations, JSON diagnostics, and exit behavior.
 - [ ] Implement importer-relative, project-root, and library-root resolution
   using `DesktopLoader`, then retain indexed Clutch lookup as the final
