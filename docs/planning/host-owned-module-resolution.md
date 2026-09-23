@@ -65,7 +65,7 @@ registration failure.
   accepting a logical requested name and an optional opaque importer identity.
 - [x] Define resolved-module data with an opaque cache key, diagnostic label,
   source payload, and optional module activation lease.
-- [ ] Replace `PathBuf` in core cache, cycle, and instance keys with the opaque
+- [x] Replace `PathBuf` in core cache, cycle, and instance keys with the opaque
   identity. Keep paths confined to the desktop implementation and diagnostics.
 - [ ] Redesign resolution errors so a resolver can report an invalid name,
   absence, unreadable payload, or host-specific provider failure without

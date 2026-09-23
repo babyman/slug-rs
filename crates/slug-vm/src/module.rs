@@ -73,10 +73,10 @@ struct ModuleLoaderState {
     library_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
     configuration: Configuration,
-    compiled: RefCell<HashMap<PathBuf, Program>>,
-    semantic_snapshots: RefCell<HashMap<PathBuf, ModuleSnapshot>>,
-    resolving_snapshots: RefCell<HashSet<PathBuf>>,
-    instances: RefCell<HashMap<PathBuf, ModuleInstance>>,
+    compiled: RefCell<HashMap<ModuleKey, Program>>,
+    semantic_snapshots: RefCell<HashMap<ModuleKey, ModuleSnapshot>>,
+    resolving_snapshots: RefCell<HashSet<ModuleKey>>,
+    instances: RefCell<HashMap<ModuleKey, ModuleInstance>>,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     active_clutch_plugins: RefCell<HashMap<PathBuf, StagedClutchPlugin>>,
@@ -113,7 +113,8 @@ enum ClutchPluginSource {
 
 #[derive(Clone, Debug)]
 pub struct ModuleInstance {
-    pub path: PathBuf,
+    pub key: ModuleKey,
+    pub diagnostic_name: String,
     pub program: Program,
     pub exports: Value,
     pub metadata: Vec<ModuleDeclaration>,
@@ -330,7 +331,7 @@ impl ModuleLoader {
     /// Returns an error for loader failures or invalid module source.
     pub fn compile(&self, importer: Option<&Path>, name: &str) -> Result<Program, ModuleLoadError> {
         let source = self.load(importer, name)?;
-        if let Some(program) = self.state.compiled.borrow().get(&source.path) {
+        if let Some(program) = self.state.compiled.borrow().get(&source.key) {
             return Ok(program.clone());
         }
         let mut program = self
@@ -347,11 +348,11 @@ impl ModuleLoader {
         self.state
             .semantic_snapshots
             .borrow_mut()
-            .insert(source.path.clone(), program.semantic_snapshot().clone());
+            .insert(source.key.clone(), program.semantic_snapshot().clone());
         self.state
             .compiled
             .borrow_mut()
-            .insert(source.path, program.clone());
+            .insert(source.key, program.clone());
         Ok(program)
     }
 
@@ -389,14 +390,14 @@ impl ModuleLoader {
 
     fn semantic_snapshot(&self, importer: Option<&Path>, name: &str) -> Option<ModuleSnapshot> {
         let source = self.load(importer, name).ok()?;
-        if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.path) {
+        if let Some(snapshot) = self.state.semantic_snapshots.borrow().get(&source.key) {
             return Some(snapshot.clone());
         }
         if !self
             .state
             .resolving_snapshots
             .borrow_mut()
-            .insert(source.path.clone())
+            .insert(source.key.clone())
         {
             return None;
         }
@@ -411,12 +412,12 @@ impl ModuleLoader {
         self.state
             .resolving_snapshots
             .borrow_mut()
-            .remove(&source.path);
+            .remove(&source.key);
         let snapshot = snapshot?;
         self.state
             .semantic_snapshots
             .borrow_mut()
-            .insert(source.path, snapshot.clone());
+            .insert(source.key, snapshot.clone());
         Some(snapshot)
     }
 
@@ -444,7 +445,7 @@ impl ModuleLoader {
             }
             Err(error) => return Err(error),
         };
-        if let Some(instance) = self.state.instances.borrow().get(&source.path) {
+        if let Some(instance) = self.state.instances.borrow().get(&source.key) {
             return Ok(instance.clone());
         }
         let mut plugin = self.stage_clutch_plugin(&source)?;
@@ -479,7 +480,8 @@ impl ModuleLoader {
             }
         };
         let instance = ModuleInstance {
-            path: source.path.clone(),
+            key: source.key.clone(),
+            diagnostic_name: source.diagnostic_name.clone(),
             program: program.program().clone(),
             exports: Value::Map(Rc::new(Vec::new())),
             metadata: vm.module_metadata().to_vec(),
@@ -488,9 +490,9 @@ impl ModuleLoader {
         self.state
             .instances
             .borrow_mut()
-            .insert(source.path.clone(), instance.clone());
+            .insert(source.key.clone(), instance.clone());
         if let Err(error) = vm.run_module(&program) {
-            self.state.instances.borrow_mut().remove(&source.path);
+            self.state.instances.borrow_mut().remove(&source.key);
             if let Some(staged) = plugin.as_ref() {
                 self.remove_foreign_batch(&staged.functions);
             }
@@ -508,12 +510,12 @@ impl ModuleLoader {
         self.state
             .instances
             .borrow_mut()
-            .insert(source.path, instance.clone());
+            .insert(source.key.clone(), instance.clone());
         if let Some(plugin) = plugin {
-            let root = source.activation.as_ref().map_or_else(
-                || instance.path.clone(),
-                |plugin| plugin.root().to_path_buf(),
-            );
+            let root = source
+                .activation
+                .as_ref()
+                .map_or_else(|| source.path.clone(), |plugin| plugin.root().to_path_buf());
             self.state
                 .active_clutch_plugins
                 .borrow_mut()
@@ -642,8 +644,8 @@ impl ModuleLoader {
     }
 
     fn virtual_builtin_module(&self) -> ModuleInstance {
-        let path = PathBuf::from("<slug.builtin>");
-        if let Some(instance) = self.state.instances.borrow().get(&path) {
+        let key = ModuleKey::new("<slug.builtin>");
+        if let Some(instance) = self.state.instances.borrow().get(&key) {
             return instance.clone();
         }
         let exports = Value::Map(Rc::new(
@@ -655,7 +657,8 @@ impl ModuleLoader {
         let mut program = Program::new();
         program.set_module_name("slug.builtin");
         let instance = ModuleInstance {
-            path: path.clone(),
+            key: key.clone(),
+            diagnostic_name: "<slug.builtin>".into(),
             program,
             exports: exports.clone(),
             metadata: Vec::new(),
@@ -664,7 +667,7 @@ impl ModuleLoader {
         self.state
             .instances
             .borrow_mut()
-            .insert(path, instance.clone());
+            .insert(key, instance.clone());
         instance
     }
 
