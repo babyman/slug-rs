@@ -528,41 +528,7 @@ impl ModuleLoader {
             return Ok(instance.clone());
         }
         let mut plugin = self.stage_clutch_plugin(&source)?;
-        let program =
-            if let Some(program) = self.state.runtime.state.compiled.borrow().get(&source.key) {
-                program.clone()
-            } else {
-                let mut program = match self.compile_source_for_module(
-                    &source.key,
-                    &source.diagnostic_name,
-                    &source.text,
-                    request.name != "slug.builtin",
-                ) {
-                    Ok(program) => program,
-                    Err(error) => {
-                        Self::cleanup_plugin(&mut plugin);
-                        return Err(ModuleLoadError::Source {
-                            location: source.diagnostic_name.clone(),
-                            message: error.to_string(),
-                        });
-                    }
-                };
-                program.set_module_name(request.name);
-                program.set_module_key(source.key.clone());
-                self.state
-                    .runtime
-                    .state
-                    .semantic_snapshots
-                    .borrow_mut()
-                    .insert(source.key.clone(), program.semantic_snapshot().clone());
-                self.state
-                    .runtime
-                    .state
-                    .compiled
-                    .borrow_mut()
-                    .insert(source.key.clone(), program.clone());
-                program
-            };
+        let program = self.cached_or_compile(&source, request.name, &mut plugin)?;
         if let Some(staged) = plugin.as_ref()
             && let Err(error) = self.define_foreign_batch(staged.functions.clone())
         {
@@ -638,6 +604,47 @@ impl ModuleLoader {
                 .insert(root, plugin);
         }
         Ok(instance)
+    }
+
+    fn cached_or_compile(
+        &self,
+        source: &ModuleSource,
+        module_name: &str,
+        plugin: &mut Option<StagedClutchPlugin>,
+    ) -> Result<Program, ModuleLoadError> {
+        if let Some(program) = self.state.runtime.state.compiled.borrow().get(&source.key) {
+            return Ok(program.clone());
+        }
+        let program = self
+            .compile_source_for_module(
+                &source.key,
+                &source.diagnostic_name,
+                &source.text,
+                module_name != "slug.builtin",
+            )
+            .map_err(|error| ModuleLoadError::Source {
+                location: source.diagnostic_name.clone(),
+                message: error.to_string(),
+            });
+        if program.is_err() {
+            Self::cleanup_plugin(plugin);
+        }
+        let mut program = program?;
+        program.set_module_name(module_name);
+        program.set_module_key(source.key.clone());
+        self.state
+            .runtime
+            .state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(source.key.clone(), program.semantic_snapshot().clone());
+        self.state
+            .runtime
+            .state
+            .compiled
+            .borrow_mut()
+            .insert(source.key.clone(), program.clone());
+        Ok(program)
     }
 
     #[must_use]

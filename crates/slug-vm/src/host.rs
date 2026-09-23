@@ -27,6 +27,11 @@ impl DesktopLoader {
     ///
     /// The library fallback accepts a bare name such as `hello` and reads
     /// `lib/hello.slug`; explicit paths retain their supplied extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns the candidate path and its read failure when a matching entry
+    /// cannot be read.
     pub fn load_entry(
         path: &str,
         source_root: Option<&Path>,
