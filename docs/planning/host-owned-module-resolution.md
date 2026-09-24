@@ -84,7 +84,7 @@ and produce the same source and module errors expected by the shared graph.
   runtime that depends only on the resolver contract.
 - [x] Route `compile_with_resolver` and interactive compilation through that
   runtime so static imports and runtime imports request the same identity.
-- [ ] Keep isolated module VMs, predeclared bindings, live exports, metadata,
+- [x] Keep isolated module VMs, predeclared bindings, live exports, metadata,
   warnings, and retry-after-failure behavior unchanged.
 - [ ] Separate immutable configuration, native-function registry, resource
   registry, and warning/shutdown sinks from filesystem resolution. Inject each
