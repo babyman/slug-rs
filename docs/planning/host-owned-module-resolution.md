@@ -120,7 +120,7 @@ programs behave identically through the new abstraction.
 - [x] Preserve the existing activation sequence: validate/compile source,
   stage registrations transactionally, initialize, remove registrations on
   failure, and retain successful Clutch ownership until shutdown.
-- [ ] Keep one native-library lease per Clutch and preserve module-qualified
+- [x] Keep one native-library lease per Clutch and preserve module-qualified
   foreign/resource validation for every provided module.
 - [ ] Confirm an ordinary source or ROM module cannot request a dynamic native
   library merely by naming an import.
