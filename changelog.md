@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed interactive `var` redeclarations so later reads return the replacement
+  value rather than a leaked binding wrapper.
+
 - Recorded the host-owned module-resolution boundary and a staged plan for
   filesystem-free desktop and embedded module loading; Slug source behavior is
   unchanged.
