@@ -115,7 +115,7 @@ programs behave identically through the new abstraction.
 
 ## 4. Adapt Clutches and native lifecycle
 
-- [ ] Make a resolved desktop Clutch module carry an optional activation lease
+- [x] Make a resolved desktop Clutch module carry an optional activation lease
   rather than exposing Clutch paths or manifests to the module runtime.
 - [ ] Preserve the existing activation sequence: validate/compile source,
   stage registrations transactionally, initialize, remove registrations on

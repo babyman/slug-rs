@@ -74,7 +74,8 @@ struct ModuleLoaderState {
     clutch_repository: ClutchRepository,
     runtime: ModuleRuntime,
     services: ModuleRuntimeServices,
-    active_clutch_plugins: RefCell<HashMap<PathBuf, StagedClutchPlugin>>,
+    activation_sources: RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>,
+    active_clutch_plugins: RefCell<HashMap<ModuleActivationLease, StagedClutchPlugin>>,
 }
 
 /// Runtime services shared by a module graph, independent of desktop lookup.
@@ -401,9 +402,15 @@ pub struct ModuleSource {
     /// Host-provided label used in source and module diagnostics.
     pub diagnostic_name: String,
     pub text: String,
-    path: PathBuf,
-    activation: Option<ClutchPluginSource>,
+    activation: Option<ModuleActivationLease>,
 }
+
+/// Opaque host-owned capability to activate a resolved module.
+///
+/// The module runtime only passes this through its lifecycle hooks; desktop
+/// storage details remain in the resolving host.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ModuleActivationLease(String);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ClutchPluginSource {
@@ -515,6 +522,7 @@ impl ModuleLoader {
                     warnings: RefCell::new(Vec::new()),
                     shutdown_errors: RefCell::new(Vec::new()),
                 },
+                activation_sources: RefCell::new(HashMap::new()),
                 active_clutch_plugins: RefCell::new(HashMap::new()),
             }),
         }
@@ -563,7 +571,6 @@ impl ModuleResolver for ModuleLoader {
                     return Ok(ModuleSource {
                         key: ModuleKey::new(path.to_string_lossy()),
                         diagnostic_name: path.to_string_lossy().into_owned(),
-                        path: path.clone(),
                         text,
                         activation: None,
                     });
@@ -588,28 +595,34 @@ impl ModuleResolver for ModuleLoader {
                 location: module.path.to_string_lossy().into_owned(),
                 message: error.to_string(),
             })?;
+            let activation = match (module.plugin_entry, module.native_plugin) {
+                (Some(entry), None) => Some(ClutchPluginSource::Host {
+                    root: module.root,
+                    entry,
+                    module_names: vec![request.name.into()],
+                }),
+                (None, Some(native)) => Some(ClutchPluginSource::Native {
+                    root: module.root,
+                    library: native.library,
+                    abi: native.abi,
+                    module_names: module.module_names,
+                }),
+                (None, None) => None,
+                (Some(_), Some(_)) => unreachable!("clutch manifest validation is inconsistent"),
+            };
+            let lease = activation.as_ref().map(|plugin| {
+                let lease = ModuleActivationLease(plugin.root().to_string_lossy().into_owned());
+                self.state
+                    .activation_sources
+                    .borrow_mut()
+                    .insert(lease.clone(), plugin.clone());
+                lease
+            });
             return Ok(ModuleSource {
                 key: ModuleKey::new(module.path.to_string_lossy()),
                 diagnostic_name: module.path.to_string_lossy().into_owned(),
-                path: module.path,
                 text,
-                activation: match (module.plugin_entry, module.native_plugin) {
-                    (Some(entry), None) => Some(ClutchPluginSource::Host {
-                        root: module.root,
-                        entry,
-                        module_names: vec![request.name.into()],
-                    }),
-                    (None, Some(native)) => Some(ClutchPluginSource::Native {
-                        root: module.root,
-                        library: native.library,
-                        abi: native.abi,
-                        module_names: module.module_names,
-                    }),
-                    (None, None) => None,
-                    (Some(_), Some(_)) => {
-                        unreachable!("clutch manifest validation is inconsistent")
-                    }
-                },
+                activation: lease,
             });
         }
         Err(ModuleLoadError::NotFound {
@@ -823,19 +836,29 @@ impl ModuleLoader {
         &self,
         source: &ModuleSource,
     ) -> Result<Option<StagedClutchPlugin>, ModuleLoadError> {
-        let Some(plugin) = &source.activation else {
+        let Some(lease) = &source.activation else {
             return Ok(None);
         };
         if self
             .state
             .active_clutch_plugins
             .borrow()
-            .contains_key(plugin.root())
+            .contains_key(lease)
         {
             return Ok(None);
         }
+        let plugin = self
+            .state
+            .activation_sources
+            .borrow()
+            .get(lease)
+            .cloned()
+            .ok_or_else(|| ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "module activation lease is no longer available".into(),
+            })?;
         let mut registrar = clutch::ClutchPluginRegistrar::new(plugin.module_names().to_vec());
-        let result = match plugin {
+        let result = match &plugin {
             ClutchPluginSource::Host { root, entry, .. } => {
                 let initializer = self.state.clutch_repository.plugin(entry).ok_or_else(|| {
                     ModuleLoadError::Clutch {
@@ -931,14 +954,12 @@ impl ModuleRuntimeHost for ModuleLoader {
     }
 
     fn retain_module_activation(&self, source: &ModuleSource, activation: Self::Activation) {
-        let root = source
-            .activation
-            .as_ref()
-            .map_or_else(|| source.path.clone(), |plugin| plugin.root().to_path_buf());
-        self.state
-            .active_clutch_plugins
-            .borrow_mut()
-            .insert(root, activation);
+        if let Some(lease) = &source.activation {
+            self.state
+                .active_clutch_plugins
+                .borrow_mut()
+                .insert(lease.clone(), activation);
+        }
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
