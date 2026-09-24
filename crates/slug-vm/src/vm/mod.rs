@@ -464,11 +464,12 @@ impl InteractiveTask {
         let mut session_globals = environment.globals.borrow_mut();
         for name in program.bindings() {
             if let Some(value) = task_globals.get(name) {
-                let value = Self::rebind_interactive_value(
-                    value.clone(),
-                    &self.globals,
-                    &environment.globals,
-                );
+                // An overlay shares an existing mutable binding cell with its
+                // session. Read its current value before synchronizing so a
+                // redeclaration cannot store the binding wrapper in itself.
+                let value = value.resolve().unwrap_or_else(|_| value.clone());
+                let value =
+                    Self::rebind_interactive_value(value, &self.globals, &environment.globals);
                 let mutable = program
                     .declarations()
                     .iter()
@@ -1035,8 +1036,12 @@ impl Vm {
         let mut destination_globals = destination.globals.borrow_mut();
         for name in program.bindings() {
             if let Some(value) = source_globals.get(name) {
+                // An overlay shares an existing mutable binding cell with its
+                // session. Read its current value before synchronizing so a
+                // redeclaration cannot store the binding wrapper in itself.
+                let value = value.resolve().unwrap_or_else(|_| value.clone());
                 let value = Self::rebind_slim_interactive_value(
-                    value.clone(),
+                    value,
                     &source.globals,
                     &destination.globals,
                 );

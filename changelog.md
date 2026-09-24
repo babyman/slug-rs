@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed interactive `var` redeclarations so later reads return the replacement
+  value rather than a leaked binding wrapper.
+
 - Added a metrics-enabled in-process Fannkuch-redux benchmark to expose
   persistent-list allocation and ownership costs alongside the source timing.
 

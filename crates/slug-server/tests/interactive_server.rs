@@ -165,6 +165,25 @@ fn session_persists_compiler_and_runtime_bindings_across_submissions() {
 }
 
 #[test]
+fn session_redeclaration_replaces_a_mutable_binding_value() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    assert_eq!(
+        submit(&mut server, 3, &session, "var x = 1").result,
+        completed(serde_json::Value::Null, "idle")
+    );
+    assert_eq!(
+        submit(&mut server, 4, &session, "var x = 2").result,
+        completed(serde_json::Value::Null, "idle")
+    );
+    assert_eq!(
+        submit(&mut server, 5, &session, "x").result,
+        completed(serde_json::json!(2), "idle")
+    );
+}
+
+#[test]
 fn session_infers_wrappers_from_retained_callable_signatures() {
     let mut server = initialized_server();
     let session = open_session(&mut server);
