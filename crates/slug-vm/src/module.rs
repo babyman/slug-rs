@@ -72,11 +72,17 @@ struct ModuleLoaderState {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
-    configuration: Configuration,
     runtime: ModuleRuntime,
+    services: ModuleRuntimeServices,
+    active_clutch_plugins: RefCell<HashMap<PathBuf, StagedClutchPlugin>>,
+}
+
+/// Runtime services shared by a module graph, independent of desktop lookup.
+#[derive(Debug)]
+struct ModuleRuntimeServices {
+    configuration: Configuration,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
-    active_clutch_plugins: RefCell<HashMap<PathBuf, StagedClutchPlugin>>,
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
@@ -500,14 +506,16 @@ impl ModuleLoader {
                 source_root: source_root.into(),
                 library_root,
                 clutch_repository,
-                configuration,
                 runtime: ModuleRuntime::new(),
-                native_globals: RefCell::new(HashMap::new()),
-                foreign_functions: RefCell::new(HashMap::new()),
+                services: ModuleRuntimeServices {
+                    configuration,
+                    native_globals: RefCell::new(HashMap::new()),
+                    foreign_functions: RefCell::new(HashMap::new()),
+                    native_resources: native_resource_registry(),
+                    warnings: RefCell::new(Vec::new()),
+                    shutdown_errors: RefCell::new(Vec::new()),
+                },
                 active_clutch_plugins: RefCell::new(HashMap::new()),
-                native_resources: native_resource_registry(),
-                warnings: RefCell::new(Vec::new()),
-                shutdown_errors: RefCell::new(Vec::new()),
             }),
         }
     }
@@ -515,7 +523,7 @@ impl ModuleLoader {
     /// The immutable configuration shared by the program module and loaded modules.
     #[must_use]
     pub fn configuration(&self) -> &Configuration {
-        &self.state.configuration
+        &self.state.services.configuration
     }
 
     /// Loads a dotted module name without exposing file-system operations to Slug code.
@@ -688,23 +696,32 @@ impl ModuleLoader {
     /// Returns and clears module warnings accumulated during evaluation.
     #[must_use]
     pub fn take_warnings(&self) -> Vec<String> {
-        std::mem::take(&mut *self.state.warnings.borrow_mut())
+        std::mem::take(&mut *self.state.services.warnings.borrow_mut())
     }
 
     pub(crate) fn warn(&self, message: impl Into<String>) {
-        self.state.warnings.borrow_mut().push(message.into());
+        self.state
+            .services
+            .warnings
+            .borrow_mut()
+            .push(message.into());
     }
 
     pub(crate) fn define_native(&self, name: String, value: Value) {
-        self.state.native_globals.borrow_mut().insert(name, value);
+        self.state
+            .services
+            .native_globals
+            .borrow_mut()
+            .insert(name, value);
     }
 
     pub(crate) fn native_globals(&self) -> HashMap<String, Value> {
-        self.state.native_globals.borrow().clone()
+        self.state.services.native_globals.borrow().clone()
     }
 
     pub(crate) fn builtin_globals(&self) -> HashMap<String, Value> {
         self.state
+            .services
             .foreign_functions
             .borrow()
             .iter()
@@ -733,7 +750,7 @@ impl ModuleLoader {
                 )
             })
             .collect::<Vec<_>>();
-        let mut registry = self.state.foreign_functions.borrow_mut();
+        let mut registry = self.state.services.foreign_functions.borrow_mut();
         for (index, key) in keys.iter().enumerate() {
             if registry.contains_key(key) || keys[..index].contains(key) {
                 return Err(NativeDescriptorError::new(format!(
@@ -749,7 +766,7 @@ impl ModuleLoader {
     }
 
     fn remove_foreign_batch(&self, functions: &[NativeFunction]) {
-        let mut registry = self.state.foreign_functions.borrow_mut();
+        let mut registry = self.state.services.foreign_functions.borrow_mut();
         for function in functions {
             let key = (
                 function.module_name().to_string(),
@@ -766,6 +783,7 @@ impl ModuleLoader {
 
     pub(crate) fn foreign(&self, module: &str, name: &str) -> Option<NativeFunction> {
         self.state
+            .services
             .foreign_functions
             .borrow()
             .get(&(module.into(), name.into()))
@@ -773,22 +791,24 @@ impl ModuleLoader {
     }
 
     pub(crate) fn native_resources(&self) -> NativeResourceRegistry {
-        self.state.native_resources.clone()
+        self.state.services.native_resources.clone()
     }
 
     /// Finalizes native resources and releases every clutch-owned registration.
     ///
     /// A host must not execute additional work through a loader after shutdown.
     pub fn shutdown(&self) {
-        self.state
-            .shutdown_errors
-            .borrow_mut()
-            .extend(self.state.native_resources.finalize_all_for_shutdown());
+        self.state.services.shutdown_errors.borrow_mut().extend(
+            self.state
+                .services
+                .native_resources
+                .finalize_all_for_shutdown(),
+        );
         let plugins = std::mem::take(&mut *self.state.active_clutch_plugins.borrow_mut());
         for (_, mut plugin) in plugins {
             self.remove_foreign_batch(&plugin.functions);
             if let Err(error) = plugin.cleanup() {
-                self.state.shutdown_errors.borrow_mut().push(error);
+                self.state.services.shutdown_errors.borrow_mut().push(error);
             }
         }
     }
@@ -796,7 +816,7 @@ impl ModuleLoader {
     /// Returns and clears failures reported by best-effort plugin shutdown.
     #[must_use]
     pub fn take_shutdown_errors(&self) -> Vec<String> {
-        std::mem::take(&mut *self.state.shutdown_errors.borrow_mut())
+        std::mem::take(&mut *self.state.services.shutdown_errors.borrow_mut())
     }
 
     fn stage_clutch_plugin(
@@ -942,12 +962,13 @@ impl ClutchPluginSource {
 
 impl Drop for ModuleLoaderState {
     fn drop(&mut self) {
-        self.shutdown_errors
+        self.services
+            .shutdown_errors
             .get_mut()
-            .extend(self.native_resources.finalize_all_for_shutdown());
+            .extend(self.services.native_resources.finalize_all_for_shutdown());
         for plugin in self.active_clutch_plugins.get_mut().values_mut() {
             if let Err(error) = plugin.cleanup() {
-                self.shutdown_errors.get_mut().push(error);
+                self.services.shutdown_errors.get_mut().push(error);
             }
         }
     }

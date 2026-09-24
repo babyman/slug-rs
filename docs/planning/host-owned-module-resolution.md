@@ -86,7 +86,7 @@ and produce the same source and module errors expected by the shared graph.
   runtime so static imports and runtime imports request the same identity.
 - [x] Keep isolated module VMs, predeclared bindings, live exports, metadata,
   warnings, and retry-after-failure behavior unchanged.
-- [ ] Separate immutable configuration, native-function registry, resource
+- [x] Separate immutable configuration, native-function registry, resource
   registry, and warning/shutdown sinks from filesystem resolution. Inject each
   as the smallest existing runtime service needed.
 - [ ] Preserve the virtual `slug.builtin` module and its current registration
