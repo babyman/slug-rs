@@ -117,7 +117,7 @@ programs behave identically through the new abstraction.
 
 - [x] Make a resolved desktop Clutch module carry an optional activation lease
   rather than exposing Clutch paths or manifests to the module runtime.
-- [ ] Preserve the existing activation sequence: validate/compile source,
+- [x] Preserve the existing activation sequence: validate/compile source,
   stage registrations transactionally, initialize, remove registrations on
   failure, and retain successful Clutch ownership until shutdown.
 - [ ] Keep one native-library lease per Clutch and preserve module-qualified
