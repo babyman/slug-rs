@@ -79,7 +79,7 @@ and produce the same source and module errors expected by the shared graph.
 
 ## 2. Extract the filesystem-free module runtime
 
-- [ ] Move compilation caching, semantic snapshots, resolving-snapshot cycle
+- [x] Move compilation caching, semantic snapshots, resolving-snapshot cycle
   protection, initialized instances, and module initialization behind a module
   runtime that depends only on the resolver contract.
 - [x] Route `compile_with_resolver` and interactive compilation through that

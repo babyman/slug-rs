@@ -99,6 +99,37 @@ struct ModuleRuntimeState {
     instances: RefCell<HashMap<ModuleKey, ModuleInstance>>,
 }
 
+/// The non-resolution services module initialization needs from its host.
+///
+/// This keeps graph state independent from the desktop loader. In particular,
+/// `ModuleRuntime` never inspects an activation's storage representation or
+/// native registrations; it only sequences their lifecycle around module
+/// compilation and execution.
+trait ModuleRuntimeHost: ModuleResolver {
+    type Activation;
+
+    fn builtin_globals(&self) -> HashMap<String, Value>;
+
+    fn stage_module_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Self::Activation>, ModuleLoadError>;
+
+    fn register_module_activation(
+        &self,
+        source: &ModuleSource,
+        activation: &Self::Activation,
+    ) -> Result<(), ModuleLoadError>;
+
+    fn remove_module_activation(&self, activation: &Self::Activation);
+
+    fn cleanup_module_activation(&self, activation: &mut Option<Self::Activation>);
+
+    fn retain_module_activation(&self, source: &ModuleSource, activation: Self::Activation);
+
+    fn module_vm(&self, bindings: &[String]) -> Vm;
+}
+
 impl ModuleRuntime {
     fn new() -> Self {
         Self {
@@ -207,6 +238,153 @@ impl ModuleRuntime {
             .borrow_mut()
             .insert(source.key, snapshot.clone());
         Some(snapshot)
+    }
+
+    fn initialize<H: ModuleRuntimeHost>(
+        &self,
+        host: &H,
+        request: ModuleRequest<'_>,
+    ) -> Result<ModuleInstance, ModuleLoadError> {
+        let source = match host.resolve(request) {
+            Ok(source) => source,
+            Err(ModuleLoadError::NotFound { .. })
+                if request.name == "slug.builtin" && !host.builtin_globals().is_empty() =>
+            {
+                return Ok(self.virtual_builtin_module(host));
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(instance) = self.state.instances.borrow().get(&source.key) {
+            return Ok(instance.clone());
+        }
+
+        let mut activation = host.stage_module_activation(&source)?;
+        let program = match self.compile_cached_or_source(host, &source, request.name) {
+            Ok(program) => program,
+            Err(error) => {
+                host.cleanup_module_activation(&mut activation);
+                return Err(error);
+            }
+        };
+        if let Some(staged) = activation.as_ref()
+            && let Err(error) = host.register_module_activation(&source, staged)
+        {
+            host.cleanup_module_activation(&mut activation);
+            return Err(error);
+        }
+
+        let mut vm = host.module_vm(program.bindings());
+        let program = match vm.install_named(program, "main") {
+            Ok(program) => program,
+            Err(error) => {
+                if let Some(staged) = activation.as_ref() {
+                    host.remove_module_activation(staged);
+                }
+                host.cleanup_module_activation(&mut activation);
+                return Err(ModuleLoadError::Source {
+                    location: source.diagnostic_name.clone(),
+                    message: error.to_string(),
+                });
+            }
+        };
+        let instance = ModuleInstance {
+            key: source.key.clone(),
+            diagnostic_name: source.diagnostic_name.clone(),
+            program: program.program().clone(),
+            exports: Value::Map(Rc::new(Vec::new())),
+            metadata: vm.module_metadata().to_vec(),
+            live_exports: vm.live_exported_values(program.program()),
+        };
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(source.key.clone(), instance.clone());
+        if let Err(error) = vm.run_module(&program) {
+            self.state.instances.borrow_mut().remove(&source.key);
+            if let Some(staged) = activation.as_ref() {
+                host.remove_module_activation(staged);
+            }
+            host.cleanup_module_activation(&mut activation);
+            return Err(ModuleLoadError::Source {
+                location: source.diagnostic_name.clone(),
+                message: error.to_string(),
+            });
+        }
+        let instance = ModuleInstance {
+            exports: vm.exported_values(program.program()),
+            metadata: vm.module_metadata().to_vec(),
+            ..instance
+        };
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(source.key.clone(), instance.clone());
+        if let Some(activation) = activation {
+            host.retain_module_activation(&source, activation);
+        }
+        Ok(instance)
+    }
+
+    fn compile_cached_or_source(
+        &self,
+        resolver: &dyn ModuleResolver,
+        source: &ModuleSource,
+        module_name: &str,
+    ) -> Result<Program, ModuleLoadError> {
+        if let Some(program) = self.state.compiled.borrow().get(&source.key) {
+            return Ok(program.clone());
+        }
+        let mut program = self
+            .compile_source_for_module(
+                resolver,
+                &source.key,
+                &source.diagnostic_name,
+                &source.text,
+                module_name != "slug.builtin",
+            )
+            .map_err(|error| ModuleLoadError::Source {
+                location: source.diagnostic_name.clone(),
+                message: error.to_string(),
+            })?;
+        program.set_module_name(module_name);
+        program.set_module_key(source.key.clone());
+        self.state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(source.key.clone(), program.semantic_snapshot().clone());
+        self.state
+            .compiled
+            .borrow_mut()
+            .insert(source.key.clone(), program.clone());
+        Ok(program)
+    }
+
+    fn virtual_builtin_module<H: ModuleRuntimeHost>(&self, host: &H) -> ModuleInstance {
+        let key = ModuleKey::new("<slug.builtin>");
+        if let Some(instance) = self.state.instances.borrow().get(&key) {
+            return instance.clone();
+        }
+        let exports = Value::Map(Rc::new(
+            host.builtin_globals()
+                .into_iter()
+                .map(|(name, value)| (Value::string(name), value))
+                .collect(),
+        ));
+        let mut program = Program::new();
+        program.set_module_name("slug.builtin");
+        let instance = ModuleInstance {
+            key: key.clone(),
+            diagnostic_name: "<slug.builtin>".into(),
+            program,
+            exports: exports.clone(),
+            metadata: Vec::new(),
+            live_exports: exports,
+        };
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(key, instance.clone());
+        instance
     }
 }
 
@@ -476,22 +654,6 @@ impl ModuleLoader {
             .compile_interactive_forms(self, path, source, state)
     }
 
-    fn compile_source_for_module(
-        &self,
-        key: &ModuleKey,
-        diagnostic_name: &str,
-        source: &str,
-        include_implicit_builtins: bool,
-    ) -> Result<Program, SourceError> {
-        self.state.runtime.compile_source_for_module(
-            self,
-            key,
-            diagnostic_name,
-            source,
-            include_implicit_builtins,
-        )
-    }
-
     #[must_use]
     pub fn cached_module_count(&self) -> usize {
         self.state.runtime.state.compiled.borrow().len()
@@ -515,136 +677,7 @@ impl ModuleLoader {
         &self,
         request: ModuleRequest<'_>,
     ) -> Result<ModuleInstance, ModuleLoadError> {
-        let source = match self.resolve(request) {
-            Ok(source) => source,
-            Err(ModuleLoadError::NotFound { .. })
-                if request.name == "slug.builtin" && !self.builtin_globals().is_empty() =>
-            {
-                return Ok(self.virtual_builtin_module());
-            }
-            Err(error) => return Err(error),
-        };
-        if let Some(instance) = self.state.runtime.state.instances.borrow().get(&source.key) {
-            return Ok(instance.clone());
-        }
-        let mut plugin = self.stage_clutch_plugin(&source)?;
-        let program = self.cached_or_compile(&source, request.name, &mut plugin)?;
-        if let Some(staged) = plugin.as_ref()
-            && let Err(error) = self.define_foreign_batch(staged.functions.clone())
-        {
-            Self::cleanup_plugin(&mut plugin);
-            return Err(ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
-            });
-        }
-        let mut vm = Vm::with_module_bindings(self, program.bindings());
-        let program = match vm.install_named(program, "main") {
-            Ok(program) => program,
-            Err(error) => {
-                if let Some(staged) = plugin.as_ref() {
-                    self.remove_foreign_batch(&staged.functions);
-                }
-                Self::cleanup_plugin(&mut plugin);
-                return Err(ModuleLoadError::Source {
-                    location: source.diagnostic_name.clone(),
-                    message: error.to_string(),
-                });
-            }
-        };
-        let instance = ModuleInstance {
-            key: source.key.clone(),
-            diagnostic_name: source.diagnostic_name.clone(),
-            program: program.program().clone(),
-            exports: Value::Map(Rc::new(Vec::new())),
-            metadata: vm.module_metadata().to_vec(),
-            live_exports: vm.live_exported_values(program.program()),
-        };
-        self.state
-            .runtime
-            .state
-            .instances
-            .borrow_mut()
-            .insert(source.key.clone(), instance.clone());
-        if let Err(error) = vm.run_module(&program) {
-            self.state
-                .runtime
-                .state
-                .instances
-                .borrow_mut()
-                .remove(&source.key);
-            if let Some(staged) = plugin.as_ref() {
-                self.remove_foreign_batch(&staged.functions);
-            }
-            Self::cleanup_plugin(&mut plugin);
-            return Err(ModuleLoadError::Source {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
-            });
-        }
-        let instance = ModuleInstance {
-            exports: vm.exported_values(program.program()),
-            metadata: vm.module_metadata().to_vec(),
-            ..instance
-        };
-        self.state
-            .runtime
-            .state
-            .instances
-            .borrow_mut()
-            .insert(source.key.clone(), instance.clone());
-        if let Some(plugin) = plugin {
-            let root = source
-                .activation
-                .as_ref()
-                .map_or_else(|| source.path.clone(), |plugin| plugin.root().to_path_buf());
-            self.state
-                .active_clutch_plugins
-                .borrow_mut()
-                .insert(root, plugin);
-        }
-        Ok(instance)
-    }
-
-    fn cached_or_compile(
-        &self,
-        source: &ModuleSource,
-        module_name: &str,
-        plugin: &mut Option<StagedClutchPlugin>,
-    ) -> Result<Program, ModuleLoadError> {
-        if let Some(program) = self.state.runtime.state.compiled.borrow().get(&source.key) {
-            return Ok(program.clone());
-        }
-        let program = self
-            .compile_source_for_module(
-                &source.key,
-                &source.diagnostic_name,
-                &source.text,
-                module_name != "slug.builtin",
-            )
-            .map_err(|error| ModuleLoadError::Source {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
-            });
-        if program.is_err() {
-            Self::cleanup_plugin(plugin);
-        }
-        let mut program = program?;
-        program.set_module_name(module_name);
-        program.set_module_key(source.key.clone());
-        self.state
-            .runtime
-            .state
-            .semantic_snapshots
-            .borrow_mut()
-            .insert(source.key.clone(), program.semantic_snapshot().clone());
-        self.state
-            .runtime
-            .state
-            .compiled
-            .borrow_mut()
-            .insert(source.key.clone(), program.clone());
-        Ok(program)
+        self.state.runtime.initialize(self, request)
     }
 
     #[must_use]
@@ -766,36 +799,6 @@ impl ModuleLoader {
         std::mem::take(&mut *self.state.shutdown_errors.borrow_mut())
     }
 
-    fn virtual_builtin_module(&self) -> ModuleInstance {
-        let key = ModuleKey::new("<slug.builtin>");
-        if let Some(instance) = self.state.runtime.state.instances.borrow().get(&key) {
-            return instance.clone();
-        }
-        let exports = Value::Map(Rc::new(
-            self.builtin_globals()
-                .into_iter()
-                .map(|(name, value)| (Value::string(name), value))
-                .collect(),
-        ));
-        let mut program = Program::new();
-        program.set_module_name("slug.builtin");
-        let instance = ModuleInstance {
-            key: key.clone(),
-            diagnostic_name: "<slug.builtin>".into(),
-            program,
-            exports: exports.clone(),
-            metadata: Vec::new(),
-            live_exports: exports,
-        };
-        self.state
-            .runtime
-            .state
-            .instances
-            .borrow_mut()
-            .insert(key, instance.clone());
-        instance
-    }
-
     fn stage_clutch_plugin(
         &self,
         source: &ModuleSource,
@@ -870,6 +873,56 @@ impl ModuleLoader {
         if let Some(plugin) = plugin {
             let _ = plugin.cleanup();
         }
+    }
+}
+
+impl ModuleRuntimeHost for ModuleLoader {
+    type Activation = StagedClutchPlugin;
+
+    fn builtin_globals(&self) -> HashMap<String, Value> {
+        self.builtin_globals()
+    }
+
+    fn stage_module_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Self::Activation>, ModuleLoadError> {
+        self.stage_clutch_plugin(source)
+    }
+
+    fn register_module_activation(
+        &self,
+        source: &ModuleSource,
+        activation: &Self::Activation,
+    ) -> Result<(), ModuleLoadError> {
+        self.define_foreign_batch(activation.functions.clone())
+            .map_err(|error| ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: error.to_string(),
+            })
+    }
+
+    fn remove_module_activation(&self, activation: &Self::Activation) {
+        self.remove_foreign_batch(&activation.functions);
+    }
+
+    fn cleanup_module_activation(&self, activation: &mut Option<Self::Activation>) {
+        Self::cleanup_plugin(activation);
+    }
+
+    fn retain_module_activation(&self, source: &ModuleSource, activation: Self::Activation) {
+        let root = source
+            .activation
+            .as_ref()
+            .map_or_else(|| source.path.clone(), |plugin| plugin.root().to_path_buf());
+        self.state
+            .active_clutch_plugins
+            .borrow_mut()
+            .insert(root, activation);
+    }
+
+    fn module_vm(&self, bindings: &[String]) -> Vm {
+        Vm::with_module_bindings(self, bindings)
     }
 }
 
