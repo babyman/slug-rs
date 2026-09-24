@@ -122,7 +122,7 @@ programs behave identically through the new abstraction.
   failure, and retain successful Clutch ownership until shutdown.
 - [x] Keep one native-library lease per Clutch and preserve module-qualified
   foreign/resource validation for every provided module.
-- [ ] Confirm an ordinary source or ROM module cannot request a dynamic native
+- [x] Confirm an ordinary source or ROM module cannot request a dynamic native
   library merely by naming an import.
 
 **Gate:** `ffi_prototype`, module-loader Clutch, and shutdown lifecycle tests
