@@ -2,7 +2,6 @@
 use std::collections::VecDeque;
 use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
 
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[cfg(not(feature = "concurrency"))]
@@ -17,6 +16,13 @@ use slug_vm::{
 };
 
 use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
+
+mod presentation;
+
+use presentation::{
+    InitializeParams, SubmitParams, completed_result, protocol_value, required_params,
+    session_result, stalled_result,
+};
 
 /// The protocol event stream used for host or program output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1011,94 +1017,4 @@ fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
         ));
     }
     call.return_value(NativeOwnedValue::nil())
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InitializeParams {
-    protocol: u8,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SubmitParams {
-    source: String,
-}
-
-fn completed_result(value: &Value, pending: bool) -> Value {
-    json!({
-        "status": "completed",
-        "value": value,
-        "session_state": session_state(pending),
-    })
-}
-
-fn stalled_result(pending: bool) -> Value {
-    json!({
-        "status": "stalled",
-        "session_state": session_state(pending),
-    })
-}
-
-fn session_result(pending: bool) -> Value {
-    json!({ "session_state": session_state(pending) })
-}
-
-const fn session_state(pending: bool) -> &'static str {
-    if pending { "stalled" } else { "idle" }
-}
-
-fn protocol_value(value: &SlugValue) -> Value {
-    match value {
-        SlugValue::Nil => Value::Null,
-        SlugValue::Bool(value) => Value::Bool(*value),
-        SlugValue::Int(value) => json!(value),
-        SlugValue::Float(value) if value.is_finite() => json!(value),
-        SlugValue::Str(value) => json!(value.as_ref()),
-        SlugValue::List(values) => Value::Array(values.iter().map(protocol_value).collect()),
-        _ => json!({ "kind": value_kind(value), "display": value.to_string() }),
-    }
-}
-
-fn value_kind(value: &SlugValue) -> &'static str {
-    match value {
-        SlugValue::Uninitialized | SlugValue::Binding { .. } => "binding",
-        SlugValue::Nil => "nil",
-        SlugValue::Bool(_) => "bool",
-        SlugValue::Int(_) | SlugValue::Float(_) => "num",
-        SlugValue::Str(_) => "str",
-        SlugValue::Bytes(_) => "bytes",
-        SlugValue::List(_) => "list",
-        SlugValue::Map(_) => "map",
-        SlugValue::StructSchema(_) => "struct_schema",
-        SlugValue::Struct(_) => "struct",
-        SlugValue::Enum(_) => "enum",
-        SlugValue::Channel(_) => "chan",
-        SlugValue::Closure(_)
-        | SlugValue::Native(_)
-        | SlugValue::DeclaredNative { .. }
-        | SlugValue::Builtin(_) => "fn",
-        #[cfg(feature = "concurrency")]
-        SlugValue::Task(_) => "task",
-        SlugValue::NativeResource(_) => "native_resource",
-        SlugValue::Overloads(_) => "overloads",
-    }
-}
-
-fn required_params<T>(request: &Request, method: &str) -> Result<T, Box<Diagnostic>>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    let Some(params) = request.params.clone() else {
-        return Err(Box::new(Diagnostic::protocol(
-            "missing_params",
-            format!("`{method}` requires params"),
-        )));
-    };
-    serde_json::from_value(params).map_err(|error| {
-        Box::new(Diagnostic::protocol(
-            "invalid_params",
-            format!("invalid `{method}` params: {error}"),
-        ))
-    })
 }

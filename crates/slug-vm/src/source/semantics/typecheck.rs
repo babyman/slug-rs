@@ -19,6 +19,12 @@ use super::{
     },
 };
 
+mod type_relations;
+
+use type_relations::{
+    is_dynamic_operation_type, is_map_key_type, type_intersection, type_subtract,
+};
+
 pub(super) fn analyze_with_imports(
     expressions: &[Expr],
     imports: ImportSnapshots,
@@ -2767,14 +2773,6 @@ fn subtract_result(
     Ok(Type::Num)
 }
 
-fn is_map_key_type(value: &Type) -> bool {
-    match value {
-        Type::Bool | Type::Num | Type::Str | Type::Bytes => true,
-        Type::Union(members) => members.iter().all(is_map_key_type),
-        _ => false,
-    }
-}
-
 fn multiply_result(
     left: &Type,
     right: &Type,
@@ -2888,14 +2886,6 @@ fn invalid_operation(
     ))
 }
 
-fn is_dynamic_operation_type(value_type: &Type) -> bool {
-    match value_type {
-        Type::Unknown | Type::Any => true,
-        Type::Union(members) => members.iter().any(is_dynamic_operation_type),
-        _ => false,
-    }
-}
-
 fn is_closed_coverage_type(value_type: &Type) -> bool {
     match value_type {
         Type::Nil
@@ -2998,54 +2988,6 @@ fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
         | Pattern::Pinned(_)
         | Pattern::MapAll
         | Pattern::EnumCase { .. } => false,
-    }
-}
-
-fn type_intersection(left: &Type, right: &Type) -> Option<Type> {
-    if let Type::Union(members) = left {
-        return union_intersections(members, right);
-    }
-    if let Type::Union(members) = right {
-        return union_intersections(members, left);
-    }
-    if left == right {
-        return Some(left.clone());
-    }
-    match (left, right) {
-        (Type::Struct(None), Type::Struct(Some(identity)))
-        | (Type::Struct(Some(identity)), Type::Struct(None)) => {
-            Some(Type::Struct(Some(identity.clone())))
-        }
-        _ => None,
-    }
-}
-
-fn union_intersections(members: &[Type], other: &Type) -> Option<Type> {
-    let intersections = members
-        .iter()
-        .filter_map(|member| type_intersection(member, other))
-        .collect::<Vec<_>>();
-    (!intersections.is_empty()).then(|| Type::union(intersections))
-}
-
-fn type_subtract(left: &Type, right: &Type) -> Option<Type> {
-    if let Type::Union(members) = right {
-        return members.iter().try_fold(left.clone(), |remaining, member| {
-            type_subtract(&remaining, member)
-        });
-    }
-    if let Type::Union(members) = left {
-        let remaining = members
-            .iter()
-            .filter(|member| type_intersection(member, right).is_none())
-            .cloned()
-            .collect::<Vec<_>>();
-        return (!remaining.is_empty()).then(|| Type::union(remaining));
-    }
-    if type_intersection(left, right).is_some() {
-        None
-    } else {
-        Some(left.clone())
     }
 }
 
