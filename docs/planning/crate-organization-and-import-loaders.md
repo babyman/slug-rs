@@ -39,19 +39,20 @@ behavior has an owning regression suite; see
 
 ## 1. Establish the workspace seams
 
-- [ ] Add workspace packages `slug-frontend`, `slug-loader`,
+- [x] Add workspace packages `slug-frontend`, `slug-loader`,
   `slug-nil-loader`, `slug-desktop-loader`, and `slug` without changing the
   executable behavior.
-- [ ] Declare one-way dependencies: `slug-frontend` depends on `slug-vm` and
+- [x] Declare one-way dependencies: `slug-frontend` depends on `slug-vm` and
   `slug-loader`; both loader implementations depend on `slug-loader`; `slug`
   composes all selected libraries. Avoid dependencies from `slug-vm` to any
   higher layer and from `slug-loader` to desktop policy.
-- [ ] Give each new crate a crate-local ownership note and focused test target.
-- [ ] Keep transitional re-exports short-lived and mark their removal point in
+- [x] Give each new crate a crate-local ownership note and focused test target.
+- [x] Keep transitional re-exports short-lived and mark their removal point in
   the migration commits rather than creating a second permanent public API.
 
-**Gate:** `cargo build --workspace` succeeds with the new empty seams and no
-dependency cycle.
+**Gate:** complete. `cargo build --workspace` succeeds with the new empty
+seams and no dependency cycle. No transitional re-exports are required until
+the next migration steps move concrete types.
 
 ## 2. Make `slug-vm` a runtime-only library
 
