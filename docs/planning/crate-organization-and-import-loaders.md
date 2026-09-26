@@ -24,17 +24,18 @@ plan remains the baseline for resolver and Clutch lifecycle invariants.
 
 ## 0. Freeze the observable baseline
 
-- [ ] Run the existing VM, CLI, module-loader, configuration, interactive, and
+- [x] Run the existing VM, CLI, module-loader, configuration, interactive, and
   native-Clutch tests before moving code; record any pre-existing failures.
-- [ ] Add focused assertions for the current desktop entry lookup, import
+- [x] Add focused assertions for the current desktop entry lookup, import
   precedence, module graph cache behavior, Clutch activation lifecycle, and
   `slug-server` protocol behavior.
-- [ ] Identify every public type crossing the intended crate seams, especially
+- [x] Identify every public type crossing the intended crate seams, especially
   source spans, source/runtime errors, module identities, native registrations,
   and interactive protocol data.
 
-**Gate:** the baseline tests pass and every observable desktop behavior has an
-owning regression suite.
+**Gate:** complete. The baseline tests pass and every observable desktop
+behavior has an owning regression suite; see
+[the baseline inventory](crate-organization-and-import-loaders-baseline.md).
 
 ## 1. Establish the workspace seams
 
