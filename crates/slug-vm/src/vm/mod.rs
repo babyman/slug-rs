@@ -33,6 +33,7 @@ mod calls;
 mod cleanup;
 mod error;
 mod frames;
+mod installation;
 mod operations;
 mod progress;
 #[cfg(feature = "concurrency")]
@@ -48,11 +49,15 @@ use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
 pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
 use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments};
+pub use installation::InstalledProgram;
 use operations::{
     add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, divide_num, index_value,
     is_map_key, list_append, list_prepend, matches_pattern, modulo, modulo_num, multiply,
     multiply_num, negate, numbers, shift, slice_value, subtract, subtract_num,
 };
+
+const MIN_I64_AS_F64: f64 = -9_223_372_036_854_775_808.0;
+const EXCLUSIVE_MAX_I64_AS_F64: f64 = 9_223_372_036_854_775_808.0;
 use progress::ProgressDriver;
 #[cfg(feature = "concurrency")]
 use scheduler::Nursery;
@@ -235,32 +240,6 @@ pub struct VmMetrics {
     pub program_clones: usize,
     /// Estimated inline bytecode bytes copied by whole-program clones.
     pub program_clone_bytes: usize,
-}
-
-/// Immutable, checked bytecode installed by a [`Vm`].
-///
-/// A program is installed for one root entry. The VM validates that entry and
-/// takes ownership of the mutable [`Program`] before this value is created.
-/// Reusing an `InstalledProgram` therefore does not clone or revalidate its
-/// bytecode. It is an in-process execution object, not a portable artifact.
-#[derive(Clone, Debug)]
-pub struct InstalledProgram {
-    program: Rc<Program>,
-    entry: usize,
-}
-
-impl InstalledProgram {
-    /// Returns the immutable bytecode retained by this installed program.
-    #[must_use]
-    pub fn program(&self) -> &Program {
-        &self.program
-    }
-
-    /// Returns the root chunk validated for this installed program.
-    #[must_use]
-    pub const fn entry(&self) -> usize {
-        self.entry
-    }
 }
 
 /// The independently owned interpreter state for a spawned task.
@@ -1435,6 +1414,7 @@ impl Vm {
     fn install_configuration_builtins(&mut self) {
         let mut globals = self.globals.borrow_mut();
         globals.insert("cfg".into(), Value::Builtin(Builtin::Cfg));
+        globals.insert("int".into(), Value::Builtin(Builtin::Int));
         globals.insert("stacktrace".into(), Value::Builtin(Builtin::Stacktrace));
     }
 
@@ -1492,6 +1472,13 @@ impl Vm {
         program
             .validate(entry)
             .map_err(|message| self.error(RuntimeErrorKind::InvalidBytecode, message, None))?;
+        if program.contains_non_finite_number() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidBytecode,
+                "bytecode contains a non-finite number".into(),
+                None,
+            ));
+        }
         #[cfg(feature = "metrics")]
         {
             let mut metrics = self.metrics.borrow_mut();
@@ -4518,7 +4505,44 @@ impl Vm {
                 } else {
                     format!("{}.{}", program.module_name(), key)
                 };
-                Ok(configuration.resolve(&key, &arguments[1]))
+                let value = configuration.resolve(&key, &arguments[1]);
+                if value.contains_non_finite_number() {
+                    return Err(self.error(
+                        RuntimeErrorKind::Type,
+                        "configuration produced a non-finite number".into(),
+                        span,
+                    ));
+                }
+                Ok(value)
+            }
+            Builtin::Int => {
+                if arguments.len() != 1 {
+                    return Err(self.error(
+                        RuntimeErrorKind::Arity,
+                        format!("`int` expects 1 argument, got {}", arguments.len()),
+                        span,
+                    ));
+                }
+                match arguments[0] {
+                    Value::Int(value) => Ok(Value::Int(value)),
+                    Value::Float(value) => {
+                        let value = value.trunc();
+                        if (MIN_I64_AS_F64..EXCLUSIVE_MAX_I64_AS_F64).contains(&value) {
+                            #[allow(clippy::cast_possible_truncation)]
+                            return Ok(Value::Int(value as i64));
+                        }
+                        Err(self.error(
+                            RuntimeErrorKind::Type,
+                            "`int` argument is outside the supported integer range".into(),
+                            span,
+                        ))
+                    }
+                    ref value => Err(self.error(
+                        RuntimeErrorKind::Type,
+                        format!("`int` expects num, got {}", value.type_name()),
+                        span,
+                    )),
+                }
             }
             Builtin::Stacktrace => {
                 if arguments.len() != 1 {
@@ -4869,6 +4893,16 @@ impl Vm {
         match function.invoke(arguments) {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);
+                if value.contains_non_finite_number() {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::NativeContract,
+                        format!(
+                            "native `{}` returned a non-finite number",
+                            function.qualified_name()
+                        ),
+                        span,
+                    ));
+                }
                 if let Some(signature) = resource_signature {
                     self.validate_foreign_resource_result(function, signature, &value, span)?;
                 }

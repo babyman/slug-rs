@@ -12,6 +12,13 @@ use super::RuntimeErrorKind;
 #[cfg(feature = "metrics")]
 use super::VmMetrics;
 
+fn finite_float(value: f64) -> Result<Value, String> {
+    value
+        .is_finite()
+        .then_some(Value::Float(value))
+        .ok_or_else(|| "numeric operation produced a non-finite number".into())
+}
+
 #[allow(clippy::cast_precision_loss)]
 pub(super) fn numbers(left: Value, right: Value) -> Result<(f64, f64), String> {
     match (left, right) {
@@ -46,7 +53,7 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
         )),
         (a, b) => {
             let (a, b) = numbers(a, b).map_err(|message| (RuntimeErrorKind::Type, message))?;
-            Ok(Value::Float(a + b))
+            finite_float(a + b).map_err(|message| (RuntimeErrorKind::Type, message))
         }
     }
 }
@@ -61,9 +68,9 @@ pub(super) fn add_num(left: Value, right: Value) -> Result<Value, String> {
             .checked_add(b)
             .map(Value::Int)
             .ok_or_else(|| "integer overflow".into()),
-        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
-        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
-        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+        (Value::Int(a), Value::Float(b)) => finite_float(a as f64 + b),
+        (Value::Float(a), Value::Int(b)) => finite_float(a + b as f64),
+        (Value::Float(a), Value::Float(b)) => finite_float(a + b),
         (left, right) => Err(format!(
             "expected numbers, got {} and {}",
             left.type_name(),
@@ -145,7 +152,7 @@ pub(super) fn divide(left: Value, right: Value) -> Result<Value, (RuntimeErrorKi
     if b == 0.0 {
         Err((RuntimeErrorKind::DivideByZero, "division by zero".into()))
     } else {
-        Ok(Value::Float(a / b))
+        finite_float(a / b).map_err(|message| (RuntimeErrorKind::Type, message))
     }
 }
 
@@ -168,7 +175,7 @@ pub(super) fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKi
     if b == 0.0 {
         Err((RuntimeErrorKind::DivideByZero, "division by zero".into()))
     } else {
-        Ok(Value::Float(a % b))
+        finite_float(a % b).map_err(|message| (RuntimeErrorKind::Type, message))
     }
 }
 
@@ -880,7 +887,7 @@ fn integer_or_float(
             .ok_or((RuntimeErrorKind::Type, "integer overflow".into()));
     }
     let (a, b) = numbers(left, right).map_err(|message| (RuntimeErrorKind::Type, message))?;
-    Ok(Value::Float(operation(a, b)))
+    finite_float(operation(a, b)).map_err(|message| (RuntimeErrorKind::Type, message))
 }
 pub(super) fn negate(value: Value) -> Result<Value, String> {
     match value {
@@ -888,7 +895,7 @@ pub(super) fn negate(value: Value) -> Result<Value, String> {
             .checked_neg()
             .map(Value::Int)
             .ok_or_else(|| "integer overflow".into()),
-        Value::Float(value) => Ok(Value::Float(-value)),
+        Value::Float(value) => finite_float(-value),
         value => Err(format!("expected number, got {}", value.type_name())),
     }
 }

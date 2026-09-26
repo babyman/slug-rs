@@ -105,6 +105,15 @@ impl Program {
         Self::default()
     }
 
+    pub(crate) fn contains_non_finite_number(&self) -> bool {
+        self.chunks.iter().any(|chunk| {
+            chunk.constants.iter().any(|constant| match constant {
+                Constant::Value(value) => value.contains_non_finite_number(),
+                Constant::Function(_) => false,
+            })
+        })
+    }
+
     pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {
         let invalid_instructions = chunk
             .code

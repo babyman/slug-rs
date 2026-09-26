@@ -443,6 +443,28 @@ fn shared_loader_closes_native_resources_only_after_its_last_runtime_owner() {
 }
 
 #[test]
+fn rejects_non_finite_native_results() {
+    fn nan(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::float(f64::NAN))
+    }
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::GetGlobal("nan".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Return);
+    let module = NativeModule::new("test.non_finite", ()).unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(module.function("nan", NativeArity::Exact(0), nan).unwrap())
+        .unwrap();
+
+    let error = vm
+        .run(&program_with_main(main), 0)
+        .expect_err("native NaN must not enter Slug");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(error.message.contains("non-finite number"));
+}
+
+#[test]
 fn native_descriptors_use_module_qualified_signature_identity() {
     fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
         call.return_value(NativeOwnedValue::nil())

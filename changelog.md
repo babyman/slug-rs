@@ -2,9 +2,13 @@
 
 ## Unreleased
 
-- Separated interactive protocol projection, FFI platform-library ownership,
-  and reusable semantic type relations from their orchestration modules without
-  changing Slug behavior.
+- Added `int(num)` with truncation toward zero, and made finite numeric values
+  a Slug runtime invariant across literals, arithmetic, bytecode, and native
+  result conversion.
+
+- Separated interactive protocol projection and native bindings, FFI
+  platform-library ownership, VM installation ownership, and reusable semantic
+  type relations from their orchestration modules without changing Slug behavior.
 
 - Fixed interactive `var` redeclarations so later reads return the replacement
   value rather than a leaked binding wrapper.

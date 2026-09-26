@@ -24,6 +24,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Builtin {
     Cfg,
+    Int,
     Stacktrace,
 }
 
@@ -927,6 +928,22 @@ pub(crate) enum ValueKind {
 }
 
 impl Value {
+    /// Reports whether this value recursively contains a non-finite float.
+    ///
+    /// Private bytecode and native callbacks can construct `Value` directly,
+    /// so execution boundaries use this to preserve Slug's finite-number rule.
+    pub(crate) fn contains_non_finite_number(&self) -> bool {
+        match self {
+            Self::Float(value) => !value.is_finite(),
+            Self::List(values) => values.iter().any(Self::contains_non_finite_number),
+            Self::Map(entries) => entries.iter().any(|(key, value)| {
+                key.contains_non_finite_number() || value.contains_non_finite_number()
+            }),
+            Self::Struct(value) => value.values.iter().any(Self::contains_non_finite_number),
+            _ => false,
+        }
+    }
+
     pub(crate) fn kind(&self) -> ValueKind {
         match self {
             Self::Nil => ValueKind::Nil,

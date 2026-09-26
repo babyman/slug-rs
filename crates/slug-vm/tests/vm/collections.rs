@@ -40,11 +40,10 @@ fn numeric_key_equality_is_exact_across_integer_and_float_representations() {
         Value::Int(9_007_199_254_740_993),
         Value::Float(9_007_199_254_740_992.0)
     );
-    assert_ne!(Value::Float(f64::NAN), Value::Float(f64::NAN));
 }
 
 #[test]
-fn rejects_nan_map_keys() {
+fn rejects_non_finite_private_bytecode_constants() {
     let mut main = Chunk::new("main", 0);
     let key = main.constant(Value::Float(f64::NAN));
     let value = main.constant(Value::Int(1));
@@ -54,8 +53,8 @@ fn rejects_nan_map_keys() {
         .emit(Op::Return);
 
     let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
-    assert_eq!(error.kind, RuntimeErrorKind::Type);
-    assert_eq!(error.message, "num cannot be used as a map key");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert_eq!(error.message, "bytecode contains a non-finite number");
 }
 
 #[test]

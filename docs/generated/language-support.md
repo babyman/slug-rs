@@ -46,7 +46,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Whole-case type constraints, schema matching, and type narrowing | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | `schema` types and nominal `struct<S>` construction inference | implemented | `crates/slug-vm/tests/cli.rs`, `crates/slug-vm/tests/module_loader.rs`, and `crates/slug-vm/tests/vm.rs` |
 | Native function calls and `println` | implemented | `crates/slug-vm/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
-| `print` and `len` builtins | implemented | `crates/slug-vm/tests/cli.rs` |
+| `int`, `print`, and `len` builtins | implemented | `crates/slug-vm/tests/cli.rs` |
 | Implicit `slug.builtin` bindings and foundational Slug values | implemented | `crates/slug-vm/tests/cli.rs` |
 | Positional call spreads and list-literal spreads | implemented | `crates/slug-vm/tests/cli.rs` |
 | Named ordinary-function arguments | implemented | `crates/slug-vm/tests/cli.rs` |

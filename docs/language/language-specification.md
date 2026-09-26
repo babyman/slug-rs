@@ -113,6 +113,11 @@ val byQuotedName = {"name": "Slug"}
 val byValue = {[key]: "Slug"}
 ```
 
+Every Slug `num` is finite. A numeric literal, arithmetic operation, native
+result, or other host-to-Slug conversion that would produce `NaN`, `+∞`, or
+`-∞` fails with a checked error instead of producing a value. Ordinary finite
+binary floating-point rounding remains observable.
+
 ## Bindings, scope, and assignment
 
 `val` creates an immutable binding. `var` creates a binding that may later be
@@ -610,7 +615,7 @@ Local declarations take precedence over implicit builtin bindings. A host that
 does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
-The bundled declaration module documents `cfg(key, default)`,
+The bundled declaration module documents `cfg(key, default)`, `int(value)`,
 `print(...values)`, `println(...values)`, and `len(value)`. The host registers
 its functions
 independently of the file. When present,
@@ -646,6 +651,19 @@ input operation waits.
 
 Calling `len` with any other value, including `nil`, or with an argument count
 other than one is a checked runtime error.
+
+### Integer conversion
+
+`int(value)` accepts exactly one `num`. It returns an integer unchanged, or
+truncates a finite floating-point value toward zero. The conversion fails with
+a checked runtime error when the truncated value lies outside the supported
+integer range.
+
+```slug
+int(42)    // 42
+int(42.9)  // 42
+int(-42.9) // -42
+```
 
 ### Program entrypoint
 

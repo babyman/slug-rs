@@ -90,7 +90,7 @@ serialization.
 For the current source fixtures, a conformance environment MUST make these
 modules and builtins available with the behavior exercised by their source:
 
-- builtins including `import`, `len`, `print`, `println`, `chan`, and `close`;
+- builtins including `import`, `int`, `len`, `print`, `println`, `chan`, and `close`;
 - `slug.std`, `slug.io.stdin`, and `slug.math` from the installed `slug.core`
   Clutch, and `slug.test`, for assertions and core collection operations;
 - `slug.channel` for channel operations, `await`, `send`, and `recv`;
@@ -115,6 +115,14 @@ semantic, module, and runtime error. A runtime error MUST retain its Slug
 payload and a Slug frame trace. Implementations MAY format diagnostics
 differently unless fixture metadata marks text as exact. They MUST NOT expose a
 host exception, stack trace, or panic as the Slug diagnostic.
+
+### Finite numbers
+
+Every Slug number MUST be finite. Implementations MUST reject `NaN`, positive
+infinity, and negative infinity at source parsing, private-bytecode validation,
+native result conversion, and every arithmetic result boundary with a checked
+Slug error. This rule applies recursively to host-provided collections and
+struct values. Hosts MUST NOT expose a non-finite value to Slug code.
 
 ## Conformance evidence
 

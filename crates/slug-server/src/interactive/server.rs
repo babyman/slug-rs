@@ -9,16 +9,19 @@ use slug_vm::{InteractiveCompilation, InteractiveExecution, VmProgress};
 #[cfg(feature = "concurrency")]
 use slug_vm::{InteractiveCompilation, InteractiveTask, VmProgress};
 use slug_vm::{
-    InteractiveCompilerState, InteractiveEnvironment, NativeArity, NativeCall,
-    NativeDescriptorError, NativeError, NativeFunction, NativeModule, NativeOwnedValue,
-    NativeStatus, NativeValueKind, NativeValueRef, Program, SourceReadiness, Value as SlugValue,
-    Vm, VmResult, source_readiness,
+    InteractiveCompilerState, InteractiveEnvironment, NativeArity, NativeDescriptorError,
+    NativeFunction, NativeModule, Program, SourceReadiness, Value as SlugValue, Vm, VmResult,
+    source_readiness,
 };
 
 use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
 
+mod builtins;
 mod presentation;
 
+use builtins::{
+    NativeCallback, native_channel, native_close, native_len, native_print, native_println,
+};
 use presentation::{
     InitializeParams, SubmitParams, completed_result, protocol_value, required_params,
     session_result, stalled_result,
@@ -912,109 +915,4 @@ impl Default for Server {
     fn default() -> Self {
         Self::new(Vm::new())
     }
-}
-
-type NativeCallback = for<'call> fn(&mut NativeCall<'call>) -> NativeStatus;
-
-fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
-    native_write(call, false)
-}
-
-fn native_println(call: &mut NativeCall<'_>) -> NativeStatus {
-    native_write(call, true)
-}
-
-fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
-    let value = match call.argument(0) {
-        Ok(value) => value,
-        Err(error) => return call.raise(error),
-    };
-    let length = match value.kind() {
-        NativeValueKind::String => match value.as_str() {
-            Ok(value) => value.chars().count(),
-            Err(error) => return call.raise(error),
-        },
-        NativeValueKind::Bytes => match value.as_bytes() {
-            Ok(value) => value.len(),
-            Err(error) => return call.raise(error),
-        },
-        NativeValueKind::List | NativeValueKind::Map => {
-            value.len().expect("collection kind has a length")
-        }
-        kind => {
-            return call.raise(NativeError::new(
-                "native.type",
-                format!("`len` expects str, bytes, list, or map, got {kind:?}"),
-            ));
-        }
-    };
-    let Ok(length) = i64::try_from(length) else {
-        return call.raise(NativeError::new(
-            "native.range",
-            "`len` result exceeds the supported integer range",
-        ));
-    };
-    call.return_value(NativeOwnedValue::integer(length))
-}
-
-fn native_channel(call: &mut NativeCall<'_>) -> NativeStatus {
-    let capacity = match call.argument_count() {
-        0 => 0,
-        1 => match call.argument(0).and_then(NativeValueRef::as_i64) {
-            Ok(value) => match usize::try_from(value) {
-                Ok(value) => value,
-                Err(_) => {
-                    return call.raise(NativeError::new(
-                        "native.type",
-                        "channel capacity must not be negative or too large",
-                    ));
-                }
-            },
-            Err(error) => return call.raise(error),
-        },
-        count => {
-            return call.raise(NativeError::new(
-                "native.arity",
-                format!("`chan` expects at most 1 argument, got {count}"),
-            ));
-        }
-    };
-    let channel = call.plain_channel(capacity);
-    call.return_value(channel)
-}
-
-fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
-    if let Err(error) = call.close_channel(0) {
-        return call.raise(error);
-    }
-    call.return_value(NativeOwnedValue::nil())
-}
-
-fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
-    let output = (0..call.argument_count())
-        .map(|index| {
-            call.argument(index)
-                .expect("index comes from the argument count")
-                .to_display_string()
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let output = if newline {
-        format!("{output}\n")
-    } else {
-        output
-    };
-    let Some(sink) = call.state::<Rc<RefCell<OutputSink>>>() else {
-        return call.raise(NativeError::new(
-            "native.output",
-            "interactive output sink is unavailable",
-        ));
-    };
-    if !sink.borrow_mut().write_active(OutputStream::Stdout, output) {
-        return call.raise(NativeError::new(
-            "native.output",
-            "interactive output was produced outside a submission",
-        ));
-    }
-    call.return_value(NativeOwnedValue::nil())
 }

@@ -127,7 +127,9 @@ fn convert_text(value: &str, fallback: &Value) -> Value {
             .map_or_else(|_| Value::string(value), Value::Int),
         Value::Float(_) => value
             .parse::<f64>()
-            .map_or_else(|_| Value::string(value), Value::Float),
+            .ok()
+            .filter(|number| number.is_finite())
+            .map_or_else(|| Value::string(value), Value::Float),
         Value::Bool(_) => value
             .parse::<bool>()
             .map_or_else(|_| Value::string(value), Value::Bool),
@@ -174,7 +176,7 @@ fn toml_value(value: &toml::Value) -> Option<Value> {
     match value {
         toml::Value::String(value) => Some(Value::string(value.as_str())),
         toml::Value::Integer(value) => Some(Value::Int(*value)),
-        toml::Value::Float(value) => Some(Value::Float(*value)),
+        toml::Value::Float(value) => value.is_finite().then_some(Value::Float(*value)),
         toml::Value::Boolean(value) => Some(Value::Bool(*value)),
         toml::Value::Array(values) => values
             .iter()

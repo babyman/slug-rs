@@ -705,3 +705,57 @@ fn reports_checked_struct_schema_construction_and_access_errors() {
         );
     }
 }
+
+#[test]
+fn int_truncates_finite_numbers_toward_zero() {
+    let path = fixture_path("int-builtin");
+    fs::write(&path, "println(int(42), int(42.9), int(-42.9))\n")
+        .expect("write int builtin source");
+    let output = slug().arg(&path).output().expect("run int builtin source");
+    fs::remove_file(&path).expect("remove int builtin source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "42 42 -42\n");
+}
+
+#[test]
+fn rejects_non_finite_float_literals() {
+    let path = fixture_path("non-finite-float");
+    fs::write(&path, "1e999\n").expect("write non-finite float source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run non-finite float source");
+    fs::remove_file(&path).expect("remove non-finite float source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: parse error: non-finite number")
+    );
+}
+
+#[test]
+fn rejects_arithmetic_that_overflows_to_infinity() {
+    let path = fixture_path("non-finite-arithmetic");
+    fs::write(&path, "1e308 * 1e308\n").expect("write overflowing arithmetic source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run overflowing arithmetic source");
+    fs::remove_file(&path).expect("remove overflowing arithmetic source");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("slug: runtime error: numeric operation produced a non-finite number")
+    );
+}

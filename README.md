@@ -9,7 +9,7 @@ contract is documented separately as `.cslug`.
 
 ## Current milestone
 
-- Dynamic Slug values: `nil`, booleans, numbers, strings, bytes,
+- Dynamic Slug values: `nil`, booleans, finite numbers, strings, bytes,
   lists, maps, struct schemas and values, closures, and explicitly registered
   native functions.
 - Chunks, constants, lexical captures, locals, globals, calls, branches, and

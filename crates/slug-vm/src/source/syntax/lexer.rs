@@ -642,9 +642,12 @@ impl Lexer {
                     }
                     let text = text.replace('_', "");
                     if float {
-                        let value = text
+                        let value: f64 = text
                             .parse()
                             .map_err(|_| SourceError::at("invalid number", span.clone()))?;
+                        if !value.is_finite() {
+                            return Err(SourceError::at("non-finite number", span));
+                        }
                         Self::push(&mut result, TokenKind::Float(value), span);
                     } else {
                         let value = text
