@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Recorded the crate reorganization and import-loader boundary: a runtime-only
+  `slug-vm`, frontend-owned module graph, import-only loaders, a concrete nil
+  loader, and a future `slug --server` executable migration. Desktop source
+  behavior is unchanged; restricted hosts report unavailable imports as checked
+  module errors.
+
 - Added `int(num)` with truncation toward zero, and made finite numeric values
   a Slug runtime invariant across literals, arithmetic, bytecode, and native
   result conversion.

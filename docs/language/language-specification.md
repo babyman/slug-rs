@@ -560,9 +560,14 @@ val divide = fn(a, b) {
 `import(name, ...)` loads one or more named modules and returns a string-keyed
 map of their exported bindings. Modules are loaded in argument order.
 Module names use dot-separated paths such as `slug.std` and `slug.channel`.
-An implementation resolves a module relative to the importing source, then the
-project module root, before searching its configured library root. The command
-line runtime uses `$SLUG_HOME/lib` as that root when `SLUG_HOME` is set. Its
+Module availability and storage resolution are host services. A host may supply
+source from a filesystem, embedded data, or another host-controlled provider;
+it may also decline external module resolution entirely. In that case, every
+explicit unavailable import is a checked module error.
+
+The desktop command-line host resolves a module relative to the importing
+source, then the project module root, before searching its configured library
+root. It uses `$SLUG_HOME/lib` as that root when `SLUG_HOME` is set. Its
 experimental clutch provider is searched last through `$SLUG_HOME/clutch`.
 A missing or malformed module is a language error.
 

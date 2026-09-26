@@ -142,8 +142,10 @@ optimization.
 The evaluator operates in a module environment and needs a small host-services
 boundary. A conforming host MUST provide:
 
-- entry-program and module resolution using the fixture-environment rules
-  above, with a stable diagnostic identity for each loaded source;
+- entry-program acquisition and a module-resolution service with a stable
+  diagnostic identity for each loaded source. The service MAY decline external
+  imports, which then fail as checked module errors; a fixture host MUST
+  provide the fixture-environment modules and resolution rules above;
 - standard output and standard error streams;
 - a process standard-input stream for `slug.io.stdin` when that module is
   available;
@@ -158,12 +160,12 @@ Host services cannot become names visible to a Slug program except through a
 `slug.builtin` export, imported library module, or declared foreign function.
 
 The host MAY obtain an entry program or imported module from a filesystem, a
-compiled artifact, or statically embedded data. Resolution policy is a host
-service: the evaluator requests a logical module identity and MUST NOT require
-filesystem paths, environment variables, package layout, or storage access in
-order to execute an import. A host may use paths as private cache keys or
-diagnostic labels when it has a filesystem, but that choice must not alter the
-module-resolution and error behavior required above.
+compiled artifact, statically embedded data, or an in-memory embedding API.
+Resolution policy is a host service: the evaluator requests a logical module
+identity and MUST NOT require filesystem paths, environment variables, package
+layout, or storage access in order to execute an import. A host may use paths
+as private cache keys or diagnostic labels when it has a filesystem, but that
+choice must not alter the module-resolution and error behavior required above.
 
 Foreign functions are not required for the portable fixture set unless a
 fixture imports a library that declares one. A declared function resolves by
