@@ -88,9 +88,9 @@ identity, cycles, live exports, static snapshots, and checked import errors.
 
 ## 4. Extract import loaders
 
-- [ ] Move `ModuleKey`, `ModuleRequest`, `ModuleSource`, `ModuleLoadError`,
+- [x] Move `ModuleKey`, `ModuleRequest`, `ModuleSource`, `ModuleLoadError`,
   resolver traits, and import-scoped activation contracts to `slug-loader`.
-- [ ] Implement `slug-nil-loader` as a deny-all external resolver with focused
+- [x] Implement `slug-nil-loader` as a deny-all external resolver with focused
   tests proving every explicit external import fails through a checked module
   error and no desktop mechanism is linked or invoked.
 - [ ] Move importer-relative, project-root, library-root, Clutch discovery, and
