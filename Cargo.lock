@@ -310,6 +310,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slug-restricted-host"
+version = "0.1.0"
+dependencies = [
+ "slug-frontend",
+ "slug-nil-loader",
+ "slug-vm",
+]
+
+[[package]]
 name = "slug-server"
 version = "0.1.0"
 dependencies = [
