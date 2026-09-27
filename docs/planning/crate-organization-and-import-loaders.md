@@ -33,7 +33,7 @@ tested commits. Do not check an item off until its stated gate passes.
 - [x] Move source parsing, semantic analysis, lowering, and checked source
   diagnostics to `slug-frontend`. Keep any compatibility re-exports temporary
   and identify their removal commit.
-- [ ] Move the module graph cache and runtime to `slug-frontend`, then prove
+- [x] Move the module graph cache and runtime to `slug-frontend`, then prove
   graph identity, cycles, live exports, static snapshots, and checked failures
   with an in-memory resolver.
 - [ ] Move desktop filesystem resolution, Clutch discovery, native activation,

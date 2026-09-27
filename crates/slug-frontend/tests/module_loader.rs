@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     fs,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -22,12 +23,19 @@ impl VmWithModuleLoader for Vm {
     }
 }
 
+type MemoryRequests = Rc<RefCell<Vec<(Option<String>, String)>>>;
+
 struct MemoryResolver {
     modules: std::collections::HashMap<String, String>,
+    requests: MemoryRequests,
 }
 
 impl ModuleResolver for MemoryResolver {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        self.requests.borrow_mut().push((
+            request.importer.map(ModuleKey::as_str).map(str::to_owned),
+            request.name.into(),
+        ));
         let text = self
             .modules
             .get(request.name)
@@ -1137,6 +1145,7 @@ fn imported_inferred_alternatives_propagate_after_independent_selection() {
 
 #[test]
 fn in_memory_resolver_serves_static_and_runtime_imports() {
+    let requests = Rc::new(RefCell::new(Vec::new()));
     let resolver = Rc::new(MemoryResolver {
         modules: [(
             "math".into(),
@@ -1144,6 +1153,7 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
         )]
         .into_iter()
         .collect(),
+        requests: requests.clone(),
     });
     let loader = ModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
     let program = loader
@@ -1159,10 +1169,79 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
 
     assert_eq!(loader.cached_module_count(), 1);
     assert_eq!(loader.initialized_module_count(), 1);
+    assert!(
+        requests
+            .borrow()
+            .iter()
+            .any(|(importer, name)| importer.as_deref() == Some("memory:main") && name == "math")
+    );
     assert_eq!(
         vm.exported_values(&program),
         Value::Map(Rc::new(vec![(Value::string("result"), Value::Int(42))]))
     );
+}
+
+#[test]
+fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let resolver = Rc::new(MemoryResolver {
+        modules: [
+            (
+                "a".into(),
+                "val b = import(\"b\")\nexport val a = fn() { b.b() }\n".into(),
+            ),
+            (
+                "b".into(),
+                "val a = import(\"a\")\nexport val b = fn() { 7 }\n".into(),
+            ),
+            (
+                "math".into(),
+                "export val double = fn(value:num) { value * 2 }\n".into(),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        requests: requests.clone(),
+    });
+    let loader = ModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
+    let program = loader
+        .compile_source(
+            "memory:main",
+            "val a = import(\"a\")\nexport val output = a.a()\n",
+        )
+        .expect("compile an in-memory cycle");
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("execute the in-memory cycle");
+    assert_eq!(loader.cached_module_count(), 2);
+    assert_eq!(loader.initialized_module_count(), 2);
+    assert!(
+        requests
+            .borrow()
+            .iter()
+            .any(|(importer, name)| { importer.as_deref() == Some("memory:a") && name == "b" })
+    );
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"output\": 7}");
+
+    let error = loader
+        .compile_source(
+            "memory:typed-main",
+            "val {*} = import(\"math\")\ndouble(\"no\")\n",
+        )
+        .expect_err("static imported signatures must come from the in-memory snapshot");
+    assert!(
+        error.to_string().contains("expected num, got str"),
+        "{error}"
+    );
+
+    let missing = loader
+        .compile_source("memory:missing", "import(\"missing\")\n")
+        .expect("missing imports compile until runtime");
+    let error = Vm::with_module_loader(loader)
+        .run_named(&missing, "main")
+        .expect_err("missing in-memory imports must be checked runtime errors");
+    assert_eq!(error.kind, RuntimeErrorKind::Module);
 }
 
 #[test]

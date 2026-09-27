@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added in-memory graph coverage for importer identity, cycles, cache reuse,
+  live exports, static snapshots, and checked missing-module failures.
+
 - Added an injected-resolver frontend graph path. Static import analysis and
   runtime `import()` now share the same host-provided resolver.
 
