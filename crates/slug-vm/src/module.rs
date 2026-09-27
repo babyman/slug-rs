@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    fmt, fs,
+    fs,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -16,50 +16,9 @@ use crate::{
         environment::ModuleSnapshot,
     },
 };
-
-/// Opaque host-defined identity for one resolved module.
-///
-/// The VM compares identities for module ownership and cache lookup but does
-/// not interpret their storage-specific representation.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ModuleKey(String);
-
-impl ModuleKey {
-    #[must_use]
-    pub fn new(identity: impl Into<String>) -> Self {
-        Self(identity.into())
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// A logical module request issued by source compilation or runtime import.
-#[derive(Clone, Copy, Debug)]
-pub struct ModuleRequest<'a> {
-    pub importer: Option<&'a ModuleKey>,
-    pub name: &'a str,
-}
-
-impl<'a> ModuleRequest<'a> {
-    #[must_use]
-    pub const fn new(importer: Option<&'a ModuleKey>, name: &'a str) -> Self {
-        Self { importer, name }
-    }
-}
-
-/// Resolves logical module identities into host-provided source.
-pub trait ModuleResolver {
-    /// Resolves one requested module without exposing host storage to the VM.
-    ///
-    /// # Errors
-    ///
-    /// Returns a checked failure when the name is invalid, unavailable, or its
-    /// host-provided source cannot be read.
-    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError>;
-}
+use slug_loader::{
+    ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
+};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone, Debug)]
@@ -74,8 +33,8 @@ struct ModuleLoaderState {
     clutch_repository: ClutchRepository,
     runtime: ModuleRuntime,
     services: ModuleRuntimeServices,
-    activation_sources: RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>,
-    active_clutch_plugins: RefCell<HashMap<ModuleActivationLease, StagedClutchPlugin>>,
+    activation_sources: RefCell<HashMap<ModuleActivation, ClutchPluginSource>>,
+    active_clutch_plugins: RefCell<HashMap<ModuleActivation, StagedClutchPlugin>>,
 }
 
 /// Runtime services shared by a module graph, independent of desktop lookup.
@@ -396,23 +355,6 @@ impl ModuleRuntime {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ModuleSource {
-    /// Stable host identity used by future filesystem-free module caches.
-    pub key: ModuleKey,
-    /// Host-provided label used in source and module diagnostics.
-    pub diagnostic_name: String,
-    pub text: String,
-    activation: Option<ModuleActivationLease>,
-}
-
-/// Opaque host-owned capability to activate a resolved module.
-///
-/// The module runtime only passes this through its lifecycle hooks; desktop
-/// storage details remain in the resolving host.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ModuleActivationLease(String);
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 enum ClutchPluginSource {
     Host {
         root: PathBuf,
@@ -436,33 +378,6 @@ pub struct ModuleInstance {
     pub metadata: Vec<ModuleDeclaration>,
     pub(crate) live_exports: Value,
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ModuleLoadError {
-    InvalidName(String),
-    NotFound { name: String, searched: Vec<String> },
-    Read { location: String, message: String },
-    Source { location: String, message: String },
-    Clutch { location: String, message: String },
-}
-
-impl fmt::Display for ModuleLoadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidName(name) => write!(f, "invalid module name `{name}`"),
-            Self::NotFound { name, .. } => write!(f, "module `{name}` was not found"),
-            Self::Read { location, message } => write!(f, "cannot read {location}: {message}"),
-            Self::Source { location, message } => {
-                write!(f, "cannot compile {location}: {message}")
-            }
-            Self::Clutch { location, message } => {
-                write!(f, "cannot load clutch {location}: {message}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ModuleLoadError {}
 
 impl ModuleLoader {
     #[must_use]
@@ -611,7 +526,7 @@ impl ModuleResolver for ModuleLoader {
                 (Some(_), Some(_)) => unreachable!("clutch manifest validation is inconsistent"),
             };
             let lease = activation.as_ref().map(|plugin| {
-                let lease = ModuleActivationLease(plugin.root().to_string_lossy().into_owned());
+                let lease = ModuleActivation::new(plugin.root().to_string_lossy().into_owned());
                 self.state
                     .activation_sources
                     .borrow_mut()
