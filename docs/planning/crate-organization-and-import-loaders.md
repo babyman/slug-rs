@@ -22,6 +22,29 @@ plan remains the baseline for resolver and Clutch lifecycle invariants.
   stable Rust API, `no_std` promise, portable `.cslug` implementation, or
   embedded target support.
 
+## Remaining migration sequence
+
+Complete the remaining phases through these dependency-ordered, separately
+tested commits. Do not check an item off until its stated gate passes.
+
+- [ ] Add narrow VM-owned bytecode-builder and host-callback contracts needed
+  by the frontend, with focused VM tests. Keep them private or explicitly
+  unstable; they are not a new embedding compatibility API.
+- [ ] Move source parsing, semantic analysis, lowering, and checked source
+  diagnostics to `slug-frontend`. Keep any compatibility re-exports temporary
+  and identify their removal commit.
+- [ ] Move the module graph cache and runtime to `slug-frontend`, then prove
+  graph identity, cycles, live exports, static snapshots, and checked failures
+  with an in-memory resolver.
+- [ ] Move desktop filesystem resolution, Clutch discovery, native activation,
+  leases, and cleanup to `slug-desktop-loader`.
+- [ ] Move CLI/configuration/entry lookup and interactive server assembly to
+  `slug`; update `slug-repl` to launch `slug --server`.
+- [ ] Add the nil-loader restricted-host harness and a dependency inspection
+  proving that path excludes desktop-loader and Clutch code.
+- [ ] Move suites and documentation to their final owners, remove transitional
+  re-exports, run `make check`, and complete the delivery checklist.
+
 ## 0. Freeze the observable baseline
 
 - [x] Run the existing VM, CLI, module-loader, configuration, interactive, and
