@@ -130,15 +130,15 @@ lifecycle behavior.
 
 ## 5. Create the `slug` executable and server mode
 
-- [ ] Move the existing `slug` runner from `slug-vm` into the `slug` package.
-- [ ] Move `slug-server` interactive server implementation into `slug`; expose
+- [x] Move the existing `slug` runner from `slug-vm` into the `slug` package.
+- [x] Move `slug-server` interactive server implementation into `slug`; expose
   its existing protocol through `slug --server`.
-- [ ] Make `slug` own CLI parsing, environment discovery, immutable
+- [x] Make `slug` own CLI parsing, environment discovery, immutable
   configuration assembly, entry-program lookup, desktop-loader construction,
   builtin registration, and VM/frontend assembly.
-- [ ] Update `slug-repl` to launch `slug --server`; retain an explicit override
+- [x] Update `slug-repl` to launch `slug --server`; retain an explicit override
   for test and distribution launchers where needed.
-- [ ] Preserve CLI exit status, human and JSON diagnostics, source locations,
+- [x] Preserve CLI exit status, human and JSON diagnostics, source locations,
   default and slim runtime behavior, and REPL/server protocol behavior.
 
 **Gate:** the public CLI, server, and REPL suites pass against `slug`; no
