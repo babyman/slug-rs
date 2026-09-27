@@ -34,7 +34,7 @@ struct ModuleLoaderState {
     library_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
     resolver: Option<Rc<dyn ModuleResolver>>,
-    runtime: ModuleRuntime,
+    graph: ModuleGraph,
     services: ModuleRuntimeServices,
     activation_sources: RefCell<HashMap<ModuleActivation, ClutchPluginSource>>,
     active_clutch_plugins: RefCell<HashMap<ModuleActivation, StagedClutchPlugin>>,
@@ -56,12 +56,12 @@ struct ModuleRuntimeServices {
 /// Resolver and host services remain on `ModuleLoader` while this type is
 /// extracted; keeping the graph caches together makes that boundary explicit.
 #[derive(Clone, Debug)]
-struct ModuleRuntime {
-    state: Rc<ModuleRuntimeState>,
+pub struct ModuleGraph {
+    state: Rc<ModuleGraphState>,
 }
 
 #[derive(Debug)]
-struct ModuleRuntimeState {
+struct ModuleGraphState {
     compiled: RefCell<HashMap<ModuleKey, Program>>,
     semantic_snapshots: RefCell<HashMap<ModuleKey, ModuleSnapshot>>,
     resolving_snapshots: RefCell<HashSet<ModuleKey>>,
@@ -71,7 +71,7 @@ struct ModuleRuntimeState {
 /// The non-resolution services module initialization needs from its host.
 ///
 /// This keeps graph state independent from the desktop loader. In particular,
-/// `ModuleRuntime` never inspects an activation's storage representation or
+/// `ModuleGraph` never inspects an activation's storage representation or
 /// native registrations; it only sequences their lifecycle around module
 /// compilation and execution.
 ///
@@ -113,10 +113,18 @@ pub trait ModuleGraphHost: ModuleResolver {
     fn module_vm(&self, bindings: &[String]) -> Vm;
 }
 
-impl ModuleRuntime {
-    fn new() -> Self {
+impl Default for ModuleGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ModuleGraph {
+    /// Creates an empty module graph.
+    #[must_use]
+    pub fn new() -> Self {
         Self {
-            state: Rc::new(ModuleRuntimeState {
+            state: Rc::new(ModuleGraphState {
                 compiled: RefCell::new(HashMap::new()),
                 semantic_snapshots: RefCell::new(HashMap::new()),
                 resolving_snapshots: RefCell::new(HashSet::new()),
@@ -125,7 +133,12 @@ impl ModuleRuntime {
         }
     }
 
-    fn compile(
+    /// Resolves and compiles one module, caching its program in this graph.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked resolver or source error.
+    pub fn compile(
         &self,
         resolver: &dyn ModuleResolver,
         request: ModuleRequest<'_>,
@@ -158,7 +171,12 @@ impl ModuleRuntime {
         Ok(compilation.program)
     }
 
-    fn compile_interactive_forms(
+    /// Compiles interactive forms using this graph's cached module snapshots.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked source error for invalid syntax or semantics.
+    pub fn compile_interactive_forms(
         &self,
         resolver: &dyn ModuleResolver,
         path: &str,
@@ -223,7 +241,12 @@ impl ModuleRuntime {
         Some(snapshot)
     }
 
-    fn initialize<H: ModuleGraphHost>(
+    /// Resolves, compiles, and initializes one module instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked resolver, source, or module-runtime error.
+    pub fn initialize<H: ModuleGraphHost>(
         &self,
         host: &H,
         request: ModuleRequest<'_>,
@@ -369,6 +392,18 @@ impl ModuleRuntime {
             .insert(key, instance.clone());
         instance
     }
+
+    /// Returns the number of compiled module programs held by this graph.
+    #[must_use]
+    pub fn cached_module_count(&self) -> usize {
+        self.state.compiled.borrow().len()
+    }
+
+    /// Returns the number of initialized module instances held by this graph.
+    #[must_use]
+    pub fn initialized_module_count(&self) -> usize {
+        self.state.instances.borrow().len()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -446,7 +481,7 @@ impl ModuleLoader {
                 library_root,
                 clutch_repository,
                 resolver: None,
-                runtime: ModuleRuntime::new(),
+                graph: ModuleGraph::new(),
                 services: ModuleRuntimeServices {
                     configuration,
                     native_globals: RefCell::new(HashMap::new()),
@@ -474,7 +509,7 @@ impl ModuleLoader {
                 library_root: None,
                 clutch_repository: ClutchRepository::default(),
                 resolver: Some(resolver),
-                runtime: ModuleRuntime::new(),
+                graph: ModuleGraph::new(),
                 services: ModuleRuntimeServices {
                     configuration,
                     native_globals: RefCell::new(HashMap::new()),
@@ -608,7 +643,7 @@ impl ModuleLoader {
     pub fn compile(&self, importer: Option<&Path>, name: &str) -> Result<Program, ModuleLoadError> {
         let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
         self.state
-            .runtime
+            .graph
             .compile(self, ModuleRequest::new(importer.as_ref(), name))
     }
 
@@ -619,7 +654,7 @@ impl ModuleLoader {
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
         self.state
-            .runtime
+            .graph
             .compile_source_for_module(self, &ModuleKey::new(path), path, source, true)
             .map(|compilation| compilation.program)
     }
@@ -632,13 +667,13 @@ impl ModuleLoader {
         state: &InteractiveCompilerState,
     ) -> Result<Vec<InteractiveCompilation>, SourceError> {
         self.state
-            .runtime
+            .graph
             .compile_interactive_forms(self, path, source, state)
     }
 
     #[must_use]
     pub fn cached_module_count(&self) -> usize {
-        self.state.runtime.state.compiled.borrow().len()
+        self.state.graph.cached_module_count()
     }
 
     /// Compiles and initializes one isolated module instance.
@@ -659,12 +694,12 @@ impl ModuleLoader {
         &self,
         request: ModuleRequest<'_>,
     ) -> Result<ModuleInstance, ModuleLoadError> {
-        self.state.runtime.initialize(self, request)
+        self.state.graph.initialize(self, request)
     }
 
     #[must_use]
     pub fn initialized_module_count(&self) -> usize {
-        self.state.runtime.state.instances.borrow().len()
+        self.state.graph.initialized_module_count()
     }
 
     /// Returns and clears module warnings accumulated during evaluation.
