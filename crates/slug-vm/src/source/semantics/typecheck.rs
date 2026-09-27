@@ -1964,7 +1964,7 @@ fn check_expression_inner(
             environment.record_foreign(
                 expression.span.clone(),
                 callable.identity(),
-                super::environment::ForeignResourceSignature::from_callable(&callable),
+                super::environment::foreign_resource_signature(&callable),
             );
             let value_type = function_value_type(&callable);
             environment.declare_callable(name.clone(), callable, &expression.span)?;
@@ -3537,7 +3537,7 @@ struct InstantiatedCandidate {
     non_variadic: bool,
     uses_empty_variadic: bool,
     result: Type,
-    identity: super::environment::CallableIdentity,
+    identity: crate::CallableIdentity,
 }
 
 #[derive(Clone, Copy)]

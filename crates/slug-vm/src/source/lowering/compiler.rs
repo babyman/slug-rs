@@ -5,9 +5,9 @@ use std::{
 
 use crate::bytecode::{Entrypoint, EntrypointArguments};
 use crate::{
-    CallArgumentKind, Capture, Chunk, MatchMapKey, MatchPattern, MatchRest, MatchType,
-    ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SelectCase,
-    SourceSpan, Value,
+    CallArgumentKind, CallableIdentity, Capture, Chunk, ForeignResourceSignature, MatchMapKey,
+    MatchPattern, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature,
+    Program, SchemaField, SelectCase, SourceSpan, Value,
 };
 
 use super::{
@@ -17,7 +17,7 @@ use super::{
         MapPatternKey, MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind,
         StringPart, Tag, TypeAnnotation,
     },
-    environment::{CallableIdentity, SemanticAnalysis},
+    environment::SemanticAnalysis,
     state::{Binding, State},
 };
 
@@ -31,7 +31,7 @@ pub(super) struct Compiler {
     selected_calls: HashMap<SourceSpan, CallableIdentity>,
     function_identities: HashMap<SourceSpan, CallableIdentity>,
     foreign_identities: HashMap<SourceSpan, CallableIdentity>,
-    foreign_resource_signatures: HashMap<SourceSpan, super::environment::ForeignResourceSignature>,
+    foreign_resource_signatures: HashMap<SourceSpan, ForeignResourceSignature>,
     match_constraints: HashMap<SourceSpan, Vec<Option<super::semantic::Type>>>,
     expression_types: HashMap<SourceSpan, super::semantic::Type>,
     callable_identities: Vec<CallableIdentity>,

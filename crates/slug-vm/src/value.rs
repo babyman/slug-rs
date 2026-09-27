@@ -13,11 +13,10 @@ use std::cell::Cell;
 use std::rc::Weak;
 
 use crate::{
+    CallableIdentity, ForeignResourceSignature,
     collections::{BytesView, List, Map, MapView},
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
-    source::environment::CallableIdentity,
-    source::environment::ForeignResourceSignature,
 };
 
 /// VM-owned builtins that require host-service context at call time.

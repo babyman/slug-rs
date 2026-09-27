@@ -29,10 +29,11 @@ mod vm;
 /// semantics may change in any pre-release version; do not serialize them or
 /// treat them as a stable Rust API. `.cslug` is the future portable contract.
 pub use bytecode::{
-    BytecodeLayoutMetrics, CallArgumentKind, Capture, CaptureListId, Chunk, Constant, DeferMode,
-    GlobalNameId, Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
-    ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SchemaFieldsId,
-    SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
+    BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture, CaptureListId, Chunk,
+    Constant, DeferMode, ForeignResourceSignature, GlobalNameId, Instruction, MatchMapKey,
+    MatchPattern, MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op,
+    ParameterSignature, Program, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan,
+    SpanId, StructFieldsId,
 };
 pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,

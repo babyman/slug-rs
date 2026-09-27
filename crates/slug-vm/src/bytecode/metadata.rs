@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use crate::{
-    Value,
-    source::environment::{CallableIdentity, ForeignResourceSignature},
-};
+use crate::Value;
 
 /// A source position attached to an instruction for language diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -77,6 +74,50 @@ metadata_id!(ListSpreadId);
 metadata_id!(CallArgumentsId);
 metadata_id!(SelectedCallId);
 metadata_id!(SelectCasesId);
+
+/// Opaque input identity used only for private runtime callable selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallableIdentity(String);
+
+impl CallableIdentity {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(canonical_input: impl Into<String>) -> Self {
+        Self(canonical_input.into())
+    }
+}
+
+/// Resource positions retained for runtime validation of a foreign declaration.
+#[derive(Clone, Debug, Default)]
+#[doc(hidden)]
+pub struct ForeignResourceSignature {
+    parameters: Vec<Option<(Option<String>, String)>>,
+    result: Option<(Option<String>, String)>,
+}
+
+impl ForeignResourceSignature {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(
+        parameters: Vec<Option<(Option<String>, String)>>,
+        result: Option<(Option<String>, String)>,
+    ) -> Self {
+        Self { parameters, result }
+    }
+
+    pub(crate) fn parameter_identity(&self, index: usize) -> Option<(Option<&str>, &str)> {
+        self.parameters
+            .get(index)
+            .and_then(Option::as_ref)
+            .map(|(module, name)| (module.as_deref(), name.as_str()))
+    }
+
+    pub(crate) fn result_identity(&self) -> Option<(Option<&str>, &str)> {
+        self.result
+            .as_ref()
+            .map(|(module, name)| (module.as_deref(), name.as_str()))
+    }
+}
 
 /// A literal embedded in a bytecode chunk.
 #[derive(Clone, Debug)]

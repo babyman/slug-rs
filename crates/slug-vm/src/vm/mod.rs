@@ -7,15 +7,15 @@ use std::time::Duration;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Instant;
 
-use crate::source::environment::CallableIdentity;
 use crate::source::{InteractiveCompilation, InteractiveCompilerState};
 #[cfg(feature = "concurrency")]
 use crate::value::Task;
 #[cfg(feature = "concurrency")]
 use crate::value::TaskAdmission;
 use crate::{
-    CallArgumentKind, Capture, MatchPatternId, ModuleDeclaration, ModuleLoader, ModuleRequest,
-    NativeDescriptorError, NativeFunction, Program, SourceSpan, SpanId, Value,
+    CallArgumentKind, CallableIdentity, Capture, ForeignResourceSignature, MatchPatternId,
+    ModuleDeclaration, ModuleLoader, ModuleRequest, NativeDescriptorError, NativeFunction, Program,
+    SourceSpan, SpanId, Value,
     bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
@@ -4884,7 +4884,7 @@ impl Vm {
         &mut self,
         function: &NativeFunction,
         arguments: &[Value],
-        resource_signature: Option<&crate::source::environment::ForeignResourceSignature>,
+        resource_signature: Option<&ForeignResourceSignature>,
         span: Option<&SourceSpan>,
     ) -> VmResult<Value> {
         if let Some(signature) = resource_signature {
@@ -4933,7 +4933,7 @@ impl Vm {
     fn validate_foreign_resource_arguments(
         &self,
         function: &NativeFunction,
-        signature: &crate::source::environment::ForeignResourceSignature,
+        signature: &ForeignResourceSignature,
         arguments: &[Value],
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
@@ -4949,7 +4949,7 @@ impl Vm {
     fn validate_foreign_resource_result(
         &self,
         function: &NativeFunction,
-        signature: &crate::source::environment::ForeignResourceSignature,
+        signature: &ForeignResourceSignature,
         value: &Value,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {

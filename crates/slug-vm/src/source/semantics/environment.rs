@@ -4,7 +4,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::SourceSpan;
+use crate::{CallableIdentity, ForeignResourceSignature, SourceSpan};
 
 use super::semantic::{EnumIdentity, InferredAlternative, ResourceIdentity, SchemaIdentity, Type};
 
@@ -32,61 +32,36 @@ impl CallableSignature {
     }
 
     pub(super) fn identity(&self) -> CallableIdentity {
-        CallableIdentity {
-            generic_arity: self.generic_arity,
-            parameters: self.parameters.clone(),
-            inferred_alternatives: self.inferred_alternatives.clone(),
-        }
+        CallableIdentity::new(format!(
+            "{:?}:{:?}:{:?}",
+            self.generic_arity, self.parameters, self.inferred_alternatives
+        ))
     }
 }
 
-/// Resource positions retained for mandatory runtime validation of a `foreign`
-/// declaration. Other source types remain compile-time-only in this subset.
-#[derive(Clone, Debug, Default)]
-#[doc(hidden)]
-pub struct ForeignResourceSignature {
-    parameters: Vec<Option<ResourceIdentity>>,
-    result: Option<ResourceIdentity>,
-}
-
-impl ForeignResourceSignature {
-    pub(super) fn from_callable(signature: &CallableSignature) -> Self {
-        Self {
-            parameters: signature
-                .parameters
-                .iter()
-                .map(|parameter| match &parameter.value_type {
-                    Type::Resource(identity) => Some(identity.clone()),
-                    _ => None,
-                })
-                .collect(),
-            result: match &signature.result {
-                Type::Resource(identity) => Some(identity.clone()),
+pub(super) fn foreign_resource_signature(
+    signature: &CallableSignature,
+) -> ForeignResourceSignature {
+    let resource = |identity: &ResourceIdentity| {
+        (
+            identity.explicit_runtime_module().map(str::to_owned),
+            identity.name.clone(),
+        )
+    };
+    ForeignResourceSignature::new(
+        signature
+            .parameters
+            .iter()
+            .map(|parameter| match &parameter.value_type {
+                Type::Resource(identity) => Some(resource(identity)),
                 _ => None,
-            },
-        }
-    }
-
-    pub(crate) fn parameter_identity(&self, index: usize) -> Option<(Option<&str>, &str)> {
-        self.parameters
-            .get(index)
-            .and_then(Option::as_ref)
-            .map(|identity| (identity.explicit_runtime_module(), identity.name.as_str()))
-    }
-
-    pub(crate) fn result_identity(&self) -> Option<(Option<&str>, &str)> {
-        self.result
-            .as_ref()
-            .map(|identity| (identity.explicit_runtime_module(), identity.name.as_str()))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-/// Opaque canonical input identity used by private callable dispatch metadata.
-pub struct CallableIdentity {
-    generic_arity: usize,
-    parameters: Vec<CallableParameter>,
-    inferred_alternatives: Vec<InferredAlternative>,
+            })
+            .collect(),
+        match &signature.result {
+            Type::Resource(identity) => Some(resource(identity)),
+            _ => None,
+        },
+    )
 }
 
 #[derive(Clone, Debug)]

@@ -4,10 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    ModuleKey,
-    source::environment::{CallableIdentity, ModuleSnapshot},
-};
+use crate::{CallableIdentity, ModuleKey, source::environment::ModuleSnapshot};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
