@@ -6,7 +6,7 @@ use std::{
 };
 
 use serde::Serialize;
-use slug_frontend::build_default_host_vm;
+use slug::build_default_host_vm;
 use slug_server::interactive::Server;
 
 fn main() -> ExitCode {

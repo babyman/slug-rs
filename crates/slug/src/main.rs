@@ -8,9 +8,8 @@ use std::{
 };
 
 use serde::Serialize;
-use slug_frontend::{
-    DesktopLoader, SourceError, SourceErrorKind, build_default_host_vm, default_library_root,
-};
+use slug::{DesktopLoader, build_default_host_vm, default_library_root};
+use slug_frontend::{SourceError, SourceErrorKind};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
     RuntimeErrorKind, SourceSpan, Vm,

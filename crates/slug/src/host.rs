@@ -6,10 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    ClutchRepository, ClutchRepositoryError, Configuration, ModuleLoader, ModuleRequest,
-    ModuleResolver, ModuleSource, Vm,
-};
+use slug_frontend::ModuleLoader;
+use slug_loader::{ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
+use slug_vm::{ClutchRepository, ClutchRepositoryError, Configuration, Vm};
 
 /// Desktop host policy for entry programs and imported modules.
 #[derive(Clone)]
@@ -82,7 +81,7 @@ impl Deref for DesktopLoader {
 }
 
 impl ModuleResolver for DesktopLoader {
-    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, crate::ModuleLoadError> {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.module_loader.resolve(request)
     }
 }
