@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{SourceSpan, Value, value::ValueKind};
+use crate::{SourceSpan, Value};
+use slug_vm::ValueKind;
 
 use super::{
     SourceError,
@@ -4663,8 +4664,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert!(opcodes.contains(&crate::bytecode::PackedOpcode::DivideNum));
-        assert!(opcodes.contains(&crate::bytecode::PackedOpcode::LessNum));
+        assert!(opcodes.contains(&slug_vm::PackedOpcode::DivideNum));
+        assert!(opcodes.contains(&slug_vm::PackedOpcode::LessNum));
     }
 
     #[test]

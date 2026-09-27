@@ -23,6 +23,11 @@ impl DesktopLoader {
         Self { module_loader }
     }
 
+    #[must_use]
+    pub fn module_loader(&self) -> ModuleLoader {
+        self.module_loader.clone()
+    }
+
     /// Reads an entry program by explicit path, module root, or installed library name.
     ///
     /// The library fallback accepts a bare name such as `hello` and reads
@@ -125,7 +130,7 @@ pub fn build_default_host_vm(
     );
     let desktop_loader = DesktopLoader::new(loader);
     Ok((
-        Vm::with_module_loader(desktop_loader.module_loader.clone()),
+        Vm::with_host(std::rc::Rc::new(desktop_loader.module_loader.clone())),
         desktop_loader,
     ))
 }

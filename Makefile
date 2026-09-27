@@ -56,11 +56,11 @@ stage-native-clutches:
 	sh scripts/stage-native-clutches.sh
 
 bench-vm:
-	cargo bench -p slug-vm --bench vm --features metrics
+	cargo bench -p slug-frontend --bench vm --features metrics
 
 bench-source:
-	cargo build --release -p slug-vm --bin slug
-	cargo bench -p slug-vm --bench source
+	cargo build --release -p slug --bin slug
+	cargo bench -p slug-frontend --bench source
 
 measure-vm-memory:
 	sh scripts/measure-vm-memory.sh

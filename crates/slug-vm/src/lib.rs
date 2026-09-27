@@ -7,22 +7,22 @@
 //! documented in `docs/reference/compiled-artifacts.md`.
 
 mod bytecode;
-mod clutch;
+#[doc(hidden)]
+pub mod clutch;
 mod collections;
 mod configuration;
 mod conformance;
 #[allow(unsafe_code)]
 mod ffi_prototype;
 mod fixture;
-pub mod host;
-mod module;
 mod native;
 mod runtime_host;
 mod scheduler_signal;
-mod source;
 mod value;
 mod vm;
 
+#[doc(hidden)]
+pub use bytecode::PackedOpcode;
 /// Experimental in-process bytecode construction and inspection types.
 ///
 /// These types are public so Rust hosts and integration tests can construct
@@ -41,9 +41,10 @@ pub use clutch::{
 };
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
-pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeLibrary};
+pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
-pub use module::{ModuleInstance, ModuleLoader};
+#[doc(hidden)]
+pub use native::native_resource_registry;
 pub use native::{
     NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeEnumCase,
     NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,
@@ -56,15 +57,10 @@ pub use runtime_host::{VmHost, VmHostError, VmModuleExports};
 pub use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
 };
-#[doc(hidden)]
-pub use source::{
-    InteractiveCompilation, InteractiveCompilerState, SourceReadiness, source_readiness,
-};
-pub use source::{SourceError, SourceErrorKind, compile};
 #[cfg(feature = "concurrency")]
 pub use value::Task;
 pub use value::{
-    Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value,
+    Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value, ValueKind,
 };
 #[cfg(not(feature = "concurrency"))]
 #[doc(hidden)]

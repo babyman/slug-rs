@@ -77,7 +77,7 @@ fn main() {
     let root = workspace_root();
     let slug = slug_executable(&root);
     let python = python_executable();
-    let source_root = root.join("crates/slug-vm/benches/source");
+    let source_root = root.join("crates/slug-frontend/benches/source");
 
     validate_workloads(&slug, &python, &source_root);
     for workload in WORKLOADS {

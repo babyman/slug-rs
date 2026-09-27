@@ -1,4 +1,4 @@
-use slug_vm::compile;
+use slug_frontend::compile;
 
 fn accepts(source: &str) {
     compile("nominal-test.slug", source).unwrap_or_else(|error| panic!("{error}\n{source}"));

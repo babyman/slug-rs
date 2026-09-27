@@ -8,10 +8,12 @@ use std::{
 };
 
 use serde::Serialize;
-use slug_vm::host::{DesktopLoader, build_default_host_vm, default_library_root};
+use slug_frontend::{
+    DesktopLoader, SourceError, SourceErrorKind, build_default_host_vm, default_library_root,
+};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
-    RuntimeErrorKind, SourceError, SourceErrorKind, SourceSpan, Vm,
+    RuntimeErrorKind, SourceSpan, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -511,7 +513,8 @@ fn display_column(text: &str, source_column: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use slug_vm::{SourceError, SourceErrorKind, SourceSpan};
+    use slug_frontend::{SourceError, SourceErrorKind};
+    use slug_vm::SourceSpan;
 
     use super::render_source_error;
 

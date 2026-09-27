@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use slug_vm::{RuntimeError, RuntimeErrorKind, SourceError, SourceErrorKind, SourceSpan, Value};
+use slug_frontend::{SourceError, SourceErrorKind};
+use slug_vm::{RuntimeError, RuntimeErrorKind, SourceSpan, Value};
 
 /// A versioned, wire-safe projection of a Slug or server failure.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

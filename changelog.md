@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved source parsing, semantic analysis, lowering, diagnostics, and the
+  module graph into `slug-frontend`; the `slug` executable now owns the CLI
+  and fixture-runner binaries. Slug behavior is unchanged.
+
 - Added an explicitly unstable VM host-callback and bytecode-builder seam for
   frontend migration. Desktop Slug behavior is unchanged.
 

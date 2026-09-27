@@ -4,14 +4,14 @@ Slug maintains two complementary benchmark layers. Neither is a
 timing-sensitive CI assertion; compare repeated local runs rather than
 recording portable performance claims.
 
-`make bench-vm` runs `crates/slug-vm/benches/vm.rs`. It executes representative
+`make bench-vm` runs `crates/slug-frontend/benches/vm.rs`. It executes representative
 source programs in-process and reports opt-in VM counters such as instruction
 dispatch, frame-local vector creation and capacity, argument-to-local movement,
 collection operations, and executable layout. Use it to identify the
 implementation cost an internal representation change affects.
 
 `make bench-source` builds the release `slug` executable and runs
-`crates/slug-vm/benches/source.rs`. The runner starts a fresh Slug or CPython
+`crates/slug-frontend/benches/source.rs`. The runner starts a fresh Slug or CPython
 process for each sample, so its timings include source compilation, VM startup,
 and program execution. It validates each checked-in pair of implementations
 against its expected output before timing it. It reports the median and the
@@ -26,7 +26,7 @@ only for an explicitly labelled comparison:
 SLUG_BENCH_PYTHON=/path/to/python3 make bench-source
 SLUG_BENCH_SLUG=/path/to/slug make bench-source
 SLUG_BENCH_SAMPLES=25 make bench-source
-cargo bench -p slug-vm --bench source -- --json
+cargo bench -p slug-frontend --bench source -- --json
 ```
 
 The initial workload corpus is Benchmark-Game-inspired, rather than a port of

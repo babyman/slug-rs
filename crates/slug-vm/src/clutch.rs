@@ -178,12 +178,14 @@ impl ClutchRepository {
     }
 
     #[must_use]
-    pub(crate) fn provider(&self, name: &str) -> Option<&PathBuf> {
+    #[doc(hidden)]
+    pub fn provider(&self, name: &str) -> Option<&PathBuf> {
         self.providers.get(name)
     }
 
     #[must_use]
-    pub(crate) fn plugin(&self, entry: &str) -> Option<ClutchPluginInitializer> {
+    #[doc(hidden)]
+    pub fn plugin(&self, entry: &str) -> Option<ClutchPluginInitializer> {
         self.plugin_initializers.get(entry).cloned()
     }
 }
@@ -263,7 +265,8 @@ pub struct ClutchPluginRegistrar {
 }
 
 impl ClutchPluginRegistrar {
-    pub(crate) fn new(module_names: impl IntoIterator<Item = String>) -> Self {
+    #[doc(hidden)]
+    pub fn new(module_names: impl IntoIterator<Item = String>) -> Self {
         let module_names = module_names.into_iter().collect::<HashSet<_>>();
         let primary_module_name = module_names
             .iter()
@@ -351,7 +354,9 @@ impl ClutchPluginRegistrar {
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> StagedClutchPlugin {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn finish(self) -> StagedClutchPlugin {
         StagedClutchPlugin {
             functions: self.functions,
             cleanup: self.cleanup,
@@ -359,7 +364,8 @@ impl ClutchPluginRegistrar {
     }
 }
 
-pub(crate) struct StagedClutchPlugin {
+#[doc(hidden)]
+pub struct StagedClutchPlugin {
     pub functions: Vec<NativeFunction>,
     cleanup: Option<Box<dyn FnOnce() -> Result<(), String>>>,
 }
@@ -375,7 +381,8 @@ impl fmt::Debug for StagedClutchPlugin {
 }
 
 impl StagedClutchPlugin {
-    pub(crate) fn cleanup(&mut self) -> Result<(), String> {
+    #[doc(hidden)]
+    pub fn cleanup(&mut self) -> Result<(), String> {
         if let Some(cleanup) = self.cleanup.take() {
             cleanup()
         } else {
@@ -385,7 +392,8 @@ impl StagedClutchPlugin {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ClutchModule {
+#[doc(hidden)]
+pub struct ClutchModule {
     pub root: PathBuf,
     pub path: PathBuf,
     pub plugin_entry: Option<String>,
@@ -394,12 +402,14 @@ pub(crate) struct ClutchModule {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct NativeClutchPlugin {
+#[doc(hidden)]
+pub struct NativeClutchPlugin {
     pub library: PathBuf,
     pub abi: String,
 }
 
-pub(crate) fn load_module(root: &Path, name: &str) -> Result<ClutchModule, String> {
+#[doc(hidden)]
+pub fn load_module(root: &Path, name: &str) -> Result<ClutchModule, String> {
     if root.extension().and_then(|extension| extension.to_str()) != Some("clutch") {
         return Err("clutch root must end in `.clutch`".into());
     }

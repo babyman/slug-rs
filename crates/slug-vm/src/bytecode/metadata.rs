@@ -182,9 +182,11 @@ pub struct ModuleDeclaration {
     /// The source-level nominal resource type declared by this metadata entry.
     pub resource_type: Option<String>,
     /// Private canonical callable identity for a resolved foreign binding.
-    pub(crate) foreign_callable_identity: Option<CallableIdentity>,
+    #[doc(hidden)]
+    pub foreign_callable_identity: Option<CallableIdentity>,
     /// Resource positions that require validation when invoking this foreign binding.
-    pub(crate) foreign_resource_signature: Option<ForeignResourceSignature>,
+    #[doc(hidden)]
+    pub foreign_resource_signature: Option<ForeignResourceSignature>,
     pub documentation: Option<String>,
     pub tags: Vec<ModuleTag>,
 }

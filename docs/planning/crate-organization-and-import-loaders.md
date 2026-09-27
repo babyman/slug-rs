@@ -30,7 +30,7 @@ tested commits. Do not check an item off until its stated gate passes.
 - [x] Add narrow VM-owned bytecode-builder and host-callback contracts needed
   by the frontend, with focused VM tests. Keep them private or explicitly
   unstable; they are not a new embedding compatibility API.
-- [ ] Move source parsing, semantic analysis, lowering, and checked source
+- [x] Move source parsing, semantic analysis, lowering, and checked source
   diagnostics to `slug-frontend`. Keep any compatibility re-exports temporary
   and identify their removal commit.
 - [ ] Move the module graph cache and runtime to `slug-frontend`, then prove

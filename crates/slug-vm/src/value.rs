@@ -860,9 +860,12 @@ impl StructValue {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnumValue {
-    pub(crate) module: Rc<str>,
-    pub(crate) name: Rc<str>,
-    pub(crate) case: Rc<str>,
+    #[doc(hidden)]
+    pub module: Rc<str>,
+    #[doc(hidden)]
+    pub name: Rc<str>,
+    #[doc(hidden)]
+    pub case: Rc<str>,
 }
 
 /// The dynamic values used by the initial Slug VM core.
@@ -908,7 +911,8 @@ pub enum Value {
 
 /// Runtime-neutral value categories for source semantic conversion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ValueKind {
+#[doc(hidden)]
+pub enum ValueKind {
     Nil,
     Bool,
     Num,
@@ -943,7 +947,9 @@ impl Value {
         }
     }
 
-    pub(crate) fn kind(&self) -> ValueKind {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn kind(&self) -> ValueKind {
         match self {
             Self::Nil => ValueKind::Nil,
             Self::Bool(_) => ValueKind::Bool,

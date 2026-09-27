@@ -6,8 +6,8 @@ use std::{
 };
 
 use serde::Serialize;
+use slug_frontend::build_default_host_vm;
 use slug_server::interactive::Server;
-use slug_vm::host::build_default_host_vm;
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os();
@@ -38,7 +38,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         };
-    let mut server = Server::new(vm);
+    let mut server = Server::with_module_loader(vm, loader.module_loader());
     let mut output = stdout.lock();
 
     if let Some(path) = application {

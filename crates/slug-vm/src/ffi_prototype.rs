@@ -27,7 +27,8 @@ use crate::{
 
 const ABI_MAJOR: u32 = 0;
 const ABI_MINOR: u32 = 13;
-pub(crate) const ABI_PROFILE: &str = "slug-ffi-prototype/0.13";
+#[doc(hidden)]
+pub const ABI_PROFILE: &str = "slug-ffi-prototype/0.13";
 const MAX_FUNCTIONS: usize = 64;
 const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);

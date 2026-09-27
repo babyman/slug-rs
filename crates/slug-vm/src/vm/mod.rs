@@ -7,15 +7,14 @@ use std::time::Duration;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Instant;
 
-use crate::source::{InteractiveCompilation, InteractiveCompilerState};
 #[cfg(feature = "concurrency")]
 use crate::value::Task;
 #[cfg(feature = "concurrency")]
 use crate::value::TaskAdmission;
 use crate::{
     CallArgumentKind, CallableIdentity, Capture, ForeignResourceSignature, MatchPatternId,
-    ModuleDeclaration, ModuleLoader, NativeDescriptorError, NativeFunction, Program, SourceSpan,
-    SpanId, Value, VmHost,
+    ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceSpan, SpanId, Value,
+    VmHost,
     bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
@@ -359,9 +358,6 @@ impl TaskExecution {
 /// A small, checked stack VM for compiler-produced Slug bytecode.
 pub struct Vm {
     host: Option<Rc<dyn VmHost>>,
-    // This compatibility handle exists only until source and interactive
-    // compilation move to slug-frontend in the next migration commit.
-    interactive_loader: Option<ModuleLoader>,
     module_program: Option<Rc<Program>>,
     globals: GlobalEnvironment,
     imported_globals: HashSet<String>,
@@ -527,7 +523,6 @@ impl Default for Vm {
         let progress = Rc::new(ProgressDriver::new());
         Self {
             host: None,
-            interactive_loader: None,
             module_program: None,
             globals: global_environment(),
             imported_globals: HashSet::new(),
@@ -600,13 +595,6 @@ impl Vm {
         }
     }
 
-    #[must_use]
-    pub fn with_module_loader(module_loader: ModuleLoader) -> Self {
-        let mut vm = Self::with_host(Rc::new(module_loader.clone()));
-        vm.interactive_loader = Some(module_loader);
-        vm
-    }
-
     /// Creates a VM using explicitly supplied host callbacks.
     ///
     /// This contract is intentionally unstable and exists only at the private
@@ -621,19 +609,6 @@ impl Vm {
         };
         vm.install_configuration_builtins();
         vm
-    }
-
-    #[doc(hidden)]
-    pub fn compile_interactive_forms(
-        &self,
-        path: &str,
-        source: &str,
-        state: &InteractiveCompilerState,
-    ) -> Result<Vec<InteractiveCompilation>, crate::SourceError> {
-        self.interactive_loader.as_ref().map_or_else(
-            || crate::source::compile_interactive_forms(path, source, state),
-            |loader| loader.compile_interactive_forms(path, source, state),
-        )
     }
 
     #[doc(hidden)]
@@ -665,7 +640,8 @@ impl Vm {
         }
     }
 
-    pub(crate) fn with_module_bindings(host: &Rc<dyn VmHost>, names: &[String]) -> Self {
+    #[doc(hidden)]
+    pub fn with_module_bindings(host: &Rc<dyn VmHost>, names: &[String]) -> Self {
         let vm = Self::with_host(host.clone());
         vm.globals.borrow_mut().extend(host.builtin_globals());
         vm.globals.borrow_mut().extend(host.native_globals());
@@ -677,7 +653,8 @@ impl Vm {
         vm
     }
 
-    pub(crate) fn run_module(&mut self, program: &InstalledProgram) -> VmResult<Value> {
+    #[doc(hidden)]
+    pub fn run_module(&mut self, program: &InstalledProgram) -> VmResult<Value> {
         self.module_program = Some(program.program.clone());
         self.install_implicit_builtins(&program.program)?;
         self.bind_foreign_declarations(&program.program)?;
@@ -1124,7 +1101,9 @@ impl Vm {
         )
     }
 
-    pub(crate) fn live_exported_values(&self, program: &Program) -> Value {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn live_exported_values(&self, program: &Program) -> Value {
         Value::Map(
             Map::new(
                 program
@@ -3731,7 +3710,6 @@ impl Vm {
         }
         let mut vm = Self {
             host: self.host.clone(),
-            interactive_loader: self.interactive_loader.clone(),
             module_program: Some(program.clone()),
             globals: closure
                 .globals

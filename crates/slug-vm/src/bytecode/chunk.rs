@@ -11,7 +11,8 @@ use super::{
 /// builder's rich `Op` values out of the executable instruction stream.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PackedOpcode {
+#[doc(hidden)]
+pub enum PackedOpcode {
     Constant,
     Interpolate,
     Nil,
@@ -94,8 +95,10 @@ pub(crate) enum PackedOpcode {
 /// Fixed-width executable instruction. `a`, `b`, and `c` are opcode-specific
 /// private operands; rich data lives in `Program` pools.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PackedInstruction {
-    pub(crate) opcode: PackedOpcode,
+#[doc(hidden)]
+pub struct PackedInstruction {
+    #[doc(hidden)]
+    pub opcode: PackedOpcode,
     pub(crate) a: u32,
     pub(crate) b: u32,
     pub(crate) c: u32,
@@ -103,7 +106,8 @@ pub(crate) struct PackedInstruction {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CompiledChunk {
+#[doc(hidden)]
+pub struct CompiledChunk {
     pub(crate) name: String,
     pub(crate) arity: usize,
     pub(crate) parameters: Vec<ParameterSignature>,
@@ -112,7 +116,8 @@ pub(crate) struct CompiledChunk {
     pub(crate) callable_identity: Option<usize>,
     pub(crate) locals: usize,
     pub(crate) constants: Vec<Constant>,
-    pub(crate) code: Vec<PackedInstruction>,
+    #[doc(hidden)]
+    pub code: Vec<PackedInstruction>,
     pub(crate) invalid_instructions: HashMap<usize, String>,
 }
 
@@ -122,7 +127,8 @@ pub struct Chunk {
     pub name: String,
     pub arity: usize,
     pub parameters: Vec<ParameterSignature>,
-    pub(crate) callable_identity: Option<usize>,
+    #[doc(hidden)]
+    pub callable_identity: Option<usize>,
     /// Number of frame-local slots, including parameters.
     pub locals: usize,
     pub constants: Vec<Constant>,

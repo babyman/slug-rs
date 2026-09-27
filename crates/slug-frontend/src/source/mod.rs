@@ -27,10 +27,11 @@ use lexer::Lexer;
 use parser::Parser;
 
 use self::environment::{ImportSnapshots, ModuleSnapshot};
+pub use interactive::compile_interactive_forms;
+pub(crate) use interactive::compile_interactive_forms_with_resolver;
 pub use interactive::{
     InteractiveCompilation, InteractiveCompilerState, SourceReadiness, source_readiness,
 };
-pub(crate) use interactive::{compile_interactive_forms, compile_interactive_forms_with_resolver};
 
 #[derive(Clone, Debug)]
 pub struct SourceError {
@@ -82,9 +83,9 @@ impl std::error::Error for SourceError {}
 pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    let mut program = compile_expressions(path, expressions, ImportSnapshots::new())?;
-    program.set_module_key(ModuleKey::new(path));
-    Ok(program)
+    let mut compilation = compile_expressions(path, expressions, ImportSnapshots::new())?;
+    compilation.program.set_module_key(ModuleKey::new(path));
+    Ok(compilation.program)
 }
 
 pub(crate) fn compile_with_resolver(
@@ -92,7 +93,7 @@ pub(crate) fn compile_with_resolver(
     source: &str,
     include_implicit_builtins: bool,
     mut resolve: impl FnMut(&str) -> Option<ModuleSnapshot>,
-) -> Result<Program, SourceError> {
+) -> Result<CompiledSource, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
     let mut imports = typecheck::static_import_names(&expressions)
@@ -106,20 +107,27 @@ pub(crate) fn compile_with_resolver(
     {
         entry.insert(snapshot);
     }
-    let mut program = compile_expressions(path, expressions, imports)?;
-    program.set_module_key(ModuleKey::new(path));
-    Ok(program)
+    let mut compilation = compile_expressions(path, expressions, imports)?;
+    compilation.program.set_module_key(ModuleKey::new(path));
+    Ok(compilation)
+}
+
+pub(crate) struct CompiledSource {
+    pub(crate) program: Program,
+    pub(crate) snapshot: ModuleSnapshot,
 }
 
 fn compile_expressions(
     path: &str,
     expressions: Vec<ast::Expr>,
     imports: ImportSnapshots,
-) -> Result<Program, SourceError> {
+) -> Result<CompiledSource, SourceError> {
     let analysis = typecheck::analyze_with_imports(&expressions, imports)?;
-    let mut program = Compiler::new(path, expressions, &analysis)
+    let program = Compiler::new(path, expressions, &analysis)
         .compile()?
         .program;
-    program.set_semantic_snapshot(analysis.snapshot);
-    Ok(program)
+    Ok(CompiledSource {
+        program,
+        snapshot: analysis.snapshot,
+    })
 }

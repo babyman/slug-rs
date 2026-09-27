@@ -265,6 +265,7 @@ struct NativeResourceRegistryInner {
 }
 
 #[doc(hidden)]
+#[must_use]
 pub fn native_resource_registry() -> NativeResourceRegistry {
     NativeResourceRegistry(Rc::new(NativeResourceRegistryInner {
         resources: RefCell::new(Vec::new()),
@@ -302,7 +303,9 @@ impl NativeResourceRegistry {
     /// This is the shutdown counterpart to ordinary `close`: it takes each
     /// payload after closing it, so a later Rust drop has only a tombstone to
     /// observe.  Native plugin code can consequently be unloaded safely.
-    pub(crate) fn finalize_all_for_shutdown(&self) -> Vec<String> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn finalize_all_for_shutdown(&self) -> Vec<String> {
         let resources = self.0.resources.borrow().clone();
         resources
             .into_iter()
@@ -945,7 +948,9 @@ impl NativeFunction {
         self.0.member_key.as_deref()
     }
 
-    pub(crate) fn same_function(&self, other: &Self) -> bool {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn same_function(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
@@ -1040,7 +1045,8 @@ pub struct NativeDescriptorError {
 }
 
 impl NativeDescriptorError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
+    #[doc(hidden)]
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }

@@ -3,12 +3,23 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use slug_vm::host::DesktopLoader;
+use slug_frontend::{DesktopLoader, ModuleLoader, compile};
 use slug_vm::{
-    ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleLoader,
-    ModuleRequest, ModuleResolver, NativeArity, NativeCall, NativeDescriptorError, NativeModule,
-    NativeOwnedValue, NativeStatus, RuntimeErrorKind, Value, Vm, compile,
+    ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleRequest,
+    ModuleResolver, NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue,
+    NativeStatus, RuntimeErrorKind, Value, Vm,
 };
+use std::rc::Rc;
+
+trait VmWithModuleLoader {
+    fn with_module_loader(loader: ModuleLoader) -> Self;
+}
+
+impl VmWithModuleLoader for Vm {
+    fn with_module_loader(loader: ModuleLoader) -> Self {
+        Self::with_host(Rc::new(loader))
+    }
+}
 
 fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())

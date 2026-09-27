@@ -2,10 +2,22 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
+    rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use slug_vm::{ClutchRepository, FfiPrototypeLibrary, ModuleLoader, RuntimeErrorKind, Vm};
+use slug_frontend::ModuleLoader;
+use slug_vm::{ClutchRepository, FfiPrototypeLibrary, RuntimeErrorKind, Vm};
+
+trait VmWithModuleLoader {
+    fn with_module_loader(loader: ModuleLoader) -> Self;
+}
+
+impl VmWithModuleLoader for Vm {
+    fn with_module_loader(loader: ModuleLoader) -> Self {
+        Self::with_host(Rc::new(loader))
+    }
+}
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 

@@ -5,14 +5,21 @@ use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
 use serde_json::{Value, json};
 
 #[cfg(not(feature = "concurrency"))]
-use slug_vm::{InteractiveCompilation, InteractiveExecution, VmProgress};
+use slug_frontend::InteractiveCompilation;
 #[cfg(feature = "concurrency")]
-use slug_vm::{InteractiveCompilation, InteractiveTask, VmProgress};
-use slug_vm::{
-    InteractiveCompilerState, InteractiveEnvironment, NativeArity, NativeDescriptorError,
-    NativeFunction, NativeModule, Program, SourceReadiness, Value as SlugValue, Vm, VmResult,
+use slug_frontend::InteractiveCompilation;
+use slug_frontend::{
+    InteractiveCompilerState, ModuleLoader, SourceReadiness, compile_interactive_forms,
     source_readiness,
 };
+use slug_vm::{
+    InteractiveEnvironment, NativeArity, NativeDescriptorError, NativeFunction, NativeModule,
+    Program, Value as SlugValue, Vm, VmResult,
+};
+#[cfg(not(feature = "concurrency"))]
+use slug_vm::{InteractiveExecution, VmProgress};
+#[cfg(feature = "concurrency")]
+use slug_vm::{InteractiveTask, VmProgress};
 
 use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
 
@@ -62,6 +69,7 @@ impl std::error::Error for OutputError {}
 /// In-process owner of interactive-session protocol lifecycle.
 pub struct Server {
     vm: Vm,
+    loader: Option<ModuleLoader>,
     initialized: bool,
     sessions: BTreeMap<String, Session>,
     next_session: u64,
@@ -154,6 +162,7 @@ impl Server {
     pub fn new(vm: Vm) -> Self {
         let mut server = Self {
             vm,
+            loader: None,
             initialized: false,
             sessions: BTreeMap::new(),
             next_session: 0,
@@ -163,10 +172,31 @@ impl Server {
         server
     }
 
+    /// Creates a server whose interactive forms resolve imports through the
+    /// supplied frontend module graph.
+    #[must_use]
+    pub fn with_module_loader(vm: Vm, loader: ModuleLoader) -> Self {
+        let mut server = Self::new(vm);
+        server.loader = Some(loader);
+        server
+    }
+
     /// Returns the shared embedded VM without starting session execution.
     #[must_use]
     pub fn vm(&self) -> &Vm {
         &self.vm
+    }
+
+    fn compile_interactive_forms(
+        &self,
+        path: &str,
+        source: &str,
+        state: &InteractiveCompilerState,
+    ) -> Result<Vec<InteractiveCompilation>, slug_frontend::SourceError> {
+        self.loader.as_ref().map_or_else(
+            || compile_interactive_forms(path, source, state),
+            |loader| loader.compile_interactive_forms(path, source, state),
+        )
     }
 
     /// Registers a shared host binding visible to every session on its next submission.
@@ -445,7 +475,7 @@ impl Server {
                 .get(&session)
                 .expect("validated session remains available during submission")
                 .compiler;
-            let compilations = match self.vm.compile_interactive_forms(&path, &source, compiler) {
+            let compilations = match self.compile_interactive_forms(&path, &source, compiler) {
                 Ok(compilations) => compilations,
                 Err(error) => {
                     return Response::failure(
@@ -580,7 +610,7 @@ impl Server {
     #[allow(clippy::too_many_lines)]
     fn submit_forms(&mut self, id: u64, session: String, path: &str, source: &str) -> Response {
         let compiler = &self.sessions[&session].compiler;
-        let compilations = match self.vm.compile_interactive_forms(path, source, compiler) {
+        let compilations = match self.compile_interactive_forms(path, source, compiler) {
             Ok(compilations) => compilations,
             Err(error) => {
                 return Response::failure(Some(id), Some(session), Diagnostic::from_source(&error));

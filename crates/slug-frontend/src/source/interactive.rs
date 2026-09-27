@@ -131,8 +131,7 @@ pub(crate) fn compile_interactive_forms_with_resolver(
             state.callable_globals.clone(),
         )
         .compile()?;
-        let mut program = compiled.program;
-        program.set_semantic_snapshot(analysis.snapshot);
+        let program = compiled.program;
         state = InteractiveCompilerState {
             semantic: analysis.session_snapshot,
             globals: compiled.globals,

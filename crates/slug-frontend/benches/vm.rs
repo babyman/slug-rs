@@ -5,9 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use slug_frontend::compile;
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, Program, Vm, VmMetrics,
-    compile,
 };
 
 const ITERATIONS: usize = 1_000;

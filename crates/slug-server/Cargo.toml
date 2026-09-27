@@ -9,8 +9,8 @@ repository = "https://github.com/sluglang/slug"
 
 [features]
 default = ["concurrency"]
-concurrency = ["slug-vm/concurrency"]
-metrics = ["slug-vm/metrics"]
+concurrency = ["slug-frontend/concurrency", "slug-vm/concurrency"]
+metrics = ["slug-frontend/metrics", "slug-vm/metrics"]
 
 [lints]
 workspace = true
@@ -19,6 +19,8 @@ workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 slug-vm = { path = "../slug-vm", default-features = false }
+slug-frontend = { path = "../slug-frontend", default-features = false }
 
 [dev-dependencies]
 slug-vm = { path = "../slug-vm", default-features = false }
+slug-frontend = { path = "../slug-frontend", default-features = false }

@@ -263,6 +263,8 @@ dependencies = [
 name = "slug"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "slug-desktop-loader",
  "slug-frontend",
  "slug-loader",
@@ -281,6 +283,8 @@ dependencies = [
 name = "slug-frontend"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "slug-loader",
  "slug-vm",
 ]
@@ -311,6 +315,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "slug-frontend",
  "slug-vm",
 ]
 
@@ -320,6 +325,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "slug-frontend",
  "slug-loader",
  "toml",
 ]

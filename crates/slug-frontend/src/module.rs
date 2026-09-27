@@ -9,8 +9,6 @@ use std::{
 use crate::{
     ClutchRepository, Configuration, FfiPrototypeLibrary, ModuleDeclaration, NativeDescriptorError,
     NativeFunction, Program, SourceError, Value, Vm, VmHost, VmHostError, VmModuleExports,
-    clutch::{self, StagedClutchPlugin},
-    native::{NativeResourceRegistry, native_resource_registry},
     source::{
         InteractiveCompilation, InteractiveCompilerState, compile_with_resolver,
         environment::ModuleSnapshot,
@@ -18,6 +16,11 @@ use crate::{
 };
 use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
+};
+use slug_vm::{
+    NativeResourceRegistry,
+    clutch::{self, StagedClutchPlugin},
+    native_resource_registry,
 };
 
 /// Host-owned roots used to load Slug module source.
@@ -43,7 +46,7 @@ struct ModuleRuntimeServices {
     configuration: Configuration,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
-    native_resources: NativeResourceRegistry,
+    native_resources: slug_vm::NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
 }
@@ -117,7 +120,7 @@ impl ModuleRuntime {
         if let Some(program) = self.state.compiled.borrow().get(&source.key) {
             return Ok(program.clone());
         }
-        let mut program = self
+        let mut compilation = self
             .compile_source_for_module(
                 resolver,
                 &source.key,
@@ -129,16 +132,16 @@ impl ModuleRuntime {
                 location: source.diagnostic_name.clone(),
                 message: error.to_string(),
             })?;
-        program.set_module_name(request.name);
+        compilation.program.set_module_name(request.name);
         self.state
             .semantic_snapshots
             .borrow_mut()
-            .insert(source.key.clone(), program.semantic_snapshot().clone());
+            .insert(source.key.clone(), compilation.snapshot);
         self.state
             .compiled
             .borrow_mut()
-            .insert(source.key, program.clone());
-        Ok(program)
+            .insert(source.key, compilation.program.clone());
+        Ok(compilation.program)
     }
 
     fn compile_interactive_forms(
@@ -161,7 +164,7 @@ impl ModuleRuntime {
         diagnostic_name: &str,
         source: &str,
         include_implicit_builtins: bool,
-    ) -> Result<Program, SourceError> {
+    ) -> Result<crate::source::CompiledSource, SourceError> {
         compile_with_resolver(diagnostic_name, source, include_implicit_builtins, |name| {
             self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name))
         })
@@ -193,7 +196,7 @@ impl ModuleRuntime {
                 request.name != "slug.builtin",
             )
             .ok()
-            .map(|program| program.semantic_snapshot().clone());
+            .map(|compilation| compilation.snapshot);
         self.state
             .resolving_snapshots
             .borrow_mut()
@@ -300,7 +303,7 @@ impl ModuleRuntime {
         if let Some(program) = self.state.compiled.borrow().get(&source.key) {
             return Ok(program.clone());
         }
-        let mut program = self
+        let mut compilation = self
             .compile_source_for_module(
                 resolver,
                 &source.key,
@@ -312,17 +315,17 @@ impl ModuleRuntime {
                 location: source.diagnostic_name.clone(),
                 message: error.to_string(),
             })?;
-        program.set_module_name(module_name);
-        program.set_module_key(source.key.clone());
+        compilation.program.set_module_name(module_name);
+        compilation.program.set_module_key(source.key.clone());
         self.state
             .semantic_snapshots
             .borrow_mut()
-            .insert(source.key.clone(), program.semantic_snapshot().clone());
+            .insert(source.key.clone(), compilation.snapshot);
         self.state
             .compiled
             .borrow_mut()
-            .insert(source.key.clone(), program.clone());
-        Ok(program)
+            .insert(source.key.clone(), compilation.program.clone());
+        Ok(compilation.program)
     }
 
     fn virtual_builtin_module<H: ModuleRuntimeHost>(&self, host: &H) -> ModuleInstance {
@@ -569,13 +572,10 @@ impl ModuleLoader {
     ///
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
-        self.state.runtime.compile_source_for_module(
-            self,
-            &ModuleKey::new(path),
-            path,
-            source,
-            true,
-        )
+        self.state
+            .runtime
+            .compile_source_for_module(self, &ModuleKey::new(path), path, source, true)
+            .map(|compilation| compilation.program)
     }
 
     #[doc(hidden)]
@@ -778,7 +778,7 @@ impl ModuleLoader {
             ClutchPluginSource::Native {
                 root, library, abi, ..
             } => {
-                if abi == crate::ffi_prototype::ABI_PROFILE {
+                if abi == slug_vm::ABI_PROFILE {
                     let module = FfiPrototypeLibrary::load(library).map_err(|error| {
                         ModuleLoadError::Clutch {
                             location: library.to_string_lossy().into_owned(),
@@ -913,7 +913,7 @@ impl VmHost for ModuleLoader {
         self.define_native(name, value);
     }
 
-    fn native_resources(&self) -> NativeResourceRegistry {
+    fn native_resources(&self) -> slug_vm::NativeResourceRegistry {
         self.native_resources()
     }
 

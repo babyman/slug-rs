@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{CallableIdentity, ModuleKey, source::environment::ModuleSnapshot};
+use crate::{CallableIdentity, ModuleKey};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
@@ -41,7 +41,6 @@ pub struct Program {
     entrypoint: Option<Entrypoint>,
     module_name: String,
     module_key: Option<ModuleKey>,
-    semantic_snapshot: ModuleSnapshot,
     callable_identities: Vec<CallableIdentity>,
     sources: Vec<Arc<str>>,
     source_ids: HashMap<Arc<str>, SourceId>,
@@ -179,7 +178,8 @@ impl Program {
     }
 
     #[must_use]
-    pub(crate) fn chunk(&self, index: usize) -> Option<&CompiledChunk> {
+    #[doc(hidden)]
+    pub fn chunk(&self, index: usize) -> Option<&CompiledChunk> {
         self.chunks.get(index)
     }
 
@@ -889,14 +889,6 @@ impl Program {
         self.entrypoint = entrypoint;
     }
 
-    pub(crate) fn semantic_snapshot(&self) -> &ModuleSnapshot {
-        &self.semantic_snapshot
-    }
-
-    pub(crate) fn set_semantic_snapshot(&mut self, snapshot: ModuleSnapshot) {
-        self.semantic_snapshot = snapshot;
-    }
-
     pub(crate) fn callable_identity(&self, index: usize) -> Option<&CallableIdentity> {
         self.callable_identities.get(index)
     }
@@ -910,7 +902,8 @@ impl Program {
         self.module_name = module_name.into();
     }
 
-    pub(crate) fn set_module_key(&mut self, module_key: ModuleKey) {
+    #[doc(hidden)]
+    pub fn set_module_key(&mut self, module_key: ModuleKey) {
         self.module_key = Some(module_key);
     }
 
