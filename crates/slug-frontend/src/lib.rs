@@ -8,7 +8,7 @@ mod module;
 mod source;
 
 pub use host::{DesktopLoader, build_default_host_vm, default_library_root};
-pub use module::{ModuleInstance, ModuleLoader};
+pub use module::{ModuleGraphHost, ModuleInstance, ModuleLoader};
 pub use source::{
     InteractiveCompilation, InteractiveCompilerState, SourceError, SourceErrorKind,
     SourceReadiness, compile, compile_interactive_forms, source_readiness,

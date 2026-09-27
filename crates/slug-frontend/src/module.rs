@@ -74,16 +74,30 @@ struct ModuleRuntimeState {
 /// `ModuleRuntime` never inspects an activation's storage representation or
 /// native registrations; it only sequences their lifecycle around module
 /// compilation and execution.
-trait ModuleRuntimeHost: ModuleResolver {
+///
+/// This is an intentionally unstable composition seam. A frontend graph host
+/// supplies VM services and owns activation transactions; a resolver supplies
+/// module source. Desktop policy does not belong to the graph itself.
+pub trait ModuleGraphHost: ModuleResolver {
     type Activation;
 
     fn builtin_globals(&self) -> HashMap<String, Value>;
 
+    /// Stages any resolver-owned activation required by `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when the activation cannot be prepared.
     fn stage_module_activation(
         &self,
         source: &ModuleSource,
     ) -> Result<Option<Self::Activation>, ModuleLoadError>;
 
+    /// Publishes one staged activation's native registrations.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error without publishing a partial registration batch.
     fn register_module_activation(
         &self,
         source: &ModuleSource,
@@ -209,7 +223,7 @@ impl ModuleRuntime {
         Some(snapshot)
     }
 
-    fn initialize<H: ModuleRuntimeHost>(
+    fn initialize<H: ModuleGraphHost>(
         &self,
         host: &H,
         request: ModuleRequest<'_>,
@@ -328,7 +342,7 @@ impl ModuleRuntime {
         Ok(compilation.program)
     }
 
-    fn virtual_builtin_module<H: ModuleRuntimeHost>(&self, host: &H) -> ModuleInstance {
+    fn virtual_builtin_module<H: ModuleGraphHost>(&self, host: &H) -> ModuleInstance {
         let key = ModuleKey::new("<slug.builtin>");
         if let Some(instance) = self.state.instances.borrow().get(&key) {
             return instance.clone();
@@ -855,7 +869,7 @@ impl ModuleLoader {
     }
 }
 
-impl ModuleRuntimeHost for ModuleLoader {
+impl ModuleGraphHost for ModuleLoader {
     type Activation = StagedClutchPlugin;
 
     fn builtin_globals(&self) -> HashMap<String, Value> {
