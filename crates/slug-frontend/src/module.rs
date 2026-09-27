@@ -24,16 +24,16 @@ use slug_vm::{
 };
 
 /// Host-owned roots used to load Slug module source.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ModuleLoader {
     state: Rc<ModuleLoaderState>,
 }
 
-#[derive(Debug)]
 struct ModuleLoaderState {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
+    resolver: Option<Rc<dyn ModuleResolver>>,
     runtime: ModuleRuntime,
     services: ModuleRuntimeServices,
     activation_sources: RefCell<HashMap<ModuleActivation, ClutchPluginSource>>,
@@ -431,6 +431,35 @@ impl ModuleLoader {
                 source_root: source_root.into(),
                 library_root,
                 clutch_repository,
+                resolver: None,
+                runtime: ModuleRuntime::new(),
+                services: ModuleRuntimeServices {
+                    configuration,
+                    native_globals: RefCell::new(HashMap::new()),
+                    foreign_functions: RefCell::new(HashMap::new()),
+                    native_resources: native_resource_registry(),
+                    warnings: RefCell::new(Vec::new()),
+                    shutdown_errors: RefCell::new(Vec::new()),
+                },
+                activation_sources: RefCell::new(HashMap::new()),
+                active_clutch_plugins: RefCell::new(HashMap::new()),
+            }),
+        }
+    }
+
+    /// Creates a graph host backed by an explicitly supplied import resolver.
+    ///
+    /// This constructor is intended for restricted and in-memory hosts. The
+    /// resolver supplies every external module; desktop filesystem and Clutch
+    /// lookup remain unavailable through this path.
+    #[must_use]
+    pub fn with_resolver(resolver: Rc<dyn ModuleResolver>, configuration: Configuration) -> Self {
+        Self {
+            state: Rc::new(ModuleLoaderState {
+                source_root: PathBuf::new(),
+                library_root: None,
+                clutch_repository: ClutchRepository::default(),
+                resolver: Some(resolver),
                 runtime: ModuleRuntime::new(),
                 services: ModuleRuntimeServices {
                     configuration,
@@ -469,6 +498,9 @@ impl ModuleLoader {
 
 impl ModuleResolver for ModuleLoader {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        if let Some(resolver) = &self.state.resolver {
+            return resolver.resolve(request);
+        }
         let relative = module_path(request.name)?;
         let mut candidates = Vec::new();
         if let Some(importer) = request

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an injected-resolver frontend graph path. Static import analysis and
+  runtime `import()` now share the same host-provided resolver.
+
 - Moved source parsing, semantic analysis, lowering, diagnostics, and the
   module graph into `slug-frontend`; the `slug` executable now owns the CLI
   and fixture-runner binaries. Slug behavior is unchanged.

@@ -4,6 +4,7 @@ use std::{
 };
 
 use slug_frontend::{DesktopLoader, ModuleLoader, compile};
+use slug_loader::{ModuleKey, ModuleSource};
 use slug_vm::{
     ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleRequest,
     ModuleResolver, NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue,
@@ -18,6 +19,28 @@ trait VmWithModuleLoader {
 impl VmWithModuleLoader for Vm {
     fn with_module_loader(loader: ModuleLoader) -> Self {
         Self::with_host(Rc::new(loader))
+    }
+}
+
+struct MemoryResolver {
+    modules: std::collections::HashMap<String, String>,
+}
+
+impl ModuleResolver for MemoryResolver {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        let text = self
+            .modules
+            .get(request.name)
+            .ok_or_else(|| ModuleLoadError::NotFound {
+                name: request.name.into(),
+                searched: Vec::new(),
+            })?;
+        Ok(ModuleSource {
+            key: ModuleKey::new(format!("memory:{}", request.name)),
+            diagnostic_name: format!("memory:{}", request.name),
+            text: text.clone(),
+            activation: None,
+        })
     }
 }
 
@@ -1110,6 +1133,36 @@ fn imported_inferred_alternatives_propagate_after_independent_selection() {
         .expect_err("selected imported alternative constrains wrapper inputs");
     assert!(error.to_string().starts_with("expected num, got bytes"));
     fs::remove_dir_all(root).expect("remove inferred alternative wrapper module directory");
+}
+
+#[test]
+fn in_memory_resolver_serves_static_and_runtime_imports() {
+    let resolver = Rc::new(MemoryResolver {
+        modules: [(
+            "math".into(),
+            "export val double = fn(value) { value * 2 }\n".into(),
+        )]
+        .into_iter()
+        .collect(),
+    });
+    let loader = ModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
+    let program = loader
+        .compile_source(
+            "memory:main",
+            "val {*} = import(\"math\")\nexport val result = double(21)\n",
+        )
+        .expect("compile through the in-memory resolver");
+    let mut vm = Vm::with_module_loader(loader.clone());
+
+    vm.run_named(&program, "main")
+        .expect("execute runtime import through the same resolver");
+
+    assert_eq!(loader.cached_module_count(), 1);
+    assert_eq!(loader.initialized_module_count(), 1);
+    assert_eq!(
+        vm.exported_values(&program),
+        Value::Map(Rc::new(vec![(Value::string("result"), Value::Int(42))]))
+    );
 }
 
 #[test]

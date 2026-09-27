@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// Desktop host policy for entry programs and imported modules.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DesktopLoader {
     module_loader: ModuleLoader,
 }

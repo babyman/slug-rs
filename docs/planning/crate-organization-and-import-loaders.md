@@ -99,7 +99,7 @@ command-line dependency, and its focused VM suite passes.
   compilation into `slug-frontend`.
 - [ ] Move compiled-program, semantic-snapshot, resolving-cycle, and module
   instance caches into a frontend-owned module graph runtime.
-- [ ] Make both static import inspection and runtime `import()` consult the
+- [x] Make both static import inspection and runtime `import()` consult the
   same injected `slug-loader` contract.
 - [ ] Preserve virtual `slug.builtin` behavior as an explicit host/VM facility,
   not a filesystem special case and not a nil-loader exception.
