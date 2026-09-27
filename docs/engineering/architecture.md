@@ -19,8 +19,8 @@ implements a small source subset through a checked bytecode virtual machine.
 | Runtime values and collections | `crates/slug-vm/src/{value,collections}.rs` | Dynamic values, channels, tasks, and persistent collection storage remain coupled by runtime lifecycle. |
 | Execution | `crates/slug-vm/src/vm/` | One VM owner for installation, dispatch, and polling; focused modules own frames/local storage, checked operand-stack access, errors, cleanup unwinding, operations, scheduler state, timers, and progress. |
 | CLI | `crates/slug-vm/src/main.rs` | Process boundary and public error presentation. |
-| Interactive server | `crates/slug-server/src/interactive/` | Versioned NDJSON protocol, session ownership, source-cell lifecycle, and event projection over a VM. |
-| Terminal REPL | `crates/slug-repl/src/main.rs` | Terminal input/editing and transport to the sibling server process; it does not embed VM behavior. |
+| Interactive server | `crates/slug/src/interactive/` | Versioned NDJSON protocol, session ownership, source-cell lifecycle, and event projection over a VM. |
+| Terminal REPL | `crates/slug-repl/src/main.rs` | Terminal input/editing and transport to `slug --server`; it does not embed VM behavior. |
 
 The current source files are intentionally a smaller set than the eventual
 stage-oriented directories described in the [agentic refactoring plan](../planning/completed/agentic-development-refactoring.md).

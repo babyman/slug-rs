@@ -38,7 +38,7 @@ tested commits. Do not check an item off until its stated gate passes.
   with an in-memory resolver.
 - [ ] Move desktop filesystem resolution, Clutch discovery, native activation,
   leases, and cleanup to `slug-desktop-loader`.
-- [ ] Move CLI/configuration/entry lookup and interactive server assembly to
+- [x] Move CLI/configuration/entry lookup and interactive server assembly to
   `slug`; update `slug-repl` to launch `slug --server`.
 - [ ] Add the nil-loader restricted-host harness and a dependency inspection
   proving that path excludes desktop-loader and Clutch code.

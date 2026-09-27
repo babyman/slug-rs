@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Moved the interactive server and NDJSON protocol into `slug`, exposed it as
+  `slug --server`, and updated `slug-repl` to launch that mode by default.
+
 - Added in-memory graph coverage for importer identity, cycles, cache reuse,
   live exports, static snapshots, and checked missing-module failures.
 

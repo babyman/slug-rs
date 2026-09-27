@@ -164,7 +164,7 @@ cargo run -p slug-repl
 cargo run -p slug-repl -- session.slug
 ```
 
-It launches the sibling `slug-server` executable, presents a `>` prompt, and
+It launches the sibling `slug --server` mode, presents a `>` prompt, and
 sends each complete source unit through its structured session protocol. In a
 terminal, the prompt supports cursor-based line editing and Up/Down command
 history for the current REPL session; piped input remains plain line-oriented.
@@ -177,7 +177,7 @@ previously declared channel and resume it in both runtime configurations.
 Incomplete syntax such as a function body uses a `.` continuation prompt. Type
 `:quit` or `:exit`, or send end-of-file, to close the session. Set
 `SLUG_SERVER` to use a different local server executable. Distributions must
-install `slug-repl` and `slug-server` together.
+install `slug-repl` and `slug` together.
 
 Interactive submissions run as session-owned cells: scheduler tasks in the
 default runtime and detached host-driven executions in the slim runtime. A
