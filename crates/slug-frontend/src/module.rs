@@ -16,6 +16,7 @@ use crate::{
 };
 use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
+    module_path,
 };
 use slug_vm::{
     NativeResourceRegistry,
@@ -1037,20 +1038,4 @@ impl Drop for ModuleLoaderState {
             }
         }
     }
-}
-
-fn module_path(name: &str) -> Result<PathBuf, ModuleLoadError> {
-    let mut path = PathBuf::new();
-    for part in name.split('.') {
-        if part.is_empty()
-            || !part
-                .chars()
-                .all(|value| value == '_' || value.is_ascii_alphanumeric())
-        {
-            return Err(ModuleLoadError::InvalidName(name.into()));
-        }
-        path.push(part);
-    }
-    path.set_extension("slug");
-    Ok(path)
 }

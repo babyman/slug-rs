@@ -3,7 +3,7 @@
 //!
 //! This crate deliberately has no desktop policy or VM construction.
 
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -98,3 +98,53 @@ impl fmt::Display for ModuleLoadError {
 }
 
 impl std::error::Error for ModuleLoadError {}
+
+/// Converts a dotted logical module name into its relative source path.
+///
+/// This validates logical names without selecting a host root or accessing
+/// storage, so every filesystem-backed resolver shares the same boundary.
+///
+/// # Errors
+///
+/// Returns [`ModuleLoadError::InvalidName`] when a name has an empty or
+/// non-identifier segment.
+pub fn module_path(name: &str) -> Result<PathBuf, ModuleLoadError> {
+    let mut path = PathBuf::new();
+    for part in name.split('.') {
+        if part.is_empty()
+            || !part
+                .chars()
+                .all(|value| value == '_' || value.is_ascii_alphanumeric())
+        {
+            return Err(ModuleLoadError::InvalidName(name.into()));
+        }
+        path.push(part);
+    }
+    path.set_extension("slug");
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{ModuleLoadError, module_path};
+
+    #[test]
+    fn maps_valid_dotted_names_to_relative_slug_paths() {
+        assert_eq!(
+            module_path("example.nested_module").expect("valid module name"),
+            PathBuf::from("example/nested_module.slug")
+        );
+    }
+
+    #[test]
+    fn rejects_empty_and_non_identifier_segments() {
+        for name in ["", "example..nested", "example/path", "example-name"] {
+            assert_eq!(
+                module_path(name),
+                Err(ModuleLoadError::InvalidName(name.into()))
+            );
+        }
+    }
+}
