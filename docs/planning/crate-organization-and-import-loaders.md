@@ -97,7 +97,7 @@ command-line dependency, and its focused VM suite passes.
 
 - [ ] Move syntax, AST, semantic analysis, lowering, source errors, and source
   compilation into `slug-frontend`.
-- [ ] Move compiled-program, semantic-snapshot, resolving-cycle, and module
+- [x] Move compiled-program, semantic-snapshot, resolving-cycle, and module
   instance caches into a frontend-owned module graph runtime.
 - [x] Make both static import inspection and runtime `import()` consult the
   same injected `slug-loader` contract.
