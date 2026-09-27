@@ -95,15 +95,15 @@ command-line dependency, and its focused VM suite passes.
 
 ## 3. Move the language frontend and module graph
 
-- [ ] Move syntax, AST, semantic analysis, lowering, source errors, and source
+- [x] Move syntax, AST, semantic analysis, lowering, source errors, and source
   compilation into `slug-frontend`.
 - [x] Move compiled-program, semantic-snapshot, resolving-cycle, and module
   instance caches into a frontend-owned module graph runtime.
 - [x] Make both static import inspection and runtime `import()` consult the
   same injected `slug-loader` contract.
-- [ ] Preserve virtual `slug.builtin` behavior as an explicit host/VM facility,
+- [x] Preserve virtual `slug.builtin` behavior as an explicit host/VM facility,
   not a filesystem special case and not a nil-loader exception.
-- [ ] Move source, module graph, and source-diagnostic tests to the frontend;
+- [x] Move source, module graph, and source-diagnostic tests to the frontend;
   keep observable runner assertions at the executable boundary.
 
 **Gate:** a non-filesystem test loader proves relative graph behavior, cache
