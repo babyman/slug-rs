@@ -56,7 +56,7 @@ the next migration steps move concrete types.
 
 ## 2. Make `slug-vm` a runtime-only library
 
-- [ ] Move dynamic values, bytecode, VM execution, checked runtime errors,
+- [x] Move dynamic values, bytecode, VM execution, checked runtime errors,
   scheduler support, and VM-facing native registration mechanisms into
   `slug-vm`.
 - [ ] Move lexing, parsing, ASTs, semantic analysis, source lowering, source
