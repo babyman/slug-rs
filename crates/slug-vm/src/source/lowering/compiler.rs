@@ -3,11 +3,11 @@ use std::{
     rc::Rc,
 };
 
-use crate::bytecode::{Entrypoint, EntrypointArguments};
 use crate::{
-    CallArgumentKind, CallableIdentity, Capture, Chunk, ForeignResourceSignature, MatchMapKey,
-    MatchPattern, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature,
-    Program, SchemaField, SelectCase, SourceSpan, Value,
+    CallArgumentKind, CallableIdentity, Capture, Chunk, Entrypoint, EntrypointArguments,
+    ForeignResourceSignature, MatchMapKey, MatchPattern, MatchRest, MatchType, ModuleDeclaration,
+    ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField, SelectCase,
+    SourceSpan, Value,
 };
 
 use super::{
@@ -232,7 +232,7 @@ impl Compiler {
         }
         state.emit(Op::Return, &SourceSpan::new(self.path.clone(), 1, 1));
         self.chunks.push(state.finish("main", 0));
-        let mut program = Program::new();
+        let mut program = ProgramBuilder::new();
         for chunk in self.chunks {
             program.add_chunk(chunk);
         }
@@ -244,7 +244,7 @@ impl Compiler {
         program.set_entrypoint(entrypoint);
         program.set_callable_identities(self.callable_identities);
         Ok(CompiledProgram {
-            program,
+            program: program.finish(),
             globals: self.globals,
             callable_globals: self.callable_globals,
         })
@@ -273,10 +273,10 @@ impl Compiler {
                 .ok_or_else(|| {
                     SourceError::semantic("cannot identify program entrypoint", span.clone())
                 })?;
-            entrypoint = Some(Entrypoint {
+            entrypoint = Some(Entrypoint::new(
                 arguments,
-                callable_identity: self.intern_callable_identity(identity),
-            });
+                self.intern_callable_identity(identity),
+            ));
         }
         Ok(entrypoint)
     }

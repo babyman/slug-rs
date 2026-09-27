@@ -257,19 +257,27 @@ impl Drop for NativeChannelProducer {
 }
 
 #[derive(Clone)]
-pub(crate) struct NativeResourceRegistry(Rc<NativeResourceRegistryInner>);
+#[doc(hidden)]
+pub struct NativeResourceRegistry(Rc<NativeResourceRegistryInner>);
 
 struct NativeResourceRegistryInner {
     resources: RefCell<Vec<Weak<NativeResource>>>,
 }
 
-pub(crate) fn native_resource_registry() -> NativeResourceRegistry {
+#[doc(hidden)]
+pub fn native_resource_registry() -> NativeResourceRegistry {
     NativeResourceRegistry(Rc::new(NativeResourceRegistryInner {
         resources: RefCell::new(Vec::new()),
     }))
 }
 
 impl NativeResourceRegistry {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new() -> Self {
+        native_resource_registry()
+    }
+
     pub(crate) fn register(&self, resources: Vec<Weak<NativeResource>>) {
         let mut tracked = self.0.resources.borrow_mut();
         tracked.retain(|resource| resource.strong_count() > 0);

@@ -14,8 +14,8 @@ use crate::value::Task;
 use crate::value::TaskAdmission;
 use crate::{
     CallArgumentKind, CallableIdentity, Capture, ForeignResourceSignature, MatchPatternId,
-    ModuleDeclaration, ModuleLoader, ModuleRequest, NativeDescriptorError, NativeFunction, Program,
-    SourceSpan, SpanId, Value,
+    ModuleDeclaration, ModuleLoader, NativeDescriptorError, NativeFunction, Program, SourceSpan,
+    SpanId, Value, VmHost,
     bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
@@ -358,7 +358,10 @@ impl TaskExecution {
 
 /// A small, checked stack VM for compiler-produced Slug bytecode.
 pub struct Vm {
-    module_loader: Option<ModuleLoader>,
+    host: Option<Rc<dyn VmHost>>,
+    // This compatibility handle exists only until source and interactive
+    // compilation move to slug-frontend in the next migration commit.
+    interactive_loader: Option<ModuleLoader>,
     module_program: Option<Rc<Program>>,
     globals: GlobalEnvironment,
     imported_globals: HashSet<String>,
@@ -523,7 +526,8 @@ impl Default for Vm {
         let metrics = Rc::new(RefCell::new(VmMetrics::default()));
         let progress = Rc::new(ProgressDriver::new());
         Self {
-            module_loader: None,
+            host: None,
+            interactive_loader: None,
             module_program: None,
             globals: global_environment(),
             imported_globals: HashSet::new(),
@@ -598,9 +602,20 @@ impl Vm {
 
     #[must_use]
     pub fn with_module_loader(module_loader: ModuleLoader) -> Self {
-        let native_resources = module_loader.native_resources();
+        let mut vm = Self::with_host(Rc::new(module_loader.clone()));
+        vm.interactive_loader = Some(module_loader);
+        vm
+    }
+
+    /// Creates a VM using explicitly supplied host callbacks.
+    ///
+    /// This contract is intentionally unstable and exists only at the private
+    /// frontend-to-runtime seam during the crate migration.
+    #[must_use]
+    pub fn with_host(host: Rc<dyn VmHost>) -> Self {
+        let native_resources = host.native_resources();
         let mut vm = Self {
-            module_loader: Some(module_loader),
+            host: Some(host),
             native_resources,
             ..Self::default()
         };
@@ -615,7 +630,7 @@ impl Vm {
         source: &str,
         state: &InteractiveCompilerState,
     ) -> Result<Vec<InteractiveCompilation>, crate::SourceError> {
-        self.module_loader.as_ref().map_or_else(
+        self.interactive_loader.as_ref().map_or_else(
             || crate::source::compile_interactive_forms(path, source, state),
             |loader| loader.compile_interactive_forms(path, source, state),
         )
@@ -624,7 +639,7 @@ impl Vm {
     #[doc(hidden)]
     #[must_use]
     pub fn has_module_loader(&self) -> bool {
-        self.module_loader.is_some()
+        self.host.is_some()
     }
 
     /// Stops this VM and releases clutch-owned runtime state.
@@ -645,19 +660,15 @@ impl Vm {
             self.release_host_execution(execution, Some(&cancellation));
         }
         self.native_resources.close_all();
-        if let Some(loader) = &self.module_loader {
-            loader.shutdown();
+        if let Some(host) = &self.host {
+            host.shutdown();
         }
     }
 
-    pub(crate) fn with_module_bindings(module_loader: &ModuleLoader, names: &[String]) -> Self {
-        let vm = Self::with_module_loader(module_loader.clone());
-        vm.globals
-            .borrow_mut()
-            .extend(module_loader.native_globals());
-        vm.globals
-            .borrow_mut()
-            .extend(module_loader.builtin_globals());
+    pub(crate) fn with_module_bindings(host: &Rc<dyn VmHost>, names: &[String]) -> Self {
+        let vm = Self::with_host(host.clone());
+        vm.globals.borrow_mut().extend(host.builtin_globals());
+        vm.globals.borrow_mut().extend(host.native_globals());
         for name in names {
             vm.globals
                 .borrow_mut()
@@ -1145,8 +1156,8 @@ impl Vm {
             )));
         }
         let value = Value::Native(function);
-        if let Some(module_loader) = &self.module_loader {
-            module_loader.define_native(name.clone(), value.clone());
+        if let Some(host) = &self.host {
+            host.define_native_global(name.clone(), value.clone());
         }
         self.globals.borrow_mut().insert(name, value);
         Ok(())
@@ -1164,10 +1175,10 @@ impl Vm {
         &mut self,
         function: NativeFunction,
     ) -> Result<(), NativeDescriptorError> {
-        let loader = self.module_loader.as_ref().ok_or_else(|| {
+        let host = self.host.as_ref().ok_or_else(|| {
             NativeDescriptorError::new("foreign bindings require a module loader")
         })?;
-        loader.define_foreign(function)
+        host.define_foreign_batch(vec![function])
     }
 
     /// Registers native descriptors atomically for matching source `foreign`
@@ -1182,10 +1193,10 @@ impl Vm {
         &mut self,
         functions: Vec<NativeFunction>,
     ) -> Result<(), NativeDescriptorError> {
-        let loader = self.module_loader.as_ref().ok_or_else(|| {
+        let host = self.host.as_ref().ok_or_else(|| {
             NativeDescriptorError::new("foreign bindings require a module loader")
         })?;
-        loader.define_foreign_batch(functions)
+        host.define_foreign_batch(functions)
     }
 
     /// Registers a host function in the implicitly available foundation module.
@@ -1212,7 +1223,7 @@ impl Vm {
             .iter()
             .filter_map(|declaration| declaration.resource_type.as_deref())
             .collect::<std::collections::HashSet<_>>();
-        let Some(loader) = self.module_loader.clone() else {
+        let Some(host) = self.host.clone() else {
             return if program
                 .declarations()
                 .iter()
@@ -1235,7 +1246,7 @@ impl Vm {
             .filter(|declaration| declaration.foreign)
         {
             registered_resource_types.extend(self.bind_foreign_declaration(
-                &loader,
+                host.as_ref(),
                 program,
                 declaration,
             )?);
@@ -1249,22 +1260,24 @@ impl Vm {
 
     fn bind_foreign_declaration(
         &mut self,
-        loader: &ModuleLoader,
+        host: &dyn VmHost,
         program: &Program,
         declaration: &ModuleDeclaration,
     ) -> VmResult<std::collections::HashSet<String>> {
         let mut resource_types = std::collections::HashSet::new();
         for name in &declaration.bindings {
-            let function = loader.foreign(program.module_name(), name).ok_or_else(|| {
-                self.error(
-                    RuntimeErrorKind::Module,
-                    format!(
-                        "foreign function `{}.{name}` is not registered",
-                        program.module_name()
-                    ),
-                    None,
-                )
-            })?;
+            let function = host
+                .foreign_function(program.module_name(), name)
+                .ok_or_else(|| {
+                    self.error(
+                        RuntimeErrorKind::Module,
+                        format!(
+                            "foreign function `{}.{name}` is not registered",
+                            program.module_name()
+                        ),
+                        None,
+                    )
+                })?;
             let (minimum, maximum) = declaration.foreign_arity.ok_or_else(|| {
                 self.error(
                     RuntimeErrorKind::InvalidBytecode,
@@ -1373,22 +1386,22 @@ impl Vm {
         if program.module_name() == "slug.builtin" {
             return Ok(());
         }
-        let Some(loader) = &self.module_loader else {
+        let Some(host) = &self.host else {
             return Ok(());
         };
         let mut globals = self.globals.borrow_mut();
-        for (name, value) in loader.builtin_globals() {
+        for (name, value) in host.builtin_globals() {
             globals.entry(name).or_insert(value);
         }
         drop(globals);
-        let instance = match loader.initialize(None, "slug.builtin") {
+        let instance = match host.import_module(None, "slug.builtin") {
             Ok(instance) => instance,
-            Err(crate::ModuleLoadError::NotFound { .. }) => return Ok(()),
+            Err(error) if error.is_not_found() => return Ok(()),
             Err(error) => {
                 return Err(self.error(RuntimeErrorKind::Module, error.to_string(), None));
             }
         };
-        let Value::Map(exports) = instance.live_exports else {
+        let Value::Map(exports) = instance.exports else {
             return Err(self.error(
                 RuntimeErrorKind::InvalidBytecode,
                 "slug.builtin exports are not a map".into(),
@@ -3717,7 +3730,8 @@ impl Vm {
             ));
         }
         let mut vm = Self {
-            module_loader: self.module_loader.clone(),
+            host: self.host.clone(),
+            interactive_loader: self.interactive_loader.clone(),
             module_program: Some(program.clone()),
             globals: closure
                 .globals
@@ -3973,8 +3987,8 @@ impl Vm {
     }
 
     fn warning(&self, message: String) {
-        if let Some(loader) = &self.module_loader {
-            loader.warn(message);
+        if let Some(host) = &self.host {
+            host.warn(message);
         }
     }
 
@@ -3995,7 +4009,7 @@ impl Vm {
                 span,
             ));
         }
-        let loader = self.module_loader.clone().ok_or_else(|| {
+        let host = self.host.clone().ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::Module,
                 "module loader is not configured".into(),
@@ -4018,12 +4032,12 @@ impl Vm {
                     span,
                 ));
             };
-            let instance = loader
-                .initialize_request(ModuleRequest::new(importer, &name))
+            let instance = host
+                .import_module(importer.map(crate::ModuleKey::as_str), &name)
                 .map_err(|error| {
                     self.error_at(RuntimeErrorKind::Module, error.to_string(), span)
                 })?;
-            let Value::Map(module_exports) = instance.live_exports else {
+            let Value::Map(module_exports) = instance.exports else {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
                     "module exports are not a map".into(),
@@ -4572,7 +4586,7 @@ impl Vm {
     }
 
     fn configuration(&self, span: Option<SourceSpan>) -> VmResult<&crate::Configuration> {
-        self.module_loader
+        self.host
             .as_ref()
             .ok_or_else(|| {
                 self.error(
@@ -4581,7 +4595,7 @@ impl Vm {
                     span,
                 )
             })
-            .map(ModuleLoader::configuration)
+            .map(|host| host.configuration())
     }
 
     #[allow(clippy::too_many_lines)]

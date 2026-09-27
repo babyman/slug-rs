@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     ClutchRepository, Configuration, FfiPrototypeLibrary, ModuleDeclaration, NativeDescriptorError,
-    NativeFunction, Program, SourceError, Value, Vm,
+    NativeFunction, Program, SourceError, Value, Vm, VmHost, VmHostError, VmModuleExports,
     clutch::{self, StagedClutchPlugin},
     native::{NativeResourceRegistry, native_resource_registry},
     source::{
@@ -643,10 +643,6 @@ impl ModuleLoader {
             .insert(name, value);
     }
 
-    pub(crate) fn native_globals(&self) -> HashMap<String, Value> {
-        self.state.services.native_globals.borrow().clone()
-    }
-
     pub(crate) fn builtin_globals(&self) -> HashMap<String, Value> {
         self.state
             .services
@@ -656,13 +652,6 @@ impl ModuleLoader {
             .filter(|((module, _), _)| module == "slug.builtin")
             .map(|((_, name), function)| (name.clone(), Value::Native(function.clone())))
             .collect()
-    }
-
-    pub(crate) fn define_foreign(
-        &self,
-        function: NativeFunction,
-    ) -> Result<(), NativeDescriptorError> {
-        self.define_foreign_batch(vec![function])
     }
 
     pub(crate) fn define_foreign_batch(
@@ -878,7 +867,66 @@ impl ModuleRuntimeHost for ModuleLoader {
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
-        Vm::with_module_bindings(self, bindings)
+        let host: std::rc::Rc<dyn VmHost> = std::rc::Rc::new(self.clone());
+        Vm::with_module_bindings(&host, bindings)
+    }
+}
+
+impl VmHost for ModuleLoader {
+    fn import_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleExports, VmHostError> {
+        let importer = importer.map(ModuleKey::new);
+        let instance = self
+            .initialize_request(ModuleRequest::new(importer.as_ref(), name))
+            .map_err(|error| match error {
+                ModuleLoadError::NotFound { .. } => VmHostError::not_found(error.to_string()),
+                error => VmHostError::new(error.to_string()),
+            })?;
+        Ok(VmModuleExports {
+            exports: instance.live_exports,
+        })
+    }
+
+    fn builtin_globals(&self) -> HashMap<String, Value> {
+        self.builtin_globals()
+    }
+
+    fn native_globals(&self) -> HashMap<String, Value> {
+        self.state.services.native_globals.borrow().clone()
+    }
+
+    fn foreign_function(&self, module: &str, name: &str) -> Option<NativeFunction> {
+        self.foreign(module, name)
+    }
+
+    fn define_foreign_batch(
+        &self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        self.define_foreign_batch(functions)
+    }
+
+    fn define_native_global(&self, name: String, value: Value) {
+        self.define_native(name, value);
+    }
+
+    fn native_resources(&self) -> NativeResourceRegistry {
+        self.native_resources()
+    }
+
+    fn configuration(&self) -> &Configuration {
+        self.configuration()
+    }
+
+    fn warn(&self, message: String) {
+        self.warn(message);
+    }
+
+    fn shutdown(&self) {
+        self.shutdown();
     }
 }
 

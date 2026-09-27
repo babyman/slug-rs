@@ -27,7 +27,7 @@ plan remains the baseline for resolver and Clutch lifecycle invariants.
 Complete the remaining phases through these dependency-ordered, separately
 tested commits. Do not check an item off until its stated gate passes.
 
-- [ ] Add narrow VM-owned bytecode-builder and host-callback contracts needed
+- [x] Add narrow VM-owned bytecode-builder and host-callback contracts needed
   by the frontend, with focused VM tests. Keep them private or explicitly
   unstable; they are not a new embedding compatibility API.
 - [ ] Move source parsing, semantic analysis, lowering, and checked source

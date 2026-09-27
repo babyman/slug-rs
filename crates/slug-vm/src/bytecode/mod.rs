@@ -17,7 +17,7 @@ pub use metadata::{
     StructFieldsId,
 };
 pub use op::{CallArgumentKind, DeferMode, Instruction, Op};
-pub use program::{BytecodeLayoutMetrics, Program};
+pub use program::{BytecodeLayoutMetrics, Program, ProgramBuilder};
 
 pub(crate) use chunk::{CompiledChunk, PackedInstruction, PackedOpcode};
-pub(crate) use program::{Entrypoint, EntrypointArguments};
+pub use program::{Entrypoint, EntrypointArguments};

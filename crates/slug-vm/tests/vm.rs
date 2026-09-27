@@ -269,6 +269,8 @@ mod collections;
 #[cfg(feature = "concurrency")]
 #[path = "vm/concurrency.rs"]
 mod concurrency;
+#[path = "vm/host_contract.rs"]
+mod host_contract;
 #[path = "vm/lifecycle.rs"]
 mod lifecycle;
 #[path = "vm/runtime.rs"]

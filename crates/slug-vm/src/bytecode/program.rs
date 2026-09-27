@@ -61,16 +61,29 @@ pub struct Program {
 
 /// Argument value supplied to a validated program entrypoint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EntrypointArguments {
+#[doc(hidden)]
+pub enum EntrypointArguments {
     None,
     List,
     Map,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Entrypoint {
+#[doc(hidden)]
+pub struct Entrypoint {
     pub(crate) arguments: EntrypointArguments,
     pub(crate) callable_identity: usize,
+}
+
+impl Entrypoint {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(arguments: EntrypointArguments, callable_identity: usize) -> Self {
+        Self {
+            arguments,
+            callable_identity,
+        }
+    }
 }
 
 /// Layout measurements for private bytecode metadata.
@@ -1568,5 +1581,59 @@ impl Program {
             ),
             Op::RecurPositional(count) => (*count, 0),
         }
+    }
+}
+
+/// Experimental bytecode assembly surface used by the source frontend.
+///
+/// The builder is deliberately small: it transfers compiler-produced chunks
+/// and module metadata into a checked [`Program`]. It is an unstable in-process
+/// boundary, not a portable bytecode format or a stable embedding API.
+#[doc(hidden)]
+pub struct ProgramBuilder {
+    program: Program,
+}
+
+impl ProgramBuilder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            program: Program::new(),
+        }
+    }
+
+    pub fn add_chunk(&mut self, chunk: Chunk) -> usize {
+        self.program.add_chunk(chunk)
+    }
+
+    pub fn set_bindings(&mut self, bindings: Vec<String>) {
+        self.program.set_bindings(bindings);
+    }
+
+    pub fn set_declarations(&mut self, declarations: Vec<ModuleDeclaration>) {
+        self.program.set_declarations(declarations);
+    }
+
+    pub fn set_exports(&mut self, exports: Vec<String>) {
+        self.program.set_exports(exports);
+    }
+
+    pub fn set_entrypoint(&mut self, entrypoint: Option<Entrypoint>) {
+        self.program.set_entrypoint(entrypoint);
+    }
+
+    pub fn set_callable_identities(&mut self, identities: Vec<CallableIdentity>) {
+        self.program.set_callable_identities(identities);
+    }
+
+    #[must_use]
+    pub fn finish(self) -> Program {
+        self.program
+    }
+}
+
+impl Default for ProgramBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }

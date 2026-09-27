@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an explicitly unstable VM host-callback and bytecode-builder seam for
+  frontend migration. Desktop Slug behavior is unchanged.
+
 - Recorded the crate reorganization and import-loader boundary: a runtime-only
   `slug-vm`, frontend-owned module graph, import-only loaders, a concrete nil
   loader, and a future `slug --server` executable migration. Desktop source

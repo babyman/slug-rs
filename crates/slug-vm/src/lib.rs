@@ -17,6 +17,7 @@ mod fixture;
 pub mod host;
 mod module;
 mod native;
+mod runtime_host;
 mod scheduler_signal;
 mod source;
 mod value;
@@ -30,10 +31,10 @@ mod vm;
 /// treat them as a stable Rust API. `.cslug` is the future portable contract.
 pub use bytecode::{
     BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture, CaptureListId, Chunk,
-    Constant, DeferMode, ForeignResourceSignature, GlobalNameId, Instruction, MatchMapKey,
-    MatchPattern, MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op,
-    ParameterSignature, Program, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan,
-    SpanId, StructFieldsId,
+    Constant, DeferMode, Entrypoint, EntrypointArguments, ForeignResourceSignature, GlobalNameId,
+    Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
+    ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField,
+    SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };
 pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
@@ -46,8 +47,11 @@ pub use module::{ModuleInstance, ModuleLoader};
 pub use native::{
     NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeEnumCase,
     NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,
-    NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
+    NativeResourceRegistry, NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind,
+    NativeValueRef,
 };
+/// Experimental VM-to-host callbacks. This trait is not a stable embedding API.
+pub use runtime_host::{VmHost, VmHostError, VmModuleExports};
 #[doc(hidden)]
 pub use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
