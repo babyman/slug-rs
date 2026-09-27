@@ -3,11 +3,120 @@
 //! This crate intentionally depends on the frontend, VM, and deny-all loader
 //! only. It does not select desktop roots or discover process configuration.
 
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use slug_frontend::{ModuleLoader, SourceError};
+use slug_frontend::{ModuleGraph, ModuleGraphHost, SourceError};
+use slug_loader::{ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_nil_loader::NilLoader;
-use slug_vm::{Configuration, RuntimeError, Value, Vm};
+use slug_vm::{
+    Configuration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, RuntimeError,
+    Value, Vm, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+};
+
+#[derive(Clone)]
+struct RestrictedHost {
+    state: Rc<RestrictedHostState>,
+}
+
+struct RestrictedHostState {
+    graph: ModuleGraph,
+    configuration: Configuration,
+    native_globals: RefCell<HashMap<String, Value>>,
+    native_resources: NativeResourceRegistry,
+}
+
+impl RestrictedHost {
+    fn new() -> Self {
+        Self {
+            state: Rc::new(RestrictedHostState {
+                graph: ModuleGraph::new(),
+                configuration: Configuration::default(),
+                native_globals: RefCell::new(HashMap::new()),
+                native_resources: native_resource_registry(),
+            }),
+        }
+    }
+}
+
+impl ModuleResolver for RestrictedHost {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        NilLoader.resolve(request)
+    }
+}
+
+impl ModuleGraphHost for RestrictedHost {
+    type Activation = ();
+
+    fn builtin_globals(&self) -> HashMap<String, Value> {
+        HashMap::new()
+    }
+
+    fn stage_module_activation(&self, _: &ModuleSource) -> Result<Option<()>, ModuleLoadError> {
+        Ok(None)
+    }
+
+    fn register_module_activation(&self, _: &ModuleSource, (): &()) -> Result<(), ModuleLoadError> {
+        Ok(())
+    }
+
+    fn remove_module_activation(&self, (): &()) {}
+
+    fn cleanup_module_activation(&self, _: &mut Option<()>) {}
+
+    fn retain_module_activation(&self, _: &ModuleSource, (): ()) {}
+
+    fn module_vm(&self, bindings: &[String]) -> Vm {
+        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        Vm::with_module_bindings(&host, bindings)
+    }
+}
+
+impl VmHost for RestrictedHost {
+    fn import_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleExports, VmHostError> {
+        let importer = importer.map(slug_loader::ModuleKey::new);
+        let instance = self
+            .state
+            .graph
+            .initialize(self, ModuleRequest::new(importer.as_ref(), name))
+            .map_err(|error| match error {
+                ModuleLoadError::NotFound { .. } => VmHostError::not_found(error.to_string()),
+                error => VmHostError::new(error.to_string()),
+            })?;
+        Ok(VmModuleExports {
+            exports: instance.live_exports(),
+        })
+    }
+
+    fn builtin_globals(&self) -> HashMap<String, Value> {
+        HashMap::new()
+    }
+    fn native_globals(&self) -> HashMap<String, Value> {
+        self.state.native_globals.borrow().clone()
+    }
+    fn foreign_function(&self, _: &str, _: &str) -> Option<NativeFunction> {
+        None
+    }
+    fn define_foreign_batch(&self, _: Vec<NativeFunction>) -> Result<(), NativeDescriptorError> {
+        Ok(())
+    }
+    fn define_native_global(&self, name: String, value: Value) {
+        self.state.native_globals.borrow_mut().insert(name, value);
+    }
+    fn native_resources(&self) -> NativeResourceRegistry {
+        self.state.native_resources.clone()
+    }
+    fn configuration(&self) -> &Configuration {
+        &self.state.configuration
+    }
+    fn warn(&self, _: String) {}
+    fn shutdown(&self) {
+        let _ = self.state.native_resources.finalize_all_for_shutdown();
+    }
+}
 
 /// Evaluates in-memory source with no external-import capability.
 ///
@@ -16,11 +125,13 @@ use slug_vm::{Configuration, RuntimeError, Value, Vm};
 /// Returns checked source or runtime failures from the selected frontend and
 /// VM; an external import is denied by [`NilLoader`].
 pub fn evaluate(source: &str) -> Result<Value, RestrictedHostError> {
-    let loader = ModuleLoader::with_resolver(Rc::new(NilLoader), Configuration::default());
-    let program = loader
-        .compile_source("memory:entry", source)
+    let host = RestrictedHost::new();
+    let program = host
+        .state
+        .graph
+        .compile_source(&host, "memory:entry", source)
         .map_err(RestrictedHostError::Source)?;
-    Vm::with_host(Rc::new(loader))
+    Vm::with_host(Rc::new(host))
         .run_named(&program, "main")
         .map_err(RestrictedHostError::Runtime)
 }

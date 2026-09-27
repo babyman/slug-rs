@@ -447,6 +447,14 @@ pub struct ModuleInstance {
     pub(crate) live_exports: Value,
 }
 
+impl ModuleInstance {
+    /// Returns the live export map used by runtime `import()` calls.
+    #[must_use]
+    pub fn live_exports(&self) -> Value {
+        self.live_exports.clone()
+    }
+}
+
 impl ModuleLoader {
     #[must_use]
     pub fn new(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
