@@ -190,6 +190,21 @@ impl ModuleGraph {
         })
     }
 
+    /// Compiles entry source while resolving static imports through `resolver`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked source error for invalid syntax or semantics.
+    pub fn compile_source(
+        &self,
+        resolver: &dyn ModuleResolver,
+        path: &str,
+        source: &str,
+    ) -> Result<Program, SourceError> {
+        self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, true)
+            .map(|compilation| compilation.program)
+    }
+
     fn compile_source_for_module(
         &self,
         resolver: &dyn ModuleResolver,
@@ -654,10 +669,7 @@ impl ModuleLoader {
     ///
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
-        self.state
-            .graph
-            .compile_source_for_module(self, &ModuleKey::new(path), path, source, true)
-            .map(|compilation| compilation.program)
+        self.state.graph.compile_source(self, path, source)
     }
 
     #[doc(hidden)]

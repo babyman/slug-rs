@@ -4,7 +4,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use slug_frontend::{ModuleLoader, compile};
+use slug_frontend::{ModuleGraph, ModuleLoader, compile};
 use slug_loader::{ModuleKey, ModuleSource};
 use slug_vm::{
     ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleRequest,
@@ -1179,6 +1179,31 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
         vm.exported_values(&program),
         Value::Map(Rc::new(vec![(Value::string("result"), Value::Int(42))]))
     );
+}
+
+#[test]
+fn module_graph_compiles_entry_source_through_an_injected_resolver() {
+    let resolver = MemoryResolver {
+        modules: [("math".into(), "export val answer = 42\n".into())]
+            .into_iter()
+            .collect(),
+        requests: Rc::new(RefCell::new(Vec::new())),
+    };
+    let graph = ModuleGraph::new();
+
+    let program = graph
+        .compile_source(
+            &resolver,
+            "memory:main",
+            "val math = import(\"math\")\nexport val answer = math.answer\n",
+        )
+        .expect("compile entry source through injected resolver");
+
+    assert_eq!(
+        program.bindings(),
+        &["answer".to_owned(), "math".to_owned()]
+    );
+    assert_eq!(graph.cached_module_count(), 0);
 }
 
 #[test]
