@@ -7,7 +7,7 @@ use std::{
 
 use rustyline::{DefaultEditor, error::ReadlineError};
 use serde_json::{Value, json};
-use slug_server::interactive::{
+use slug::interactive::{
     Diagnostic, DiagnosticCategory, Event, IncomingMessage, PROTOCOL_VERSION, Request, Response,
 };
 
@@ -403,8 +403,9 @@ impl ServerProcess {
     fn spawn() -> io::Result<Self> {
         let executable = env::var_os("SLUG_SERVER")
             .map(PathBuf::from)
-            .map_or_else(sibling_server_path, Ok)?;
+            .map_or_else(sibling_slug_path, Ok)?;
         let mut child = Command::new(&executable)
+            .arg("--server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -443,9 +444,9 @@ impl ServerProcess {
     }
 }
 
-fn sibling_server_path() -> io::Result<PathBuf> {
+fn sibling_slug_path() -> io::Result<PathBuf> {
     let mut path = env::current_exe()?;
-    path.set_file_name(format!("slug-server{}", env::consts::EXE_SUFFIX));
+    path.set_file_name(format!("slug{}", env::consts::EXE_SUFFIX));
     Ok(path)
 }
 

@@ -163,6 +163,12 @@ fn register_native_modules(vm: &mut Vm) {
 }
 
 fn main() -> ExitCode {
+    if env::args_os()
+        .nth(1)
+        .is_some_and(|argument| argument == "--server")
+    {
+        return slug::run_server();
+    }
     let mut args = env::args();
     let executable = args.next().unwrap_or_else(|| "slug".into());
     let mut remaining = args.collect::<Vec<_>>().into_iter().peekable();

@@ -306,14 +306,13 @@ version = "0.1.0"
 dependencies = [
  "rustyline",
  "serde_json",
- "slug-server",
+ "slug",
 ]
 
 [[package]]
 name = "slug-server"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
  "slug",
  "slug-frontend",

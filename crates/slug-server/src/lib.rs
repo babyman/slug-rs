@@ -1,3 +1,3 @@
-//! Interactive session protocol and server for Slug hosts.
+//! Compatibility re-export for the interactive server now owned by `slug`.
 
-pub mod interactive;
+pub use slug::interactive;

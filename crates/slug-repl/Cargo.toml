@@ -9,8 +9,8 @@ repository = "https://github.com/sluglang/slug"
 
 [features]
 default = ["concurrency"]
-concurrency = ["slug-server/concurrency"]
-metrics = ["slug-server/metrics"]
+concurrency = ["slug/concurrency"]
+metrics = ["slug/metrics"]
 
 [lints]
 workspace = true
@@ -18,4 +18,4 @@ workspace = true
 [dependencies]
 rustyline = "17"
 serde_json = "1"
-slug-server = { path = "../slug-server", default-features = false }
+slug = { path = "../slug", default-features = false }
