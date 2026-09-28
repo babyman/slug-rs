@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    fs,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -14,13 +13,9 @@ use crate::{
         environment::ModuleSnapshot,
     },
 };
-use slug_desktop_loader::{
-    ABI_PROFILE, ClutchRepository, FfiPrototypeLibrary,
-    clutch::{self, StagedClutchPlugin},
-};
+use slug_desktop_loader::{ClutchRepository, DesktopResolver, clutch::StagedClutchPlugin};
 use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
-    module_path,
 };
 use slug_vm::{NativeResourceRegistry, native_resource_registry};
 
@@ -31,14 +26,16 @@ pub struct ModuleLoader {
 }
 
 struct ModuleLoaderState {
-    source_root: PathBuf,
-    library_root: Option<PathBuf>,
-    clutch_repository: ClutchRepository,
-    resolver: Option<Rc<dyn ModuleResolver>>,
+    resolver: ModuleLoaderResolver,
     graph: ModuleGraph,
     services: ModuleRuntimeServices,
-    activation_sources: RefCell<HashMap<ModuleActivation, ClutchPluginSource>>,
     active_clutch_plugins: RefCell<HashMap<ModuleActivation, StagedClutchPlugin>>,
+}
+
+#[derive(Clone)]
+enum ModuleLoaderResolver {
+    Desktop(DesktopResolver),
+    Injected(Rc<dyn ModuleResolver>),
 }
 
 /// Runtime services shared by a module graph, independent of desktop lookup.
@@ -422,21 +419,6 @@ impl ModuleGraph {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ClutchPluginSource {
-    Host {
-        root: PathBuf,
-        entry: String,
-        module_names: Vec<String>,
-    },
-    Native {
-        root: PathBuf,
-        library: PathBuf,
-        abi: String,
-        module_names: Vec<String>,
-    },
-}
-
 #[derive(Clone, Debug)]
 pub struct ModuleInstance {
     pub key: ModuleKey,
@@ -499,12 +481,20 @@ impl ModuleLoader {
         configuration: Configuration,
         clutch_repository: ClutchRepository,
     ) -> Self {
-        Self {
-            state: Rc::new(ModuleLoaderState {
-                source_root: source_root.into(),
+        Self::with_loader_resolver(
+            ModuleLoaderResolver::Desktop(DesktopResolver::with_clutch_repository(
+                source_root,
                 library_root,
                 clutch_repository,
-                resolver: None,
+            )),
+            configuration,
+        )
+    }
+
+    fn with_loader_resolver(resolver: ModuleLoaderResolver, configuration: Configuration) -> Self {
+        Self {
+            state: Rc::new(ModuleLoaderState {
+                resolver,
                 graph: ModuleGraph::new(),
                 services: ModuleRuntimeServices {
                     configuration,
@@ -514,7 +504,6 @@ impl ModuleLoader {
                     warnings: RefCell::new(Vec::new()),
                     shutdown_errors: RefCell::new(Vec::new()),
                 },
-                activation_sources: RefCell::new(HashMap::new()),
                 active_clutch_plugins: RefCell::new(HashMap::new()),
             }),
         }
@@ -527,25 +516,7 @@ impl ModuleLoader {
     /// lookup remain unavailable through this path.
     #[must_use]
     pub fn with_resolver(resolver: Rc<dyn ModuleResolver>, configuration: Configuration) -> Self {
-        Self {
-            state: Rc::new(ModuleLoaderState {
-                source_root: PathBuf::new(),
-                library_root: None,
-                clutch_repository: ClutchRepository::default(),
-                resolver: Some(resolver),
-                graph: ModuleGraph::new(),
-                services: ModuleRuntimeServices {
-                    configuration,
-                    native_globals: RefCell::new(HashMap::new()),
-                    foreign_functions: RefCell::new(HashMap::new()),
-                    native_resources: native_resource_registry(),
-                    warnings: RefCell::new(Vec::new()),
-                    shutdown_errors: RefCell::new(Vec::new()),
-                },
-                activation_sources: RefCell::new(HashMap::new()),
-                active_clutch_plugins: RefCell::new(HashMap::new()),
-            }),
-        }
+        Self::with_loader_resolver(ModuleLoaderResolver::Injected(resolver), configuration)
     }
 
     /// The immutable configuration shared by the program module and loaded modules.
@@ -571,90 +542,10 @@ impl ModuleLoader {
 
 impl ModuleResolver for ModuleLoader {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
-        if let Some(resolver) = &self.state.resolver {
-            return resolver.resolve(request);
+        match &self.state.resolver {
+            ModuleLoaderResolver::Desktop(resolver) => resolver.resolve(request),
+            ModuleLoaderResolver::Injected(resolver) => resolver.resolve(request),
         }
-        let relative = module_path(request.name)?;
-        let mut candidates = Vec::new();
-        if let Some(importer) = request
-            .importer
-            .map(ModuleKey::as_str)
-            .map(Path::new)
-            .and_then(Path::parent)
-        {
-            candidates.push(importer.join(&relative));
-        }
-        candidates.push(self.state.source_root.join(&relative));
-        if let Some(library_root) = &self.state.library_root {
-            candidates.push(library_root.join(&relative));
-        }
-        for path in &candidates {
-            match fs::read_to_string(path) {
-                Ok(text) => {
-                    return Ok(ModuleSource {
-                        key: ModuleKey::new(path.to_string_lossy()),
-                        diagnostic_name: path.to_string_lossy().into_owned(),
-                        text,
-                        activation: None,
-                    });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(ModuleLoadError::Read {
-                        location: path.to_string_lossy().into_owned(),
-                        message: error.to_string(),
-                    });
-                }
-            }
-        }
-        if let Some(root) = self.state.clutch_repository.provider(request.name) {
-            let module = clutch::load_module(root, request.name).map_err(|message| {
-                ModuleLoadError::Clutch {
-                    location: root.to_string_lossy().into_owned(),
-                    message,
-                }
-            })?;
-            let text = fs::read_to_string(&module.path).map_err(|error| ModuleLoadError::Read {
-                location: module.path.to_string_lossy().into_owned(),
-                message: error.to_string(),
-            })?;
-            let activation = match (module.plugin_entry, module.native_plugin) {
-                (Some(entry), None) => Some(ClutchPluginSource::Host {
-                    root: module.root,
-                    entry,
-                    module_names: vec![request.name.into()],
-                }),
-                (None, Some(native)) => Some(ClutchPluginSource::Native {
-                    root: module.root,
-                    library: native.library,
-                    abi: native.abi,
-                    module_names: module.module_names,
-                }),
-                (None, None) => None,
-                (Some(_), Some(_)) => unreachable!("clutch manifest validation is inconsistent"),
-            };
-            let lease = activation.as_ref().map(|plugin| {
-                let lease = ModuleActivation::new(plugin.root().to_string_lossy().into_owned());
-                self.state
-                    .activation_sources
-                    .borrow_mut()
-                    .insert(lease.clone(), plugin.clone());
-                lease
-            });
-            return Ok(ModuleSource {
-                key: ModuleKey::new(module.path.to_string_lossy()),
-                diagnostic_name: module.path.to_string_lossy().into_owned(),
-                text,
-                activation: lease,
-            });
-        }
-        Err(ModuleLoadError::NotFound {
-            name: request.name.into(),
-            searched: candidates
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect(),
-        })
     }
 }
 
@@ -853,69 +744,13 @@ impl ModuleLoader {
         {
             return Ok(None);
         }
-        let plugin = self
-            .state
-            .activation_sources
-            .borrow()
-            .get(lease)
-            .cloned()
-            .ok_or_else(|| ModuleLoadError::Clutch {
+        match &self.state.resolver {
+            ModuleLoaderResolver::Desktop(resolver) => resolver.stage_activation(source),
+            ModuleLoaderResolver::Injected(_) => Err(ModuleLoadError::Clutch {
                 location: source.diagnostic_name.clone(),
-                message: "module activation lease is no longer available".into(),
-            })?;
-        let mut registrar = clutch::ClutchPluginRegistrar::new(plugin.module_names().to_vec());
-        let result = match &plugin {
-            ClutchPluginSource::Host { root, entry, .. } => {
-                let initializer = self.state.clutch_repository.plugin(entry).ok_or_else(|| {
-                    ModuleLoadError::Clutch {
-                        location: root.to_string_lossy().into_owned(),
-                        message: format!("plugin entry `{entry}` is not configured by the host"),
-                    }
-                })?;
-                initializer(&mut registrar).map_err(|error| ModuleLoadError::Clutch {
-                    location: root.to_string_lossy().into_owned(),
-                    message: format!("plugin initialization failed: {error}"),
-                })
-            }
-            ClutchPluginSource::Native {
-                root, library, abi, ..
-            } => {
-                if abi == ABI_PROFILE {
-                    let module = FfiPrototypeLibrary::load(library).map_err(|error| {
-                        ModuleLoadError::Clutch {
-                            location: library.to_string_lossy().into_owned(),
-                            message: format!("cannot load native plugin: {error}"),
-                        }
-                    })?;
-                    module
-                        .stage(&mut registrar)
-                        .map_err(|error| ModuleLoadError::Clutch {
-                            location: root.to_string_lossy().into_owned(),
-                            message: format!("native plugin initialization failed: {error}"),
-                        })?;
-                    registrar
-                        .set_cleanup_operation(move || {
-                            module.shutdown();
-                            Ok(())
-                        })
-                        .map_err(|error| ModuleLoadError::Clutch {
-                            location: root.to_string_lossy().into_owned(),
-                            message: format!("cannot retain native plugin cleanup: {error}"),
-                        })
-                } else {
-                    Err(ModuleLoadError::Clutch {
-                        location: root.to_string_lossy().into_owned(),
-                        message: format!("unsupported native ABI `{abi}`"),
-                    })
-                }
-            }
-        };
-        if let Err(error) = result {
-            let mut staged = registrar.finish();
-            let _ = staged.cleanup();
-            return Err(error);
+                message: format!("module activation lease `{lease:?}` requires a desktop resolver"),
+            }),
         }
-        Ok(Some(registrar.finish()))
     }
 
     fn cleanup_plugin(plugin: &mut Option<StagedClutchPlugin>) {
@@ -1029,20 +864,6 @@ impl VmHost for ModuleLoader {
 
     fn shutdown(&self) {
         self.shutdown();
-    }
-}
-
-impl ClutchPluginSource {
-    fn root(&self) -> &Path {
-        match self {
-            Self::Host { root, .. } | Self::Native { root, .. } => root,
-        }
-    }
-
-    fn module_names(&self) -> &[String] {
-        match self {
-            Self::Host { module_names, .. } | Self::Native { module_names, .. } => module_names,
-        }
     }
 }
 
