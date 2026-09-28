@@ -22,6 +22,7 @@ use slug_vm::{InteractiveExecution, VmProgress};
 use slug_vm::{InteractiveTask, VmProgress};
 
 use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
+use crate::DesktopLoader;
 
 mod builtins;
 mod presentation;
@@ -69,11 +70,17 @@ impl std::error::Error for OutputError {}
 /// In-process owner of interactive-session protocol lifecycle.
 pub struct Server {
     vm: Vm,
-    loader: Option<ModuleLoader>,
+    loader: Option<InteractiveLoader>,
     initialized: bool,
     sessions: BTreeMap<String, Session>,
     next_session: u64,
     output: Rc<RefCell<OutputSink>>,
+}
+
+#[derive(Clone)]
+enum InteractiveLoader {
+    Legacy(ModuleLoader),
+    Desktop(DesktopLoader),
 }
 
 impl Drop for Server {
@@ -177,7 +184,15 @@ impl Server {
     #[must_use]
     pub fn with_module_loader(vm: Vm, loader: ModuleLoader) -> Self {
         let mut server = Self::new(vm);
-        server.loader = Some(loader);
+        server.loader = Some(InteractiveLoader::Legacy(loader));
+        server
+    }
+
+    /// Creates a server whose interactive forms use the desktop host graph.
+    #[must_use]
+    pub fn with_desktop_loader(vm: Vm, loader: DesktopLoader) -> Self {
+        let mut server = Self::new(vm);
+        server.loader = Some(InteractiveLoader::Desktop(loader));
         server
     }
 
@@ -195,7 +210,14 @@ impl Server {
     ) -> Result<Vec<InteractiveCompilation>, slug_frontend::SourceError> {
         self.loader.as_ref().map_or_else(
             || compile_interactive_forms(path, source, state),
-            |loader| loader.compile_interactive_forms(path, source, state),
+            |loader| match loader {
+                InteractiveLoader::Legacy(loader) => {
+                    loader.compile_interactive_forms(path, source, state)
+                }
+                InteractiveLoader::Desktop(loader) => {
+                    loader.compile_interactive_forms(path, source, state)
+                }
+            },
         )
     }
 

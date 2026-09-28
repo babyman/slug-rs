@@ -44,7 +44,7 @@ pub fn run_server() -> ExitCode {
                 return ExitCode::from(1);
             }
         };
-    let mut server = Server::with_module_loader(vm, loader.module_loader());
+    let mut server = Server::with_desktop_loader(vm, loader.clone());
     let mut output = stdout.lock();
 
     if let Some(path) = application {
