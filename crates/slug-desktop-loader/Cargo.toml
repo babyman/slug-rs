@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 slug-loader = { path = "../slug-loader" }
+slug-vm = { path = "../slug-vm", default-features = false }
