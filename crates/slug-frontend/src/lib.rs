@@ -16,9 +16,9 @@ pub use source::{
 // while ownership moves here. They are private to this crate.
 pub(crate) use slug_loader::ModuleKey;
 pub(crate) use slug_vm::{
-    CallArgumentKind, CallableIdentity, Capture, Chunk, ClutchRepository, Configuration, DeferMode,
-    Entrypoint, EntrypointArguments, EnumValue, FfiPrototypeLibrary, ForeignResourceSignature,
-    MatchMapKey, MatchPattern, MatchRest, MatchType, ModuleDeclaration, ModuleTag,
-    NativeDescriptorError, NativeFunction, Op, ParameterSignature, Program, ProgramBuilder,
-    SchemaField, SelectCase, SourceSpan, Value, Vm, VmHost, VmHostError, VmModuleExports,
+    CallArgumentKind, CallableIdentity, Capture, Chunk, Configuration, DeferMode, Entrypoint,
+    EntrypointArguments, EnumValue, ForeignResourceSignature, MatchMapKey, MatchPattern, MatchRest,
+    MatchType, ModuleDeclaration, ModuleTag, NativeDescriptorError, NativeFunction, Op,
+    ParameterSignature, Program, ProgramBuilder, SchemaField, SelectCase, SourceSpan, Value, Vm,
+    VmHost, VmHostError, VmModuleExports,
 };

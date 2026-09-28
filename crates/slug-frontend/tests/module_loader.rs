@@ -4,12 +4,12 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use slug_desktop_loader::{ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError};
 use slug_frontend::{ModuleGraph, ModuleLoader, compile};
 use slug_loader::{ModuleKey, ModuleSource};
 use slug_vm::{
-    ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError, ModuleLoadError, ModuleRequest,
-    ModuleResolver, NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue,
-    NativeStatus, RuntimeErrorKind, Value, Vm,
+    ModuleLoadError, ModuleRequest, ModuleResolver, NativeArity, NativeCall, NativeDescriptorError,
+    NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind, Value, Vm,
 };
 use std::rc::Rc;
 

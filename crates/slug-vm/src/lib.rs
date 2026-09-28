@@ -7,13 +7,9 @@
 //! documented in `docs/reference/compiled-artifacts.md`.
 
 mod bytecode;
-#[doc(hidden)]
-pub mod clutch;
 mod collections;
 mod configuration;
 mod conformance;
-#[allow(unsafe_code)]
-mod ffi_prototype;
 mod fixture;
 mod native;
 mod runtime_host;
@@ -36,12 +32,8 @@ pub use bytecode::{
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField,
     SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };
-pub use clutch::{
-    ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
-};
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
-pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 #[doc(hidden)]
 pub use native::native_resource_registry;

@@ -15,10 +15,16 @@ use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
     module_path,
 };
-use slug_vm::{
-    ClutchRepository, FfiPrototypeLibrary,
-    clutch::{self, StagedClutchPlugin},
+#[doc(hidden)]
+pub mod clutch;
+#[allow(unsafe_code)]
+mod ffi_prototype;
+
+use clutch::StagedClutchPlugin;
+pub use clutch::{
+    ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
 };
+pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
 
 /// Filesystem resolver for an explicitly configured desktop module search path.
 #[derive(Clone, Debug)]
@@ -93,7 +99,7 @@ impl DesktopResolver {
             ClutchPluginSource::Native {
                 root, library, abi, ..
             } => {
-                if abi == slug_vm::ABI_PROFILE {
+                if abi == ABI_PROFILE {
                     let module = FfiPrototypeLibrary::load(library).map_err(|error| {
                         ModuleLoadError::Clutch {
                             location: library.to_string_lossy().into_owned(),
@@ -254,10 +260,8 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
+    use super::{ClutchRepository, DesktopResolver};
     use slug_loader::{ModuleKey, ModuleRequest, ModuleResolver};
-    use slug_vm::ClutchRepository;
-
-    use super::DesktopResolver;
 
     static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 

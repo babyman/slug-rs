@@ -20,9 +20,11 @@ use std::{
     },
 };
 
-use crate::{
-    ClutchPluginRegistrar, NativeArity, NativeCall, NativeDescriptorError, NativeError,
-    NativeModule, NativeOwnedValue, NativeProducerStatus, NativeSendValue, NativeStatus, Vm,
+use crate::ClutchPluginRegistrar;
+use slug_vm::{
+    NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeError,
+    NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus, NativeResourceType,
+    NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef, Vm,
 };
 
 const ABI_MAJOR: u32 = 0;
@@ -177,7 +179,7 @@ struct FfiChannel {
 }
 
 struct FfiProducer {
-    producer: crate::NativeChannelProducer,
+    producer: NativeChannelProducer,
 }
 
 #[repr(C)]
@@ -236,7 +238,7 @@ fn take_handle<T>(handles: &Mutex<HashSet<usize>>, handle: *mut T) -> bool {
 
 #[derive(Clone)]
 struct CResourceType {
-    resource_type: crate::NativeResourceType<CResource>,
+    resource_type: NativeResourceType<CResource>,
     destroy: ResourceDestroy,
 }
 
@@ -454,7 +456,7 @@ impl FfiPrototypeLibrary {
         self.library.shutdown();
     }
 
-    fn foreign_functions(&self) -> Result<Vec<crate::NativeFunction>, NativeDescriptorError> {
+    fn foreign_functions(&self) -> Result<Vec<NativeFunction>, NativeDescriptorError> {
         let functions = self
             .modules
             .iter()
@@ -617,7 +619,7 @@ unsafe extern "C" fn value_map_length(
         ));
         return false;
     };
-    if value.as_ref().kind() != crate::NativeValueKind::Map {
+    if value.as_ref().kind() != NativeValueKind::Map {
         call.set_error(NativeError::new("native.type", "expected map"));
         return false;
     }
@@ -748,7 +750,7 @@ unsafe extern "C" fn argument_i64(context: *mut c_void, index: usize, output: *m
         ));
         return false;
     }
-    match call.argument(index).and_then(crate::NativeValueRef::as_i64) {
+    match call.argument(index).and_then(NativeValueRef::as_i64) {
         Ok(value) => {
             // SAFETY: checked non-null above; C owns the pointed-to output slot.
             unsafe { *output = value };
@@ -772,7 +774,7 @@ unsafe extern "C" fn argument_f64(context: *mut c_void, index: usize, output: *m
         ));
         return false;
     }
-    match call.argument(index).and_then(crate::NativeValueRef::as_f64) {
+    match call.argument(index).and_then(NativeValueRef::as_f64) {
         Ok(value) => {
             // SAFETY: checked non-null above; C owns the pointed-to output slot.
             unsafe { *output = value };
@@ -800,7 +802,7 @@ unsafe extern "C" fn argument_text(
         ));
         return false;
     }
-    match call.argument(index).and_then(crate::NativeValueRef::as_str) {
+    match call.argument(index).and_then(NativeValueRef::as_str) {
         Ok(value) => {
             let Ok(length) = u64::try_from(value.len()) else {
                 call.set_error(NativeError::new(
@@ -840,10 +842,7 @@ unsafe extern "C" fn argument_bytes(
         ));
         return false;
     }
-    match call
-        .argument(index)
-        .and_then(crate::NativeValueRef::as_bytes)
-    {
+    match call.argument(index).and_then(NativeValueRef::as_bytes) {
         Ok(value) => {
             if let Ok(length) = u64::try_from(value.len()) {
                 unsafe {
@@ -883,12 +882,12 @@ unsafe extern "C" fn argument_kind(
         ));
         return false;
     }
-    let kind = match call.argument(index).map(crate::NativeValueRef::kind) {
-        Ok(crate::NativeValueKind::Nil) => FfiValueKind::Nil,
-        Ok(crate::NativeValueKind::Int) => FfiValueKind::Int,
-        Ok(crate::NativeValueKind::Float) => FfiValueKind::Float,
-        Ok(crate::NativeValueKind::String) => FfiValueKind::Text,
-        Ok(crate::NativeValueKind::Bytes) => FfiValueKind::Bytes,
+    let kind = match call.argument(index).map(NativeValueRef::kind) {
+        Ok(NativeValueKind::Nil) => FfiValueKind::Nil,
+        Ok(NativeValueKind::Int) => FfiValueKind::Int,
+        Ok(NativeValueKind::Float) => FfiValueKind::Float,
+        Ok(NativeValueKind::String) => FfiValueKind::Text,
+        Ok(NativeValueKind::Bytes) => FfiValueKind::Bytes,
         Ok(_) => {
             call.set_error(NativeError::new(
                 "native.type",

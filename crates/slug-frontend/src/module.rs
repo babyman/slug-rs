@@ -7,22 +7,22 @@ use std::{
 };
 
 use crate::{
-    ClutchRepository, Configuration, FfiPrototypeLibrary, ModuleDeclaration, NativeDescriptorError,
-    NativeFunction, Program, SourceError, Value, Vm, VmHost, VmHostError, VmModuleExports,
+    Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceError,
+    Value, Vm, VmHost, VmHostError, VmModuleExports,
     source::{
         InteractiveCompilation, InteractiveCompilerState, compile_with_resolver,
         environment::ModuleSnapshot,
     },
 };
+use slug_desktop_loader::{
+    ABI_PROFILE, ClutchRepository, FfiPrototypeLibrary,
+    clutch::{self, StagedClutchPlugin},
+};
 use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
     module_path,
 };
-use slug_vm::{
-    NativeResourceRegistry,
-    clutch::{self, StagedClutchPlugin},
-    native_resource_registry,
-};
+use slug_vm::{NativeResourceRegistry, native_resource_registry};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone)]
@@ -880,7 +880,7 @@ impl ModuleLoader {
             ClutchPluginSource::Native {
                 root, library, abi, ..
             } => {
-                if abi == slug_vm::ABI_PROFILE {
+                if abi == ABI_PROFILE {
                     let module = FfiPrototypeLibrary::load(library).map_err(|error| {
                         ModuleLoadError::Clutch {
                             location: library.to_string_lossy().into_owned(),

@@ -1,4 +1,4 @@
-use crate::{NativeDescriptorError, NativeFunction};
+use slug_vm::{NativeDescriptorError, NativeFunction};
 use std::{
     collections::{HashMap, HashSet},
     fmt, fs,

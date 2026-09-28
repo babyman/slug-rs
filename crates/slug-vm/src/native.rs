@@ -115,7 +115,8 @@ impl NativeChannelProducer {
     /// Publishes an owned value after its sender has finalized transferred
     /// resources. The callback runs only for a send that has committed to the
     /// channel, before a receiver can observe the value.
-    pub(crate) fn try_send_after_accepting<F>(
+    #[doc(hidden)]
+    pub fn try_send_after_accepting<F>(
         &self,
         value: NativeSendValue,
         finalize: F,
@@ -529,7 +530,9 @@ impl NativeOwnedValue {
         self.0
     }
 
-    pub(crate) fn as_ref(&self) -> NativeValueRef<'_> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn as_ref(&self) -> NativeValueRef<'_> {
         NativeValueRef { value: &self.0 }
     }
 }
@@ -756,7 +759,8 @@ impl NativeModule {
         Self::new_with_scope(name, state, NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed))
     }
 
-    pub(crate) fn new_with_scope<T: Any>(
+    #[doc(hidden)]
+    pub fn new_with_scope<T: Any>(
         name: impl Into<Rc<str>>,
         state: T,
         scope_id: usize,

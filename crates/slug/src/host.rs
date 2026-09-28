@@ -8,7 +8,9 @@ use std::{
     rc::Rc,
 };
 
-use slug_desktop_loader::DesktopResolver;
+use slug_desktop_loader::{
+    ClutchRepository, ClutchRepositoryError, DesktopResolver, clutch::StagedClutchPlugin,
+};
 use slug_frontend::{
     InteractiveCompilation, InteractiveCompilerState, ModuleGraph, ModuleGraphHost, SourceError,
 };
@@ -16,9 +18,8 @@ use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
 };
 use slug_vm::{
-    ClutchRepository, ClutchRepositoryError, Configuration, NativeDescriptorError, NativeFunction,
-    NativeResourceRegistry, Value, Vm, VmHost, VmHostError, VmModuleExports,
-    clutch::StagedClutchPlugin, native_resource_registry,
+    Configuration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value, Vm,
+    VmHost, VmHostError, VmModuleExports, native_resource_registry,
 };
 
 /// Desktop host policy for entry programs and imported modules.
