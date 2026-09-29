@@ -41,6 +41,46 @@ struct DesktopLoaderState {
 }
 
 impl DesktopLoader {
+    /// Creates a desktop host with default configuration and no Clutch repository.
+    #[must_use]
+    pub fn for_roots(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
+        Self::with_configuration_and_clutch_repository(
+            source_root,
+            library_root,
+            Configuration::default(),
+            ClutchRepository::default(),
+        )
+    }
+
+    /// Creates a desktop host with an explicit Clutch repository.
+    #[must_use]
+    pub fn with_clutch_repository(
+        source_root: impl Into<PathBuf>,
+        library_root: Option<PathBuf>,
+        clutches: ClutchRepository,
+    ) -> Self {
+        Self::with_configuration_and_clutch_repository(
+            source_root,
+            library_root,
+            Configuration::default(),
+            clutches,
+        )
+    }
+
+    /// Creates a desktop host with caller-supplied configuration and Clutches.
+    #[must_use]
+    pub fn with_configuration_and_clutch_repository(
+        source_root: impl Into<PathBuf>,
+        library_root: Option<PathBuf>,
+        configuration: Configuration,
+        clutches: ClutchRepository,
+    ) -> Self {
+        Self::new(
+            DesktopResolver::with_clutch_repository(source_root, library_root, clutches),
+            configuration,
+        )
+    }
+
     #[must_use]
     pub fn new(resolver: DesktopResolver, configuration: Configuration) -> Self {
         Self {
