@@ -6,14 +6,15 @@ use std::{
 };
 
 use slug_frontend::{ModuleLoader, compile};
+use slug_loader::{ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 #[cfg(feature = "concurrency")]
 use slug_vm::SelectCase;
 use slug_vm::VmProgress;
 use slug_vm::{
-    CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPatternId,
-    MatchRest, NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue,
-    NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField, SchemaFieldsId,
-    SourceSpan, SpanId, StructFieldsId, Value, Vm,
+    CallArgumentKind, Capture, CaptureListId, Chunk, Configuration, GlobalNameId, MatchMapKey,
+    MatchPatternId, MatchRest, NativeArity, NativeCall, NativeError, NativeModule,
+    NativeOwnedValue, NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField,
+    SchemaFieldsId, SourceSpan, SpanId, StructFieldsId, Value, Vm,
 };
 
 #[cfg(feature = "metrics")]
@@ -32,6 +33,17 @@ trait VmWithModuleLoader {
 impl VmWithModuleLoader for Vm {
     fn with_module_loader(loader: ModuleLoader) -> Self {
         Self::with_host(Rc::new(loader))
+    }
+}
+
+struct NoModuleResolver;
+
+impl ModuleResolver for NoModuleResolver {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        Err(ModuleLoadError::NotFound {
+            name: request.name.into(),
+            searched: Vec::new(),
+        })
     }
 }
 

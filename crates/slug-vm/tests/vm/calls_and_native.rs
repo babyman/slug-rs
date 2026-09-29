@@ -422,7 +422,7 @@ fn shared_loader_closes_native_resources_only_after_its_last_runtime_owner() {
     let closed = Rc::new(Cell::new(0));
     let destroyed = Rc::new(Cell::new(0));
     let module = native_resource_fixture::module(closed.clone(), destroyed.clone());
-    let loader = ModuleLoader::new(".", None);
+    let loader = ModuleLoader::with_resolver(Rc::new(NoModuleResolver), Configuration::default());
     let mut first = Vm::with_module_loader(loader.clone());
     native_resource_fixture::install(&mut first, &module);
 

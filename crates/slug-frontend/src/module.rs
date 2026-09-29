@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::Path,
     rc::Rc,
 };
 
@@ -13,10 +13,7 @@ use crate::{
         environment::ModuleSnapshot,
     },
 };
-use slug_desktop_loader::{ClutchRepository, DesktopResolver, clutch::StagedClutchPlugin};
-use slug_loader::{
-    ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
-};
+use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_vm::{NativeResourceRegistry, native_resource_registry};
 
 /// Host-owned roots used to load Slug module source.
@@ -26,16 +23,9 @@ pub struct ModuleLoader {
 }
 
 struct ModuleLoaderState {
-    resolver: ModuleLoaderResolver,
+    resolver: Rc<dyn ModuleResolver>,
     graph: ModuleGraph,
     services: ModuleRuntimeServices,
-    active_clutch_plugins: RefCell<HashMap<ModuleActivation, StagedClutchPlugin>>,
-}
-
-#[derive(Clone)]
-enum ModuleLoaderResolver {
-    Desktop(DesktopResolver),
-    Injected(Rc<dyn ModuleResolver>),
 }
 
 /// Runtime services shared by a module graph, independent of desktop lookup.
@@ -438,60 +428,13 @@ impl ModuleInstance {
 }
 
 impl ModuleLoader {
+    /// Creates a graph host backed by an explicitly supplied import resolver.
+    ///
+    /// This constructor is intended for restricted and in-memory hosts. The
+    /// resolver supplies every external module; desktop filesystem and Clutch
+    /// lookup remain unavailable through this path.
     #[must_use]
-    pub fn new(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
-        Self::with_configuration(source_root, library_root, Configuration::default())
-    }
-
-    /// Creates a loader that shares one immutable configuration store with its modules.
-    #[must_use]
-    pub fn with_configuration(
-        source_root: impl Into<PathBuf>,
-        library_root: Option<PathBuf>,
-        configuration: Configuration,
-    ) -> Self {
-        Self::with_configuration_and_clutch_repository(
-            source_root,
-            library_root,
-            configuration,
-            ClutchRepository::default(),
-        )
-    }
-
-    /// Creates a loader with an explicit local clutch repository.
-    #[must_use]
-    pub fn with_clutch_repository(
-        source_root: impl Into<PathBuf>,
-        library_root: Option<PathBuf>,
-        clutch_repository: ClutchRepository,
-    ) -> Self {
-        Self::with_configuration_and_clutch_repository(
-            source_root,
-            library_root,
-            Configuration::default(),
-            clutch_repository,
-        )
-    }
-
-    /// Creates a loader with shared configuration and an explicit clutch repository.
-    #[must_use]
-    pub fn with_configuration_and_clutch_repository(
-        source_root: impl Into<PathBuf>,
-        library_root: Option<PathBuf>,
-        configuration: Configuration,
-        clutch_repository: ClutchRepository,
-    ) -> Self {
-        Self::with_loader_resolver(
-            ModuleLoaderResolver::Desktop(DesktopResolver::with_clutch_repository(
-                source_root,
-                library_root,
-                clutch_repository,
-            )),
-            configuration,
-        )
-    }
-
-    fn with_loader_resolver(resolver: ModuleLoaderResolver, configuration: Configuration) -> Self {
+    pub fn with_resolver(resolver: Rc<dyn ModuleResolver>, configuration: Configuration) -> Self {
         Self {
             state: Rc::new(ModuleLoaderState {
                 resolver,
@@ -504,19 +447,8 @@ impl ModuleLoader {
                     warnings: RefCell::new(Vec::new()),
                     shutdown_errors: RefCell::new(Vec::new()),
                 },
-                active_clutch_plugins: RefCell::new(HashMap::new()),
             }),
         }
-    }
-
-    /// Creates a graph host backed by an explicitly supplied import resolver.
-    ///
-    /// This constructor is intended for restricted and in-memory hosts. The
-    /// resolver supplies every external module; desktop filesystem and Clutch
-    /// lookup remain unavailable through this path.
-    #[must_use]
-    pub fn with_resolver(resolver: Rc<dyn ModuleResolver>, configuration: Configuration) -> Self {
-        Self::with_loader_resolver(ModuleLoaderResolver::Injected(resolver), configuration)
     }
 
     /// The immutable configuration shared by the program module and loaded modules.
@@ -542,10 +474,7 @@ impl ModuleLoader {
 
 impl ModuleResolver for ModuleLoader {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
-        match &self.state.resolver {
-            ModuleLoaderResolver::Desktop(resolver) => resolver.resolve(request),
-            ModuleLoaderResolver::Injected(resolver) => resolver.resolve(request),
-        }
+        self.state.resolver.resolve(request)
     }
 }
 
@@ -675,22 +604,6 @@ impl ModuleLoader {
         Ok(())
     }
 
-    fn remove_foreign_batch(&self, functions: &[NativeFunction]) {
-        let mut registry = self.state.services.foreign_functions.borrow_mut();
-        for function in functions {
-            let key = (
-                function.module_name().to_string(),
-                function.name().to_string(),
-            );
-            if registry
-                .get(&key)
-                .is_some_and(|registered| registered.same_function(function))
-            {
-                registry.remove(&key);
-            }
-        }
-    }
-
     pub(crate) fn foreign(&self, module: &str, name: &str) -> Option<NativeFunction> {
         self.state
             .services
@@ -714,13 +627,6 @@ impl ModuleLoader {
                 .native_resources
                 .finalize_all_for_shutdown(),
         );
-        let plugins = std::mem::take(&mut *self.state.active_clutch_plugins.borrow_mut());
-        for (_, mut plugin) in plugins {
-            self.remove_foreign_batch(&plugin.functions);
-            if let Err(error) = plugin.cleanup() {
-                self.state.services.shutdown_errors.borrow_mut().push(error);
-            }
-        }
     }
 
     /// Returns and clears failures reported by best-effort plugin shutdown.
@@ -728,40 +634,10 @@ impl ModuleLoader {
     pub fn take_shutdown_errors(&self) -> Vec<String> {
         std::mem::take(&mut *self.state.services.shutdown_errors.borrow_mut())
     }
-
-    fn stage_clutch_plugin(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<StagedClutchPlugin>, ModuleLoadError> {
-        let Some(lease) = &source.activation else {
-            return Ok(None);
-        };
-        if self
-            .state
-            .active_clutch_plugins
-            .borrow()
-            .contains_key(lease)
-        {
-            return Ok(None);
-        }
-        match &self.state.resolver {
-            ModuleLoaderResolver::Desktop(resolver) => resolver.stage_activation(source),
-            ModuleLoaderResolver::Injected(_) => Err(ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: format!("module activation lease `{lease:?}` requires a desktop resolver"),
-            }),
-        }
-    }
-
-    fn cleanup_plugin(plugin: &mut Option<StagedClutchPlugin>) {
-        if let Some(plugin) = plugin {
-            let _ = plugin.cleanup();
-        }
-    }
 }
 
 impl ModuleGraphHost for ModuleLoader {
-    type Activation = StagedClutchPlugin;
+    type Activation = ();
 
     fn builtin_globals(&self) -> HashMap<String, Value> {
         self.builtin_globals()
@@ -771,37 +647,32 @@ impl ModuleGraphHost for ModuleLoader {
         &self,
         source: &ModuleSource,
     ) -> Result<Option<Self::Activation>, ModuleLoadError> {
-        self.stage_clutch_plugin(source)
+        source.activation.as_ref().map_or_else(
+            || Ok(None),
+            |lease| {
+                Err(ModuleLoadError::Clutch {
+                    location: source.diagnostic_name.clone(),
+                    message: format!(
+                        "module activation lease `{lease:?}` requires an executable host"
+                    ),
+                })
+            },
+        )
     }
 
     fn register_module_activation(
         &self,
-        source: &ModuleSource,
-        activation: &Self::Activation,
+        _: &ModuleSource,
+        &(): &Self::Activation,
     ) -> Result<(), ModuleLoadError> {
-        self.define_foreign_batch(activation.functions.clone())
-            .map_err(|error| ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
-            })
+        Ok(())
     }
 
-    fn remove_module_activation(&self, activation: &Self::Activation) {
-        self.remove_foreign_batch(&activation.functions);
-    }
+    fn remove_module_activation(&self, &(): &Self::Activation) {}
 
-    fn cleanup_module_activation(&self, activation: &mut Option<Self::Activation>) {
-        Self::cleanup_plugin(activation);
-    }
+    fn cleanup_module_activation(&self, _: &mut Option<Self::Activation>) {}
 
-    fn retain_module_activation(&self, source: &ModuleSource, activation: Self::Activation) {
-        if let Some(lease) = &source.activation {
-            self.state
-                .active_clutch_plugins
-                .borrow_mut()
-                .insert(lease.clone(), activation);
-        }
-    }
+    fn retain_module_activation(&self, _: &ModuleSource, (): Self::Activation) {}
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
         let host: std::rc::Rc<dyn VmHost> = std::rc::Rc::new(self.clone());
@@ -873,10 +744,5 @@ impl Drop for ModuleLoaderState {
             .shutdown_errors
             .get_mut()
             .extend(self.services.native_resources.finalize_all_for_shutdown());
-        for plugin in self.active_clutch_plugins.get_mut().values_mut() {
-            if let Err(error) = plugin.cleanup() {
-                self.services.shutdown_errors.get_mut().push(error);
-            }
-        }
     }
 }
