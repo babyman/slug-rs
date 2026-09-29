@@ -12,7 +12,8 @@ use slug_desktop_loader::{
     ClutchRepository, ClutchRepositoryError, DesktopResolver, clutch::StagedClutchPlugin,
 };
 use slug_frontend::{
-    InteractiveCompilation, InteractiveCompilerState, ModuleGraph, ModuleGraphHost, SourceError,
+    InteractiveCompilation, InteractiveCompilerState, ModuleGraph, ModuleGraphHost, ModuleInstance,
+    SourceError,
 };
 use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
@@ -154,6 +155,49 @@ impl DesktopLoader {
         source: &str,
     ) -> Result<slug_vm::Program, SourceError> {
         self.state.graph.compile_source(self, path, source)
+    }
+
+    /// Resolves one import without initializing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested module cannot be resolved or read.
+    pub fn load(
+        &self,
+        importer: Option<&Path>,
+        name: &str,
+    ) -> Result<ModuleSource, ModuleLoadError> {
+        let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
+        self.resolve(ModuleRequest::new(importer.as_ref(), name))
+    }
+
+    /// Returns the number of compiled modules retained by this host graph.
+    #[must_use]
+    pub fn cached_module_count(&self) -> usize {
+        self.state.graph.cached_module_count()
+    }
+
+    /// Initializes one import through this desktop host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested module cannot be resolved, loaded,
+    /// compiled, or initialized.
+    pub fn initialize(
+        &self,
+        importer: Option<&Path>,
+        name: &str,
+    ) -> Result<ModuleInstance, ModuleLoadError> {
+        let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
+        self.state
+            .graph
+            .initialize(self, ModuleRequest::new(importer.as_ref(), name))
+    }
+
+    /// Returns the number of initialized modules retained by this host graph.
+    #[must_use]
+    pub fn initialized_module_count(&self) -> usize {
+        self.state.graph.initialized_module_count()
     }
 
     #[doc(hidden)]
