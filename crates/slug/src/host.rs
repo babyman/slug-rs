@@ -215,6 +215,13 @@ impl ModuleGraphHost for DesktopLoader {
         &self,
         source: &ModuleSource,
     ) -> Result<Option<Self::Activation>, ModuleLoadError> {
+        if source
+            .activation
+            .as_ref()
+            .is_some_and(|lease| self.state.active_plugins.borrow().contains_key(lease))
+        {
+            return Ok(None);
+        }
         self.state.resolver.stage_activation(source)
     }
 
