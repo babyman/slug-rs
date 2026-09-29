@@ -19,8 +19,8 @@ use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
 };
 use slug_vm::{
-    Configuration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value, Vm,
-    VmHost, VmHostError, VmModuleExports, native_resource_registry,
+    Configuration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program, Value,
+    Vm, VmHost, VmHostError, VmModuleExports, native_resource_registry,
 };
 
 /// Desktop host policy for entry programs and imported modules.
@@ -169,6 +169,19 @@ impl DesktopLoader {
     ) -> Result<ModuleSource, ModuleLoadError> {
         let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
         self.resolve(ModuleRequest::new(importer.as_ref(), name))
+    }
+
+    /// Resolves and compiles one module, caching its program for repeat requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested module cannot be resolved, read, or
+    /// compiled.
+    pub fn compile(&self, importer: Option<&Path>, name: &str) -> Result<Program, ModuleLoadError> {
+        let importer = importer.map(|path| ModuleKey::new(path.to_string_lossy()));
+        self.state
+            .graph
+            .compile(self, ModuleRequest::new(importer.as_ref(), name))
     }
 
     /// Returns the number of compiled modules retained by this host graph.

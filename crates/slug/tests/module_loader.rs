@@ -4,8 +4,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use slug::DesktopLoader as ModuleLoader;
 use slug_desktop_loader::{ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError};
-use slug_frontend::{ModuleGraph, ModuleLoader, compile};
+use slug_frontend::{ModuleGraph, ModuleLoader as FrontendModuleLoader, compile};
 use slug_loader::{ModuleKey, ModuleSource};
 use slug_vm::{
     ModuleLoadError, ModuleRequest, ModuleResolver, NativeArity, NativeCall, NativeDescriptorError,
@@ -1155,14 +1156,14 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
         .collect(),
         requests: requests.clone(),
     });
-    let loader = ModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
+    let loader = FrontendModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
     let program = loader
         .compile_source(
             "memory:main",
             "val {*} = import(\"math\")\nexport val result = double(21)\n",
         )
         .expect("compile through the in-memory resolver");
-    let mut vm = Vm::with_module_loader(loader.clone());
+    let mut vm = Vm::with_host(Rc::new(loader.clone()));
 
     vm.run_named(&program, "main")
         .expect("execute runtime import through the same resolver");
@@ -1228,14 +1229,14 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
         .collect(),
         requests: requests.clone(),
     });
-    let loader = ModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
+    let loader = FrontendModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
     let program = loader
         .compile_source(
             "memory:main",
             "val a = import(\"a\")\nexport val output = a.a()\n",
         )
         .expect("compile an in-memory cycle");
-    let mut vm = Vm::with_module_loader(loader.clone());
+    let mut vm = Vm::with_host(Rc::new(loader.clone()));
 
     vm.run_named(&program, "main")
         .expect("execute the in-memory cycle");
@@ -1263,7 +1264,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
     let missing = loader
         .compile_source("memory:missing", "import(\"missing\")\n")
         .expect("missing imports compile until runtime");
-    let error = Vm::with_module_loader(loader)
+    let error = Vm::with_host(Rc::new(loader))
         .run_named(&missing, "main")
         .expect_err("missing in-memory imports must be checked runtime errors");
     assert_eq!(error.kind, RuntimeErrorKind::Module);
