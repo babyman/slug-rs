@@ -6,8 +6,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use slug::DesktopLoader as ModuleLoader;
 use slug_desktop_loader::{ClutchRepository, FfiPrototypeLibrary};
-use slug_frontend::ModuleLoader;
 use slug_vm::{RuntimeErrorKind, Vm};
 
 trait VmWithModuleLoader {

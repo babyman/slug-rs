@@ -43,7 +43,7 @@ struct DesktopLoaderState {
 impl DesktopLoader {
     /// Creates a desktop host with default configuration and no Clutch repository.
     #[must_use]
-    pub fn for_roots(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
+    pub fn new(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
         Self::with_configuration_and_clutch_repository(
             source_root,
             library_root,
@@ -75,14 +75,15 @@ impl DesktopLoader {
         configuration: Configuration,
         clutches: ClutchRepository,
     ) -> Self {
-        Self::new(
+        Self::with_resolver(
             DesktopResolver::with_clutch_repository(source_root, library_root, clutches),
             configuration,
         )
     }
 
+    /// Creates a desktop host from explicitly assembled resolution and VM policy.
     #[must_use]
-    pub fn new(resolver: DesktopResolver, configuration: Configuration) -> Self {
+    pub fn with_resolver(resolver: DesktopResolver, configuration: Configuration) -> Self {
         Self {
             state: Rc::new(DesktopLoaderState {
                 resolver,
@@ -414,7 +415,7 @@ pub fn build_default_host_vm(
         }
         _ => ClutchRepository::default(),
     };
-    let loader = DesktopLoader::new(
+    let loader = DesktopLoader::with_resolver(
         DesktopResolver::with_clutch_repository(
             source_root.to_path_buf(),
             default_library_root(slug_home),
