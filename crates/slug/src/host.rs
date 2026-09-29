@@ -45,10 +45,20 @@ impl DesktopLoader {
     /// Creates a desktop host with default configuration and no Clutch repository.
     #[must_use]
     pub fn new(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
+        Self::with_configuration(source_root, library_root, Configuration::default())
+    }
+
+    /// Creates a desktop host with the configuration shared by all modules.
+    #[must_use]
+    pub fn with_configuration(
+        source_root: impl Into<PathBuf>,
+        library_root: Option<PathBuf>,
+        configuration: Configuration,
+    ) -> Self {
         Self::with_configuration_and_clutch_repository(
             source_root,
             library_root,
-            Configuration::default(),
+            configuration,
             ClutchRepository::default(),
         )
     }

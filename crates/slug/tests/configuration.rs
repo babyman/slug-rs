@@ -1,6 +1,7 @@
 use std::fs;
 
-use slug_frontend::{ModuleLoader, compile};
+use slug::DesktopLoader;
+use slug_frontend::compile;
 use slug_vm::{Configuration, ConfigurationValue, Value, Vm};
 use std::rc::Rc;
 
@@ -116,7 +117,7 @@ fn exposes_cfg_to_program_and_imported_modules() {
         ],
         "app",
     );
-    let loader = ModuleLoader::with_configuration(&root, None, configuration);
+    let loader = DesktopLoader::with_configuration(&root, None, configuration);
     let main_path = root.join("app.slug");
     let mut program = compile(
         &main_path.to_string_lossy(),
