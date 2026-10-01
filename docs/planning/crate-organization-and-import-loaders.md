@@ -36,7 +36,7 @@ tested commits. Do not check an item off until its stated gate passes.
 - [x] Move the module graph cache and runtime to `slug-frontend`, then prove
   graph identity, cycles, live exports, static snapshots, and checked failures
   with an in-memory resolver.
-- [ ] Move desktop filesystem resolution, Clutch discovery, native activation,
+- [x] Move desktop filesystem resolution, Clutch discovery, native activation,
   leases, and cleanup to `slug-desktop-loader`.
 - [x] Move CLI/configuration/entry lookup and interactive server assembly to
   `slug`; update `slug-repl` to launch `slug --server`.
@@ -82,12 +82,12 @@ the next migration steps move concrete types.
 - [x] Move dynamic values, bytecode, VM execution, checked runtime errors,
   scheduler support, and VM-facing native registration mechanisms into
   `slug-vm`.
-- [ ] Move lexing, parsing, ASTs, semantic analysis, source lowering, source
+- [x] Move lexing, parsing, ASTs, semantic analysis, source lowering, source
   compilation, source diagnostics, configuration, module loading, host setup,
   and CLI code out of `slug-vm`.
-- [ ] Replace VM references to source/host types with the smallest shared
+- [x] Replace VM references to source/host types with the smallest shared
   metadata or callback contract required for checked diagnostics and imports.
-- [ ] Move private-bytecode/runtime tests with the VM and prove the VM can be
+- [x] Move private-bytecode/runtime tests with the VM and prove the VM can be
   built without the frontend or either concrete loader.
 
 **Gate:** `slug-vm` has no source parser, filesystem, environment, Clutch, or
@@ -116,12 +116,12 @@ identity, cycles, live exports, static snapshots, and checked import errors.
 - [x] Implement `slug-nil-loader` as a deny-all external resolver with focused
   tests proving every explicit external import fails through a checked module
   error and no desktop mechanism is linked or invoked.
-- [ ] Move importer-relative, project-root, library-root, Clutch discovery, and
+- [x] Move importer-relative, project-root, library-root, Clutch discovery, and
   native activation behavior to `slug-desktop-loader`.
-- [ ] Pass already-selected roots and desktop policy into `slug-desktop-loader`;
+- [x] Pass already-selected roots and desktop policy into `slug-desktop-loader`;
   it must not read `SLUG_HOME`, fixture overrides, process arguments, or
   configuration files on its own.
-- [ ] Preserve transactional native registration, activation cleanup, library
+- [x] Preserve transactional native registration, activation cleanup, library
   leases, and shutdown behavior in desktop-loader tests.
 
 **Gate:** the same frontend graph suite passes with both a test resolver and
