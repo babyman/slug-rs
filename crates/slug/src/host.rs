@@ -19,9 +19,11 @@ use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
 };
 use slug_vm::{
-    Configuration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program, Value,
-    Vm, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+    NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program, Value, Vm,
+    VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
 };
+
+use crate::Configuration;
 
 /// Desktop host policy for entry programs and imported modules.
 #[derive(Clone)]
@@ -421,7 +423,7 @@ impl VmHost for DesktopLoader {
         self.state.native_resources.clone()
     }
 
-    fn configuration(&self) -> &Configuration {
+    fn configuration(&self) -> &dyn VmConfiguration {
         &self.state.configuration
     }
 

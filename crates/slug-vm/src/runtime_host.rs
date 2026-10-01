@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::{Configuration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value};
+use crate::{NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value};
 
 /// Checked failure returned by a VM host callback.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +50,49 @@ impl std::error::Error for VmHostError {}
 #[derive(Clone, Debug)]
 pub struct VmModuleExports {
     pub exports: Value,
+}
+
+/// Runtime configuration callbacks required by `cfg` and typed entrypoints.
+///
+/// Concrete hosts collect and interpret configuration before constructing a VM.
+/// The VM only requests a value using a Slug fallback shape or receives prepared
+/// entrypoint arguments. This trait is intentionally unstable.
+pub trait VmConfiguration {
+    /// Resolves one configuration key, returning `fallback` when it is absent.
+    fn resolve(&self, key: &str, fallback: &Value) -> Value;
+
+    /// Returns the unmodified arguments after the entry program name.
+    fn arguments(&self) -> &[String];
+
+    /// Returns prepared program options and positional arguments as Slug values.
+    fn argument_map(&self) -> Value;
+}
+
+/// A configuration callback with no selected values or program arguments.
+///
+/// This is useful for in-memory hosts and tests that deliberately do not
+/// collect configuration from the process or filesystem.
+#[derive(Clone, Debug, Default)]
+pub struct EmptyVmConfiguration;
+
+impl VmConfiguration for EmptyVmConfiguration {
+    fn resolve(&self, _: &str, fallback: &Value) -> Value {
+        fallback.clone()
+    }
+
+    fn arguments(&self) -> &[String] {
+        &[]
+    }
+
+    fn argument_map(&self) -> Value {
+        Value::Map(
+            vec![
+                (Value::string("options"), Value::Map(Vec::new().into())),
+                (Value::string("positional"), Value::list(Vec::new())),
+            ]
+            .into(),
+        )
+    }
 }
 
 /// Host services required while a VM executes installed bytecode.
@@ -97,8 +140,8 @@ pub trait VmHost {
     /// Native-resource lifetime registry shared by VMs for this host.
     fn native_resources(&self) -> NativeResourceRegistry;
 
-    /// Immutable configuration visible to `cfg` and typed entrypoints.
-    fn configuration(&self) -> &Configuration;
+    /// Immutable configuration callbacks visible to `cfg` and typed entrypoints.
+    fn configuration(&self) -> &dyn VmConfiguration;
 
     /// Receives non-fatal runtime warnings such as shadowed imports.
     fn warn(&self, message: String);

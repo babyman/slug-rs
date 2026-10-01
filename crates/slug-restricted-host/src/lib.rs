@@ -9,9 +9,48 @@ use slug_frontend::{ModuleGraph, ModuleGraphHost, SourceError};
 use slug_loader::{ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_nil_loader::NilLoader;
 use slug_vm::{
-    Configuration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, RuntimeError,
-    Value, Vm, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+    NativeDescriptorError, NativeFunction, NativeResourceRegistry, RuntimeError, Value, Vm,
+    VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
 };
+
+/// Explicit in-memory configuration for the restricted host.
+#[derive(Clone, Debug, Default)]
+pub struct RestrictedConfiguration {
+    values: HashMap<String, Value>,
+}
+
+impl RestrictedConfiguration {
+    /// Creates configuration from preselected Slug values.
+    #[must_use]
+    pub fn from_values(values: impl IntoIterator<Item = (String, Value)>) -> Self {
+        Self {
+            values: values.into_iter().collect(),
+        }
+    }
+}
+
+impl VmConfiguration for RestrictedConfiguration {
+    fn resolve(&self, key: &str, fallback: &Value) -> Value {
+        self.values
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    }
+
+    fn arguments(&self) -> &[String] {
+        &[]
+    }
+
+    fn argument_map(&self) -> Value {
+        Value::Map(
+            vec![
+                (Value::string("options"), Value::Map(Vec::new().into())),
+                (Value::string("positional"), Value::list(Vec::new())),
+            ]
+            .into(),
+        )
+    }
+}
 
 #[derive(Clone)]
 struct RestrictedHost {
@@ -20,13 +59,13 @@ struct RestrictedHost {
 
 struct RestrictedHostState {
     graph: ModuleGraph,
-    configuration: Configuration,
+    configuration: RestrictedConfiguration,
     native_globals: RefCell<HashMap<String, Value>>,
     native_resources: NativeResourceRegistry,
 }
 
 impl RestrictedHost {
-    fn with_configuration(configuration: Configuration) -> Self {
+    fn with_configuration(configuration: RestrictedConfiguration) -> Self {
         Self {
             state: Rc::new(RestrictedHostState {
                 graph: ModuleGraph::new(),
@@ -109,7 +148,7 @@ impl VmHost for RestrictedHost {
     fn native_resources(&self) -> NativeResourceRegistry {
         self.state.native_resources.clone()
     }
-    fn configuration(&self) -> &Configuration {
+    fn configuration(&self) -> &dyn VmConfiguration {
         &self.state.configuration
     }
     fn warn(&self, _: String) {}
@@ -125,7 +164,7 @@ impl VmHost for RestrictedHost {
 /// Returns checked source or runtime failures from the selected frontend and
 /// VM; an external import is denied by [`NilLoader`].
 pub fn evaluate(source: &str) -> Result<Value, RestrictedHostError> {
-    evaluate_with_configuration(source, Configuration::default())
+    evaluate_with_configuration(source, RestrictedConfiguration::default())
 }
 
 /// Evaluates in-memory source with an explicitly supplied host configuration.
@@ -136,7 +175,7 @@ pub fn evaluate(source: &str) -> Result<Value, RestrictedHostError> {
 /// VM; an external import is denied by [`NilLoader`].
 pub fn evaluate_with_configuration(
     source: &str,
-    configuration: Configuration,
+    configuration: RestrictedConfiguration,
 ) -> Result<Value, RestrictedHostError> {
     let host = RestrictedHost::with_configuration(configuration);
     let program = host
@@ -169,9 +208,9 @@ impl std::error::Error for RestrictedHostError {}
 
 #[cfg(test)]
 mod tests {
-    use slug_vm::{Configuration, ConfigurationValue, Value};
+    use slug_vm::Value;
 
-    use super::{evaluate, evaluate_with_configuration};
+    use super::{RestrictedConfiguration, evaluate, evaluate_with_configuration};
 
     #[test]
     fn evaluates_in_memory_source_without_external_capabilities() {
@@ -194,10 +233,8 @@ mod tests {
 
     #[test]
     fn uses_only_explicitly_supplied_configuration() {
-        let configuration = Configuration::from_values([(
-            "feature.enabled".into(),
-            ConfigurationValue::Text("true".into()),
-        )]);
+        let configuration =
+            RestrictedConfiguration::from_values([("feature.enabled".into(), Value::Bool(true))]);
 
         assert_eq!(
             evaluate_with_configuration("cfg(\"feature.enabled\", false)\n", configuration)

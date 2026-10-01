@@ -8,7 +8,6 @@
 
 mod bytecode;
 mod collections;
-mod configuration;
 mod conformance;
 mod fixture;
 mod native;
@@ -32,7 +31,6 @@ pub use bytecode::{
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField,
     SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };
-pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 #[doc(hidden)]
@@ -44,7 +42,9 @@ pub use native::{
     NativeValueRef,
 };
 /// Experimental VM-to-host callbacks. This trait is not a stable embedding API.
-pub use runtime_host::{VmHost, VmHostError, VmModuleExports};
+pub use runtime_host::{
+    EmptyVmConfiguration, VmConfiguration, VmHost, VmHostError, VmModuleExports,
+};
 #[doc(hidden)]
 pub use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,

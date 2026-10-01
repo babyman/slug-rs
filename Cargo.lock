@@ -270,6 +270,7 @@ dependencies = [
  "slug-loader",
  "slug-nil-loader",
  "slug-vm",
+ "toml",
 ]
 
 [[package]]

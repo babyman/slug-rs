@@ -2,11 +2,11 @@ use std::rc::Rc;
 
 use slug_frontend::ModuleHost;
 use slug_nil_loader::NilLoader;
-use slug_vm::{Configuration, Value, Vm};
+use slug_vm::{EmptyVmConfiguration, Value, Vm};
 
 #[test]
 fn in_memory_nil_host_evaluates_without_desktop_capabilities() {
-    let loader = ModuleHost::with_resolver(Rc::new(NilLoader), Configuration::default());
+    let loader = ModuleHost::with_resolver(Rc::new(NilLoader), Rc::new(EmptyVmConfiguration));
     let program = loader
         .compile_source("memory:entry", "40 + 2\n")
         .expect("compile in-memory entry source");
@@ -21,7 +21,7 @@ fn in_memory_nil_host_evaluates_without_desktop_capabilities() {
 
 #[test]
 fn in_memory_nil_host_rejects_external_imports_as_checked_errors() {
-    let loader = ModuleHost::with_resolver(Rc::new(NilLoader), Configuration::default());
+    let loader = ModuleHost::with_resolver(Rc::new(NilLoader), Rc::new(EmptyVmConfiguration));
     let program = loader
         .compile_source("memory:entry", "import(\"outside.module\")\n")
         .expect("compile unresolved runtime import");

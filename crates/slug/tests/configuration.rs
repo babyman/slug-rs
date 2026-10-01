@@ -1,8 +1,8 @@
 use std::fs;
 
-use slug::DesktopLoader;
+use slug::{Configuration, ConfigurationValue, DesktopLoader};
 use slug_frontend::compile;
-use slug_vm::{Configuration, ConfigurationValue, Value, Vm};
+use slug_vm::{Value, Vm};
 use std::rc::Rc;
 
 fn root(kind: &str) -> std::path::PathBuf {

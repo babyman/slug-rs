@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs, path::Path};
 
-use crate::Value;
+use slug_vm::{Value, VmConfiguration};
 
 /// A value retained by the immutable runtime configuration store.
 #[derive(Clone, Debug, PartialEq)]
@@ -107,6 +107,20 @@ impl Configuration {
             ]
             .into(),
         )
+    }
+}
+
+impl VmConfiguration for Configuration {
+    fn resolve(&self, key: &str, fallback: &Value) -> Value {
+        Self::resolve(self, key, fallback)
+    }
+
+    fn arguments(&self) -> &[String] {
+        Self::arguments(self)
+    }
+
+    fn argument_map(&self) -> Value {
+        Self::argument_map(self)
     }
 }
 

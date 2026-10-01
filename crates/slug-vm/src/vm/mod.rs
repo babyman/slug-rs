@@ -4563,7 +4563,7 @@ impl Vm {
         }
     }
 
-    fn configuration(&self, span: Option<SourceSpan>) -> VmResult<&crate::Configuration> {
+    fn configuration(&self, span: Option<SourceSpan>) -> VmResult<&dyn crate::VmConfiguration> {
         self.host
             .as_ref()
             .ok_or_else(|| {

@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    Configuration, ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceError,
-    Value, Vm, VmHost, VmHostError, VmModuleExports,
+    ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceError, Value, Vm,
+    VmConfiguration, VmHost, VmHostError, VmModuleExports,
     source::{
         InteractiveCompilation, InteractiveCompilerState, compile_with_resolver,
         environment::ModuleSnapshot,
@@ -29,9 +29,8 @@ struct ModuleHostState {
 }
 
 /// Runtime services shared by a module graph, independent of desktop lookup.
-#[derive(Debug)]
 struct ModuleRuntimeServices {
-    configuration: Configuration,
+    configuration: Rc<dyn VmConfiguration>,
     native_globals: RefCell<HashMap<String, Value>>,
     foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: slug_vm::NativeResourceRegistry,
@@ -434,7 +433,10 @@ impl ModuleHost {
     /// resolver supplies every external module; desktop filesystem and Clutch
     /// lookup remain unavailable through this path.
     #[must_use]
-    pub fn with_resolver(resolver: Rc<dyn ModuleResolver>, configuration: Configuration) -> Self {
+    pub fn with_resolver(
+        resolver: Rc<dyn ModuleResolver>,
+        configuration: Rc<dyn VmConfiguration>,
+    ) -> Self {
         Self {
             state: Rc::new(ModuleHostState {
                 resolver,
@@ -453,8 +455,8 @@ impl ModuleHost {
 
     /// The immutable configuration shared by the program module and loaded modules.
     #[must_use]
-    pub fn configuration(&self) -> &Configuration {
-        &self.state.services.configuration
+    pub fn configuration(&self) -> &dyn VmConfiguration {
+        self.state.services.configuration.as_ref()
     }
 
     /// Loads a dotted module name without exposing file-system operations to Slug code.
@@ -725,7 +727,7 @@ impl VmHost for ModuleHost {
         self.native_resources()
     }
 
-    fn configuration(&self) -> &Configuration {
+    fn configuration(&self) -> &dyn VmConfiguration {
         self.configuration()
     }
 

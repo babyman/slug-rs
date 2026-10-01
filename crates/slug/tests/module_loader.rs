@@ -1156,7 +1156,8 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
         .collect(),
         requests: requests.clone(),
     });
-    let loader = FrontendModuleHost::with_resolver(resolver, slug_vm::Configuration::default());
+    let loader =
+        FrontendModuleHost::with_resolver(resolver, Rc::new(slug_vm::EmptyVmConfiguration));
     let program = loader
         .compile_source(
             "memory:main",
@@ -1229,7 +1230,8 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
         .collect(),
         requests: requests.clone(),
     });
-    let loader = FrontendModuleHost::with_resolver(resolver, slug_vm::Configuration::default());
+    let loader =
+        FrontendModuleHost::with_resolver(resolver, Rc::new(slug_vm::EmptyVmConfiguration));
     let program = loader
         .compile_source(
             "memory:main",

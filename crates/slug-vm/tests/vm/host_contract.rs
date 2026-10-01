@@ -5,15 +5,16 @@ use std::{
 };
 
 use slug_vm::{
-    CallArgumentKind, Chunk, Configuration, NativeDescriptorError, NativeFunction,
-    NativeResourceRegistry, Op, ProgramBuilder, Value, Vm, VmHost, VmHostError, VmModuleExports,
+    CallArgumentKind, Chunk, EmptyVmConfiguration, NativeDescriptorError, NativeFunction,
+    NativeResourceRegistry, Op, ProgramBuilder, Value, Vm, VmConfiguration, VmHost, VmHostError,
+    VmModuleExports,
 };
 
 struct RecordingHost {
     imports: RefCell<Vec<(Option<String>, String)>>,
     warnings: RefCell<Vec<String>>,
     shutdown: Cell<bool>,
-    configuration: Configuration,
+    configuration: EmptyVmConfiguration,
     native_resources: NativeResourceRegistry,
 }
 
@@ -23,7 +24,7 @@ impl RecordingHost {
             imports: RefCell::new(Vec::new()),
             warnings: RefCell::new(Vec::new()),
             shutdown: Cell::new(false),
-            configuration: Configuration::default(),
+            configuration: EmptyVmConfiguration,
             native_resources: NativeResourceRegistry::new(),
         }
     }
@@ -72,7 +73,7 @@ impl VmHost for RecordingHost {
         self.native_resources.clone()
     }
 
-    fn configuration(&self) -> &Configuration {
+    fn configuration(&self) -> &dyn VmConfiguration {
         &self.configuration
     }
 
