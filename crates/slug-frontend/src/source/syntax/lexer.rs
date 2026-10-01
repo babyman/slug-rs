@@ -1,5 +1,5 @@
 /// Stateful scanner for the source front end.
-use crate::SourceSpan;
+use slug_vm::SourceSpan;
 
 use super::{
     SourceError,

@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{SourceSpan, Value};
-use slug_vm::ValueKind;
+use slug_vm::{CallableIdentity, SourceSpan, Value, ValueKind};
 
 use super::{
     SourceError,
@@ -90,14 +89,14 @@ struct ParameterConstraints {
 #[derive(Clone, Debug)]
 struct ParameterRequirement {
     value_type: Type,
-    span: crate::SourceSpan,
+    span: SourceSpan,
 }
 
 #[derive(Debug)]
 struct PlusOperands {
     left: String,
     right: String,
-    span: crate::SourceSpan,
+    span: SourceSpan,
 }
 
 /// A direct nil guard whose two branch bodies must be inferred as separate
@@ -123,7 +122,7 @@ impl ParameterConstraints {
                         parameter.name.clone(),
                         ParameterRequirement {
                             value_type: Type::Unknown,
-                            span: crate::SourceSpan::new("<parameter>", 0, 0),
+                            span: SourceSpan::new("<parameter>", 0, 0),
                         },
                     )
                 })
@@ -415,7 +414,7 @@ impl ParameterConstraints {
         });
     }
 
-    fn collect_plus_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
+    fn collect_plus_operands(&mut self, left: &Expr, right: &Expr, span: &SourceSpan) {
         let (ExprKind::Name(left), ExprKind::Name(right)) = (&left.kind, &right.kind) else {
             return;
         };
@@ -428,7 +427,7 @@ impl ParameterConstraints {
         }
     }
 
-    fn collect_subtract_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
+    fn collect_subtract_operands(&mut self, left: &Expr, right: &Expr, span: &SourceSpan) {
         let (ExprKind::Name(left), ExprKind::Name(right)) = (&left.kind, &right.kind) else {
             return;
         };
@@ -441,7 +440,7 @@ impl ParameterConstraints {
         }
     }
 
-    fn collect_multiply_operands(&mut self, left: &Expr, right: &Expr, span: &crate::SourceSpan) {
+    fn collect_multiply_operands(&mut self, left: &Expr, right: &Expr, span: &SourceSpan) {
         let (ExprKind::Name(left), ExprKind::Name(right)) = (&left.kind, &right.kind) else {
             return;
         };
@@ -1598,7 +1597,7 @@ fn resolve_type_aliases(
 
 fn resolve_type_alias(
     name: &str,
-    aliases: &HashMap<String, (&TypeAnnotation, crate::SourceSpan)>,
+    aliases: &HashMap<String, (&TypeAnnotation, SourceSpan)>,
     environment: &mut Environment,
     visiting: &mut Vec<String>,
     resolved: &mut HashSet<String>,
@@ -1643,7 +1642,7 @@ fn resolve_type_alias(
 
 fn alias_dependencies(
     annotation: &TypeAnnotation,
-    aliases: &HashMap<String, (&TypeAnnotation, crate::SourceSpan)>,
+    aliases: &HashMap<String, (&TypeAnnotation, SourceSpan)>,
     dependencies: &mut Vec<String>,
 ) -> Result<(), SourceError> {
     match annotation {
@@ -1676,7 +1675,7 @@ fn function_type(
     type_parameters: &[String],
     parameters: &[Parameter],
     result: Option<&TypeAnnotation>,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
     environment: &Environment,
     inferred_parameters: Option<&HashMap<String, Type>>,
 ) -> Result<CallableSignature, SourceError> {
@@ -1726,7 +1725,7 @@ fn function_type(
 
 fn callable_signature(
     expression: &Expr,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
     environment: &Environment,
 ) -> Result<Option<CallableSignature>, SourceError> {
     let ExprKind::Function {
@@ -2644,7 +2643,7 @@ fn binary_result(
     operator: Binary,
     left: &Type,
     right: &Type,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<Type, SourceError> {
     if matches!(left, Type::Never) || matches!(right, Type::Never) {
         return Ok(Type::Never);
@@ -2669,11 +2668,7 @@ fn binary_result(
     }
 }
 
-fn bitwise_result(
-    left: &Type,
-    right: &Type,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn bitwise_result(left: &Type, right: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
         return Ok(Type::Unknown);
     }
@@ -2684,11 +2679,7 @@ fn bitwise_result(
     }
 }
 
-fn prefix_result(
-    operator: Prefix,
-    value: &Type,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn prefix_result(operator: Prefix, value: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if matches!(value, Type::Never) {
         return Ok(Type::Never);
     }
@@ -2702,7 +2693,7 @@ fn prefix_result(
     }
 }
 
-fn bit_not_result(value: &Type, span: &crate::SourceSpan) -> Result<Type, SourceError> {
+fn bit_not_result(value: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(value) {
         return Ok(Type::Unknown);
     }
@@ -2716,16 +2707,12 @@ fn bit_not_result(value: &Type, span: &crate::SourceSpan) -> Result<Type, Source
     }
 }
 
-fn numeric_operands(
-    left: &Type,
-    right: &Type,
-    span: &crate::SourceSpan,
-) -> Result<(), SourceError> {
+fn numeric_operands(left: &Type, right: &Type, span: &SourceSpan) -> Result<(), SourceError> {
     require_operation_operand(&Type::Num, left, span)?;
     require_operation_operand(&Type::Num, right, span)
 }
 
-fn add_result(left: &Type, right: &Type, span: &crate::SourceSpan) -> Result<Type, SourceError> {
+fn add_result(left: &Type, right: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if matches!(left, Type::Str) {
         return Ok(Type::Str);
     }
@@ -2759,11 +2746,7 @@ fn add_result(left: &Type, right: &Type, span: &crate::SourceSpan) -> Result<Typ
     }
 }
 
-fn subtract_result(
-    left: &Type,
-    right: &Type,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn subtract_result(left: &Type, right: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if matches!(left, Type::Map(_)) {
         if is_dynamic_operation_type(right) || is_map_key_type(right) {
             return Ok(left.clone());
@@ -2774,11 +2757,7 @@ fn subtract_result(
     Ok(Type::Num)
 }
 
-fn multiply_result(
-    left: &Type,
-    right: &Type,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn multiply_result(left: &Type, right: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
         return Ok(Type::Unknown);
     }
@@ -2789,11 +2768,7 @@ fn multiply_result(
     }
 }
 
-fn list_append_result(
-    list: &Type,
-    value: &Type,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn list_append_result(list: &Type, value: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if matches!(list, Type::Bytes) {
         if is_dynamic_operation_type(value) || matches!(value, Type::Num | Type::Bytes) {
             return Ok(Type::Bytes);
@@ -2813,11 +2788,7 @@ fn list_append_result(
     }
 }
 
-fn index_result(
-    collection: &Type,
-    index: &Type,
-    span: &crate::SourceSpan,
-) -> Result<Type, SourceError> {
+fn index_result(collection: &Type, index: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(collection) || is_dynamic_operation_type(index) {
         return Ok(Type::Unknown);
     }
@@ -2849,7 +2820,7 @@ fn index_result(
     }
 }
 
-fn slice_result(collection: &Type, span: &crate::SourceSpan) -> Result<Type, SourceError> {
+fn slice_result(collection: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(collection) {
         return Ok(Type::Unknown);
     }
@@ -2867,7 +2838,7 @@ fn slice_result(collection: &Type, span: &crate::SourceSpan) -> Result<Type, Sou
 fn require_operation_operand(
     expected: &Type,
     actual: &Type,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<(), SourceError> {
     if is_dynamic_operation_type(actual) || actual.is_assignable_to(expected) {
         return Ok(());
@@ -2879,7 +2850,7 @@ fn invalid_operation(
     operator: &str,
     left: &Type,
     right: &Type,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<Type, SourceError> {
     Err(SourceError::semantic(
         format!("operator `{operator}` does not accept {left} and {right}"),
@@ -3482,7 +3453,7 @@ fn check_function_value_call(
     value_type: &Type,
     shapes: &[ArgumentShape<'_>],
     actuals: &[Type],
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<Type, SourceError> {
     let Type::Function(Some(signature)) = value_type else {
         return Ok(Type::Unknown);
@@ -3538,7 +3509,7 @@ struct InstantiatedCandidate {
     non_variadic: bool,
     uses_empty_variadic: bool,
     result: Type,
-    identity: crate::CallableIdentity,
+    identity: CallableIdentity,
 }
 
 #[derive(Clone, Copy)]
@@ -3555,7 +3526,7 @@ fn instantiate_candidate(
     actuals: &[Type],
     explicit: Option<&Vec<TypeAnnotation>>,
     type_parameters: &[String],
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
     environment: &Environment,
     report_mismatch: bool,
 ) -> Result<Option<InstantiatedCandidate>, SourceError> {
@@ -3805,7 +3776,7 @@ fn infer(
     expected: &Type,
     actual: &Type,
     substitutions: &mut HashMap<usize, Type>,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<(), SourceError> {
     if let Type::Generic(index) = expected {
         if matches!(actual, Type::Unknown) {
@@ -3858,7 +3829,7 @@ fn infer_union(
     expected: &[Type],
     actual: &Type,
     substitutions: &mut HashMap<usize, Type>,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<(), SourceError> {
     let mut remaining = match actual {
         Type::Union(members) => members.clone(),
@@ -3896,7 +3867,7 @@ fn infer_task_payload(
     expected: &Type,
     actual: &Type,
     substitutions: &mut HashMap<usize, Type>,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<(), SourceError> {
     infer_payload(expected, actual, substitutions, span, false)
 }
@@ -3905,7 +3876,7 @@ fn infer_channel_payload(
     expected: &Type,
     actual: &Type,
     substitutions: &mut HashMap<usize, Type>,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<(), SourceError> {
     infer_payload(expected, actual, substitutions, span, true)
 }
@@ -3914,7 +3885,7 @@ fn infer_payload(
     expected: &Type,
     actual: &Type,
     substitutions: &mut HashMap<usize, Type>,
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
     preserve_unknown: bool,
 ) -> Result<(), SourceError> {
     let Type::Generic(index) = expected else {
@@ -4012,7 +3983,7 @@ fn value_type(value: &Value) -> Type {
     }
 }
 
-fn require(expected: &Type, actual: &Type, span: &crate::SourceSpan) -> Result<(), SourceError> {
+fn require(expected: &Type, actual: &Type, span: &SourceSpan) -> Result<(), SourceError> {
     if actual.is_assignable_to(expected) {
         Ok(())
     } else {
@@ -4223,7 +4194,7 @@ fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<
 fn validate_parameter(
     parameter: &Parameter,
     type_parameters: &[String],
-    span: &crate::SourceSpan,
+    span: &SourceSpan,
 ) -> Result<(), SourceError> {
     if let Some(annotation) = &parameter.annotation {
         resolve_annotation(annotation, type_parameters, span)?;
@@ -4307,8 +4278,8 @@ fn validate_pattern(pattern: &Pattern, type_parameters: &[String]) -> Result<(),
 mod tests {
     use super::*;
 
-    fn span() -> crate::SourceSpan {
-        crate::SourceSpan::new("test.slug", 1, 1)
+    fn span() -> SourceSpan {
+        SourceSpan::new("test.slug", 1, 1)
     }
 
     fn name(name: &str) -> Expr {

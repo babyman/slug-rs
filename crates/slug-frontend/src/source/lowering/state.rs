@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{Capture, Chunk, Op, SourceSpan, Value};
+use slug_vm::{Capture, Chunk, Op, SourceSpan, Value};
 
 #[derive(Clone, Debug)]
 pub(super) enum Binding {
@@ -247,7 +247,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::{Binding, State};
-    use crate::Capture;
+    use slug_vm::Capture;
 
     #[test]
     fn captures_only_referenced_outer_bindings_through_intermediate_functions() {

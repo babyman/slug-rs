@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::SourceSpan;
+use slug_vm::SourceSpan;
 
 use super::{SourceError, ast::TypeAnnotation, environment::Environment};
 

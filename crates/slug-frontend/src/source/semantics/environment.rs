@@ -4,7 +4,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{CallableIdentity, ForeignResourceSignature, SourceSpan};
+use slug_vm::{CallableIdentity, ForeignResourceSignature, SourceSpan};
 
 use super::semantic::{EnumIdentity, InferredAlternative, ResourceIdentity, SchemaIdentity, Type};
 

@@ -6,15 +6,17 @@ use std::{
 };
 
 use crate::{
-    ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceError, Value, Vm,
-    VmConfiguration, VmHost, VmHostError, VmModuleExports,
+    SourceError,
     source::{
         InteractiveCompilation, InteractiveCompilerState, compile_with_resolver,
         environment::ModuleSnapshot,
     },
 };
 use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
-use slug_vm::{NativeResourceRegistry, native_resource_registry};
+use slug_vm::{
+    ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
+    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone)]

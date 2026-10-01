@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::Program;
+use slug_vm::Program;
 
 use super::{
     SourceError,

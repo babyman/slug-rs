@@ -6,7 +6,7 @@ use super::{
         StructSchemaField, Tag, Token, TokenKind, TypeAnnotation,
     },
 };
-use crate::{DeferMode, SourceSpan, Value};
+use slug_vm::{DeferMode, SourceSpan, Value};
 
 /// Stateful parser for the source front end.
 pub(super) struct Parser {

@@ -3,7 +3,8 @@
 
 use std::{collections::HashMap, fmt};
 
-use crate::{ModuleKey, Program, SourceSpan};
+use slug_loader::ModuleKey;
+use slug_vm::{Program, SourceSpan};
 
 #[path = "syntax/ast.rs"]
 mod ast;

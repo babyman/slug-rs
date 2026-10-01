@@ -1,4 +1,4 @@
-use crate::{DeferMode, SourceSpan, Value};
+use slug_vm::{DeferMode, SourceSpan, Value};
 
 #[derive(Clone, Debug)]
 pub(super) struct Expr {

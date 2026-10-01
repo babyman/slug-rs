@@ -3,8 +3,8 @@ use std::{
     rc::Rc,
 };
 
-use crate::{
-    CallArgumentKind, CallableIdentity, Capture, Chunk, Entrypoint, EntrypointArguments,
+use slug_vm::{
+    CallArgumentKind, CallableIdentity, Capture, Chunk, Entrypoint, EntrypointArguments, EnumValue,
     ForeignResourceSignature, MatchMapKey, MatchPattern, MatchRest, MatchType, ModuleDeclaration,
     ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField, SelectCase,
     SourceSpan, Value,
@@ -835,7 +835,7 @@ impl Compiler {
                 for case in cases {
                     let key = state.constant(Value::string(case.clone()));
                     state.emit(Op::Constant(key), &expression.span);
-                    let value = state.constant(Value::Enum(Rc::new(crate::EnumValue {
+                    let value = state.constant(Value::Enum(Rc::new(EnumValue {
                         module: self.path.clone().into(),
                         name: name.clone().into(),
                         case: case.clone().into(),
