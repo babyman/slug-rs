@@ -9,8 +9,7 @@ use slug_frontend::InteractiveCompilation;
 #[cfg(feature = "concurrency")]
 use slug_frontend::InteractiveCompilation;
 use slug_frontend::{
-    InteractiveCompilerState, ModuleLoader, SourceReadiness, compile_interactive_forms,
-    source_readiness,
+    InteractiveCompilerState, SourceReadiness, compile_interactive_forms, source_readiness,
 };
 use slug_vm::{
     InteractiveEnvironment, NativeArity, NativeDescriptorError, NativeFunction, NativeModule,
@@ -70,17 +69,11 @@ impl std::error::Error for OutputError {}
 /// In-process owner of interactive-session protocol lifecycle.
 pub struct Server {
     vm: Vm,
-    loader: Option<InteractiveLoader>,
+    loader: Option<DesktopLoader>,
     initialized: bool,
     sessions: BTreeMap<String, Session>,
     next_session: u64,
     output: Rc<RefCell<OutputSink>>,
-}
-
-#[derive(Clone)]
-enum InteractiveLoader {
-    Legacy(ModuleLoader),
-    Desktop(DesktopLoader),
 }
 
 impl Drop for Server {
@@ -179,20 +172,11 @@ impl Server {
         server
     }
 
-    /// Creates a server whose interactive forms resolve imports through the
-    /// supplied frontend module graph.
-    #[must_use]
-    pub fn with_module_loader(vm: Vm, loader: ModuleLoader) -> Self {
-        let mut server = Self::new(vm);
-        server.loader = Some(InteractiveLoader::Legacy(loader));
-        server
-    }
-
     /// Creates a server whose interactive forms use the desktop host graph.
     #[must_use]
     pub fn with_desktop_loader(vm: Vm, loader: DesktopLoader) -> Self {
         let mut server = Self::new(vm);
-        server.loader = Some(InteractiveLoader::Desktop(loader));
+        server.loader = Some(loader);
         server
     }
 
@@ -210,14 +194,7 @@ impl Server {
     ) -> Result<Vec<InteractiveCompilation>, slug_frontend::SourceError> {
         self.loader.as_ref().map_or_else(
             || compile_interactive_forms(path, source, state),
-            |loader| match loader {
-                InteractiveLoader::Legacy(loader) => {
-                    loader.compile_interactive_forms(path, source, state)
-                }
-                InteractiveLoader::Desktop(loader) => {
-                    loader.compile_interactive_forms(path, source, state)
-                }
-            },
+            |loader| loader.compile_interactive_forms(path, source, state),
         )
     }
 
