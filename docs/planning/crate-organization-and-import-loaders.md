@@ -40,7 +40,7 @@ tested commits. Do not check an item off until its stated gate passes.
   leases, and cleanup to `slug-desktop-loader`.
 - [x] Move CLI/configuration/entry lookup and interactive server assembly to
   `slug`; update `slug-repl` to launch `slug --server`.
-- [ ] Add the nil-loader restricted-host harness and a dependency inspection
+- [x] Add the nil-loader restricted-host harness and a dependency inspection
   proving that path excludes desktop-loader and Clutch code.
 - [ ] Move suites and documentation to their final owners, remove transitional
   re-exports, run `make check`, and complete the delivery checklist.
@@ -146,17 +146,21 @@ binary in `slug-vm` or `slug-server` remains required by a normal installation.
 
 ## 6. Prove restricted-host assembly
 
-- [ ] Add a small in-memory entry-source harness using `slug-nil-loader` and
+- [x] Add a small in-memory entry-source harness using `slug-nil-loader` and
   explicitly selected host builtins.
-- [ ] Prove it evaluates source without desktop imports and rejects an explicit
+- [x] Prove it evaluates source without desktop imports and rejects an explicit
   import as a checked module error.
-- [ ] Confirm configuration is supplied by the host harness and no ambient
+- [x] Confirm configuration is supplied by the host harness and no ambient
   environment or filesystem discovery occurs.
-- [ ] Add a dependency/build inspection appropriate to the target toolchain to
+- [x] Add a dependency/build inspection appropriate to the target toolchain to
   prove the nil-loader path does not pull in desktop loader or Clutch code.
 
 **Gate:** the restricted harness has a reproducible no-external-import proof;
 it is not yet a `no_std` or ESP32 compatibility claim.
+
+**Dependency inspection:** run
+`cargo tree -p slug-restricted-host -e normal`. Its normal dependency tree
+must not contain `slug-desktop-loader` or a Clutch implementation.
 
 ## 7. Complete documentation and delivery
 
