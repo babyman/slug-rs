@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use slug_frontend::{ModuleLoader, compile};
+use slug_frontend::{ModuleHost, compile};
 use slug_loader::{ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 #[cfg(feature = "concurrency")]
 use slug_vm::SelectCase;
@@ -26,12 +26,12 @@ fn program_with_main(main: Chunk) -> Program {
     program
 }
 
-trait VmWithModuleLoader {
-    fn with_module_loader(loader: ModuleLoader) -> Self;
+trait VmWithModuleHost {
+    fn with_module_loader(loader: ModuleHost) -> Self;
 }
 
-impl VmWithModuleLoader for Vm {
-    fn with_module_loader(loader: ModuleLoader) -> Self {
+impl VmWithModuleHost for Vm {
+    fn with_module_loader(loader: ModuleHost) -> Self {
         Self::with_host(Rc::new(loader))
     }
 }

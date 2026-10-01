@@ -6,7 +6,7 @@ use std::{
 
 use slug::DesktopLoader as ModuleLoader;
 use slug_desktop_loader::{ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError};
-use slug_frontend::{ModuleGraph, ModuleLoader as FrontendModuleLoader, compile};
+use slug_frontend::{ModuleGraph, ModuleHost as FrontendModuleHost, compile};
 use slug_loader::{ModuleKey, ModuleSource};
 use slug_vm::{
     ModuleLoadError, ModuleRequest, ModuleResolver, NativeArity, NativeCall, NativeDescriptorError,
@@ -1156,7 +1156,7 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
         .collect(),
         requests: requests.clone(),
     });
-    let loader = FrontendModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
+    let loader = FrontendModuleHost::with_resolver(resolver, slug_vm::Configuration::default());
     let program = loader
         .compile_source(
             "memory:main",
@@ -1229,7 +1229,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
         .collect(),
         requests: requests.clone(),
     });
-    let loader = FrontendModuleLoader::with_resolver(resolver, slug_vm::Configuration::default());
+    let loader = FrontendModuleHost::with_resolver(resolver, slug_vm::Configuration::default());
     let program = loader
         .compile_source(
             "memory:main",

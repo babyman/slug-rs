@@ -18,11 +18,11 @@ use slug_vm::{NativeResourceRegistry, native_resource_registry};
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone)]
-pub struct ModuleLoader {
-    state: Rc<ModuleLoaderState>,
+pub struct ModuleHost {
+    state: Rc<ModuleHostState>,
 }
 
-struct ModuleLoaderState {
+struct ModuleHostState {
     resolver: Rc<dyn ModuleResolver>,
     graph: ModuleGraph,
     services: ModuleRuntimeServices,
@@ -41,7 +41,7 @@ struct ModuleRuntimeServices {
 
 /// The storage-independent state shared by all requests for one module graph.
 ///
-/// Resolver and host services remain on `ModuleLoader` while this type is
+/// Resolver and host services remain on `ModuleHost` while this type is
 /// extracted; keeping the graph caches together makes that boundary explicit.
 #[derive(Clone, Debug)]
 pub struct ModuleGraph {
@@ -427,7 +427,7 @@ impl ModuleInstance {
     }
 }
 
-impl ModuleLoader {
+impl ModuleHost {
     /// Creates a graph host backed by an explicitly supplied import resolver.
     ///
     /// This constructor is intended for restricted and in-memory hosts. The
@@ -436,7 +436,7 @@ impl ModuleLoader {
     #[must_use]
     pub fn with_resolver(resolver: Rc<dyn ModuleResolver>, configuration: Configuration) -> Self {
         Self {
-            state: Rc::new(ModuleLoaderState {
+            state: Rc::new(ModuleHostState {
                 resolver,
                 graph: ModuleGraph::new(),
                 services: ModuleRuntimeServices {
@@ -472,13 +472,13 @@ impl ModuleLoader {
     }
 }
 
-impl ModuleResolver for ModuleLoader {
+impl ModuleResolver for ModuleHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
     }
 }
 
-impl ModuleLoader {
+impl ModuleHost {
     /// Loads and compiles a module, returning a cached program for repeat requests.
     ///
     /// # Errors
@@ -636,7 +636,7 @@ impl ModuleLoader {
     }
 }
 
-impl ModuleGraphHost for ModuleLoader {
+impl ModuleGraphHost for ModuleHost {
     type Activation = ();
 
     fn builtin_globals(&self) -> HashMap<String, Value> {
@@ -680,7 +680,7 @@ impl ModuleGraphHost for ModuleLoader {
     }
 }
 
-impl VmHost for ModuleLoader {
+impl VmHost for ModuleHost {
     fn import_module(
         &self,
         importer: Option<&str>,
@@ -738,7 +738,7 @@ impl VmHost for ModuleLoader {
     }
 }
 
-impl Drop for ModuleLoaderState {
+impl Drop for ModuleHostState {
     fn drop(&mut self) {
         self.services
             .shutdown_errors
