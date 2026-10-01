@@ -26,11 +26,11 @@ struct RestrictedHostState {
 }
 
 impl RestrictedHost {
-    fn new() -> Self {
+    fn with_configuration(configuration: Configuration) -> Self {
         Self {
             state: Rc::new(RestrictedHostState {
                 graph: ModuleGraph::new(),
-                configuration: Configuration::default(),
+                configuration,
                 native_globals: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
             }),
@@ -125,7 +125,20 @@ impl VmHost for RestrictedHost {
 /// Returns checked source or runtime failures from the selected frontend and
 /// VM; an external import is denied by [`NilLoader`].
 pub fn evaluate(source: &str) -> Result<Value, RestrictedHostError> {
-    let host = RestrictedHost::new();
+    evaluate_with_configuration(source, Configuration::default())
+}
+
+/// Evaluates in-memory source with an explicitly supplied host configuration.
+///
+/// # Errors
+///
+/// Returns checked source or runtime failures from the selected frontend and
+/// VM; an external import is denied by [`NilLoader`].
+pub fn evaluate_with_configuration(
+    source: &str,
+    configuration: Configuration,
+) -> Result<Value, RestrictedHostError> {
+    let host = RestrictedHost::with_configuration(configuration);
     let program = host
         .state
         .graph
@@ -156,9 +169,9 @@ impl std::error::Error for RestrictedHostError {}
 
 #[cfg(test)]
 mod tests {
-    use slug_vm::Value;
+    use slug_vm::{Configuration, ConfigurationValue, Value};
 
-    use super::evaluate;
+    use super::{evaluate, evaluate_with_configuration};
 
     #[test]
     fn evaluates_in_memory_source_without_external_capabilities() {
@@ -176,6 +189,20 @@ mod tests {
             error
                 .to_string()
                 .contains("module `outside.module` was not found")
+        );
+    }
+
+    #[test]
+    fn uses_only_explicitly_supplied_configuration() {
+        let configuration = Configuration::from_values([(
+            "feature.enabled".into(),
+            ConfigurationValue::Text("true".into()),
+        )]);
+
+        assert_eq!(
+            evaluate_with_configuration("cfg(\"feature.enabled\", false)\n", configuration)
+                .expect("evaluate source with explicit configuration"),
+            Value::Bool(true)
         );
     }
 }

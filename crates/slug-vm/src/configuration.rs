@@ -22,6 +22,19 @@ pub struct Configuration {
 }
 
 impl Configuration {
+    /// Creates configuration from values selected by the embedding host.
+    ///
+    /// This constructor performs no filesystem, environment, or argument
+    /// discovery.
+    #[must_use]
+    pub fn from_values(values: impl IntoIterator<Item = (String, ConfigurationValue)>) -> Self {
+        Self {
+            values: values.into_iter().collect(),
+            arguments: Vec::new(),
+            entry_module: String::new(),
+        }
+    }
+
     /// Collects configuration using the portable source-precedence order.
     ///
     /// `slug_home` supplies the optional `$SLUG_HOME` directory; its library
