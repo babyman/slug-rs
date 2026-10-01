@@ -9,15 +9,13 @@ use std::{
 };
 
 use slug_desktop_loader::{
-    ClutchRepository, ClutchRepositoryError, DesktopResolver, clutch::StagedClutchPlugin,
+    ClutchRepository, ClutchRepositoryError, DesktopActivation, DesktopResolver,
 };
 use slug_frontend::{
     InteractiveCompilation, InteractiveCompilerState, ModuleGraph, ModuleGraphHost, ModuleInstance,
     SourceError,
 };
-use slug_loader::{
-    ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
-};
+use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_vm::{
     NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program, Value, Vm,
     VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
@@ -36,11 +34,9 @@ struct DesktopLoaderState {
     graph: ModuleGraph,
     configuration: Configuration,
     native_globals: RefCell<HashMap<String, Value>>,
-    foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
-    active_plugins: RefCell<HashMap<ModuleActivation, StagedClutchPlugin>>,
 }
 
 impl DesktopLoader {
@@ -103,11 +99,9 @@ impl DesktopLoader {
                 graph: ModuleGraph::new(),
                 configuration,
                 native_globals: RefCell::new(HashMap::new()),
-                foreign_functions: RefCell::new(HashMap::new()),
                 native_resources: native_resource_registry(),
                 warnings: RefCell::new(Vec::new()),
                 shutdown_errors: RefCell::new(Vec::new()),
-                active_plugins: RefCell::new(HashMap::new()),
             }),
         }
     }
@@ -243,62 +237,12 @@ impl DesktopLoader {
         std::mem::take(&mut *self.state.warnings.borrow_mut())
     }
 
-    fn define_foreign_batch(
-        &self,
-        functions: Vec<NativeFunction>,
-    ) -> Result<(), NativeDescriptorError> {
-        let keys = functions
-            .iter()
-            .map(|function| {
-                (
-                    function.module_name().to_string(),
-                    function.name().to_string(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut registry = self.state.foreign_functions.borrow_mut();
-        for (index, key) in keys.iter().enumerate() {
-            if registry.contains_key(key) || keys[..index].contains(key) {
-                return Err(NativeDescriptorError::new(format!(
-                    "foreign binding `{}.{}` is already defined",
-                    key.0, key.1
-                )));
-            }
-        }
-        for (key, function) in keys.into_iter().zip(functions) {
-            registry.insert(key, function);
-        }
-        Ok(())
-    }
-
-    fn remove_foreign_batch(&self, functions: &[NativeFunction]) {
-        let mut registry = self.state.foreign_functions.borrow_mut();
-        for function in functions {
-            let key = (
-                function.module_name().to_string(),
-                function.name().to_string(),
-            );
-            if registry
-                .get(&key)
-                .is_some_and(|registered| registered.same_function(function))
-            {
-                registry.remove(&key);
-            }
-        }
-    }
-
     fn shutdown(&self) {
         self.state
             .shutdown_errors
             .borrow_mut()
             .extend(self.state.native_resources.finalize_all_for_shutdown());
-        let plugins = std::mem::take(&mut *self.state.active_plugins.borrow_mut());
-        for (_, mut plugin) in plugins {
-            self.remove_foreign_batch(&plugin.functions);
-            if let Err(error) = plugin.cleanup() {
-                self.state.shutdown_errors.borrow_mut().push(error);
-            }
-        }
+        self.state.resolver.shutdown();
     }
 }
 
@@ -309,30 +253,17 @@ impl ModuleResolver for DesktopLoader {
 }
 
 impl ModuleGraphHost for DesktopLoader {
-    type Activation = StagedClutchPlugin;
+    type Activation = DesktopActivation;
 
     fn builtin_globals(&self) -> HashMap<String, Value> {
-        self.state
-            .foreign_functions
-            .borrow()
-            .iter()
-            .filter(|((module, _), _)| module == "slug.builtin")
-            .map(|((_, name), function)| (name.clone(), Value::Native(function.clone())))
-            .collect()
+        self.state.resolver.builtin_globals()
     }
 
     fn stage_module_activation(
         &self,
         source: &ModuleSource,
     ) -> Result<Option<Self::Activation>, ModuleLoadError> {
-        if source
-            .activation
-            .as_ref()
-            .is_some_and(|lease| self.state.active_plugins.borrow().contains_key(lease))
-        {
-            return Ok(None);
-        }
-        self.state.resolver.stage_activation(source)
+        self.state.resolver.stage_module_activation(source)
     }
 
     fn register_module_activation(
@@ -340,30 +271,23 @@ impl ModuleGraphHost for DesktopLoader {
         source: &ModuleSource,
         activation: &Self::Activation,
     ) -> Result<(), ModuleLoadError> {
-        self.define_foreign_batch(activation.functions.clone())
-            .map_err(|error| ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
-            })
+        self.state
+            .resolver
+            .register_module_activation(source, activation)
     }
 
     fn remove_module_activation(&self, activation: &Self::Activation) {
-        self.remove_foreign_batch(&activation.functions);
+        self.state.resolver.remove_module_activation(activation);
     }
 
     fn cleanup_module_activation(&self, activation: &mut Option<Self::Activation>) {
-        if let Some(activation) = activation {
-            let _ = activation.cleanup();
-        }
+        self.state.resolver.cleanup_module_activation(activation);
     }
 
     fn retain_module_activation(&self, source: &ModuleSource, activation: Self::Activation) {
-        if let Some(lease) = &source.activation {
-            self.state
-                .active_plugins
-                .borrow_mut()
-                .insert(lease.clone(), activation);
-        }
+        self.state
+            .resolver
+            .retain_module_activation(source, activation);
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
@@ -401,18 +325,14 @@ impl VmHost for DesktopLoader {
     }
 
     fn foreign_function(&self, module: &str, name: &str) -> Option<NativeFunction> {
-        self.state
-            .foreign_functions
-            .borrow()
-            .get(&(module.into(), name.into()))
-            .cloned()
+        self.state.resolver.foreign_function(module, name)
     }
 
     fn define_foreign_batch(
         &self,
         functions: Vec<NativeFunction>,
     ) -> Result<(), NativeDescriptorError> {
-        self.define_foreign_batch(functions)
+        self.state.resolver.define_foreign_batch(functions)
     }
 
     fn define_native_global(&self, name: String, value: Value) {
@@ -441,11 +361,7 @@ impl Drop for DesktopLoaderState {
         self.shutdown_errors
             .get_mut()
             .extend(self.native_resources.finalize_all_for_shutdown());
-        for plugin in self.active_plugins.get_mut().values_mut() {
-            if let Err(error) = plugin.cleanup() {
-                self.shutdown_errors.get_mut().push(error);
-            }
-        }
+        self.resolver.shutdown();
     }
 }
 

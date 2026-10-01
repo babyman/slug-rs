@@ -15,6 +15,7 @@ use slug_loader::{
     ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
     module_path,
 };
+use slug_vm::{NativeDescriptorError, NativeFunction, Value};
 #[doc(hidden)]
 pub mod clutch;
 #[allow(unsafe_code)]
@@ -33,6 +34,32 @@ pub struct DesktopResolver {
     library_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
     activation_sources: Rc<RefCell<HashMap<ModuleActivation, ClutchPluginSource>>>,
+    activation_state: Rc<RefCell<DesktopActivationState>>,
+}
+
+#[derive(Debug, Default)]
+struct DesktopActivationState {
+    foreign_functions: HashMap<(String, String), NativeFunction>,
+    active_plugins: HashMap<ModuleActivation, DesktopActivation>,
+    shutdown_errors: Vec<String>,
+}
+
+impl Drop for DesktopActivationState {
+    fn drop(&mut self) {
+        let plugins = std::mem::take(&mut self.active_plugins);
+        for (_, mut activation) in plugins {
+            remove_foreign_batch(&mut self.foreign_functions, &activation.plugin.functions);
+            if let Err(error) = activation.plugin.cleanup() {
+                self.shutdown_errors.push(error);
+            }
+        }
+    }
+}
+
+/// Staged desktop-native registrations owned by one imported Clutch module.
+#[derive(Debug)]
+pub struct DesktopActivation {
+    plugin: StagedClutchPlugin,
 }
 
 impl DesktopResolver {
@@ -54,25 +81,31 @@ impl DesktopResolver {
             library_root,
             clutch_repository,
             activation_sources: Rc::new(RefCell::new(HashMap::new())),
+            activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
         }
     }
 
     /// Stages the native registrations required by a resolved module.
     ///
-    /// The caller owns publication and cleanup of the returned transaction.
-    /// This keeps desktop discovery separate from the frontend module graph.
-    ///
     /// # Errors
     ///
     /// Returns a checked error when an activation lease is invalid or its
     /// plugin cannot be prepared.
-    pub fn stage_activation(
+    pub fn stage_module_activation(
         &self,
         source: &ModuleSource,
-    ) -> Result<Option<StagedClutchPlugin>, ModuleLoadError> {
+    ) -> Result<Option<DesktopActivation>, ModuleLoadError> {
         let Some(lease) = &source.activation else {
             return Ok(None);
         };
+        if self
+            .activation_state
+            .borrow()
+            .active_plugins
+            .contains_key(lease)
+        {
+            return Ok(None);
+        }
         let plugin = self
             .activation_sources
             .borrow()
@@ -134,7 +167,143 @@ impl DesktopResolver {
             let _ = staged.cleanup();
             return Err(error);
         }
-        Ok(Some(registrar.finish()))
+        Ok(Some(DesktopActivation {
+            plugin: registrar.finish(),
+        }))
+    }
+
+    /// Publishes a staged activation atomically into this desktop loader.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error without publishing a partial batch when a
+    /// foreign binding conflicts with an existing registration.
+    pub fn register_module_activation(
+        &self,
+        source: &ModuleSource,
+        activation: &DesktopActivation,
+    ) -> Result<(), ModuleLoadError> {
+        self.define_foreign_batch(activation.plugin.functions.clone())
+            .map_err(|error| ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: error.to_string(),
+            })
+    }
+
+    /// Removes registrations published by a failed module initialization.
+    pub fn remove_module_activation(&self, activation: &DesktopActivation) {
+        remove_foreign_batch(
+            &mut self.activation_state.borrow_mut().foreign_functions,
+            &activation.plugin.functions,
+        );
+    }
+
+    /// Runs a failed activation's one-shot cleanup hook.
+    pub fn cleanup_module_activation(&self, activation: &mut Option<DesktopActivation>) {
+        if let Some(activation) = activation
+            && let Err(error) = activation.plugin.cleanup()
+        {
+            self.activation_state
+                .borrow_mut()
+                .shutdown_errors
+                .push(error);
+        }
+    }
+
+    /// Retains a successfully initialized module activation until shutdown.
+    pub fn retain_module_activation(&self, source: &ModuleSource, activation: DesktopActivation) {
+        if let Some(lease) = &source.activation {
+            self.activation_state
+                .borrow_mut()
+                .active_plugins
+                .insert(lease.clone(), activation);
+        }
+    }
+
+    /// Returns plugin-provided functions for one module-qualified declaration.
+    #[must_use]
+    pub fn foreign_function(&self, module: &str, name: &str) -> Option<NativeFunction> {
+        self.activation_state
+            .borrow()
+            .foreign_functions
+            .get(&(module.into(), name.into()))
+            .cloned()
+    }
+
+    /// Returns native functions exported through the virtual builtin module.
+    #[must_use]
+    pub fn builtin_globals(&self) -> HashMap<String, Value> {
+        self.activation_state
+            .borrow()
+            .foreign_functions
+            .iter()
+            .filter(|((module, _), _)| module == "slug.builtin")
+            .map(|((_, name), function)| (name.clone(), Value::Native(function.clone())))
+            .collect()
+    }
+
+    /// Registers foreign declarations atomically for the selected desktop host.
+    ///
+    /// # Errors
+    ///
+    /// Returns a descriptor error without retaining any supplied function when
+    /// a declaration conflicts with an existing binding.
+    pub fn define_foreign_batch(
+        &self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        let keys = functions
+            .iter()
+            .map(|function| {
+                (
+                    function.module_name().to_string(),
+                    function.name().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut state = self.activation_state.borrow_mut();
+        for (index, key) in keys.iter().enumerate() {
+            if state.foreign_functions.contains_key(key) || keys[..index].contains(key) {
+                return Err(NativeDescriptorError::new(format!(
+                    "foreign binding `{}.{}` is already defined",
+                    key.0, key.1
+                )));
+            }
+        }
+        for (key, function) in keys.into_iter().zip(functions) {
+            state.foreign_functions.insert(key, function);
+        }
+        Ok(())
+    }
+
+    /// Finalizes retained desktop-native activations.
+    pub fn shutdown(&self) {
+        let mut state = self.activation_state.borrow_mut();
+        let plugins = std::mem::take(&mut state.active_plugins);
+        for (_, mut activation) in plugins {
+            remove_foreign_batch(&mut state.foreign_functions, &activation.plugin.functions);
+            if let Err(error) = activation.plugin.cleanup() {
+                state.shutdown_errors.push(error);
+            }
+        }
+    }
+}
+
+fn remove_foreign_batch(
+    registry: &mut HashMap<(String, String), NativeFunction>,
+    functions: &[NativeFunction],
+) {
+    for function in functions {
+        let key = (
+            function.module_name().to_string(),
+            function.name().to_string(),
+        );
+        if registry
+            .get(&key)
+            .is_some_and(|registered| registered.same_function(function))
+        {
+            registry.remove(&key);
+        }
     }
 }
 
