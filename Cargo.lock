@@ -326,10 +326,7 @@ dependencies = [
 name = "slug-server"
 version = "0.1.0"
 dependencies = [
- "serde_json",
  "slug",
- "slug-frontend",
- "slug-vm",
 ]
 
 [[package]]

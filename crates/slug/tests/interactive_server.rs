@@ -8,11 +8,9 @@ use std::{
     rc::Rc,
 };
 
-use slug::DesktopLoader;
+use interactive::{Diagnostic, DiagnosticCategory, EventOrigin, OutputError, OutputStream, Server};
+use slug::{DesktopLoader, interactive};
 use slug_frontend::compile;
-use slug_server::interactive::{
-    Diagnostic, DiagnosticCategory, EventOrigin, OutputError, OutputStream, Server,
-};
 #[cfg(feature = "concurrency")]
 use slug_vm::NativeChannelProducer;
 use slug_vm::Vm;
@@ -1121,7 +1119,8 @@ fn submitted_diagnostics_retain_source_kinds_and_locations() {
 
 #[test]
 fn server_binary_keeps_ndjson_on_stdout() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .arg("--server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1155,7 +1154,8 @@ fn server_binary_keeps_ndjson_on_stdout() {
 
 #[test]
 fn server_binary_returns_structured_slug_diagnostics_on_protocol_stdout() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .arg("--server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1192,7 +1192,8 @@ fn server_binary_returns_structured_slug_diagnostics_on_protocol_stdout() {
 
 #[test]
 fn server_binary_preserves_a_binding_between_ndjson_submissions() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .arg("--server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1231,7 +1232,8 @@ fn server_binary_preserves_a_binding_between_ndjson_submissions() {
 
 #[test]
 fn server_binary_emits_program_output_only_as_ndjson_events() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .arg("--server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1270,7 +1272,8 @@ fn server_binary_emits_program_output_only_as_ndjson_events() {
 
 #[test]
 fn server_binary_orders_output_before_a_failing_submission_response() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_slug-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .arg("--server")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1329,12 +1332,7 @@ fn open_session(server: &mut Server) -> String {
         .into()
 }
 
-fn submit(
-    server: &mut Server,
-    id: u64,
-    session: &str,
-    source: &str,
-) -> slug_server::interactive::Response {
+fn submit(server: &mut Server, id: u64, session: &str, source: &str) -> interactive::Response {
     server.handle_line(
         &request(
             id,

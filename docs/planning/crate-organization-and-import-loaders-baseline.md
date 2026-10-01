@@ -17,20 +17,20 @@ failures:
 | `cargo test -p slug-vm --features metrics --test cli` | 247 passed |
 | `cargo test -p slug-vm --features metrics --test module_loader` | 57 passed |
 | `cargo test -p slug-vm --features metrics --test configuration` | 3 passed |
-| `cargo test -p slug-server --test interactive_server` | 36 passed |
+| `cargo test -p slug --test interactive_server` | 36 passed |
 | `cargo test -p slug-vm --test ffi_prototype` | 30 passed |
 
 ## Observable behavior owners
 
 | Behavior | Regression suite |
 | --- | --- |
-| Explicit-path, project-root, and installed bare-name entry lookup | `crates/slug-vm/tests/cli/basics.rs`: `executes_a_bare_program_name_from_the_library_directory` |
-| Source provider precedence over Clutches | `crates/slug-vm/tests/module_loader.rs`: `existing_source_providers_take_precedence_over_clutches` |
-| Relative and library-root import resolution | `crates/slug-vm/tests/module_loader.rs`: `resolves_importer_relative_source_and_library_roots` |
-| Module graph identity, cache reuse, live exports, and static import snapshots | `crates/slug-vm/tests/module_loader.rs`: `baseline_graph_preserves_resolution_cache_liveness_and_import_snapshots` |
-| Clutch activation validation, rollback, cleanup, and retained registrations | `crates/slug-vm/tests/module_loader.rs`: `clutch_plugins_reject_unavailable_or_unrelated_registrations`, `clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations`, and `clutch_plugins_bind_only_their_declared_module_foreign_functions` |
+| Explicit-path, project-root, and installed bare-name entry lookup | `crates/slug/tests/cli/basics.rs`: `executes_a_bare_program_name_from_the_library_directory` |
+| Source provider precedence over Clutches | `crates/slug/tests/module_loader.rs`: `existing_source_providers_take_precedence_over_clutches` |
+| Relative and library-root import resolution | `crates/slug/tests/module_loader.rs`: `resolves_importer_relative_source_and_library_roots` |
+| Module graph identity, cache reuse, live exports, and static import snapshots | `crates/slug/tests/module_loader.rs`: `baseline_graph_preserves_resolution_cache_liveness_and_import_snapshots` |
+| Clutch activation validation, rollback, cleanup, and retained registrations | `crates/slug/tests/module_loader.rs`: `clutch_plugins_reject_unavailable_or_unrelated_registrations`, `clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations`, and `clutch_plugins_bind_only_their_declared_module_foreign_functions` |
 | Dynamic-native Clutch resource and library lifecycle | `crates/slug-vm/tests/ffi_prototype.rs`: `cleans_up_c_resources_during_error_unwinding_and_vm_teardown` and `unloads_libraries_after_destroying_each_library_state` |
-| NDJSON server protocol, diagnostics, state, and output ordering | `crates/slug-server/tests/interactive_server.rs`: `server_binary_keeps_ndjson_on_stdout`, `server_binary_returns_structured_slug_diagnostics_on_protocol_stdout`, and the remaining `server_binary_*` tests |
+| NDJSON server protocol, diagnostics, state, and output ordering | `crates/slug/tests/interactive_server.rs`: `server_binary_keeps_ndjson_on_stdout`, `server_binary_returns_structured_slug_diagnostics_on_protocol_stdout`, and the remaining `server_binary_*` tests |
 
 ## Public seam inventory
 

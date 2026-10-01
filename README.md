@@ -152,7 +152,7 @@ val main = fn() {
 Run it from the repository root:
 
 ```sh
-cargo run -p slug-vm --bin slug -- hello.slug
+cargo run -p slug -- hello.slug
 ```
 
 For a persistent interactive session, run the minimal terminal client:
@@ -193,7 +193,7 @@ The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with
 `--diagnostic-format=json` to receive runner-generated fatal diagnostics as one
 JSON document on standard error, which is intended for editor and agent integrations; use
-`cargo run -p slug-vm --bin slug -- --help` to see the current command interface. Start with the
+`cargo run -p slug -- --help` to see the current command interface. Start with the
 [language support matrix](docs/generated/language-support.md) for the
 implemented subset, and use the [language documents](docs/language/README.md)
 as the source-language reference.
@@ -202,7 +202,7 @@ as the source-language reference.
 
 ```sh
 make check
-cargo run -p slug-vm --bin slug -- --help
+cargo run -p slug -- --help
 make bench-vm
 make bench-source
 ```

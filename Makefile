@@ -22,7 +22,7 @@ test-vm:
 	cargo test -p slug-vm --features metrics --test vm
 
 test-cli:
-	cargo test -p slug-vm --features metrics --test cli
+	cargo test -p slug --features metrics --test cli
 
 # Focused subsystem aliases. Keep their integration-test target names stable.
 test-frontend:
@@ -41,16 +41,16 @@ test-slug:
 	cargo test -p slug --all-targets
 
 test-modules:
-	cargo test -p slug-vm --features metrics --test module_loader
+	cargo test -p slug --features metrics --test module_loader
 
 test-server:
-	cargo test -p slug-server --features metrics --test interactive_server
+	cargo test -p slug --features metrics --test interactive_server
 
 test-repl:
 	cargo test -p slug-repl --features metrics --test interactive_repl
 
 test-ffi-prototype:
-	cargo test -p slug-vm --test ffi_prototype
+	cargo test -p slug --test ffi_prototype
 
 stage-native-clutches:
 	sh scripts/stage-native-clutches.sh
