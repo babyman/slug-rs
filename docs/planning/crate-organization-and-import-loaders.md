@@ -42,7 +42,7 @@ tested commits. Do not check an item off until its stated gate passes.
   `slug`; update `slug-repl` to launch `slug --server`.
 - [x] Add the nil-loader restricted-host harness and a dependency inspection
   proving that path excludes desktop-loader and Clutch code.
-- [ ] Move suites and documentation to their final owners, remove transitional
+- [x] Move suites and documentation to their final owners, remove transitional
   re-exports, run `make check`, and complete the delivery checklist.
 
 ## 0. Freeze the observable baseline
@@ -171,7 +171,7 @@ must not contain `slug-desktop-loader` or a Clutch implementation.
   restricted-host behavior.
 - [x] Update contributor guidance, test routing, release/install instructions,
   and `slug-repl` distribution notes.
-- [ ] Append user-visible changes to `changelog.md`, run `make docs-check` and
+- [x] Append user-visible changes to `changelog.md`, run `make docs-check` and
   `git diff --check` for documentation slices, then run `make check` before
   the implementation handoff.
 

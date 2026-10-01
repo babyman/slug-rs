@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Completed the crate and loader reorganization: `slug-vm` is runtime-only,
+  `slug-frontend` owns source and module graphs, `slug-desktop-loader` owns
+  desktop activation, and `slug` owns executable configuration and server
+  assembly. Desktop Slug behavior is unchanged.
+
 - Moved the interactive server and NDJSON protocol into `slug`, exposed it as
   `slug --server`, and updated `slug-repl` to launch that mode by default.
 
