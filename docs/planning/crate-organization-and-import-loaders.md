@@ -166,7 +166,7 @@ must not contain `slug-desktop-loader` or a Clutch implementation.
 
 - [x] Update README package names, commands, and capability wording only when
   each executable/package migration is implemented.
-- [ ] Keep the module and host-service language requirements aligned with the
+- [x] Keep the module and host-service language requirements aligned with the
   selected loader model; preserve fixture-host requirements separately from
   restricted-host behavior.
 - [x] Update contributor guidance, test routing, release/install instructions,

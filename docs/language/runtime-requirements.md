@@ -215,6 +215,21 @@ to a number or boolean when the fallback has that type; with a list fallback a
 single string becomes a one-element list. If conversion is unavailable, the
 string remains a string.
 
+### Host configuration profiles
+
+These requirements describe the immutable store visible to Slug code, not a
+required process-discovery mechanism. The desktop command-line host implements
+the reference precedence above. A fixture host MUST construct its store only
+from fixture metadata and declared fixture roots; it MUST NOT inherit ambient
+project files, library files, environment variables, or command-line options.
+A restricted or in-memory host MAY instead provide an empty store or values
+selected explicitly by its embedding. It MUST NOT inspect filesystem,
+environment, command-line, Clutch, or network state merely to satisfy `cfg`.
+
+Every profile supplies one fixed store to the entry program and all imported
+modules. Changing the host's inputs after evaluation begins cannot change that
+store.
+
 ## Clean-room implementation checklist
 
 An independent implementation can reach useful conformance in the following
