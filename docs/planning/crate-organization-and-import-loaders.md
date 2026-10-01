@@ -164,12 +164,12 @@ must not contain `slug-desktop-loader` or a Clutch implementation.
 
 ## 7. Complete documentation and delivery
 
-- [ ] Update README package names, commands, and capability wording only when
+- [x] Update README package names, commands, and capability wording only when
   each executable/package migration is implemented.
 - [ ] Keep the module and host-service language requirements aligned with the
   selected loader model; preserve fixture-host requirements separately from
   restricted-host behavior.
-- [ ] Update contributor guidance, test routing, release/install instructions,
+- [x] Update contributor guidance, test routing, release/install instructions,
   and `slug-repl` distribution notes.
 - [ ] Append user-visible changes to `changelog.md`, run `make docs-check` and
   `git diff --check` for documentation slices, then run `make check` before
