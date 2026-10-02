@@ -325,8 +325,6 @@ dependencies = [
 name = "slug-vm"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
  "slug-frontend",
  "slug-loader",
 ]

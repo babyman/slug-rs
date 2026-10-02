@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Removed unused serialization dependencies from the VM and made the frontend's
+  benchmark-only serialization dependencies development-only.
+
 - Moved fixture-sidecar parsing and external fixture execution from `slug-vm`
   to the `slug` executable host, leaving the VM free of filesystem, process,
   timing, and TOML dependencies. The nil loader is now test-only for `slug`.
