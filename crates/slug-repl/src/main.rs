@@ -93,14 +93,14 @@ fn run_with_reader(
     let mut server = match ServerProcess::spawn() {
         Ok(server) => server,
         Err(error) => {
-            let _ = writeln!(errors, "slug-repl: cannot start slug-server: {error}");
+            let _ = writeln!(errors, "slug-repl: cannot start slug --server: {error}");
             return ExitCode::from(1);
         }
     };
     let result = run_session(&mut server, reader, output, errors, startup_source);
     let shutdown = server.finish();
     if let Err(error) = shutdown {
-        let _ = writeln!(errors, "slug-repl: slug-server shutdown failed: {error}");
+        let _ = writeln!(errors, "slug-repl: slug --server shutdown failed: {error}");
         return ExitCode::from(1);
     }
     result
@@ -250,7 +250,7 @@ fn submit_startup_source(
 }
 
 fn render_transport_error(error: &io::Error, errors: &mut dyn Write) -> ExitCode {
-    let _ = writeln!(errors, "slug-repl: slug-server protocol error: {error}");
+    let _ = writeln!(errors, "slug-repl: slug --server protocol error: {error}");
     ExitCode::from(1)
 }
 
@@ -366,13 +366,13 @@ impl<R: BufRead, W: Write> ProtocolClient<R, W> {
             if self.reader.read_line(&mut line)? == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "slug-server closed its protocol stream before responding",
+                    "slug --server closed its protocol stream before responding",
                 ));
             }
             let message = serde_json::from_str(&line).map_err(|error| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("slug-server emitted malformed protocol JSON: {error}"),
+                    format!("slug --server emitted malformed protocol JSON: {error}"),
                 )
             })?;
             match message {
@@ -384,7 +384,7 @@ impl<R: BufRead, W: Write> ProtocolClient<R, W> {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!(
-                            "slug-server responded with id {:?}, expected {}",
+                            "slug --server responded with id {:?}, expected {}",
                             response.id, request.id
                         ),
                     ));
@@ -416,11 +416,11 @@ impl ServerProcess {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| io::Error::other("slug-server stdin was not piped"))?;
+            .ok_or_else(|| io::Error::other("slug --server stdin was not piped"))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| io::Error::other("slug-server stdout was not piped"))?;
+            .ok_or_else(|| io::Error::other("slug --server stdout was not piped"))?;
         Ok(Self {
             child,
             client: ProtocolClient {
@@ -438,7 +438,7 @@ impl ServerProcess {
             Ok(())
         } else {
             Err(io::Error::other(format!(
-                "slug-server exited with {status}"
+                "slug --server exited with {status}"
             )))
         }
     }

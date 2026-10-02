@@ -7,6 +7,9 @@
 
 - Updated live crate ownership guidance to match the restructured workspace.
 
+- Updated interactive server and REPL diagnostics to name the supported
+  `slug --server` invocation.
+
 - Removed unused serialization dependencies from the VM and made the frontend's
   benchmark-only serialization dependencies development-only.
 

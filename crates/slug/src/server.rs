@@ -8,11 +8,13 @@ use std::{
 use crate::{build_default_host_vm, interactive::Server};
 use serde::Serialize;
 
+const SERVER_COMMAND: &str = "slug --server";
+
 /// Runs the NDJSON interactive server used by `slug --server`.
 #[must_use]
 pub fn run_server() -> ExitCode {
     let mut arguments = env::args_os();
-    let executable = arguments.next().unwrap_or_else(|| "slug-server".into());
+    let executable = arguments.next().unwrap_or_else(|| "slug".into());
     let first_argument = arguments.next();
     let application = if first_argument.as_deref() == Some(std::ffi::OsStr::new("--server")) {
         arguments.next().map(PathBuf::from)
@@ -20,7 +22,10 @@ pub fn run_server() -> ExitCode {
         first_argument.map(PathBuf::from)
     };
     if arguments.next().is_some() {
-        eprintln!("Usage: {} [app.slug]", executable.to_string_lossy());
+        eprintln!(
+            "Usage: {} --server [app.slug]",
+            executable.to_string_lossy()
+        );
         return ExitCode::from(1);
     }
     let stdin = io::stdin();
@@ -30,7 +35,7 @@ pub fn run_server() -> ExitCode {
         None => match env::current_dir() {
             Ok(path) => path,
             Err(error) => {
-                eprintln!("slug-server: cannot determine current directory: {error}");
+                eprintln!("{SERVER_COMMAND}: cannot determine current directory: {error}");
                 return ExitCode::from(1);
             }
         },
@@ -40,7 +45,7 @@ pub fn run_server() -> ExitCode {
         match build_default_host_vm(&source_root, slug_home.as_deref(), &[], "interactive") {
             Ok(host) => host,
             Err(error) => {
-                eprintln!("slug-server: cannot configure default host: {error}");
+                eprintln!("{SERVER_COMMAND}: cannot configure default host: {error}");
                 return ExitCode::from(1);
             }
         };
@@ -51,7 +56,7 @@ pub fn run_server() -> ExitCode {
         let source = match fs::read_to_string(&path) {
             Ok(source) => source,
             Err(error) => {
-                eprintln!("slug-server: cannot read {}: {error}", path.display());
+                eprintln!("{SERVER_COMMAND}: cannot read {}: {error}", path.display());
                 return ExitCode::from(1);
             }
         };
@@ -59,7 +64,10 @@ pub fn run_server() -> ExitCode {
         let mut program = match loader.compile_source(&path_text, &source) {
             Ok(program) => program,
             Err(error) => {
-                eprintln!("slug-server: cannot compile {}: {error}", path.display());
+                eprintln!(
+                    "{SERVER_COMMAND}: cannot compile {}: {error}",
+                    path.display()
+                );
                 return ExitCode::from(1);
             }
         };
@@ -69,11 +77,11 @@ pub fn run_server() -> ExitCode {
                 .unwrap_or_default(),
         );
         if let Err(error) = server.run_root_program(&program) {
-            eprintln!("slug-server: root program failed: {error}");
+            eprintln!("{SERVER_COMMAND}: root program failed: {error}");
             return ExitCode::from(1);
         }
         if let Err(error) = write_events(&mut output, &mut server) {
-            eprintln!("slug-server: cannot write standard output: {error}");
+            eprintln!("{SERVER_COMMAND}: cannot write standard output: {error}");
             return ExitCode::from(1);
         }
     }
@@ -82,17 +90,17 @@ pub fn run_server() -> ExitCode {
         let line = match line {
             Ok(line) => line,
             Err(error) => {
-                eprintln!("slug-server: cannot read standard input: {error}");
+                eprintln!("{SERVER_COMMAND}: cannot read standard input: {error}");
                 return ExitCode::from(1);
             }
         };
         let response = server.handle_line(&line);
         if let Err(error) = write_events(&mut output, &mut server) {
-            eprintln!("slug-server: cannot write standard output: {error}");
+            eprintln!("{SERVER_COMMAND}: cannot write standard output: {error}");
             return ExitCode::from(1);
         }
         if let Err(error) = write_message(&mut output, &response) {
-            eprintln!("slug-server: cannot write standard output: {error}");
+            eprintln!("{SERVER_COMMAND}: cannot write standard output: {error}");
             return ExitCode::from(1);
         }
     }

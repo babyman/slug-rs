@@ -297,5 +297,5 @@ fn repl_reports_a_missing_configured_server() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.contains("cannot start slug-server"));
+    assert!(stderr.contains("cannot start slug --server"));
 }
