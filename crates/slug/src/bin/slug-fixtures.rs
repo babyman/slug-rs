@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf, process::ExitCode};
 
-use slug_vm::FixtureRunner;
+use slug::FixtureRunner;
 
 fn main() -> ExitCode {
     let mut arguments = env::args().skip(1);

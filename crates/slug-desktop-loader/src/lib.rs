@@ -58,7 +58,7 @@ impl Drop for DesktopActivationState {
 
 /// Staged desktop-native registrations owned by one imported Clutch module.
 #[derive(Debug)]
-pub struct DesktopActivation {
+struct DesktopActivation {
     resolver: DesktopResolver,
     lease: Option<ModuleActivationLease>,
     diagnostic_name: String,

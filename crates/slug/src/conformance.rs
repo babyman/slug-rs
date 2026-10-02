@@ -8,7 +8,7 @@ use std::{
 
 use crate::{FixtureMetadata, FixtureOutcome};
 
-/// Runs portable Slug conformance fixtures through a Slug executable.
+/// Executes portable Slug conformance fixtures through a Slug executable.
 pub struct FixtureRunner {
     executable: PathBuf,
     default_timeout: Duration,

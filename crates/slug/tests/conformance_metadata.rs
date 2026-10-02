@@ -1,6 +1,6 @@
 use std::fs;
 
-use slug_vm::{FixtureMetadata, FixtureOutcome};
+use slug::{FixtureMetadata, FixtureOutcome};
 
 fn path(kind: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(

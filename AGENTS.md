@@ -50,7 +50,7 @@ a Rust change, run `make check`. For documentation-only changes, run
 | Imports, modules, exports, and live bindings | `crates/slug/tests/module_loader.rs` | `cargo test -p slug --features metrics --test module_loader` |
 | Configuration loading and `cfg`-related behavior | `crates/slug/tests/configuration.rs` | `cargo test -p slug --features metrics --test configuration` |
 | Fixture execution behavior | `crates/slug/tests/conformance_runner.rs` | `cargo test -p slug --features metrics --test conformance_runner` |
-| Fixture-sidecar validation | `crates/slug-vm/tests/conformance_metadata.rs` | `cargo test -p slug-vm --features metrics --test conformance_metadata` |
+| Fixture-sidecar validation | `crates/slug/tests/conformance_metadata.rs` | `cargo test -p slug --features metrics --test conformance_metadata` |
 | Repository legacy-syntax fixtures | `crates/slug/tests/legacy_syntax_conformance.rs` | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 
 `make test` runs the full unit, binary, and integration suite. See

@@ -8,8 +8,6 @@
 
 mod bytecode;
 mod collections;
-mod conformance;
-mod fixture;
 mod native;
 mod runtime_host;
 mod scheduler_signal;
@@ -31,8 +29,6 @@ pub use bytecode::{
     ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField,
     SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };
-pub use conformance::FixtureRunner;
-pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 #[doc(hidden)]
 pub use native::native_resource_registry;
 pub use native::{

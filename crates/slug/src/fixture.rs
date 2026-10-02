@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-/// Expected terminal result for one portable conformance fixture.
+/// Expected terminal result for one portable fixture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FixtureOutcome {
     Success,

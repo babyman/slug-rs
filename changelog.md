@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved fixture-sidecar parsing and external fixture execution from `slug-vm`
+  to the `slug` executable host, leaving the VM free of filesystem, process,
+  timing, and TOML dependencies. The nil loader is now test-only for `slug`.
+
 - Simplified the crate seams after the loader reorganization: `slug-vm` no
   longer depends on loader contracts, resolver-owned activation transactions no
   longer leak into every module host, and the restricted host reuses the
