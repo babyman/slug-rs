@@ -17,7 +17,9 @@ use std::ffi::CString;
 use super::LoadLibraryW;
 #[cfg(unix)]
 use super::RTLD_NOW;
-use super::{FfiPrototypeError, c_void, close_library, dlopen, loader_error, lookup_symbol};
+#[cfg(unix)]
+use super::dlopen;
+use super::{FfiPrototypeError, c_void, close_library, loader_error, lookup_symbol};
 
 // ABI 0.13 lets a C worker release its final producer capability from inside
 // that library's own thread. Its return path can still execute library code

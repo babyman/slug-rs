@@ -9,7 +9,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     error::Error,
-    ffi::{CStr, c_char, c_void},
+    ffi::{c_char, c_void},
     fmt,
     mem::size_of,
     path::Path,
@@ -19,6 +19,9 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
+
+#[cfg(unix)]
+use std::ffi::CStr;
 
 use crate::ClutchPluginRegistrar;
 use slug_vm::{

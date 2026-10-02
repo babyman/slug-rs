@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restored Windows compilation for the experimental native Clutch loader.
+
 - Prevented project, library, and importer-relative module imports from
   following symlinks outside their configured lookup roots.
 
