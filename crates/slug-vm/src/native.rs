@@ -115,7 +115,8 @@ impl NativeChannelProducer {
     /// Publishes an owned value after its sender has finalized transferred
     /// resources. The callback runs only for a send that has committed to the
     /// channel, before a receiver can observe the value.
-    pub(crate) fn try_send_after_accepting<F>(
+    #[doc(hidden)]
+    pub fn try_send_after_accepting<F>(
         &self,
         value: NativeSendValue,
         finalize: F,
@@ -257,19 +258,28 @@ impl Drop for NativeChannelProducer {
 }
 
 #[derive(Clone)]
-pub(crate) struct NativeResourceRegistry(Rc<NativeResourceRegistryInner>);
+#[doc(hidden)]
+pub struct NativeResourceRegistry(Rc<NativeResourceRegistryInner>);
 
 struct NativeResourceRegistryInner {
     resources: RefCell<Vec<Weak<NativeResource>>>,
 }
 
-pub(crate) fn native_resource_registry() -> NativeResourceRegistry {
+#[doc(hidden)]
+#[must_use]
+pub fn native_resource_registry() -> NativeResourceRegistry {
     NativeResourceRegistry(Rc::new(NativeResourceRegistryInner {
         resources: RefCell::new(Vec::new()),
     }))
 }
 
 impl NativeResourceRegistry {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new() -> Self {
+        native_resource_registry()
+    }
+
     pub(crate) fn register(&self, resources: Vec<Weak<NativeResource>>) {
         let mut tracked = self.0.resources.borrow_mut();
         tracked.retain(|resource| resource.strong_count() > 0);
@@ -294,7 +304,9 @@ impl NativeResourceRegistry {
     /// This is the shutdown counterpart to ordinary `close`: it takes each
     /// payload after closing it, so a later Rust drop has only a tombstone to
     /// observe.  Native plugin code can consequently be unloaded safely.
-    pub(crate) fn finalize_all_for_shutdown(&self) -> Vec<String> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn finalize_all_for_shutdown(&self) -> Vec<String> {
         let resources = self.0.resources.borrow().clone();
         resources
             .into_iter()
@@ -518,7 +530,9 @@ impl NativeOwnedValue {
         self.0
     }
 
-    pub(crate) fn as_ref(&self) -> NativeValueRef<'_> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn as_ref(&self) -> NativeValueRef<'_> {
         NativeValueRef { value: &self.0 }
     }
 }
@@ -745,7 +759,8 @@ impl NativeModule {
         Self::new_with_scope(name, state, NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed))
     }
 
-    pub(crate) fn new_with_scope<T: Any>(
+    #[doc(hidden)]
+    pub fn new_with_scope<T: Any>(
         name: impl Into<Rc<str>>,
         state: T,
         scope_id: usize,
@@ -937,7 +952,9 @@ impl NativeFunction {
         self.0.member_key.as_deref()
     }
 
-    pub(crate) fn same_function(&self, other: &Self) -> bool {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn same_function(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
@@ -1032,7 +1049,8 @@ pub struct NativeDescriptorError {
 }
 
 impl NativeDescriptorError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
+    #[doc(hidden)]
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }

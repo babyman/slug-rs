@@ -1,0 +1,947 @@
+#[cfg(not(feature = "concurrency"))]
+use std::collections::VecDeque;
+use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
+
+use serde_json::{Value, json};
+
+#[cfg(not(feature = "concurrency"))]
+use slug_frontend::InteractiveCompilation;
+#[cfg(feature = "concurrency")]
+use slug_frontend::InteractiveCompilation;
+use slug_frontend::{
+    InteractiveCompilerState, SourceReadiness, compile_interactive_forms, source_readiness,
+};
+use slug_vm::{
+    InteractiveEnvironment, NativeArity, NativeDescriptorError, NativeFunction, NativeModule,
+    Program, Value as SlugValue, Vm, VmResult,
+};
+#[cfg(not(feature = "concurrency"))]
+use slug_vm::{InteractiveExecution, VmProgress};
+#[cfg(feature = "concurrency")]
+use slug_vm::{InteractiveTask, VmProgress};
+
+use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
+use crate::DesktopLoader;
+
+mod builtins;
+mod presentation;
+
+use builtins::{
+    NativeCallback, native_channel, native_close, native_len, native_print, native_println,
+};
+use presentation::{
+    InitializeParams, SubmitParams, completed_result, protocol_value, required_params,
+    session_result, stalled_result,
+};
+
+/// The protocol event stream used for host or program output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
+impl OutputStream {
+    const fn event_name(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+/// Failure to attribute host output to a live interactive session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OutputError {
+    UnknownSession(String),
+}
+
+impl fmt::Display for OutputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownSession(session) => write!(formatter, "unknown session `{session}`"),
+        }
+    }
+}
+
+impl std::error::Error for OutputError {}
+
+/// In-process owner of interactive-session protocol lifecycle.
+pub struct Server {
+    vm: Vm,
+    loader: Option<DesktopLoader>,
+    initialized: bool,
+    sessions: BTreeMap<String, Session>,
+    next_session: u64,
+    output: Rc<RefCell<OutputSink>>,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        #[cfg(feature = "concurrency")]
+        for session in self.sessions.values() {
+            for submission in &session.executions {
+                self.vm.cancel_interactive_task(&submission.execution);
+            }
+        }
+        #[cfg(not(feature = "concurrency"))]
+        for session in self.sessions.values_mut() {
+            for mut submission in std::mem::take(&mut session.executions) {
+                self.vm.cancel_interactive_execution(
+                    &mut submission.execution,
+                    &mut submission.runtime,
+                );
+            }
+        }
+    }
+}
+
+struct Session {
+    compiler: InteractiveCompilerState,
+    runtime: InteractiveEnvironment,
+    #[cfg(feature = "concurrency")]
+    executions: Vec<InteractiveSubmission>,
+    #[cfg(not(feature = "concurrency"))]
+    executions: VecDeque<InteractiveSlimSubmission>,
+    pending_source: String,
+}
+
+/// One independently schedulable interactive top-level form.
+#[cfg(feature = "concurrency")]
+struct InteractiveSubmission {
+    execution: InteractiveTask,
+    compilation: InteractiveCompilation,
+}
+
+#[cfg(not(feature = "concurrency"))]
+struct InteractiveSlimSubmission {
+    execution: InteractiveExecution,
+    compilation: InteractiveCompilation,
+    runtime: InteractiveEnvironment,
+}
+
+#[derive(Default)]
+struct OutputSink {
+    active_origin: Option<EventOrigin>,
+    events: Vec<Event>,
+}
+
+impl OutputSink {
+    fn begin(&mut self, session: String) {
+        self.active_origin = Some(EventOrigin::Session { session });
+    }
+
+    fn end(&mut self) {
+        self.active_origin = None;
+    }
+
+    fn begin_root(&mut self) {
+        self.active_origin = Some(EventOrigin::Root);
+    }
+
+    fn write_active(&mut self, stream: OutputStream, data: String) -> bool {
+        let Some(origin) = &self.active_origin else {
+            return false;
+        };
+        self.write(origin.clone(), stream, data);
+        true
+    }
+
+    fn write(&mut self, origin: EventOrigin, stream: OutputStream, data: String) {
+        self.events.push(Event {
+            origin,
+            event: stream.event_name().into(),
+            data: Value::String(data),
+        });
+    }
+}
+
+impl Server {
+    /// Creates a server around the shared VM that future session execution will use.
+    #[must_use]
+    pub fn new(vm: Vm) -> Self {
+        let mut server = Self {
+            vm,
+            loader: None,
+            initialized: false,
+            sessions: BTreeMap::new(),
+            next_session: 0,
+            output: Rc::new(RefCell::new(OutputSink::default())),
+        };
+        server.install_session_builtins();
+        server
+    }
+
+    /// Creates a server whose interactive forms use the desktop host graph.
+    #[must_use]
+    pub fn with_desktop_loader(vm: Vm, loader: DesktopLoader) -> Self {
+        let mut server = Self::new(vm);
+        server.loader = Some(loader);
+        server
+    }
+
+    /// Returns the shared embedded VM without starting session execution.
+    #[must_use]
+    pub fn vm(&self) -> &Vm {
+        &self.vm
+    }
+
+    fn compile_interactive_forms(
+        &self,
+        path: &str,
+        source: &str,
+        state: &InteractiveCompilerState,
+    ) -> Result<Vec<InteractiveCompilation>, slug_frontend::SourceError> {
+        self.loader.as_ref().map_or_else(
+            || compile_interactive_forms(path, source, state),
+            |loader| loader.compile_interactive_forms(path, source, state),
+        )
+    }
+
+    /// Registers a shared host binding visible to every session on its next submission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a descriptor error when the binding conflicts with an existing host binding.
+    pub fn define_host_native(
+        &mut self,
+        function: NativeFunction,
+    ) -> Result<(), NativeDescriptorError> {
+        self.vm.define_native(function)
+    }
+
+    /// Drains output generated by completed protocol operations.
+    #[must_use]
+    pub fn take_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.output.borrow_mut().events)
+    }
+
+    /// Runs a launched application with output attributed to the root runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked runtime error from the launched program.
+    pub fn run_root_program(&mut self, program: &Program) -> VmResult<SlugValue> {
+        self.output.borrow_mut().begin_root();
+        let result = self.vm.run_program(program);
+        self.output.borrow_mut().end();
+        result
+    }
+
+    /// Queues host or background-runtime output for a live session.
+    ///
+    /// The embedding host must supply the session explicitly. Events queued
+    /// outside a `submit` are delivered the next time the host drains
+    /// [`Self::take_events`]; output is never written directly to protocol
+    /// stdout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::UnknownSession`] after the session is closed or
+    /// when its identifier is not known to this server.
+    pub fn emit_output(
+        &mut self,
+        session: &str,
+        stream: OutputStream,
+        data: impl Into<String>,
+    ) -> Result<(), OutputError> {
+        if !self.sessions.contains_key(session) {
+            return Err(OutputError::UnknownSession(session.into()));
+        }
+        self.output.borrow_mut().write(
+            EventOrigin::Session {
+                session: session.into(),
+            },
+            stream,
+            data.into(),
+        );
+        Ok(())
+    }
+
+    /// Handles one decoded protocol request.
+    #[must_use]
+    pub fn handle(&mut self, request: Request) -> Response {
+        match request.method.as_str() {
+            "initialize" => self.initialize(request),
+            "session.open" => self.open(request),
+            "session.close" => self.close(request),
+            "submit" => self.submit(request),
+            "session.poll" => self.poll(request),
+            method => Response::failure(
+                Some(request.id),
+                request.session,
+                Diagnostic::protocol("unknown_method", format!("unknown method `{method}`")),
+            ),
+        }
+    }
+
+    /// Decodes and handles one NDJSON request line without terminating the server.
+    #[must_use]
+    pub fn handle_line(&mut self, line: &str) -> Response {
+        match serde_json::from_str(line) {
+            Ok(request) => self.handle(request),
+            Err(error) => Response::failure(
+                None,
+                None,
+                Diagnostic::protocol("malformed_json", format!("invalid request JSON: {error}")),
+            ),
+        }
+    }
+
+    fn initialize(&mut self, request: Request) -> Response {
+        let params = match required_params::<InitializeParams>(&request, "initialize") {
+            Ok(params) => params,
+            Err(error) => return Response::failure(Some(request.id), None, *error),
+        };
+        if request.session.is_some() {
+            return Response::failure(
+                Some(request.id),
+                request.session,
+                Diagnostic::protocol("invalid_request", "`initialize` must not include a session"),
+            );
+        }
+        if params.protocol != PROTOCOL_VERSION {
+            return Response::failure(
+                Some(request.id),
+                None,
+                Diagnostic::protocol(
+                    "unsupported_protocol",
+                    format!(
+                        "protocol {} is unsupported; expected {PROTOCOL_VERSION}",
+                        params.protocol
+                    ),
+                ),
+            );
+        }
+        self.initialized = true;
+        Response::success(
+            request.id,
+            None,
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "capabilities": { "sessions": true }
+            }),
+        )
+    }
+
+    fn open(&mut self, request: Request) -> Response {
+        if let Some(response) = self.require_initialized(&request) {
+            return response;
+        }
+        if request.session.is_some() || request.params.is_some() {
+            return Response::failure(
+                Some(request.id),
+                request.session,
+                Diagnostic::protocol(
+                    "invalid_request",
+                    "`session.open` must not include a session or params",
+                ),
+            );
+        }
+        self.next_session += 1;
+        let session = format!("s{}", self.next_session);
+        self.sessions.insert(
+            session.clone(),
+            Session {
+                compiler: InteractiveCompilerState::default(),
+                runtime: self.vm.interactive_environment(),
+                #[cfg(feature = "concurrency")]
+                executions: Vec::default(),
+                #[cfg(not(feature = "concurrency"))]
+                executions: VecDeque::default(),
+                pending_source: String::new(),
+            },
+        );
+        Response::success(request.id, None, json!({ "session": session }))
+    }
+
+    fn close(&mut self, request: Request) -> Response {
+        if let Some(response) = self.require_initialized(&request) {
+            return response;
+        }
+        if request.params.is_some() {
+            return Response::failure(
+                Some(request.id),
+                request.session,
+                Diagnostic::protocol("invalid_request", "`session.close` does not accept params"),
+            );
+        }
+        let Some(session) = request.session else {
+            return Response::failure(
+                Some(request.id),
+                None,
+                Diagnostic::protocol("missing_session", "`session.close` requires a session"),
+            );
+        };
+        #[cfg(feature = "concurrency")]
+        if let Some(active) = self.sessions.get(&session) {
+            for execution in &active.executions {
+                self.vm.cancel_interactive_task(&execution.execution);
+            }
+        }
+        #[cfg(not(feature = "concurrency"))]
+        if let Some(session_state) = self.sessions.get_mut(&session) {
+            for mut submission in std::mem::take(&mut session_state.executions) {
+                self.vm.cancel_interactive_execution(
+                    &mut submission.execution,
+                    &mut submission.runtime,
+                );
+            }
+        }
+        if self.sessions.remove(&session).is_none() {
+            return Response::failure(
+                Some(request.id),
+                Some(session.clone()),
+                Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
+            );
+        }
+        Response::success(request.id, Some(session), Value::Null)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn submit(&mut self, request: Request) -> Response {
+        if let Some(response) = self.require_initialized(&request) {
+            return response;
+        }
+        let params = match required_params::<SubmitParams>(&request, "submit") {
+            Ok(params) => params,
+            Err(error) => return Response::failure(Some(request.id), request.session, *error),
+        };
+        let Some(session) = request.session else {
+            return Response::failure(
+                Some(request.id),
+                None,
+                Diagnostic::protocol("missing_session", "`submit` requires a session"),
+            );
+        };
+        #[cfg(feature = "concurrency")]
+        let session_exists = self.sessions.contains_key(&session);
+        #[cfg(not(feature = "concurrency"))]
+        let session_exists = self.sessions.contains_key(&session);
+        #[cfg(feature = "concurrency")]
+        if !session_exists {
+            return Response::failure(
+                Some(request.id),
+                Some(session.clone()),
+                Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
+            );
+        }
+        #[cfg(not(feature = "concurrency"))]
+        if !session_exists {
+            return Response::failure(
+                Some(request.id),
+                Some(session.clone()),
+                Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
+            );
+        }
+        let path = format!("<interactive:{session}>");
+        let source = {
+            let active = self
+                .sessions
+                .get_mut(&session)
+                .expect("validated session remains available during submission");
+            if !active.pending_source.is_empty() {
+                active.pending_source.push('\n');
+            }
+            active.pending_source.push_str(&params.source);
+            match source_readiness(&path, &active.pending_source) {
+                SourceReadiness::Incomplete => {
+                    return Response::success(
+                        request.id,
+                        Some(session),
+                        json!({ "status": "incomplete" }),
+                    );
+                }
+                SourceReadiness::Invalid(error) => {
+                    active.pending_source.clear();
+                    return Response::failure(
+                        Some(request.id),
+                        Some(session),
+                        Diagnostic::from_source(&error),
+                    );
+                }
+                SourceReadiness::Complete => std::mem::take(&mut active.pending_source),
+            }
+        };
+        #[cfg(feature = "concurrency")]
+        {
+            self.submit_forms(request.id, session, &path, &source)
+        }
+        #[cfg(not(feature = "concurrency"))]
+        {
+            let compiler = &self
+                .sessions
+                .get(&session)
+                .expect("validated session remains available during submission")
+                .compiler;
+            let compilations = match self.compile_interactive_forms(&path, &source, compiler) {
+                Ok(compilations) => compilations,
+                Err(error) => {
+                    return Response::failure(
+                        Some(request.id),
+                        Some(session),
+                        Diagnostic::from_source(&error),
+                    );
+                }
+            };
+            if !self.sessions[&session].executions.is_empty()
+                && compilations
+                    .iter()
+                    .any(|compilation| !compilation.program.bindings().is_empty())
+            {
+                return Response::failure(
+                    Some(request.id),
+                    Some(session),
+                    Diagnostic::protocol(
+                        "background_bindings",
+                        "a session with suspended forms accepts only binding-free source until they settle",
+                    ),
+                );
+            }
+            let mut response = Response::success(request.id, Some(session.clone()), Value::Null);
+            for compilation in compilations {
+                if !self.sessions[&session].executions.is_empty()
+                    && !compilation.program.bindings().is_empty()
+                {
+                    return Response::failure(
+                        Some(request.id),
+                        Some(session),
+                        Diagnostic::protocol(
+                            "background_bindings",
+                            "a session with suspended forms accepts only binding-free source until they settle",
+                        ),
+                    );
+                }
+                let (execution, runtime) = {
+                    let (vm, sessions) = (&mut self.vm, &mut self.sessions);
+                    let active = sessions
+                        .get_mut(&session)
+                        .expect("validated session remains available during submission");
+                    let mut runtime = Vm::interactive_overlay(&mut active.runtime);
+                    match vm.start_named_interactive_execution(
+                        &compilation.program,
+                        "main",
+                        &mut runtime,
+                    ) {
+                        Ok(execution) => (execution, runtime),
+                        Err(error) => {
+                            return Response::failure(
+                                Some(request.id),
+                                Some(session),
+                                Diagnostic::from_runtime(&error),
+                            );
+                        }
+                    }
+                };
+                response = self.drive_slim_submission(
+                    request.id,
+                    &session,
+                    InteractiveSlimSubmission {
+                        execution,
+                        compilation,
+                        runtime,
+                    },
+                );
+                if !response.ok {
+                    break;
+                }
+                if !self.sessions[&session].executions.is_empty() {
+                    let progress = self.pump_slim_session(request.id, &session);
+                    if !progress.ok {
+                        return progress;
+                    }
+                }
+            }
+            if !response.ok {
+                return response;
+            }
+            let foreground_stalled = response
+                .result
+                .as_ref()
+                .and_then(|result| result.get("state"))
+                .and_then(Value::as_str)
+                == Some("stalled");
+            let pending = !self.sessions[&session].executions.is_empty();
+            if foreground_stalled {
+                Response::success(request.id, Some(session), stalled_result(pending))
+            } else {
+                let value = response
+                    .result
+                    .and_then(|result| result.get("value").cloned())
+                    .unwrap_or(Value::Null);
+                Response::success(request.id, Some(session), completed_result(&value, pending))
+            }
+        }
+    }
+
+    fn poll(&mut self, request: Request) -> Response {
+        if let Some(response) = self.require_initialized(&request) {
+            return response;
+        }
+        if request.params.is_some() {
+            return Response::failure(
+                Some(request.id),
+                request.session,
+                Diagnostic::protocol("invalid_request", "`session.poll` does not accept params"),
+            );
+        }
+        let Some(session) = request.session else {
+            return Response::failure(
+                Some(request.id),
+                None,
+                Diagnostic::protocol("missing_session", "`session.poll` requires a session"),
+            );
+        };
+        if !self.sessions.contains_key(&session) {
+            return Response::failure(
+                Some(request.id),
+                Some(session.clone()),
+                Diagnostic::protocol("unknown_session", format!("unknown session `{session}`")),
+            );
+        }
+        #[cfg(feature = "concurrency")]
+        return self.poll_session(request.id, session);
+        #[cfg(not(feature = "concurrency"))]
+        self.pump_slim_session(request.id, &session)
+    }
+
+    #[cfg(feature = "concurrency")]
+    #[allow(clippy::too_many_lines)]
+    fn submit_forms(&mut self, id: u64, session: String, path: &str, source: &str) -> Response {
+        let compiler = &self.sessions[&session].compiler;
+        let compilations = match self.compile_interactive_forms(path, source, compiler) {
+            Ok(compilations) => compilations,
+            Err(error) => {
+                return Response::failure(Some(id), Some(session), Diagnostic::from_source(&error));
+            }
+        };
+        if !self.sessions[&session].executions.is_empty()
+            && compilations
+                .iter()
+                .any(|compilation| !compilation.program.bindings().is_empty())
+        {
+            return Response::failure(
+                Some(id),
+                Some(session),
+                Diagnostic::protocol(
+                    "background_bindings",
+                    "a session with suspended forms accepts only binding-free source until they settle",
+                ),
+            );
+        }
+        let mut last = SlugValue::Nil;
+        let mut foreground_stalled = false;
+        for compilation in compilations {
+            if !self.sessions[&session].executions.is_empty()
+                && !compilation.program.bindings().is_empty()
+            {
+                return Response::failure(
+                    Some(id),
+                    Some(session),
+                    Diagnostic::protocol(
+                        "background_bindings",
+                        "a session with suspended forms accepts only binding-free source until they settle",
+                    ),
+                );
+            }
+            let task = {
+                let (vm, sessions) = (&mut self.vm, &mut self.sessions);
+                let active = sessions
+                    .get_mut(&session)
+                    .expect("session remains available");
+                match vm.start_named_interactive_task(
+                    &compilation.program,
+                    "main",
+                    &mut active.runtime,
+                ) {
+                    Ok(task) => task,
+                    Err(error) => {
+                        return Response::failure(
+                            Some(id),
+                            Some(session),
+                            Diagnostic::from_runtime(&error),
+                        );
+                    }
+                }
+            };
+            self.output.borrow_mut().begin(session.clone());
+            let progress = self.vm.run_interactive_task_until_stalled(&task);
+            self.output.borrow_mut().end();
+            match progress {
+                VmProgress::Completed(value) => {
+                    let active = self
+                        .sessions
+                        .get_mut(&session)
+                        .expect("session remains available");
+                    task.synchronize_environment(&mut active.runtime, &compilation.program);
+                    Vm::release_interactive_task(&task);
+                    Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
+                    active.compiler = compilation.state;
+                    last = value;
+                    foreground_stalled = false;
+                }
+                VmProgress::Failed(error) => {
+                    Vm::release_interactive_task(&task);
+                    return Response::failure(
+                        Some(id),
+                        Some(session),
+                        Diagnostic::from_runtime(&error),
+                    );
+                }
+                VmProgress::MadeProgress | VmProgress::Stalled => {
+                    self.sessions
+                        .get_mut(&session)
+                        .expect("session remains available")
+                        .executions
+                        .push(InteractiveSubmission {
+                            execution: task,
+                            compilation,
+                        });
+                    foreground_stalled = true;
+                }
+            }
+            if let Err(error) = self.pump_background(&session) {
+                return Response::failure(
+                    Some(id),
+                    Some(session),
+                    Diagnostic::from_runtime(&error),
+                );
+            }
+        }
+        match self.pump_background(&session) {
+            Ok(pending) if foreground_stalled => {
+                Response::success(id, Some(session), stalled_result(pending))
+            }
+            Ok(pending) => {
+                let value = protocol_value(&last);
+                Response::success(id, Some(session), completed_result(&value, pending))
+            }
+            Err(error) => {
+                Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
+            }
+        }
+    }
+
+    #[cfg(feature = "concurrency")]
+    fn poll_session(&mut self, id: u64, session: String) -> Response {
+        match self.pump_background(&session) {
+            Ok(pending) => Response::success(id, Some(session), session_result(pending)),
+            Err(error) => {
+                Response::failure(Some(id), Some(session), Diagnostic::from_runtime(&error))
+            }
+        }
+    }
+
+    #[cfg(feature = "concurrency")]
+    fn pump_background(&mut self, session: &str) -> Result<bool, slug_vm::RuntimeError> {
+        let tasks = self.sessions[session]
+            .executions
+            .iter()
+            .map(|submission| submission.execution.clone())
+            .collect::<Vec<_>>();
+        for task in tasks {
+            self.output.borrow_mut().begin(session.into());
+            let progress = self.vm.run_interactive_task_until_stalled(&task);
+            self.output.borrow_mut().end();
+            let _ = progress;
+        }
+        let executions = std::mem::take(
+            &mut self
+                .sessions
+                .get_mut(session)
+                .expect("session remains available")
+                .executions,
+        );
+        let mut pending = Vec::new();
+        let mut failure = None;
+        for submission in executions {
+            match submission.execution.outcome() {
+                None => pending.push(submission),
+                Some(Ok(_)) => {
+                    Vm::release_interactive_task(&submission.execution);
+                    let active = self
+                        .sessions
+                        .get_mut(session)
+                        .expect("session remains available");
+                    submission.execution.synchronize_environment(
+                        &mut active.runtime,
+                        &submission.compilation.program,
+                    );
+                    Vm::commit_interactive_bindings(
+                        &mut active.runtime,
+                        &submission.compilation.program,
+                    );
+                    active.compiler = submission.compilation.state;
+                }
+                Some(Err(error)) => {
+                    Vm::release_interactive_task(&submission.execution);
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        let active = self
+            .sessions
+            .get_mut(session)
+            .expect("session remains available");
+        active.executions = pending;
+        if let Some(error) = failure {
+            Err(error)
+        } else {
+            Ok(!active.executions.is_empty())
+        }
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    fn pump_slim_session(&mut self, id: u64, session: &str) -> Response {
+        let count = self.sessions[session].executions.len();
+        for _ in 0..count {
+            let response = self.drive_slim_session(id, session.into());
+            if !response.ok {
+                return response;
+            }
+        }
+        Response::success(
+            id,
+            Some(session.into()),
+            session_result(!self.sessions[session].executions.is_empty()),
+        )
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    fn drive_slim_session(&mut self, id: u64, session: String) -> Response {
+        let submission = {
+            let active = self
+                .sessions
+                .get_mut(&session)
+                .expect("validated session remains available during its poll");
+            active.executions.pop_front()
+        };
+        let Some(submission) = submission else {
+            return Response::success(id, Some(session), json!({ "state": "idle" }));
+        };
+        self.drive_slim_submission(id, &session, submission)
+    }
+
+    #[cfg(not(feature = "concurrency"))]
+    fn drive_slim_submission(
+        &mut self,
+        id: u64,
+        session: &str,
+        submission: InteractiveSlimSubmission,
+    ) -> Response {
+        let InteractiveSlimSubmission {
+            mut execution,
+            compilation,
+            mut runtime,
+        } = submission;
+        self.output.borrow_mut().begin(session.into());
+        let progress = {
+            self.vm
+                .run_interactive_execution_until_stalled(&mut execution, &mut runtime)
+        };
+        self.output.borrow_mut().end();
+        match progress {
+            VmProgress::Completed(value) => {
+                let active = self
+                    .sessions
+                    .get_mut(session)
+                    .expect("active session remains available during its poll");
+                Vm::synchronize_interactive_submission(
+                    &runtime,
+                    &mut active.runtime,
+                    &compilation.program,
+                );
+                Vm::commit_interactive_bindings(&mut active.runtime, &compilation.program);
+                active.compiler = compilation.state;
+                Response::success(
+                    id,
+                    Some(session.into()),
+                    json!({ "value": protocol_value(&value) }),
+                )
+            }
+            VmProgress::Failed(error) => Response::failure(
+                Some(id),
+                Some(session.into()),
+                Diagnostic::from_runtime(&error),
+            ),
+            VmProgress::MadeProgress | VmProgress::Stalled => {
+                self.sessions
+                    .get_mut(session)
+                    .expect("active session remains available during its poll")
+                    .executions
+                    .push_back(InteractiveSlimSubmission {
+                        execution,
+                        compilation,
+                        runtime,
+                    });
+                Response::success(id, Some(session.into()), json!({ "state": "stalled" }))
+            }
+        }
+    }
+
+    fn install_session_builtins(&mut self) {
+        let module = NativeModule::new("slug.builtin", self.output.clone())
+            .expect("static interactive output module is valid");
+        for (name, callback) in [
+            ("print", native_print as NativeCallback),
+            ("println", native_println as NativeCallback),
+        ] {
+            let function = module
+                .function(name, NativeArity::Variadic { minimum: 0 }, callback)
+                .expect("static interactive output function is valid");
+            self.define_session_builtin(function)
+                .expect("interactive output binding is unique");
+        }
+        let length = module
+            .function("len", NativeArity::Exact(1), native_len)
+            .expect("static interactive length function is valid");
+        self.define_session_builtin(length)
+            .expect("interactive length binding is unique");
+        let channel = module
+            .function(
+                "chan",
+                NativeArity::Range {
+                    minimum: 0,
+                    maximum: 1,
+                },
+                native_channel,
+            )
+            .expect("static interactive channel function is valid");
+        self.define_session_builtin(channel)
+            .expect("interactive channel binding is unique");
+        let close = module
+            .function("close", NativeArity::Exact(1), native_close)
+            .expect("static interactive close function is valid");
+        self.define_session_builtin(close)
+            .expect("interactive close binding is unique");
+    }
+
+    fn define_session_builtin(
+        &mut self,
+        function: NativeFunction,
+    ) -> Result<(), NativeDescriptorError> {
+        if self.vm.has_module_loader() {
+            self.vm.define_builtin(function.clone())?;
+        }
+        self.vm.define_native(function)
+    }
+
+    fn require_initialized(&self, request: &Request) -> Option<Response> {
+        (!self.initialized).then(|| {
+            Response::failure(
+                Some(request.id),
+                request.session.clone(),
+                Diagnostic::protocol(
+                    "not_initialized",
+                    "send `initialize` before session requests",
+                ),
+            )
+        })
+    }
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self::new(Vm::new())
+    }
+}

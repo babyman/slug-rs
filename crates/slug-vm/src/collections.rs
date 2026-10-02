@@ -31,7 +31,6 @@ impl MapKey {
         match value {
             Value::Bool(value) => Some(Self::Bool(*value)),
             Value::Int(value) => Some(Self::Int(*value)),
-            Value::Float(value) if value.is_nan() => None,
             Value::Float(value)
                 if value.is_finite()
                     && value.fract() == 0.0
@@ -40,7 +39,7 @@ impl MapKey {
             {
                 Some(Self::Int(*value as i64))
             }
-            Value::Float(value) => Some(Self::Float(value.to_bits())),
+            Value::Float(value) if value.is_finite() => Some(Self::Float(value.to_bits())),
             Value::Str(value) => Some(Self::Str(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.clone())),
             _ => None,
@@ -95,7 +94,7 @@ impl List {
         }
     }
 
-    #[cfg(feature = "metrics")]
+    #[cfg(any(feature = "metrics", test))]
     pub(crate) fn is_uniquely_owned(&self) -> bool {
         Rc::strong_count(&self.values) == 1
     }

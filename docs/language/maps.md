@@ -28,8 +28,8 @@ A key must be hashable. Numbers, strings, bytes, and booleans are hashable.
 `nil`, lists, maps, functions, and structs are not valid map keys.
 An integer and a float key are equal only when the float exactly represents
 that integer, so `1` and `1.0` address the same key without conflating large
-integers above binary64's exact range. `0` and `-0.0` are equal. NaN is not a
-valid map key; infinities may be keys but never equal integers.
+integers above binary64's exact range. `0` and `-0.0` are equal. Every Slug
+number is finite, so `NaN` and infinities cannot be map keys.
 
 Map patterns use the same bare, quoted, and bracketed key forms. A bracketed
 map-pattern key is evaluated once before its pattern is tested; an unhashable

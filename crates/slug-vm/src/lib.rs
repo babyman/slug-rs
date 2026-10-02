@@ -7,21 +7,15 @@
 //! documented in `docs/reference/compiled-artifacts.md`.
 
 mod bytecode;
-mod clutch;
 mod collections;
-mod configuration;
-mod conformance;
-#[allow(unsafe_code)]
-mod ffi_prototype;
-mod fixture;
-pub mod host;
-mod module;
 mod native;
+mod runtime_host;
 mod scheduler_signal;
-mod source;
 mod value;
 mod vm;
 
+#[doc(hidden)]
+pub use bytecode::PackedOpcode;
 /// Experimental in-process bytecode construction and inspection types.
 ///
 /// These types are public so Rust hosts and integration tests can construct
@@ -29,33 +23,28 @@ mod vm;
 /// semantics may change in any pre-release version; do not serialize them or
 /// treat them as a stable Rust API. `.cslug` is the future portable contract.
 pub use bytecode::{
-    BytecodeLayoutMetrics, CallArgumentKind, Capture, CaptureListId, Chunk, Constant, DeferMode,
-    GlobalNameId, Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
-    ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, SchemaField, SchemaFieldsId,
-    SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
+    BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture, CaptureListId, Chunk,
+    Constant, DeferMode, Entrypoint, EntrypointArguments, ForeignResourceSignature, GlobalNameId,
+    Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
+    ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField,
+    SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
 };
-pub use clutch::{
-    ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
-};
-pub use configuration::{Configuration, ConfigurationValue};
-pub use conformance::FixtureRunner;
-pub use ffi_prototype::{FfiPrototypeError, FfiPrototypeLibrary};
-pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
-pub use module::{ModuleInstance, ModuleLoadError, ModuleLoader, ModuleSource};
+#[doc(hidden)]
+pub use native::native_resource_registry;
 pub use native::{
     NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeEnumCase,
     NativeError, NativeFunction, NativeModule, NativeOwnedValue, NativeProducerStatus,
-    NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind, NativeValueRef,
+    NativeResourceRegistry, NativeResourceType, NativeSendValue, NativeStatus, NativeValueKind,
+    NativeValueRef,
 };
-#[doc(hidden)]
-pub use source::{
-    InteractiveCompilation, InteractiveCompilerState, SourceReadiness, source_readiness,
+/// Experimental VM-to-host callbacks. This trait is not a stable embedding API.
+pub use runtime_host::{
+    EmptyVmConfiguration, VmConfiguration, VmHost, VmHostError, VmModuleExports,
 };
-pub use source::{SourceError, SourceErrorKind, compile};
 #[cfg(feature = "concurrency")]
 pub use value::Task;
 pub use value::{
-    Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value,
+    Builtin, Channel, Closure, EnumValue, StructField, StructSchema, StructValue, Value, ValueKind,
 };
 #[cfg(not(feature = "concurrency"))]
 #[doc(hidden)]

@@ -13,17 +13,17 @@ use std::cell::Cell;
 use std::rc::Weak;
 
 use crate::{
+    CallableIdentity, ForeignResourceSignature,
     collections::{BytesView, List, Map, MapView},
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
-    source::environment::CallableIdentity,
-    source::environment::ForeignResourceSignature,
 };
 
 /// VM-owned builtins that require host-service context at call time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Builtin {
     Cfg,
+    Int,
     Stacktrace,
 }
 
@@ -860,9 +860,12 @@ impl StructValue {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnumValue {
-    pub(crate) module: Rc<str>,
-    pub(crate) name: Rc<str>,
-    pub(crate) case: Rc<str>,
+    #[doc(hidden)]
+    pub module: Rc<str>,
+    #[doc(hidden)]
+    pub name: Rc<str>,
+    #[doc(hidden)]
+    pub case: Rc<str>,
 }
 
 /// The dynamic values used by the initial Slug VM core.
@@ -908,7 +911,8 @@ pub enum Value {
 
 /// Runtime-neutral value categories for source semantic conversion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ValueKind {
+#[doc(hidden)]
+pub enum ValueKind {
     Nil,
     Bool,
     Num,
@@ -927,7 +931,25 @@ pub(crate) enum ValueKind {
 }
 
 impl Value {
-    pub(crate) fn kind(&self) -> ValueKind {
+    /// Reports whether this value recursively contains a non-finite float.
+    ///
+    /// Private bytecode and native callbacks can construct `Value` directly,
+    /// so execution boundaries use this to preserve Slug's finite-number rule.
+    pub(crate) fn contains_non_finite_number(&self) -> bool {
+        match self {
+            Self::Float(value) => !value.is_finite(),
+            Self::List(values) => values.iter().any(Self::contains_non_finite_number),
+            Self::Map(entries) => entries.iter().any(|(key, value)| {
+                key.contains_non_finite_number() || value.contains_non_finite_number()
+            }),
+            Self::Struct(value) => value.values.iter().any(Self::contains_non_finite_number),
+            _ => false,
+        }
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn kind(&self) -> ValueKind {
         match self {
             Self::Nil => ValueKind::Nil,
             Self::Bool(_) => ValueKind::Bool,

@@ -260,20 +260,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "slug"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "slug-desktop-loader",
+ "slug-frontend",
+ "slug-loader",
+ "slug-nil-loader",
+ "slug-vm",
+ "toml",
+]
+
+[[package]]
+name = "slug-desktop-loader"
+version = "0.1.0"
+dependencies = [
+ "slug-loader",
+ "slug-vm",
+ "toml",
+]
+
+[[package]]
+name = "slug-frontend"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "slug-loader",
+ "slug-vm",
+]
+
+[[package]]
+name = "slug-loader"
+version = "0.1.0"
+
+[[package]]
+name = "slug-nil-loader"
+version = "0.1.0"
+dependencies = [
+ "slug-loader",
+]
+
+[[package]]
 name = "slug-repl"
 version = "0.1.0"
 dependencies = [
  "rustyline",
  "serde_json",
- "slug-server",
+ "slug",
 ]
 
 [[package]]
-name = "slug-server"
+name = "slug-restricted-host"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
+ "slug-frontend",
+ "slug-nil-loader",
  "slug-vm",
 ]
 
@@ -281,9 +325,8 @@ dependencies = [
 name = "slug-vm"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "toml",
+ "slug-frontend",
+ "slug-loader",
 ]
 
 [[package]]

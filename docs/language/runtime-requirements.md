@@ -90,7 +90,7 @@ serialization.
 For the current source fixtures, a conformance environment MUST make these
 modules and builtins available with the behavior exercised by their source:
 
-- builtins including `import`, `len`, `print`, `println`, `chan`, and `close`;
+- builtins including `import`, `int`, `len`, `print`, `println`, `chan`, and `close`;
 - `slug.std`, `slug.io.stdin`, and `slug.math` from the installed `slug.core`
   Clutch, and `slug.test`, for assertions and core collection operations;
 - `slug.channel` for channel operations, `await`, `send`, and `recv`;
@@ -116,6 +116,14 @@ payload and a Slug frame trace. Implementations MAY format diagnostics
 differently unless fixture metadata marks text as exact. They MUST NOT expose a
 host exception, stack trace, or panic as the Slug diagnostic.
 
+### Finite numbers
+
+Every Slug number MUST be finite. Implementations MUST reject `NaN`, positive
+infinity, and negative infinity at source parsing, private-bytecode validation,
+native result conversion, and every arithmetic result boundary with a checked
+Slug error. This rule applies recursively to host-provided collections and
+struct values. Hosts MUST NOT expose a non-finite value to Slug code.
+
 ## Conformance evidence
 
 The source fixtures are the portable acceptance surface. The repository also
@@ -134,8 +142,10 @@ optimization.
 The evaluator operates in a module environment and needs a small host-services
 boundary. A conforming host MUST provide:
 
-- source loading and a stable path for diagnostics;
-- module loading using the fixture-environment rules above;
+- entry-program acquisition and a module-resolution service with a stable
+  diagnostic identity for each loaded source. The service MAY decline external
+  imports, which then fail as checked module errors; a fixture host MUST
+  provide the fixture-environment modules and resolution rules above;
 - standard output and standard error streams;
 - a process standard-input stream for `slug.io.stdin` when that module is
   available;
@@ -148,6 +158,14 @@ boundary. A conforming host MUST provide:
 The evaluator MUST keep these host capabilities separate from Slug bindings.
 Host services cannot become names visible to a Slug program except through a
 `slug.builtin` export, imported library module, or declared foreign function.
+
+The host MAY obtain an entry program or imported module from a filesystem, a
+compiled artifact, statically embedded data, or an in-memory embedding API.
+Resolution policy is a host service: the evaluator requests a logical module
+identity and MUST NOT require filesystem paths, environment variables, package
+layout, or storage access in order to execute an import. A host may use paths
+as private cache keys or diagnostic labels when it has a filesystem, but that
+choice must not alter the module-resolution and error behavior required above.
 
 Foreign functions are not required for the portable fixture set unless a
 fixture imports a library that declares one. A declared function resolves by
@@ -196,6 +214,21 @@ shape. Environment and command-line values begin as strings and are converted
 to a number or boolean when the fallback has that type; with a list fallback a
 single string becomes a one-element list. If conversion is unavailable, the
 string remains a string.
+
+### Host configuration profiles
+
+These requirements describe the immutable store visible to Slug code, not a
+required process-discovery mechanism. The desktop command-line host implements
+the reference precedence above. A fixture host MUST construct its store only
+from fixture metadata and declared fixture roots; it MUST NOT inherit ambient
+project files, library files, environment variables, or command-line options.
+A restricted or in-memory host MAY instead provide an empty store or values
+selected explicitly by its embedding. It MUST NOT inspect filesystem,
+environment, command-line, Clutch, or network state merely to satisfy `cfg`.
+
+Every profile supplies one fixed store to the entry program and all imported
+modules. Changing the host's inputs after evaluation begins cannot change that
+store.
 
 ## Clean-room implementation checklist
 
@@ -520,7 +553,9 @@ The VM may use threads, goroutines, frames, environments, stacks, or slots
 internally. Those choices are conforming only when they preserve the contracts
 above. The VM must not import a concrete host runtime merely to acquire runtime
 services. Keep the dependency direction from runtime orchestration into VM
-execution, with host services injected at the boundary.
+execution, with host services injected at the boundary. In particular, module
+resolution and entry-program loading belong to the host boundary; VM execution
+must not depend on filesystem or package-layout assumptions.
 
 ## Topics pending requirements
 

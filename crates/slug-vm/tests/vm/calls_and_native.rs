@@ -422,7 +422,8 @@ fn shared_loader_closes_native_resources_only_after_its_last_runtime_owner() {
     let closed = Rc::new(Cell::new(0));
     let destroyed = Rc::new(Cell::new(0));
     let module = native_resource_fixture::module(closed.clone(), destroyed.clone());
-    let loader = ModuleLoader::new(".", None);
+    let loader =
+        ModuleHost::with_resolver(Rc::new(NoModuleResolver), Rc::new(EmptyVmConfiguration));
     let mut first = Vm::with_module_loader(loader.clone());
     native_resource_fixture::install(&mut first, &module);
 
@@ -440,6 +441,28 @@ fn shared_loader_closes_native_resources_only_after_its_last_runtime_owner() {
     assert_eq!(closed.get(), 1);
     drop(resource);
     assert_eq!(destroyed.get(), 1);
+}
+
+#[test]
+fn rejects_non_finite_native_results() {
+    fn nan(call: &mut NativeCall<'_>) -> NativeStatus {
+        call.return_value(NativeOwnedValue::float(f64::NAN))
+    }
+
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::GetGlobal("nan".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Return);
+    let module = NativeModule::new("test.non_finite", ()).unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(module.function("nan", NativeArity::Exact(0), nan).unwrap())
+        .unwrap();
+
+    let error = vm
+        .run(&program_with_main(main), 0)
+        .expect_err("native NaN must not enter Slug");
+    assert_eq!(error.kind, RuntimeErrorKind::NativeContract);
+    assert!(error.message.contains("non-finite number"));
 }
 
 #[test]

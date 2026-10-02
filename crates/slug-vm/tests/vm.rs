@@ -5,20 +5,46 @@ use std::{
     rc::Rc,
 };
 
+use slug_frontend::{ModuleHost, compile};
+use slug_loader::{ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 #[cfg(feature = "concurrency")]
 use slug_vm::SelectCase;
 use slug_vm::VmProgress;
 use slug_vm::{
-    CallArgumentKind, Capture, CaptureListId, Chunk, GlobalNameId, MatchMapKey, MatchPattern,
-    MatchPatternId, MatchRest, ModuleLoader, NativeArity, NativeCall, NativeError, NativeModule,
+    CallArgumentKind, Capture, CaptureListId, Chunk, EmptyVmConfiguration, GlobalNameId,
+    MatchMapKey, MatchPatternId, MatchRest, NativeArity, NativeCall, NativeError, NativeModule,
     NativeOwnedValue, NativeResourceType, NativeStatus, Op, Program, RuntimeErrorKind, SchemaField,
-    SchemaFieldsId, SourceSpan, SpanId, StructFieldsId, Value, Vm, compile,
+    SchemaFieldsId, SourceSpan, SpanId, StructFieldsId, Value, Vm,
 };
+
+#[cfg(feature = "metrics")]
+use slug_vm::MatchPattern;
 
 fn program_with_main(main: Chunk) -> Program {
     let mut program = Program::new();
     program.add_chunk(main);
     program
+}
+
+trait VmWithModuleHost {
+    fn with_module_loader(loader: ModuleHost) -> Self;
+}
+
+impl VmWithModuleHost for Vm {
+    fn with_module_loader(loader: ModuleHost) -> Self {
+        Self::with_host(Rc::new(loader))
+    }
+}
+
+struct NoModuleResolver;
+
+impl ModuleResolver for NoModuleResolver {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        Err(ModuleLoadError::NotFound {
+            name: request.name.into(),
+            searched: Vec::new(),
+        })
+    }
 }
 
 #[cfg(feature = "concurrency")]
@@ -266,6 +292,8 @@ mod collections;
 #[cfg(feature = "concurrency")]
 #[path = "vm/concurrency.rs"]
 mod concurrency;
+#[path = "vm/host_contract.rs"]
+mod host_contract;
 #[path = "vm/lifecycle.rs"]
 mod lifecycle;
 #[path = "vm/runtime.rs"]

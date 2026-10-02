@@ -151,8 +151,8 @@ Live unloading remains out of scope. The host must quiesce VMs sharing a loader
 before shutdown. Native functions and resources retained by Rust values share
 the plugin lifetime state; after shutdown they fail with
 `native.plugin_inactive` and never call an unloaded pointer. Cleanup failures
-are collected by `ModuleLoader::take_shutdown_errors`; one failure does not
-prevent other plugins from being finalized.
+are recorded by the desktop host; one failure does not prevent other plugins
+from being finalized.
 
 ## Required diagnostics and proof
 

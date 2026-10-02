@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::source::environment::{CallableIdentity, ModuleSnapshot};
+use crate::CallableIdentity;
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
@@ -40,7 +40,7 @@ pub struct Program {
     exports: Vec<String>,
     entrypoint: Option<Entrypoint>,
     module_name: String,
-    semantic_snapshot: ModuleSnapshot,
+    module_key: Option<String>,
     callable_identities: Vec<CallableIdentity>,
     sources: Vec<Arc<str>>,
     source_ids: HashMap<Arc<str>, SourceId>,
@@ -60,16 +60,29 @@ pub struct Program {
 
 /// Argument value supplied to a validated program entrypoint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EntrypointArguments {
+#[doc(hidden)]
+pub enum EntrypointArguments {
     None,
     List,
     Map,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Entrypoint {
+#[doc(hidden)]
+pub struct Entrypoint {
     pub(crate) arguments: EntrypointArguments,
     pub(crate) callable_identity: usize,
+}
+
+impl Entrypoint {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(arguments: EntrypointArguments, callable_identity: usize) -> Self {
+        Self {
+            arguments,
+            callable_identity,
+        }
+    }
 }
 
 /// Layout measurements for private bytecode metadata.
@@ -99,6 +112,15 @@ impl Program {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn contains_non_finite_number(&self) -> bool {
+        self.chunks.iter().any(|chunk| {
+            chunk.constants.iter().any(|constant| match constant {
+                Constant::Value(value) => value.contains_non_finite_number(),
+                Constant::Function(_) => false,
+            })
+        })
     }
 
     pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {
@@ -156,7 +178,8 @@ impl Program {
     }
 
     #[must_use]
-    pub(crate) fn chunk(&self, index: usize) -> Option<&CompiledChunk> {
+    #[doc(hidden)]
+    pub fn chunk(&self, index: usize) -> Option<&CompiledChunk> {
         self.chunks.get(index)
     }
 
@@ -842,6 +865,10 @@ impl Program {
         &self.module_name
     }
 
+    pub(crate) fn module_key(&self) -> Option<&str> {
+        self.module_key.as_deref()
+    }
+
     pub(crate) fn set_bindings(&mut self, bindings: Vec<String>) {
         self.bindings = bindings;
     }
@@ -862,14 +889,6 @@ impl Program {
         self.entrypoint = entrypoint;
     }
 
-    pub(crate) fn semantic_snapshot(&self) -> &ModuleSnapshot {
-        &self.semantic_snapshot
-    }
-
-    pub(crate) fn set_semantic_snapshot(&mut self, snapshot: ModuleSnapshot) {
-        self.semantic_snapshot = snapshot;
-    }
-
     pub(crate) fn callable_identity(&self, index: usize) -> Option<&CallableIdentity> {
         self.callable_identities.get(index)
     }
@@ -881,6 +900,11 @@ impl Program {
     /// Sets the module name used by module-relative host services.
     pub fn set_module_name(&mut self, module_name: impl Into<String>) {
         self.module_name = module_name.into();
+    }
+
+    #[doc(hidden)]
+    pub fn set_module_key(&mut self, module_key: impl Into<String>) {
+        self.module_key = Some(module_key.into());
     }
 
     pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {
@@ -1550,5 +1574,59 @@ impl Program {
             ),
             Op::RecurPositional(count) => (*count, 0),
         }
+    }
+}
+
+/// Experimental bytecode assembly surface used by the source frontend.
+///
+/// The builder is deliberately small: it transfers compiler-produced chunks
+/// and module metadata into a checked [`Program`]. It is an unstable in-process
+/// boundary, not a portable bytecode format or a stable embedding API.
+#[doc(hidden)]
+pub struct ProgramBuilder {
+    program: Program,
+}
+
+impl ProgramBuilder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            program: Program::new(),
+        }
+    }
+
+    pub fn add_chunk(&mut self, chunk: Chunk) -> usize {
+        self.program.add_chunk(chunk)
+    }
+
+    pub fn set_bindings(&mut self, bindings: Vec<String>) {
+        self.program.set_bindings(bindings);
+    }
+
+    pub fn set_declarations(&mut self, declarations: Vec<ModuleDeclaration>) {
+        self.program.set_declarations(declarations);
+    }
+
+    pub fn set_exports(&mut self, exports: Vec<String>) {
+        self.program.set_exports(exports);
+    }
+
+    pub fn set_entrypoint(&mut self, entrypoint: Option<Entrypoint>) {
+        self.program.set_entrypoint(entrypoint);
+    }
+
+    pub fn set_callable_identities(&mut self, identities: Vec<CallableIdentity>) {
+        self.program.set_callable_identities(identities);
+    }
+
+    #[must_use]
+    pub fn finish(self) -> Program {
+        self.program
+    }
+}
+
+impl Default for ProgramBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -4,10 +4,10 @@ This crate owns the compiler-to-VM boundary and all embedded-host integration.
 Keep the crate-level exports in `src/lib.rs` stable unless an explicit API
 change is intended; bytecode remains an in-process, unstable Rust boundary.
 
-`src/module.rs` owns source resolution, compiler snapshots, module-instance
-caching, clutch plugin staging, and shutdown of loader-owned native resources.
-Prove changes there with `make test-modules`; configuration behavior belongs in
-`tests/configuration.rs`. Do not let module loading drive VM execution directly.
+Source resolution, compiler snapshots, module-instance caching, and Clutch
+activation belong to `slug-frontend` and the loader crates. The VM accepts only
+opaque module-identity text for host import callbacks; do not reintroduce
+loader contracts into this crate. Prove import behavior with `make test-modules`.
 
 `src/native.rs` owns native descriptors, value conversion, resources, and
 thread-safe producer ingress. Producers may enqueue owned values and signal

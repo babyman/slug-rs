@@ -11,12 +11,14 @@ mod program;
 
 pub use chunk::Chunk;
 pub use metadata::{
-    Capture, CaptureListId, Constant, GlobalNameId, MatchMapKey, MatchPattern, MatchPatternId,
-    MatchRest, MatchType, ModuleDeclaration, ModuleTag, ParameterSignature, SchemaField,
-    SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
+    CallableIdentity, Capture, CaptureListId, Constant, ForeignResourceSignature, GlobalNameId,
+    MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType, ModuleDeclaration, ModuleTag,
+    ParameterSignature, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
+    StructFieldsId,
 };
 pub use op::{CallArgumentKind, DeferMode, Instruction, Op};
-pub use program::{BytecodeLayoutMetrics, Program};
+pub use program::{BytecodeLayoutMetrics, Program, ProgramBuilder};
 
-pub(crate) use chunk::{CompiledChunk, PackedInstruction, PackedOpcode};
-pub(crate) use program::{Entrypoint, EntrypointArguments};
+#[doc(hidden)]
+pub use chunk::{CompiledChunk, PackedInstruction, PackedOpcode};
+pub use program::{Entrypoint, EntrypointArguments};

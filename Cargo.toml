@@ -1,5 +1,14 @@
 [workspace]
-members = ["crates/slug-vm", "crates/slug-server", "crates/slug-repl"]
+members = [
+    "crates/slug-vm",
+    "crates/slug-frontend",
+    "crates/slug-loader",
+    "crates/slug-nil-loader",
+    "crates/slug-restricted-host",
+    "crates/slug-desktop-loader",
+    "crates/slug",
+    "crates/slug-repl",
+]
 resolver = "3"
 
 # Normal desktop/server Slug

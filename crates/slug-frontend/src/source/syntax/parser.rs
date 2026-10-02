@@ -1,0 +1,1760 @@
+use super::{
+    SourceError,
+    ast::{
+        Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, MatchCase,
+        Parameter, Pattern, Prefix, RestPattern, SelectCase, SelectCaseKind, StringPart,
+        StructSchemaField, Tag, Token, TokenKind, TypeAnnotation,
+    },
+};
+use slug_vm::{DeferMode, SourceSpan, Value};
+
+/// Stateful parser for the source front end.
+pub(super) struct Parser {
+    tokens: Vec<Token>,
+    index: usize,
+    nesting: usize,
+    match_subject_nesting: Option<usize>,
+    pipeline_enabled: bool,
+}
+
+enum DocumentationPrefix {
+    Declaration(String),
+    Module { content: String, span: SourceSpan },
+    None,
+}
+
+impl Parser {
+    pub(super) fn new(tokens: Vec<Token>) -> Self {
+        Self {
+            tokens,
+            index: 0,
+            nesting: 0,
+            match_subject_nesting: None,
+            pipeline_enabled: true,
+        }
+    }
+
+    fn peek(&self) -> &Token {
+        &self.tokens[self.index]
+    }
+    fn kind(&self) -> &TokenKind {
+        &self.peek().kind
+    }
+    fn next(&mut self) -> Token {
+        let token = self.peek().clone();
+        self.index += 1;
+        token
+    }
+    fn matches(&self, kind: &TokenKind) -> bool {
+        std::mem::discriminant(self.kind()) == std::mem::discriminant(kind)
+    }
+    fn consume(&mut self, kind: &TokenKind, message: &str) -> Result<Token, SourceError> {
+        if self.matches(kind) {
+            Ok(self.next())
+        } else {
+            Err(SourceError::at(message, self.peek().span.clone()))
+        }
+    }
+    fn separators(&mut self) {
+        while self.is_separator() {
+            self.next();
+        }
+    }
+    fn is_separator(&self) -> bool {
+        matches!(self.kind(), TokenKind::Sep | TokenKind::BlankSep)
+    }
+    fn enter_nesting(&mut self, span: SourceSpan) -> Result<(), SourceError> {
+        if self.nesting == MAX_PARSE_NESTING {
+            return Err(SourceError::at("source nesting limit exceeded", span));
+        }
+        self.nesting += 1;
+        Ok(())
+    }
+    fn leave_nesting(&mut self) {
+        self.nesting -= 1;
+    }
+
+    pub(super) fn parse(&mut self) -> Result<Vec<Expr>, SourceError> {
+        let mut expressions = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::End) {
+            expressions.push(self.statement()?);
+            if !matches!(
+                self.kind(),
+                TokenKind::End | TokenKind::Sep | TokenKind::BlankSep | TokenKind::Documentation(_)
+            ) {
+                return Err(SourceError::at(
+                    "expected statement separator",
+                    self.peek().span.clone(),
+                ));
+            }
+            self.separators();
+        }
+        Ok(expressions)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn statement(&mut self) -> Result<Expr, SourceError> {
+        let documentation = match self.documentation_prefix()? {
+            DocumentationPrefix::Declaration(content) => Some(content),
+            DocumentationPrefix::Module { content, span } => {
+                return Ok(Expr {
+                    kind: ExprKind::Documentation(content),
+                    span,
+                });
+            }
+            DocumentationPrefix::None => None,
+        };
+        let mut tags = Vec::new();
+        while self.matches(&TokenKind::At) {
+            tags.push(self.tag()?);
+            self.separators();
+        }
+        let exported = if self.matches(&TokenKind::Export) {
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "export declarations are only valid at top level",
+                    self.peek().span.clone(),
+                ));
+            }
+            self.next();
+            true
+        } else {
+            false
+        };
+        if (documentation.is_some() || !tags.is_empty())
+            && !(matches!(
+                self.kind(),
+                TokenKind::Val
+                    | TokenKind::Var
+                    | TokenKind::Foreign
+                    | TokenKind::Resource
+                    | TokenKind::Enum
+            ) || matches!(self.kind(), TokenKind::Name(name) if name == "type"))
+        {
+            return Err(SourceError::at(
+                "documentation blocks and tags must prefix a val, var, foreign, resource, or enum declaration",
+                self.peek().span.clone(),
+            ));
+        }
+        if self.matches(&TokenKind::NotImplemented) {
+            let span = self.next().span;
+            return Ok(Expr {
+                kind: ExprKind::NotImplemented,
+                span,
+            });
+        }
+        if matches!(self.kind(), TokenKind::Return) {
+            let span = self.next().span;
+            let value = self.expression()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Return {
+                    value: Box::new(value),
+                },
+            });
+        }
+        if matches!(self.kind(), TokenKind::Throw) {
+            let span = self.next().span;
+            let value = self.expression()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Throw {
+                    value: Box::new(value),
+                },
+            });
+        }
+        if matches!(self.kind(), TokenKind::Defer) {
+            let span = self.next().span;
+            let (mode, error_name) = if self.matches(&TokenKind::Onsuccess) {
+                self.next();
+                (DeferMode::Success, None)
+            } else if self.matches(&TokenKind::Onerror) {
+                self.next();
+                self.consume(&TokenKind::LParen, "expected ( after onerror")?;
+                let token = self.next();
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected error binding name", token.span));
+                };
+                self.consume(&TokenKind::RParen, "expected ) after error binding")?;
+                (DeferMode::Error, Some(name))
+            } else {
+                (DeferMode::Always, None)
+            };
+            let value = self.expression()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Defer {
+                    value: Box::new(value),
+                    mode,
+                    error_name,
+                },
+            });
+        }
+        if matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
+            let mutable = matches!(self.next().kind, TokenKind::Var);
+            if self.matches(&TokenKind::Eq) {
+                return Err(SourceError::at(
+                    "expected binding name",
+                    self.peek().span.clone(),
+                ));
+            }
+            let pattern = self.pattern()?;
+            let annotation = if self.matches(&TokenKind::Colon) {
+                self.next();
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
+            self.consume(&TokenKind::Eq, "expected =")?;
+            let value = self.expression()?;
+            return Ok(Expr {
+                span: value.span.clone(),
+                kind: ExprKind::Declare {
+                    mutable,
+                    exported,
+                    pattern,
+                    documentation,
+                    tags,
+                    annotation,
+                    value: Box::new(value),
+                },
+            });
+        }
+        if self.matches(&TokenKind::Foreign) {
+            return self.foreign_declaration(exported, documentation, tags);
+        }
+        if self.matches(&TokenKind::Resource) {
+            let span = self.next().span;
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "resource declarations are only valid at top level",
+                    span,
+                ));
+            }
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected resource type name", token.span));
+            };
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Resource {
+                    exported,
+                    name,
+                    documentation,
+                    tags,
+                },
+            });
+        }
+        if self.matches(&TokenKind::Enum) {
+            let span = self.next().span;
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "enum declarations are only valid at top level",
+                    span,
+                ));
+            }
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected enum type name", token.span));
+            };
+            self.consume(&TokenKind::LBrace, "expected { after enum name")?;
+            self.separators();
+            let mut cases = Vec::new();
+            while !self.matches(&TokenKind::RBrace) {
+                let token = self.next();
+                let TokenKind::Name(case) = token.kind else {
+                    return Err(SourceError::at("expected enum case name", token.span));
+                };
+                if cases.contains(&case) {
+                    return Err(SourceError::at(
+                        format!("duplicate enum case `{case}`"),
+                        token.span,
+                    ));
+                }
+                cases.push(case);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                self.separators();
+                if self.matches(&TokenKind::RBrace) {
+                    break;
+                }
+            }
+            self.consume(&TokenKind::RBrace, "expected } after enum cases")?;
+            if cases.is_empty() {
+                return Err(SourceError::at("enum must declare at least one case", span));
+            }
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Enum {
+                    exported,
+                    name,
+                    cases,
+                    documentation,
+                    tags,
+                },
+            });
+        }
+        if matches!(self.kind(), TokenKind::Name(name) if name == "type") {
+            let span = self.next().span;
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "type aliases are only valid at top level",
+                    span,
+                ));
+            }
+            if documentation.is_some() || !tags.is_empty() {
+                return Err(SourceError::at(
+                    "documentation blocks and tags cannot prefix a type alias",
+                    self.peek().span.clone(),
+                ));
+            }
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected type alias name", token.span));
+            };
+            self.consume(&TokenKind::Eq, "expected = after type alias name")?;
+            let annotation = self.type_annotation()?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::TypeAlias {
+                    exported,
+                    name,
+                    annotation,
+                },
+            });
+        }
+        self.expression()
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn foreign_declaration(
+        &mut self,
+        exported: bool,
+        documentation: Option<String>,
+        tags: Vec<Tag>,
+    ) -> Result<Expr, SourceError> {
+        let span = self.next().span;
+        if self.nesting != 0 {
+            return Err(SourceError::at(
+                "foreign declarations are only valid at top level",
+                span,
+            ));
+        }
+        let name = self.next();
+        let TokenKind::Name(name) = name.kind else {
+            return Err(SourceError::at(
+                "expected foreign declaration name",
+                name.span,
+            ));
+        };
+        self.consume(&TokenKind::Eq, "expected = after foreign declaration name")?;
+        self.consume(&TokenKind::Fn, "expected fn in foreign declaration")?;
+        let mut type_parameters = Vec::new();
+        if self.matches(&TokenKind::Less) {
+            self.next();
+            loop {
+                let parameter = self.next();
+                let TokenKind::Name(parameter) = parameter.kind else {
+                    return Err(SourceError::at(
+                        "expected type parameter name",
+                        parameter.span,
+                    ));
+                };
+                type_parameters.push(parameter);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+            }
+            self.consume(&TokenKind::Greater, "expected > after type parameters")?;
+        }
+        self.consume(&TokenKind::LParen, "expected ( after foreign fn")?;
+        let mut parameters = Vec::new();
+        let mut has_variadic = false;
+        while !self.matches(&TokenKind::RParen) {
+            let variadic = if self.matches(&TokenKind::Ellipsis) {
+                if has_variadic {
+                    return Err(SourceError::at(
+                        "function can have only one variadic parameter",
+                        self.next().span,
+                    ));
+                }
+                self.next();
+                true
+            } else {
+                false
+            };
+            let parameter = self.next();
+            let TokenKind::Name(name) = parameter.kind else {
+                return Err(SourceError::at("expected parameter name", parameter.span));
+            };
+            let annotation = if self.matches(&TokenKind::Colon) {
+                self.next();
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
+            let default = if self.matches(&TokenKind::Eq) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            if variadic && default.is_some() {
+                return Err(SourceError::at(
+                    "variadic parameters cannot have defaults",
+                    parameter.span,
+                ));
+            }
+            parameters.push(Parameter {
+                name,
+                discard: false,
+                tags: Vec::new(),
+                annotation,
+                default,
+                variadic,
+            });
+            has_variadic |= variadic;
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+            self.next();
+            if has_variadic && !self.matches(&TokenKind::RParen) {
+                return Err(SourceError::at(
+                    "variadic parameter must be final",
+                    self.peek().span.clone(),
+                ));
+            }
+        }
+        self.consume(&TokenKind::RParen, "expected ) after foreign parameters")?;
+        let return_annotation = if self.matches(&TokenKind::Colon) {
+            self.next();
+            Some(self.type_annotation()?)
+        } else {
+            None
+        };
+        Ok(Expr {
+            span,
+            kind: ExprKind::Foreign {
+                exported,
+                name,
+                documentation,
+                tags,
+                signature: Box::new(super::ast::ForeignSignature {
+                    type_parameters,
+                    parameters,
+                    return_annotation,
+                }),
+            },
+        })
+    }
+
+    fn documentation_prefix(&mut self) -> Result<DocumentationPrefix, SourceError> {
+        if let TokenKind::Documentation(content) = self.kind() {
+            if self.nesting != 0 {
+                return Err(SourceError::at(
+                    "documentation blocks are only valid at top level",
+                    self.peek().span.clone(),
+                ));
+            }
+            let content = content.clone();
+            let span = self.next().span;
+            let separator_start = self.index;
+            let mut has_blank_separator = false;
+            let mut separators = 0;
+            while self.is_separator() {
+                has_blank_separator |= self.matches(&TokenKind::BlankSep);
+                self.next();
+                separators += 1;
+            }
+            if has_blank_separator || separators >= 2 {
+                self.index = separator_start;
+                Ok(DocumentationPrefix::Module { content, span })
+            } else {
+                Ok(DocumentationPrefix::Declaration(content))
+            }
+        } else {
+            Ok(DocumentationPrefix::None)
+        }
+    }
+
+    fn tag(&mut self) -> Result<Tag, SourceError> {
+        self.next();
+        let token = self.next();
+        let name = match token.kind {
+            TokenKind::Name(name) => name,
+            TokenKind::Export => "export".into(),
+            _ => return Err(SourceError::at("expected tag name", token.span)),
+        };
+        let mut arguments = Vec::new();
+        if self.matches(&TokenKind::LParen) {
+            self.next();
+            if !self.matches(&TokenKind::RParen) {
+                loop {
+                    arguments.push(self.expression()?);
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.next();
+                    if self.matches(&TokenKind::RParen) {
+                        break;
+                    }
+                }
+            }
+            self.consume(&TokenKind::RParen, "expected ) after tag arguments")?;
+        }
+        Ok(Tag { name, arguments })
+    }
+
+    fn expression(&mut self) -> Result<Expr, SourceError> {
+        if let (
+            TokenKind::Name(name),
+            Some(Token {
+                kind: TokenKind::Eq,
+                ..
+            }),
+        ) = (self.kind().clone(), self.tokens.get(self.index + 1))
+        {
+            let span = self.next().span;
+            self.next();
+            self.enter_nesting(span.clone())?;
+            let value = self.expression()?;
+            self.leave_nesting();
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Assign {
+                    name,
+                    value: Box::new(value),
+                },
+            });
+        }
+        self.binary(0)
+    }
+
+    fn select_header_expression(&mut self) -> Result<Expr, SourceError> {
+        let pipeline_enabled = self.pipeline_enabled;
+        self.pipeline_enabled = false;
+        let expression = self.expression();
+        self.pipeline_enabled = pipeline_enabled;
+        expression
+    }
+}
+
+const MAX_PARSE_NESTING: usize = 256;
+
+impl Parser {
+    fn binary(&mut self, minimum: u8) -> Result<Expr, SourceError> {
+        let mut left = self.prefix()?;
+        loop {
+            let (operator, precedence) = match self.kind() {
+                TokenKind::OrOr => (Binary::Or, 1),
+                TokenKind::AndAnd => (Binary::And, 2),
+                TokenKind::EqEq => (Binary::Equal, 3),
+                TokenKind::BangEq => (Binary::NotEqual, 3),
+                TokenKind::Less => (Binary::Less, 4),
+                TokenKind::LessEq => (Binary::LessEqual, 4),
+                TokenKind::Greater => (Binary::Greater, 4),
+                TokenKind::GreaterEq => (Binary::GreaterEqual, 4),
+                TokenKind::Pipe => (Binary::BitOr, 5),
+                TokenKind::Caret => (Binary::BitXor, 6),
+                TokenKind::Ampersand => (Binary::BitAnd, 7),
+                TokenKind::ShiftLeft => (Binary::ShiftLeft, 8),
+                TokenKind::ShiftRight => (Binary::ShiftRight, 8),
+                TokenKind::Plus => (Binary::Add, 9),
+                TokenKind::Minus => (Binary::Subtract, 9),
+                TokenKind::Star => (Binary::Multiply, 10),
+                TokenKind::Slash => (Binary::Divide, 10),
+                TokenKind::Percent => (Binary::Modulo, 10),
+                TokenKind::ColonPlus => (Binary::Append, 11),
+                TokenKind::PlusColon => (Binary::Prepend, 11),
+                _ => break,
+            };
+            if precedence < minimum {
+                break;
+            }
+            let span = self.next().span;
+            let right = self.binary(if matches!(operator, Binary::Prepend) {
+                precedence
+            } else {
+                precedence + 1
+            })?;
+            left = Expr {
+                span,
+                kind: ExprKind::Binary {
+                    left: Box::new(left),
+                    operator,
+                    right: Box::new(right),
+                },
+            };
+        }
+        Ok(left)
+    }
+    fn prefix(&mut self) -> Result<Expr, SourceError> {
+        let mut operators = Vec::new();
+        while self.matches(&TokenKind::Minus)
+            || self.matches(&TokenKind::Bang)
+            || self.matches(&TokenKind::Tilde)
+        {
+            let token = self.next();
+            let operator = match token.kind {
+                TokenKind::Minus => Prefix::Negate,
+                TokenKind::Bang => Prefix::Not,
+                TokenKind::Tilde => Prefix::BitNot,
+                _ => unreachable!("prefix token was checked"),
+            };
+            operators.push((operator, token.span));
+        }
+        let mut value = self.postfix()?;
+        while self.pipeline_enabled && self.matches(&TokenKind::Pipeline) {
+            let span = self.next().span;
+            let right = self.postfix()?;
+            value = Expr {
+                span,
+                kind: ExprKind::Binary {
+                    left: Box::new(value),
+                    operator: Binary::Pipeline,
+                    right: Box::new(right),
+                },
+            };
+        }
+        if operators.is_empty() {
+            Ok(value)
+        } else {
+            let span = operators[0].1.clone();
+            Ok(Expr {
+                span,
+                kind: ExprKind::Prefix {
+                    operators,
+                    value: Box::new(value),
+                },
+            })
+        }
+    }
+
+    fn postfix(&mut self) -> Result<Expr, SourceError> {
+        let mut value = self.primary()?;
+        loop {
+            if self.matches(&TokenKind::LParen) {
+                let delimiter = self.next();
+                self.enter_nesting(delimiter.span)?;
+                let arguments = self.call_arguments()?;
+                self.consume(&TokenKind::RParen, "expected )")?;
+                self.leave_nesting();
+                let span = value.span.clone();
+                value = Expr {
+                    span,
+                    kind: ExprKind::Call {
+                        callee: Box::new(value),
+                        arguments,
+                    },
+                };
+            } else if self.starts_type_application_call() {
+                self.next();
+                let mut arguments = Vec::new();
+                loop {
+                    arguments.push(self.type_annotation()?);
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.next();
+                }
+                self.consume(&TokenKind::Greater, "expected > in type application")?;
+                let span = value.span.clone();
+                value = Expr {
+                    span,
+                    kind: ExprKind::TypeApply {
+                        callee: Box::new(value),
+                        arguments,
+                    },
+                };
+            } else if self.matches(&TokenKind::LBracket) {
+                let span = self.next().span;
+                self.enter_nesting(span.clone())?;
+                value = self.index_or_slice(value, span)?;
+                self.leave_nesting();
+            } else if self.matches(&TokenKind::Dot) {
+                let span = self.next().span;
+                let name = self.next();
+                let name = match name.kind {
+                    TokenKind::Name(name) => name,
+                    // `select` is reserved only where it begins a select
+                    // expression; maps and module exports may still use it.
+                    TokenKind::Select => "select".into(),
+                    _ => return Err(SourceError::at("expected property name", name.span)),
+                };
+                let index = Expr {
+                    span: span.clone(),
+                    kind: ExprKind::Value(Value::string(name)),
+                };
+                value = Expr {
+                    span,
+                    kind: ExprKind::Index {
+                        collection: Box::new(value),
+                        index: Box::new(index),
+                    },
+                };
+            } else if self.matches(&TokenKind::LBrace) && self.starts_struct_init() {
+                let span = self.next().span;
+                value = self.struct_init(value, span)?;
+            } else if self.matches(&TokenKind::Copy) {
+                let span = self.next().span;
+                self.consume(&TokenKind::LBrace, "expected { after copy")?;
+                value = self.struct_copy(value, span)?;
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    fn starts_type_application_call(&self) -> bool {
+        if !self.matches(&TokenKind::Less) {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (offset, token) in self.tokens[self.index..].iter().enumerate() {
+            match token.kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(
+                            self.tokens
+                                .get(self.index + offset + 1)
+                                .map(|next| &next.kind),
+                            Some(TokenKind::LParen)
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn index_or_slice(&mut self, collection: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+        let start = if self.matches(&TokenKind::Colon) {
+            None
+        } else {
+            Some(Box::new(self.expression()?))
+        };
+        if self.matches(&TokenKind::Colon) {
+            self.next();
+            let end = if self.matches(&TokenKind::Colon) || self.matches(&TokenKind::RBracket) {
+                None
+            } else {
+                Some(Box::new(self.expression()?))
+            };
+            let step = if self.matches(&TokenKind::Colon) {
+                self.next();
+                if self.matches(&TokenKind::RBracket) {
+                    None
+                } else {
+                    Some(Box::new(self.expression()?))
+                }
+            } else {
+                None
+            };
+            self.consume(&TokenKind::RBracket, "expected ]")?;
+            return Ok(Expr {
+                span,
+                kind: ExprKind::Slice {
+                    collection: Box::new(collection),
+                    start,
+                    end,
+                    step,
+                },
+            });
+        }
+        let Some(index) = start else {
+            unreachable!("a bracket expression is either a slice or has an index")
+        };
+        self.consume(&TokenKind::RBracket, "expected ]")?;
+        Ok(Expr {
+            span,
+            kind: ExprKind::Index {
+                collection: Box::new(collection),
+                index,
+            },
+        })
+    }
+    fn call_arguments(&mut self) -> Result<Vec<CallArgument>, SourceError> {
+        let mut arguments = Vec::new();
+        let mut has_named = false;
+        while !self.matches(&TokenKind::RParen) {
+            if self.matches(&TokenKind::Ellipsis) {
+                let spread = self.next();
+                if has_named {
+                    return Err(SourceError::at(
+                        "spread argument cannot appear after a named argument",
+                        spread.span,
+                    ));
+                }
+                arguments.push(CallArgument::Spread(self.expression()?));
+            } else if let (
+                TokenKind::Name(name),
+                Some(Token {
+                    kind: TokenKind::Eq,
+                    ..
+                }),
+            ) = (self.kind().clone(), self.tokens.get(self.index + 1))
+            {
+                self.next();
+                self.next();
+                has_named = true;
+                arguments.push(CallArgument::Named {
+                    name,
+                    value: self.expression()?,
+                });
+            } else {
+                if has_named {
+                    return Err(SourceError::at(
+                        "positional argument cannot appear after a named argument",
+                        self.peek().span.clone(),
+                    ));
+                }
+                arguments.push(CallArgument::Positional(self.expression()?));
+            }
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+            self.next();
+        }
+        Ok(arguments)
+    }
+    fn primary(&mut self) -> Result<Expr, SourceError> {
+        let token = self.next();
+        let span = token.span.clone();
+        let kind = match token.kind {
+            TokenKind::Int(value) => ExprKind::Value(Value::Int(value)),
+            TokenKind::Float(value) => ExprKind::Value(Value::Float(value)),
+            TokenKind::Bytes(value) => ExprKind::Value(Value::Bytes(value.into())),
+            TokenKind::Interpolated(parts) => {
+                if let [StringPart::Text(value)] = parts.as_slice() {
+                    ExprKind::Value(Value::string(value.clone()))
+                } else {
+                    ExprKind::Interpolate(parts)
+                }
+            }
+            TokenKind::True => ExprKind::Value(Value::Bool(true)),
+            TokenKind::False => ExprKind::Value(Value::Bool(false)),
+            TokenKind::Nil => ExprKind::Value(Value::Nil),
+            TokenKind::Name(value) => ExprKind::Name(value),
+            TokenKind::LParen => {
+                self.enter_nesting(span.clone())?;
+                let value = self.expression()?;
+                self.consume(&TokenKind::RParen, "expected )")?;
+                self.leave_nesting();
+                return Ok(value);
+            }
+            TokenKind::LBracket => return self.list(span),
+            TokenKind::LBrace => return self.map_or_block(span),
+            TokenKind::Fn => return self.function(span),
+            TokenKind::If => return self.if_expression(span),
+            TokenKind::Recur => return self.recur(span),
+            TokenKind::Nursery => return self.nursery(span),
+            TokenKind::Spawn => return self.spawn(span),
+            TokenKind::Select => return self.select(span),
+            TokenKind::Match => return self.match_expression(span),
+            TokenKind::Struct => return self.struct_schema(span),
+            _ => return Err(SourceError::at("expected expression", span)),
+        };
+        Ok(Expr { kind, span })
+    }
+    fn select(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let delimiter = self.consume(&TokenKind::LBrace, "expected { after select")?;
+        self.enter_nesting(delimiter.span)?;
+        let mut cases = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            let token = self.next();
+            let case_span = token.span.clone();
+            let kind = match token.kind {
+                TokenKind::Name(name) if name == "recv" => {
+                    SelectCaseKind::Receive(self.select_header_expression()?)
+                }
+                TokenKind::Name(name) if name == "send" => {
+                    let channel = self.select_header_expression()?;
+                    self.consume(&TokenKind::Comma, "expected , after select send channel")?;
+                    SelectCaseKind::Send {
+                        channel,
+                        value: Box::new(self.select_header_expression()?),
+                    }
+                }
+                TokenKind::Name(name) if name == "after" => {
+                    SelectCaseKind::After(self.select_header_expression()?)
+                }
+                TokenKind::Name(name) if name == "await" => {
+                    SelectCaseKind::Await(self.select_header_expression()?)
+                }
+                TokenKind::Name(name) if name == "_" => SelectCaseKind::Default,
+                _ => return Err(SourceError::at("expected select case", case_span)),
+            };
+            let handler = if self.matches(&TokenKind::Pipeline) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            cases.push(SelectCase { kind, handler });
+            self.separators();
+        }
+        self.consume(&TokenKind::RBrace, "expected } after select cases")?;
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Select(cases),
+            span,
+        })
+    }
+    fn nursery(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let limit = if self.matches(&TokenKind::Limit) {
+            self.next();
+            // A following block begins the nursery body rather than a struct
+            // initializer applied to the limit expression.
+            let previous_match_subject_nesting = self.match_subject_nesting;
+            self.match_subject_nesting = Some(self.nesting);
+            let limit = self.expression();
+            self.match_subject_nesting = previous_match_subject_nesting;
+            Some(Box::new(limit?))
+        } else {
+            None
+        };
+        let body = match self.kind() {
+            TokenKind::Fn => self.primary()?,
+            TokenKind::LBrace => {
+                let delimiter = self.next();
+                self.map_or_block(delimiter.span)?
+            }
+            _ => {
+                return Err(SourceError::at(
+                    "nursery expects a function or block",
+                    self.peek().span.clone(),
+                ));
+            }
+        };
+        Ok(Expr {
+            kind: ExprKind::Nursery {
+                limit,
+                body: Box::new(body),
+            },
+            span,
+        })
+    }
+    fn spawn(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let body = match self.kind() {
+            TokenKind::LBrace => {
+                let delimiter = self.next();
+                self.map_or_block(delimiter.span)?
+            }
+            _ => self.prefix()?,
+        };
+        Ok(Expr {
+            kind: ExprKind::Spawn(Box::new(body)),
+            span,
+        })
+    }
+    fn starts_struct_init(&self) -> bool {
+        if self.match_subject_nesting != Some(self.nesting) {
+            return true;
+        }
+        let mut depth = 0usize;
+        for token in &self.tokens[self.index..] {
+            match token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::Arrow if depth == 1 => return false,
+                _ => {}
+            }
+        }
+        matches!(
+            (
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                self.tokens.get(self.index + 2).map(|token| &token.kind),
+            ),
+            (Some(TokenKind::Name(_)), Some(TokenKind::Colon))
+        )
+    }
+    fn struct_schema(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let delimiter = self.consume(&TokenKind::LBrace, "expected { after struct")?;
+        self.enter_nesting(delimiter.span)?;
+        let mut fields = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected struct field name", token.span));
+            };
+            let annotation = if self.matches(&TokenKind::Colon) {
+                self.next();
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
+            let default = if self.matches(&TokenKind::Eq) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            fields.push(StructSchemaField {
+                name,
+                annotation,
+                default,
+            });
+            self.struct_field_separator()?;
+        }
+        self.next();
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::StructSchema(fields),
+            span,
+        })
+    }
+    fn struct_init(&mut self, schema: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+        let fields = self.struct_fields(&span)?;
+        Ok(Expr {
+            kind: ExprKind::StructInit {
+                schema: Box::new(schema),
+                fields,
+            },
+            span,
+        })
+    }
+    fn struct_copy(&mut self, value: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
+        let fields = self.struct_fields(&span)?;
+        Ok(Expr {
+            kind: ExprKind::StructCopy {
+                value: Box::new(value),
+                fields,
+            },
+            span,
+        })
+    }
+    fn struct_fields(&mut self, span: &SourceSpan) -> Result<Vec<(String, Expr)>, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut fields = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            let token = self.next();
+            let TokenKind::Name(name) = token.kind else {
+                return Err(SourceError::at("expected struct field name", token.span));
+            };
+            self.consume(&TokenKind::Colon, "expected : after struct field name")?;
+            fields.push((name, self.expression()?));
+            self.struct_field_separator()?;
+        }
+        self.next();
+        self.leave_nesting();
+        Ok(fields)
+    }
+    fn struct_field_separator(&mut self) -> Result<(), SourceError> {
+        if self.matches(&TokenKind::Comma) {
+            self.next();
+            self.separators();
+        } else if self.is_separator() {
+            self.separators();
+            if !self.matches(&TokenKind::RBrace) {
+                return Err(SourceError::at(
+                    "expected , between struct fields",
+                    self.peek().span.clone(),
+                ));
+            }
+        } else if !self.matches(&TokenKind::RBrace) {
+            return Err(SourceError::at(
+                "expected , between struct fields",
+                self.peek().span.clone(),
+            ));
+        }
+        Ok(())
+    }
+    fn list(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut values = Vec::new();
+        if !self.matches(&TokenKind::RBracket) {
+            loop {
+                if self.matches(&TokenKind::Ellipsis) {
+                    self.next();
+                    values.push(ListElement::Spread(self.expression()?));
+                } else {
+                    values.push(ListElement::Value(self.expression()?));
+                }
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                if self.matches(&TokenKind::RBracket) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RBracket, "expected ]")?;
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::List(values),
+            span,
+        })
+    }
+    fn map_or_block(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        if self.matches(&TokenKind::RBrace) {
+            self.next();
+            return Ok(Expr {
+                kind: ExprKind::Map(Vec::new()),
+                span,
+            });
+        }
+        let first_entry = self.next_non_separator_index();
+        let map = ((matches!(
+            self.tokens.get(first_entry).map(|token| &token.kind),
+            Some(TokenKind::Name(_) | TokenKind::Interpolated(_))
+        )) && matches!(
+            self.tokens.get(first_entry + 1).map(|token| &token.kind),
+            Some(TokenKind::Colon)
+        )) || self.starts_computed_map_key(first_entry);
+        if map {
+            self.map(span)
+        } else {
+            self.block_after_open(span)
+        }
+    }
+    fn next_non_separator_index(&self) -> usize {
+        self.tokens[self.index..]
+            .iter()
+            .position(|token| !matches!(token.kind, TokenKind::Sep | TokenKind::BlankSep))
+            .map_or(self.index, |offset| self.index + offset)
+    }
+    fn starts_computed_map_key(&self, index: usize) -> bool {
+        if !matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::LBracket)
+        ) {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (offset, token) in self.tokens[index..].iter().enumerate() {
+            match token.kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(
+                            self.tokens.get(index + offset + 1).map(|token| &token.kind),
+                            Some(TokenKind::Colon)
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    fn map(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut entries = Vec::new();
+        self.separators();
+        loop {
+            let key = if self.matches(&TokenKind::LBracket) {
+                self.next();
+                let key = self.expression()?;
+                self.consume(&TokenKind::RBracket, "expected ]")?;
+                key
+            } else {
+                let token = self.next();
+                let kind = match token.kind {
+                    TokenKind::Name(name) => ExprKind::Value(Value::string(name)),
+                    TokenKind::Interpolated(parts) => {
+                        if let [StringPart::Text(value)] = parts.as_slice() {
+                            ExprKind::Value(Value::string(value.clone()))
+                        } else {
+                            ExprKind::Interpolate(parts)
+                        }
+                    }
+                    _ => return Err(SourceError::at("expected map key", token.span)),
+                };
+                Expr {
+                    span: token.span,
+                    kind,
+                }
+            };
+            self.consume(&TokenKind::Colon, "expected :")?;
+            let value = self.expression()?;
+            entries.push((key, value));
+            self.separators();
+            if !self.matches(&TokenKind::Comma) {
+                break;
+            }
+            self.next();
+            self.separators();
+            if self.matches(&TokenKind::RBrace) {
+                break;
+            }
+        }
+        self.consume(&TokenKind::RBrace, "expected }")?;
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Map(entries),
+            span,
+        })
+    }
+    fn block_after_open(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut values = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            if self.matches(&TokenKind::End) {
+                return Err(SourceError::at("expected }", self.peek().span.clone()));
+            }
+            values.push(self.statement()?);
+            if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
+                return Err(SourceError::at(
+                    "expected statement separator",
+                    self.peek().span.clone(),
+                ));
+            }
+            self.separators();
+        }
+        self.next();
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Block(values),
+            span,
+        })
+    }
+    fn block(&mut self) -> Result<Expr, SourceError> {
+        let span = self.consume(&TokenKind::LBrace, "expected {")?.span;
+        self.block_after_open(span)
+    }
+    #[allow(clippy::too_many_lines)]
+    fn function(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let mut type_parameters = Vec::new();
+        if self.matches(&TokenKind::Less) {
+            self.next();
+            loop {
+                let token = self.next();
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected type parameter", token.span));
+                };
+                type_parameters.push(name);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+            }
+            self.consume(&TokenKind::Greater, "expected > after type parameters")?;
+        }
+        self.consume(&TokenKind::LParen, "expected (")?;
+        let mut parameters = Vec::new();
+        let mut has_variadic = false;
+        if !self.matches(&TokenKind::RParen) {
+            loop {
+                let mut tags = Vec::new();
+                while self.matches(&TokenKind::At) {
+                    tags.push(self.tag()?);
+                    self.separators();
+                }
+                let variadic = if self.matches(&TokenKind::Ellipsis) {
+                    let token = self.next();
+                    if has_variadic {
+                        return Err(SourceError::at(
+                            "function can have only one variadic parameter",
+                            token.span,
+                        ));
+                    }
+                    true
+                } else {
+                    false
+                };
+                let token = self.next();
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected parameter name", token.span));
+                };
+                let discard = name == "_";
+                let name = if discard {
+                    format!("<discard parameter {}>", parameters.len())
+                } else {
+                    name
+                };
+                let annotation = if self.matches(&TokenKind::Colon) {
+                    self.next();
+                    Some(self.type_annotation()?)
+                } else {
+                    None
+                };
+                let default = if self.matches(&TokenKind::Eq) {
+                    self.next();
+                    Some(self.expression()?)
+                } else {
+                    None
+                };
+                if variadic && default.is_some() {
+                    return Err(SourceError::at(
+                        "variadic parameters cannot have defaults",
+                        token.span,
+                    ));
+                }
+                parameters.push(Parameter {
+                    name,
+                    discard,
+                    tags,
+                    annotation,
+                    default,
+                    variadic,
+                });
+                has_variadic |= variadic;
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                if self.matches(&TokenKind::RParen) {
+                    break;
+                }
+                if has_variadic {
+                    return Err(SourceError::at(
+                        "variadic parameter must be final",
+                        self.peek().span.clone(),
+                    ));
+                }
+            }
+        }
+        self.consume(&TokenKind::RParen, "expected )")?;
+        let return_annotation = if self.matches(&TokenKind::Colon) {
+            self.next();
+            Some(self.type_annotation()?)
+        } else {
+            None
+        };
+        let body = if self.matches(&TokenKind::Match) {
+            let match_span = self.next().span;
+            let subject = if parameters.len() == 1 {
+                Expr {
+                    kind: ExprKind::Name(parameters[0].name.clone()),
+                    span: match_span.clone(),
+                }
+            } else {
+                Expr {
+                    kind: ExprKind::List(
+                        parameters
+                            .iter()
+                            .map(|parameter| {
+                                ListElement::Value(Expr {
+                                    kind: ExprKind::Name(parameter.name.clone()),
+                                    span: match_span.clone(),
+                                })
+                            })
+                            .collect(),
+                    ),
+                    span: match_span.clone(),
+                }
+            };
+            self.match_cases(Some(Box::new(subject)), match_span)?
+        } else {
+            self.block()?
+        };
+        Ok(Expr {
+            kind: ExprKind::Function {
+                type_parameters,
+                parameters,
+                return_annotation,
+                body: Box::new(body),
+            },
+            span,
+        })
+    }
+    fn recur(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let delimiter = self.consume(&TokenKind::LParen, "expected (")?;
+        self.enter_nesting(delimiter.span)?;
+        let arguments = self.call_arguments()?;
+        self.consume(&TokenKind::RParen, "expected )")?;
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Recur(arguments),
+            span,
+        })
+    }
+    fn match_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        let previous = self.match_subject_nesting.replace(self.nesting);
+        let subject = if self.matches(&TokenKind::LBrace) {
+            Ok(None)
+        } else {
+            self.expression().map(|subject| Some(Box::new(subject)))
+        };
+        self.match_subject_nesting = previous;
+        let subject = subject?;
+        self.match_cases(subject, span)
+    }
+    fn match_cases(
+        &mut self,
+        subject: Option<Box<Expr>>,
+        span: SourceSpan,
+    ) -> Result<Expr, SourceError> {
+        let delimiter = self.consume(&TokenKind::LBrace, "expected { after match subject")?;
+        self.enter_nesting(delimiter.span)?;
+        let mut cases = Vec::new();
+        self.separators();
+        while !self.matches(&TokenKind::RBrace) {
+            if self.matches(&TokenKind::End) {
+                return Err(SourceError::at("expected }", self.peek().span.clone()));
+            }
+            let mut patterns = vec![self.case_pattern()?];
+            while self.matches(&TokenKind::Comma) {
+                self.next();
+                patterns.push(self.case_pattern()?);
+            }
+            let guard = if self.matches(&TokenKind::If) {
+                self.next();
+                Some(self.expression()?)
+            } else {
+                None
+            };
+            let case_span = self
+                .consume(&TokenKind::Arrow, "expected => after match pattern")?
+                .span;
+            let value = self.statement()?;
+            cases.push(MatchCase {
+                patterns,
+                guard,
+                value,
+                span: case_span,
+            });
+            if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
+                return Err(SourceError::at(
+                    "expected match case separator",
+                    self.peek().span.clone(),
+                ));
+            }
+            self.separators();
+        }
+        self.next();
+        self.leave_nesting();
+        Ok(Expr {
+            kind: ExprKind::Match { subject, cases },
+            span,
+        })
+    }
+    fn case_pattern(&mut self) -> Result<CasePattern, SourceError> {
+        let pattern = self.pattern()?;
+        let constraint = if self.matches(&TokenKind::Colon) {
+            self.next();
+            Some(self.type_annotation()?)
+        } else {
+            None
+        };
+        Ok(CasePattern {
+            pattern,
+            constraint,
+        })
+    }
+    fn pattern(&mut self) -> Result<Pattern, SourceError> {
+        let token = self.next();
+        match token.kind {
+            TokenKind::Int(value) => Ok(Pattern::Literal(Value::Int(value))),
+            TokenKind::Float(value) => Ok(Pattern::Literal(Value::Float(value))),
+            TokenKind::Bytes(value) => Ok(Pattern::Literal(Value::Bytes(value.into()))),
+            TokenKind::Interpolated(parts) => {
+                let [StringPart::Text(value)] = parts.as_slice() else {
+                    return Err(SourceError::at(
+                        "interpolated strings are not match patterns",
+                        token.span,
+                    ));
+                };
+                Ok(Pattern::Literal(Value::string(value.clone())))
+            }
+            TokenKind::True => Ok(Pattern::Literal(Value::Bool(true))),
+            TokenKind::False => Ok(Pattern::Literal(Value::Bool(false))),
+            TokenKind::Nil => Ok(Pattern::Literal(Value::Nil)),
+            TokenKind::Name(name) if name == "_" => Ok(Pattern::Wildcard),
+            TokenKind::Name(name) if self.matches(&TokenKind::At) => {
+                self.next();
+                self.enter_nesting(token.span.clone())?;
+                let pattern = self.pattern();
+                self.leave_nesting();
+                Ok(Pattern::At {
+                    name,
+                    pattern: Box::new(pattern?),
+                })
+            }
+            TokenKind::Name(name) if self.matches(&TokenKind::Dot) => {
+                let mut path = name;
+                while self.matches(&TokenKind::Dot) {
+                    self.next();
+                    let token = self.next();
+                    let TokenKind::Name(part) = token.kind else {
+                        return Err(SourceError::at("expected enum case name", token.span));
+                    };
+                    if self.matches(&TokenKind::Dot) {
+                        path.push('.');
+                        path.push_str(&part);
+                    } else {
+                        return Ok(Pattern::EnumCase { path, case: part });
+                    }
+                }
+                unreachable!()
+            }
+            TokenKind::Name(name) => Ok(Pattern::Binding(name)),
+            TokenKind::Select => Ok(Pattern::Binding("select".into())),
+            TokenKind::Caret => {
+                let token = self.next();
+                let TokenKind::Name(name) = token.kind else {
+                    return Err(SourceError::at("expected pinned binding name", token.span));
+                };
+                Ok(Pattern::Pinned(name))
+            }
+            TokenKind::LBracket => self.list_pattern(&token.span),
+            TokenKind::LBrace => self.map_pattern(&token.span),
+            TokenKind::LExactMap => self.exact_map_pattern(&token.span),
+            _ => Err(SourceError::at("expected match pattern", token.span)),
+        }
+    }
+    fn rest_pattern(&mut self) -> RestPattern {
+        self.next();
+        if matches!(self.kind(), TokenKind::Name(_)) {
+            let TokenKind::Name(name) = self.next().kind else {
+                unreachable!("name token was checked");
+            };
+            RestPattern::Binding(name)
+        } else {
+            RestPattern::Discard
+        }
+    }
+    fn list_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut items = Vec::new();
+        let mut rest = None;
+        if !self.matches(&TokenKind::RBracket) {
+            loop {
+                if self.matches(&TokenKind::Ellipsis) {
+                    rest = Some(self.rest_pattern());
+                    if !self.matches(&TokenKind::RBracket) {
+                        return Err(SourceError::at(
+                            "list spread pattern must be final",
+                            self.peek().span.clone(),
+                        ));
+                    }
+                    break;
+                }
+                items.push(self.pattern()?);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                if self.matches(&TokenKind::RBracket) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RBracket, "expected ]")?;
+        self.leave_nesting();
+        Ok(Pattern::List { items, rest })
+    }
+    fn map_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
+        self.map_pattern_with_mode(span, false)
+    }
+    fn exact_map_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
+        self.map_pattern_with_mode(span, true)
+    }
+    fn map_pattern_with_mode(
+        &mut self,
+        span: &SourceSpan,
+        exact: bool,
+    ) -> Result<Pattern, SourceError> {
+        self.enter_nesting(span.clone())?;
+        let mut entries = Vec::new();
+        let mut rest = None;
+        let closing = if exact {
+            TokenKind::RExactMap
+        } else {
+            TokenKind::RBrace
+        };
+        if !self.matches(&closing) {
+            if self.matches(&TokenKind::Star) {
+                if exact {
+                    return Err(SourceError::at(
+                        "exact map patterns cannot select all entries",
+                        self.peek().span.clone(),
+                    ));
+                }
+                self.next();
+                self.consume(&closing, "expected } after *")?;
+                self.leave_nesting();
+                return Ok(Pattern::MapAll);
+            }
+            loop {
+                if self.matches(&TokenKind::Ellipsis) {
+                    if exact {
+                        return Err(SourceError::at(
+                            "exact map patterns cannot contain a spread pattern",
+                            self.peek().span.clone(),
+                        ));
+                    }
+                    rest = Some(self.rest_pattern());
+                    if !self.matches(&closing) {
+                        return Err(SourceError::at(
+                            "map spread pattern must be final",
+                            self.peek().span.clone(),
+                        ));
+                    }
+                    break;
+                }
+                let key = if self.matches(&TokenKind::LBracket) {
+                    self.next();
+                    let key = self.expression()?;
+                    self.consume(&TokenKind::RBracket, "expected ]")?;
+                    MapPatternKey::Computed(key)
+                } else {
+                    let token = self.next();
+                    match token.kind {
+                        TokenKind::Name(name) => MapPatternKey::String(name),
+                        TokenKind::Interpolated(parts) => {
+                            let [StringPart::Text(value)] = parts.as_slice() else {
+                                return Err(SourceError::at(
+                                    "interpolated strings are not map pattern keys",
+                                    token.span,
+                                ));
+                            };
+                            MapPatternKey::String(value.clone())
+                        }
+                        _ => return Err(SourceError::at("expected map pattern key", token.span)),
+                    }
+                };
+                if let MapPatternKey::String(name) = &key
+                    && entries.iter().any(|(existing, _)| {
+                        matches!(existing, MapPatternKey::String(existing) if existing == name)
+                    })
+                {
+                    return Err(SourceError::at(
+                        format!("duplicate map pattern key `{name}`"),
+                        self.peek().span.clone(),
+                    ));
+                }
+                let pattern = if self.matches(&TokenKind::Colon) {
+                    self.next();
+                    self.pattern()?
+                } else {
+                    let MapPatternKey::String(name) = &key else {
+                        return Err(SourceError::at(
+                            "expected : after computed map pattern key",
+                            self.peek().span.clone(),
+                        ));
+                    };
+                    Pattern::Binding(name.clone())
+                };
+                entries.push((key, pattern));
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                self.next();
+                if self.matches(&closing) {
+                    break;
+                }
+            }
+        }
+        self.consume(&closing, if exact { "expected |}" } else { "expected }" })?;
+        self.leave_nesting();
+        // `{}` is the empty-map pattern; non-empty ordinary map patterns
+        // remain partial unless written with the explicit exact delimiters.
+        let exact = exact || entries.is_empty() && rest.is_none();
+        Ok(Pattern::Map {
+            entries,
+            rest,
+            exact,
+        })
+    }
+    fn type_annotation(&mut self) -> Result<TypeAnnotation, SourceError> {
+        let mut members = vec![self.type_term()?];
+        while self.matches(&TokenKind::Pipe) {
+            self.next();
+            members.push(self.type_term()?);
+        }
+        Ok(if members.len() == 1 {
+            members.pop().expect("type annotation has one member")
+        } else {
+            TypeAnnotation::Union(members)
+        })
+    }
+    fn type_term(&mut self) -> Result<TypeAnnotation, SourceError> {
+        let token = self.next();
+        let mut annotation = match token.kind {
+            TokenKind::Name(mut name) => {
+                while self.matches(&TokenKind::Dot) {
+                    self.next();
+                    let segment = self.next();
+                    let TokenKind::Name(segment) = segment.kind else {
+                        return Err(SourceError::at("expected type name after .", segment.span));
+                    };
+                    name.push('.');
+                    name.push_str(&segment);
+                }
+                TypeAnnotation::Name(name)
+            }
+            TokenKind::Fn => TypeAnnotation::Name("fn".into()),
+            TokenKind::Struct => TypeAnnotation::Name("struct".into()),
+            TokenKind::LBracket => {
+                let mut elements = Vec::new();
+                if !self.matches(&TokenKind::RBracket) {
+                    loop {
+                        elements.push(self.type_annotation()?);
+                        if !self.matches(&TokenKind::Comma) {
+                            break;
+                        }
+                        self.next();
+                    }
+                }
+                self.consume(&TokenKind::RBracket, "expected ] in tuple type")?;
+                return Ok(TypeAnnotation::Tuple(elements));
+            }
+            TokenKind::Nil => TypeAnnotation::Name("nil".into()),
+            _ => return Err(SourceError::at("expected type annotation", token.span)),
+        };
+        if self.matches(&TokenKind::Less) {
+            self.next();
+            let mut arguments = Vec::new();
+            if !self.matches(&TokenKind::Greater) {
+                loop {
+                    arguments.push(self.type_annotation()?);
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.next();
+                }
+            }
+            self.consume(&TokenKind::Greater, "expected > in type annotation")?;
+            let TypeAnnotation::Name(name) = annotation else {
+                unreachable!("only named types have arguments")
+            };
+            annotation = TypeAnnotation::Apply { name, arguments };
+        }
+        Ok(annotation)
+    }
+    fn if_expression(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
+        self.consume(&TokenKind::LParen, "expected (")?;
+        let condition = self.expression()?;
+        self.consume(&TokenKind::RParen, "expected )")?;
+        let then_branch = self.block()?;
+        let else_branch = if self.matches(&TokenKind::Else) {
+            self.next();
+            Some(Box::new(if self.matches(&TokenKind::If) {
+                let token = self.next();
+                self.if_expression(token.span)?
+            } else {
+                self.block()?
+            }))
+        } else {
+            None
+        };
+        Ok(Expr {
+            kind: ExprKind::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch,
+            },
+            span,
+        })
+    }
+}

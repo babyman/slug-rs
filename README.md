@@ -9,7 +9,7 @@ contract is documented separately as `.cslug`.
 
 ## Current milestone
 
-- Dynamic Slug values: `nil`, booleans, numbers, strings, bytes,
+- Dynamic Slug values: `nil`, booleans, finite numbers, strings, bytes,
   lists, maps, struct schemas and values, closures, and explicitly registered
   native functions.
 - Chunks, constants, lexical captures, locals, globals, calls, branches, and
@@ -152,7 +152,7 @@ val main = fn() {
 Run it from the repository root:
 
 ```sh
-cargo run -p slug-vm --bin slug -- hello.slug
+cargo run -p slug -- hello.slug
 ```
 
 For a persistent interactive session, run the minimal terminal client:
@@ -164,7 +164,7 @@ cargo run -p slug-repl
 cargo run -p slug-repl -- session.slug
 ```
 
-It launches the sibling `slug-server` executable, presents a `>` prompt, and
+It launches the sibling `slug --server` mode, presents a `>` prompt, and
 sends each complete source unit through its structured session protocol. In a
 terminal, the prompt supports cursor-based line editing and Up/Down command
 history for the current REPL session; piped input remains plain line-oriented.
@@ -177,7 +177,7 @@ previously declared channel and resume it in both runtime configurations.
 Incomplete syntax such as a function body uses a `.` continuation prompt. Type
 `:quit` or `:exit`, or send end-of-file, to close the session. Set
 `SLUG_SERVER` to use a different local server executable. Distributions must
-install `slug-repl` and `slug-server` together.
+install `slug-repl` and `slug` together.
 
 Interactive submissions run as session-owned cells: scheduler tasks in the
 default runtime and detached host-driven executions in the slim runtime. A
@@ -193,7 +193,7 @@ The CLI executes the source file and automatically invokes a local `main()`.
 Pass additional arguments after the source path. Prefix the source path with
 `--diagnostic-format=json` to receive runner-generated fatal diagnostics as one
 JSON document on standard error, which is intended for editor and agent integrations; use
-`cargo run -p slug-vm --bin slug -- --help` to see the current command interface. Start with the
+`cargo run -p slug -- --help` to see the current command interface. Start with the
 [language support matrix](docs/generated/language-support.md) for the
 implemented subset, and use the [language documents](docs/language/README.md)
 as the source-language reference.
@@ -202,7 +202,7 @@ as the source-language reference.
 
 ```sh
 make check
-cargo run -p slug-vm --bin slug -- --help
+cargo run -p slug -- --help
 make bench-vm
 make bench-source
 ```

@@ -6,7 +6,7 @@
 #[cfg(feature = "concurrency")]
 use std::{cell::Cell, rc::Rc};
 
-use crate::{Value, source::environment::CallableIdentity};
+use crate::{CallableIdentity, Value};
 
 #[cfg(feature = "concurrency")]
 use super::Nursery;

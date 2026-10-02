@@ -610,6 +610,7 @@ fn matches_list_patterns_and_exposes_bindings() {
             Value::list(vec![Value::Int(2), Value::Int(3)]),
         ])
     );
+    #[cfg(feature = "metrics")]
     assert_eq!(vm.metrics().list_views_created, 1);
 }
 

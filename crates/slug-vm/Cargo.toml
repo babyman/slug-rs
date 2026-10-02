@@ -15,23 +15,9 @@ default = ["concurrency"]
 concurrency = []
 metrics = []
 
-[[bin]]
-name = "slug"
-path = "src/main.rs"
-
-[[bench]]
-name = "vm"
-harness = false
-required-features = ["metrics"]
-
-[[bench]]
-name = "source"
-harness = false
-
 [lints]
 workspace = true
 
-[dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
+[dev-dependencies]
+slug-frontend = { path = "../slug-frontend", default-features = false }
+slug-loader = { path = "../slug-loader" }

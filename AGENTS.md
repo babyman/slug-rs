@@ -8,9 +8,14 @@ abstractions.
 ## Repository map
 
 ```
-crates/slug-vm/ Runtime, bytecode, dynamic values, compiler, and VM tests
-crates/slug-server/ Interactive session protocol and server
-crates/slug-repl/ Terminal REPL client
+crates/slug-vm/               Runtime, bytecode, dynamic values, and VM tests
+crates/slug-frontend/         Source syntax, semantics, lowering, and module graph
+crates/slug-loader/           Storage-independent import contracts
+crates/slug-desktop-loader/   Desktop import resolution and Clutch activation
+crates/slug-nil-loader/       Deny-all resolver for restricted hosts
+crates/slug-restricted-host/  In-memory restricted host facade
+crates/slug/                  CLI, configuration, fixture tooling, and server mode
+crates/slug-repl/             Terminal REPL client for `slug --server`
 tests/      Shared Slug conformance fixtures and native C fixtures
 docs/       Architecture, development policy, and canonical language documents
 .agents/    Agent workflows and decision-record guidance
@@ -35,7 +40,7 @@ make test-cli     # Run public CLI tests only
 make docs-generate # Regenerate the implementation support matrix
 make docs-check   # Verify documentation inventory and generated output
 make check        # Run format, lint, and the full test suite
-cargo run -p slug-vm --bin slug -- --help
+cargo run -p slug -- --help
 ```
 
 Run the narrowest test that proves a change while iterating. Before handing off
@@ -47,12 +52,12 @@ a Rust change, run `make check`. For documentation-only changes, run
 | Boundary | Test | Focused command |
 |---|---|---|
 | Private bytecode and VM/runtime behavior | `crates/slug-vm/tests/vm.rs` | `make test-vm` |
-| Source syntax, CLI output, and diagnostics | `crates/slug-vm/tests/cli.rs` | `make test-cli` |
-| Imports, modules, exports, and live bindings | `crates/slug-vm/tests/module_loader.rs` | `cargo test -p slug-vm --features metrics --test module_loader` |
-| Configuration loading and `cfg`-related behavior | `crates/slug-vm/tests/configuration.rs` | `cargo test -p slug-vm --features metrics --test configuration` |
-| Fixture execution behavior | `crates/slug-vm/tests/conformance_runner.rs` | `cargo test -p slug-vm --features metrics --test conformance_runner` |
-| Fixture-sidecar validation | `crates/slug-vm/tests/conformance_metadata.rs` | `cargo test -p slug-vm --features metrics --test conformance_metadata` |
-| Repository legacy-syntax fixtures | `crates/slug-vm/tests/legacy_syntax_conformance.rs` | `cargo test -p slug-vm --features metrics --test legacy_syntax_conformance` |
+| Source syntax, CLI output, and diagnostics | `crates/slug/tests/cli.rs` | `make test-cli` |
+| Imports, modules, exports, and live bindings | `crates/slug/tests/module_loader.rs` | `cargo test -p slug --features metrics --test module_loader` |
+| Configuration loading and `cfg`-related behavior | `crates/slug/tests/configuration.rs` | `cargo test -p slug --features metrics --test configuration` |
+| Fixture execution behavior | `crates/slug/tests/conformance_runner.rs` | `cargo test -p slug --features metrics --test conformance_runner` |
+| Fixture-sidecar validation | `crates/slug/tests/conformance_metadata.rs` | `cargo test -p slug --features metrics --test conformance_metadata` |
+| Repository legacy-syntax fixtures | `crates/slug/tests/legacy_syntax_conformance.rs` | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 
 `make test` runs the full unit, binary, and integration suite. See
 [`docs/engineering/testing.md`](docs/engineering/testing.md) for each layer's

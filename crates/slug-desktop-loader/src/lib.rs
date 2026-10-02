@@ -1,0 +1,602 @@
+//! Desktop external-import resolution and import-scoped activation.
+//!
+//! Callers provide already-selected project and library roots. This crate does
+//! not discover process environment, command-line arguments, or configuration.
+
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
+
+use slug_loader::{
+    ModuleActivation as ModuleActivationLease, ModuleActivationTransaction, ModuleKey,
+    ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
+};
+use slug_vm::{NativeDescriptorError, NativeFunction, Value};
+#[doc(hidden)]
+pub mod clutch;
+#[allow(unsafe_code)]
+mod ffi_prototype;
+
+use clutch::StagedClutchPlugin;
+pub use clutch::{
+    ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
+};
+pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
+
+/// Filesystem resolver for an explicitly configured desktop module search path.
+#[derive(Clone, Debug)]
+pub struct DesktopResolver {
+    source_root: PathBuf,
+    library_root: Option<PathBuf>,
+    clutch_repository: ClutchRepository,
+    activation_sources: Rc<RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>>,
+    activation_state: Rc<RefCell<DesktopActivationState>>,
+}
+
+#[derive(Debug, Default)]
+struct DesktopActivationState {
+    foreign_functions: HashMap<(String, String), NativeFunction>,
+    active_plugins: HashMap<ModuleActivationLease, DesktopActivation>,
+    shutdown_errors: Vec<String>,
+}
+
+impl Drop for DesktopActivationState {
+    fn drop(&mut self) {
+        let plugins = std::mem::take(&mut self.active_plugins);
+        for (_, mut activation) in plugins {
+            remove_foreign_batch(&mut self.foreign_functions, &activation.plugin.functions);
+            if let Err(error) = activation.plugin.cleanup() {
+                self.shutdown_errors.push(error);
+            }
+        }
+    }
+}
+
+/// Staged desktop-native registrations owned by one imported Clutch module.
+#[derive(Debug)]
+struct DesktopActivation {
+    resolver: DesktopResolver,
+    lease: Option<ModuleActivationLease>,
+    diagnostic_name: String,
+    plugin: StagedClutchPlugin,
+}
+
+impl ModuleActivationTransaction for DesktopActivation {
+    fn register(&self) -> Result<(), ModuleLoadError> {
+        self.resolver
+            .define_foreign_batch(self.plugin.functions.clone())
+            .map_err(|error| ModuleLoadError::Clutch {
+                location: self.diagnostic_name.clone(),
+                message: error.to_string(),
+            })
+    }
+
+    fn rollback(&self) {
+        remove_foreign_batch(
+            &mut self
+                .resolver
+                .activation_state
+                .borrow_mut()
+                .foreign_functions,
+            &self.plugin.functions,
+        );
+    }
+
+    fn cleanup(&mut self) {
+        if let Err(error) = self.plugin.cleanup() {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .shutdown_errors
+                .push(error);
+        }
+    }
+
+    fn retain(self: Box<Self>) {
+        let mut activation = *self;
+        let Some(lease) = activation.lease.take() else {
+            activation.cleanup();
+            return;
+        };
+        let state = activation.resolver.activation_state.clone();
+        state.borrow_mut().active_plugins.insert(lease, activation);
+    }
+}
+
+impl DesktopResolver {
+    /// Creates a resolver using caller-selected project and library roots.
+    #[must_use]
+    pub fn new(source_root: impl Into<PathBuf>, library_root: Option<PathBuf>) -> Self {
+        Self::with_clutch_repository(source_root, library_root, ClutchRepository::default())
+    }
+
+    /// Creates a resolver with an explicit desktop Clutch repository.
+    #[must_use]
+    pub fn with_clutch_repository(
+        source_root: impl Into<PathBuf>,
+        library_root: Option<PathBuf>,
+        clutch_repository: ClutchRepository,
+    ) -> Self {
+        Self {
+            source_root: source_root.into(),
+            library_root,
+            clutch_repository,
+            activation_sources: Rc::new(RefCell::new(HashMap::new())),
+            activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
+        }
+    }
+
+    /// Stages the native registrations required by a resolved module.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when an activation lease is invalid or its
+    /// plugin cannot be prepared.
+    fn stage_module_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<DesktopActivation>, ModuleLoadError> {
+        let Some(lease) = &source.activation else {
+            return Ok(None);
+        };
+        if self
+            .activation_state
+            .borrow()
+            .active_plugins
+            .contains_key(lease)
+        {
+            return Ok(None);
+        }
+        let plugin = self
+            .activation_sources
+            .borrow()
+            .get(lease)
+            .cloned()
+            .ok_or_else(|| ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "module activation lease is no longer available".into(),
+            })?;
+        let mut registrar = clutch::ClutchPluginRegistrar::new(plugin.module_names().to_vec());
+        let result = match &plugin {
+            ClutchPluginSource::Host { root, entry, .. } => {
+                let initializer = self.clutch_repository.plugin(entry).ok_or_else(|| {
+                    ModuleLoadError::Clutch {
+                        location: root.to_string_lossy().into_owned(),
+                        message: format!("plugin entry `{entry}` is not configured by the host"),
+                    }
+                })?;
+                initializer(&mut registrar).map_err(|error| ModuleLoadError::Clutch {
+                    location: root.to_string_lossy().into_owned(),
+                    message: format!("plugin initialization failed: {error}"),
+                })
+            }
+            ClutchPluginSource::Native {
+                root, library, abi, ..
+            } => {
+                if abi == ABI_PROFILE {
+                    let module = FfiPrototypeLibrary::load(library).map_err(|error| {
+                        ModuleLoadError::Clutch {
+                            location: library.to_string_lossy().into_owned(),
+                            message: format!("cannot load native plugin: {error}"),
+                        }
+                    })?;
+                    module
+                        .stage(&mut registrar)
+                        .map_err(|error| ModuleLoadError::Clutch {
+                            location: root.to_string_lossy().into_owned(),
+                            message: format!("native plugin initialization failed: {error}"),
+                        })?;
+                    registrar
+                        .set_cleanup_operation(move || {
+                            module.shutdown();
+                            Ok(())
+                        })
+                        .map_err(|error| ModuleLoadError::Clutch {
+                            location: root.to_string_lossy().into_owned(),
+                            message: format!("cannot retain native plugin cleanup: {error}"),
+                        })
+                } else {
+                    Err(ModuleLoadError::Clutch {
+                        location: root.to_string_lossy().into_owned(),
+                        message: format!("unsupported native ABI `{abi}`"),
+                    })
+                }
+            }
+        };
+        if let Err(error) = result {
+            let mut staged = registrar.finish();
+            let _ = staged.cleanup();
+            return Err(error);
+        }
+        Ok(Some(DesktopActivation {
+            resolver: self.clone(),
+            lease: source.activation.clone(),
+            diagnostic_name: source.diagnostic_name.clone(),
+            plugin: registrar.finish(),
+        }))
+    }
+
+    /// Returns plugin-provided functions for one module-qualified declaration.
+    #[must_use]
+    pub fn foreign_function(&self, module: &str, name: &str) -> Option<NativeFunction> {
+        self.activation_state
+            .borrow()
+            .foreign_functions
+            .get(&(module.into(), name.into()))
+            .cloned()
+    }
+
+    /// Returns native functions exported through the virtual builtin module.
+    #[must_use]
+    pub fn builtin_globals(&self) -> HashMap<String, Value> {
+        self.activation_state
+            .borrow()
+            .foreign_functions
+            .iter()
+            .filter(|((module, _), _)| module == "slug.builtin")
+            .map(|((_, name), function)| (name.clone(), Value::Native(function.clone())))
+            .collect()
+    }
+
+    /// Registers foreign declarations atomically for the selected desktop host.
+    ///
+    /// # Errors
+    ///
+    /// Returns a descriptor error without retaining any supplied function when
+    /// a declaration conflicts with an existing binding.
+    pub fn define_foreign_batch(
+        &self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        let keys = functions
+            .iter()
+            .map(|function| {
+                (
+                    function.module_name().to_string(),
+                    function.name().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut state = self.activation_state.borrow_mut();
+        for (index, key) in keys.iter().enumerate() {
+            if state.foreign_functions.contains_key(key) || keys[..index].contains(key) {
+                return Err(NativeDescriptorError::new(format!(
+                    "foreign binding `{}.{}` is already defined",
+                    key.0, key.1
+                )));
+            }
+        }
+        for (key, function) in keys.into_iter().zip(functions) {
+            state.foreign_functions.insert(key, function);
+        }
+        Ok(())
+    }
+
+    /// Finalizes retained desktop-native activations.
+    pub fn shutdown(&self) {
+        let mut state = self.activation_state.borrow_mut();
+        let plugins = std::mem::take(&mut state.active_plugins);
+        for (_, mut activation) in plugins {
+            remove_foreign_batch(&mut state.foreign_functions, &activation.plugin.functions);
+            if let Err(error) = activation.plugin.cleanup() {
+                state.shutdown_errors.push(error);
+            }
+        }
+    }
+}
+
+fn remove_foreign_batch(
+    registry: &mut HashMap<(String, String), NativeFunction>,
+    functions: &[NativeFunction],
+) {
+    for function in functions {
+        let key = (
+            function.module_name().to_string(),
+            function.name().to_string(),
+        );
+        if registry
+            .get(&key)
+            .is_some_and(|registered| registered.same_function(function))
+        {
+            registry.remove(&key);
+        }
+    }
+}
+
+impl ModuleResolver for DesktopResolver {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        let relative = module_path(request.name)?;
+        let mut candidates = Vec::new();
+        if let Some(importer) = request
+            .importer
+            .map(ModuleKey::as_str)
+            .map(Path::new)
+            .and_then(Path::parent)
+        {
+            candidates.push((importer, importer.join(&relative)));
+        }
+        candidates.push((&self.source_root, self.source_root.join(&relative)));
+        if let Some(library_root) = &self.library_root {
+            candidates.push((library_root, library_root.join(&relative)));
+        }
+        for (root, path) in &candidates {
+            match read_contained_source(root, path) {
+                Ok(Some((path, text))) => {
+                    return Ok(ModuleSource {
+                        key: ModuleKey::new(path.to_string_lossy()),
+                        diagnostic_name: path.to_string_lossy().into_owned(),
+                        text,
+                        activation: None,
+                    });
+                }
+                Err(error) => {
+                    return Err(error);
+                }
+                Ok(None) => {}
+            }
+        }
+        if let Some(root) = self.clutch_repository.provider(request.name) {
+            let module = clutch::load_module(root, request.name).map_err(|message| {
+                ModuleLoadError::Clutch {
+                    location: root.to_string_lossy().into_owned(),
+                    message,
+                }
+            })?;
+            let text = fs::read_to_string(&module.path).map_err(|error| ModuleLoadError::Read {
+                location: module.path.to_string_lossy().into_owned(),
+                message: error.to_string(),
+            })?;
+            let activation = match (module.plugin_entry, module.native_plugin) {
+                (Some(entry), None) => Some(ClutchPluginSource::Host {
+                    root: module.root,
+                    entry,
+                    module_names: module.host_plugin_module_names,
+                }),
+                (None, Some(native)) => Some(ClutchPluginSource::Native {
+                    root: module.root,
+                    library: native.library,
+                    abi: native.abi,
+                    module_names: module.module_names,
+                }),
+                (None, None) => None,
+                (Some(_), Some(_)) => unreachable!("clutch manifest validation is inconsistent"),
+            };
+            let lease = activation.as_ref().map(|plugin| {
+                let lease = ModuleActivationLease::new(plugin.activation_identity());
+                self.activation_sources
+                    .borrow_mut()
+                    .insert(lease.clone(), plugin.clone());
+                lease
+            });
+            return Ok(ModuleSource {
+                key: ModuleKey::new(module.path.to_string_lossy()),
+                diagnostic_name: module.path.to_string_lossy().into_owned(),
+                text,
+                activation: lease,
+            });
+        }
+        Err(ModuleLoadError::NotFound {
+            name: request.name.into(),
+            searched: candidates
+                .iter()
+                .map(|(_, path)| path.to_string_lossy().into_owned())
+                .collect(),
+        })
+    }
+
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
+        self.stage_module_activation(source).map(|activation| {
+            activation
+                .map(|activation| Box::new(activation) as Box<dyn ModuleActivationTransaction>)
+        })
+    }
+}
+
+/// Reads a source candidate only after resolving both it and its selected
+/// lookup root. This prevents a symlink below a project, library, or
+/// importer-relative directory from widening the configured import boundary.
+fn read_contained_source(
+    root: &Path,
+    path: &Path,
+) -> Result<Option<(PathBuf, String)>, ModuleLoadError> {
+    let canonical = match fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ModuleLoadError::Read {
+                location: path.to_string_lossy().into_owned(),
+                message: error.to_string(),
+            });
+        }
+    };
+    let canonical_root = fs::canonicalize(root).map_err(|error| ModuleLoadError::Read {
+        location: root.to_string_lossy().into_owned(),
+        message: error.to_string(),
+    })?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(ModuleLoadError::Read {
+            location: path.to_string_lossy().into_owned(),
+            message: format!(
+                "module path escapes configured import root {}",
+                canonical_root.display()
+            ),
+        });
+    }
+    let text = fs::read_to_string(&canonical).map_err(|error| ModuleLoadError::Read {
+        location: canonical.to_string_lossy().into_owned(),
+        message: error.to_string(),
+    })?;
+    Ok(Some((canonical, text)))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ClutchPluginSource {
+    Host {
+        root: PathBuf,
+        entry: String,
+        module_names: Vec<String>,
+    },
+    Native {
+        root: PathBuf,
+        library: PathBuf,
+        abi: String,
+        module_names: Vec<String>,
+    },
+}
+
+impl ClutchPluginSource {
+    fn root(&self) -> &Path {
+        match self {
+            Self::Host { root, .. } | Self::Native { root, .. } => root,
+        }
+    }
+
+    fn module_names(&self) -> &[String] {
+        match self {
+            Self::Host { module_names, .. } | Self::Native { module_names, .. } => module_names,
+        }
+    }
+
+    fn activation_identity(&self) -> String {
+        let root = self.root().to_string_lossy();
+        match self {
+            Self::Host { entry, .. } => format!("host\0{root}\0{entry}"),
+            Self::Native { .. } => format!("native\0{root}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
+    use super::{ClutchRepository, DesktopResolver};
+    use slug_loader::{ModuleKey, ModuleRequest, ModuleResolver};
+
+    static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
+
+    fn root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "slug-desktop-resolver-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn resolves_importer_relative_then_project_then_library_modules() {
+        let root = root();
+        let project = root.join("project");
+        let library = root.join("library");
+        fs::create_dir_all(project.join("nested")).expect("create project directory");
+        fs::create_dir_all(&library).expect("create library directory");
+        fs::write(project.join("nested/math.slug"), "relative").expect("write relative module");
+        fs::write(project.join("fallback.slug"), "project").expect("write project module");
+        fs::write(library.join("library.slug"), "library").expect("write library module");
+
+        let resolver = DesktopResolver::new(&project, Some(library.clone()));
+        let importer = ModuleKey::new(project.join("nested/main.slug").to_string_lossy());
+        assert_eq!(
+            resolver
+                .resolve(ModuleRequest::new(Some(&importer), "math"))
+                .expect("resolve relative module")
+                .text,
+            "relative"
+        );
+        assert_eq!(
+            resolver
+                .resolve(ModuleRequest::new(None, "fallback"))
+                .expect("resolve project module")
+                .text,
+            "project"
+        );
+        assert_eq!(
+            resolver
+                .resolve(ModuleRequest::new(None, "library"))
+                .expect("resolve library module")
+                .text,
+            "library"
+        );
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    #[test]
+    fn resolves_explicit_clutch_modules_with_activation_leases() {
+        let root = root();
+        let clutch = root.join("example.clutch");
+        fs::create_dir_all(clutch.join("modules")).expect("create clutch module directory");
+        fs::write(
+            clutch.join("modules/library.slug"),
+            "export val answer = 42\n",
+        )
+        .expect("write clutch module");
+        fs::write(
+            clutch.join("clutch.toml"),
+            "[modules]\n\"example.library\" = { source = \"modules/library.slug\", plugin = \"test.plugin\" }\n",
+        )
+        .expect("write clutch manifest");
+        let repository = ClutchRepository::new(vec![("example.library".into(), clutch)])
+            .expect("create clutch repository");
+        let resolver = DesktopResolver::with_clutch_repository(&root, None, repository);
+
+        let source = resolver
+            .resolve(ModuleRequest::new(None, "example.library"))
+            .expect("resolve clutch module");
+
+        assert_eq!(source.text, "export val answer = 42\n");
+        assert!(source.activation.is_some());
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_modules_outside_configured_roots() {
+        let root = root();
+        let project = root.join("project");
+        let library = root.join("library");
+        let outside = root.join("outside");
+        fs::create_dir_all(&project).expect("create project directory");
+        fs::create_dir_all(project.join("nested")).expect("create importer directory");
+        fs::create_dir_all(&library).expect("create library directory");
+        fs::create_dir_all(&outside).expect("create outside directory");
+        fs::write(outside.join("secret.slug"), "export val secret = 42\n")
+            .expect("write outside module");
+        symlink(&outside, project.join("project_escape")).expect("link project escape");
+        symlink(&outside, project.join("nested/importer_escape")).expect("link importer escape");
+        symlink(&outside, library.join("library_escape")).expect("link library escape");
+
+        let resolver = DesktopResolver::new(&project, Some(library));
+        for name in ["project_escape.secret", "library_escape.secret"] {
+            let error = resolver
+                .resolve(ModuleRequest::new(None, name))
+                .expect_err("reject configured-root symlink escape");
+            assert!(matches!(error, super::ModuleLoadError::Read { .. }));
+            assert!(error.to_string().contains("escapes configured import root"));
+        }
+        let importer = ModuleKey::new(project.join("nested/main.slug").to_string_lossy());
+        let error = resolver
+            .resolve(ModuleRequest::new(
+                Some(&importer),
+                "importer_escape.secret",
+            ))
+            .expect_err("reject importer-relative symlink escape");
+        assert!(matches!(error, super::ModuleLoadError::Read { .. }));
+        assert!(error.to_string().contains("escapes configured import root"));
+
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+}

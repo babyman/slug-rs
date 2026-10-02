@@ -1,0 +1,14 @@
+[package]
+name = "slug-nil-loader"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+description = "Deny-all external import loader for restricted Slug hosts"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sluglang/slug"
+
+[lints]
+workspace = true
+
+[dependencies]
+slug-loader = { path = "../slug-loader" }

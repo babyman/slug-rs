@@ -2,8 +2,73 @@
 
 ## Unreleased
 
+- Restored Windows compilation for the experimental native Clutch loader.
+
+- Prevented project, library, and importer-relative module imports from
+  following symlinks outside their configured lookup roots.
+
+- Preserved opaque resolver module identities for runtime relative imports and
+  activated each declared host plugin independently within a Clutch.
+
+- Updated live crate ownership guidance to match the restructured workspace.
+
+- Updated interactive server and REPL diagnostics to name the supported
+  `slug --server` invocation.
+
+- Removed unused serialization dependencies from the VM and made the frontend's
+  benchmark-only serialization dependencies development-only.
+
+- Moved fixture-sidecar parsing and external fixture execution from `slug-vm`
+  to the `slug` executable host, leaving the VM free of filesystem, process,
+  timing, and TOML dependencies. The nil loader is now test-only for `slug`.
+
+- Simplified the crate seams after the loader reorganization: `slug-vm` no
+  longer depends on loader contracts, resolver-owned activation transactions no
+  longer leak into every module host, and the restricted host reuses the
+  frontend's in-memory host assembly. Removed the retired `slug-server`
+  compatibility package; use `slug --server`.
+
+- Completed the crate and loader reorganization: `slug-vm` is runtime-only,
+  `slug-frontend` owns source and module graphs, `slug-desktop-loader` owns
+  desktop activation, and `slug` owns executable configuration and server
+  assembly. Desktop Slug behavior is unchanged.
+
+- Moved the interactive server and NDJSON protocol into `slug`, exposed it as
+  `slug --server`, and updated `slug-repl` to launch that mode by default.
+
+- Added in-memory graph coverage for importer identity, cycles, cache reuse,
+  live exports, static snapshots, and checked missing-module failures.
+
+- Added an injected-resolver frontend graph path. Static import analysis and
+  runtime `import()` now share the same host-provided resolver.
+
+- Moved source parsing, semantic analysis, lowering, diagnostics, and the
+  module graph into `slug-frontend`; the `slug` executable now owns the CLI
+  and fixture-runner binaries. Slug behavior is unchanged.
+
+- Added an explicitly unstable VM host-callback and bytecode-builder seam for
+  frontend migration. Desktop Slug behavior is unchanged.
+
+- Recorded the crate reorganization and import-loader boundary: a runtime-only
+  `slug-vm`, frontend-owned module graph, import-only loaders, a concrete nil
+  loader, and a future `slug --server` executable migration. Desktop source
+  behavior is unchanged; restricted hosts report unavailable imports as checked
+  module errors.
+
+- Added `int(num)` with truncation toward zero, and made finite numeric values
+  a Slug runtime invariant across literals, arithmetic, bytecode, and native
+  result conversion.
+
+- Separated interactive protocol projection and native bindings, FFI
+  platform-library ownership, VM installation ownership, and reusable semantic
+  type relations from their orchestration modules without changing Slug behavior.
+
 - Fixed interactive `var` redeclarations so later reads return the replacement
   value rather than a leaked binding wrapper.
+
+- Recorded the host-owned module-resolution boundary and a staged plan for
+  filesystem-free desktop and embedded module loading; Slug source behavior is
+  unchanged.
 
 - Added a metrics-enabled in-process Fannkuch-redux benchmark to expose
   persistent-list allocation and ownership costs alongside the source timing.
