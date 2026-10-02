@@ -2,7 +2,7 @@
 
 This inventory freezes the observable behavior and Rust seams before the crate
 split described in
-[Crate organization and import loaders](crate-organization-and-import-loaders.md).
+[Crate organization and import loaders](completed/crate-organization-and-import-loaders.md).
 It is a migration aid, not a compatibility promise for the current public
 Rust API.
 
