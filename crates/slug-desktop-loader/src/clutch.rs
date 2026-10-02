@@ -398,6 +398,7 @@ pub struct ClutchModule {
     pub path: PathBuf,
     pub plugin_entry: Option<String>,
     pub native_plugin: Option<NativeClutchPlugin>,
+    pub host_plugin_module_names: Vec<String>,
     pub module_names: Vec<String>,
 }
 
@@ -440,11 +441,20 @@ pub fn load_module(root: &Path, name: &str) -> Result<ClutchModule, String> {
             })
         })
         .transpose()?;
+    let host_plugin_module_names = module.plugin_entry.as_ref().map_or_else(Vec::new, |entry| {
+        manifest
+            .modules
+            .iter()
+            .filter(|(_, module)| module.plugin_entry.as_ref() == Some(entry))
+            .map(|(name, _)| name.clone())
+            .collect()
+    });
     Ok(ClutchModule {
         root,
         path: source_path,
         plugin_entry: module.plugin_entry.clone(),
         native_plugin,
+        host_plugin_module_names,
         module_names: manifest.modules.into_keys().collect(),
     })
 }

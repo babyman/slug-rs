@@ -31,6 +31,37 @@ struct MemoryResolver {
     requests: MemoryRequests,
 }
 
+struct OpaqueKeyResolver;
+
+impl ModuleResolver for OpaqueKeyResolver {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        let module = match (request.importer.map(ModuleKey::as_str), request.name) {
+            (None, "parent") => (
+                "resolver:parent",
+                "diagnostics/parent.slug",
+                "val child = import(\"child\")\nexport val value = child.value\n",
+            ),
+            (Some("resolver:parent"), "child") => (
+                "resolver:child",
+                "diagnostics/child.slug",
+                "export val value = 42\n",
+            ),
+            _ => {
+                return Err(ModuleLoadError::NotFound {
+                    name: request.name.into(),
+                    searched: Vec::new(),
+                });
+            }
+        };
+        Ok(ModuleSource {
+            key: ModuleKey::new(module.0),
+            diagnostic_name: module.1.into(),
+            text: module.2.into(),
+            activation: None,
+        })
+    }
+}
+
 impl ModuleResolver for MemoryResolver {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.requests.borrow_mut().push((
@@ -69,6 +100,9 @@ static ANSWER_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
 static INVALID_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
 static RETRY_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
 static RESOURCE_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+static ALPHA_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+static BETA_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
+static SHARED_PLUGIN_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
 
 fn record_answer_plugin_cleanup() {
     ANSWER_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
@@ -84,6 +118,18 @@ fn record_retry_plugin_cleanup() {
 
 fn record_resource_plugin_cleanup() {
     RESOURCE_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn record_alpha_plugin_cleanup() {
+    ALPHA_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn record_beta_plugin_cleanup() {
+    BETA_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn record_shared_plugin_cleanup() {
+    SHARED_PLUGIN_CLEANUPS.fetch_add(1, Ordering::SeqCst);
 }
 
 fn answer_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
@@ -128,6 +174,30 @@ fn resource_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDe
     let _file = module.resource_type("File", close_unit, destroy_unit)?;
     registrar.define_foreign(module.function("open", NativeArity::Exact(0), returns_nil)?)?;
     registrar.set_cleanup(record_resource_plugin_cleanup)
+}
+
+fn alpha_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    let module = NativeModule::new("example.alpha", ())?;
+    registrar.define_foreign(module.function("value", NativeArity::Exact(0), returns_seven)?)?;
+    registrar.set_cleanup(record_alpha_plugin_cleanup)
+}
+
+fn beta_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    let module = NativeModule::new("example.beta", ())?;
+    registrar.define_foreign(module.function("value", NativeArity::Exact(0), returns_seven)?)?;
+    registrar.set_cleanup(record_beta_plugin_cleanup)
+}
+
+fn shared_plugin(registrar: &mut ClutchPluginRegistrar) -> Result<(), NativeDescriptorError> {
+    for module_name in ["example.alpha", "example.beta"] {
+        let module = NativeModule::new(module_name, ())?;
+        registrar.define_foreign(module.function(
+            "value",
+            NativeArity::Exact(0),
+            returns_seven,
+        )?)?;
+    }
+    registrar.set_cleanup(record_shared_plugin_cleanup)
 }
 
 fn describes_enum_case(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -212,6 +282,35 @@ fn write_plugin_clutch(
         ),
     )
     .expect("write plugin clutch manifest");
+    clutch
+}
+
+fn write_multi_plugin_clutch(
+    root: &std::path::Path,
+    alpha_plugin: &str,
+    beta_plugin: &str,
+) -> std::path::PathBuf {
+    let clutch = root.join("multi-plugin.clutch");
+    fs::create_dir_all(clutch.join("modules")).expect("create multi-plugin module directory");
+    fs::write(
+        clutch.join("modules/alpha.slug"),
+        "export foreign value = fn():num\n",
+    )
+    .expect("write alpha module");
+    fs::write(
+        clutch.join("modules/beta.slug"),
+        "export foreign value = fn():num\n",
+    )
+    .expect("write beta module");
+    fs::write(
+        clutch.join("clutch.toml"),
+        format!(
+            "[modules]\n\
+             \"example.alpha\" = {{ source = \"modules/alpha.slug\", plugin = \"{alpha_plugin}\" }}\n\
+             \"example.beta\" = {{ source = \"modules/beta.slug\", plugin = \"{beta_plugin}\" }}\n"
+        ),
+    )
+    .expect("write multi-plugin clutch manifest");
     clutch
 }
 
@@ -547,6 +646,84 @@ fn clutch_plugins_bind_only_their_declared_module_foreign_functions() {
     }
     assert_eq!(ANSWER_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
     fs::remove_dir_all(root).expect("remove plugin test root");
+}
+
+#[test]
+fn clutch_modules_activate_each_declared_host_plugin_once() {
+    ALPHA_PLUGIN_CLEANUPS.store(0, Ordering::SeqCst);
+    BETA_PLUGIN_CLEANUPS.store(0, Ordering::SeqCst);
+    let root = root("clutch-multiple-host-plugins");
+    fs::create_dir_all(&root).expect("create multi-plugin test root");
+    let clutch = write_multi_plugin_clutch(&root, "test.alpha", "test.beta");
+    {
+        let mut repository = ClutchRepository::new(vec![
+            ("example.alpha".into(), clutch.clone()),
+            ("example.beta".into(), clutch),
+        ])
+        .expect("create repository");
+        repository
+            .define_plugin("test.alpha", alpha_plugin)
+            .expect("configure alpha plugin");
+        repository
+            .define_plugin("test.beta", beta_plugin)
+            .expect("configure beta plugin");
+        let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+        let program = loader
+            .compile_source(
+                &root.join("main.slug").to_string_lossy(),
+                "val alpha = import(\"example.alpha\")\n\
+                 val beta = import(\"example.beta\")\n\
+                 export val result = alpha.value() + beta.value()\n",
+            )
+            .expect("compile multi-plugin consumer");
+        let mut vm = Vm::with_module_loader(loader);
+
+        vm.run_named(&program, "main")
+            .expect("run multi-plugin consumer");
+
+        assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 14}");
+        assert_eq!(ALPHA_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 0);
+        assert_eq!(BETA_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 0);
+    }
+    assert_eq!(ALPHA_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+    assert_eq!(BETA_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+    fs::remove_dir_all(root).expect("remove multi-plugin test root");
+}
+
+#[test]
+fn clutch_modules_share_one_host_plugin_activation_and_registration_scope() {
+    SHARED_PLUGIN_CLEANUPS.store(0, Ordering::SeqCst);
+    let root = root("clutch-shared-host-plugin");
+    fs::create_dir_all(&root).expect("create shared-plugin test root");
+    let clutch = write_multi_plugin_clutch(&root, "test.shared", "test.shared");
+    {
+        let mut repository = ClutchRepository::new(vec![
+            ("example.alpha".into(), clutch.clone()),
+            ("example.beta".into(), clutch),
+        ])
+        .expect("create repository");
+        repository
+            .define_plugin("test.shared", shared_plugin)
+            .expect("configure shared plugin");
+        let loader = ModuleLoader::with_clutch_repository(&root, None, repository);
+        let program = loader
+            .compile_source(
+                &root.join("main.slug").to_string_lossy(),
+                "val alpha = import(\"example.alpha\")\n\
+                 val beta = import(\"example.beta\")\n\
+                 export val result = alpha.value() + beta.value()\n",
+            )
+            .expect("compile shared-plugin consumer");
+        let mut vm = Vm::with_module_loader(loader);
+
+        vm.run_named(&program, "main")
+            .expect("run shared-plugin consumer");
+
+        assert_eq!(vm.exported_values(&program).to_string(), "{\"result\": 14}");
+        assert_eq!(SHARED_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 0);
+    }
+    assert_eq!(SHARED_PLUGIN_CLEANUPS.load(Ordering::SeqCst), 1);
+    fs::remove_dir_all(root).expect("remove shared-plugin test root");
 }
 
 #[test]
@@ -1181,6 +1358,23 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
         vm.exported_values(&program),
         Value::Map(Rc::new(vec![(Value::string("result"), Value::Int(42))]))
     );
+}
+
+#[test]
+fn compiling_a_module_preserves_an_opaque_resolver_key_for_runtime_imports() {
+    let loader = FrontendModuleHost::with_resolver(
+        Rc::new(OpaqueKeyResolver),
+        Rc::new(slug_vm::EmptyVmConfiguration),
+    );
+    let program = loader
+        .compile(None, "parent")
+        .expect("compile parent module through opaque resolver");
+    let mut vm = Vm::with_host(Rc::new(loader));
+
+    vm.run_named(&program, "main")
+        .expect("runtime import uses resolver key rather than diagnostic name");
+
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"value\": 42}");
 }
 
 #[test]

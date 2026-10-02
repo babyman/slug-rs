@@ -120,6 +120,9 @@ impl ModuleGraph {
                 message: error.to_string(),
             })?;
         compilation.program.set_module_name(request.name);
+        // The resolver key, rather than the diagnostic label, is the stable
+        // identity passed back to the host for runtime relative imports.
+        compilation.program.set_module_key(source.key.as_str());
         self.state
             .semantic_snapshots
             .borrow_mut()

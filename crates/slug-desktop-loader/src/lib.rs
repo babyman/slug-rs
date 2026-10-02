@@ -357,7 +357,7 @@ impl ModuleResolver for DesktopResolver {
                 (Some(entry), None) => Some(ClutchPluginSource::Host {
                     root: module.root,
                     entry,
-                    module_names: vec![request.name.into()],
+                    module_names: module.host_plugin_module_names,
                 }),
                 (None, Some(native)) => Some(ClutchPluginSource::Native {
                     root: module.root,
@@ -369,8 +369,7 @@ impl ModuleResolver for DesktopResolver {
                 (Some(_), Some(_)) => unreachable!("clutch manifest validation is inconsistent"),
             };
             let lease = activation.as_ref().map(|plugin| {
-                let lease =
-                    ModuleActivationLease::new(plugin.root().to_string_lossy().into_owned());
+                let lease = ModuleActivationLease::new(plugin.activation_identity());
                 self.activation_sources
                     .borrow_mut()
                     .insert(lease.clone(), plugin.clone());
@@ -428,6 +427,14 @@ impl ClutchPluginSource {
     fn module_names(&self) -> &[String] {
         match self {
             Self::Host { module_names, .. } | Self::Native { module_names, .. } => module_names,
+        }
+    }
+
+    fn activation_identity(&self) -> String {
+        let root = self.root().to_string_lossy();
+        match self {
+            Self::Host { entry, .. } => format!("host\0{root}\0{entry}"),
+            Self::Native { .. } => format!("native\0{root}"),
         }
     }
 }

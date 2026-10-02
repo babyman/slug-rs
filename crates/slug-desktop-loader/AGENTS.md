@@ -1,6 +1,6 @@
 # Slug desktop-loader crate boundary
 
-This crate will implement importer-relative, project-root, library-root, and
+This crate implements importer-relative, project-root, library-root, and
 Clutch resolution plus import-scoped native activation. The executable must
 supply roots and policy; this crate must not inspect `SLUG_HOME`, arguments,
 or configuration files.
