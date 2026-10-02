@@ -12,5 +12,5 @@ they settle successfully. Route session output through queued events rather
 than process stdout.
 
 Cover protocol, lifecycle, output, and retained-work changes in
-`crates/slug-server/tests/interactive_server.rs` and run `make test-server`.
+`crates/slug/tests/interactive_server.rs` and run `make test-server`.
 When a change crosses the terminal boundary, also run `make test-repl`.

@@ -4010,11 +4010,9 @@ impl Vm {
                     span,
                 ));
             };
-            let instance = host
-                .import_module(importer.map(crate::ModuleKey::as_str), &name)
-                .map_err(|error| {
-                    self.error_at(RuntimeErrorKind::Module, error.to_string(), span)
-                })?;
+            let instance = host.import_module(importer, &name).map_err(|error| {
+                self.error_at(RuntimeErrorKind::Module, error.to_string(), span)
+            })?;
             let Value::Map(module_exports) = instance.exports else {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,

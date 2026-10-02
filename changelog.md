@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Simplified the crate seams after the loader reorganization: `slug-vm` no
+  longer depends on loader contracts, resolver-owned activation transactions no
+  longer leak into every module host, and the restricted host reuses the
+  frontend's in-memory host assembly. Removed the retired `slug-server`
+  compatibility package; use `slug --server`.
+
 - Completed the crate and loader reorganization: `slug-vm` is runtime-only,
   `slug-frontend` owns source and module graphs, `slug-desktop-loader` owns
   desktop activation, and `slug` owns executable configuration and server

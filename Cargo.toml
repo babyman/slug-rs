@@ -7,7 +7,6 @@ members = [
     "crates/slug-restricted-host",
     "crates/slug-desktop-loader",
     "crates/slug",
-    "crates/slug-server",
     "crates/slug-repl",
 ]
 resolver = "3"

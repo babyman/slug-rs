@@ -8,9 +8,7 @@ use std::{
     rc::Rc,
 };
 
-use slug_desktop_loader::{
-    ClutchRepository, ClutchRepositoryError, DesktopActivation, DesktopResolver,
-};
+use slug_desktop_loader::{ClutchRepository, ClutchRepositoryError, DesktopResolver};
 use slug_frontend::{
     InteractiveCompilation, InteractiveCompilerState, ModuleGraph, ModuleGraphHost, ModuleInstance,
     SourceError,
@@ -250,44 +248,18 @@ impl ModuleResolver for DesktopLoader {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
     }
+
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn slug_loader::ModuleActivationTransaction>>, ModuleLoadError> {
+        self.state.resolver.stage_activation(source)
+    }
 }
 
 impl ModuleGraphHost for DesktopLoader {
-    type Activation = DesktopActivation;
-
     fn builtin_globals(&self) -> HashMap<String, Value> {
         self.state.resolver.builtin_globals()
-    }
-
-    fn stage_module_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Self::Activation>, ModuleLoadError> {
-        self.state.resolver.stage_module_activation(source)
-    }
-
-    fn register_module_activation(
-        &self,
-        source: &ModuleSource,
-        activation: &Self::Activation,
-    ) -> Result<(), ModuleLoadError> {
-        self.state
-            .resolver
-            .register_module_activation(source, activation)
-    }
-
-    fn remove_module_activation(&self, activation: &Self::Activation) {
-        self.state.resolver.remove_module_activation(activation);
-    }
-
-    fn cleanup_module_activation(&self, activation: &mut Option<Self::Activation>) {
-        self.state.resolver.cleanup_module_activation(activation);
-    }
-
-    fn retain_module_activation(&self, source: &ModuleSource, activation: Self::Activation) {
-        self.state
-            .resolver
-            .retain_module_activation(source, activation);
     }
 
     fn module_vm(&self, bindings: &[String]) -> Vm {

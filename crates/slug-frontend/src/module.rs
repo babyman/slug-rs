@@ -65,39 +65,10 @@ struct ModuleGraphState {
 /// compilation and execution.
 ///
 /// This is an intentionally unstable composition seam. A frontend graph host
-/// supplies VM services and owns activation transactions; a resolver supplies
-/// module source. Desktop policy does not belong to the graph itself.
+/// supplies VM services, while a resolver owns source and any activation
+/// transaction. Desktop policy does not belong to the graph itself.
 pub trait ModuleGraphHost: ModuleResolver {
-    type Activation;
-
     fn builtin_globals(&self) -> HashMap<String, Value>;
-
-    /// Stages any resolver-owned activation required by `source`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a checked error when the activation cannot be prepared.
-    fn stage_module_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Self::Activation>, ModuleLoadError>;
-
-    /// Publishes one staged activation's native registrations.
-    ///
-    /// # Errors
-    ///
-    /// Returns a checked error without publishing a partial registration batch.
-    fn register_module_activation(
-        &self,
-        source: &ModuleSource,
-        activation: &Self::Activation,
-    ) -> Result<(), ModuleLoadError>;
-
-    fn remove_module_activation(&self, activation: &Self::Activation);
-
-    fn cleanup_module_activation(&self, activation: &mut Option<Self::Activation>);
-
-    fn retain_module_activation(&self, source: &ModuleSource, activation: Self::Activation);
 
     fn module_vm(&self, bindings: &[String]) -> Vm;
 }
@@ -268,18 +239,22 @@ impl ModuleGraph {
             return Ok(instance.clone());
         }
 
-        let mut activation = host.stage_module_activation(&source)?;
+        let mut activation = host.stage_activation(&source)?;
         let program = match self.compile_cached_or_source(host, &source, request.name) {
             Ok(program) => program,
             Err(error) => {
-                host.cleanup_module_activation(&mut activation);
+                if let Some(activation) = activation.as_mut() {
+                    activation.cleanup();
+                }
                 return Err(error);
             }
         };
         if let Some(staged) = activation.as_ref()
-            && let Err(error) = host.register_module_activation(&source, staged)
+            && let Err(error) = staged.register()
         {
-            host.cleanup_module_activation(&mut activation);
+            if let Some(activation) = activation.as_mut() {
+                activation.cleanup();
+            }
             return Err(error);
         }
 
@@ -288,9 +263,11 @@ impl ModuleGraph {
             Ok(program) => program,
             Err(error) => {
                 if let Some(staged) = activation.as_ref() {
-                    host.remove_module_activation(staged);
+                    staged.rollback();
                 }
-                host.cleanup_module_activation(&mut activation);
+                if let Some(activation) = activation.as_mut() {
+                    activation.cleanup();
+                }
                 return Err(ModuleLoadError::Source {
                     location: source.diagnostic_name.clone(),
                     message: error.to_string(),
@@ -312,9 +289,11 @@ impl ModuleGraph {
         if let Err(error) = vm.run_module(&program) {
             self.state.instances.borrow_mut().remove(&source.key);
             if let Some(staged) = activation.as_ref() {
-                host.remove_module_activation(staged);
+                staged.rollback();
             }
-            host.cleanup_module_activation(&mut activation);
+            if let Some(activation) = activation.as_mut() {
+                activation.cleanup();
+            }
             return Err(ModuleLoadError::Source {
                 location: source.diagnostic_name.clone(),
                 message: error.to_string(),
@@ -330,7 +309,7 @@ impl ModuleGraph {
             .borrow_mut()
             .insert(source.key.clone(), instance.clone());
         if let Some(activation) = activation {
-            host.retain_module_activation(&source, activation);
+            activation.retain();
         }
         Ok(instance)
     }
@@ -357,7 +336,7 @@ impl ModuleGraph {
                 message: error.to_string(),
             })?;
         compilation.program.set_module_name(module_name);
-        compilation.program.set_module_key(source.key.clone());
+        compilation.program.set_module_key(source.key.as_str());
         self.state
             .semantic_snapshots
             .borrow_mut()
@@ -479,6 +458,13 @@ impl ModuleHost {
 impl ModuleResolver for ModuleHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
+    }
+
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn slug_loader::ModuleActivationTransaction>>, ModuleLoadError> {
+        self.state.resolver.stage_activation(source)
     }
 }
 
@@ -641,42 +627,9 @@ impl ModuleHost {
 }
 
 impl ModuleGraphHost for ModuleHost {
-    type Activation = ();
-
     fn builtin_globals(&self) -> HashMap<String, Value> {
         self.builtin_globals()
     }
-
-    fn stage_module_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Self::Activation>, ModuleLoadError> {
-        source.activation.as_ref().map_or_else(
-            || Ok(None),
-            |lease| {
-                Err(ModuleLoadError::Clutch {
-                    location: source.diagnostic_name.clone(),
-                    message: format!(
-                        "module activation lease `{lease:?}` requires an executable host"
-                    ),
-                })
-            },
-        )
-    }
-
-    fn register_module_activation(
-        &self,
-        _: &ModuleSource,
-        &(): &Self::Activation,
-    ) -> Result<(), ModuleLoadError> {
-        Ok(())
-    }
-
-    fn remove_module_activation(&self, &(): &Self::Activation) {}
-
-    fn cleanup_module_activation(&self, _: &mut Option<Self::Activation>) {}
-
-    fn retain_module_activation(&self, _: &ModuleSource, (): Self::Activation) {}
 
     fn module_vm(&self, bindings: &[String]) -> Vm {
         let host: std::rc::Rc<dyn VmHost> = std::rc::Rc::new(self.clone());

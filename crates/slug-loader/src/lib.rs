@@ -59,6 +59,28 @@ impl ModuleActivation {
     }
 }
 
+/// Resolver-owned transaction for one import-scoped activation.
+///
+/// The frontend sequences this transaction around module initialization without
+/// learning how a resolver registers or tears down host capabilities.
+pub trait ModuleActivationTransaction {
+    /// Publishes the activation's capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error without publishing a partial activation.
+    fn register(&self) -> Result<(), ModuleLoadError>;
+
+    /// Reverses capabilities published before module initialization failed.
+    fn rollback(&self);
+
+    /// Releases an activation that did not become live.
+    fn cleanup(&mut self);
+
+    /// Transfers a live activation back to its resolver for shutdown.
+    fn retain(self: Box<Self>);
+}
+
 /// Resolves logical module identities into host-provided source.
 pub trait ModuleResolver {
     /// Resolves one requested module without exposing host storage to the
@@ -69,6 +91,29 @@ pub trait ModuleResolver {
     /// Returns a checked failure when the name is invalid, unavailable, or its
     /// host-provided source cannot be read.
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError>;
+
+    /// Stages host capabilities required by a resolved module.
+    ///
+    /// Resolvers without import-scoped activation keep the default. A resolver
+    /// that returns an activation lease must override this method rather than
+    /// leaving the frontend to know its storage representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when this resolver cannot stage the source's
+    /// activation lease.
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
+        if source.activation.is_some() {
+            return Err(ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "module activation requires resolver support".into(),
+            });
+        }
+        Ok(None)
+    }
 }
 
 /// Checked failure while resolving or compiling one imported module.

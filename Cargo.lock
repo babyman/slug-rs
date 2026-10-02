@@ -317,16 +317,8 @@ name = "slug-restricted-host"
 version = "0.1.0"
 dependencies = [
  "slug-frontend",
- "slug-loader",
  "slug-nil-loader",
  "slug-vm",
-]
-
-[[package]]
-name = "slug-server"
-version = "0.1.0"
-dependencies = [
- "slug",
 ]
 
 [[package]]

@@ -12,8 +12,8 @@ use std::{
 };
 
 use slug_loader::{
-    ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
-    module_path,
+    ModuleActivation as ModuleActivationLease, ModuleActivationTransaction, ModuleKey,
+    ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
 };
 use slug_vm::{NativeDescriptorError, NativeFunction, Value};
 #[doc(hidden)]
@@ -33,14 +33,14 @@ pub struct DesktopResolver {
     source_root: PathBuf,
     library_root: Option<PathBuf>,
     clutch_repository: ClutchRepository,
-    activation_sources: Rc<RefCell<HashMap<ModuleActivation, ClutchPluginSource>>>,
+    activation_sources: Rc<RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>>,
     activation_state: Rc<RefCell<DesktopActivationState>>,
 }
 
 #[derive(Debug, Default)]
 struct DesktopActivationState {
     foreign_functions: HashMap<(String, String), NativeFunction>,
-    active_plugins: HashMap<ModuleActivation, DesktopActivation>,
+    active_plugins: HashMap<ModuleActivationLease, DesktopActivation>,
     shutdown_errors: Vec<String>,
 }
 
@@ -59,7 +59,52 @@ impl Drop for DesktopActivationState {
 /// Staged desktop-native registrations owned by one imported Clutch module.
 #[derive(Debug)]
 pub struct DesktopActivation {
+    resolver: DesktopResolver,
+    lease: Option<ModuleActivationLease>,
+    diagnostic_name: String,
     plugin: StagedClutchPlugin,
+}
+
+impl ModuleActivationTransaction for DesktopActivation {
+    fn register(&self) -> Result<(), ModuleLoadError> {
+        self.resolver
+            .define_foreign_batch(self.plugin.functions.clone())
+            .map_err(|error| ModuleLoadError::Clutch {
+                location: self.diagnostic_name.clone(),
+                message: error.to_string(),
+            })
+    }
+
+    fn rollback(&self) {
+        remove_foreign_batch(
+            &mut self
+                .resolver
+                .activation_state
+                .borrow_mut()
+                .foreign_functions,
+            &self.plugin.functions,
+        );
+    }
+
+    fn cleanup(&mut self) {
+        if let Err(error) = self.plugin.cleanup() {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .shutdown_errors
+                .push(error);
+        }
+    }
+
+    fn retain(self: Box<Self>) {
+        let mut activation = *self;
+        let Some(lease) = activation.lease.take() else {
+            activation.cleanup();
+            return;
+        };
+        let state = activation.resolver.activation_state.clone();
+        state.borrow_mut().active_plugins.insert(lease, activation);
+    }
 }
 
 impl DesktopResolver {
@@ -91,7 +136,7 @@ impl DesktopResolver {
     ///
     /// Returns a checked error when an activation lease is invalid or its
     /// plugin cannot be prepared.
-    pub fn stage_module_activation(
+    fn stage_module_activation(
         &self,
         source: &ModuleSource,
     ) -> Result<Option<DesktopActivation>, ModuleLoadError> {
@@ -168,56 +213,11 @@ impl DesktopResolver {
             return Err(error);
         }
         Ok(Some(DesktopActivation {
+            resolver: self.clone(),
+            lease: source.activation.clone(),
+            diagnostic_name: source.diagnostic_name.clone(),
             plugin: registrar.finish(),
         }))
-    }
-
-    /// Publishes a staged activation atomically into this desktop loader.
-    ///
-    /// # Errors
-    ///
-    /// Returns a checked error without publishing a partial batch when a
-    /// foreign binding conflicts with an existing registration.
-    pub fn register_module_activation(
-        &self,
-        source: &ModuleSource,
-        activation: &DesktopActivation,
-    ) -> Result<(), ModuleLoadError> {
-        self.define_foreign_batch(activation.plugin.functions.clone())
-            .map_err(|error| ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
-            })
-    }
-
-    /// Removes registrations published by a failed module initialization.
-    pub fn remove_module_activation(&self, activation: &DesktopActivation) {
-        remove_foreign_batch(
-            &mut self.activation_state.borrow_mut().foreign_functions,
-            &activation.plugin.functions,
-        );
-    }
-
-    /// Runs a failed activation's one-shot cleanup hook.
-    pub fn cleanup_module_activation(&self, activation: &mut Option<DesktopActivation>) {
-        if let Some(activation) = activation
-            && let Err(error) = activation.plugin.cleanup()
-        {
-            self.activation_state
-                .borrow_mut()
-                .shutdown_errors
-                .push(error);
-        }
-    }
-
-    /// Retains a successfully initialized module activation until shutdown.
-    pub fn retain_module_activation(&self, source: &ModuleSource, activation: DesktopActivation) {
-        if let Some(lease) = &source.activation {
-            self.activation_state
-                .borrow_mut()
-                .active_plugins
-                .insert(lease.clone(), activation);
-        }
     }
 
     /// Returns plugin-provided functions for one module-qualified declaration.
@@ -369,7 +369,8 @@ impl ModuleResolver for DesktopResolver {
                 (Some(_), Some(_)) => unreachable!("clutch manifest validation is inconsistent"),
             };
             let lease = activation.as_ref().map(|plugin| {
-                let lease = ModuleActivation::new(plugin.root().to_string_lossy().into_owned());
+                let lease =
+                    ModuleActivationLease::new(plugin.root().to_string_lossy().into_owned());
                 self.activation_sources
                     .borrow_mut()
                     .insert(lease.clone(), plugin.clone());
@@ -388,6 +389,16 @@ impl ModuleResolver for DesktopResolver {
                 .iter()
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect(),
+        })
+    }
+
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
+        self.stage_module_activation(source).map(|activation| {
+            activation
+                .map(|activation| Box::new(activation) as Box<dyn ModuleActivationTransaction>)
         })
     }
 }

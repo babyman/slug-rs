@@ -7,10 +7,10 @@ use std::{
 use slug::DesktopLoader as ModuleLoader;
 use slug_desktop_loader::{ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError};
 use slug_frontend::{ModuleGraph, ModuleHost as FrontendModuleHost, compile};
-use slug_loader::{ModuleKey, ModuleSource};
+use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_vm::{
-    ModuleLoadError, ModuleRequest, ModuleResolver, NativeArity, NativeCall, NativeDescriptorError,
-    NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind, Value, Vm,
+    NativeArity, NativeCall, NativeDescriptorError, NativeModule, NativeOwnedValue, NativeStatus,
+    RuntimeErrorKind, Value, Vm,
 };
 use std::rc::Rc;
 

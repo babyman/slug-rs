@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{CallableIdentity, ModuleKey};
+use crate::CallableIdentity;
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
@@ -40,7 +40,7 @@ pub struct Program {
     exports: Vec<String>,
     entrypoint: Option<Entrypoint>,
     module_name: String,
-    module_key: Option<ModuleKey>,
+    module_key: Option<String>,
     callable_identities: Vec<CallableIdentity>,
     sources: Vec<Arc<str>>,
     source_ids: HashMap<Arc<str>, SourceId>,
@@ -865,8 +865,8 @@ impl Program {
         &self.module_name
     }
 
-    pub(crate) fn module_key(&self) -> Option<&ModuleKey> {
-        self.module_key.as_ref()
+    pub(crate) fn module_key(&self) -> Option<&str> {
+        self.module_key.as_deref()
     }
 
     pub(crate) fn set_bindings(&mut self, bindings: Vec<String>) {
@@ -903,8 +903,8 @@ impl Program {
     }
 
     #[doc(hidden)]
-    pub fn set_module_key(&mut self, module_key: ModuleKey) {
-        self.module_key = Some(module_key);
+    pub fn set_module_key(&mut self, module_key: impl Into<String>) {
+        self.module_key = Some(module_key.into());
     }
 
     pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {

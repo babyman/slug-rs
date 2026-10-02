@@ -45,10 +45,6 @@ pub use native::{
 pub use runtime_host::{
     EmptyVmConfiguration, VmConfiguration, VmHost, VmHostError, VmModuleExports,
 };
-#[doc(hidden)]
-pub use slug_loader::{
-    ModuleActivation, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
-};
 #[cfg(feature = "concurrency")]
 pub use value::Task;
 pub use value::{

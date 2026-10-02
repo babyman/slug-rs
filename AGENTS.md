@@ -9,7 +9,6 @@ abstractions.
 
 ```
 crates/slug-vm/ Runtime, bytecode, dynamic values, compiler, and VM tests
-crates/slug-server/ Interactive session protocol and server
 crates/slug-repl/ Terminal REPL client
 tests/      Shared Slug conformance fixtures and native C fixtures
 docs/       Architecture, development policy, and canonical language documents

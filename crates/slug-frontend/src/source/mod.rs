@@ -3,7 +3,6 @@
 
 use std::{collections::HashMap, fmt};
 
-use slug_loader::ModuleKey;
 use slug_vm::{Program, SourceSpan};
 
 #[path = "syntax/ast.rs"]
@@ -85,7 +84,7 @@ pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
     let mut compilation = compile_expressions(path, expressions, ImportSnapshots::new())?;
-    compilation.program.set_module_key(ModuleKey::new(path));
+    compilation.program.set_module_key(path);
     Ok(compilation.program)
 }
 
@@ -109,7 +108,7 @@ pub(crate) fn compile_with_resolver(
         entry.insert(snapshot);
     }
     let mut compilation = compile_expressions(path, expressions, imports)?;
-    compilation.program.set_module_key(ModuleKey::new(path));
+    compilation.program.set_module_key(path);
     Ok(compilation)
 }
 
