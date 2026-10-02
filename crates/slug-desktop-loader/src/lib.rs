@@ -317,15 +317,15 @@ impl ModuleResolver for DesktopResolver {
             .map(Path::new)
             .and_then(Path::parent)
         {
-            candidates.push(importer.join(&relative));
+            candidates.push((importer, importer.join(&relative)));
         }
-        candidates.push(self.source_root.join(&relative));
+        candidates.push((&self.source_root, self.source_root.join(&relative)));
         if let Some(library_root) = &self.library_root {
-            candidates.push(library_root.join(&relative));
+            candidates.push((library_root, library_root.join(&relative)));
         }
-        for path in &candidates {
-            match fs::read_to_string(path) {
-                Ok(text) => {
+        for (root, path) in &candidates {
+            match read_contained_source(root, path) {
+                Ok(Some((path, text))) => {
                     return Ok(ModuleSource {
                         key: ModuleKey::new(path.to_string_lossy()),
                         diagnostic_name: path.to_string_lossy().into_owned(),
@@ -333,13 +333,10 @@ impl ModuleResolver for DesktopResolver {
                         activation: None,
                     });
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
-                    return Err(ModuleLoadError::Read {
-                        location: path.to_string_lossy().into_owned(),
-                        message: error.to_string(),
-                    });
+                    return Err(error);
                 }
+                Ok(None) => {}
             }
         }
         if let Some(root) = self.clutch_repository.provider(request.name) {
@@ -386,7 +383,7 @@ impl ModuleResolver for DesktopResolver {
             name: request.name.into(),
             searched: candidates
                 .iter()
-                .map(|path| path.to_string_lossy().into_owned())
+                .map(|(_, path)| path.to_string_lossy().into_owned())
                 .collect(),
         })
     }
@@ -400,6 +397,43 @@ impl ModuleResolver for DesktopResolver {
                 .map(|activation| Box::new(activation) as Box<dyn ModuleActivationTransaction>)
         })
     }
+}
+
+/// Reads a source candidate only after resolving both it and its selected
+/// lookup root. This prevents a symlink below a project, library, or
+/// importer-relative directory from widening the configured import boundary.
+fn read_contained_source(
+    root: &Path,
+    path: &Path,
+) -> Result<Option<(PathBuf, String)>, ModuleLoadError> {
+    let canonical = match fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ModuleLoadError::Read {
+                location: path.to_string_lossy().into_owned(),
+                message: error.to_string(),
+            });
+        }
+    };
+    let canonical_root = fs::canonicalize(root).map_err(|error| ModuleLoadError::Read {
+        location: root.to_string_lossy().into_owned(),
+        message: error.to_string(),
+    })?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(ModuleLoadError::Read {
+            location: path.to_string_lossy().into_owned(),
+            message: format!(
+                "module path escapes configured import root {}",
+                canonical_root.display()
+            ),
+        });
+    }
+    let text = fs::read_to_string(&canonical).map_err(|error| ModuleLoadError::Read {
+        location: canonical.to_string_lossy().into_owned(),
+        message: error.to_string(),
+    })?;
+    Ok(Some((canonical, text)))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -446,6 +480,9 @@ mod tests {
         path::PathBuf,
         sync::atomic::{AtomicUsize, Ordering},
     };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     use super::{ClutchRepository, DesktopResolver};
     use slug_loader::{ModuleKey, ModuleRequest, ModuleResolver};
@@ -522,6 +559,44 @@ mod tests {
 
         assert_eq!(source.text, "export val answer = 42\n");
         assert!(source.activation.is_some());
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_modules_outside_configured_roots() {
+        let root = root();
+        let project = root.join("project");
+        let library = root.join("library");
+        let outside = root.join("outside");
+        fs::create_dir_all(&project).expect("create project directory");
+        fs::create_dir_all(project.join("nested")).expect("create importer directory");
+        fs::create_dir_all(&library).expect("create library directory");
+        fs::create_dir_all(&outside).expect("create outside directory");
+        fs::write(outside.join("secret.slug"), "export val secret = 42\n")
+            .expect("write outside module");
+        symlink(&outside, project.join("project_escape")).expect("link project escape");
+        symlink(&outside, project.join("nested/importer_escape")).expect("link importer escape");
+        symlink(&outside, library.join("library_escape")).expect("link library escape");
+
+        let resolver = DesktopResolver::new(&project, Some(library));
+        for name in ["project_escape.secret", "library_escape.secret"] {
+            let error = resolver
+                .resolve(ModuleRequest::new(None, name))
+                .expect_err("reject configured-root symlink escape");
+            assert!(matches!(error, super::ModuleLoadError::Read { .. }));
+            assert!(error.to_string().contains("escapes configured import root"));
+        }
+        let importer = ModuleKey::new(project.join("nested/main.slug").to_string_lossy());
+        let error = resolver
+            .resolve(ModuleRequest::new(
+                Some(&importer),
+                "importer_escape.secret",
+            ))
+            .expect_err("reject importer-relative symlink escape");
+        assert!(matches!(error, super::ModuleLoadError::Read { .. }));
+        assert!(error.to_string().contains("escapes configured import root"));
+
         fs::remove_dir_all(root).expect("remove temporary resolver directory");
     }
 }

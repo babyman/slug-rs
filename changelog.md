@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Prevented project, library, and importer-relative module imports from
+  following symlinks outside their configured lookup roots.
+
 - Preserved opaque resolver module identities for runtime relative imports and
   activated each declared host plugin independently within a Clutch.
 
