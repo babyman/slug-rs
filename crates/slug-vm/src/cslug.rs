@@ -8,7 +8,8 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 
 use crate::{
     CallArgumentKind, CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature,
-    ModuleDeclaration, ModuleTag, Program, SchemaField, SelectCase, SourceSpan,
+    MatchMapKey, MatchPattern, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Program,
+    SchemaField, SelectCase, SourceSpan, Value,
 };
 use crate::{Capture, bytecode::CallArgumentsId};
 
@@ -115,6 +116,8 @@ pub enum Error {
     InvalidStructure(String),
     /// A graph index or duplicate graph key is invalid.
     InvalidReference(String),
+    /// A value is outside the source-derived version-1 subset.
+    UnsupportedValue(String),
 }
 
 impl core::fmt::Display for Error {
@@ -145,6 +148,9 @@ impl core::fmt::Display for Error {
             }
             Self::InvalidReference(message) => {
                 write!(formatter, "invalid .cslug reference: {message}")
+            }
+            Self::UnsupportedValue(message) => {
+                write!(formatter, "unsupported .cslug value: {message}")
             }
         }
     }
@@ -384,6 +390,11 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         schema_fields.push(fields);
     }
     let struct_fields = reader.strings_lists("struct field lists")?;
+    let match_pattern_count = reader.usize("match pattern count")?;
+    let mut match_patterns = Vec::with_capacity(match_pattern_count);
+    for _ in 0..match_pattern_count {
+        match_patterns.push(reader.match_pattern(0)?);
+    }
     let interpolations = reader.strings_lists("interpolation lists")?;
     let list_spreads = reader.bool_lists("list spread lists")?;
     let call_arguments = reader.call_argument_lists()?;
@@ -413,6 +424,7 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         capture_lists,
         schema_fields,
         struct_fields,
+        match_patterns,
         interpolations,
         list_spreads,
         call_arguments,
@@ -594,6 +606,38 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    fn i64(&mut self, context: &'static str) -> Result<i64, Error> {
+        let encoded = self.usize(context)? as u64;
+        Ok(((encoded >> 1) as i64) ^ -((encoded & 1) as i64))
+    }
+
+    fn value(&mut self, context: &'static str) -> Result<Value, Error> {
+        match self.byte(context)? {
+            0 => Ok(Value::Nil),
+            1 => Ok(Value::Bool(false)),
+            2 => Ok(Value::Bool(true)),
+            3 => Ok(Value::Int(self.i64(context)?)),
+            4 => {
+                let bytes = self.bytes(8, context)?;
+                let value = f64::from_le_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ]);
+                if !value.is_finite() {
+                    return Err(Error::UnsupportedValue("non-finite number".into()));
+                }
+                Ok(Value::Float(value))
+            }
+            5 => Ok(Value::string(self.string(1024 * 1024, context)?)),
+            6 => {
+                let length = self.usize(context)?;
+                Ok(Value::Bytes(alloc::rc::Rc::new(
+                    self.bytes(length, context)?.to_vec(),
+                )))
+            }
+            _ => Err(Error::UnsupportedValue("value tag".into())),
+        }
+    }
+
     fn string(&mut self, limit: usize, context: &'static str) -> Result<String, Error> {
         let length = self.usize(context)?;
         if length > limit {
@@ -676,6 +720,135 @@ impl<'a> Reader<'a> {
         Ok(lists)
     }
 
+    fn match_pattern(&mut self, depth: usize) -> Result<MatchPattern, Error> {
+        if depth >= 128 {
+            return Err(Error::LimitExceeded {
+                context: "match pattern depth",
+            });
+        }
+        match self.byte("match pattern kind")? {
+            0 => Ok(MatchPattern::Literal(self.value("match literal")?)),
+            1 => Ok(MatchPattern::Enum(self.usize("match enum operand")?)),
+            2 => Ok(MatchPattern::Wildcard),
+            3 => Ok(MatchPattern::Binding),
+            4 => Ok(MatchPattern::Pinned(self.usize("match pinned operand")?)),
+            5 => Ok(MatchPattern::At(Box::new(self.match_pattern(depth + 1)?))),
+            6 => {
+                let count = self.usize("match alternative count")?;
+                let mut patterns = Vec::with_capacity(count);
+                for _ in 0..count {
+                    patterns.push(self.match_pattern(depth + 1)?);
+                }
+                Ok(MatchPattern::Alternatives(patterns))
+            }
+            7 => {
+                let count = self.usize("match list item count")?;
+                let mut items = Vec::with_capacity(count);
+                for _ in 0..count {
+                    items.push(self.match_pattern(depth + 1)?);
+                }
+                Ok(MatchPattern::List {
+                    items,
+                    rest: self.match_rest()?,
+                })
+            }
+            8 => {
+                let count = self.usize("match map entry count")?;
+                let mut entries = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let key = match self.byte("match map key kind")? {
+                        0 => MatchMapKey::String(self.string(1024 * 1024, "match map key")?),
+                        1 => MatchMapKey::Operand(self.usize("match map key operand")?),
+                        _ => return Err(Error::InvalidStructure("match map key kind".into())),
+                    };
+                    entries.push((key, self.match_pattern(depth + 1)?));
+                }
+                Ok(MatchPattern::Map {
+                    entries,
+                    rest: self.match_rest()?,
+                    exact: self.bool("match map exact")?,
+                })
+            }
+            9 => Ok(MatchPattern::Constrained {
+                pattern: Box::new(self.match_pattern(depth + 1)?),
+                constraint: self.match_type(depth + 1)?,
+            }),
+            _ => Err(Error::InvalidStructure("match pattern kind".into())),
+        }
+    }
+
+    fn match_rest(&mut self) -> Result<MatchRest, Error> {
+        match self.byte("match rest")? {
+            0 => Ok(MatchRest::None),
+            1 => Ok(MatchRest::Discard),
+            2 => Ok(MatchRest::Binding),
+            _ => Err(Error::InvalidStructure("match rest".into())),
+        }
+    }
+
+    fn match_type(&mut self, depth: usize) -> Result<MatchType, Error> {
+        if depth >= 128 {
+            return Err(Error::LimitExceeded {
+                context: "match type depth",
+            });
+        }
+        match self.byte("match type kind")? {
+            0 => Ok(MatchType::Any),
+            1 => Ok(MatchType::Nil),
+            2 => Ok(MatchType::Bool),
+            3 => Ok(MatchType::Num),
+            4 => Ok(MatchType::Str),
+            5 => Ok(MatchType::Bytes),
+            6 => Ok(MatchType::Resource {
+                module: self.string(1024 * 1024, "match resource module")?,
+                name: self.string(1024 * 1024, "match resource name")?,
+            }),
+            7 => Ok(MatchType::Enum {
+                module: self.string(1024 * 1024, "match enum module")?,
+                name: self.string(1024 * 1024, "match enum name")?,
+            }),
+            8 => Ok(MatchType::List(self.optional_match_type(depth + 1)?)),
+            9 => Ok(MatchType::Map(
+                match self.byte("match map type presence")? {
+                    0 => None,
+                    1 => Some((
+                        Box::new(self.match_type(depth + 1)?),
+                        Box::new(self.match_type(depth + 1)?),
+                    )),
+                    _ => return Err(Error::InvalidStructure("match map type presence".into())),
+                },
+            )),
+            10 => Ok(MatchType::Function),
+            11 => Ok(MatchType::Task),
+            12 => Ok(MatchType::Channel),
+            13 => Ok(MatchType::Schema),
+            14 => Ok(MatchType::Struct(
+                match self.byte("match struct type presence")? {
+                    0 => None,
+                    1 => Some(self.usize("match struct operand")?),
+                    _ => return Err(Error::InvalidStructure("match struct type presence".into())),
+                },
+            )),
+            15 => {
+                let count = self.usize("match union type count")?;
+                let mut types = Vec::with_capacity(count);
+                for _ in 0..count {
+                    types.push(self.match_type(depth + 1)?);
+                }
+                Ok(MatchType::Union(types))
+            }
+            _ => Err(Error::InvalidStructure("match type kind".into())),
+        }
+    }
+
+    fn optional_match_type(&mut self, depth: usize) -> Result<Option<Box<MatchType>>, Error> {
+        match self.byte("match type presence")? {
+            0 => Ok(None),
+            1 => Ok(Some(Box::new(self.match_type(depth)?))),
+            _ => Err(Error::InvalidStructure("match type presence".into())),
+        }
+    }
+
     fn select_case_lists(&mut self) -> Result<Vec<Vec<SelectCase>>, Error> {
         let count = self.usize("select case lists")?;
         let mut lists = Vec::with_capacity(count);
@@ -720,7 +893,8 @@ const fn uleb_length(mut value: u64) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, HEADER_LENGTH, Header, Limits, decode_envelope, encode_header};
+    use super::{Error, HEADER_LENGTH, Header, Limits, Reader, decode_envelope, encode_header};
+    use crate::Value;
 
     fn uleb(mut value: usize, output: &mut Vec<u8>) {
         loop {
@@ -750,8 +924,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(16, &mut module);
-        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        uleb(17, &mut module);
+        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -859,6 +1033,10 @@ mod tests {
         uleb(0, &mut record); // capture lists
         uleb(0, &mut record); // schema field lists
         uleb(0, &mut record); // struct field lists
+        uleb(1, &mut record); // match patterns
+        record.push(9); // constrained pattern
+        record.push(3); // binding
+        record.push(4); // string constraint
         uleb(0, &mut record); // interpolation lists
         uleb(0, &mut record); // list spread lists
         uleb(0, &mut record); // call argument lists
@@ -906,6 +1084,7 @@ mod tests {
         uleb(1, &mut record); // struct field lists
         uleb(1, &mut record); // struct fields
         string("field", &mut record);
+        uleb(0, &mut record); // match patterns
         uleb(0, &mut record); // interpolation lists
         uleb(0, &mut record); // list spread lists
         uleb(0, &mut record); // call argument lists
@@ -928,5 +1107,22 @@ mod tests {
         assert_eq!(program.source_count(), 1);
         assert_eq!(program.span_count(), 1);
         assert_eq!(program.layout_metrics().metadata_pool_slots, 4);
+    }
+
+    #[test]
+    fn decodes_only_finite_source_literal_values() {
+        let mut integer = vec![3];
+        uleb(5, &mut integer); // ZigZag -3
+        assert_eq!(
+            Reader::new(&integer).value("value").unwrap(),
+            Value::Int(-3)
+        );
+
+        let mut non_finite = vec![4];
+        non_finite.extend(f64::NAN.to_le_bytes());
+        assert!(matches!(
+            Reader::new(&non_finite).value("value"),
+            Err(Error::UnsupportedValue(_))
+        ));
     }
 }
