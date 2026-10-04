@@ -1,0 +1,37 @@
+[package]
+edition = "2024"
+name = "slug-esp32-s3"
+rust-version = "1.95"
+version = "0.1.0"
+
+# This is a standalone firmware workspace. It must not become a member of the
+# desktop workspace because its Xtensa target is unavailable to ordinary host
+# test, lint, and documentation commands.
+[workspace]
+
+[[bin]]
+name = "slug-esp32-s3"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+critical-section = "1.2.0"
+esp-alloc = { version = "0.11.0", features = ["esp32s3"] }
+esp-backtrace = { version = "0.20.0", features = [
+    "esp32s3",
+    "panic-handler",
+    "println",
+] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3"] }
+esp-hal = { version = "~1.2.2", features = ["esp32s3"] }
+esp-println = { version = "0.18.0", features = ["esp32s3"] }
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = "s"

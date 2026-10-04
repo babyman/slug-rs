@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a standalone ESP32-S3 bare-metal firmware bootstrap with a bounded
+  allocator and UART readiness line. It is isolated from the desktop workspace
+  while embedded Slug runtime support is developed.
+
 - Recorded the bare-metal ESP32-S3 embedded-host boundary and staged proof of
   concept: a `no_std + alloc` runtime path, flash-resident source resolver,
   explicit UART `println` capability, a shared-core portability rule, and
