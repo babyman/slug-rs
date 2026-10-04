@@ -2,8 +2,8 @@
 
 ## Goal
 
-Flash a bare-metal firmware image to an ESP32-S3 that executes a Slug source
-program embedded in flash and writes the expected line to UART:
+Flash a bare-metal firmware image to an ESP32-S3 that executes a Slug program
+embedded in flash and writes the expected line to UART:
 
 ```slug
 val main = fn() {
@@ -19,9 +19,9 @@ embedded distribution format or full device platform.
 ## Scope
 
 The firmware includes startup, an explicit allocator, UART, an embedded host,
-the required Slug frontend/compiler path, and the VM. The entry source is
-compiled into the firmware image and compiled to private in-memory bytecode at
-boot.
+and the VM. A desktop build tool will compile the entry source and emit a
+private frozen firmware image that the device translates to checked in-memory
+bytecode at boot.
 
 The proof of concept excludes:
 
@@ -56,8 +56,7 @@ firmware bootstrap
   -> allocator and UART initialization
   -> embedded host
        -> native capability registry: println -> UART
-       -> flash module resolver: entry module only
-  -> frontend: parse, analyze, lower
+       -> flash program image: entry module only
   -> VM: invoke main()
 ```
 
@@ -105,12 +104,14 @@ bytecode smoke test runs on the board without allocation failure.
 ### 4. Implement the embedded host and resolver
 
 Create an embedded host assembly that supplies fixed configuration, a
-compiled-in entry source table, and deny-by-default import behavior. Reuse the
-frontend module graph rather than duplicating compilation or module-cache
-semantics. Make unsupported imports return the normal checked module error.
+compiled-in entry program image, and deny-by-default import behavior. Reuse
+the desktop frontend at build time rather than duplicating source compilation
+on the device. Make unsupported imports return the normal checked module
+error.
 
 Acceptance: host tests prove entry resolution and checked rejection of an
-unlisted import; firmware builds the embedded source without filesystem access.
+unlisted import; firmware loads the generated entry image without filesystem
+access.
 
 ### 5. Register UART output as the first native capability
 
@@ -147,5 +148,6 @@ for the documented hardware acceptance step.
 
 After the proof of concept, decide from measurements whether to add more native
 modules, a better embedded map implementation, source compression, or portable
-`.cslug` artifacts. Those are separate decisions; none should be inferred from
-the hello-world firmware.
+`.cslug` artifacts. The private frozen-image boundary is defined by
+[Frozen firmware image boundary](../decisions/2026-10-04-frozen-firmware-image-boundary.md);
+portable artifacts remain a separate decision.

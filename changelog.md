@@ -13,6 +13,9 @@
   keeping its compact static image distinct from Slug's future portable
   compiled-artifact format.
 
+- Defined the private frozen-firmware-image boundary: desktop compilation may
+  generate firmware build input without publishing a `.cslug` artifact format.
+
 - Added a standalone ESP32-S3 bare-metal firmware bootstrap with a bounded
   allocator and UART readiness line. It is isolated from the desktop workspace
   while embedded Slug runtime support is developed.
