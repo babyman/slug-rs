@@ -52,21 +52,12 @@ impl fmt::Display for FlashLoadError {
     }
 }
 
-include!(concat!(env!("OUT_DIR"), "/slug_frozen_program.rs"));
+include!(concat!(env!("OUT_DIR"), "/slug_blink_program.rs"));
 
-// Compile-check the next program's generated Rust against this firmware loader.
-// The GPIO/time providers will select it for execution in the next stage.
-#[allow(dead_code)]
-mod staged_blink {
-    use super::{FlashConstant, FlashInstruction, FlashProgram};
-
-    include!(concat!(env!("OUT_DIR"), "/slug_blink_program.rs"));
-}
-
-/// Loads the immutable proof program from its firmware-resident image.
+/// Loads the immutable GPIO blink program from its firmware-resident image.
 ///
 /// The return value is the Program and its validated entry chunk index.
-pub fn load_entry_program() -> Result<(Program, usize), FlashLoadError> {
+pub fn load_blink_program() -> Result<(Program, usize), FlashLoadError> {
     load(&FROZEN_PROGRAM)
 }
 

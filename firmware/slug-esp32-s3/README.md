@@ -1,18 +1,16 @@
 # Slug ESP32-S3 VM proof of concept
 
 This standalone package cross-compiles
-[`programs/hello.slug`](programs/hello.slug) through a desktop build dependency
+[`programs/blink.slug`](programs/blink.slug) through a desktop build dependency
 into a small firmware-resident program image, then loads it into Slug's shared
-VM on an ESP32-S3. It supplies only a UART-backed native `println` capability,
-uses a bounded `no_std + alloc` heap, and intentionally links neither the
-source frontend nor a desktop loader. It is not a member of the desktop Cargo
-workspace.
+VM on an ESP32-S3. It owns a push-pull GPIO 2 output and a blocking delay
+provider for the PinPulse Shield's active-high `led` alias, uses a bounded
+`no_std + alloc` heap, and intentionally links neither the source frontend nor
+a desktop loader. It is not a member of the desktop Cargo workspace.
 
-The build also validates [`programs/blink.slug`](programs/blink.slug) against
-[`capabilities.rs`](capabilities.rs) and emits its private frozen image. The
-firmware continues to boot the UART hello image until the GPIO and time native
-providers are installed. The `led` alias is the PinPulse Shield indicator on
-GPIO 2 (active high).
+The build validates the blink source against [`capabilities.rs`](capabilities.rs)
+and emits its private frozen image. The `led` alias is the PinPulse Shield
+indicator on GPIO 2 (active high); source code never selects a raw GPIO pin.
 
 ## Prerequisites
 
@@ -40,13 +38,13 @@ With the board connected over USB, flash and monitor it:
 espflash flash --monitor --chip esp32s3 target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
 ```
 
-The serial monitor repeatedly prints:
+The serial monitor repeatedly prints the logical transitions:
 
 ```text
-Hello from Slug on ESP32-S3
-Slug VM completed
+Slug GPIO led -> high
+Slug GPIO led -> low
 ```
 
-The next milestone installs native GPIO and blocking-delay providers and then
-selects the blink image at boot. See
-[`docs/planning/esp32-s3-proof-of-concept.md`](../../docs/planning/esp32-s3-proof-of-concept.md).
+The program requests each level for 250 ms before tail-recurring, so the LED
+should blink with a 500 ms period. See
+[`docs/planning/esp32-s3-static-clutch-gpio.md`](../../docs/planning/esp32-s3-static-clutch-gpio.md).

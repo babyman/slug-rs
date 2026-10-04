@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Linked ESP32-S3 firmware-native GPIO and blocking-delay providers to the
+  frozen blink image. The PinPulse Shield `led` alias now owns active-high
+  GPIO 2 for the VM lifetime and emits proof UART transition traces.
+
 - Added a deterministic desktop static-host simulator for the selected GPIO
   and time modules. It executes the normal import and foreign-call path while
   recording checked logical output writes and delay requests for embedded
