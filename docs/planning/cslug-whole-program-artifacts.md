@@ -14,7 +14,7 @@ execution path or publishing a VM-independent IR.
   module initialization, source diagnostics, or validation.
 - [x] Specify the version-1 header: magic bytes, format version, VM/bytecode
   compatibility version, flags, byte order, and canonical integer encoding.
-- [ ] Specify bounded section framing, all canonical encodings, resource
+- [x] Specify bounded section framing, all canonical encodings, resource
   limits, verifier rules, and checked load-error categories in
   `reference/compiled-artifacts.md`.
 
