@@ -299,6 +299,12 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
     let mut reader = Reader::new(bytes);
     let bindings = reader.strings("bindings")?;
     let exports = reader.strings("exports")?;
+    let declarations = reader.usize("declaration count")?;
+    if declarations != 0 {
+        return Err(Error::InvalidStructure(
+            "declaration decoding is not available yet".into(),
+        ));
+    }
     let identities = reader
         .strings("callable identities")?
         .into_iter()
@@ -471,8 +477,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(4, &mut module);
-        module.extend([0, 0, 0, 0]);
+        uleb(5, &mut module);
+        module.extend([0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
