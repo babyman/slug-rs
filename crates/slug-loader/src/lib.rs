@@ -3,7 +3,7 @@
 //!
 //! This crate deliberately has no desktop policy or VM construction.
 
-use std::{collections::HashMap, fmt, path::PathBuf, rc::Rc};
+use std::{collections::HashMap, fmt, path::PathBuf};
 
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -91,40 +91,9 @@ pub trait ModuleResolver {
     /// Returns a checked failure when the name is invalid, unavailable, or its
     /// host-provided source cannot be read.
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError>;
-
-    /// Stages host capabilities required by a resolved module.
-    ///
-    /// Resolvers without import-scoped activation keep the default. A resolver
-    /// that returns an activation lease must override this method rather than
-    /// leaving the frontend to know its storage representation.
-    ///
-    /// # Errors
-    ///
-    /// Returns a checked error when this resolver cannot stage the source's
-    /// activation lease.
-    fn stage_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
-        if source.activation.is_some() {
-            return Err(ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: "module activation requires resolver support".into(),
-            });
-        }
-        Ok(None)
-    }
 }
 
-/// Factory for one static provider's host-owned activation transaction.
-///
-/// A factory is used rather than a transaction instance because every import
-/// initialization needs a fresh transaction. The loader contract does not
-/// inspect the native capabilities registered by that transaction.
-pub type StaticModuleActivationFactory =
-    Rc<dyn Fn() -> Result<Box<dyn ModuleActivationTransaction>, ModuleLoadError>>;
-
-/// One source module and its optional statically linked host activation.
+/// One source module selected by a statically linked host.
 ///
 /// Static providers are selected by their embedding host at construction time.
 /// They do not access storage, discover plugins, or load shared libraries.
@@ -132,7 +101,6 @@ pub type StaticModuleActivationFactory =
 pub struct StaticModuleProvider {
     name: String,
     source: ModuleSource,
-    activation_factory: Option<StaticModuleActivationFactory>,
 }
 
 impl StaticModuleProvider {
@@ -145,26 +113,7 @@ impl StaticModuleProvider {
     pub fn new(name: impl Into<String>, source: ModuleSource) -> Result<Self, ModuleLoadError> {
         let name = name.into();
         module_path(&name)?;
-        Ok(Self {
-            name,
-            source,
-            activation_factory: None,
-        })
-    }
-
-    /// Associates this provider with a statically linked activation factory.
-    ///
-    /// The provider source receives `activation`, so the ordinary frontend
-    /// import lifecycle stages the factory before module initialization.
-    #[must_use]
-    pub fn with_activation(
-        mut self,
-        activation: ModuleActivation,
-        factory: StaticModuleActivationFactory,
-    ) -> Self {
-        self.source.activation = Some(activation);
-        self.activation_factory = Some(factory);
-        self
+        Ok(Self { name, source })
     }
 }
 
@@ -212,33 +161,6 @@ impl ModuleResolver for StaticModuleResolver {
                 name: request.name.into(),
                 searched: vec!["static providers".into()],
             })
-    }
-
-    fn stage_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
-        let provider = self
-            .providers
-            .values()
-            .find(|provider| provider.source.key == source.key)
-            .ok_or_else(|| ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: "static provider source is not registered".into(),
-            })?;
-
-        match (&source.activation, &provider.activation_factory) {
-            (None, None) => Ok(None),
-            (Some(_), Some(factory)) => factory().map(Some),
-            (Some(_), None) => Err(ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: "static provider activation has no factory".into(),
-            }),
-            (None, Some(_)) => Err(ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: "static provider factory has no activation lease".into(),
-            }),
-        }
     }
 }
 
@@ -297,29 +219,12 @@ pub fn module_path(name: &str) -> Result<PathBuf, ModuleLoadError> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, path::PathBuf, rc::Rc};
+    use std::path::PathBuf;
 
     use super::{
-        ModuleActivation, ModuleActivationTransaction, ModuleKey, ModuleLoadError, ModuleRequest,
-        ModuleResolver, ModuleSource, StaticModuleProvider, StaticModuleResolver, module_path,
+        ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
+        StaticModuleProvider, StaticModuleResolver, module_path,
     };
-
-    struct RecordingActivation {
-        registered: Rc<Cell<bool>>,
-    }
-
-    impl ModuleActivationTransaction for RecordingActivation {
-        fn register(&self) -> Result<(), ModuleLoadError> {
-            self.registered.set(true);
-            Ok(())
-        }
-
-        fn rollback(&self) {}
-
-        fn cleanup(&mut self) {}
-
-        fn retain(self: Box<Self>) {}
-    }
 
     #[test]
     fn maps_valid_dotted_names_to_relative_slug_paths() {
@@ -366,38 +271,5 @@ mod tests {
                 searched: vec!["static providers".into()],
             }
         );
-    }
-
-    #[test]
-    fn stages_a_fresh_activation_for_an_activated_static_provider() {
-        let registered = Rc::new(Cell::new(false));
-        let factory_registered = Rc::clone(&registered);
-        let source = ModuleSource {
-            key: ModuleKey::new("static:slug.gpio"),
-            diagnostic_name: "static:slug.gpio".into(),
-            text: "foreign write(name: str, level: bool): nil".into(),
-            activation: None,
-        };
-        let provider = StaticModuleProvider::new("slug.gpio", source)
-            .expect("valid static provider")
-            .with_activation(
-                ModuleActivation::new("static:slug.gpio"),
-                Rc::new(move || {
-                    Ok(Box::new(RecordingActivation {
-                        registered: Rc::clone(&factory_registered),
-                    }))
-                }),
-            );
-        let resolver = StaticModuleResolver::new([provider]).expect("register static provider");
-        let source = resolver
-            .resolve(ModuleRequest::new(None, "slug.gpio"))
-            .expect("resolve static provider");
-
-        let activation = resolver
-            .stage_activation(&source)
-            .expect("stage static activation")
-            .expect("activated provider has a transaction");
-        activation.register().expect("register activation");
-        assert!(registered.get());
     }
 }

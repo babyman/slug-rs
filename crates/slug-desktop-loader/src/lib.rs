@@ -387,8 +387,18 @@ impl ModuleResolver for DesktopResolver {
                 .collect(),
         })
     }
+}
 
-    fn stage_activation(
+impl DesktopResolver {
+    /// Stages the native registrations required by a resolved module.
+    ///
+    /// The desktop host calls this while it owns the module initialization
+    /// lifecycle and native-function registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when an activation lease cannot be staged.
+    pub fn stage_activation(
         &self,
         source: &ModuleSource,
     ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {

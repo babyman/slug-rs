@@ -248,16 +248,16 @@ impl ModuleResolver for DesktopLoader {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
     }
+}
 
+impl ModuleGraphHost for DesktopLoader {
     fn stage_activation(
         &self,
         source: &ModuleSource,
     ) -> Result<Option<Box<dyn slug_loader::ModuleActivationTransaction>>, ModuleLoadError> {
         self.state.resolver.stage_activation(source)
     }
-}
 
-impl ModuleGraphHost for DesktopLoader {
     fn builtin_globals(&self) -> HashMap<String, Value> {
         self.state.resolver.builtin_globals()
     }

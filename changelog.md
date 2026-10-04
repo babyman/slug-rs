@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved imported-module activation sequencing to the frontend host boundary,
+  keeping source resolution storage-independent while allowing static hosts to
+  own native capability registration.
+
 - Defined static Clutch providers for firmware-native modules and staged the
   ESP32-S3 `slug.gpio`/`slug.time` path to a portable-source LED blink proof.
 

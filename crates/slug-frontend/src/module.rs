@@ -12,7 +12,10 @@ use crate::{
         environment::ModuleSnapshot,
     },
 };
-use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
+use slug_loader::{
+    ModuleActivationTransaction, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver,
+    ModuleSource,
+};
 use slug_vm::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
     Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
@@ -68,6 +71,27 @@ struct ModuleGraphState {
 /// supplies VM services, while a resolver owns source and any activation
 /// transaction. Desktop policy does not belong to the graph itself.
 pub trait ModuleGraphHost: ModuleResolver {
+    /// Stages host capabilities required by a resolved module.
+    ///
+    /// The graph sequences this transaction around module initialization, but
+    /// the embedding host owns native registration and activation storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when the host cannot stage an activation lease.
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
+        if source.activation.is_some() {
+            return Err(ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "module activation requires host support".into(),
+            });
+        }
+        Ok(None)
+    }
+
     fn builtin_globals(&self) -> HashMap<String, Value>;
 
     fn module_vm(&self, bindings: &[String]) -> Vm;
@@ -461,13 +485,6 @@ impl ModuleHost {
 impl ModuleResolver for ModuleHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
-    }
-
-    fn stage_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Box<dyn slug_loader::ModuleActivationTransaction>>, ModuleLoadError> {
-        self.state.resolver.stage_activation(source)
     }
 }
 
