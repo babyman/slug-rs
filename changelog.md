@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a deterministic desktop static-host simulator for the selected GPIO
+  and time modules. It executes the normal import and foreign-call path while
+  recording checked logical output writes and delay requests for embedded
+  program testing.
+
 - Extended the private ESP32-S3 frozen-image generator for a selected GPIO 2
   blink source, with build-time checks for modules, output aliases, delays,
   and unsupported operations. Firmware still boots the UART proof program.
