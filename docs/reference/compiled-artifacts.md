@@ -147,7 +147,9 @@ or enclosing-capture slots. Field records contain `name:string` and
 and `variadic:bool`. A declaration retains the source metadata represented by
 `ModuleDeclaration`, including binding names, mutable/export/foreign flags,
 foreign arity, resource and callable identities, resource signatures,
-documentation, and tags. Tags carry a name and a version-1 value list.
+documentation, and tags. Tags carry their static name only. Their argument
+expressions run during module initialization, so each decoded tag begins with
+an empty runtime argument list.
 
 Version-1 values are only `nil`, booleans, signed 64-bit integers,
 finite IEEE-754 binary64 numbers, UTF-8 strings, and byte strings. Signed

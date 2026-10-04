@@ -8,7 +8,7 @@ use alloc::{string::String, vec::Vec};
 
 use crate::{
     CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature, ModuleDeclaration,
-    Program,
+    ModuleTag, Program,
 };
 
 /// The exact byte count of a version-1 `.cslug` header.
@@ -393,10 +393,15 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
         _ => return Err(Error::InvalidStructure("foreign resource signature".into())),
     };
     let documentation = reader.optional_string("declaration documentation")?;
-    if reader.usize("declaration tag count")? != 0 {
-        return Err(Error::InvalidStructure(
-            "declaration tags are not available yet".into(),
-        ));
+    let tag_count = reader.usize("declaration tag count")?;
+    let mut tags = Vec::with_capacity(tag_count);
+    for _ in 0..tag_count {
+        // Tag expressions execute during module initialization. Persist only
+        // their static name; argument values begin empty in a fresh VM.
+        tags.push(ModuleTag {
+            name: reader.string(1024 * 1024, "declaration tag name")?,
+            arguments: Vec::new(),
+        });
     }
     Ok(PendingDeclaration {
         declaration: ModuleDeclaration {
@@ -409,7 +414,7 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
             foreign_callable_identity: None,
             foreign_resource_signature,
             documentation,
-            tags: Vec::new(),
+            tags,
         },
         foreign_identity,
     })
@@ -607,6 +612,11 @@ mod tests {
         encoded
     }
 
+    fn string(value: &str, output: &mut Vec<u8>) {
+        uleb(value.len(), output);
+        output.extend(value.as_bytes());
+    }
+
     #[test]
     fn encodes_and_decodes_the_version_one_header() {
         let mut encoded = Vec::new();
@@ -681,5 +691,38 @@ mod tests {
             decode_envelope(&wrong_order, Limits::default()),
             Err(Error::InvalidStructure(_))
         ));
+    }
+
+    #[test]
+    fn decodes_declaration_tag_names_without_live_arguments() {
+        let mut record = Vec::new();
+        uleb(0, &mut record); // bindings
+        uleb(0, &mut record); // exports
+        uleb(1, &mut record); // declarations
+        uleb(0, &mut record); // declaration bindings
+        record.extend([0, 0, 0]); // mutable, exported, foreign
+        record.push(0); // resource type
+        record.push(0); // foreign resource signature
+        record.push(0); // documentation
+        uleb(1, &mut record); // tags
+        string("audit", &mut record);
+        uleb(0, &mut record); // callable identities
+        record.push(0); // no entrypoint
+
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        let envelope = decode_envelope(&artifact, Limits::default()).expect("valid artifact");
+        let tags = &envelope.modules[0].program.declarations()[0].tags;
+        assert_eq!(tags[0].name, "audit");
+        assert!(tags[0].arguments.is_empty());
     }
 }
