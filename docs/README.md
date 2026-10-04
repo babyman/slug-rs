@@ -36,7 +36,7 @@ a specified feature is implemented.
 | Document | Purpose |
 |---|---|
 | [compatibility.md](reference/compatibility.md) | Promises and intentional non-promises. |
-| [compiled-artifacts.md](reference/compiled-artifacts.md) | Portable `.cslug` compiled-module contract. |
+| [compiled-artifacts.md](reference/compiled-artifacts.md) | VM-first `.cslug` whole-program artifact contract. |
 | [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
@@ -63,6 +63,7 @@ a specified feature is implemented.
 | [body-derived-inference-follow-up.md](planning/body-derived-inference-follow-up.md) | Implementation checklist for known-call and nil-partitioned body-derived inference. |
 | [host-owned-module-resolution.md](planning/host-owned-module-resolution.md) | Staged extraction of filesystem-free module resolution with desktop and embedded hosts. |
 | [esp32-s3-proof-of-concept.md](planning/esp32-s3-proof-of-concept.md) | Bounded bare-metal ESP32-S3 plan for flash-resident Slug source and UART output. |
+| [cslug-whole-program-artifacts.md](planning/cslug-whole-program-artifacts.md) | Staged `.cslug` codec, verifier, and ESP-evaluation plan. |
 | [agentic-development-refactoring.md](planning/completed/agentic-development-refactoring.md) | Organizational refactoring plan for discoverable subsystem boundaries and focused validation. |
 | [micro-runtime-followups.md](planning/completed/micro-runtime-followups.md) | Completed correctness, lifecycle, and Cargo feature-matrix follow-ups for the slim VM runtime. |
 | [FFI channel producer prototype ABI 0.13 plan](planning/ffi-channel-producer-v0.13.md) | Prototype ABI 0.13 native-producer work and the completed `slug.io.stdin` Clutch extraction. |

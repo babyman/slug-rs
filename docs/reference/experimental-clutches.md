@@ -33,9 +33,9 @@ directory that distributes one or more modules and their optional supporting
 native plugin. A **plugin** is a Slug-aware native implementation used only
 behind a module's declared `foreign` interface.
 
-Programs import modules; they do not import clutches or plugins. A module's
-identity is independent of whether it is supplied as source now or a future
-`.cslug` representation. Exactly one provider owns a resolved module.
+Programs import modules; they do not import clutches or plugins. Version-0
+Clutches supply source modules only, and exactly one provider owns a resolved
+module. Initial whole-program `.cslug` artifacts are outside this boundary.
 
 ## Local clutch identity
 
@@ -115,10 +115,9 @@ invalid manifest is a checked module-load error. The loader caches by module
 identity and the selected provider, so a cyclic import still observes the
 existing shared module-instance rules.
 
-The initial experiment loads only source modules. A future artifact loader may
-choose a compatible `.cslug` representation only under the independent
-compiled-artifact contract; its absence or incompatibility must not silently
-change the source module identity or grant a fallback capability.
+The initial experiment loads only source modules. A future module-artifact
+design requires a separate decision; whole-program `.cslug` artifacts do not
+participate in Clutch resolution or grant a fallback capability.
 
 ## Native plugins and lifecycle
 

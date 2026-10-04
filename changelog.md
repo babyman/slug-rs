@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Defined `.cslug` as a versioned, validated whole-program serialization of
+  the VM `CompiledProgram`, with direct source execution unchanged, checked
+  incompatible-artifact rejection, and a staged codec/verifier/ESP plan.
+
 - Verified the ESP32-S3 GPIO proof on the PinPulse Shield: the frozen Slug
   program now repeatedly blinks its active-high GPIO 2 indicator after flash.
 

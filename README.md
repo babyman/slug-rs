@@ -4,7 +4,7 @@ This repository is a clean-room Rust workspace implementing the Slug language.
 It starts with the execution boundary recommended by the language package: a
 small, checked VM with Slug-specific bytecode. The bytecode types are a public
 but unstable in-process Rust embedding and testing surface: they are not a file
-format or a compatibility commitment. The planned portable compiled-module
+format or a compatibility commitment. The planned portable whole-program
 contract is documented separately as `.cslug`.
 
 ## Current milestone
@@ -100,7 +100,7 @@ contract is documented separately as `.cslug`.
   names through `$SLUG_HOME/lib/<name>.slug`.
 - The standard library, full type inference, and the remaining language forms are progressive
   milestones beyond this subset.
-- Portable `.cslug` compiled modules are an adopted compatibility target; no
+- Portable `.cslug` whole-program artifacts are an adopted compatibility target; no
   encoder or loader is implemented yet.
 - Statically registered native functions use an opaque, call-scoped version 0
   Rust facade with structured errors and typed resources. It remains unstable;
@@ -126,12 +126,14 @@ with closures copying only the declared captured slots. The current model
 intentionally favors clear semantics and diagnostics over compact bytecode or
 performance.
 
-## Portable compiled modules
+## Portable compiled artifacts
 
-`.cslug` will be a versioned, portable compiled-module format. It will remain
-separate from the public-but-unstable in-process `Program`, `Chunk`, and `Op`
-types, which may change freely. See [compiled artifacts](docs/reference/compiled-artifacts.md)
-for the adopted contract and the requirements before version 1 is implemented.
+`.cslug` will be a versioned, validated serialized form of a complete VM
+`CompiledProgram`. It is portable across machines supporting the same declared
+format and VM/bytecode compatibility version. Normal source execution remains
+directly in memory; the format is only for persistence and transport. See
+[compiled artifacts](docs/reference/compiled-artifacts.md) for the adopted
+contract and requirements before version 1 is implemented.
 
 ## Quick start
 

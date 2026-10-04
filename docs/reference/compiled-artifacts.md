@@ -2,101 +2,92 @@
 
 ## Status
 
-This document defines the intended external contract for portable Slug compiled
-modules.  The decision to provide that contract is adopted; version 1 has not
+This document defines the intended external contract for `.cslug` whole-program
+artifacts. The decision to provide that contract is adopted; version 1 has not
 yet been implemented, so this repository does not currently create, load, or
-accept `.cslug` files.  The version-1 binary encoding and executable instruction
-set must be added here before implementation begins.
+accept `.cslug` files.
 
-The contract is normative once an artifact version is published.  It is
-separate from the source-language grammar and from any implementation's private
-bytecode representation.
+`.cslug` is deliberately a serialization boundary for the Slug VM, not an
+independent intermediate language or a stable cross-implementation bytecode
+standard. The version-1 binary schema must be specified here before
+implementation begins.
 
-## Artifact identity
+## Artifact identity and scope
 
-A compiled module is stored in a file with the `.cslug` extension.  It is a
-portable executable module, not a compiler cache, memory snapshot, or a
+A `.cslug` file stores one complete executable Slug program. It includes the
+entry point and all compiled module state needed for that program to run. It
+is not initially a module artifact, compiler cache, memory snapshot, or
 serialization of host-language objects.
 
-An artifact version identifies its binary schema.  A language compatibility
-version identifies the Slug source and runtime rules assumed by the module.
-Both versions are mandatory and independently checked when loading.  A loader
-must reject an artifact when it does not support either version; it must not
-guess, silently reinterpret, or execute an unknown version.
+An artifact is portable across machines running VMs that support its declared
+format and VM/bytecode compatibility version. It is not a promise that an
+artifact will run on later incompatible VM revisions. A host must reject an
+unknown or unsupported version; it must not guess, silently reinterpret, or
+partially execute an artifact.
 
-Version 1 will assign a fixed magic value, byte order, integer encodings, and
-canonical encoding rules.  Those details are intentionally unassigned until
-the executable representation is designed and reviewed.  They must be
-specified before any version-1 artifact is written.
+Version 1 will assign fixed magic bytes, byte order, integer encodings, flags,
+and canonical encoding rules. Those details are intentionally unassigned until
+the executable representation and verifier are designed and reviewed.
 
-## Required module contents
+## Representation and execution boundary
 
-Every published artifact version must encode, or provide a lossless equivalent
-for, the following information:
+`CompiledProgram` is the primary executable contract for this implementation:
 
-- artifact and language compatibility versions;
-- module identity and declared imports/exports;
-- constants, functions, and executable code;
-- enough source identity and span information to produce source-oriented
-  diagnostics when available;
-- dependency identities and the compatibility requirements used to resolve
-  them;
-- all information needed to validate references before executing code.
+```text
+.slug -> frontend -> CompiledProgram -> VM
+```
 
-The artifact format must not require a Rust type layout, pointer width,
-endianness of the producing host, Go objects, or a particular VM instruction
-layout.  Implementations may use different internal execution strategies after
-loading the same artifact.
+Normal source execution does not serialize. Saving a program adds the distinct
+persistence stage `CompiledProgram -> cslug::encode() -> .cslug`; loading
+reverses it through `cslug::decode()` before execution. In-memory compilation
+must not encode and immediately decode merely to invoke the VM.
+
+The VM representation drives the schema. Version 1 must encode the
+`CompiledProgram` state required by the VM—bytecode, constants, functions,
+module state, entry point, source metadata, and executable invariants—without
+introducing a VM-independent IR. The exact Rust layouts remain private and may
+change; the encoder and decoder evolve with their supported VM compatibility
+version.
 
 ## Loading and validation
 
-Loading a `.cslug` file is an untrusted-input operation.  Before execution, a
-loader must validate its header, version requirements, length-delimited
-sections, reference indices, function and call metadata, constant encodings,
-and control-flow targets.  It must enforce implementation-defined resource
-limits for input size, section sizes, nesting, constants, and code.
+Loading a `.cslug` file is an untrusted-input operation. Before returning a
+`CompiledProgram`, the decoder must validate the header, version and flags,
+length-delimited sections, resource limits, indices, constants, function and
+call metadata, module references, entry point, and control-flow targets.
 
-Malformed, truncated, unsupported, or incompatible artifacts must be rejected
-with a Slug diagnostic in the module-loading or runtime category.  They must
-never cause a host panic, unchecked allocation, out-of-bounds access, or
-execution of partially validated code.  Exact diagnostic text is not a
-compatibility promise unless a future artifact version says otherwise.
+Malformed, truncated, hostile, unsupported, or incompatible artifacts must
+produce a checked load error. They must never cause a host panic, unchecked
+allocation, out-of-bounds access, or execution of partially validated code.
+Exact diagnostic wording is not a compatibility promise unless a future
+artifact version says otherwise.
 
 ## Compatibility and evolution
 
-An implementation that advertises support for an artifact version must accept
-every valid artifact of that version whose language compatibility requirements
-it supports.  It may reject artifacts that use optional features it does not
-advertise.
+`.cslug` compatibility follows VM/bytecode compatibility rather than Slug
+source-language versions. A VM that advertises a format/compatibility pair
+must accept every valid artifact for that pair within its documented resource
+limits.
 
-Private VM bytecode may change freely.  The loader is responsible for
-translating the stable `.cslug` representation into the implementation's
-private representation, or for executing the stable representation directly.
-Changing a private `Op` enum therefore does not change the artifact contract.
+When the VM's optimal executable representation changes incompatibly, the
+artifact version or compatibility version changes with it. The VM rejects older
+artifacts cleanly; migration or recompilation is the mechanism for carrying an
+artifact forward. No runtime compatibility layer is implied. Compatible
+extensions require an explicitly specified mechanism and must preserve the
+meaning of existing valid artifacts.
 
-Incompatible changes require a new artifact version.  Compatible additions
-require an explicitly specified extension mechanism and must preserve the
-meaning of existing valid artifacts.  A compiler must not overwrite an
-artifact with a different version without an explicit user request.
+## Initial non-goals
 
-## Source and dependency policy
-
-An artifact may include source text, source hashes, or source maps, but the
-version-specific schema must say which are required and how they are verified.
-Source locations are diagnostic metadata; their absence must not alter program
-semantics.
-
-Dependency resolution remains subject to the module rules in
-[`language/runtime-requirements.md`](../language/runtime-requirements.md).  An
-artifact must identify its dependencies sufficiently for a loader to detect a
-missing or incompatible dependency.  It must not implicitly gain host
-capabilities or bindings beyond the documented module and builtin surface.
+Version 1 does not require module-level `.cslug` files, Clutch integration,
+zero-copy execution, memory mapping, generalized IR semantics, or a stable
+long-lived artifact ABI independent of the VM. Those require separate evidence
+and a later decision.
 
 ## Implementation gate for version 1
 
-Before version 1 is implemented, this document must gain a complete binary
-schema, including the magic bytes, section encoding, canonical value encoding,
-executable representation, verifier rules, feature negotiation, and test
-fixtures.  The implementation must then prove round-trip loading, cross-build
-compatibility, malformed-input rejection, and diagnostic behavior through
-public CLI and module-loading tests.
+Before version 1 is implemented, this document must gain the complete binary
+schema, compatibility fields, canonical encodings, verifier rules, resource
+limits, error mapping, and fixture corpus. The implementation must then prove
+round-trip execution, cross-machine compatibility for the same supported VM
+pair, clean incompatible-version rejection, malformed-input rejection, and
+that source execution still reaches the VM directly.

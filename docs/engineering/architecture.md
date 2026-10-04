@@ -14,7 +14,7 @@ implements a small source subset through a checked bytecode virtual machine.
 | Source semantics | `crates/slug-frontend/src/source/semantics/{typecheck,environment,semantic}.rs` | Resolves bindings, imports, annotations, inferred types, and compiler-facing semantic snapshots from the AST. |
 | Source lowering | `crates/slug-frontend/src/source/lowering/{compiler,state}.rs` | Consumes AST plus semantic analysis and constructs the public-but-unstable bytecode representation. |
 | In-process bytecode | `crates/slug-vm/src/bytecode/` | Public but unstable Rust instruction/program representation: metadata, builder operations, chunks, and installation/validation. |
-| Compiled artifacts | `docs/reference/compiled-artifacts.md` | Portable `.cslug` contract; implementation pending. |
+| Compiled artifacts | `docs/reference/compiled-artifacts.md` | VM-first `.cslug` whole-program contract; implementation pending. |
 | Modules and graph caches | `crates/slug-frontend/src/module.rs` | Owns source-module compilation, semantic snapshots, isolated initialization, live exports, and cycle detection. |
 | Desktop imports and Clutches | `crates/slug-desktop-loader/` | Resolves importer-relative, project-root, library-root, and Clutch modules; owns desktop-native activation and shutdown. |
 | Restricted imports | `crates/slug-nil-loader/` and `crates/slug-restricted-host/` | Provides a deny-all resolver and a thin in-memory host convenience façade. |
@@ -60,8 +60,9 @@ native lifecycle details outside that graph.
   construct them, but only a `Vm` may turn an owned `Program` into an immutable
   `InstalledProgram` for execution. Their layouts, variants, constructors, and
   semantics are not a stable Rust API or serialized format.
-- `.cslug` is the future portable compiled-module format.  It is a distinct,
-  versioned contract and must not serialize private bytecode directly.
+- `.cslug` is the future versioned, validated serialized form of a complete
+  `CompiledProgram`. It follows VM/bytecode compatibility and must not create
+  a VM-independent IR or serialize Rust memory layouts directly.
 - Native extensions use an opaque call and resource boundary. They must not
   expose runtime value layouts, tasks, nurseries, or scheduler operations.
 - Invalid source is reported as `SourceError`; runtime failures are reported as
