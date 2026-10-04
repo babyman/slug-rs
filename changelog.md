@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Recorded the bare-metal ESP32-S3 embedded-host boundary and staged proof of
+  concept: a `no_std + alloc` runtime path, flash-resident source resolver,
+  explicit UART `println` capability, a shared-core portability rule, and
+  measured resource limits. Desktop Slug behavior is unchanged.
+
 - Restored Windows compilation for the experimental native Clutch loader.
 
 - Prevented project, library, and importer-relative module imports from
