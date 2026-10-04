@@ -12,7 +12,7 @@ execution path or publishing a VM-independent IR.
   defined root entry point; defer module artifacts and Clutch loading.
 - [x] Inventory every `CompiledProgram` component that affects execution,
   module initialization, source diagnostics, or validation.
-- [ ] Specify the version-1 header: magic bytes, format version, VM/bytecode
+- [x] Specify the version-1 header: magic bytes, format version, VM/bytecode
   compatibility version, flags, byte order, and canonical integer encoding.
 - [ ] Specify bounded section framing, all canonical encodings, resource
   limits, verifier rules, and checked load-error categories in
@@ -42,6 +42,12 @@ configuration, or activation leases. Those remain fresh host/VM state. The VM
 installation validator remains the final executable-invariant check after
 decode; the decoder must additionally validate file structure and graph
 references before a `Program` reaches installation.
+
+Version 1 uses the fixed `CSLG` header, format and VM/bytecode compatibility
+version `1`, zero flags, little-endian fixed-width fields, and canonical
+unsigned LEB128 lengths, counts, and indexes. The decoded graph is the sole
+import provider: an absent dynamic or static import fails through the ordinary
+checked module-load path rather than falling back to source resolution.
 
 ## Implementation slices
 

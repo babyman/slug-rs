@@ -26,9 +26,20 @@ artifact will run on later incompatible VM revisions. A host must reject an
 unknown or unsupported version; it must not guess, silently reinterpret, or
 partially execute an artifact.
 
-Version 1 will assign fixed magic bytes, byte order, integer encodings, flags,
-and canonical encoding rules. Those details are intentionally unassigned until
-the executable representation and verifier are designed and reviewed.
+Version 1 begins with this fixed 12-byte header:
+
+| Offset | Size | Field | Version-1 rule |
+|---|---:|---|---|
+| 0 | 4 | magic | ASCII `CSLG` |
+| 4 | 2 | format version | unsigned little-endian integer, `1` |
+| 6 | 2 | VM/bytecode compatibility | unsigned little-endian integer, `1` |
+| 8 | 4 | flags | unsigned little-endian integer; all bits are zero in version 1 |
+
+Every other fixed-width integer is little-endian. Lengths, counts, and indexes
+use unsigned LEB128 and must use their shortest representation. A decoder must
+reject an unknown format or compatibility version, any nonzero version-1 flag,
+integer overflow, and noncanonical LEB128 input before allocating or executing
+from the corresponding value.
 
 ## Representation and execution boundary
 
@@ -49,6 +60,11 @@ closed module graph, entry point, source metadata, and executable
 invariants—without introducing a VM-independent IR. The exact Rust layouts
 remain private and may change; the encoder and decoder evolve with their
 supported VM compatibility version.
+
+The decoded graph supplies all runtime imports. An `import()` request whose
+logical module identity is absent from that graph, including a dynamically
+computed name, must fail as a checked module-load error. Version 1 must not
+fall back to a source resolver, Clutch, filesystem, or host module registry.
 
 ## Loading and validation
 
