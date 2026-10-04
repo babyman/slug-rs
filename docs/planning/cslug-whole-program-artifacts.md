@@ -49,6 +49,11 @@ unsigned LEB128 lengths, counts, and indexes. The decoded graph is the sole
 import provider: an absent dynamic or static import fails through the ordinary
 checked module-load path rather than falling back to source resolution.
 
+Version 1 encodes only a closed graph emitted by the Slug frontend. The encoder
+rejects arbitrary public Rust bytecode construction and non-source runtime
+values, including native functions/resources, channels, tasks, closures,
+bindings, and overload groups.
+
 ## Implementation slices
 
 ### 1. Establish the codec boundary

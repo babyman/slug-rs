@@ -66,6 +66,19 @@ logical module identity is absent from that graph, including a dynamically
 computed name, must fail as a checked module-load error. Version 1 must not
 fall back to a source resolver, Clutch, filesystem, or host module registry.
 
+## Version-1 encoding eligibility
+
+Version 1 accepts only a closed graph emitted by the Slug frontend. It does not
+accept arbitrary `slug_vm::Program` values constructed through the unstable
+Rust bytecode API. This keeps the artifact boundary defined by source-derived
+VM state rather than host object reachability.
+
+The encoder must reject, with a checked encode error, any value or graph member
+outside the version-1 source-derived set. In particular, it must not serialize
+native functions, declared-native wrappers, native resources, channels, tasks,
+closures, bindings, overload groups, or other live host/VM state. It must also
+reject a graph that is not closed under its recorded import edges.
+
 ## Loading and validation
 
 Loading a `.cslug` file is an untrusted-input operation. Before returning a
@@ -96,10 +109,10 @@ meaning of existing valid artifacts.
 
 ## Initial non-goals
 
-Version 1 does not require module-level `.cslug` files, Clutch integration,
-zero-copy execution, memory mapping, generalized IR semantics, or a stable
-long-lived artifact ABI independent of the VM. Those require separate evidence
-and a later decision.
+Version 1 does not require module-level `.cslug` files, encoding of arbitrary
+Rust-built bytecode, Clutch integration, zero-copy execution, memory mapping,
+generalized IR semantics, or a stable long-lived artifact ABI independent of
+the VM. Those require separate evidence and a later decision.
 
 ## Implementation gate for version 1
 
