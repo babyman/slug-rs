@@ -300,15 +300,19 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
     let bindings = reader.strings("bindings")?;
     let exports = reader.strings("exports")?;
     let count = reader.usize("declaration count")?;
-    let mut declarations = Vec::with_capacity(count);
+    let mut pending = Vec::with_capacity(count);
     for _ in 0..count {
-        declarations.push(decode_declaration(&mut reader)?);
+        pending.push(decode_declaration(&mut reader)?);
     }
     let identities = reader
         .strings("callable identities")?
         .into_iter()
         .map(CallableIdentity::new)
         .collect::<Vec<_>>();
+    let declarations = pending
+        .into_iter()
+        .map(|declaration| declaration.finish(&identities))
+        .collect::<Result<Vec<_>, _>>()?;
     let entrypoint = match reader.byte("entrypoint")? {
         0 => None,
         1 => {
@@ -338,15 +342,47 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
     ))
 }
 
-fn decode_declaration(reader: &mut Reader<'_>) -> Result<ModuleDeclaration, Error> {
+struct PendingDeclaration {
+    declaration: ModuleDeclaration,
+    foreign_identity: Option<usize>,
+}
+
+impl PendingDeclaration {
+    fn finish(mut self, identities: &[CallableIdentity]) -> Result<ModuleDeclaration, Error> {
+        if let Some(index) = self.foreign_identity {
+            self.declaration.foreign_callable_identity = Some(
+                identities
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| Error::InvalidReference("foreign callable identity".into()))?,
+            );
+        }
+        Ok(self.declaration)
+    }
+}
+
+fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Error> {
     let bindings = reader.strings("declaration bindings")?;
     let mutable = reader.bool("declaration mutable")?;
     let exported = reader.bool("declaration exported")?;
-    if reader.bool("declaration foreign")? {
-        return Err(Error::InvalidStructure(
-            "foreign declarations are not available yet".into(),
-        ));
-    }
+    let foreign = reader.bool("declaration foreign")?;
+    let (foreign_arity, foreign_identity) = if foreign {
+        let minimum = reader.usize("foreign minimum arity")?;
+        let maximum = match reader.byte("foreign maximum arity")? {
+            0 => None,
+            1 => Some(reader.usize("foreign maximum arity")?),
+            _ => return Err(Error::InvalidStructure("foreign maximum arity".into())),
+        };
+        if maximum.is_some_and(|maximum| maximum < minimum) {
+            return Err(Error::InvalidStructure("foreign arity range".into()));
+        }
+        (
+            Some((minimum, maximum)),
+            Some(reader.usize("foreign callable identity")?),
+        )
+    } else {
+        (None, None)
+    };
     let resource_type = reader.optional_string("resource type")?;
     let documentation = reader.optional_string("declaration documentation")?;
     if reader.usize("declaration tag count")? != 0 {
@@ -354,17 +390,20 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<ModuleDeclaration, Erro
             "declaration tags are not available yet".into(),
         ));
     }
-    Ok(ModuleDeclaration {
-        bindings,
-        mutable,
-        exported,
-        foreign: false,
-        foreign_arity: None,
-        resource_type,
-        foreign_callable_identity: None,
-        foreign_resource_signature: None,
-        documentation,
-        tags: Vec::new(),
+    Ok(PendingDeclaration {
+        declaration: ModuleDeclaration {
+            bindings,
+            mutable,
+            exported,
+            foreign,
+            foreign_arity,
+            resource_type,
+            foreign_callable_identity: None,
+            foreign_resource_signature: None,
+            documentation,
+            tags: Vec::new(),
+        },
+        foreign_identity,
     })
 }
 
