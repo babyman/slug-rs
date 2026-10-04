@@ -6,6 +6,7 @@
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 
+use crate::Capture;
 use crate::{
     CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature, ModuleDeclaration,
     ModuleTag, Program, SourceSpan,
@@ -355,6 +356,20 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         });
     }
     let global_names = reader.strings("global names")?;
+    let capture_list_count = reader.usize("capture list count")?;
+    let mut capture_lists = Vec::with_capacity(capture_list_count);
+    for _ in 0..capture_list_count {
+        let capture_count = reader.usize("capture count")?;
+        let mut captures = Vec::with_capacity(capture_count);
+        for _ in 0..capture_count {
+            captures.push(match reader.byte("capture kind")? {
+                0 => Capture::Local(reader.usize("capture local slot")?),
+                1 => Capture::Capture(reader.usize("capture enclosing slot")?),
+                _ => return Err(Error::InvalidStructure("capture kind".into())),
+            });
+        }
+        capture_lists.push(captures);
+    }
     reader.finish("scalar program record")?;
     Ok(Program::from_cslug_scalar_metadata(
         bindings,
@@ -365,6 +380,7 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         sources,
         spans,
         global_names,
+        capture_lists,
     ))
 }
 
@@ -633,8 +649,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(8, &mut module);
-        module.extend([0, 0, 0, 0, 0, 0, 0, 0]);
+        uleb(9, &mut module);
+        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -739,6 +755,7 @@ mod tests {
         uleb(0, &mut record); // source paths
         uleb(0, &mut record); // source spans
         uleb(0, &mut record); // global names
+        uleb(0, &mut record); // capture lists
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -768,6 +785,12 @@ mod tests {
         record.extend(8u32.to_le_bytes());
         uleb(1, &mut record); // global names
         string("value", &mut record);
+        uleb(1, &mut record); // capture lists
+        uleb(2, &mut record); // captures
+        record.push(0); // local
+        uleb(3, &mut record);
+        record.push(1); // enclosing capture
+        uleb(1, &mut record);
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -784,5 +807,6 @@ mod tests {
         let program = &envelope.modules[0].program;
         assert_eq!(program.source_count(), 1);
         assert_eq!(program.span_count(), 1);
+        assert_eq!(program.layout_metrics().metadata_pool_slots, 2);
     }
 }

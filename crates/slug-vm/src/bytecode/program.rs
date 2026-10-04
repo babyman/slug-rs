@@ -124,6 +124,7 @@ impl Program {
         sources: Vec<Arc<str>>,
         spans: Vec<SourceSpan>,
         global_names: Vec<String>,
+        capture_lists: Vec<Vec<Capture>>,
     ) -> Self {
         let source_ids = sources
             .iter()
@@ -147,6 +148,7 @@ impl Program {
             spans,
             span_ids,
             global_names,
+            capture_lists,
             ..Self::default()
         }
     }
