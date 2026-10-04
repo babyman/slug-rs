@@ -6,6 +6,8 @@
 
 use alloc::{string::String, vec::Vec};
 
+use crate::{CallableIdentity, Entrypoint, EntrypointArguments, Program};
+
 /// The exact byte count of a version-1 `.cslug` header.
 pub const HEADER_LENGTH: usize = 12;
 
@@ -186,18 +188,20 @@ pub(crate) struct ImportEdge {
     pub(crate) target: usize,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
+#[allow(dead_code)] // Exposed to the graph loader once full program decoding lands.
 pub(crate) struct Envelope {
     pub(crate) root: usize,
     pub(crate) modules: Vec<ModuleRecord>,
     pub(crate) imports: Vec<ImportEdge>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
+#[allow(dead_code)] // Module fields are consumed by the next graph-loader slice.
 pub(crate) struct ModuleRecord {
     pub(crate) key: String,
     pub(crate) name: String,
-    pub(crate) program: Vec<u8>,
+    pub(crate) program: Program,
 }
 
 /// Validates the `.cslug` header and closed-graph envelope without decoding
@@ -286,9 +290,43 @@ fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
             context: "program length",
         });
     }
-    let program = reader.bytes(program_length, "program record")?.to_vec();
+    let program = decode_scalar_program(reader.bytes(program_length, "program record")?)?;
     reader.finish("module section")?;
     Ok(ModuleRecord { key, name, program })
+}
+
+fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
+    let mut reader = Reader::new(bytes);
+    let bindings = reader.strings("bindings")?;
+    let exports = reader.strings("exports")?;
+    let identities = reader
+        .strings("callable identities")?
+        .into_iter()
+        .map(CallableIdentity::new)
+        .collect::<Vec<_>>();
+    let entrypoint = match reader.byte("entrypoint")? {
+        0 => None,
+        1 => {
+            let arguments = match reader.byte("entrypoint arguments")? {
+                0 => EntrypointArguments::None,
+                1 => EntrypointArguments::List,
+                2 => EntrypointArguments::Map,
+                _ => return Err(Error::InvalidStructure("entrypoint arguments".into())),
+            };
+            let callable_identity = reader.usize("entrypoint callable identity")?;
+            if callable_identity >= identities.len() {
+                return Err(Error::InvalidReference(
+                    "entrypoint callable identity".into(),
+                ));
+            }
+            Some(Entrypoint::new(arguments, callable_identity))
+        }
+        _ => return Err(Error::InvalidStructure("entrypoint presence".into())),
+    };
+    reader.finish("scalar program record")?;
+    Ok(Program::from_cslug_scalar_metadata(
+        bindings, exports, entrypoint, identities,
+    ))
 }
 
 fn read_section<'a>(
@@ -372,6 +410,15 @@ impl<'a> Reader<'a> {
             .map_err(|_| Error::InvalidStructure(format!("invalid UTF-8 {context}")))
     }
 
+    fn strings(&mut self, context: &'static str) -> Result<Vec<String>, Error> {
+        let count = self.usize(context)?;
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            values.push(self.string(1024 * 1024, context)?);
+        }
+        Ok(values)
+    }
+
     fn finish(&self, context: &'static str) -> Result<(), Error> {
         if self.cursor == self.bytes.len() {
             Ok(())
@@ -424,7 +471,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(0, &mut module);
+        uleb(4, &mut module);
+        module.extend([0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -481,7 +529,7 @@ mod tests {
         assert_eq!(envelope.root, 0);
         assert_eq!(envelope.modules[0].key, "root");
         assert_eq!(envelope.modules[0].name, "");
-        assert!(envelope.modules[0].program.is_empty());
+        assert!(envelope.modules[0].program.bindings().is_empty());
         assert!(envelope.imports.is_empty());
     }
 
@@ -490,12 +538,12 @@ mod tests {
         let mut noncanonical = minimal_envelope();
         noncanonical[HEADER_LENGTH + 1] = 0x83;
         noncanonical.insert(HEADER_LENGTH + 2, 0);
-        assert_eq!(
+        assert!(matches!(
             decode_envelope(&noncanonical, Limits::default()),
             Err(Error::NonCanonicalInteger {
                 context: "graph section"
             })
-        );
+        ));
 
         let mut wrong_order = Vec::new();
         encode_header(&mut wrong_order);
