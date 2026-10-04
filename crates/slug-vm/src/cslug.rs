@@ -4,11 +4,11 @@
 //! validation boundary. The initial surface establishes the fixed artifact
 //! header; graph and bytecode records are added in later codec slices.
 
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 
 use crate::{
     CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature, ModuleDeclaration,
-    ModuleTag, Program,
+    ModuleTag, Program, SourceSpan,
 };
 
 /// The exact byte count of a version-1 `.cslug` header.
@@ -335,6 +335,25 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         }
         _ => return Err(Error::InvalidStructure("entrypoint presence".into())),
     };
+    let sources = reader
+        .strings("source paths")?
+        .into_iter()
+        .map(Arc::from)
+        .collect::<Vec<Arc<str>>>();
+    let span_count = reader.usize("source span count")?;
+    let mut spans = Vec::with_capacity(span_count);
+    for _ in 0..span_count {
+        let source = reader.usize("source span path")?;
+        let path = sources
+            .get(source)
+            .cloned()
+            .ok_or_else(|| Error::InvalidReference("source span path".into()))?;
+        spans.push(SourceSpan {
+            path,
+            line: reader.u32("source span line")?,
+            column: reader.u32("source span column")?,
+        });
+    }
     reader.finish("scalar program record")?;
     Ok(Program::from_cslug_scalar_metadata(
         bindings,
@@ -342,6 +361,8 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         declarations,
         entrypoint,
         identities,
+        sources,
+        spans,
     ))
 }
 
@@ -513,6 +534,11 @@ impl<'a> Reader<'a> {
         }
     }
 
+    fn u32(&mut self, context: &'static str) -> Result<u32, Error> {
+        let bytes = self.bytes(4, context)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
     fn string(&mut self, limit: usize, context: &'static str) -> Result<String, Error> {
         let length = self.usize(context)?;
         if length > limit {
@@ -605,8 +631,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(5, &mut module);
-        module.extend([0, 0, 0, 0, 0]);
+        uleb(7, &mut module);
+        module.extend([0, 0, 0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -708,6 +734,8 @@ mod tests {
         string("audit", &mut record);
         uleb(0, &mut record); // callable identities
         record.push(0); // no entrypoint
+        uleb(0, &mut record); // source paths
+        uleb(0, &mut record); // source spans
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -724,5 +752,32 @@ mod tests {
         let tags = &envelope.modules[0].program.declarations()[0].tags;
         assert_eq!(tags[0].name, "audit");
         assert!(tags[0].arguments.is_empty());
+    }
+
+    #[test]
+    fn decodes_source_paths_and_spans() {
+        let mut record = vec![0, 0, 0, 0, 0];
+        uleb(1, &mut record); // source paths
+        string("main.slug", &mut record);
+        uleb(1, &mut record); // source spans
+        uleb(0, &mut record); // source index
+        record.extend(4u32.to_le_bytes());
+        record.extend(8u32.to_le_bytes());
+
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        let envelope = decode_envelope(&artifact, Limits::default()).expect("valid artifact");
+        let program = &envelope.modules[0].program;
+        assert_eq!(program.source_count(), 1);
+        assert_eq!(program.span_count(), 1);
     }
 }

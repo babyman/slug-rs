@@ -121,13 +121,30 @@ impl Program {
         declarations: Vec<ModuleDeclaration>,
         entrypoint: Option<Entrypoint>,
         callable_identities: Vec<CallableIdentity>,
+        sources: Vec<Arc<str>>,
+        spans: Vec<SourceSpan>,
     ) -> Self {
+        let source_ids = sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| (source.clone(), SourceId(index as u32)))
+            .collect();
+        let span_ids = spans
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, span)| (span, SpanId(index as u32)))
+            .collect();
         Self {
             bindings,
             exports,
             declarations,
             entrypoint,
             callable_identities,
+            sources,
+            source_ids,
+            spans,
+            span_ids,
             ..Self::default()
         }
     }
