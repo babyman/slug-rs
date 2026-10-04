@@ -48,13 +48,21 @@ loop construct.
 
 ### 0. Identify the board LED safely
 
-Record the exact ESP32-S3 board model and either its onboard LED GPIO/polarity
-or the GPIO used for an external LED with a resistor. Confirm the pin is not
-reserved for USB, flash/PSRAM, boot strapping, or another active board
-function.
+The selected board is the Lonely Binary ESP32-S3 N16R8 / ESP32-S3-DevKitC-1
+V1.6. Its onboard LED is an addressable RGB LED on GPIO 48 (`RGB@IO48`), not a
+plain digital output. A boolean GPIO write cannot make it blink: it requires a
+WS2812-compatible encoded waveform, normally emitted through a timing-capable
+peripheral such as RMT.
 
-Acceptance: a board profile names one logical alias, `led`, and one verified
-safe output configuration. No generic GPIO number is guessed in Slug source.
+This board therefore cannot use `slug.gpio.write("led", level)` for its
+onboard LED. The GPIO alias remains valid for a separately wired plain LED,
+but the onboard target requires an explicit RGB/LED capability before the
+hardware stages can proceed. GPIO 48 is reserved for that onboard LED profile;
+Slug source continues to name no raw GPIO number.
+
+Acceptance: the board identity and LED protocol are recorded from the vendor
+documentation, and the plan does not incorrectly treat the RGB LED as a direct
+GPIO output.
 
 ### 1. Define static-provider registration
 
