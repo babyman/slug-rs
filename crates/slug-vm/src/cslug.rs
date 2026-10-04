@@ -354,6 +354,7 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
             column: reader.u32("source span column")?,
         });
     }
+    let global_names = reader.strings("global names")?;
     reader.finish("scalar program record")?;
     Ok(Program::from_cslug_scalar_metadata(
         bindings,
@@ -363,6 +364,7 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         identities,
         sources,
         spans,
+        global_names,
     ))
 }
 
@@ -631,8 +633,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(7, &mut module);
-        module.extend([0, 0, 0, 0, 0, 0, 0]);
+        uleb(8, &mut module);
+        module.extend([0, 0, 0, 0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -736,6 +738,7 @@ mod tests {
         record.push(0); // no entrypoint
         uleb(0, &mut record); // source paths
         uleb(0, &mut record); // source spans
+        uleb(0, &mut record); // global names
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -763,6 +766,8 @@ mod tests {
         uleb(0, &mut record); // source index
         record.extend(4u32.to_le_bytes());
         record.extend(8u32.to_le_bytes());
+        uleb(1, &mut record); // global names
+        string("value", &mut record);
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);

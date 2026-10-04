@@ -123,6 +123,7 @@ impl Program {
         callable_identities: Vec<CallableIdentity>,
         sources: Vec<Arc<str>>,
         spans: Vec<SourceSpan>,
+        global_names: Vec<String>,
     ) -> Self {
         let source_ids = sources
             .iter()
@@ -145,6 +146,7 @@ impl Program {
             source_ids,
             spans,
             span_ids,
+            global_names,
             ..Self::default()
         }
     }
