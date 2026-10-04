@@ -8,11 +8,12 @@
 
 extern crate alloc;
 
+mod flash_program;
+
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, main};
 use slug_vm::{
-    Chunk, NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, Op, Program,
-    Value, Vm,
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, Value, Vm,
 };
 
 // The ESP-IDF bootloader requires this application descriptor.
@@ -42,15 +43,10 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73_744);
 
-    let mut main = Chunk::new("main", 0);
-    let greeting = main.constant(Value::string("Hello from Slug on ESP32-S3"));
-    main.emit(Op::GetGlobal("println".into()))
-        .emit(Op::Constant(greeting))
-        .emit(Op::Call(1))
-        .emit(Op::Return);
-
-    let mut program = Program::new();
-    let entry = program.add_chunk(main);
+    let (program, entry) = match flash_program::load_hello_program() {
+        Ok(program) => program,
+        Err(error) => panic!("failed to load flash program: {error}"),
+    };
     let module = NativeModule::new("slug.uart", ()).expect("UART module name is valid");
     let mut vm = Vm::new();
     vm.define_native(

@@ -9,6 +9,10 @@
 - Added a minimal UART-backed `println` native capability to the ESP32-S3 proof
   firmware, exercised through a direct Slug VM bytecode call.
 
+- Added a checked firmware-local flash program loader for the ESP32-S3 proof,
+  keeping its compact static image distinct from Slug's future portable
+  compiled-artifact format.
+
 - Added a standalone ESP32-S3 bare-metal firmware bootstrap with a bounded
   allocator and UART readiness line. It is isolated from the desktop workspace
   while embedded Slug runtime support is developed.
