@@ -18,7 +18,7 @@ export foreign write = fn(name:str, level:bool):nil
 "#;
 
 /// Source contract for a deliberately blocking delay capability.
-pub const TIME_MODULE_SOURCE: &str = r#"
+pub const TIME_MODULE_SOURCE: &str = r"
 /**
  * Blocks the current host execution for a whole number of milliseconds.
  *
@@ -26,7 +26,7 @@ pub const TIME_MODULE_SOURCE: &str = r#"
  * as checked failures. This function does not schedule a Slug timer.
  */
 export foreign sleepMs = fn(milliseconds:num):nil
-"#;
+";
 
 /// Returns the selected provider for `slug.gpio`.
 ///

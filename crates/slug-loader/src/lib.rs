@@ -257,10 +257,10 @@ mod tests {
         ])
         .expect("register static provider");
 
-        let resolved = resolver
+        let module_source = resolver
             .resolve(ModuleRequest::new(None, "slug.gpio"))
             .expect("resolve registered provider");
-        assert_eq!(resolved.key.as_str(), "static:slug.gpio");
+        assert_eq!(module_source.key.as_str(), "static:slug.gpio");
 
         assert_eq!(
             resolver
