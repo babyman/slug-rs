@@ -581,6 +581,14 @@ impl<'a> Reader<'a> {
     }
 
     fn usize(&mut self, context: &'static str) -> Result<usize, Error> {
+        let value = self.u64(context)?;
+        if value > usize::MAX as u64 {
+            return Err(Error::NonCanonicalInteger { context });
+        }
+        Ok(value as usize)
+    }
+
+    fn u64(&mut self, context: &'static str) -> Result<u64, Error> {
         let mut value = 0u64;
         let mut shift = 0u32;
         let mut bytes = 0usize;
@@ -592,10 +600,10 @@ impl<'a> Reader<'a> {
             }
             value |= u64::from(byte & 0x7f) << shift;
             if byte & 0x80 == 0 {
-                if bytes != uleb_length(value) || value > usize::MAX as u64 {
+                if bytes != uleb_length(value) {
                     return Err(Error::NonCanonicalInteger { context });
                 }
-                return Ok(value as usize);
+                return Ok(value);
             }
             shift += 7;
         }
@@ -607,7 +615,7 @@ impl<'a> Reader<'a> {
     }
 
     fn i64(&mut self, context: &'static str) -> Result<i64, Error> {
-        let encoded = self.usize(context)? as u64;
+        let encoded = self.u64(context)?;
         Ok(((encoded >> 1) as i64) ^ -((encoded & 1) as i64))
     }
 
