@@ -125,6 +125,8 @@ impl Program {
         spans: Vec<SourceSpan>,
         global_names: Vec<String>,
         capture_lists: Vec<Vec<Capture>>,
+        schema_fields: Vec<Vec<SchemaField>>,
+        struct_fields: Vec<Vec<String>>,
     ) -> Self {
         let source_ids = sources
             .iter()
@@ -149,6 +151,8 @@ impl Program {
             span_ids,
             global_names,
             capture_lists,
+            schema_fields,
+            struct_fields,
             ..Self::default()
         }
     }

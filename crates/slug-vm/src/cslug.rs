@@ -9,7 +9,7 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 use crate::Capture;
 use crate::{
     CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature, ModuleDeclaration,
-    ModuleTag, Program, SourceSpan,
+    ModuleTag, Program, SchemaField, SourceSpan,
 };
 
 /// The exact byte count of a version-1 `.cslug` header.
@@ -370,6 +370,20 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         }
         capture_lists.push(captures);
     }
+    let schema_field_list_count = reader.usize("schema field list count")?;
+    let mut schema_fields = Vec::with_capacity(schema_field_list_count);
+    for _ in 0..schema_field_list_count {
+        let count = reader.usize("schema field count")?;
+        let mut fields = Vec::with_capacity(count);
+        for _ in 0..count {
+            fields.push(SchemaField {
+                name: reader.string(1024 * 1024, "schema field name")?,
+                has_default: reader.bool("schema field default")?,
+            });
+        }
+        schema_fields.push(fields);
+    }
+    let struct_fields = reader.strings_lists("struct field lists")?;
     reader.finish("scalar program record")?;
     Ok(Program::from_cslug_scalar_metadata(
         bindings,
@@ -381,6 +395,8 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         spans,
         global_names,
         capture_lists,
+        schema_fields,
+        struct_fields,
     ))
 }
 
@@ -597,6 +613,15 @@ impl<'a> Reader<'a> {
         Ok(values)
     }
 
+    fn strings_lists(&mut self, context: &'static str) -> Result<Vec<Vec<String>>, Error> {
+        let count = self.usize(context)?;
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            values.push(self.strings(context)?);
+        }
+        Ok(values)
+    }
+
     fn finish(&self, context: &'static str) -> Result<(), Error> {
         if self.cursor == self.bytes.len() {
             Ok(())
@@ -649,8 +674,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(9, &mut module);
-        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        uleb(11, &mut module);
+        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -756,6 +781,8 @@ mod tests {
         uleb(0, &mut record); // source spans
         uleb(0, &mut record); // global names
         uleb(0, &mut record); // capture lists
+        uleb(0, &mut record); // schema field lists
+        uleb(0, &mut record); // struct field lists
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -791,6 +818,13 @@ mod tests {
         uleb(3, &mut record);
         record.push(1); // enclosing capture
         uleb(1, &mut record);
+        uleb(1, &mut record); // schema field lists
+        uleb(1, &mut record); // schema fields
+        string("field", &mut record);
+        record.push(1); // default
+        uleb(1, &mut record); // struct field lists
+        uleb(1, &mut record); // struct fields
+        string("field", &mut record);
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -807,6 +841,6 @@ mod tests {
         let program = &envelope.modules[0].program;
         assert_eq!(program.source_count(), 1);
         assert_eq!(program.span_count(), 1);
-        assert_eq!(program.layout_metrics().metadata_pool_slots, 2);
+        assert_eq!(program.layout_metrics().metadata_pool_slots, 4);
     }
 }
