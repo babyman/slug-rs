@@ -11,6 +11,7 @@ mod ast;
 mod compiler;
 #[path = "semantics/environment.rs"]
 pub(crate) mod environment;
+mod frozen;
 mod interactive;
 #[path = "syntax/lexer.rs"]
 mod lexer;
@@ -27,6 +28,7 @@ use lexer::Lexer;
 use parser::Parser;
 
 use self::environment::{ImportSnapshots, ModuleSnapshot};
+pub use frozen::compile_frozen_uart_entry;
 pub use interactive::compile_interactive_forms;
 pub(crate) use interactive::compile_interactive_forms_with_resolver;
 pub use interactive::{

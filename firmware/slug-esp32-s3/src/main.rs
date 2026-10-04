@@ -43,7 +43,7 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73_744);
 
-    let (program, entry) = match flash_program::load_hello_program() {
+    let (program, entry) = match flash_program::load_entry_program() {
         Ok(program) => program,
         Err(error) => panic!("failed to load flash program: {error}"),
     };

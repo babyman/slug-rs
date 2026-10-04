@@ -16,6 +16,10 @@
 - Defined the private frozen-firmware-image boundary: desktop compilation may
   generate firmware build input without publishing a `.cslug` artifact format.
 
+- Added the first desktop frozen-image backend for the ESP32-S3 proof. It
+  validates and emits the minimal `main { println("text") }` entry shape into
+  firmware build input without linking the frontend to the device.
+
 - Added a standalone ESP32-S3 bare-metal firmware bootstrap with a bounded
   allocator and UART readiness line. It is isolated from the desktop workspace
   while embedded Slug runtime support is developed.

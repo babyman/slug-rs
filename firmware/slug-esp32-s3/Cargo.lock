@@ -1311,8 +1311,21 @@ dependencies = [
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
+ "slug-frontend",
  "slug-vm",
 ]
+
+[[package]]
+name = "slug-frontend"
+version = "0.1.0"
+dependencies = [
+ "slug-loader",
+ "slug-vm",
+]
+
+[[package]]
+name = "slug-loader"
+version = "0.1.0"
 
 [[package]]
 name = "slug-vm"

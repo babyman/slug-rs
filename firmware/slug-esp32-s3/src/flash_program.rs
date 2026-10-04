@@ -46,24 +46,13 @@ impl fmt::Display for FlashLoadError {
     }
 }
 
-const HELLO_CONSTANTS: &[FlashConstant] = &[FlashConstant::Text("Hello from Slug on ESP32-S3")];
-const HELLO_INSTRUCTIONS: &[FlashInstruction] = &[
-    FlashInstruction::GetGlobal("println"),
-    FlashInstruction::Constant(0),
-    FlashInstruction::Call(1),
-    FlashInstruction::Return,
-];
-const HELLO_PROGRAM: FlashProgram = FlashProgram {
-    name: "main",
-    constants: HELLO_CONSTANTS,
-    instructions: HELLO_INSTRUCTIONS,
-};
+include!(concat!(env!("OUT_DIR"), "/slug_frozen_program.rs"));
 
 /// Loads the immutable proof program from its firmware-resident image.
 ///
 /// The return value is the Program and its validated entry chunk index.
-pub fn load_hello_program() -> Result<(Program, usize), FlashLoadError> {
-    load(&HELLO_PROGRAM)
+pub fn load_entry_program() -> Result<(Program, usize), FlashLoadError> {
+    load(&FROZEN_PROGRAM)
 }
 
 fn load(image: &FlashProgram) -> Result<(Program, usize), FlashLoadError> {

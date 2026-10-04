@@ -1,10 +1,12 @@
 # Slug ESP32-S3 VM proof of concept
 
-This standalone package loads a small firmware-resident program image into
-Slug's shared VM on an ESP32-S3. It supplies only a UART-backed native
-`println` capability, uses a bounded `no_std + alloc` heap, and intentionally
-links neither the source frontend nor a desktop loader. It is not a member of
-the desktop Cargo workspace.
+This standalone package cross-compiles
+[`programs/hello.slug`](programs/hello.slug) through a desktop build dependency
+into a small firmware-resident program image, then loads it into Slug's shared
+VM on an ESP32-S3. It supplies only a UART-backed native `println` capability,
+uses a bounded `no_std + alloc` heap, and intentionally links neither the
+source frontend nor a desktop loader. It is not a member of the desktop Cargo
+workspace.
 
 ## Prerequisites
 
