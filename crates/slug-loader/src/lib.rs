@@ -3,7 +3,7 @@
 //!
 //! This crate deliberately has no desktop policy or VM construction.
 
-use std::{fmt, path::PathBuf};
+use std::{collections::HashMap, fmt, path::PathBuf, rc::Rc};
 
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -116,6 +116,132 @@ pub trait ModuleResolver {
     }
 }
 
+/// Factory for one static provider's host-owned activation transaction.
+///
+/// A factory is used rather than a transaction instance because every import
+/// initialization needs a fresh transaction. The loader contract does not
+/// inspect the native capabilities registered by that transaction.
+pub type StaticModuleActivationFactory =
+    Rc<dyn Fn() -> Result<Box<dyn ModuleActivationTransaction>, ModuleLoadError>>;
+
+/// One source module and its optional statically linked host activation.
+///
+/// Static providers are selected by their embedding host at construction time.
+/// They do not access storage, discover plugins, or load shared libraries.
+#[derive(Clone)]
+pub struct StaticModuleProvider {
+    name: String,
+    source: ModuleSource,
+    activation_factory: Option<StaticModuleActivationFactory>,
+}
+
+impl StaticModuleProvider {
+    /// Creates a static provider for a valid dotted module name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-name error when `name` is not a valid logical module
+    /// name.
+    pub fn new(name: impl Into<String>, source: ModuleSource) -> Result<Self, ModuleLoadError> {
+        let name = name.into();
+        module_path(&name)?;
+        Ok(Self {
+            name,
+            source,
+            activation_factory: None,
+        })
+    }
+
+    /// Associates this provider with a statically linked activation factory.
+    ///
+    /// The provider source receives `activation`, so the ordinary frontend
+    /// import lifecycle stages the factory before module initialization.
+    #[must_use]
+    pub fn with_activation(
+        mut self,
+        activation: ModuleActivation,
+        factory: StaticModuleActivationFactory,
+    ) -> Self {
+        self.source.activation = Some(activation);
+        self.activation_factory = Some(factory);
+        self
+    }
+}
+
+/// Fixed in-memory registry for source modules supplied by a host.
+///
+/// This resolver is the storage-independent half of static Clutch providers.
+/// A desktop simulator or firmware bootstrap selects its providers explicitly;
+/// neither path inherits desktop Clutch discovery or dynamic-library policy.
+pub struct StaticModuleResolver {
+    providers: HashMap<String, StaticModuleProvider>,
+}
+
+impl StaticModuleResolver {
+    /// Creates a static registry from explicitly selected providers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when more than one provider uses the same
+    /// logical module name.
+    pub fn new(
+        providers: impl IntoIterator<Item = StaticModuleProvider>,
+    ) -> Result<Self, ModuleLoadError> {
+        let mut registered = HashMap::new();
+        for provider in providers {
+            let name = provider.name.clone();
+            if registered.insert(name.clone(), provider).is_some() {
+                return Err(ModuleLoadError::Clutch {
+                    location: name,
+                    message: "duplicate static module provider".into(),
+                });
+            }
+        }
+        Ok(Self {
+            providers: registered,
+        })
+    }
+}
+
+impl ModuleResolver for StaticModuleResolver {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        self.providers
+            .get(request.name)
+            .map(|provider| provider.source.clone())
+            .ok_or_else(|| ModuleLoadError::NotFound {
+                name: request.name.into(),
+                searched: vec!["static providers".into()],
+            })
+    }
+
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
+        let provider = self
+            .providers
+            .values()
+            .find(|provider| provider.source.key == source.key)
+            .ok_or_else(|| ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "static provider source is not registered".into(),
+            })?;
+
+        match (&source.activation, &provider.activation_factory) {
+            (None, None) => Ok(None),
+            (Some(_), Some(factory)) => factory().map(Some),
+            (Some(_), None) => Err(ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "static provider activation has no factory".into(),
+            }),
+            (None, Some(_)) => Err(ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "static provider factory has no activation lease".into(),
+            }),
+        }
+    }
+}
+
 /// Checked failure while resolving or compiling one imported module.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleLoadError {
@@ -171,9 +297,29 @@ pub fn module_path(name: &str) -> Result<PathBuf, ModuleLoadError> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{cell::Cell, path::PathBuf, rc::Rc};
 
-    use super::{ModuleLoadError, module_path};
+    use super::{
+        ModuleActivation, ModuleActivationTransaction, ModuleKey, ModuleLoadError, ModuleRequest,
+        ModuleResolver, ModuleSource, StaticModuleProvider, StaticModuleResolver, module_path,
+    };
+
+    struct RecordingActivation {
+        registered: Rc<Cell<bool>>,
+    }
+
+    impl ModuleActivationTransaction for RecordingActivation {
+        fn register(&self) -> Result<(), ModuleLoadError> {
+            self.registered.set(true);
+            Ok(())
+        }
+
+        fn rollback(&self) {}
+
+        fn cleanup(&mut self) {}
+
+        fn retain(self: Box<Self>) {}
+    }
 
     #[test]
     fn maps_valid_dotted_names_to_relative_slug_paths() {
@@ -191,5 +337,67 @@ mod tests {
                 Err(ModuleLoadError::InvalidName(name.into()))
             );
         }
+    }
+
+    #[test]
+    fn resolves_only_explicitly_registered_static_modules() {
+        let source = ModuleSource {
+            key: ModuleKey::new("static:slug.gpio"),
+            diagnostic_name: "static:slug.gpio".into(),
+            text: "foreign write(name: str, level: bool): nil".into(),
+            activation: None,
+        };
+        let resolver = StaticModuleResolver::new([
+            StaticModuleProvider::new("slug.gpio", source).expect("valid static provider")
+        ])
+        .expect("register static provider");
+
+        let resolved = resolver
+            .resolve(ModuleRequest::new(None, "slug.gpio"))
+            .expect("resolve registered provider");
+        assert_eq!(resolved.key.as_str(), "static:slug.gpio");
+
+        assert_eq!(
+            resolver
+                .resolve(ModuleRequest::new(None, "slug.unavailable"))
+                .expect_err("unregistered static module is unavailable"),
+            ModuleLoadError::NotFound {
+                name: "slug.unavailable".into(),
+                searched: vec!["static providers".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn stages_a_fresh_activation_for_an_activated_static_provider() {
+        let registered = Rc::new(Cell::new(false));
+        let factory_registered = Rc::clone(&registered);
+        let source = ModuleSource {
+            key: ModuleKey::new("static:slug.gpio"),
+            diagnostic_name: "static:slug.gpio".into(),
+            text: "foreign write(name: str, level: bool): nil".into(),
+            activation: None,
+        };
+        let provider = StaticModuleProvider::new("slug.gpio", source)
+            .expect("valid static provider")
+            .with_activation(
+                ModuleActivation::new("static:slug.gpio"),
+                Rc::new(move || {
+                    Ok(Box::new(RecordingActivation {
+                        registered: Rc::clone(&factory_registered),
+                    }))
+                }),
+            );
+        let resolver = StaticModuleResolver::new([provider]).expect("register static provider");
+        let source = resolver
+            .resolve(ModuleRequest::new(None, "slug.gpio"))
+            .expect("resolve static provider");
+
+        let activation = resolver
+            .stage_activation(&source)
+            .expect("stage static activation")
+            .expect("activated provider has a transaction");
+        activation.register().expect("register activation");
+        assert!(registered.get());
     }
 }
