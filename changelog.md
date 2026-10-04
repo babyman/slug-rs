@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Verified the ESP32-S3 GPIO proof on the PinPulse Shield: the frozen Slug
+  program now repeatedly blinks its active-high GPIO 2 indicator after flash.
+
 - Linked ESP32-S3 firmware-native GPIO and blocking-delay providers to the
   frozen blink image. The PinPulse Shield `led` alias now owns active-high
   GPIO 2 for the VM lifetime and emits proof UART transition traces.

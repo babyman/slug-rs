@@ -48,3 +48,16 @@ Slug GPIO led -> low
 The program requests each level for 250 ms before tail-recurring, so the LED
 should blink with a 500 ms period. See
 [`docs/planning/esp32-s3-static-clutch-gpio.md`](../../docs/planning/esp32-s3-static-clutch-gpio.md).
+
+## Hardware verification
+
+Verified on 2026-10-04 with the Lonely Binary ESP32-S3 N16R8 and PinPulse
+Shield over `/dev/cu.usbmodem1101`:
+
+- `espflash` identified an ESP32-S3 revision 0.2 with 16 MB flash and wrote a
+  290,944-byte application image (1.78% of the factory partition).
+- UART repeatedly reported `Slug GPIO led -> high` then `Slug GPIO led -> low`.
+- The PinPulse Shield GPIO 2 indicator was visibly blinking at the expected
+  250 ms-on / 250 ms-off cadence.
+- The configured bounded heap is 73,744 bytes. The release ELF reserves
+  331,720 bytes for `.stack`; peak heap use is not yet instrumented.

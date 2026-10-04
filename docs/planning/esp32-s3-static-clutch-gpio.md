@@ -163,5 +163,20 @@ capabilities need distinct ownership, memory, scheduling, and safety rules.
 4. Firmware unit or host tests for alias and delay range checks.
 5. On-device UART transition trace and physical LED observation.
 
+## Stage 6 verification record
+
+On 2026-10-04, the `slug-esp32-s3` release image was flashed to the Lonely
+Binary ESP32-S3 N16R8 / PinPulse Shield through `/dev/cu.usbmodem1101`.
+`espflash` identified an ESP32-S3 revision 0.2 with 16 MB flash and reported a
+290,944-byte application image (1.78% of the factory partition). UART emitted
+repeated `Slug GPIO led -> high` and `Slug GPIO led -> low` transitions, and
+the PinPulse Shield's active-high GPIO 2 indicator was visibly observed
+blinking. The program uses the selected 250 ms on/off delays, for a 500 ms
+nominal period.
+
+The current firmware reserves a 73,744-byte bounded heap and a 331,720-byte
+`.stack` section. Peak heap use is not yet instrumented; that measurement is a
+follow-up before increasing the frozen program's complexity.
+
 Run `make check` before handing off Rust changes; for this documentation plan,
 validate links and run `git diff --check`.
