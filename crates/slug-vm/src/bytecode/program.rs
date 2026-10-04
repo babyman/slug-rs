@@ -111,6 +111,24 @@ impl Program {
         Self::default()
     }
 
+    /// Rebuilds the scalar metadata decoded from a `.cslug` program record.
+    ///
+    /// This is crate-internal codec plumbing, not a stable bytecode builder.
+    pub(crate) fn from_cslug_scalar_metadata(
+        bindings: Vec<String>,
+        exports: Vec<String>,
+        entrypoint: Option<Entrypoint>,
+        callable_identities: Vec<CallableIdentity>,
+    ) -> Self {
+        Self {
+            bindings,
+            exports,
+            entrypoint,
+            callable_identities,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn contains_non_finite_number(&self) -> bool {
         self.chunks.iter().any(|chunk| {
             chunk.constants.iter().any(|constant| match constant {
