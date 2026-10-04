@@ -151,3 +151,8 @@ modules, a better embedded map implementation, source compression, or portable
 `.cslug` artifacts. The private frozen-image boundary is defined by
 [Frozen firmware image boundary](../decisions/2026-10-04-frozen-firmware-image-boundary.md);
 portable artifacts remain a separate decision.
+
+The next selected capability is deliberately narrower: the
+[ESP32-S3 static Clutch GPIO plan](esp32-s3-static-clutch-gpio.md) defines a
+logical LED output and blocking delay through static providers, without using
+the desktop dynamic Clutch loader.

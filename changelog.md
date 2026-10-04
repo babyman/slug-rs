@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Defined static Clutch providers for firmware-native modules and staged the
+  ESP32-S3 `slug.gpio`/`slug.time` path to a portable-source LED blink proof.
+
 - Added a target-selected `no_std + alloc` profile to `slug-vm` for freestanding
   ESP32-S3 builds. The proof firmware now executes shared Slug bytecode directly
   and reports its result over UART; desktop VM behavior is unchanged.
