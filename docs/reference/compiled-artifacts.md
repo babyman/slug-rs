@@ -79,6 +79,45 @@ native functions, declared-native wrappers, native resources, channels, tasks,
 closures, bindings, overload groups, or other live host/VM state. It must also
 reject a graph that is not closed under its recorded import edges.
 
+## Envelope, graph table, and limits
+
+The header is followed by a sequence of length-delimited sections. Each section
+is `kind:u8`, `payload_length:uleb128`, then exactly `payload_length` bytes.
+Version 1 permits only these sections, in this order:
+
+| Kind | Name | Count | Payload |
+|---:|---|---:|---|
+| `1` | graph | exactly one, first | Root-module index, module count, and import-edge table. |
+| `2` | module | exactly the graph's module count | One module identity plus its encoded `Program`. |
+| `0` | end | exactly one, last | Empty. |
+
+The graph payload contains `root_module_index:uleb128`,
+`module_count:uleb128`, `import_count:uleb128`, then one import edge per
+entry: `importer_module_index:uleb128`, `logical_name:string`, and
+`target_module_index:uleb128`. A string is its byte length as canonical ULEB128
+followed by valid UTF-8 bytes. Import edges are the decoded graph's sole
+resolver table.
+
+Module sections are sorted by the UTF-8 byte order of their logical module key;
+the graph's root and import indices refer to that order. Import edges are sorted
+by importer index, logical-name bytes, then target index. Duplicate module keys
+and duplicate `(importer, logical name)` edges are invalid. The root and every
+edge endpoint must name an existing module.
+
+The default decoder limits are a 64 MiB artifact, 32 MiB section, 4,096
+modules, 16,384 import edges, 1 MiB string, 65,535 chunks per module, and
+1,048,576 constants, instructions, or entries in any one metadata pool per
+module. A decoder must allow an embedding host to choose stricter limits,
+including an ESP-specific profile, but it must enforce a finite limit before
+allocation or recursive descent.
+
+Version-1 decoding reports one checked load-error category for: truncated
+input; bad header; unsupported version or flags; noncanonical or overflowing
+integer; invalid UTF-8; limit exhaustion; invalid section structure; invalid
+graph/index reference; unsupported source-derived value; and failed VM
+executable-invariant validation. No category may return a partially decoded
+graph for execution.
+
 ## Loading and validation
 
 Loading a `.cslug` file is an untrusted-input operation. Before returning a
