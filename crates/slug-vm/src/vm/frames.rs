@@ -3,7 +3,7 @@
 //! Frames retain the code owner, lexical locals, deferred scopes, and source
 //! location needed to preserve checked runtime errors across calls and cleanup.
 
-use std::rc::Rc;
+use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use crate::{
     Program, SourceSpan, SpanId, Value,

@@ -1,4 +1,5 @@
-use std::{fmt, fmt::Write as _, rc::Rc};
+use alloc::{borrow::ToOwned, boxed::Box, rc::Rc, string::String, vec::Vec};
+use core::{fmt, fmt::Write as _};
 
 use crate::{SourceSpan, Value};
 
@@ -57,6 +58,7 @@ impl fmt::Display for RuntimeError {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl std::error::Error for RuntimeError {}
 
 pub(super) fn render_stacktrace(error: &RuntimeError) -> String {

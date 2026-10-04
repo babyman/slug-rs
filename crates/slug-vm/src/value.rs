@@ -1,16 +1,14 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, VecDeque},
-    fmt,
-    fmt::Write as _,
-    rc::Rc,
-    sync::Arc,
-};
+use alloc::{boxed::Box, collections::VecDeque, rc::Rc, string::String, sync::Arc, vec::Vec};
+#[cfg(feature = "concurrency")]
+use core::mem;
+use core::{cell::RefCell, fmt, fmt::Write as _};
+
+use crate::platform::HashMap;
 
 #[cfg(feature = "concurrency")]
-use std::cell::Cell;
+use alloc::rc::Weak;
 #[cfg(feature = "concurrency")]
-use std::rc::Weak;
+use core::cell::Cell;
 
 use crate::{
     CallableIdentity, ForeignResourceSignature,
@@ -385,6 +383,7 @@ impl Channel {
         }
     }
 
+    #[cfg(not(target_os = "none"))]
     pub(crate) fn has_live_native_producer(&self) -> bool {
         self.native_producer
             .as_ref()
@@ -578,10 +577,7 @@ struct TaskState {
 
 #[cfg(feature = "concurrency")]
 pub(crate) fn task_state_layout() -> (usize, usize) {
-    (
-        std::mem::size_of::<TaskState>(),
-        std::mem::align_of::<TaskState>(),
-    )
+    (mem::size_of::<TaskState>(), mem::align_of::<TaskState>())
 }
 
 #[cfg(feature = "concurrency")]
@@ -649,7 +645,7 @@ impl Task {
 
     pub(crate) fn take_pending(&self, task: &Rc<Task>) -> Option<crate::vm::TaskExecution> {
         let mut state = self.state.borrow_mut();
-        let phase = std::mem::replace(&mut state.phase, TaskPhase::Running);
+        let phase = mem::replace(&mut state.phase, TaskPhase::Running);
         match phase {
             TaskPhase::Pending(mut execution) => {
                 execution.set_current_task(task);
@@ -693,7 +689,7 @@ impl Task {
         state.phase = TaskPhase::Settled(outcome.clone());
         state.wait_registration = None;
         release_admission(&mut state);
-        let waiters = std::mem::take(&mut state.waiters);
+        let waiters = mem::take(&mut state.waiters);
         drop(state);
         for waiter in waiters {
             waiter.resume(outcome.clone());
@@ -763,13 +759,13 @@ impl Task {
 
     pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
-        let phase = std::mem::replace(&mut state.phase, TaskPhase::Running);
+        let phase = mem::replace(&mut state.phase, TaskPhase::Running);
         if !matches!(phase, TaskPhase::Pending(_)) {
             state.phase = phase;
             return;
         }
         let wait_registration = state.wait_registration.take();
-        let waiters = std::mem::take(&mut state.waiters);
+        let waiters = mem::take(&mut state.waiters);
         let ready = state.ready.clone();
         state.phase = TaskPhase::Settled(Err(error.clone()));
         release_admission(&mut state);
@@ -1153,12 +1149,13 @@ fn hex(bytes: &[u8]) -> String {
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
+    clippy::float_cmp,
     reason = "the range and integral-value checks make the conversion exact"
 )]
 fn int_equals_float(integer: i64, float: f64) -> bool {
     float.is_finite()
-        && float.fract() == 0.0
         && float >= i64::MIN as f64
         && float < -(i64::MIN as f64)
+        && (float as i64) as f64 == float
         && float as i64 == integer
 }

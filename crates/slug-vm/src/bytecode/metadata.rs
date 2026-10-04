@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use crate::Value;
 
 /// A source position attached to an instruction for language diagnostics.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct SourceSpan {
     pub path: Arc<str>,
     pub line: u32,
@@ -22,7 +22,7 @@ impl SourceSpan {
 }
 
 /// Private source-path table index used by bytecode span metadata.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SourceId(pub(crate) u32);
 
 impl SourceId {
@@ -32,7 +32,7 @@ impl SourceId {
 }
 
 /// Private source-span table index used by bytecode instructions.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SpanId(pub(crate) u32);
 
 impl SpanId {
@@ -48,7 +48,7 @@ impl SpanId {
 
 macro_rules! metadata_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(pub(crate) u32);
 
         impl $name {

@@ -10,6 +10,7 @@ extern crate alloc;
 
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, main};
+use slug_vm::{Chunk, Op, Program, Value, Vm};
 
 // The ESP-IDF bootloader requires this application descriptor.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -29,9 +30,25 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73_744);
 
-    esp_println::println!("Slug ESP32-S3 firmware bootstrap ready");
+    let mut main = Chunk::new("main", 0);
+    let seven = main.constant(Value::Int(7));
+    let six = main.constant(Value::Int(6));
+    main.emit(Op::Constant(seven))
+        .emit(Op::Constant(six))
+        .emit(Op::Multiply)
+        .emit(Op::Return);
 
+    let mut program = Program::new();
+    let entry = program.add_chunk(main);
+    let result = Vm::new().run(&program, entry);
     loop {
-        core::hint::spin_loop();
+        match &result {
+            Ok(Value::Int(value)) => esp_println::println!("Slug VM result: {value}"),
+            Ok(value) => esp_println::println!("Slug VM unexpected result: {value:?}"),
+            Err(error) => esp_println::println!("Slug VM runtime error: {error}"),
+        }
+        for _ in 0..30_000_000 {
+            core::hint::spin_loop();
+        }
     }
 }

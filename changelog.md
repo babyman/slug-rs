@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a target-selected `no_std + alloc` profile to `slug-vm` for freestanding
+  ESP32-S3 builds. The proof firmware now executes shared Slug bytecode directly
+  and reports its result over UART; desktop VM behavior is unchanged.
+
 - Added a standalone ESP32-S3 bare-metal firmware bootstrap with a bounded
   allocator and UART readiness line. It is isolated from the desktop workspace
   while embedded Slug runtime support is developed.

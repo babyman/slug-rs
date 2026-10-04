@@ -1,29 +1,34 @@
-use std::{
-    cell::RefCell,
+use alloc::{
     rc::{Rc, Weak},
     sync::Arc,
+    vec::Vec,
 };
+use core::cell::RefCell;
 
-use crate::{
-    scheduler_signal::{BlockingProgressWaiter, ProgressSignal},
-    value::Channel,
-};
+#[cfg(target_os = "none")]
+use crate::scheduler_signal::ProgressSignal;
+#[cfg(not(target_os = "none"))]
+use crate::scheduler_signal::{BlockingProgressWaiter, ProgressSignal};
+use crate::value::Channel;
 
 /// Shared native-ingress and wake state. It intentionally has no knowledge of
 /// Slug tasks, nurseries, or timer policy so a slim VM can own it directly.
 pub(super) struct ProgressDriver {
     native_channels: RefCell<Vec<Weak<Channel>>>,
     signal: Arc<ProgressSignal>,
+    #[cfg(not(target_os = "none"))]
     blocking_waiter: BlockingProgressWaiter,
 }
 
 impl ProgressDriver {
     pub(super) fn new() -> Self {
         let signal = Arc::new(ProgressSignal::new());
+        #[cfg(not(target_os = "none"))]
         let blocking_waiter = signal.blocking_waiter();
         Self {
             native_channels: RefCell::new(Vec::new()),
             signal,
+            #[cfg(not(target_os = "none"))]
             blocking_waiter,
         }
     }
@@ -61,22 +66,25 @@ impl ProgressDriver {
         self.drain_native_channels()
     }
 
+    #[cfg(not(target_os = "none"))]
     pub(super) fn has_live_native_source(&self) -> bool {
         self.native_channels()
             .iter()
             .any(|channel| channel.has_live_native_producer())
     }
 
+    #[cfg(not(target_os = "none"))]
     pub(super) fn snapshot(&self) -> u64 {
         self.signal.snapshot()
     }
 
+    #[cfg(not(target_os = "none"))]
     pub(super) fn wait(&self, observed: u64, timeout: Option<std::time::Duration>) {
         self.blocking_waiter.wait(&self.signal, observed, timeout);
     }
 
     /// Waits only when a live native producer can create future progress.
-    #[cfg(not(feature = "concurrency"))]
+    #[cfg(all(not(target_os = "none"), not(feature = "concurrency")))]
     pub(super) fn wait_for_progress(&self) -> bool {
         if !self.has_live_native_source() {
             return false;
@@ -87,6 +95,12 @@ impl ProgressDriver {
         }
         self.wait(observed, None);
         true
+    }
+
+    /// Freestanding hosts must return to their event loop rather than block.
+    #[cfg(target_os = "none")]
+    pub(super) fn wait_for_progress(&self) -> bool {
+        false
     }
 
     fn native_channels(&self) -> Vec<Rc<Channel>> {

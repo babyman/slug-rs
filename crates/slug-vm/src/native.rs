@@ -1,20 +1,28 @@
-use std::{
+use alloc::{
+    boxed::Box,
+    collections::VecDeque,
+    rc::{Rc, Weak},
+    string::{String, ToString},
+    sync::{Arc, Weak as SyncWeak},
+    vec::Vec,
+};
+use core::{
     any::Any,
     cell::{Cell, RefCell},
-    collections::{HashSet, VecDeque},
     fmt,
     marker::PhantomData,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+#[cfg(not(target_os = "none"))]
+use std::{
     panic::{AssertUnwindSafe, catch_unwind},
-    rc::{Rc, Weak},
-    sync::{
-        Arc, Mutex, Once, Weak as SyncWeak,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
+    sync::{Mutex, Once, atomic::AtomicBool},
 };
 
 use crate::{
     Value,
     collections::{Bytes, BytesView, List, Map, MapView},
+    platform::HashSet,
     scheduler_signal::ProgressSignal,
     value::Channel,
 };
@@ -78,11 +86,13 @@ pub enum NativeProducerStatus {
     Closed(NativeSendValue),
 }
 
+#[cfg(not(target_os = "none"))]
 pub struct NativeChannelProducer {
     state: Arc<NativeProducerState>,
     producer_lease: bool,
 }
 
+#[cfg(not(target_os = "none"))]
 struct NativeProducerState {
     capacity: usize,
     occupied: AtomicUsize,
@@ -92,6 +102,7 @@ struct NativeProducerState {
     progress_signals: Mutex<Vec<SyncWeak<ProgressSignal>>>,
 }
 
+#[cfg(not(target_os = "none"))]
 impl NativeChannelProducer {
     #[must_use]
     pub(crate) fn bounded(capacity: usize) -> Self {
@@ -205,6 +216,7 @@ impl NativeChannelProducer {
         }
     }
 
+    #[cfg(not(target_os = "none"))]
     pub(crate) fn has_external_producer(&self) -> bool {
         self.state.producer_leases.load(Ordering::Acquire) > 0 && !self.is_closed()
     }
@@ -235,6 +247,7 @@ impl NativeChannelProducer {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl Clone for NativeChannelProducer {
     fn clone(&self) -> Self {
         if self.producer_lease {
@@ -247,11 +260,165 @@ impl Clone for NativeChannelProducer {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl Drop for NativeChannelProducer {
     fn drop(&mut self) {
         if self.producer_lease {
             let previous = self.state.producer_leases.fetch_sub(1, Ordering::AcqRel);
             debug_assert!(previous > 0, "native producer lease underflow");
+        }
+        self.notify_progress();
+    }
+}
+
+/// A single-threaded native producer for freestanding hosts.
+///
+/// Interrupt and multi-core ingress require a host-specific adapter; this
+/// minimal implementation keeps the same bounded mailbox contract for native
+/// callbacks executing on the VM-driving thread.
+#[cfg(target_os = "none")]
+pub struct NativeChannelProducer {
+    state: Rc<RefCell<EmbeddedNativeProducerState>>,
+    producer_lease: bool,
+}
+
+#[cfg(target_os = "none")]
+struct EmbeddedNativeProducerState {
+    capacity: usize,
+    queue: VecDeque<NativeSendValue>,
+    closed: bool,
+    producer_leases: usize,
+    progress_signals: Vec<SyncWeak<ProgressSignal>>,
+}
+
+#[cfg(target_os = "none")]
+impl NativeChannelProducer {
+    #[must_use]
+    pub(crate) fn bounded(capacity: usize) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(EmbeddedNativeProducerState {
+                capacity,
+                queue: VecDeque::new(),
+                closed: false,
+                producer_leases: 1,
+                progress_signals: Vec::new(),
+            })),
+            producer_lease: true,
+        }
+    }
+
+    #[must_use]
+    pub fn try_send(&self, value: NativeSendValue) -> NativeProducerStatus {
+        self.try_send_after_accepting(value, || {})
+    }
+
+    #[doc(hidden)]
+    pub fn try_send_after_accepting<F>(
+        &self,
+        value: NativeSendValue,
+        finalize: F,
+    ) -> NativeProducerStatus
+    where
+        F: FnOnce(),
+    {
+        let mut state = self.state.borrow_mut();
+        if state.closed {
+            return NativeProducerStatus::Closed(value);
+        }
+        if state.queue.len() >= state.capacity {
+            return NativeProducerStatus::Full(value);
+        }
+        finalize();
+        state.queue.push_back(value);
+        drop(state);
+        self.notify_progress();
+        NativeProducerStatus::Sent
+    }
+
+    pub fn close(&self) {
+        self.state.borrow_mut().closed = true;
+        self.notify_progress();
+    }
+
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.state.borrow().closed
+    }
+
+    pub(crate) fn drain(&self, limit: usize) -> Vec<NativeSendValue> {
+        let mut state = self.state.borrow_mut();
+        let end = limit.min(state.queue.len());
+        state.queue.drain(..end).collect()
+    }
+
+    pub(crate) fn reserve_slot(&self) -> bool {
+        let state = self.state.borrow();
+        !state.closed && state.queue.len() < state.capacity
+    }
+
+    pub(crate) fn release_slot(&self) {}
+
+    pub(crate) fn register_progress_signal(&self, signal: &Arc<ProgressSignal>) {
+        let mut state = self.state.borrow_mut();
+        state
+            .progress_signals
+            .retain(|candidate| candidate.strong_count() > 0);
+        if !state
+            .progress_signals
+            .iter()
+            .any(|candidate| candidate.ptr_eq(&Arc::downgrade(signal)))
+        {
+            state.progress_signals.push(Arc::downgrade(signal));
+        }
+    }
+
+    #[cfg(not(target_os = "none"))]
+    pub(crate) fn has_external_producer(&self) -> bool {
+        let state = self.state.borrow();
+        state.producer_leases > 0 && !state.closed
+    }
+
+    pub(crate) fn receiver_handle(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            producer_lease: false,
+        }
+    }
+
+    fn notify_progress(&self) {
+        let signals = self
+            .state
+            .borrow()
+            .progress_signals
+            .iter()
+            .filter_map(SyncWeak::upgrade)
+            .collect::<Vec<_>>();
+        for signal in signals {
+            signal.notify();
+        }
+    }
+}
+
+#[cfg(target_os = "none")]
+impl Clone for NativeChannelProducer {
+    fn clone(&self) -> Self {
+        if self.producer_lease {
+            self.state.borrow_mut().producer_leases += 1;
+        }
+        Self {
+            state: self.state.clone(),
+            producer_lease: self.producer_lease,
+        }
+    }
+}
+
+#[cfg(target_os = "none")]
+impl Drop for NativeChannelProducer {
+    fn drop(&mut self) {
+        if self.producer_lease {
+            let mut state = self.state.borrow_mut();
+            debug_assert!(state.producer_leases > 0, "native producer lease underflow");
+            state.producer_leases -= 1;
         }
         self.notify_progress();
     }
@@ -341,16 +508,20 @@ impl Drop for NativeResourceRegistryInner {
 
 static NEXT_MODULE_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_RESOURCE_TYPE_ID: AtomicUsize = AtomicUsize::new(1);
+#[cfg(not(target_os = "none"))]
 static NATIVE_PANIC_HOOK: Once = Once::new();
 
+#[cfg(not(target_os = "none"))]
 thread_local! {
     static NATIVE_BOUNDARY_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
+#[cfg(not(target_os = "none"))]
 struct NativeBoundaryGuard {
     previous_depth: usize,
 }
 
+#[cfg(not(target_os = "none"))]
 impl NativeBoundaryGuard {
     fn enter() -> Self {
         install_native_panic_hook();
@@ -363,12 +534,14 @@ impl NativeBoundaryGuard {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl Drop for NativeBoundaryGuard {
     fn drop(&mut self) {
         NATIVE_BOUNDARY_DEPTH.with(|depth| depth.set(self.previous_depth));
     }
 }
 
+#[cfg(not(target_os = "none"))]
 fn install_native_panic_hook() {
     NATIVE_PANIC_HOOK.call_once(|| {
         let previous = std::panic::take_hook();
@@ -381,12 +554,18 @@ fn install_native_panic_hook() {
     });
 }
 
+#[cfg(not(target_os = "none"))]
 fn catch_native_unwind<R>(operation: impl FnOnce() -> R) -> std::thread::Result<R> {
     let _guard = NativeBoundaryGuard::enter();
     catch_unwind(AssertUnwindSafe(operation))
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg(target_os = "none")]
+fn catch_native_unwind<R>(operation: impl FnOnce() -> R) -> Result<R, ()> {
+    Ok(operation())
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum NativeArity {
     Exact(usize),
     Range { minimum: usize, maximum: usize },
@@ -1063,6 +1242,7 @@ impl fmt::Display for NativeDescriptorError {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl std::error::Error for NativeDescriptorError {}
 
 pub struct NativeResourceType<T> {

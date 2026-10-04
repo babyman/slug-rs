@@ -1,3 +1,5 @@
+#![cfg(not(target_os = "none"))]
+
 use std::{
     sync::{Arc, Condvar, Mutex, Weak},
     time::Duration,

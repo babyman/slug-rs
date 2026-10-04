@@ -4,7 +4,8 @@
 //! collection redesign. This module is the only place that needs to know the
 //! concrete backing containers for ordinary collection transformations.
 
-use std::{ops::Deref, rc::Rc};
+use alloc::{rc::Rc, string::String, vec::Vec};
+use core::ops::Deref;
 
 use crate::Value;
 
@@ -25,6 +26,7 @@ impl MapKey {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
+        clippy::float_cmp,
         reason = "the range and integral-value checks make this conversion exact"
     )]
     pub(crate) fn from_value(value: &Value) -> Option<Self> {
@@ -33,11 +35,11 @@ impl MapKey {
             Value::Int(value) => Some(Self::Int(*value)),
             Value::Float(value)
                 if value.is_finite()
-                    && value.fract() == 0.0
                     && *value >= i64::MIN as f64
                     && *value < -(i64::MIN as f64) =>
             {
-                Some(Self::Int(*value as i64))
+                let integer = *value as i64;
+                ((integer as f64) == *value).then_some(Self::Int(integer))
             }
             Value::Float(value) if value.is_finite() => Some(Self::Float(value.to_bits())),
             Value::Str(value) => Some(Self::Str(value.clone())),

@@ -1311,7 +1311,12 @@ dependencies = [
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
+ "slug-vm",
 ]
+
+[[package]]
+name = "slug-vm"
+version = "0.1.0"
 
 [[package]]
 name = "somni-expr"

@@ -4,7 +4,10 @@
 //! live-binding validation, and frame creation must remain traceable together.
 
 #[cfg(feature = "concurrency")]
-use std::{cell::Cell, rc::Rc};
+use alloc::rc::Rc;
+use alloc::{string::String, vec::Vec};
+#[cfg(feature = "concurrency")]
+use core::cell::Cell;
 
 use crate::{CallableIdentity, Value};
 

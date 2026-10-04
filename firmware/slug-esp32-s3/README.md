@@ -1,8 +1,9 @@
-# Slug ESP32-S3 firmware bootstrap
+# Slug ESP32-S3 VM proof of concept
 
-This standalone package proves the ESP32-S3 toolchain, bootloader, UART output,
-and bounded `no_std + alloc` heap before linking the Slug frontend or VM. It is
-not a member of the desktop Cargo workspace.
+This standalone package runs a direct bytecode program through Slug's shared VM
+on an ESP32-S3. It uses a bounded `no_std + alloc` heap and intentionally links
+neither the source frontend nor a desktop loader. It is not a member of the
+desktop Cargo workspace.
 
 ## Prerequisites
 
@@ -30,12 +31,12 @@ With the board connected over USB, flash and monitor it:
 espflash flash --monitor --chip esp32s3 target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
 ```
 
-The serial monitor must contain:
+The serial monitor repeatedly prints:
 
 ```text
-Slug ESP32-S3 firmware bootstrap ready
+Slug VM result: 42
 ```
 
-The next milestone replaces this Rust-only line with UART output driven by an
-embedded Slug program. See
+The next milestone introduces an embedded native `println` capability and a
+flash-resident program loader. See
 [`docs/planning/esp32-s3-proof-of-concept.md`](../../docs/planning/esp32-s3-proof-of-concept.md).

@@ -1,3 +1,5 @@
+use alloc::{string::String, vec::Vec};
+
 use super::metadata::{
     CallArgumentsId, Capture, CaptureListId, GlobalNameId, InterpolationId, ListSpreadId,
     MatchPattern, MatchPatternId, SchemaField, SchemaFieldsId, SelectCase, SelectCasesId,

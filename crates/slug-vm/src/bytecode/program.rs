@@ -1,10 +1,7 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    mem,
-    sync::Arc,
-};
+use alloc::{collections::VecDeque, string::String, sync::Arc, vec::Vec};
+use core::mem;
 
-use crate::CallableIdentity;
+use crate::{CallableIdentity, platform::HashMap};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
@@ -219,10 +216,10 @@ impl Program {
         let (largest_chunk_instructions, largest_constant_pool, largest_local_frame) =
             self.largest_chunk_metrics();
         BytecodeLayoutMetrics {
-            program_inline_bytes: std::mem::size_of::<Self>(),
+            program_inline_bytes: mem::size_of::<Self>(),
             instructions,
-            instruction_bytes: instructions * std::mem::size_of::<PackedInstruction>(),
-            instruction_size_bytes: std::mem::size_of::<PackedInstruction>(),
+            instruction_bytes: instructions * mem::size_of::<PackedInstruction>(),
+            instruction_size_bytes: mem::size_of::<PackedInstruction>(),
             chunk_storage_bytes,
             constant_pool_slots,
             constant_pool_capacity_bytes,
@@ -235,8 +232,8 @@ impl Program {
             largest_local_frame,
             largest_metadata_pool,
             span_table_entries: self.spans.len(),
-            inline_span_bytes: instructions * std::mem::size_of::<Option<SpanId>>(),
-            compressed_span_map_bytes: span_runs * (std::mem::size_of::<u32>() * 2),
+            inline_span_bytes: instructions * mem::size_of::<Option<SpanId>>(),
+            compressed_span_map_bytes: span_runs * (mem::size_of::<u32>() * 2),
         }
     }
 
@@ -244,12 +241,12 @@ impl Program {
         self.chunks.iter().fold((0, 0, 0), |totals, chunk| {
             (
                 totals.0
-                    + chunk.code.capacity() * std::mem::size_of::<PackedInstruction>()
-                    + chunk.constants.capacity() * std::mem::size_of::<Constant>()
-                    + chunk.parameters.capacity() * std::mem::size_of::<ParameterSignature>()
+                    + chunk.code.capacity() * mem::size_of::<PackedInstruction>()
+                    + chunk.constants.capacity() * mem::size_of::<Constant>()
+                    + chunk.parameters.capacity() * mem::size_of::<ParameterSignature>()
                     + chunk.name.capacity(),
                 totals.1 + chunk.constants.len(),
-                totals.2 + chunk.constants.capacity() * std::mem::size_of::<Constant>(),
+                totals.2 + chunk.constants.capacity() * mem::size_of::<Constant>(),
             )
         })
     }
@@ -271,23 +268,23 @@ impl Program {
             + self.selected_calls.len()
             + self.select_cases.len();
         let capacity_bytes = self.callable_identities.capacity()
-            * std::mem::size_of::<CallableIdentity>()
-            + self.global_names.capacity() * std::mem::size_of::<String>()
-            + self.capture_lists.capacity() * std::mem::size_of::<Vec<Capture>>()
-            + self.schema_fields.capacity() * std::mem::size_of::<Vec<SchemaField>>()
-            + self.struct_fields.capacity() * std::mem::size_of::<Vec<String>>()
-            + self.match_patterns.capacity() * std::mem::size_of::<MatchPattern>()
-            + self.interpolations.capacity() * std::mem::size_of::<Vec<String>>()
-            + self.list_spreads.capacity() * std::mem::size_of::<Vec<bool>>()
-            + self.call_arguments.capacity() * std::mem::size_of::<Vec<CallArgumentKind>>()
-            + self.selected_calls.capacity() * std::mem::size_of::<(CallArgumentsId, usize)>()
-            + self.select_cases.capacity() * std::mem::size_of::<Vec<SelectCase>>();
+            * mem::size_of::<CallableIdentity>()
+            + self.global_names.capacity() * mem::size_of::<String>()
+            + self.capture_lists.capacity() * mem::size_of::<Vec<Capture>>()
+            + self.schema_fields.capacity() * mem::size_of::<Vec<SchemaField>>()
+            + self.struct_fields.capacity() * mem::size_of::<Vec<String>>()
+            + self.match_patterns.capacity() * mem::size_of::<MatchPattern>()
+            + self.interpolations.capacity() * mem::size_of::<Vec<String>>()
+            + self.list_spreads.capacity() * mem::size_of::<Vec<bool>>()
+            + self.call_arguments.capacity() * mem::size_of::<Vec<CallArgumentKind>>()
+            + self.selected_calls.capacity() * mem::size_of::<(CallArgumentsId, usize)>()
+            + self.select_cases.capacity() * mem::size_of::<Vec<SelectCase>>();
         (slots, capacity_bytes)
     }
 
     fn source_table_capacity_bytes(&self) -> usize {
-        self.sources.capacity() * std::mem::size_of::<Arc<str>>()
-            + self.spans.capacity() * std::mem::size_of::<SourceSpan>()
+        self.sources.capacity() * mem::size_of::<Arc<str>>()
+            + self.spans.capacity() * mem::size_of::<SourceSpan>()
     }
 
     fn largest_chunk_metrics(&self) -> (usize, usize, usize) {

@@ -1,3 +1,6 @@
+use alloc::{boxed::Box, vec::Vec};
+use core::mem;
+
 use crate::{DeferMode, Program, SourceSpan, Value};
 
 use super::frames::{Frame, LocalSlot, ProvidedArguments};
@@ -47,7 +50,7 @@ impl Vm {
                 .get(self.frames.len().saturating_sub(2))
                 .is_some_and(|parent| parent.cleanup_action);
         let frame = self.frames.last_mut().expect("frame was checked");
-        let scopes = std::mem::take(&mut frame.scopes);
+        let scopes = mem::take(&mut frame.scopes);
         let cleanup_recovers = frame.cleanup_action && frame.cleanup_recovers;
         let cleanup_owner_depth = frame.cleanup_owner_depth;
         if cleanup_recovers && cleanup_owner_depth.is_none() {
@@ -262,7 +265,7 @@ impl Vm {
                 .filter(|item| matches!(item, Cleanup::Actions { .. })),
         );
         for (frame_depth, frame) in self.frames.iter_mut().enumerate() {
-            let scopes = std::mem::take(&mut frame.scopes);
+            let scopes = mem::take(&mut frame.scopes);
             cleanup.extend(scopes.into_iter().map(|actions| Cleanup::Actions {
                 actions,
                 success: false,

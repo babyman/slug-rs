@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use alloc::{string::String, vec::Vec};
+
+use crate::platform::HashMap;
 
 use crate::Value;
 

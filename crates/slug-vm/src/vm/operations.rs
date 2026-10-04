@@ -1,7 +1,13 @@
-use std::{cmp::Ordering, rc::Rc};
+use alloc::{
+    borrow::ToOwned,
+    rc::Rc,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::cmp::Ordering;
 
 #[cfg(feature = "metrics")]
-use std::cell::RefCell;
+use core::cell::RefCell;
 
 use crate::{
     MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
