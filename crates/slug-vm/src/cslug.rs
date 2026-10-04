@@ -6,11 +6,11 @@
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 
-use crate::Capture;
 use crate::{
-    CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature, ModuleDeclaration,
-    ModuleTag, Program, SchemaField, SourceSpan,
+    CallArgumentKind, CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature,
+    ModuleDeclaration, ModuleTag, Program, SchemaField, SelectCase, SourceSpan,
 };
+use crate::{Capture, bytecode::CallArgumentsId};
 
 /// The exact byte count of a version-1 `.cslug` header.
 pub const HEADER_LENGTH: usize = 12;
@@ -384,6 +384,22 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         schema_fields.push(fields);
     }
     let struct_fields = reader.strings_lists("struct field lists")?;
+    let interpolations = reader.strings_lists("interpolation lists")?;
+    let list_spreads = reader.bool_lists("list spread lists")?;
+    let call_arguments = reader.call_argument_lists()?;
+    let selected_call_count = reader.usize("selected call count")?;
+    let mut selected_calls = Vec::with_capacity(selected_call_count);
+    for _ in 0..selected_call_count {
+        let arguments = reader.usize("selected call arguments")?;
+        if arguments >= call_arguments.len() {
+            return Err(Error::InvalidReference("selected call arguments".into()));
+        }
+        selected_calls.push((
+            CallArgumentsId::new(arguments as u32),
+            reader.usize("selected call identity")?,
+        ));
+    }
+    let select_cases = reader.select_case_lists()?;
     reader.finish("scalar program record")?;
     Ok(Program::from_cslug_scalar_metadata(
         bindings,
@@ -397,6 +413,11 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         capture_lists,
         schema_fields,
         struct_fields,
+        interpolations,
+        list_spreads,
+        call_arguments,
+        selected_calls,
+        select_cases,
     ))
 }
 
@@ -622,6 +643,61 @@ impl<'a> Reader<'a> {
         Ok(values)
     }
 
+    fn bool_lists(&mut self, context: &'static str) -> Result<Vec<Vec<bool>>, Error> {
+        let count = self.usize(context)?;
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            let items = self.usize(context)?;
+            let mut list = Vec::with_capacity(items);
+            for _ in 0..items {
+                list.push(self.bool(context)?);
+            }
+            values.push(list);
+        }
+        Ok(values)
+    }
+
+    fn call_argument_lists(&mut self) -> Result<Vec<Vec<CallArgumentKind>>, Error> {
+        let count = self.usize("call argument lists")?;
+        let mut lists = Vec::with_capacity(count);
+        for _ in 0..count {
+            let argument_count = self.usize("call argument count")?;
+            let mut arguments = Vec::with_capacity(argument_count);
+            for _ in 0..argument_count {
+                arguments.push(match self.byte("call argument kind")? {
+                    0 => CallArgumentKind::Positional,
+                    1 => CallArgumentKind::Spread,
+                    2 => CallArgumentKind::Named(self.string(1024 * 1024, "call argument name")?),
+                    _ => return Err(Error::InvalidStructure("call argument kind".into())),
+                });
+            }
+            lists.push(arguments);
+        }
+        Ok(lists)
+    }
+
+    fn select_case_lists(&mut self) -> Result<Vec<Vec<SelectCase>>, Error> {
+        let count = self.usize("select case lists")?;
+        let mut lists = Vec::with_capacity(count);
+        for _ in 0..count {
+            let case_count = self.usize("select case count")?;
+            let mut cases = Vec::with_capacity(case_count);
+            for _ in 0..case_count {
+                let has_handler = self.bool("select case handler")?;
+                cases.push(match self.byte("select case kind")? {
+                    0 => SelectCase::Receive { has_handler },
+                    1 => SelectCase::Send { has_handler },
+                    2 => SelectCase::After { has_handler },
+                    3 => SelectCase::Await { has_handler },
+                    4 => SelectCase::Default { has_handler },
+                    _ => return Err(Error::InvalidStructure("select case kind".into())),
+                });
+            }
+            lists.push(cases);
+        }
+        Ok(lists)
+    }
+
     fn finish(&self, context: &'static str) -> Result<(), Error> {
         if self.cursor == self.bytes.len() {
             Ok(())
@@ -674,8 +750,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(11, &mut module);
-        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        uleb(16, &mut module);
+        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -783,6 +859,11 @@ mod tests {
         uleb(0, &mut record); // capture lists
         uleb(0, &mut record); // schema field lists
         uleb(0, &mut record); // struct field lists
+        uleb(0, &mut record); // interpolation lists
+        uleb(0, &mut record); // list spread lists
+        uleb(0, &mut record); // call argument lists
+        uleb(0, &mut record); // selected calls
+        uleb(0, &mut record); // select case lists
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -825,6 +906,11 @@ mod tests {
         uleb(1, &mut record); // struct field lists
         uleb(1, &mut record); // struct fields
         string("field", &mut record);
+        uleb(0, &mut record); // interpolation lists
+        uleb(0, &mut record); // list spread lists
+        uleb(0, &mut record); // call argument lists
+        uleb(0, &mut record); // selected calls
+        uleb(0, &mut record); // select case lists
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);

@@ -127,6 +127,11 @@ impl Program {
         capture_lists: Vec<Vec<Capture>>,
         schema_fields: Vec<Vec<SchemaField>>,
         struct_fields: Vec<Vec<String>>,
+        interpolations: Vec<Vec<String>>,
+        list_spreads: Vec<Vec<bool>>,
+        call_arguments: Vec<Vec<CallArgumentKind>>,
+        selected_calls: Vec<(CallArgumentsId, usize)>,
+        select_cases: Vec<Vec<SelectCase>>,
     ) -> Self {
         let source_ids = sources
             .iter()
@@ -153,6 +158,11 @@ impl Program {
             capture_lists,
             schema_fields,
             struct_fields,
+            interpolations,
+            list_spreads,
+            call_arguments,
+            selected_calls,
+            select_cases,
             ..Self::default()
         }
     }
