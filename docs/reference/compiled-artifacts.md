@@ -14,10 +14,11 @@ implementation begins.
 
 ## Artifact identity and scope
 
-A `.cslug` file stores one complete executable Slug program. It includes the
-entry point and all compiled module state needed for that program to run. It
-is not initially a module artifact, compiler cache, memory snapshot, or
-serialization of host-language objects.
+A `.cslug` file stores one complete executable Slug program as a closed
+compiled module graph. It includes a designated root program, its entry point,
+and every resolved compiled dependency needed to execute that graph without a
+source resolver. It is not initially a module artifact, compiler cache, memory
+snapshot, or serialization of host-language objects.
 
 An artifact is portable across machines running VMs that support its declared
 format and VM/bytecode compatibility version. It is not a promise that an
@@ -44,17 +45,18 @@ must not encode and immediately decode merely to invoke the VM.
 
 The VM representation drives the schema. Version 1 must encode the
 `CompiledProgram` state required by the VM—bytecode, constants, functions,
-module state, entry point, source metadata, and executable invariants—without
-introducing a VM-independent IR. The exact Rust layouts remain private and may
-change; the encoder and decoder evolve with their supported VM compatibility
-version.
+closed module graph, entry point, source metadata, and executable
+invariants—without introducing a VM-independent IR. The exact Rust layouts
+remain private and may change; the encoder and decoder evolve with their
+supported VM compatibility version.
 
 ## Loading and validation
 
 Loading a `.cslug` file is an untrusted-input operation. Before returning a
 `CompiledProgram`, the decoder must validate the header, version and flags,
 length-delimited sections, resource limits, indices, constants, function and
-call metadata, module references, entry point, and control-flow targets.
+call metadata, module-graph references, root entry point, and control-flow
+targets.
 
 Malformed, truncated, hostile, unsupported, or incompatible artifacts must
 produce a checked load error. They must never cause a host panic, unchecked

@@ -8,15 +8,40 @@ execution path or publishing a VM-independent IR.
 
 ## Preconditions
 
-- [ ] Keep the artifact scope to one whole program with a defined entry point;
-  defer module artifacts and Clutch loading.
-- [ ] Inventory every `CompiledProgram` component that affects execution,
+- [x] Keep the artifact scope to one closed compiled module graph with a
+  defined root entry point; defer module artifacts and Clutch loading.
+- [x] Inventory every `CompiledProgram` component that affects execution,
   module initialization, source diagnostics, or validation.
 - [ ] Specify the version-1 header: magic bytes, format version, VM/bytecode
   compatibility version, flags, byte order, and canonical integer encoding.
 - [ ] Specify bounded section framing, all canonical encodings, resource
   limits, verifier rules, and checked load-error categories in
   `reference/compiled-artifacts.md`.
+
+### Current executable-state inventory
+
+The current compiler's private `CompiledProgram` is one `slug_vm::Program`
+plus frontend-only global-binding facts. The serializable executable state is
+therefore the closed graph of `Program` values compiled by `ModuleGraph`, not
+that private lowering wrapper or any live `ModuleInstance` values.
+
+Each graph member must retain its logical module key and runtime module name,
+and the graph must identify its root member. A member's `Program` retains:
+
+- chunks, their constants, parameters, local counts, callable identity, packed
+  instructions, and source-span references;
+- bindings, declarations, exports, entrypoint metadata, and callable
+  identities;
+- interned source paths/spans and every executable metadata pool: global names,
+  captures, schema and struct fields, match patterns, interpolations, list
+  spreads, call descriptors, selected calls, and select cases.
+
+The codec must not capture `ModuleGraph` caches, semantic snapshots, initialized
+module values, VM frames, task/scheduler state, native registrations, host
+configuration, or activation leases. Those remain fresh host/VM state. The VM
+installation validator remains the final executable-invariant check after
+decode; the decoder must additionally validate file structure and graph
+references before a `Program` reaches installation.
 
 ## Implementation slices
 
