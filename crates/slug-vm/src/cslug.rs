@@ -6,7 +6,10 @@
 
 use alloc::{string::String, vec::Vec};
 
-use crate::{CallableIdentity, Entrypoint, EntrypointArguments, ModuleDeclaration, Program};
+use crate::{
+    CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature, ModuleDeclaration,
+    Program,
+};
 
 /// The exact byte count of a version-1 `.cslug` header.
 pub const HEADER_LENGTH: usize = 12;
@@ -384,6 +387,11 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
         (None, None)
     };
     let resource_type = reader.optional_string("resource type")?;
+    let foreign_resource_signature = match reader.byte("foreign resource signature")? {
+        0 => None,
+        1 => Some(decode_resource_signature(reader)?),
+        _ => return Err(Error::InvalidStructure("foreign resource signature".into())),
+    };
     let documentation = reader.optional_string("declaration documentation")?;
     if reader.usize("declaration tag count")? != 0 {
         return Err(Error::InvalidStructure(
@@ -399,12 +407,35 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
             foreign_arity,
             resource_type,
             foreign_callable_identity: None,
-            foreign_resource_signature: None,
+            foreign_resource_signature,
             documentation,
             tags: Vec::new(),
         },
         foreign_identity,
     })
+}
+
+fn decode_resource_signature(reader: &mut Reader<'_>) -> Result<ForeignResourceSignature, Error> {
+    let count = reader.usize("foreign resource parameter count")?;
+    let mut parameters = Vec::with_capacity(count);
+    for _ in 0..count {
+        parameters.push(decode_resource_identity(reader)?);
+    }
+    let result = decode_resource_identity(reader)?;
+    Ok(ForeignResourceSignature::new(parameters, result))
+}
+
+fn decode_resource_identity(
+    reader: &mut Reader<'_>,
+) -> Result<Option<(Option<String>, String)>, Error> {
+    match reader.byte("foreign resource identity")? {
+        0 => Ok(None),
+        1 => Ok(Some((
+            reader.optional_string("foreign resource module")?,
+            reader.string(1024 * 1024, "foreign resource name")?,
+        ))),
+        _ => Err(Error::InvalidStructure("foreign resource identity".into())),
+    }
 }
 
 fn read_section<'a>(
