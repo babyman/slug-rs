@@ -101,6 +101,14 @@ pub enum Error {
     UnsupportedVmCompatibility(u16),
     /// The artifact requests unsupported format features.
     UnsupportedFlags(u32),
+    /// An unsigned LEB128 integer is malformed or not shortest-form.
+    NonCanonicalInteger { context: &'static str },
+    /// A bounded artifact resource would exceed the caller's configured limit.
+    LimitExceeded { context: &'static str },
+    /// Section ordering or framing does not match the version-1 envelope.
+    InvalidStructure(String),
+    /// A graph index or duplicate graph key is invalid.
+    InvalidReference(String),
 }
 
 impl core::fmt::Display for Error {
@@ -120,6 +128,18 @@ impl core::fmt::Display for Error {
             Self::UnsupportedFlags(flags) => {
                 write!(formatter, "unsupported .cslug flags {flags:#x}")
             }
+            Self::NonCanonicalInteger { context } => {
+                write!(formatter, "invalid .cslug integer for {context}")
+            }
+            Self::LimitExceeded { context } => {
+                write!(formatter, ".cslug limit exceeded: {context}")
+            }
+            Self::InvalidStructure(message) => {
+                write!(formatter, "invalid .cslug structure: {message}")
+            }
+            Self::InvalidReference(message) => {
+                write!(formatter, "invalid .cslug reference: {message}")
+            }
         }
     }
 }
@@ -132,9 +152,249 @@ pub fn encode_header(output: &mut Vec<u8>) {
     output.extend(Header::version_1().encode());
 }
 
+/// Resource bounds enforced before the envelope reader allocates or recurses.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Limits {
+    /// Maximum complete artifact byte length.
+    pub artifact_bytes: usize,
+    /// Maximum one section payload byte length.
+    pub section_bytes: usize,
+    /// Maximum closed-graph members.
+    pub modules: usize,
+    /// Maximum closed-graph import edges.
+    pub imports: usize,
+    /// Maximum UTF-8 string byte length.
+    pub string_bytes: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            artifact_bytes: 64 * 1024 * 1024,
+            section_bytes: 32 * 1024 * 1024,
+            modules: 4_096,
+            imports: 16_384,
+            string_bytes: 1024 * 1024,
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ImportEdge {
+    pub(crate) importer: usize,
+    pub(crate) name: String,
+    pub(crate) target: usize,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct Envelope {
+    pub(crate) root: usize,
+    pub(crate) module_payloads: Vec<Vec<u8>>,
+    pub(crate) imports: Vec<ImportEdge>,
+}
+
+/// Validates the `.cslug` header and closed-graph envelope without decoding
+/// program records.
+///
+/// # Errors
+///
+/// Returns a checked error for malformed, noncanonical, oversized, or invalid
+/// graph-envelope input.
+pub fn validate_envelope(bytes: &[u8], limits: Limits) -> Result<(), Error> {
+    let _ = decode_envelope(bytes, limits)?;
+    Ok(())
+}
+
+pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, Error> {
+    if bytes.len() > limits.artifact_bytes {
+        return Err(Error::LimitExceeded {
+            context: "artifact bytes",
+        });
+    }
+    Header::decode(bytes)?;
+    let mut reader = Reader::new(&bytes[HEADER_LENGTH..]);
+    let graph = read_section(&mut reader, 1, limits.section_bytes, "graph section")?;
+    let mut graph_reader = Reader::new(graph);
+    let root = graph_reader.usize("root module index")?;
+    let module_count = graph_reader.usize("module count")?;
+    let import_count = graph_reader.usize("import count")?;
+    if module_count > limits.modules {
+        return Err(Error::LimitExceeded {
+            context: "module count",
+        });
+    }
+    if import_count > limits.imports {
+        return Err(Error::LimitExceeded {
+            context: "import count",
+        });
+    }
+    let mut imports = Vec::with_capacity(import_count);
+    for _ in 0..import_count {
+        imports.push(ImportEdge {
+            importer: graph_reader.usize("importer module index")?,
+            name: graph_reader.string(limits.string_bytes, "import name")?,
+            target: graph_reader.usize("import target module index")?,
+        });
+    }
+    graph_reader.finish("graph section")?;
+    if module_count == 0 || root >= module_count {
+        return Err(Error::InvalidReference("root module index".into()));
+    }
+    let mut module_payloads = Vec::with_capacity(module_count);
+    for _ in 0..module_count {
+        module_payloads
+            .push(read_section(&mut reader, 2, limits.section_bytes, "module section")?.to_vec());
+    }
+    let end = read_section(&mut reader, 0, 0, "end section")?;
+    if !end.is_empty() {
+        return Err(Error::InvalidStructure("end section is not empty".into()));
+    }
+    reader.finish("artifact")?;
+    for edge in &imports {
+        if edge.importer >= module_count || edge.target >= module_count {
+            return Err(Error::InvalidReference("import module index".into()));
+        }
+    }
+    Ok(Envelope {
+        root,
+        module_payloads,
+        imports,
+    })
+}
+
+fn read_section<'a>(
+    reader: &mut Reader<'a>,
+    expected_kind: u8,
+    max_payload: usize,
+    context: &'static str,
+) -> Result<&'a [u8], Error> {
+    let kind = reader.byte(context)?;
+    if kind != expected_kind {
+        return Err(Error::InvalidStructure(format!("expected {context}")));
+    }
+    let length = reader.usize(context)?;
+    if length > max_payload {
+        return Err(Error::LimitExceeded { context });
+    }
+    reader.bytes(length, context)
+}
+
+struct Reader<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> Reader<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, cursor: 0 }
+    }
+
+    fn byte(&mut self, context: &'static str) -> Result<u8, Error> {
+        let byte = *self
+            .bytes
+            .get(self.cursor)
+            .ok_or(Error::Truncated { context })?;
+        self.cursor += 1;
+        Ok(byte)
+    }
+
+    fn bytes(&mut self, length: usize, context: &'static str) -> Result<&'a [u8], Error> {
+        let end = self
+            .cursor
+            .checked_add(length)
+            .ok_or(Error::LimitExceeded { context })?;
+        let value = self
+            .bytes
+            .get(self.cursor..end)
+            .ok_or(Error::Truncated { context })?;
+        self.cursor = end;
+        Ok(value)
+    }
+
+    fn usize(&mut self, context: &'static str) -> Result<usize, Error> {
+        let mut value = 0u64;
+        let mut shift = 0u32;
+        let mut bytes = 0usize;
+        loop {
+            let byte = self.byte(context)?;
+            bytes += 1;
+            if bytes > 10 || shift >= 64 {
+                return Err(Error::NonCanonicalInteger { context });
+            }
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                if bytes != uleb_length(value) || value > usize::MAX as u64 {
+                    return Err(Error::NonCanonicalInteger { context });
+                }
+                return Ok(value as usize);
+            }
+            shift += 7;
+        }
+    }
+
+    fn string(&mut self, limit: usize, context: &'static str) -> Result<String, Error> {
+        let length = self.usize(context)?;
+        if length > limit {
+            return Err(Error::LimitExceeded { context });
+        }
+        let bytes = self.bytes(length, context)?;
+        core::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|_| Error::InvalidStructure(format!("invalid UTF-8 {context}")))
+    }
+
+    fn finish(&self, context: &'static str) -> Result<(), Error> {
+        if self.cursor == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(Error::InvalidStructure(format!(
+                "trailing bytes in {context}"
+            )))
+        }
+    }
+}
+
+const fn uleb_length(mut value: u64) -> usize {
+    let mut length = 1;
+    while value >= 0x80 {
+        value >>= 7;
+        length += 1;
+    }
+    length
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Error, HEADER_LENGTH, Header, encode_header};
+    use super::{Error, HEADER_LENGTH, Header, Limits, decode_envelope, encode_header};
+
+    fn uleb(mut value: usize, output: &mut Vec<u8>) {
+        loop {
+            let mut byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            output.push(byte);
+            if value == 0 {
+                return;
+            }
+        }
+    }
+
+    fn section(kind: u8, payload: &[u8], output: &mut Vec<u8>) {
+        output.push(kind);
+        uleb(payload.len(), output);
+        output.extend(payload);
+    }
+
+    fn minimal_envelope() -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encode_header(&mut encoded);
+        section(1, &[0, 1, 0], &mut encoded);
+        section(2, &[], &mut encoded);
+        section(0, &[], &mut encoded);
+        encoded
+    }
 
     #[test]
     fn encodes_and_decodes_the_version_one_header() {
@@ -177,5 +437,36 @@ mod tests {
         let mut flags = Header::version_1().encode();
         flags[8] = 1;
         assert_eq!(Header::decode(&flags), Err(Error::UnsupportedFlags(1)));
+    }
+
+    #[test]
+    fn validates_the_bounded_closed_graph_envelope() {
+        let artifact = minimal_envelope();
+        let envelope = decode_envelope(&artifact, Limits::default()).expect("valid envelope");
+
+        assert_eq!(envelope.root, 0);
+        assert_eq!(envelope.module_payloads, vec![Vec::new()]);
+        assert!(envelope.imports.is_empty());
+    }
+
+    #[test]
+    fn rejects_noncanonical_or_unordered_envelope_data() {
+        let mut noncanonical = minimal_envelope();
+        noncanonical[HEADER_LENGTH + 1] = 0x83;
+        noncanonical.insert(HEADER_LENGTH + 2, 0);
+        assert_eq!(
+            decode_envelope(&noncanonical, Limits::default()),
+            Err(Error::NonCanonicalInteger {
+                context: "graph section"
+            })
+        );
+
+        let mut wrong_order = Vec::new();
+        encode_header(&mut wrong_order);
+        section(2, &[], &mut wrong_order);
+        assert!(matches!(
+            decode_envelope(&wrong_order, Limits::default()),
+            Err(Error::InvalidStructure(_))
+        ));
     }
 }
