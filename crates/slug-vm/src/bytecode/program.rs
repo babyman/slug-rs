@@ -114,6 +114,7 @@ impl Program {
     /// Rebuilds the scalar metadata decoded from a `.cslug` program record.
     ///
     /// This is crate-internal codec plumbing, not a stable bytecode builder.
+    #[allow(dead_code)] // Wired when the scalar program-record decoder lands.
     pub(crate) fn from_cslug_scalar_metadata(
         bindings: Vec<String>,
         exports: Vec<String>,
