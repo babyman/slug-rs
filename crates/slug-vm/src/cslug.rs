@@ -189,8 +189,15 @@ pub(crate) struct ImportEdge {
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct Envelope {
     pub(crate) root: usize,
-    pub(crate) module_payloads: Vec<Vec<u8>>,
+    pub(crate) modules: Vec<ModuleRecord>,
     pub(crate) imports: Vec<ImportEdge>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ModuleRecord {
+    pub(crate) key: String,
+    pub(crate) name: String,
+    pub(crate) program: Vec<u8>,
 }
 
 /// Validates the `.cslug` header and closed-graph envelope without decoding
@@ -240,10 +247,10 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
     if module_count == 0 || root >= module_count {
         return Err(Error::InvalidReference("root module index".into()));
     }
-    let mut module_payloads = Vec::with_capacity(module_count);
+    let mut modules = Vec::with_capacity(module_count);
     for _ in 0..module_count {
-        module_payloads
-            .push(read_section(&mut reader, 2, limits.section_bytes, "module section")?.to_vec());
+        let payload = read_section(&mut reader, 2, limits.section_bytes, "module section")?;
+        modules.push(decode_module(payload, limits)?);
     }
     let end = read_section(&mut reader, 0, 0, "end section")?;
     if !end.is_empty() {
@@ -255,11 +262,33 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
             return Err(Error::InvalidReference("import module index".into()));
         }
     }
+    for pair in modules.windows(2) {
+        if pair[0].key >= pair[1].key {
+            return Err(Error::InvalidReference(
+                "module keys are not strictly sorted".into(),
+            ));
+        }
+    }
     Ok(Envelope {
         root,
-        module_payloads,
+        modules,
         imports,
     })
+}
+
+fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
+    let mut reader = Reader::new(bytes);
+    let key = reader.string(limits.string_bytes, "module key")?;
+    let name = reader.string(limits.string_bytes, "module name")?;
+    let program_length = reader.usize("program length")?;
+    if program_length > limits.section_bytes {
+        return Err(Error::LimitExceeded {
+            context: "program length",
+        });
+    }
+    let program = reader.bytes(program_length, "program record")?.to_vec();
+    reader.finish("module section")?;
+    Ok(ModuleRecord { key, name, program })
 }
 
 fn read_section<'a>(
@@ -391,7 +420,12 @@ mod tests {
         let mut encoded = Vec::new();
         encode_header(&mut encoded);
         section(1, &[0, 1, 0], &mut encoded);
-        section(2, &[], &mut encoded);
+        let mut module = Vec::new();
+        uleb(4, &mut module);
+        module.extend(b"root");
+        uleb(0, &mut module);
+        uleb(0, &mut module);
+        section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
     }
@@ -445,7 +479,9 @@ mod tests {
         let envelope = decode_envelope(&artifact, Limits::default()).expect("valid envelope");
 
         assert_eq!(envelope.root, 0);
-        assert_eq!(envelope.module_payloads, vec![Vec::new()]);
+        assert_eq!(envelope.modules[0].key, "root");
+        assert_eq!(envelope.modules[0].name, "");
+        assert!(envelope.modules[0].program.is_empty());
         assert!(envelope.imports.is_empty());
     }
 
