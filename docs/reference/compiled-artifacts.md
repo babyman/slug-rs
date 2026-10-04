@@ -118,6 +118,61 @@ graph/index reference; unsupported source-derived value; and failed VM
 executable-invariant validation. No category may return a partially decoded
 graph for execution.
 
+## Module and program records
+
+A module-section payload is `module_key:string`, `module_name:string`,
+`program_length:uleb128`, and exactly `program_length` bytes. The program
+record is an ordered sequence of counted tables. Each count is canonical ULEB128;
+each table is encoded in its listed order:
+
+1. bindings and exports as string lists;
+2. declarations, callable identities, and optional entrypoint metadata;
+3. source-path and source-span tables;
+4. global-name, capture-list, schema-field, struct-field, match-pattern,
+   interpolation, list-spread, call-argument, selected-call, and select-case
+   metadata tables; and
+5. chunks, each with its name, arity, parameters, optional callable identity,
+   local count, constants, and packed instructions.
+
+Every optional field is one `present:u8` byte (`0` absent, `1` present),
+followed by its value only when present. Every boolean is one byte (`0` false,
+`1` true); any other byte is invalid. Enum tags are one byte and must name a
+defined variant. Lists are a count followed by their elements. A `Program`
+table reference is a zero-based ULEB128 index into its corresponding table and
+must be in range.
+
+Source spans are `(source_index, line, column)`. Captures are tagged as local
+or enclosing-capture slots. Field records contain `name:string` and
+`has_default:bool`; parameter records contain `name:string`, `has_default:bool`,
+and `variadic:bool`. A declaration retains the source metadata represented by
+`ModuleDeclaration`, including binding names, mutable/export/foreign flags,
+foreign arity, resource and callable identities, resource signatures,
+documentation, and tags. Tags carry a name and a version-1 value list.
+
+Version-1 values are only `nil`, booleans, signed 64-bit integers,
+finite IEEE-754 binary64 numbers, UTF-8 strings, and byte strings. Signed
+integers use ZigZag-transformed canonical ULEB128. A float is its eight
+little-endian IEEE-754 bytes and must be finite. Lists, maps, schemas, structs,
+enums, closures, bindings, host callables, channels, tasks, resources, and
+overload groups are not valid encoded values; source lowering represents their
+construction through bytecode rather than constants.
+
+Packed instructions are `opcode:u8`, `a:uleb128`, `b:uleb128`,
+`c:uleb128`, and `span_index_plus_one:uleb128`, where zero means no span. The
+opcode byte is the `PackedOpcode` discriminant for VM/bytecode compatibility
+version 1; the v1 mapping is fixed by the ordered `PackedOpcode` declaration
+in `crates/slug-vm/src/bytecode/chunk.rs`. Its three operands must fit `u32`
+and have the meaning assigned by that opcode. The decoder rejects an unknown
+opcode before inspecting its operands, then validates every referenced table,
+chunk, constant, callable identity, declaration, and instruction target.
+
+Match-pattern, match-type, map-key, call-argument, defer-mode, select-case,
+entrypoint-argument, and resource-signature records use their source enum
+variant order as one-byte tags, with recursively encoded fields in declaration
+order. Recursive match-pattern and match-type depth is limited to 128. An
+encoder must emit the canonical pooled form already installed in `Program`;
+the decoder must not accept builder-only rich instruction forms.
+
 ## Loading and validation
 
 Loading a `.cslug` file is an untrusted-input operation. Before returning a
