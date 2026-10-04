@@ -118,12 +118,14 @@ impl Program {
     pub(crate) fn from_cslug_scalar_metadata(
         bindings: Vec<String>,
         exports: Vec<String>,
+        declarations: Vec<ModuleDeclaration>,
         entrypoint: Option<Entrypoint>,
         callable_identities: Vec<CallableIdentity>,
     ) -> Self {
         Self {
             bindings,
             exports,
+            declarations,
             entrypoint,
             callable_identities,
             ..Self::default()

@@ -6,7 +6,7 @@
 
 use alloc::{string::String, vec::Vec};
 
-use crate::{CallableIdentity, Entrypoint, EntrypointArguments, Program};
+use crate::{CallableIdentity, Entrypoint, EntrypointArguments, ModuleDeclaration, Program};
 
 /// The exact byte count of a version-1 `.cslug` header.
 pub const HEADER_LENGTH: usize = 12;
@@ -299,11 +299,10 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
     let mut reader = Reader::new(bytes);
     let bindings = reader.strings("bindings")?;
     let exports = reader.strings("exports")?;
-    let declarations = reader.usize("declaration count")?;
-    if declarations != 0 {
-        return Err(Error::InvalidStructure(
-            "declaration decoding is not available yet".into(),
-        ));
+    let count = reader.usize("declaration count")?;
+    let mut declarations = Vec::with_capacity(count);
+    for _ in 0..count {
+        declarations.push(decode_declaration(&mut reader)?);
     }
     let identities = reader
         .strings("callable identities")?
@@ -331,8 +330,42 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
     };
     reader.finish("scalar program record")?;
     Ok(Program::from_cslug_scalar_metadata(
-        bindings, exports, entrypoint, identities,
+        bindings,
+        exports,
+        declarations,
+        entrypoint,
+        identities,
     ))
+}
+
+fn decode_declaration(reader: &mut Reader<'_>) -> Result<ModuleDeclaration, Error> {
+    let bindings = reader.strings("declaration bindings")?;
+    let mutable = reader.bool("declaration mutable")?;
+    let exported = reader.bool("declaration exported")?;
+    if reader.bool("declaration foreign")? {
+        return Err(Error::InvalidStructure(
+            "foreign declarations are not available yet".into(),
+        ));
+    }
+    let resource_type = reader.optional_string("resource type")?;
+    let documentation = reader.optional_string("declaration documentation")?;
+    if reader.usize("declaration tag count")? != 0 {
+        return Err(Error::InvalidStructure(
+            "declaration tags are not available yet".into(),
+        ));
+    }
+    Ok(ModuleDeclaration {
+        bindings,
+        mutable,
+        exported,
+        foreign: false,
+        foreign_arity: None,
+        resource_type,
+        foreign_callable_identity: None,
+        foreign_resource_signature: None,
+        documentation,
+        tags: Vec::new(),
+    })
 }
 
 fn read_section<'a>(
@@ -414,6 +447,26 @@ impl<'a> Reader<'a> {
         core::str::from_utf8(bytes)
             .map(str::to_owned)
             .map_err(|_| Error::InvalidStructure(format!("invalid UTF-8 {context}")))
+    }
+
+    fn bool(&mut self, context: &'static str) -> Result<bool, Error> {
+        match self.byte(context)? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Error::InvalidStructure(format!(
+                "invalid boolean {context}"
+            ))),
+        }
+    }
+
+    fn optional_string(&mut self, context: &'static str) -> Result<Option<String>, Error> {
+        match self.byte(context)? {
+            0 => Ok(None),
+            1 => self.string(1024 * 1024, context).map(Some),
+            _ => Err(Error::InvalidStructure(format!(
+                "invalid optional {context}"
+            ))),
+        }
     }
 
     fn strings(&mut self, context: &'static str) -> Result<Vec<String>, Error> {
