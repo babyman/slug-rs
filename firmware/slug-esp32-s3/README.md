@@ -1,9 +1,10 @@
 # Slug ESP32-S3 VM proof of concept
 
 This standalone package runs a direct bytecode program through Slug's shared VM
-on an ESP32-S3. It uses a bounded `no_std + alloc` heap and intentionally links
-neither the source frontend nor a desktop loader. It is not a member of the
-desktop Cargo workspace.
+on an ESP32-S3. It supplies only a UART-backed native `println` capability,
+uses a bounded `no_std + alloc` heap, and intentionally links neither the
+source frontend nor a desktop loader. It is not a member of the desktop Cargo
+workspace.
 
 ## Prerequisites
 
@@ -34,9 +35,10 @@ espflash flash --monitor --chip esp32s3 target/xtensa-esp32s3-none-elf/release/s
 The serial monitor repeatedly prints:
 
 ```text
-Slug VM result: 42
+Hello from Slug on ESP32-S3
+Slug VM completed
 ```
 
-The next milestone introduces an embedded native `println` capability and a
-flash-resident program loader. See
+The next milestone replaces the Rust-assembled bytecode with a flash-resident
+program loader. See
 [`docs/planning/esp32-s3-proof-of-concept.md`](../../docs/planning/esp32-s3-proof-of-concept.md).

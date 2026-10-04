@@ -10,15 +10,27 @@ extern crate alloc;
 
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, main};
-use slug_vm::{Chunk, Op, Program, Value, Vm};
+use slug_vm::{
+    Chunk, NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, Op, Program,
+    Value, Vm,
+};
 
 // The ESP-IDF bootloader requires this application descriptor.
 esp_bootloader_esp_idf::esp_app_desc!();
 
-/// Verifies the first firmware milestone before the Slug runtime is linked.
+fn uart_println(call: &mut NativeCall<'_>) -> NativeStatus {
+    let value = match call.argument(0) {
+        Ok(value) => value,
+        Err(error) => return call.raise(error),
+    };
+    esp_println::println!("{}", value.to_display_string());
+    call.return_value(NativeOwnedValue::nil())
+}
+
+/// Runs a direct bytecode program against the minimal UART capability.
 ///
-/// The bounded allocator is intentionally initialized here: later Slug values,
-/// source parsing, and bytecode will allocate from this same heap.
+/// The bounded allocator serves all VM allocations. Source parsing and desktop
+/// module resolution remain intentionally outside this proof firmware.
 #[allow(
     clippy::large_stack_frames,
     reason = "the firmware entrypoint owns the hardware and allocator setup."
@@ -31,19 +43,25 @@ fn main() -> ! {
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73_744);
 
     let mut main = Chunk::new("main", 0);
-    let seven = main.constant(Value::Int(7));
-    let six = main.constant(Value::Int(6));
-    main.emit(Op::Constant(seven))
-        .emit(Op::Constant(six))
-        .emit(Op::Multiply)
+    let greeting = main.constant(Value::string("Hello from Slug on ESP32-S3"));
+    main.emit(Op::GetGlobal("println".into()))
+        .emit(Op::Constant(greeting))
+        .emit(Op::Call(1))
         .emit(Op::Return);
 
     let mut program = Program::new();
     let entry = program.add_chunk(main);
-    let result = Vm::new().run(&program, entry);
+    let module = NativeModule::new("slug.uart", ()).expect("UART module name is valid");
+    let mut vm = Vm::new();
+    vm.define_native(
+        module
+            .function("println", NativeArity::Exact(1), uart_println)
+            .expect("UART println descriptor is valid"),
+    )
+    .expect("UART println is installed once");
     loop {
-        match &result {
-            Ok(Value::Int(value)) => esp_println::println!("Slug VM result: {value}"),
+        match vm.run(&program, entry) {
+            Ok(Value::Nil) => esp_println::println!("Slug VM completed"),
             Ok(value) => esp_println::println!("Slug VM unexpected result: {value:?}"),
             Err(error) => esp_println::println!("Slug VM runtime error: {error}"),
         }
