@@ -13,6 +13,7 @@ extern crate alloc;
 
 mod bytecode;
 mod collections;
+pub mod cslug;
 mod native;
 mod platform;
 mod runtime_host;
