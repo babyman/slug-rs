@@ -174,6 +174,11 @@ If a required foreign function is unavailable, the implementation MUST report
 a Slug module or foreign-resolution error rather than substitute host behavior
 silently.
 
+Optional embedded capabilities follow the source contracts in
+[Embedded host modules](embedded-host-modules.md). A host selects them as a
+whole module and retains the same checked unavailable-module behavior when it
+does not select one.
+
 ## Configuration service
 
 Before evaluating any program or imported module, a conforming runtime MUST

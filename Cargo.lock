@@ -322,6 +322,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slug-static-host"
+version = "0.1.0"
+dependencies = [
+ "slug-frontend",
+ "slug-loader",
+ "slug-vm",
+]
+
+[[package]]
 name = "slug-vm"
 version = "0.1.0"
 dependencies = [

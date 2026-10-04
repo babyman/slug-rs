@@ -5,6 +5,7 @@ members = [
     "crates/slug-loader",
     "crates/slug-nil-loader",
     "crates/slug-restricted-host",
+    "crates/slug-static-host",
     "crates/slug-desktop-loader",
     "crates/slug",
     "crates/slug-repl",

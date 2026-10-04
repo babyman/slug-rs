@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added shared static-host source contracts for `slug.gpio.write` and
+  `slug.time.sleepMs`, with checked import and signature coverage independent
+  of ESP32 hardware.
+
 - Moved imported-module activation sequencing to the frontend host boundary,
   keeping source resolution storage-independent while allowing static hosts to
   own native capability registration.
