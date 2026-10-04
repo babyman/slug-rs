@@ -12,6 +12,7 @@ mod compiler;
 #[path = "semantics/environment.rs"]
 pub(crate) mod environment;
 mod frozen;
+mod frozen_gpio;
 mod interactive;
 #[path = "syntax/lexer.rs"]
 mod lexer;
@@ -29,6 +30,7 @@ use parser::Parser;
 
 use self::environment::{ImportSnapshots, ModuleSnapshot};
 pub use frozen::compile_frozen_uart_entry;
+pub use frozen_gpio::{FrozenGpioCapabilities, compile_frozen_gpio_entry};
 pub use interactive::compile_interactive_forms;
 pub(crate) use interactive::compile_interactive_forms_with_resolver;
 pub use interactive::{

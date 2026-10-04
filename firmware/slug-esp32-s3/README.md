@@ -8,6 +8,12 @@ uses a bounded `no_std + alloc` heap, and intentionally links neither the
 source frontend nor a desktop loader. It is not a member of the desktop Cargo
 workspace.
 
+The build also validates [`programs/blink.slug`](programs/blink.slug) against
+[`capabilities.rs`](capabilities.rs) and emits its private frozen image. The
+firmware continues to boot the UART hello image until the GPIO and time native
+providers are installed. The `led` alias is the PinPulse Shield indicator on
+GPIO 2 (active high).
+
 ## Prerequisites
 
 Install Espressif's Xtensa toolchain and flasher, then make them available to
@@ -41,6 +47,6 @@ Hello from Slug on ESP32-S3
 Slug VM completed
 ```
 
-The next milestone replaces the firmware-local program image with a compiled
-artifact loader. See
+The next milestone installs native GPIO and blocking-delay providers and then
+selects the blink image at boot. See
 [`docs/planning/esp32-s3-proof-of-concept.md`](../../docs/planning/esp32-s3-proof-of-concept.md).

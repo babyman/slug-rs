@@ -1,0 +1,14 @@
+val gpio = import("slug.gpio")
+val time = import("slug.time")
+
+val blink = fn() {
+    gpio.write("led", true)
+    time.sleepMs(250)
+    gpio.write("led", false)
+    time.sleepMs(250)
+    recur()
+}
+
+val main = fn() {
+    blink()
+}

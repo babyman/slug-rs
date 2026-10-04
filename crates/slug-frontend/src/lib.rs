@@ -8,7 +8,7 @@ mod source;
 
 pub use module::{ModuleGraph, ModuleGraphHost, ModuleHost, ModuleInstance};
 pub use source::{
-    InteractiveCompilation, InteractiveCompilerState, SourceError, SourceErrorKind,
-    SourceReadiness, compile, compile_frozen_uart_entry, compile_interactive_forms,
-    source_readiness,
+    FrozenGpioCapabilities, InteractiveCompilation, InteractiveCompilerState, SourceError,
+    SourceErrorKind, SourceReadiness, compile, compile_frozen_gpio_entry,
+    compile_frozen_uart_entry, compile_interactive_forms, source_readiness,
 };

@@ -11,13 +11,19 @@ use slug_vm::{Chunk, Op, Program, Value};
 #[derive(Clone, Copy)]
 enum FlashConstant {
     Text(&'static str),
+    Number(u32),
 }
 
 #[derive(Clone, Copy)]
 enum FlashInstruction {
     GetGlobal(&'static str),
     Constant(u16),
+    True,
+    False,
+    Pop,
+    Nil,
     Call(u8),
+    Recur,
     Return,
 }
 
@@ -48,6 +54,15 @@ impl fmt::Display for FlashLoadError {
 
 include!(concat!(env!("OUT_DIR"), "/slug_frozen_program.rs"));
 
+// Compile-check the next program's generated Rust against this firmware loader.
+// The GPIO/time providers will select it for execution in the next stage.
+#[allow(dead_code)]
+mod staged_blink {
+    use super::{FlashConstant, FlashInstruction, FlashProgram};
+
+    include!(concat!(env!("OUT_DIR"), "/slug_blink_program.rs"));
+}
+
 /// Loads the immutable proof program from its firmware-resident image.
 ///
 /// The return value is the Program and its validated entry chunk index.
@@ -61,6 +76,9 @@ fn load(image: &FlashProgram) -> Result<(Program, usize), FlashLoadError> {
         match constant {
             FlashConstant::Text(value) => {
                 chunk.constant(Value::string(*value));
+            }
+            FlashConstant::Number(value) => {
+                chunk.constant(Value::Int(i64::from(*value)));
             }
         }
     }
@@ -80,6 +98,21 @@ fn load(image: &FlashProgram) -> Result<(Program, usize), FlashLoadError> {
             }
             FlashInstruction::Call(arguments) => {
                 chunk.emit(Op::Call(usize::from(*arguments)));
+            }
+            FlashInstruction::True => {
+                chunk.emit(Op::True);
+            }
+            FlashInstruction::False => {
+                chunk.emit(Op::False);
+            }
+            FlashInstruction::Pop => {
+                chunk.emit(Op::Pop);
+            }
+            FlashInstruction::Nil => {
+                chunk.emit(Op::Nil);
+            }
+            FlashInstruction::Recur => {
+                chunk.emit(Op::RecurPositional(0));
             }
             FlashInstruction::Return => {
                 chunk.emit(Op::Return);
