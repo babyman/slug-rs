@@ -175,9 +175,7 @@ pub fn encode_header(output: &mut Vec<u8>) {
 
 #[allow(dead_code)] // Wired into the graph encoder once all metadata tables are encoded.
 fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
-    if !program.bindings().is_empty()
-        || !program.exports().is_empty()
-        || !program.declarations().is_empty()
+    if !program.declarations().is_empty()
         || program.has_entrypoint()
         || program.source_count() != 0
         || program.span_count() != 0
@@ -188,7 +186,9 @@ fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
     }
 
     let mut output = Vec::new();
-    output.extend([0; 17]); // Empty scalar metadata tables.
+    strings(program.bindings(), &mut output);
+    strings(program.exports(), &mut output);
+    output.extend([0; 15]); // Remaining empty scalar metadata tables.
     uleb(program.cslug_chunks().len(), &mut output);
     for chunk in program.cslug_chunks() {
         encode_chunk(chunk, &mut output)?;
@@ -284,6 +284,14 @@ fn optional_usize(value: Option<usize>, output: &mut Vec<u8>) {
 fn string(value: &str, output: &mut Vec<u8>) {
     uleb(value.len(), output);
     output.extend(value.as_bytes());
+}
+
+#[allow(dead_code)]
+fn strings(values: &[String], output: &mut Vec<u8>) {
+    uleb(values.len(), output);
+    for value in values {
+        string(value, output);
+    }
 }
 
 #[allow(dead_code)]
@@ -1255,6 +1263,8 @@ mod tests {
     #[test]
     fn encodes_packed_chunks_with_source_literal_constants() {
         let mut program = Program::new();
+        program.set_bindings(vec!["value".into()]);
+        program.set_exports(vec!["value".into()]);
         let mut main = Chunk::new("main", 0);
         main.constant(Value::Int(-3));
         main.emit(Op::Constant(0)).emit(Op::Return);
@@ -1269,6 +1279,8 @@ mod tests {
         let decoded =
             super::decode_scalar_program(&encoded, 1, 16, 16).expect("encoded program decodes");
         let chunk = decoded.chunk(0).expect("main chunk");
+        assert_eq!(decoded.bindings(), ["value"]);
+        assert_eq!(decoded.exports(), ["value"]);
         assert_eq!(chunk.constants.len(), 1);
         assert_eq!(chunk.code.len(), 2);
     }
