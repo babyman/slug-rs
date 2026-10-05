@@ -175,7 +175,10 @@ pub fn encode_header(output: &mut Vec<u8>) {
 
 #[allow(dead_code)] // Wired into the graph encoder once all metadata tables are encoded.
 fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
-    if !program.declarations().is_empty()
+    if program
+        .declarations()
+        .iter()
+        .any(|declaration| declaration.foreign)
         || program.source_count() != 0
         || program.span_count() != 0
     {
@@ -187,7 +190,20 @@ fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
     let mut output = Vec::new();
     strings(program.bindings(), &mut output);
     strings(program.exports(), &mut output);
-    output.push(0); // declarations
+    uleb(program.declarations().len(), &mut output);
+    for declaration in program.declarations() {
+        strings(&declaration.bindings, &mut output);
+        boolean(declaration.mutable, &mut output);
+        boolean(declaration.exported, &mut output);
+        output.push(0); // non-foreign in this encoder slice
+        optional_string(declaration.resource_type.as_deref(), &mut output);
+        output.push(0); // no foreign resource signature
+        optional_string(declaration.documentation.as_deref(), &mut output);
+        uleb(declaration.tags.len(), &mut output);
+        for tag in &declaration.tags {
+            string(&tag.name, &mut output);
+        }
+    }
     uleb(program.cslug_callable_identities().len(), &mut output);
     for identity in program.cslug_callable_identities() {
         string(identity.cslug_text(), &mut output);
@@ -292,6 +308,17 @@ fn optional_usize(value: Option<usize>, output: &mut Vec<u8>) {
         Some(value) => {
             output.push(1);
             uleb(value, output);
+        }
+        None => output.push(0),
+    }
+}
+
+#[allow(dead_code)]
+fn optional_string(value: Option<&str>, output: &mut Vec<u8>) {
+    match value {
+        Some(value) => {
+            output.push(1);
+            string(value, output);
         }
         None => output.push(0),
     }
