@@ -973,6 +973,9 @@ impl Program {
     }
 
     pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {
+        if self.names.len() != self.chunks.len() {
+            return Err("program contains duplicate function chunk names".into());
+        }
         if let Some(entrypoint) = self.entrypoint
             && self
                 .callable_identity(entrypoint.callable_identity)
@@ -981,6 +984,15 @@ impl Program {
             return Err("program entrypoint references missing callable identity".into());
         }
         for (chunk_index, compiled) in self.chunks.iter().enumerate() {
+            if compiled
+                .callable_identity
+                .is_some_and(|identity| self.callable_identity(identity).is_none())
+            {
+                return Err(format!(
+                    "function `{}` references missing callable identity",
+                    compiled.name
+                ));
+            }
             if let Some(error) = compiled.invalid_instructions.values().next() {
                 return Err(error.clone());
             }
