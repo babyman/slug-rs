@@ -117,6 +117,11 @@ impl ForeignResourceSignature {
             .map(|(module, name)| (module.as_deref(), name.as_str()))
     }
 
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) fn cslug_parameter_count(&self) -> usize {
+        self.parameters.len()
+    }
+
     pub(crate) fn result_identity(&self) -> Option<(Option<&str>, &str)> {
         self.result
             .as_ref()
