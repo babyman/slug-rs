@@ -121,6 +121,8 @@ pub enum Error {
     InvalidReference(String),
     /// A value is outside the source-derived version-1 subset.
     UnsupportedValue(String),
+    /// Decoded bytecode violates a VM executable invariant.
+    InvalidExecutable(String),
 }
 
 impl core::fmt::Display for Error {
@@ -154,6 +156,9 @@ impl core::fmt::Display for Error {
             }
             Self::UnsupportedValue(message) => {
                 write!(formatter, "unsupported .cslug value: {message}")
+            }
+            Self::InvalidExecutable(message) => {
+                write!(formatter, "invalid .cslug executable: {message}")
             }
         }
     }
@@ -444,6 +449,7 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         select_cases,
     );
     program.set_cslug_chunks(chunks);
+    program.validate(0).map_err(Error::InvalidExecutable)?;
     Ok(program)
 }
 
@@ -1228,6 +1234,37 @@ mod tests {
         assert_eq!(chunk.name, "main");
         assert_eq!(chunk.constants.len(), 1);
         assert_eq!(chunk.code.len(), 2);
+    }
+
+    #[test]
+    fn rejects_invalid_control_flow_before_returning_a_program() {
+        let mut record = vec![0; 17]; // Empty scalar metadata tables.
+        uleb(1, &mut record); // chunks
+        string("main", &mut record);
+        uleb(0, &mut record); // arity
+        uleb(0, &mut record); // parameters
+        record.push(0); // callable identity
+        uleb(0, &mut record); // locals
+        uleb(0, &mut record); // constants
+        uleb(1, &mut record); // instructions
+        record.push(PackedOpcode::Jump as u8);
+        record.extend([1, 0, 0, 0]); // missing target, unused operands, no span
+
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        assert!(matches!(
+            decode_envelope(&artifact, Limits::default()),
+            Err(Error::InvalidExecutable(message)) if message.contains("jumps to missing instruction")
+        ));
     }
 
     #[test]
