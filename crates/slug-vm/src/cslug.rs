@@ -187,6 +187,8 @@ pub struct Limits {
     pub string_bytes: usize,
     /// Maximum chunks in one decoded module program.
     pub chunks_per_module: usize,
+    /// Maximum entries in one decoded program table or chunk pool.
+    pub entries_per_table: usize,
 }
 
 impl Default for Limits {
@@ -198,6 +200,7 @@ impl Default for Limits {
             imports: 16_384,
             string_bytes: 1024 * 1024,
             chunks_per_module: 65_535,
+            entries_per_table: 1_048_576,
         }
     }
 }
@@ -314,17 +317,22 @@ fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
     let program = decode_scalar_program(
         reader.bytes(program_length, "program record")?,
         limits.chunks_per_module,
+        limits.entries_per_table,
     )?;
     reader.finish("module section")?;
     Ok(ModuleRecord { key, name, program })
 }
 
 #[allow(clippy::too_many_lines)]
-fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Error> {
-    let mut reader = Reader::new(bytes);
+fn decode_scalar_program(
+    bytes: &[u8],
+    max_chunks: usize,
+    max_entries: usize,
+) -> Result<Program, Error> {
+    let mut reader = Reader::with_entry_limit(bytes, max_entries);
     let bindings = reader.strings("bindings")?;
     let exports = reader.strings("exports")?;
-    let count = reader.usize("declaration count")?;
+    let count = reader.count("declaration count")?;
     let mut pending = Vec::with_capacity(count);
     for _ in 0..count {
         pending.push(decode_declaration(&mut reader)?);
@@ -362,7 +370,7 @@ fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Err
         .into_iter()
         .map(Arc::from)
         .collect::<Vec<Arc<str>>>();
-    let span_count = reader.usize("source span count")?;
+    let span_count = reader.count("source span count")?;
     let mut spans = Vec::with_capacity(span_count);
     for _ in 0..span_count {
         let source = reader.usize("source span path")?;
@@ -377,10 +385,10 @@ fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Err
         });
     }
     let global_names = reader.strings("global names")?;
-    let capture_list_count = reader.usize("capture list count")?;
+    let capture_list_count = reader.count("capture list count")?;
     let mut capture_lists = Vec::with_capacity(capture_list_count);
     for _ in 0..capture_list_count {
-        let capture_count = reader.usize("capture count")?;
+        let capture_count = reader.count("capture count")?;
         let mut captures = Vec::with_capacity(capture_count);
         for _ in 0..capture_count {
             captures.push(match reader.byte("capture kind")? {
@@ -391,10 +399,10 @@ fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Err
         }
         capture_lists.push(captures);
     }
-    let schema_field_list_count = reader.usize("schema field list count")?;
+    let schema_field_list_count = reader.count("schema field list count")?;
     let mut schema_fields = Vec::with_capacity(schema_field_list_count);
     for _ in 0..schema_field_list_count {
-        let count = reader.usize("schema field count")?;
+        let count = reader.count("schema field count")?;
         let mut fields = Vec::with_capacity(count);
         for _ in 0..count {
             fields.push(SchemaField {
@@ -405,7 +413,7 @@ fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Err
         schema_fields.push(fields);
     }
     let struct_fields = reader.strings_lists("struct field lists")?;
-    let match_pattern_count = reader.usize("match pattern count")?;
+    let match_pattern_count = reader.count("match pattern count")?;
     let mut match_patterns = Vec::with_capacity(match_pattern_count);
     for _ in 0..match_pattern_count {
         match_patterns.push(reader.match_pattern(0)?);
@@ -413,7 +421,7 @@ fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Err
     let interpolations = reader.strings_lists("interpolation lists")?;
     let list_spreads = reader.bool_lists("list spread lists")?;
     let call_arguments = reader.call_argument_lists()?;
-    let selected_call_count = reader.usize("selected call count")?;
+    let selected_call_count = reader.count("selected call count")?;
     let mut selected_calls = Vec::with_capacity(selected_call_count);
     for _ in 0..selected_call_count {
         let arguments = reader.usize("selected call arguments")?;
@@ -429,7 +437,7 @@ fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Err
         ));
     }
     let select_cases = reader.select_case_lists()?;
-    let chunk_count = reader.usize("chunk count")?;
+    let chunk_count = reader.count("chunk count")?;
     if chunk_count > max_chunks {
         return Err(Error::LimitExceeded {
             context: "chunk count",
@@ -512,7 +520,7 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
         _ => return Err(Error::InvalidStructure("foreign resource signature".into())),
     };
     let documentation = reader.optional_string("declaration documentation")?;
-    let tag_count = reader.usize("declaration tag count")?;
+    let tag_count = reader.count("declaration tag count")?;
     let mut tags = Vec::with_capacity(tag_count);
     for _ in 0..tag_count {
         // Tag expressions execute during module initialization. Persist only
@@ -540,7 +548,7 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
 }
 
 fn decode_resource_signature(reader: &mut Reader<'_>) -> Result<ForeignResourceSignature, Error> {
-    let count = reader.usize("foreign resource parameter count")?;
+    let count = reader.count("foreign resource parameter count")?;
     let mut parameters = Vec::with_capacity(count);
     for _ in 0..count {
         parameters.push(decode_resource_identity(reader)?);
@@ -582,11 +590,20 @@ fn read_section<'a>(
 struct Reader<'a> {
     bytes: &'a [u8],
     cursor: usize,
+    entry_limit: usize,
 }
 
 impl<'a> Reader<'a> {
     const fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, cursor: 0 }
+        Self::with_entry_limit(bytes, usize::MAX)
+    }
+
+    const fn with_entry_limit(bytes: &'a [u8], entry_limit: usize) -> Self {
+        Self {
+            bytes,
+            cursor: 0,
+            entry_limit,
+        }
     }
 
     fn byte(&mut self, context: &'static str) -> Result<u8, Error> {
@@ -617,6 +634,14 @@ impl<'a> Reader<'a> {
             return Err(Error::NonCanonicalInteger { context });
         }
         usize::try_from(value).map_err(|_| Error::NonCanonicalInteger { context })
+    }
+
+    fn count(&mut self, context: &'static str) -> Result<usize, Error> {
+        let count = self.usize(context)?;
+        if count > self.entry_limit {
+            return Err(Error::LimitExceeded { context });
+        }
+        Ok(count)
     }
 
     fn u64(&mut self, context: &'static str) -> Result<u64, Error> {
@@ -711,7 +736,7 @@ impl<'a> Reader<'a> {
     }
 
     fn strings(&mut self, context: &'static str) -> Result<Vec<String>, Error> {
-        let count = self.usize(context)?;
+        let count = self.count(context)?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
             values.push(self.string(1024 * 1024, context)?);
@@ -720,7 +745,7 @@ impl<'a> Reader<'a> {
     }
 
     fn strings_lists(&mut self, context: &'static str) -> Result<Vec<Vec<String>>, Error> {
-        let count = self.usize(context)?;
+        let count = self.count(context)?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
             values.push(self.strings(context)?);
@@ -729,10 +754,10 @@ impl<'a> Reader<'a> {
     }
 
     fn bool_lists(&mut self, context: &'static str) -> Result<Vec<Vec<bool>>, Error> {
-        let count = self.usize(context)?;
+        let count = self.count(context)?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
-            let items = self.usize(context)?;
+            let items = self.count(context)?;
             let mut list = Vec::with_capacity(items);
             for _ in 0..items {
                 list.push(self.bool(context)?);
@@ -743,10 +768,10 @@ impl<'a> Reader<'a> {
     }
 
     fn call_argument_lists(&mut self) -> Result<Vec<Vec<CallArgumentKind>>, Error> {
-        let count = self.usize("call argument lists")?;
+        let count = self.count("call argument lists")?;
         let mut lists = Vec::with_capacity(count);
         for _ in 0..count {
-            let argument_count = self.usize("call argument count")?;
+            let argument_count = self.count("call argument count")?;
             let mut arguments = Vec::with_capacity(argument_count);
             for _ in 0..argument_count {
                 arguments.push(match self.byte("call argument kind")? {
@@ -775,7 +800,7 @@ impl<'a> Reader<'a> {
             4 => Ok(MatchPattern::Pinned(self.usize("match pinned operand")?)),
             5 => Ok(MatchPattern::At(Box::new(self.match_pattern(depth + 1)?))),
             6 => {
-                let count = self.usize("match alternative count")?;
+                let count = self.count("match alternative count")?;
                 let mut patterns = Vec::with_capacity(count);
                 for _ in 0..count {
                     patterns.push(self.match_pattern(depth + 1)?);
@@ -783,7 +808,7 @@ impl<'a> Reader<'a> {
                 Ok(MatchPattern::Alternatives(patterns))
             }
             7 => {
-                let count = self.usize("match list item count")?;
+                let count = self.count("match list item count")?;
                 let mut items = Vec::with_capacity(count);
                 for _ in 0..count {
                     items.push(self.match_pattern(depth + 1)?);
@@ -794,7 +819,7 @@ impl<'a> Reader<'a> {
                 })
             }
             8 => {
-                let count = self.usize("match map entry count")?;
+                let count = self.count("match map entry count")?;
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
                     let key = match self.byte("match map key kind")? {
@@ -871,7 +896,7 @@ impl<'a> Reader<'a> {
                 },
             )),
             15 => {
-                let count = self.usize("match union type count")?;
+                let count = self.count("match union type count")?;
                 let mut types = Vec::with_capacity(count);
                 for _ in 0..count {
                     types.push(self.match_type(depth + 1)?);
@@ -891,10 +916,10 @@ impl<'a> Reader<'a> {
     }
 
     fn select_case_lists(&mut self) -> Result<Vec<Vec<SelectCase>>, Error> {
-        let count = self.usize("select case lists")?;
+        let count = self.count("select case lists")?;
         let mut lists = Vec::with_capacity(count);
         for _ in 0..count {
-            let case_count = self.usize("select case count")?;
+            let case_count = self.count("select case count")?;
             let mut cases = Vec::with_capacity(case_count);
             for _ in 0..case_count {
                 let has_handler = self.bool("select case handler")?;
@@ -915,7 +940,7 @@ impl<'a> Reader<'a> {
     fn chunk(&mut self) -> Result<CompiledChunk, Error> {
         let name = self.string(1024 * 1024, "chunk name")?;
         let arity = self.usize("chunk arity")?;
-        let parameter_count = self.usize("chunk parameter count")?;
+        let parameter_count = self.count("chunk parameter count")?;
         let mut parameters = Vec::with_capacity(parameter_count);
         for _ in 0..parameter_count {
             parameters.push(ParameterSignature {
@@ -930,7 +955,7 @@ impl<'a> Reader<'a> {
             _ => return Err(Error::InvalidStructure("chunk callable identity".into())),
         };
         let locals = self.usize("chunk local count")?;
-        let constant_count = self.usize("constant count")?;
+        let constant_count = self.count("constant count")?;
         let mut constants = Vec::with_capacity(constant_count);
         for _ in 0..constant_count {
             constants.push(match self.byte("constant kind")? {
@@ -939,7 +964,7 @@ impl<'a> Reader<'a> {
                 _ => return Err(Error::InvalidStructure("constant kind".into())),
             });
         }
-        let instruction_count = self.usize("instruction count")?;
+        let instruction_count = self.count("instruction count")?;
         let mut code = Vec::with_capacity(instruction_count);
         for _ in 0..instruction_count {
             let opcode = PackedOpcode::from_cslug_tag(self.byte("opcode")?)
@@ -1278,6 +1303,30 @@ mod tests {
             decode_envelope(&artifact, limits),
             Err(Error::LimitExceeded {
                 context: "chunk count"
+            })
+        ));
+    }
+
+    #[test]
+    fn enforces_the_table_entry_limit_before_allocating_metadata() {
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        module.extend([1, 1]); // program length and one binding entry
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        let limits = Limits {
+            entries_per_table: 0,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            decode_envelope(&artifact, limits),
+            Err(Error::LimitExceeded {
+                context: "bindings"
             })
         ));
     }
