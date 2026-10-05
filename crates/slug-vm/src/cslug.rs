@@ -291,6 +291,20 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
             return Err(Error::InvalidReference("import module index".into()));
         }
     }
+    for pair in imports.windows(2) {
+        let previous = &pair[0];
+        let current = &pair[1];
+        if previous.importer == current.importer && previous.name == current.name {
+            return Err(Error::InvalidReference("duplicate import edge".into()));
+        }
+        if (previous.importer, &previous.name, previous.target)
+            >= (current.importer, &current.name, current.target)
+        {
+            return Err(Error::InvalidReference(
+                "import edges are not strictly sorted".into(),
+            ));
+        }
+    }
     for pair in modules.windows(2) {
         if pair[0].key >= pair[1].key {
             return Err(Error::InvalidReference(
@@ -1138,6 +1152,31 @@ mod tests {
         assert!(matches!(
             decode_envelope(&wrong_order, Limits::default()),
             Err(Error::InvalidStructure(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_import_edges() {
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        let mut graph = vec![0, 1, 2]; // root, modules, imports
+        for _ in 0..2 {
+            graph.push(0); // importer
+            string("dep", &mut graph);
+            graph.push(0); // target
+        }
+        section(1, &graph, &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(18, &mut module);
+        module.extend([0; 18]);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        assert!(matches!(
+            decode_envelope(&artifact, Limits::default()),
+            Err(Error::InvalidReference(message)) if message == "duplicate import edge"
         ));
     }
 
