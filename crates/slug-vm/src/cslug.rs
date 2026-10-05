@@ -185,6 +185,8 @@ pub struct Limits {
     pub imports: usize,
     /// Maximum UTF-8 string byte length.
     pub string_bytes: usize,
+    /// Maximum chunks in one decoded module program.
+    pub chunks_per_module: usize,
 }
 
 impl Default for Limits {
@@ -195,6 +197,7 @@ impl Default for Limits {
             modules: 4_096,
             imports: 16_384,
             string_bytes: 1024 * 1024,
+            chunks_per_module: 65_535,
         }
     }
 }
@@ -308,13 +311,16 @@ fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
             context: "program length",
         });
     }
-    let program = decode_scalar_program(reader.bytes(program_length, "program record")?)?;
+    let program = decode_scalar_program(
+        reader.bytes(program_length, "program record")?,
+        limits.chunks_per_module,
+    )?;
     reader.finish("module section")?;
     Ok(ModuleRecord { key, name, program })
 }
 
 #[allow(clippy::too_many_lines)]
-fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
+fn decode_scalar_program(bytes: &[u8], max_chunks: usize) -> Result<Program, Error> {
     let mut reader = Reader::new(bytes);
     let bindings = reader.strings("bindings")?;
     let exports = reader.strings("exports")?;
@@ -424,6 +430,11 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
     }
     let select_cases = reader.select_case_lists()?;
     let chunk_count = reader.usize("chunk count")?;
+    if chunk_count > max_chunks {
+        return Err(Error::LimitExceeded {
+            context: "chunk count",
+        });
+    }
     let mut chunks = Vec::with_capacity(chunk_count);
     for _ in 0..chunk_count {
         chunks.push(reader.chunk()?);
@@ -1234,6 +1245,41 @@ mod tests {
         assert_eq!(chunk.name, "main");
         assert_eq!(chunk.constants.len(), 1);
         assert_eq!(chunk.code.len(), 2);
+    }
+
+    #[test]
+    fn enforces_the_chunk_limit_before_allocating_program_chunks() {
+        let mut record = vec![0; 17]; // Empty scalar metadata tables.
+        uleb(1, &mut record); // chunks
+        string("main", &mut record);
+        uleb(0, &mut record); // arity
+        uleb(0, &mut record); // parameters
+        record.push(0); // callable identity
+        uleb(0, &mut record); // locals
+        uleb(0, &mut record); // constants
+        uleb(0, &mut record); // instructions
+
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        let limits = Limits {
+            chunks_per_module: 0,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            decode_envelope(&artifact, limits),
+            Err(Error::LimitExceeded {
+                context: "chunk count"
+            })
+        ));
     }
 
     #[test]
