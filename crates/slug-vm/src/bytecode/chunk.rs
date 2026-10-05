@@ -94,6 +94,91 @@ pub enum PackedOpcode {
     Return,
 }
 
+impl PackedOpcode {
+    pub(crate) fn from_cslug_tag(tag: u8) -> Option<Self> {
+        const OPCODES: &[PackedOpcode] = &[
+            PackedOpcode::Constant,
+            PackedOpcode::Interpolate,
+            PackedOpcode::Nil,
+            PackedOpcode::True,
+            PackedOpcode::False,
+            PackedOpcode::Pop,
+            PackedOpcode::Duplicate,
+            PackedOpcode::GetLocal,
+            PackedOpcode::SetLocal,
+            PackedOpcode::GetCapture,
+            PackedOpcode::SetCapture,
+            PackedOpcode::GetGlobal,
+            PackedOpcode::NotImplemented,
+            PackedOpcode::DefineGlobal,
+            PackedOpcode::CombineOverloads,
+            PackedOpcode::DefineMapGlobals,
+            PackedOpcode::RecordModuleTag,
+            PackedOpcode::SetGlobal,
+            PackedOpcode::MakeClosure,
+            PackedOpcode::List,
+            PackedOpcode::ListSpread,
+            PackedOpcode::Map,
+            PackedOpcode::StructSchema,
+            PackedOpcode::Struct,
+            PackedOpcode::StructCopy,
+            PackedOpcode::GetIndex,
+            PackedOpcode::GetSlice,
+            PackedOpcode::Add,
+            PackedOpcode::AddNum,
+            PackedOpcode::Subtract,
+            PackedOpcode::SubtractNum,
+            PackedOpcode::Multiply,
+            PackedOpcode::MultiplyNum,
+            PackedOpcode::Divide,
+            PackedOpcode::DivideNum,
+            PackedOpcode::Modulo,
+            PackedOpcode::ModuloNum,
+            PackedOpcode::BitAnd,
+            PackedOpcode::BitOr,
+            PackedOpcode::BitXor,
+            PackedOpcode::ShiftLeft,
+            PackedOpcode::ShiftRight,
+            PackedOpcode::ListAppend,
+            PackedOpcode::ListPrepend,
+            PackedOpcode::Negate,
+            PackedOpcode::Not,
+            PackedOpcode::BitNot,
+            PackedOpcode::Equal,
+            PackedOpcode::Greater,
+            PackedOpcode::GreaterNum,
+            PackedOpcode::Less,
+            PackedOpcode::LessNum,
+            PackedOpcode::GuardGreater,
+            PackedOpcode::GuardLess,
+            PackedOpcode::Jump,
+            PackedOpcode::JumpIfFalse,
+            PackedOpcode::JumpIfProvided,
+            PackedOpcode::Call,
+            PackedOpcode::CallPositional,
+            PackedOpcode::CallSpread,
+            PackedOpcode::CallSelected,
+            PackedOpcode::PipelineCall,
+            PackedOpcode::PipelineCallSelected,
+            PackedOpcode::Import,
+            PackedOpcode::Spawn,
+            PackedOpcode::Nursery,
+            PackedOpcode::Select,
+            PackedOpcode::SelectApply,
+            PackedOpcode::TryMatch,
+            PackedOpcode::MatchFailure,
+            PackedOpcode::Throw,
+            PackedOpcode::EnterScope,
+            PackedOpcode::LeaveScope,
+            PackedOpcode::Defer,
+            PackedOpcode::Recur,
+            PackedOpcode::RecurPositional,
+            PackedOpcode::Return,
+        ];
+        OPCODES.get(usize::from(tag)).copied()
+    }
+}
+
 /// Fixed-width executable instruction. `a`, `b`, and `c` are opcode-specific
 /// private operands; rich data lives in `Program` pools.
 #[derive(Clone, Copy, Debug)]
@@ -105,6 +190,24 @@ pub struct PackedInstruction {
     pub(crate) b: u32,
     pub(crate) c: u32,
     pub(crate) span: Option<SpanId>,
+}
+
+impl PackedInstruction {
+    pub(crate) const fn from_cslug(
+        opcode: PackedOpcode,
+        a: u32,
+        b: u32,
+        c: u32,
+        span: Option<SpanId>,
+    ) -> Self {
+        Self {
+            opcode,
+            a,
+            b,
+            c,
+            span,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +224,32 @@ pub struct CompiledChunk {
     #[doc(hidden)]
     pub code: Vec<PackedInstruction>,
     pub(crate) invalid_instructions: HashMap<usize, String>,
+}
+
+impl CompiledChunk {
+    pub(crate) fn from_cslug(
+        name: String,
+        arity: usize,
+        parameters: Vec<ParameterSignature>,
+        callable_identity: Option<usize>,
+        locals: usize,
+        constants: Vec<Constant>,
+        code: Vec<PackedInstruction>,
+    ) -> Self {
+        Self {
+            name,
+            arity,
+            exact_positional_parameters: !parameters
+                .iter()
+                .any(|parameter| parameter.has_default || parameter.variadic),
+            parameters,
+            callable_identity,
+            locals,
+            constants,
+            code,
+            invalid_instructions: HashMap::new(),
+        }
+    }
 }
 
 /// Independently callable code and its constant pool.

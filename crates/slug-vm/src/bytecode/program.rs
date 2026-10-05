@@ -114,7 +114,7 @@ impl Program {
     /// Rebuilds the scalar metadata decoded from a `.cslug` program record.
     ///
     /// This is crate-internal codec plumbing, not a stable bytecode builder.
-    #[allow(dead_code)] // Wired when the scalar program-record decoder lands.
+    #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
     pub(crate) fn from_cslug_scalar_metadata(
         bindings: Vec<String>,
         exports: Vec<String>,
@@ -147,8 +147,8 @@ impl Program {
             .collect();
         Self {
             bindings,
-            exports,
             declarations,
+            exports,
             entrypoint,
             callable_identities,
             sources,
@@ -167,6 +167,16 @@ impl Program {
             select_cases,
             ..Self::default()
         }
+    }
+
+    /// Installs chunks decoded from a `.cslug` program record.
+    pub(crate) fn set_cslug_chunks(&mut self, chunks: Vec<CompiledChunk>) {
+        self.names = chunks
+            .iter()
+            .enumerate()
+            .map(|(index, chunk)| (chunk.name.clone(), index))
+            .collect();
+        self.chunks = chunks;
     }
 
     pub(crate) fn contains_non_finite_number(&self) -> bool {

@@ -8,10 +8,13 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 
 use crate::{
     CallArgumentKind, CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature,
-    MatchMapKey, MatchPattern, MatchRest, MatchType, ModuleDeclaration, ModuleTag, Program,
-    SchemaField, SelectCase, SourceSpan, Value,
+    MatchMapKey, MatchPattern, MatchRest, MatchType, ModuleDeclaration, ModuleTag, PackedOpcode,
+    ParameterSignature, Program, SchemaField, SelectCase, SourceSpan, SpanId, Value,
 };
-use crate::{Capture, bytecode::CallArgumentsId};
+use crate::{
+    Capture, Constant,
+    bytecode::{CallArgumentsId, CompiledChunk, PackedInstruction},
+};
 
 /// The exact byte count of a version-1 `.cslug` header.
 pub const HEADER_LENGTH: usize = 12;
@@ -305,6 +308,7 @@ fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
     Ok(ModuleRecord { key, name, program })
 }
 
+#[allow(clippy::too_many_lines)]
 fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
     let mut reader = Reader::new(bytes);
     let bindings = reader.strings("bindings")?;
@@ -406,13 +410,21 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
             return Err(Error::InvalidReference("selected call arguments".into()));
         }
         selected_calls.push((
-            CallArgumentsId::new(arguments as u32),
+            CallArgumentsId::new(
+                u32::try_from(arguments)
+                    .map_err(|_| Error::InvalidReference("selected call arguments".into()))?,
+            ),
             reader.usize("selected call identity")?,
         ));
     }
     let select_cases = reader.select_case_lists()?;
+    let chunk_count = reader.usize("chunk count")?;
+    let mut chunks = Vec::with_capacity(chunk_count);
+    for _ in 0..chunk_count {
+        chunks.push(reader.chunk()?);
+    }
     reader.finish("scalar program record")?;
-    Ok(Program::from_cslug_scalar_metadata(
+    let mut program = Program::from_cslug_scalar_metadata(
         bindings,
         exports,
         declarations,
@@ -430,7 +442,9 @@ fn decode_scalar_program(bytes: &[u8]) -> Result<Program, Error> {
         call_arguments,
         selected_calls,
         select_cases,
-    ))
+    );
+    program.set_cslug_chunks(chunks);
+    Ok(program)
 }
 
 struct PendingDeclaration {
@@ -585,7 +599,7 @@ impl<'a> Reader<'a> {
         if value > usize::MAX as u64 {
             return Err(Error::NonCanonicalInteger { context });
         }
-        Ok(value as usize)
+        usize::try_from(value).map_err(|_| Error::NonCanonicalInteger { context })
     }
 
     fn u64(&mut self, context: &'static str) -> Result<u64, Error> {
@@ -616,7 +630,9 @@ impl<'a> Reader<'a> {
 
     fn i64(&mut self, context: &'static str) -> Result<i64, Error> {
         let encoded = self.u64(context)?;
-        Ok(((encoded >> 1) as i64) ^ -((encoded & 1) as i64))
+        let value =
+            i64::try_from(encoded >> 1).map_err(|_| Error::NonCanonicalInteger { context })?;
+        Ok(value ^ -i64::from((encoded & 1) as u8))
     }
 
     fn value(&mut self, context: &'static str) -> Result<Value, Error> {
@@ -879,6 +895,64 @@ impl<'a> Reader<'a> {
         Ok(lists)
     }
 
+    fn chunk(&mut self) -> Result<CompiledChunk, Error> {
+        let name = self.string(1024 * 1024, "chunk name")?;
+        let arity = self.usize("chunk arity")?;
+        let parameter_count = self.usize("chunk parameter count")?;
+        let mut parameters = Vec::with_capacity(parameter_count);
+        for _ in 0..parameter_count {
+            parameters.push(ParameterSignature {
+                name: self.string(1024 * 1024, "parameter name")?,
+                has_default: self.bool("parameter default")?,
+                variadic: self.bool("parameter variadic")?,
+            });
+        }
+        let callable_identity = match self.byte("chunk callable identity")? {
+            0 => None,
+            1 => Some(self.usize("chunk callable identity")?),
+            _ => return Err(Error::InvalidStructure("chunk callable identity".into())),
+        };
+        let locals = self.usize("chunk local count")?;
+        let constant_count = self.usize("constant count")?;
+        let mut constants = Vec::with_capacity(constant_count);
+        for _ in 0..constant_count {
+            constants.push(match self.byte("constant kind")? {
+                0 => Constant::Value(self.value("constant value")?),
+                1 => Constant::Function(self.usize("constant function chunk")?),
+                _ => return Err(Error::InvalidStructure("constant kind".into())),
+            });
+        }
+        let instruction_count = self.usize("instruction count")?;
+        let mut code = Vec::with_capacity(instruction_count);
+        for _ in 0..instruction_count {
+            let opcode = PackedOpcode::from_cslug_tag(self.byte("opcode")?)
+                .ok_or_else(|| Error::InvalidStructure("opcode".into()))?;
+            let a = self.u32_uleb("instruction operand")?;
+            let b = self.u32_uleb("instruction operand")?;
+            let c = self.u32_uleb("instruction operand")?;
+            let span = match self.usize("instruction span")? {
+                0 => None,
+                index => Some(SpanId::new(u32::try_from(index - 1).map_err(|_| {
+                    Error::InvalidReference("instruction source span".into())
+                })?)),
+            };
+            code.push(PackedInstruction::from_cslug(opcode, a, b, c, span));
+        }
+        Ok(CompiledChunk::from_cslug(
+            name,
+            arity,
+            parameters,
+            callable_identity,
+            locals,
+            constants,
+            code,
+        ))
+    }
+
+    fn u32_uleb(&mut self, context: &'static str) -> Result<u32, Error> {
+        u32::try_from(self.u64(context)?).map_err(|_| Error::NonCanonicalInteger { context })
+    }
+
     fn finish(&self, context: &'static str) -> Result<(), Error> {
         if self.cursor == self.bytes.len() {
             Ok(())
@@ -902,11 +976,11 @@ const fn uleb_length(mut value: u64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{Error, HEADER_LENGTH, Header, Limits, Reader, decode_envelope, encode_header};
-    use crate::Value;
+    use crate::{PackedOpcode, Value};
 
     fn uleb(mut value: usize, output: &mut Vec<u8>) {
         loop {
-            let mut byte = (value & 0x7f) as u8;
+            let mut byte = u8::try_from(value & 0x7f).expect("ULEB128 byte is bounded");
             value >>= 7;
             if value != 0 {
                 byte |= 0x80;
@@ -932,8 +1006,8 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(17, &mut module);
-        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        uleb(18, &mut module);
+        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -1050,6 +1124,7 @@ mod tests {
         uleb(0, &mut record); // call argument lists
         uleb(0, &mut record); // selected calls
         uleb(0, &mut record); // select case lists
+        uleb(0, &mut record); // chunks
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -1098,6 +1173,7 @@ mod tests {
         uleb(0, &mut record); // call argument lists
         uleb(0, &mut record); // selected calls
         uleb(0, &mut record); // select case lists
+        uleb(0, &mut record); // chunks
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -1115,6 +1191,43 @@ mod tests {
         assert_eq!(program.source_count(), 1);
         assert_eq!(program.span_count(), 1);
         assert_eq!(program.layout_metrics().metadata_pool_slots, 4);
+    }
+
+    #[test]
+    fn decodes_packed_chunks_and_source_constants() {
+        let mut record = vec![0; 17]; // Empty scalar metadata tables.
+        uleb(1, &mut record); // chunks
+        string("main", &mut record);
+        uleb(0, &mut record); // arity
+        uleb(0, &mut record); // parameters
+        record.push(0); // callable identity
+        uleb(0, &mut record); // locals
+        uleb(1, &mut record); // constants
+        record.push(0); // source literal constant
+        record.push(3); // integer value
+        uleb(42, &mut record); // ZigZag 21
+        uleb(2, &mut record); // instructions
+        record.push(PackedOpcode::Constant as u8);
+        record.extend([0, 0, 0, 0]); // constant index, unused operands, no span
+        record.push(PackedOpcode::Return as u8);
+        record.extend([0, 0, 0, 0]); // unused operands, no span
+
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        let envelope = decode_envelope(&artifact, Limits::default()).expect("valid artifact");
+        let chunk = envelope.modules[0].program.chunk(0).expect("main chunk");
+        assert_eq!(chunk.name, "main");
+        assert_eq!(chunk.constants.len(), 1);
+        assert_eq!(chunk.code.len(), 2);
     }
 
     #[test]
