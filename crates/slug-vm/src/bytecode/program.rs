@@ -80,6 +80,11 @@ impl Entrypoint {
             callable_identity,
         }
     }
+
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) const fn cslug_parts(self) -> (EntrypointArguments, usize) {
+        (self.arguments, self.callable_identity)
+    }
 }
 
 /// Layout measurements for private bytecode metadata.
@@ -191,6 +196,11 @@ impl Program {
     #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
     pub(crate) fn cslug_chunks(&self) -> &[CompiledChunk] {
         &self.chunks
+    }
+
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) fn cslug_callable_identities(&self) -> &[CallableIdentity] {
+        &self.callable_identities
     }
 
     pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {

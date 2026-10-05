@@ -85,6 +85,11 @@ impl CallableIdentity {
     pub fn new(canonical_input: impl Into<String>) -> Self {
         Self(canonical_input.into())
     }
+
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) fn cslug_text(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Resource positions retained for runtime validation of a foreign declaration.

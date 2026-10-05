@@ -176,7 +176,6 @@ pub fn encode_header(output: &mut Vec<u8>) {
 #[allow(dead_code)] // Wired into the graph encoder once all metadata tables are encoded.
 fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
     if !program.declarations().is_empty()
-        || program.has_entrypoint()
         || program.source_count() != 0
         || program.span_count() != 0
     {
@@ -188,7 +187,25 @@ fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
     let mut output = Vec::new();
     strings(program.bindings(), &mut output);
     strings(program.exports(), &mut output);
-    output.extend([0; 15]); // Remaining empty scalar metadata tables.
+    output.push(0); // declarations
+    uleb(program.cslug_callable_identities().len(), &mut output);
+    for identity in program.cslug_callable_identities() {
+        string(identity.cslug_text(), &mut output);
+    }
+    match program.entrypoint() {
+        None => output.push(0),
+        Some(entrypoint) => {
+            output.push(1);
+            let (arguments, identity) = entrypoint.cslug_parts();
+            output.push(match arguments {
+                EntrypointArguments::None => 0,
+                EntrypointArguments::List => 1,
+                EntrypointArguments::Map => 2,
+            });
+            uleb(identity, &mut output);
+        }
+    }
+    output.extend([0; 12]); // Remaining empty scalar metadata tables.
     uleb(program.cslug_chunks().len(), &mut output);
     for chunk in program.cslug_chunks() {
         encode_chunk(chunk, &mut output)?;
@@ -1186,7 +1203,9 @@ mod tests {
         Error, HEADER_LENGTH, Header, Limits, Reader, decode_envelope, encode_header,
         encode_scalar_program,
     };
-    use crate::{Chunk, Op, PackedOpcode, Program, Value};
+    use crate::{
+        CallableIdentity, Chunk, Entrypoint, EntrypointArguments, Op, PackedOpcode, Program, Value,
+    };
 
     fn uleb(mut value: usize, output: &mut Vec<u8>) {
         loop {
@@ -1265,6 +1284,8 @@ mod tests {
         let mut program = Program::new();
         program.set_bindings(vec!["value".into()]);
         program.set_exports(vec!["value".into()]);
+        program.set_callable_identities(vec![CallableIdentity::new("root::main")]);
+        program.set_entrypoint(Some(Entrypoint::new(EntrypointArguments::List, 0)));
         let mut main = Chunk::new("main", 0);
         main.constant(Value::Int(-3));
         main.emit(Op::Constant(0)).emit(Op::Return);
@@ -1281,6 +1302,7 @@ mod tests {
         let chunk = decoded.chunk(0).expect("main chunk");
         assert_eq!(decoded.bindings(), ["value"]);
         assert_eq!(decoded.exports(), ["value"]);
+        assert!(decoded.has_entrypoint());
         assert_eq!(chunk.constants.len(), 1);
         assert_eq!(chunk.code.len(), 2);
     }
