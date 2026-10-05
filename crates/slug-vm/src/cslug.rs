@@ -22,6 +22,7 @@ pub const HEADER_LENGTH: usize = 12;
 const MAGIC: [u8; 4] = *b"CSLG";
 const FORMAT_VERSION: u16 = 1;
 const VM_COMPATIBILITY_VERSION: u16 = 1;
+const DEFAULT_STRING_BYTES: usize = 1024 * 1024;
 
 /// The fixed header that identifies a version-1 `.cslug` artifact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,7 +199,7 @@ impl Default for Limits {
             section_bytes: 32 * 1024 * 1024,
             modules: 4_096,
             imports: 16_384,
-            string_bytes: 1024 * 1024,
+            string_bytes: DEFAULT_STRING_BYTES,
             chunks_per_module: 65_535,
             entries_per_table: 1_048_576,
         }
@@ -249,7 +250,7 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
     Header::decode(bytes)?;
     let mut reader = Reader::new(&bytes[HEADER_LENGTH..]);
     let graph = read_section(&mut reader, 1, limits.section_bytes, "graph section")?;
-    let mut graph_reader = Reader::new(graph);
+    let mut graph_reader = Reader::with_limits(graph, usize::MAX, limits.string_bytes);
     let root = graph_reader.usize("root module index")?;
     let module_count = graph_reader.usize("module count")?;
     let import_count = graph_reader.usize("import count")?;
@@ -267,7 +268,7 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
     for _ in 0..import_count {
         imports.push(ImportEdge {
             importer: graph_reader.usize("importer module index")?,
-            name: graph_reader.string(limits.string_bytes, "import name")?,
+            name: graph_reader.string("import name")?,
             target: graph_reader.usize("import target module index")?,
         });
     }
@@ -305,9 +306,9 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
 }
 
 fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
-    let mut reader = Reader::new(bytes);
-    let key = reader.string(limits.string_bytes, "module key")?;
-    let name = reader.string(limits.string_bytes, "module name")?;
+    let mut reader = Reader::with_limits(bytes, usize::MAX, limits.string_bytes);
+    let key = reader.string("module key")?;
+    let name = reader.string("module name")?;
     let program_length = reader.usize("program length")?;
     if program_length > limits.section_bytes {
         return Err(Error::LimitExceeded {
@@ -318,6 +319,7 @@ fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
         reader.bytes(program_length, "program record")?,
         limits.chunks_per_module,
         limits.entries_per_table,
+        limits.string_bytes,
     )?;
     reader.finish("module section")?;
     Ok(ModuleRecord { key, name, program })
@@ -328,8 +330,9 @@ fn decode_scalar_program(
     bytes: &[u8],
     max_chunks: usize,
     max_entries: usize,
+    max_string_bytes: usize,
 ) -> Result<Program, Error> {
-    let mut reader = Reader::with_entry_limit(bytes, max_entries);
+    let mut reader = Reader::with_limits(bytes, max_entries, max_string_bytes);
     let bindings = reader.strings("bindings")?;
     let exports = reader.strings("exports")?;
     let count = reader.count("declaration count")?;
@@ -406,7 +409,7 @@ fn decode_scalar_program(
         let mut fields = Vec::with_capacity(count);
         for _ in 0..count {
             fields.push(SchemaField {
-                name: reader.string(1024 * 1024, "schema field name")?,
+                name: reader.string("schema field name")?,
                 has_default: reader.bool("schema field default")?,
             });
         }
@@ -526,7 +529,7 @@ fn decode_declaration(reader: &mut Reader<'_>) -> Result<PendingDeclaration, Err
         // Tag expressions execute during module initialization. Persist only
         // their static name; argument values begin empty in a fresh VM.
         tags.push(ModuleTag {
-            name: reader.string(1024 * 1024, "declaration tag name")?,
+            name: reader.string("declaration tag name")?,
             arguments: Vec::new(),
         });
     }
@@ -564,7 +567,7 @@ fn decode_resource_identity(
         0 => Ok(None),
         1 => Ok(Some((
             reader.optional_string("foreign resource module")?,
-            reader.string(1024 * 1024, "foreign resource name")?,
+            reader.string("foreign resource name")?,
         ))),
         _ => Err(Error::InvalidStructure("foreign resource identity".into())),
     }
@@ -591,18 +594,20 @@ struct Reader<'a> {
     bytes: &'a [u8],
     cursor: usize,
     entry_limit: usize,
+    string_limit: usize,
 }
 
 impl<'a> Reader<'a> {
     const fn new(bytes: &'a [u8]) -> Self {
-        Self::with_entry_limit(bytes, usize::MAX)
+        Self::with_limits(bytes, usize::MAX, DEFAULT_STRING_BYTES)
     }
 
-    const fn with_entry_limit(bytes: &'a [u8], entry_limit: usize) -> Self {
+    const fn with_limits(bytes: &'a [u8], entry_limit: usize, string_limit: usize) -> Self {
         Self {
             bytes,
             cursor: 0,
             entry_limit,
+            string_limit,
         }
     }
 
@@ -693,7 +698,7 @@ impl<'a> Reader<'a> {
                 }
                 Ok(Value::Float(value))
             }
-            5 => Ok(Value::string(self.string(1024 * 1024, context)?)),
+            5 => Ok(Value::string(self.string(context)?)),
             6 => {
                 let length = self.usize(context)?;
                 Ok(Value::Bytes(alloc::rc::Rc::new(
@@ -704,9 +709,9 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn string(&mut self, limit: usize, context: &'static str) -> Result<String, Error> {
+    fn string(&mut self, context: &'static str) -> Result<String, Error> {
         let length = self.usize(context)?;
-        if length > limit {
+        if length > self.string_limit {
             return Err(Error::LimitExceeded { context });
         }
         let bytes = self.bytes(length, context)?;
@@ -728,7 +733,7 @@ impl<'a> Reader<'a> {
     fn optional_string(&mut self, context: &'static str) -> Result<Option<String>, Error> {
         match self.byte(context)? {
             0 => Ok(None),
-            1 => self.string(1024 * 1024, context).map(Some),
+            1 => self.string(context).map(Some),
             _ => Err(Error::InvalidStructure(format!(
                 "invalid optional {context}"
             ))),
@@ -739,7 +744,7 @@ impl<'a> Reader<'a> {
         let count = self.count(context)?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
-            values.push(self.string(1024 * 1024, context)?);
+            values.push(self.string(context)?);
         }
         Ok(values)
     }
@@ -777,7 +782,7 @@ impl<'a> Reader<'a> {
                 arguments.push(match self.byte("call argument kind")? {
                     0 => CallArgumentKind::Positional,
                     1 => CallArgumentKind::Spread,
-                    2 => CallArgumentKind::Named(self.string(1024 * 1024, "call argument name")?),
+                    2 => CallArgumentKind::Named(self.string("call argument name")?),
                     _ => return Err(Error::InvalidStructure("call argument kind".into())),
                 });
             }
@@ -823,7 +828,7 @@ impl<'a> Reader<'a> {
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
                     let key = match self.byte("match map key kind")? {
-                        0 => MatchMapKey::String(self.string(1024 * 1024, "match map key")?),
+                        0 => MatchMapKey::String(self.string("match map key")?),
                         1 => MatchMapKey::Operand(self.usize("match map key operand")?),
                         _ => return Err(Error::InvalidStructure("match map key kind".into())),
                     };
@@ -866,12 +871,12 @@ impl<'a> Reader<'a> {
             4 => Ok(MatchType::Str),
             5 => Ok(MatchType::Bytes),
             6 => Ok(MatchType::Resource {
-                module: self.string(1024 * 1024, "match resource module")?,
-                name: self.string(1024 * 1024, "match resource name")?,
+                module: self.string("match resource module")?,
+                name: self.string("match resource name")?,
             }),
             7 => Ok(MatchType::Enum {
-                module: self.string(1024 * 1024, "match enum module")?,
-                name: self.string(1024 * 1024, "match enum name")?,
+                module: self.string("match enum module")?,
+                name: self.string("match enum name")?,
             }),
             8 => Ok(MatchType::List(self.optional_match_type(depth + 1)?)),
             9 => Ok(MatchType::Map(
@@ -938,13 +943,13 @@ impl<'a> Reader<'a> {
     }
 
     fn chunk(&mut self) -> Result<CompiledChunk, Error> {
-        let name = self.string(1024 * 1024, "chunk name")?;
+        let name = self.string("chunk name")?;
         let arity = self.usize("chunk arity")?;
         let parameter_count = self.count("chunk parameter count")?;
         let mut parameters = Vec::with_capacity(parameter_count);
         for _ in 0..parameter_count {
             parameters.push(ParameterSignature {
-                name: self.string(1024 * 1024, "parameter name")?,
+                name: self.string("parameter name")?,
                 has_default: self.bool("parameter default")?,
                 variadic: self.bool("parameter variadic")?,
             });
@@ -1321,6 +1326,30 @@ mod tests {
 
         let limits = Limits {
             entries_per_table: 0,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            decode_envelope(&artifact, limits),
+            Err(Error::LimitExceeded {
+                context: "bindings"
+            })
+        ));
+    }
+
+    #[test]
+    fn enforces_host_string_limits_inside_program_records() {
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        module.extend([2, 1, 5]); // program length, binding count, binding length
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        let limits = Limits {
+            string_bytes: 4,
             ..Limits::default()
         };
         assert!(matches!(
