@@ -329,13 +329,15 @@ fn decode_module(bytes: &[u8], limits: Limits) -> Result<ModuleRecord, Error> {
             context: "program length",
         });
     }
-    let program = decode_scalar_program(
+    let mut program = decode_scalar_program(
         reader.bytes(program_length, "program record")?,
         limits.chunks_per_module,
         limits.entries_per_table,
         limits.string_bytes,
     )?;
     reader.finish("module section")?;
+    program.set_module_name(name.clone());
+    program.set_module_key(key.clone());
     Ok(ModuleRecord { key, name, program })
 }
 
@@ -1155,6 +1157,8 @@ mod tests {
         assert_eq!(envelope.root, 0);
         assert_eq!(envelope.modules[0].key, "root");
         assert_eq!(envelope.modules[0].name, "");
+        assert_eq!(envelope.modules[0].program.module_key(), Some("root"));
+        assert_eq!(envelope.modules[0].program.module_name(), "");
         assert!(envelope.modules[0].program.bindings().is_empty());
         assert!(envelope.imports.is_empty());
     }
