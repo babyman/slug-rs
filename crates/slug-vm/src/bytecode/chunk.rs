@@ -208,6 +208,11 @@ impl PackedInstruction {
             span,
         }
     }
+
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) const fn cslug_parts(self) -> (PackedOpcode, u32, u32, u32, Option<SpanId>) {
+        (self.opcode, self.a, self.b, self.c, self.span)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -249,6 +254,29 @@ impl CompiledChunk {
             code,
             invalid_instructions: HashMap::new(),
         }
+    }
+
+    #[allow(clippy::type_complexity, dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) fn cslug_parts(
+        &self,
+    ) -> (
+        &str,
+        usize,
+        &[ParameterSignature],
+        Option<usize>,
+        usize,
+        &[Constant],
+        &[PackedInstruction],
+    ) {
+        (
+            &self.name,
+            self.arity,
+            &self.parameters,
+            self.callable_identity,
+            self.locals,
+            &self.constants,
+            &self.code,
+        )
     }
 }
 

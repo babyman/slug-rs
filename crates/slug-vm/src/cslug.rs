@@ -173,6 +173,139 @@ pub fn encode_header(output: &mut Vec<u8>) {
     output.extend(Header::version_1().encode());
 }
 
+#[allow(dead_code)] // Wired into the graph encoder once all metadata tables are encoded.
+fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
+    if !program.bindings().is_empty()
+        || !program.exports().is_empty()
+        || !program.declarations().is_empty()
+        || program.has_entrypoint()
+        || program.source_count() != 0
+        || program.span_count() != 0
+    {
+        return Err(Error::UnsupportedValue(
+            "program metadata is not yet encodable".into(),
+        ));
+    }
+
+    let mut output = Vec::new();
+    output.extend([0; 17]); // Empty scalar metadata tables.
+    uleb(program.cslug_chunks().len(), &mut output);
+    for chunk in program.cslug_chunks() {
+        encode_chunk(chunk, &mut output)?;
+    }
+    Ok(output)
+}
+
+#[allow(dead_code)]
+fn encode_chunk(chunk: &CompiledChunk, output: &mut Vec<u8>) -> Result<(), Error> {
+    let (name, arity, parameters, callable_identity, locals, constants, code) = chunk.cslug_parts();
+    string(name, output);
+    uleb(arity, output);
+    uleb(parameters.len(), output);
+    for parameter in parameters {
+        string(&parameter.name, output);
+        boolean(parameter.has_default, output);
+        boolean(parameter.variadic, output);
+    }
+    optional_usize(callable_identity, output);
+    uleb(locals, output);
+    uleb(constants.len(), output);
+    for constant in constants {
+        match constant {
+            Constant::Value(value) => {
+                output.push(0);
+                encode_value(value, output)?;
+            }
+            Constant::Function(index) => {
+                output.push(1);
+                uleb(*index, output);
+            }
+        }
+    }
+    uleb(code.len(), output);
+    for instruction in code {
+        let (opcode, a, b, c, span) = instruction.cslug_parts();
+        output.push(opcode as u8);
+        uleb(a as usize, output);
+        uleb(b as usize, output);
+        uleb(c as usize, output);
+        uleb(span.map_or(0, |span| span.index() + 1), output);
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn encode_value(value: &Value, output: &mut Vec<u8>) -> Result<(), Error> {
+    match value {
+        Value::Nil => output.push(0),
+        Value::Bool(false) => output.push(1),
+        Value::Bool(true) => output.push(2),
+        Value::Int(value) => {
+            output.push(3);
+            let encoded = (value.unsigned_abs() << 1) - u64::from(*value < 0);
+            uleb_u64(encoded, output);
+        }
+        Value::Float(value) if value.is_finite() => {
+            output.push(4);
+            output.extend(value.to_le_bytes());
+        }
+        Value::Str(value) => {
+            output.push(5);
+            string(value, output);
+        }
+        Value::Bytes(value) => {
+            output.push(6);
+            uleb(value.len(), output);
+            output.extend(value.iter());
+        }
+        Value::Float(_) => return Err(Error::UnsupportedValue("non-finite number".into())),
+        _ => return Err(Error::UnsupportedValue("non-source literal value".into())),
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn boolean(value: bool, output: &mut Vec<u8>) {
+    output.push(u8::from(value));
+}
+
+#[allow(dead_code)]
+fn optional_usize(value: Option<usize>, output: &mut Vec<u8>) {
+    match value {
+        Some(value) => {
+            output.push(1);
+            uleb(value, output);
+        }
+        None => output.push(0),
+    }
+}
+
+#[allow(dead_code)]
+fn string(value: &str, output: &mut Vec<u8>) {
+    uleb(value.len(), output);
+    output.extend(value.as_bytes());
+}
+
+#[allow(dead_code)]
+fn uleb(value: usize, output: &mut Vec<u8>) {
+    uleb_u64(value as u64, output);
+}
+
+#[allow(dead_code)]
+fn uleb_u64(mut value: u64, output: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        output.push(byte);
+        if value == 0 {
+            return;
+        }
+    }
+}
+
 /// Resource bounds enforced before the envelope reader allocates or recurses.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
@@ -1041,8 +1174,11 @@ const fn uleb_length(mut value: u64) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, HEADER_LENGTH, Header, Limits, Reader, decode_envelope, encode_header};
-    use crate::{PackedOpcode, Value};
+    use super::{
+        Error, HEADER_LENGTH, Header, Limits, Reader, decode_envelope, encode_header,
+        encode_scalar_program,
+    };
+    use crate::{Chunk, Op, PackedOpcode, Program, Value};
 
     fn uleb(mut value: usize, output: &mut Vec<u8>) {
         loop {
@@ -1114,6 +1250,27 @@ mod tests {
         assert_eq!(encoded.len(), HEADER_LENGTH);
         assert_eq!(encoded, b"CSLG\x01\0\x01\0\0\0\0\0");
         assert_eq!(Header::decode(&encoded), Ok(Header::version_1()));
+    }
+
+    #[test]
+    fn encodes_packed_chunks_with_source_literal_constants() {
+        let mut program = Program::new();
+        let mut main = Chunk::new("main", 0);
+        main.constant(Value::Int(-3));
+        main.emit(Op::Constant(0)).emit(Op::Return);
+        program.add_chunk(main);
+
+        let encoded = encode_scalar_program(&program).expect("encodes source literals");
+        assert_eq!(
+            encoded,
+            encode_scalar_program(&program).expect("encoding is deterministic")
+        );
+
+        let decoded =
+            super::decode_scalar_program(&encoded, 1, 16, 16).expect("encoded program decodes");
+        let chunk = decoded.chunk(0).expect("main chunk");
+        assert_eq!(chunk.constants.len(), 1);
+        assert_eq!(chunk.code.len(), 2);
     }
 
     #[test]

@@ -188,6 +188,11 @@ impl Program {
         })
     }
 
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) fn cslug_chunks(&self) -> &[CompiledChunk] {
+        &self.chunks
+    }
+
     pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {
         let invalid_instructions = chunk
             .code
