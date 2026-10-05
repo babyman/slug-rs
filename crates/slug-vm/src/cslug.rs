@@ -1503,6 +1503,39 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_instruction_source_spans() {
+        let mut record = vec![0; 17]; // Empty scalar metadata tables.
+        uleb(1, &mut record); // chunks
+        string("main", &mut record);
+        uleb(0, &mut record); // arity
+        uleb(0, &mut record); // parameters
+        record.push(0); // callable identity
+        uleb(0, &mut record); // locals
+        uleb(0, &mut record); // constants
+        uleb(2, &mut record); // instructions
+        record.push(PackedOpcode::Nil as u8);
+        record.extend([0, 0, 0, 1]); // unused operands, missing span index zero
+        record.push(PackedOpcode::Return as u8);
+        record.extend([0, 0, 0, 0]); // unused operands, no span
+
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        assert!(matches!(
+            decode_envelope(&artifact, Limits::default()),
+            Err(Error::InvalidExecutable(message)) if message.contains("missing source span")
+        ));
+    }
+
+    #[test]
     fn rejects_programs_without_a_main_entry_chunk() {
         let mut record = vec![0; 17]; // Empty scalar metadata tables.
         uleb(1, &mut record); // chunks

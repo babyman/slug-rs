@@ -996,6 +996,17 @@ impl Program {
             if let Some(error) = compiled.invalid_instructions.values().next() {
                 return Err(error.clone());
             }
+            if let Some(span) = compiled.code.iter().find_map(|instruction| {
+                instruction
+                    .span
+                    .filter(|span| span.index() >= self.spans.len())
+            }) {
+                return Err(format!(
+                    "function `{}` references missing source span {}",
+                    compiled.name,
+                    span.index()
+                ));
+            }
             let chunk = Self::unpack_chunk(compiled)?;
             if chunk.locals < chunk.arity {
                 return Err(format!(
