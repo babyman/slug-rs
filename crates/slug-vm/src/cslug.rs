@@ -276,16 +276,6 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
     if module_count == 0 || root >= module_count {
         return Err(Error::InvalidReference("root module index".into()));
     }
-    let mut modules = Vec::with_capacity(module_count);
-    for _ in 0..module_count {
-        let payload = read_section(&mut reader, 2, limits.section_bytes, "module section")?;
-        modules.push(decode_module(payload, limits)?);
-    }
-    let end = read_section(&mut reader, 0, 0, "end section")?;
-    if !end.is_empty() {
-        return Err(Error::InvalidStructure("end section is not empty".into()));
-    }
-    reader.finish("artifact")?;
     for edge in &imports {
         if edge.importer >= module_count || edge.target >= module_count {
             return Err(Error::InvalidReference("import module index".into()));
@@ -305,6 +295,16 @@ pub(crate) fn decode_envelope(bytes: &[u8], limits: Limits) -> Result<Envelope, 
             ));
         }
     }
+    let mut modules = Vec::with_capacity(module_count);
+    for _ in 0..module_count {
+        let payload = read_section(&mut reader, 2, limits.section_bytes, "module section")?;
+        modules.push(decode_module(payload, limits)?);
+    }
+    let end = read_section(&mut reader, 0, 0, "end section")?;
+    if !end.is_empty() {
+        return Err(Error::InvalidStructure("end section is not empty".into()));
+    }
+    reader.finish("artifact")?;
     for pair in modules.windows(2) {
         if pair[0].key >= pair[1].key {
             return Err(Error::InvalidReference(
@@ -485,7 +485,10 @@ fn decode_scalar_program(
         select_cases,
     );
     program.set_cslug_chunks(chunks);
-    program.validate(0).map_err(Error::InvalidExecutable)?;
+    let entry = program
+        .find_chunk("main")
+        .ok_or_else(|| Error::InvalidExecutable("program is missing main entry chunk".into()))?;
+    program.validate(entry).map_err(Error::InvalidExecutable)?;
     Ok(program)
 }
 
@@ -1067,8 +1070,9 @@ mod tests {
         uleb(4, &mut module);
         module.extend(b"root");
         uleb(0, &mut module);
-        uleb(18, &mut module);
-        module.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let program = empty_program();
+        uleb(program.len(), &mut module);
+        module.extend(program);
         section(2, &module, &mut encoded);
         section(0, &[], &mut encoded);
         encoded
@@ -1077,6 +1081,27 @@ mod tests {
     fn string(value: &str, output: &mut Vec<u8>) {
         uleb(value.len(), output);
         output.extend(value.as_bytes());
+    }
+
+    fn empty_program() -> Vec<u8> {
+        let mut program = vec![0; 17]; // Empty scalar metadata tables.
+        main_chunk(&mut program);
+        program
+    }
+
+    fn main_chunk(output: &mut Vec<u8>) {
+        uleb(1, output); // chunks
+        string("main", output);
+        uleb(0, output); // arity
+        uleb(0, output); // parameters
+        output.push(0); // callable identity
+        uleb(0, output); // locals
+        uleb(0, output); // constants
+        uleb(2, output); // instructions
+        output.push(PackedOpcode::Nil as u8);
+        output.extend([0, 0, 0, 0]); // unused operands, no span
+        output.push(PackedOpcode::Return as u8);
+        output.extend([0, 0, 0, 0]); // unused operands, no span
     }
 
     #[test]
@@ -1210,7 +1235,7 @@ mod tests {
         uleb(0, &mut record); // call argument lists
         uleb(0, &mut record); // selected calls
         uleb(0, &mut record); // select case lists
-        uleb(0, &mut record); // chunks
+        main_chunk(&mut record);
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -1259,7 +1284,7 @@ mod tests {
         uleb(0, &mut record); // call argument lists
         uleb(0, &mut record); // selected calls
         uleb(0, &mut record); // select case lists
-        uleb(0, &mut record); // chunks
+        main_chunk(&mut record);
 
         let mut artifact = Vec::new();
         encode_header(&mut artifact);
@@ -1282,8 +1307,8 @@ mod tests {
     #[test]
     fn decodes_packed_chunks_and_source_constants() {
         let mut record = vec![0; 17]; // Empty scalar metadata tables.
-        uleb(1, &mut record); // chunks
-        string("main", &mut record);
+        uleb(2, &mut record); // chunks
+        string("<fn #0>", &mut record);
         uleb(0, &mut record); // arity
         uleb(0, &mut record); // parameters
         record.push(0); // callable identity
@@ -1295,6 +1320,17 @@ mod tests {
         uleb(2, &mut record); // instructions
         record.push(PackedOpcode::Constant as u8);
         record.extend([0, 0, 0, 0]); // constant index, unused operands, no span
+        record.push(PackedOpcode::Return as u8);
+        record.extend([0, 0, 0, 0]); // unused operands, no span
+        string("main", &mut record);
+        uleb(0, &mut record); // arity
+        uleb(0, &mut record); // parameters
+        record.push(0); // callable identity
+        uleb(0, &mut record); // locals
+        uleb(0, &mut record); // constants
+        uleb(2, &mut record); // instructions
+        record.push(PackedOpcode::Nil as u8);
+        record.extend([0, 0, 0, 0]); // unused operands, no span
         record.push(PackedOpcode::Return as u8);
         record.extend([0, 0, 0, 0]); // unused operands, no span
 
@@ -1310,10 +1346,12 @@ mod tests {
         section(0, &[], &mut artifact);
 
         let envelope = decode_envelope(&artifact, Limits::default()).expect("valid artifact");
-        let chunk = envelope.modules[0].program.chunk(0).expect("main chunk");
-        assert_eq!(chunk.name, "main");
+        let program = &envelope.modules[0].program;
+        let chunk = program.chunk(0).expect("function chunk");
+        assert_eq!(chunk.name, "<fn #0>");
         assert_eq!(chunk.constants.len(), 1);
         assert_eq!(chunk.code.len(), 2);
+        assert_eq!(program.find_chunk("main"), Some(1));
     }
 
     #[test]
@@ -1457,6 +1495,39 @@ mod tests {
         assert!(matches!(
             decode_envelope(&artifact, Limits::default()),
             Err(Error::InvalidExecutable(message)) if message.contains("missing callable identity")
+        ));
+    }
+
+    #[test]
+    fn rejects_programs_without_a_main_entry_chunk() {
+        let mut record = vec![0; 17]; // Empty scalar metadata tables.
+        uleb(1, &mut record); // chunks
+        string("<fn #0>", &mut record);
+        uleb(0, &mut record); // arity
+        uleb(0, &mut record); // parameters
+        record.push(0); // callable identity
+        uleb(0, &mut record); // locals
+        uleb(0, &mut record); // constants
+        uleb(2, &mut record); // instructions
+        record.push(PackedOpcode::Nil as u8);
+        record.extend([0, 0, 0, 0]); // unused operands, no span
+        record.push(PackedOpcode::Return as u8);
+        record.extend([0, 0, 0, 0]); // unused operands, no span
+
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+
+        assert!(matches!(
+            decode_envelope(&artifact, Limits::default()),
+            Err(Error::InvalidExecutable(message)) if message == "program is missing main entry chunk"
         ));
     }
 
