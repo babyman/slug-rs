@@ -63,6 +63,7 @@ a specified feature is implemented.
 | [body-derived-inference-follow-up.md](planning/body-derived-inference-follow-up.md) | Implementation checklist for known-call and nil-partitioned body-derived inference. |
 | [host-owned-module-resolution.md](planning/host-owned-module-resolution.md) | Staged extraction of filesystem-free module resolution with desktop and embedded hosts. |
 | [esp32-s3-proof-of-concept.md](planning/esp32-s3-proof-of-concept.md) | Bounded bare-metal ESP32-S3 plan for flash-resident Slug source and UART output. |
+| [general-frozen-firmware-programs.md](planning/general-frozen-firmware-programs.md) | Staged migration from the ESP32-S3 blink-only image to a selectable closed program. |
 | [cslug-whole-program-artifacts.md](planning/cslug-whole-program-artifacts.md) | Staged `.cslug` codec, verifier, and ESP-evaluation plan. |
 | [agentic-development-refactoring.md](planning/completed/agentic-development-refactoring.md) | Organizational refactoring plan for discoverable subsystem boundaries and focused validation. |
 | [micro-runtime-followups.md](planning/completed/micro-runtime-followups.md) | Completed correctness, lifecycle, and Cargo feature-matrix follow-ups for the slim VM runtime. |

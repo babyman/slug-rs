@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Defined the private general frozen-program path for ESP32-S3 firmware. It
+  will compile a selected closed Slug entry graph during the firmware build
+  while remaining distinct from portable `.cslug` artifacts.
+
 - Added `slug compile source.slug output.cslug` and `slug run program.cslug`.
   Compiled artifacts preserve CLI builtins and execute their closed module graph
   without source resolver fallback.
