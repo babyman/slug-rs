@@ -3,7 +3,7 @@
 //! The codec stays adjacent to the VM because decoding is an executable
 //! validation boundary.
 
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{borrow::ToOwned, boxed::Box, string::String, sync::Arc, vec::Vec};
 
 use crate::{
     CallArgumentKind, CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature,

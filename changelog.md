@@ -9,6 +9,9 @@
 - Moved ESP32-S3 private frozen-image table loading into the shared `no_std`
   VM, with checked entry and constant-reference validation before installation.
 
+- Restored `no_std + alloc` compilation of the `.cslug` decoder so ESP32-S3
+  firmware builds continue through the shared VM runtime.
+
 - Added `slug compile source.slug output.cslug` and `slug run program.cslug`.
   Compiled artifacts preserve CLI builtins and execute their closed module graph
   without source resolver fallback.
