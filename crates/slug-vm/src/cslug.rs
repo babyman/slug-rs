@@ -3,7 +3,8 @@
 //! The codec stays adjacent to the VM because decoding is an executable
 //! validation boundary.
 
-use alloc::{borrow::ToOwned, boxed::Box, string::String, sync::Arc, vec::Vec};
+use alloc::{borrow::ToOwned, boxed::Box, rc::Rc, string::String, sync::Arc, vec::Vec};
+use core::cell::RefCell;
 
 use crate::{
     CallArgumentKind, CallableIdentity, Entrypoint, EntrypointArguments, ForeignResourceSignature,
@@ -11,8 +12,11 @@ use crate::{
     ParameterSignature, Program, SchemaField, SelectCase, SourceSpan, SpanId, Value,
 };
 use crate::{
-    Capture, Constant,
+    Capture, Constant, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Vm,
+    VmConfiguration, VmHost, VmHostError, VmModuleExports, VmResult,
     bytecode::{CallArgumentsId, CompiledChunk, PackedInstruction},
+    native_resource_registry,
+    platform::{HashMap, HashSet},
 };
 
 /// The exact byte count of a version-1 `.cslug` header.
@@ -206,6 +210,245 @@ pub struct ImportEdge {
     pub name: String,
     /// Index of the resolved module.
     pub target: usize,
+}
+
+/// Executes a closed `.cslug` artifact without consulting a source resolver.
+///
+/// The host owns the initialized-module cache and native resources, so live
+/// exports remain visible across import cycles and resources live until the
+/// host is dropped.
+#[derive(Clone)]
+pub struct ArtifactHost {
+    state: Rc<ArtifactHostState>,
+}
+
+struct ArtifactHostState {
+    artifact: Artifact,
+    configuration: Rc<dyn VmConfiguration>,
+    instances: RefCell<HashMap<String, Value>>,
+    native_globals: RefCell<HashMap<String, Value>>,
+    foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
+    native_resources: NativeResourceRegistry,
+    warnings: RefCell<Vec<String>>,
+}
+
+impl ArtifactHost {
+    /// Creates a host for a decoded or in-memory closed artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked artifact error when graph references are invalid.
+    pub fn new(artifact: Artifact, configuration: Rc<dyn VmConfiguration>) -> Result<Self, Error> {
+        if artifact.modules.is_empty() || artifact.root >= artifact.modules.len() {
+            return Err(Error::InvalidReference("root module index".into()));
+        }
+        let mut keys = HashSet::new();
+        for module in &artifact.modules {
+            if !keys.insert(module.key.as_str()) {
+                return Err(Error::InvalidReference("duplicate module key".into()));
+            }
+        }
+        let mut edges = HashSet::new();
+        for edge in &artifact.imports {
+            if edge.importer >= artifact.modules.len() || edge.target >= artifact.modules.len() {
+                return Err(Error::InvalidReference("import module index".into()));
+            }
+            if !edges.insert((edge.importer, edge.name.as_str())) {
+                return Err(Error::InvalidReference("duplicate import edge".into()));
+            }
+        }
+        Ok(Self {
+            state: Rc::new(ArtifactHostState {
+                artifact,
+                configuration,
+                instances: RefCell::new(HashMap::new()),
+                native_globals: RefCell::new(HashMap::new()),
+                foreign_functions: RefCell::new(HashMap::new()),
+                native_resources: native_resource_registry(),
+                warnings: RefCell::new(Vec::new()),
+            }),
+        })
+    }
+
+    /// Registers a host-provided module-qualified native function.
+    ///
+    /// This is the embedding API for statically linked providers such as
+    /// `slug.gpio.write` and `slug.time.sleepMs`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the module-qualified binding is already registered.
+    pub fn register_foreign(&self, function: NativeFunction) -> Result<(), NativeDescriptorError> {
+        self.register_foreign_batch(vec![function])
+    }
+
+    /// Registers host-provided module-qualified native functions atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without publishing any supplied function when a
+    /// module-qualified binding is already registered.
+    pub fn register_foreign_batch(
+        &self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        self.define_foreign_batch(functions)
+    }
+
+    /// Registers a native function provided by the artifact's implicit builtin module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the function is not a `slug.builtin` member or its
+    /// module-qualified name is already registered.
+    pub fn register_builtin(&self, function: NativeFunction) -> Result<(), NativeDescriptorError> {
+        if function.module_name() != "slug.builtin" {
+            return Err(NativeDescriptorError::new(
+                "builtin bindings must belong to module slug.builtin",
+            ));
+        }
+        self.register_foreign(function)
+    }
+
+    /// Executes the artifact root, including its declared entrypoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns ordinary checked VM errors, including unavailable artifact imports.
+    pub fn run(&self) -> VmResult<Value> {
+        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let mut vm = Vm::with_host(host);
+        vm.run_program(&self.state.artifact.modules[self.state.artifact.root].program)
+    }
+
+    fn initialize(&self, index: usize) -> Result<Value, VmHostError> {
+        let module = &self.state.artifact.modules[index];
+        if let Some(exports) = self.state.instances.borrow().get(&module.key) {
+            return Ok(exports.clone());
+        }
+        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let mut vm = Vm::with_module_bindings(&host, module.program.bindings());
+        let program = vm
+            .install_named(module.program.clone(), "main")
+            .map_err(|error| VmHostError::new(error.to_string()))?;
+        let live_exports = vm.live_exported_values(program.program());
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(module.key.clone(), live_exports);
+        if let Err(error) = vm.run_module(&program) {
+            self.state.instances.borrow_mut().remove(&module.key);
+            return Err(VmHostError::new(error.to_string()));
+        }
+        let exports = vm.exported_values(program.program());
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(module.key.clone(), exports.clone());
+        Ok(exports)
+    }
+}
+
+impl VmHost for ArtifactHost {
+    fn import_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleExports, VmHostError> {
+        let Some(importer) = importer else {
+            return Err(VmHostError::not_found(format!(
+                "module `{name}` is not present in the compiled artifact"
+            )));
+        };
+        let Some(importer) = self
+            .state
+            .artifact
+            .modules
+            .iter()
+            .position(|module| module.key == importer)
+        else {
+            return Err(VmHostError::not_found(format!(
+                "module `{name}` is not present in the compiled artifact"
+            )));
+        };
+        let Some(edge) = self
+            .state
+            .artifact
+            .imports
+            .iter()
+            .find(|edge| edge.importer == importer && edge.name == name)
+        else {
+            return Err(VmHostError::not_found(format!(
+                "module `{name}` is not present in the compiled artifact"
+            )));
+        };
+        self.initialize(edge.target)
+            .map(|exports| VmModuleExports { exports })
+    }
+
+    fn builtin_globals(&self) -> HashMap<String, Value> {
+        self.state
+            .foreign_functions
+            .borrow()
+            .iter()
+            .filter(|((module, _), _)| module == "slug.builtin")
+            .map(|((_, name), function)| (name.clone(), Value::Native(function.clone())))
+            .collect()
+    }
+
+    fn native_globals(&self) -> HashMap<String, Value> {
+        self.state.native_globals.borrow().clone()
+    }
+
+    fn foreign_function(&self, module: &str, name: &str) -> Option<NativeFunction> {
+        self.state
+            .foreign_functions
+            .borrow()
+            .get(&(module.into(), name.into()))
+            .cloned()
+    }
+
+    fn define_foreign_batch(
+        &self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        let keys = functions
+            .iter()
+            .map(|function| (function.module_name().into(), function.name().into()))
+            .collect::<Vec<(String, String)>>();
+        let mut registry = self.state.foreign_functions.borrow_mut();
+        if keys
+            .iter()
+            .enumerate()
+            .any(|(index, key)| registry.contains_key(key) || keys[..index].contains(key))
+        {
+            return Err(NativeDescriptorError::new(
+                "foreign binding is already defined",
+            ));
+        }
+        for (key, function) in keys.into_iter().zip(functions) {
+            registry.insert(key, function);
+        }
+        Ok(())
+    }
+
+    fn define_native_global(&self, name: String, value: Value) {
+        self.state.native_globals.borrow_mut().insert(name, value);
+    }
+
+    fn native_resources(&self) -> NativeResourceRegistry {
+        self.state.native_resources.clone()
+    }
+
+    fn configuration(&self) -> &dyn VmConfiguration {
+        self.state.configuration.as_ref()
+    }
+
+    fn warn(&self, message: String) {
+        self.state.warnings.borrow_mut().push(message);
+    }
+
+    fn shutdown(&self) {}
 }
 
 /// Encodes a closed program graph in canonical version-1 `.cslug` form.

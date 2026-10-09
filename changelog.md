@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved closed `.cslug` graph execution into `slug-vm`, so firmware hosts can
+  decode and execute artifacts without linking the source frontend, and added
+  static module-qualified native-function registration for embedded providers.
+
 - Extracted the target-neutral `slug.gpio` and `slug.time` source contracts
   into the source-only `slug.embedded` Clutch for desktop simulation and
   firmware builds.

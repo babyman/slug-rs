@@ -106,6 +106,18 @@ overload groups.
   module artifacts, memory mapping, or zero-copy execution without a new
   decision.
 
+### 6. Prepare the closed artifact runtime for firmware
+
+- [x] Move the closed-artifact runtime host into `slug-vm::cslug` so a
+  firmware image can execute a decoded graph without linking `slug-frontend`.
+- [x] Preserve checked closed-graph imports and live exports, and expose a
+  host-facing registration API for statically linked module-qualified native
+  functions.
+- [ ] Have the firmware build compile the selected source graph and its static
+  providers into a version-1 `.cslug` file in `OUT_DIR`.
+- [ ] Embed and decode that file under finite ESP limits, register the selected
+  static providers, and replace the temporary frozen-table loader.
+
 ## Completion gate
 
 Version 1 is complete only when the format specification, codec, verifier,
