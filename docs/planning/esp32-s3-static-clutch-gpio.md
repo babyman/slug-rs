@@ -14,8 +14,10 @@ val time = import("slug.time")
 
 val blink = fn() {
     gpio.write("led", true)
+    gpio.write("led4", true)
     time.sleepMs(250)
     gpio.write("led", false)
+    gpio.write("led4", false)
     time.sleepMs(250)
     recur()
 }
@@ -35,7 +37,7 @@ loop construct.
 - `slug.gpio` and `slug.time` are normal imported modules with declared
   signatures. Firmware implements them as static Clutch providers; desktop can
   provide a simulator with the same public contract.
-- Firmware configuration owns `"led" -> GPIO pin`, output polarity, and
+- Firmware configuration owns `"led" -> GPIO 2`, `"led4" -> GPIO 4`, output polarity, and
   electrical setup. Application source owns neither a pin number nor a mode.
 - The firmware build resolves the selected source contracts on the desktop and
   writes one closed version-1 `.cslug` program artifact. The device decodes
@@ -176,7 +178,12 @@ nominal period.
 
 The current firmware reserves a 73,744-byte bounded heap and a 331,720-byte
 `.stack` section. Peak heap use is not yet instrumented; that measurement is a
-follow-up before increasing the frozen program's complexity.
+follow-up before increasing the closed artifact's complexity.
+
+On 2026-10-08, the closed `.cslug` firmware was rebuilt and flashed to the
+same board. Its 372,848-byte application image emitted repeated UART sequences
+of `led` (GPIO 2) and `led4` (GPIO 4) low/high transitions, confirming that
+both statically registered output aliases execute through the artifact host.
 
 Run `make check` before handing off Rust changes; for this documentation plan,
 validate links and run `git diff --check`.

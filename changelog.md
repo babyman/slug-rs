@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added the `led4` GPIO 4 output alias to the ESP32-S3 host; the embedded Slug
+  blink program now toggles the GPIO 2 `led` and GPIO 4 `led4` outputs together.
+
 - Documented the reproducible ESP32-S3 toolchain, release build, USB flash,
   and non-interactive UART-monitor workflow for the closed `.cslug` firmware.
 

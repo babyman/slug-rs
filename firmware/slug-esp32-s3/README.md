@@ -5,13 +5,14 @@ This standalone package cross-compiles
 `slug.embedded` source contracts through a desktop build dependency into a
 closed version-1 `.cslug` artifact in `OUT_DIR`. Firmware embeds, bounds-checks,
 and executes that artifact through the shared `no_std + alloc` VM on an
-ESP32-S3. It owns a push-pull GPIO 2 output and a blocking delay provider for
-the PinPulse Shield's active-high `led` alias; it links neither the source
+ESP32-S3. It owns push-pull GPIO 2 and GPIO 4 outputs plus a blocking delay
+provider for the active-high `led` and `led4` aliases; it links neither the source
 frontend nor a desktop loader. It is not a member of the desktop Cargo
 workspace.
 
-The `led` alias is the PinPulse Shield indicator on GPIO 2 (active high);
-source code never selects a raw GPIO pin.
+The `led` alias is the PinPulse Shield indicator on GPIO 2 (active high), and
+`led4` is the second active-high host-selected output on GPIO 4. Source code
+never selects a raw GPIO pin.
 
 ## Prerequisites
 
@@ -95,9 +96,10 @@ Verified on 2026-10-08 with the Lonely Binary ESP32-S3 N16R8 and PinPulse
 Shield over `/dev/cu.usbmodem1101`:
 
 - `espflash` identified an ESP32-S3 revision 0.2 with 16 MB flash and wrote a
-  372,192-byte application image (2.27% of the factory partition).
+  372,848-byte application image (2.28% of the factory partition).
 - The firmware built from the embedded closed `.cslug` artifact and UART
-  repeatedly reported `Slug GPIO led -> low` then `Slug GPIO led -> high`.
+  repeatedly reported `Slug GPIO led -> low`, `Slug GPIO led4 -> low`, then
+  their corresponding high transitions.
 - The PinPulse Shield GPIO 2 indicator was visibly blinking at the expected
   250 ms-on / 250 ms-off cadence.
 - The configured bounded heap is 73,744 bytes. The release ELF reserves

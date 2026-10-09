@@ -18,7 +18,7 @@ use esp_hal::{clock::CpuClock, main};
 use slug_vm::{EmptyVmConfiguration, Value, cslug::ArtifactHost};
 use alloc::rc::Rc;
 
-use crate::capabilities::{LED_ACTIVE_HIGH, LED_GPIO};
+use crate::capabilities::{LED4_GPIO, LED_ACTIVE_HIGH, LED_GPIO};
 
 // The ESP-IDF bootloader requires this application descriptor.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -36,7 +36,7 @@ fn main() -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
     esp_println::println!(
-        "Slug static host: led -> GPIO {LED_GPIO} ({})",
+        "Slug static host: led -> GPIO {LED_GPIO} ({}), led4 -> GPIO {LED4_GPIO} (active high)",
         if LED_ACTIVE_HIGH {
             "active high"
         } else {
@@ -52,7 +52,11 @@ fn main() -> ! {
     };
     let host = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
         .expect("flash artifact graph is valid");
-    providers::register(&host, providers::output(peripherals.GPIO2))
+    providers::register(
+        &host,
+        providers::output_2(peripherals.GPIO2),
+        providers::output_4(peripherals.GPIO4),
+    )
         .expect("GPIO and time providers are registered once");
     loop {
         match host.run() {

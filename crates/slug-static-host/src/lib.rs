@@ -568,6 +568,46 @@ mod tests {
     }
 
     #[test]
+    fn simulator_records_two_selected_output_aliases() {
+        let host = StaticHost::with_gpio_and_time(["led", "led4"], 1_000)
+            .expect("fixed simulator host setup succeeds");
+
+        host.run_source(
+            "memory:two-outputs",
+            r#"
+                val gpio = import("slug.gpio")
+                gpio.write("led", true)
+                gpio.write("led4", true)
+                gpio.write("led", false)
+                gpio.write("led4", false)
+            "#,
+        )
+        .expect("both selected outputs execute through static module contracts");
+
+        assert_eq!(
+            host.take_gpio_writes(),
+            vec![
+                GpioWrite {
+                    name: "led".into(),
+                    level: true,
+                },
+                GpioWrite {
+                    name: "led4".into(),
+                    level: true,
+                },
+                GpioWrite {
+                    name: "led".into(),
+                    level: false,
+                },
+                GpioWrite {
+                    name: "led4".into(),
+                    level: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn simulator_rejects_an_unselected_output_alias() {
         let host = StaticHost::with_gpio_and_time(["led"], 1_000)
             .expect("fixed simulator host setup succeeds");

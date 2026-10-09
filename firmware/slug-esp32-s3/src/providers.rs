@@ -1,7 +1,7 @@
 //! Firmware-native providers for the closed GPIO blink artifact.
 //!
 //! These callbacks own the selected output and blocking delay facility for the
-//! VM lifetime. They intentionally expose only the board-profile `led` alias;
+//! VM lifetime. They expose the board-profile `led` and `led4` aliases;
 //! source never selects raw pins or electrical configuration.
 
 use alloc::format;
@@ -17,10 +17,13 @@ use slug_vm::{
     cslug::ArtifactHost,
 };
 
-use crate::capabilities::{LED_ACTIVE_HIGH, MAXIMUM_SLEEP_MS};
+use crate::capabilities::{
+    LED4_ACTIVE_HIGH, LED4_ALIAS, LED_ACTIVE_HIGH, LED_ALIAS, MAXIMUM_SLEEP_MS,
+};
 
 struct GpioState {
     led: RefCell<Output<'static>>,
+    led4: RefCell<Output<'static>>,
 }
 
 /// Registers the selected GPIO and blocking-delay capabilities with `host`.
@@ -32,11 +35,16 @@ struct GpioState {
 ///
 /// Returns a checked descriptor error if an artifact-host binding was
 /// already installed.
-pub fn register(host: &ArtifactHost, led: Output<'static>) -> Result<(), NativeDescriptorError> {
+pub fn register(
+    host: &ArtifactHost,
+    led: Output<'static>,
+    led4: Output<'static>,
+) -> Result<(), NativeDescriptorError> {
     let gpio = NativeModule::new(
         "slug.gpio",
         GpioState {
             led: RefCell::new(led),
+            led4: RefCell::new(led4),
         },
     )?;
     let time = NativeModule::new("slug.time", Delay::new())?;
@@ -47,8 +55,14 @@ pub fn register(host: &ArtifactHost, led: Output<'static>) -> Result<(), NativeD
 
 /// Creates the board-profile output at the inactive level.
 #[must_use]
-pub fn output(pin: esp_hal::peripherals::GPIO2<'static>) -> Output<'static> {
-    Output::new(pin, inactive_level(), OutputConfig::default())
+pub fn output_2(pin: esp_hal::peripherals::GPIO2<'static>) -> Output<'static> {
+    Output::new(pin, inactive_level(LED_ACTIVE_HIGH), OutputConfig::default())
+}
+
+/// Creates GPIO 4 at the inactive level for the second host-selected output.
+#[must_use]
+pub fn output_4(pin: esp_hal::peripherals::GPIO4<'static>) -> Output<'static> {
+    Output::new(pin, inactive_level(LED4_ACTIVE_HIGH), OutputConfig::default())
 }
 
 fn gpio_write(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -60,17 +74,26 @@ fn gpio_write(call: &mut NativeCall<'_>) -> NativeStatus {
         Ok(level) => level,
         Err(error) => return call.raise(error),
     };
-    if alias != "led" {
-        return call.raise(NativeError::new(
-            "gpio.alias",
-            format!("GPIO output alias `{alias}` is unavailable"),
-        ));
-    }
     let Some(state) = call.state::<GpioState>() else {
         return call.report_contract_violation("GPIO callback has incompatible module state");
     };
-    state.led.borrow_mut().set_level(level_for(level));
-    esp_println::println!("Slug GPIO led -> {}", if level { "high" } else { "low" });
+    match alias {
+        LED_ALIAS => state
+            .led
+            .borrow_mut()
+            .set_level(level_for(level, LED_ACTIVE_HIGH)),
+        LED4_ALIAS => state
+            .led4
+            .borrow_mut()
+            .set_level(level_for(level, LED4_ACTIVE_HIGH)),
+        _ => {
+            return call.raise(NativeError::new(
+                "gpio.alias",
+                format!("GPIO output alias `{alias}` is unavailable"),
+            ));
+        }
+    }
+    esp_println::println!("Slug GPIO {alias} -> {}", if level { "high" } else { "low" });
     call.return_value(NativeOwnedValue::nil())
 }
 
@@ -119,12 +142,12 @@ fn invalid_milliseconds() -> NativeError {
     )
 }
 
-const fn inactive_level() -> Level {
-    level_for(false)
+const fn inactive_level(active_high: bool) -> Level {
+    level_for(false, active_high)
 }
 
-const fn level_for(level: bool) -> Level {
-    match level == LED_ACTIVE_HIGH {
+const fn level_for(level: bool, active_high: bool) -> Level {
+    match level == active_high {
         true => Level::High,
         false => Level::Low,
     }
