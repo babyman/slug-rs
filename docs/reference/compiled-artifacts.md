@@ -206,10 +206,12 @@ meaning of existing valid artifacts.
 
 ## Initial non-goals
 
-Version 1 does not require module-level `.cslug` files, encoding of arbitrary
+Version 1 does not implement module-level `.cslug` files, encoding of arbitrary
 Rust-built bytecode, Clutch integration, zero-copy execution, memory mapping,
 generalized IR semantics, or a stable long-lived artifact ABI independent of
-the VM. Those require separate evidence and a later decision.
+the VM. The adopted, unimplemented version-2 module contract is specified in
+[Compiled Modules](compiled-modules.md); every other item requires separate
+evidence and a later decision.
 
 ## Implementation gate for version 1
 

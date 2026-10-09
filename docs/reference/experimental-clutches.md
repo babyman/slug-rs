@@ -115,9 +115,10 @@ invalid manifest is a checked module-load error. The loader caches by module
 identity and the selected provider, so a cyclic import still observes the
 existing shared module-instance rules.
 
-The initial experiment loads only source modules. A future module-artifact
-design requires a separate decision; whole-program `.cslug` artifacts do not
-participate in Clutch resolution or grant a fallback capability.
+The initial experiment loads only source modules. The adopted version-2
+[compiled-module contract](compiled-modules.md) defines the future artifact
+role; implementation remains separate work. Whole-program `.cslug` artifacts
+do not participate in Clutch resolution or grant a fallback capability.
 
 ## Native plugins and lifecycle
 

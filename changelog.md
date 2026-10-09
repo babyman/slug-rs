@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Defined the version-2 compiled-module artifact contract: source and
+  compiled providers may link into one closed `.cslug` program, while Clutch
+  native capabilities remain host-selected rather than artifact-embedded.
+
 - Defined the private general frozen-program path for ESP32-S3 firmware. It
   will compile a selected closed Slug entry graph during the firmware build
   while remaining distinct from portable `.cslug` artifacts.
