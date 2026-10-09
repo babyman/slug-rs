@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Extracted the target-neutral `slug.gpio` and `slug.time` source contracts
+  into the source-only `slug.embedded` Clutch for desktop simulation and
+  firmware builds.
+
 - Defined the version-2 compiled-module artifact contract: source and
   compiled providers may link into one closed `.cslug` program, while Clutch
   native capabilities remain host-selected rather than artifact-embedded.

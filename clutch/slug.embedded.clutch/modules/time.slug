@@ -1,0 +1,7 @@
+/**
+ * Blocks the current host execution for a whole number of milliseconds.
+ *
+ * The host rejects negative, fractional, non-finite, and out-of-range values
+ * as checked failures. This function does not schedule a Slug timer.
+ */
+export foreign sleepMs = fn(milliseconds:num):nil

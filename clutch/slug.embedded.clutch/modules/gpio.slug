@@ -1,0 +1,7 @@
+/**
+ * Writes a boolean level to a host-defined logical output.
+ *
+ * `name` identifies an alias selected by the host, such as `"led"`; it is not
+ * a raw GPIO number. An unavailable alias is a checked host failure.
+ */
+export foreign write = fn(name:str, level:bool):nil

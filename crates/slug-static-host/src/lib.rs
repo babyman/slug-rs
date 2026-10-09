@@ -23,26 +23,12 @@ use slug_vm::{
 };
 
 /// Source contract for a board-alias GPIO output capability.
-pub const GPIO_MODULE_SOURCE: &str = r#"
-/**
- * Writes a boolean level to a host-defined logical output.
- *
- * `name` identifies an alias selected by the host, such as `"led"`; it is not
- * a raw GPIO number. An unavailable alias is a checked host failure.
- */
-export foreign write = fn(name:str, level:bool):nil
-"#;
+pub const GPIO_MODULE_SOURCE: &str =
+    include_str!("../../../clutch/slug.embedded.clutch/modules/gpio.slug");
 
 /// Source contract for a deliberately blocking delay capability.
-pub const TIME_MODULE_SOURCE: &str = r"
-/**
- * Blocks the current host execution for a whole number of milliseconds.
- *
- * The host rejects negative, fractional, non-finite, and out-of-range values
- * as checked failures. This function does not schedule a Slug timer.
- */
-export foreign sleepMs = fn(milliseconds:num):nil
-";
+pub const TIME_MODULE_SOURCE: &str =
+    include_str!("../../../clutch/slug.embedded.clutch/modules/time.slug");
 
 /// Returns the selected provider for `slug.gpio`.
 ///

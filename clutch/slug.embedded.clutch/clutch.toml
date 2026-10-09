@@ -1,0 +1,3 @@
+[modules]
+"slug.gpio" = { source = "modules/gpio.slug" }
+"slug.time" = { source = "modules/time.slug" }
