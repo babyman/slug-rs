@@ -1,16 +1,17 @@
 # Slug ESP32-S3 VM proof of concept
 
 This standalone package cross-compiles
-[`programs/blink.slug`](programs/blink.slug) through a desktop build dependency
-into a small firmware-resident program image, then loads it into Slug's shared
-VM on an ESP32-S3. It owns a push-pull GPIO 2 output and a blocking delay
-provider for the PinPulse Shield's active-high `led` alias, uses a bounded
-`no_std + alloc` heap, and intentionally links neither the source frontend nor
-a desktop loader. It is not a member of the desktop Cargo workspace.
+[`programs/blink.slug`](programs/blink.slug) and the selected
+`slug.embedded` source contracts through a desktop build dependency into a
+closed version-1 `.cslug` artifact in `OUT_DIR`. Firmware embeds, bounds-checks,
+and executes that artifact through the shared `no_std + alloc` VM on an
+ESP32-S3. It owns a push-pull GPIO 2 output and a blocking delay provider for
+the PinPulse Shield's active-high `led` alias; it links neither the source
+frontend nor a desktop loader. It is not a member of the desktop Cargo
+workspace.
 
-The build validates the blink source against [`capabilities.rs`](capabilities.rs)
-and emits its private frozen image. The `led` alias is the PinPulse Shield
-indicator on GPIO 2 (active high); source code never selects a raw GPIO pin.
+The `led` alias is the PinPulse Shield indicator on GPIO 2 (active high);
+source code never selects a raw GPIO pin.
 
 ## Prerequisites
 
@@ -20,29 +21,68 @@ the shell:
 ```sh
 cargo install espup espflash --locked
 espup install --targets esp32s3
-source "$HOME/export-esp.sh"
+source /Users/evan/export-esp.sh
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-## Build and flash
+`export-esp.sh` adds `xtensa-esp32s3-elf-gcc` to `PATH`. The ESP Rust toolchain
+needs that linker even for `cargo check` because this package verifies the
+toolchain in `build.rs`.
+
+Confirm the tools before building:
+
+```sh
+rustup toolchain list
+xtensa-esp32s3-elf-gcc --version
+espflash --version
+```
+
+## Build
 
 From this directory, build the firmware with the Espressif compiler:
 
 ```sh
-cargo build --release
+cargo +esp check
+cargo +esp build --release
 ```
 
-With the board connected over USB, flash and monitor it:
+The release firmware is:
+
+```text
+target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
+```
+
+## Install and monitor
+
+Connect the board through its USB port, then find the serial device and verify
+the chip. The verified board appears as `/dev/cu.usbmodem1101`; do not assume
+that name is stable across hosts or reconnects.
 
 ```sh
-espflash flash --monitor --chip esp32s3 target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
+ls /dev/cu.usbmodem* 2>/dev/null
+espflash board-info --chip esp32s3 --port /dev/cu.usbmodem1101
+```
+
+Flash the release image:
+
+```sh
+espflash flash --chip esp32s3 --port /dev/cu.usbmodem1101 \
+  target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
+```
+
+Then reset and capture the UART proof. A separate non-interactive monitor is
+more reliable than `flash --monitor` in non-terminal sessions:
+
+```sh
+espflash monitor --non-interactive --chip esp32s3 --port /dev/cu.usbmodem1101 \
+  --elf target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
 ```
 
 The serial monitor repeatedly prints the logical transitions:
 
 ```text
-Slug GPIO led -> high
 Slug GPIO led -> low
+Slug GPIO led -> high
 ```
 
 The program requests each level for 250 ms before tail-recurring, so the LED
@@ -51,12 +91,13 @@ should blink with a 500 ms period. See
 
 ## Hardware verification
 
-Verified on 2026-10-04 with the Lonely Binary ESP32-S3 N16R8 and PinPulse
+Verified on 2026-10-08 with the Lonely Binary ESP32-S3 N16R8 and PinPulse
 Shield over `/dev/cu.usbmodem1101`:
 
 - `espflash` identified an ESP32-S3 revision 0.2 with 16 MB flash and wrote a
-  290,944-byte application image (1.78% of the factory partition).
-- UART repeatedly reported `Slug GPIO led -> high` then `Slug GPIO led -> low`.
+  372,192-byte application image (2.27% of the factory partition).
+- The firmware built from the embedded closed `.cslug` artifact and UART
+  repeatedly reported `Slug GPIO led -> low` then `Slug GPIO led -> high`.
 - The PinPulse Shield GPIO 2 indicator was visibly blinking at the expected
   250 ms-on / 250 ms-off cadence.
 - The configured bounded heap is 73,744 bytes. The release ELF reserves

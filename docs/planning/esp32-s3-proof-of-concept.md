@@ -1,5 +1,9 @@
 # ESP32-S3 Slug proof of concept
 
+> Superseded by the closed version-1 `.cslug` firmware workflow documented in
+> [`firmware/slug-esp32-s3/README.md`](../../firmware/slug-esp32-s3/README.md).
+> The retained sections document the initial private frozen-image proof.
+
 ## Goal
 
 Flash a bare-metal firmware image to an ESP32-S3 that executes a Slug program

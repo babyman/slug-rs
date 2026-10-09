@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented the reproducible ESP32-S3 toolchain, release build, USB flash,
+  and non-interactive UART-monitor workflow for the closed `.cslug` firmware.
+
 - Switched the ESP32-S3 blink firmware to compile and embed its closed v1
   `.cslug` graph, decode it under device limits, and register static GPIO/time
   providers through the VM-owned artifact host.
