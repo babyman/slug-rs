@@ -14,11 +14,11 @@ separate portable artifact and is not accepted by firmware.
 
 ### 1. Establish the private generic image boundary
 
-- [ ] Define a `slug-vm`-owned, `no_std + alloc`-compatible frozen-image
+- [x] Define a `slug-vm`-owned, `no_std + alloc`-compatible frozen-image
   table contract and checked loader errors.
-- [ ] Keep the contract private to generated firmware Rust input; do not add a
+- [x] Keep the contract private to generated firmware Rust input; do not add a
   public bytecode serialization API or accept byte streams on the device.
-- [ ] Prove the loader rejects malformed table references before installation.
+- [x] Prove the loader rejects malformed table references before installation.
 
 ### 2. Render ordinary lowered programs
 

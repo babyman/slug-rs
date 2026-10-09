@@ -14,6 +14,8 @@ extern crate alloc;
 mod bytecode;
 mod collections;
 pub mod cslug;
+#[doc(hidden)]
+pub mod frozen;
 mod native;
 mod platform;
 mod runtime_host;

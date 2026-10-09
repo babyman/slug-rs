@@ -111,18 +111,19 @@ fn unsupported(expression: &Expr, message: &str) -> SourceError {
 
 fn render_image(text: &str) -> String {
     format!(
-        "const FROZEN_CONSTANTS: &[FlashConstant] = &[FlashConstant::Text({text:?})];\n\
-         const FROZEN_INSTRUCTIONS: &[FlashInstruction] = &[\n\
-             FlashInstruction::GetGlobal(\"println\"),\n\
-             FlashInstruction::Constant(0),\n\
-             FlashInstruction::Call(1),\n\
-             FlashInstruction::Return,\n\
+        "const FROZEN_CONSTANTS: &[FrozenConstant] = &[FrozenConstant::Text({text:?})];\n\
+         const FROZEN_INSTRUCTIONS: &[FrozenInstruction] = &[\n\
+             FrozenInstruction::GetGlobal(\"println\"),\n\
+             FrozenInstruction::Constant(0),\n\
+             FrozenInstruction::Call(1),\n\
+             FrozenInstruction::Return,\n\
          ];\n\
-         const FROZEN_PROGRAM: FlashProgram = FlashProgram {{\n\
+         const FROZEN_CHUNKS: &[FrozenChunk] = &[FrozenChunk {{\n\
              name: \"main\",\n\
              constants: FROZEN_CONSTANTS,\n\
              instructions: FROZEN_INSTRUCTIONS,\n\
-         }};\n"
+         }}];\n\
+         const FROZEN_PROGRAM: FrozenProgram = FrozenProgram {{ chunks: FROZEN_CHUNKS, entry: 0 }};\n"
     )
 }
 
@@ -135,8 +136,8 @@ mod tests {
         let image =
             compile_frozen_uart_entry("hello.slug", "val main = fn() { println(\"hello\") }")
                 .expect("minimal entry is supported");
-        assert!(image.contains("FlashConstant::Text(\"hello\")"));
-        assert!(image.contains("FlashInstruction::Call(1)"));
+        assert!(image.contains("FrozenConstant::Text(\"hello\")"));
+        assert!(image.contains("FrozenInstruction::Call(1)"));
     }
 
     #[test]

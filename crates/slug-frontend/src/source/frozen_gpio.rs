@@ -247,24 +247,25 @@ fn sleep_call(
 
 fn render_blink(on_alias: &str, on_delay: u32, off_alias: &str, off_delay: u32) -> String {
     format!(
-        "const FROZEN_CONSTANTS: &[FlashConstant] = &[\n\
-         FlashConstant::Text({on_alias:?}), FlashConstant::Number({on_delay}),\n\
-         FlashConstant::Text({off_alias:?}), FlashConstant::Number({off_delay}),\n\
+        "const FROZEN_CONSTANTS: &[FrozenConstant] = &[\n\
+         FrozenConstant::Text({on_alias:?}), FrozenConstant::Integer({on_delay}),\n\
+         FrozenConstant::Text({off_alias:?}), FrozenConstant::Integer({off_delay}),\n\
          ];\n\
-         const FROZEN_INSTRUCTIONS: &[FlashInstruction] = &[\n\
-         FlashInstruction::GetGlobal(\"gpio.write\"), FlashInstruction::Constant(0),\n\
-         FlashInstruction::True, FlashInstruction::Call(2), FlashInstruction::Pop,\n\
-         FlashInstruction::GetGlobal(\"time.sleepMs\"), FlashInstruction::Constant(1),\n\
-         FlashInstruction::Call(1), FlashInstruction::Pop,\n\
-         FlashInstruction::GetGlobal(\"gpio.write\"), FlashInstruction::Constant(2),\n\
-         FlashInstruction::False, FlashInstruction::Call(2), FlashInstruction::Pop,\n\
-         FlashInstruction::GetGlobal(\"time.sleepMs\"), FlashInstruction::Constant(3),\n\
-         FlashInstruction::Call(1), FlashInstruction::Pop,\n\
-         FlashInstruction::Recur, FlashInstruction::Nil, FlashInstruction::Return,\n\
+         const FROZEN_INSTRUCTIONS: &[FrozenInstruction] = &[\n\
+         FrozenInstruction::GetGlobal(\"gpio.write\"), FrozenInstruction::Constant(0),\n\
+         FrozenInstruction::True, FrozenInstruction::Call(2), FrozenInstruction::Pop,\n\
+         FrozenInstruction::GetGlobal(\"time.sleepMs\"), FrozenInstruction::Constant(1),\n\
+         FrozenInstruction::Call(1), FrozenInstruction::Pop,\n\
+         FrozenInstruction::GetGlobal(\"gpio.write\"), FrozenInstruction::Constant(2),\n\
+         FrozenInstruction::False, FrozenInstruction::Call(2), FrozenInstruction::Pop,\n\
+         FrozenInstruction::GetGlobal(\"time.sleepMs\"), FrozenInstruction::Constant(3),\n\
+         FrozenInstruction::Call(1), FrozenInstruction::Pop,\n\
+         FrozenInstruction::RecurPositional(0), FrozenInstruction::Nil, FrozenInstruction::Return,\n\
          ];\n\
-         const FROZEN_PROGRAM: FlashProgram = FlashProgram {{\n\
+         const FROZEN_CHUNKS: &[FrozenChunk] = &[FrozenChunk {{\n\
          name: \"main\", constants: FROZEN_CONSTANTS, instructions: FROZEN_INSTRUCTIONS,\n\
-         }};\n"
+         }}];\n\
+         const FROZEN_PROGRAM: FrozenProgram = FrozenProgram {{ chunks: FROZEN_CHUNKS, entry: 0 }};\n"
     )
 }
 
@@ -303,9 +304,9 @@ mod tests {
     fn freezes_the_selected_blink_with_vm_tail_recursion() {
         let image = compile_frozen_gpio_entry("blink.slug", BLINK, &CAPABILITIES)
             .expect("blink shape is supported");
-        assert!(image.contains("FlashInstruction::Recur"));
-        assert!(image.contains("FlashInstruction::GetGlobal(\"gpio.write\")"));
-        assert!(image.contains("FlashConstant::Number(250)"));
+        assert!(image.contains("FrozenInstruction::RecurPositional(0)"));
+        assert!(image.contains("FrozenInstruction::GetGlobal(\"gpio.write\")"));
+        assert!(image.contains("FrozenConstant::Integer(250)"));
     }
 
     #[test]

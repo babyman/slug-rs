@@ -6,6 +6,9 @@
   will compile a selected closed Slug entry graph during the firmware build
   while remaining distinct from portable `.cslug` artifacts.
 
+- Moved ESP32-S3 private frozen-image table loading into the shared `no_std`
+  VM, with checked entry and constant-reference validation before installation.
+
 - Added `slug compile source.slug output.cslug` and `slug run program.cslug`.
   Compiled artifacts preserve CLI builtins and execute their closed module graph
   without source resolver fallback.
