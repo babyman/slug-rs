@@ -122,6 +122,20 @@ impl ForeignResourceSignature {
         self.parameters.len()
     }
 
+    pub(crate) fn cslug_parameter_identities(
+        &self,
+    ) -> impl Iterator<Item = Option<(Option<&str>, &str)>> {
+        self.parameters.iter().map(|identity| {
+            identity
+                .as_ref()
+                .map(|(module, name)| (module.as_deref(), name.as_str()))
+        })
+    }
+
+    pub(crate) fn cslug_result_identity(&self) -> Option<(Option<&str>, &str)> {
+        self.result_identity()
+    }
+
     pub(crate) fn result_identity(&self) -> Option<(Option<&str>, &str)> {
         self.result
             .as_ref()

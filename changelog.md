@@ -2,9 +2,13 @@
 
 ## Unreleased
 
-- Defined `.cslug` as a versioned, validated whole-program serialization of
-  the VM `CompiledProgram`, with direct source execution unchanged, checked
-  incompatible-artifact rejection, and a staged codec/verifier/ESP plan.
+- Added `slug compile source.slug output.cslug` and `slug run program.cslug`.
+  Compiled artifacts preserve CLI builtins and execute their closed module graph
+  without source resolver fallback.
+
+- Added version-1 `.cslug` encoding and checked loading for closed
+  whole-program graphs. Direct source execution remains in memory, while the
+  ESP32-S3 deployment path continues to use its distinct private frozen image.
 
 - Verified the ESP32-S3 GPIO proof on the PinPulse Shield: the frozen Slug
   program now repeatedly blinks its active-high GPIO 2 indicator after flash.

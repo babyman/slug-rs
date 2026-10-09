@@ -203,6 +203,39 @@ impl Program {
         &self.callable_identities
     }
 
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn cslug_metadata(
+        &self,
+    ) -> (
+        &[Arc<str>],
+        &[SourceSpan],
+        &[String],
+        &[Vec<Capture>],
+        &[Vec<SchemaField>],
+        &[Vec<String>],
+        &[MatchPattern],
+        &[Vec<String>],
+        &[Vec<bool>],
+        &[Vec<CallArgumentKind>],
+        &[(CallArgumentsId, usize)],
+        &[Vec<SelectCase>],
+    ) {
+        (
+            &self.sources,
+            &self.spans,
+            &self.global_names,
+            &self.capture_lists,
+            &self.schema_fields,
+            &self.struct_fields,
+            &self.match_patterns,
+            &self.interpolations,
+            &self.list_spreads,
+            &self.call_arguments,
+            &self.selected_calls,
+            &self.select_cases,
+        )
+    }
+
     pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {
         let invalid_instructions = chunk
             .code

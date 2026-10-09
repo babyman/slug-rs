@@ -18,7 +18,9 @@ use slug_loader::{
 };
 use slug_vm::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
-    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports, VmResult,
+    cslug::{Artifact, Error as ArtifactError, ImportEdge, Module as ArtifactModule},
+    native_resource_registry,
 };
 
 /// Host-owned roots used to load Slug module source.
@@ -189,6 +191,112 @@ impl ModuleGraph {
     ) -> Result<Program, SourceError> {
         self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, true)
             .map(|compilation| compilation.program)
+    }
+
+    /// Compiles an entry source and every literal import into a closed artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when an entry or static dependency
+    /// cannot be resolved and compiled.
+    pub fn compile_artifact(
+        &self,
+        resolver: &dyn ModuleResolver,
+        path: &str,
+        source: &str,
+    ) -> Result<Artifact, ModuleLoadError> {
+        let mut modules = Vec::new();
+        let mut indexes = HashMap::new();
+        let mut imports = Vec::new();
+        let key = ModuleKey::new(path);
+        let root = self.collect_artifact_module(
+            resolver,
+            &key,
+            path,
+            path,
+            source,
+            &mut modules,
+            &mut indexes,
+            &mut imports,
+        )?;
+        Ok(Artifact {
+            root,
+            modules,
+            imports,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_artifact_module(
+        &self,
+        resolver: &dyn ModuleResolver,
+        key: &ModuleKey,
+        name: &str,
+        diagnostic_name: &str,
+        source: &str,
+        modules: &mut Vec<ArtifactModule>,
+        indexes: &mut HashMap<ModuleKey, usize>,
+        imports: &mut Vec<ImportEdge>,
+    ) -> Result<usize, ModuleLoadError> {
+        if let Some(index) = indexes.get(key) {
+            return Ok(*index);
+        }
+        let mut compilation = self
+            .compile_source_for_module(
+                resolver,
+                key,
+                diagnostic_name,
+                source,
+                name != "slug.builtin",
+            )
+            .map_err(|error| ModuleLoadError::Source {
+                location: diagnostic_name.into(),
+                message: error.to_string(),
+            })?;
+        compilation.program.set_module_name(name);
+        compilation.program.set_module_key(key.as_str());
+        self.state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(key.clone(), compilation.snapshot);
+        self.state
+            .compiled
+            .borrow_mut()
+            .insert(key.clone(), compilation.program.clone());
+
+        let index = modules.len();
+        indexes.insert(key.clone(), index);
+        modules.push(ArtifactModule {
+            key: key.as_str().into(),
+            name: name.into(),
+            program: compilation.program,
+        });
+        for import_name in
+            crate::source::static_import_names(diagnostic_name, source).map_err(|error| {
+                ModuleLoadError::Source {
+                    location: diagnostic_name.into(),
+                    message: error.to_string(),
+                }
+            })?
+        {
+            let module_source = resolver.resolve(ModuleRequest::new(Some(key), &import_name))?;
+            let target = self.collect_artifact_module(
+                resolver,
+                &module_source.key,
+                &import_name,
+                &module_source.diagnostic_name,
+                &module_source.text,
+                modules,
+                indexes,
+                imports,
+            )?;
+            imports.push(ImportEdge {
+                importer: index,
+                name: import_name,
+                target,
+            });
+        }
+        Ok(index)
     }
 
     fn compile_source_for_module(
@@ -434,6 +542,233 @@ impl ModuleInstance {
     }
 }
 
+/// Executes a closed `.cslug` artifact without consulting a source resolver.
+#[derive(Clone)]
+pub struct ArtifactHost {
+    state: Rc<ArtifactHostState>,
+}
+
+struct ArtifactHostState {
+    artifact: Artifact,
+    configuration: Rc<dyn VmConfiguration>,
+    instances: RefCell<HashMap<String, Value>>,
+    native_globals: RefCell<HashMap<String, Value>>,
+    foreign_functions: RefCell<HashMap<(String, String), NativeFunction>>,
+    native_resources: NativeResourceRegistry,
+    warnings: RefCell<Vec<String>>,
+}
+
+impl ArtifactHost {
+    /// Creates a host for a decoded or in-memory closed artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked artifact error when graph references are invalid.
+    pub fn new(
+        artifact: Artifact,
+        configuration: Rc<dyn VmConfiguration>,
+    ) -> Result<Self, ArtifactError> {
+        if artifact.modules.is_empty() || artifact.root >= artifact.modules.len() {
+            return Err(ArtifactError::InvalidReference("root module index".into()));
+        }
+        let mut keys = HashSet::new();
+        for module in &artifact.modules {
+            if !keys.insert(module.key.as_str()) {
+                return Err(ArtifactError::InvalidReference(
+                    "duplicate module key".into(),
+                ));
+            }
+        }
+        let mut edges = HashSet::new();
+        for edge in &artifact.imports {
+            if edge.importer >= artifact.modules.len() || edge.target >= artifact.modules.len() {
+                return Err(ArtifactError::InvalidReference(
+                    "import module index".into(),
+                ));
+            }
+            if !edges.insert((edge.importer, edge.name.as_str())) {
+                return Err(ArtifactError::InvalidReference(
+                    "duplicate import edge".into(),
+                ));
+            }
+        }
+        Ok(Self {
+            state: Rc::new(ArtifactHostState {
+                artifact,
+                configuration,
+                instances: RefCell::new(HashMap::new()),
+                native_globals: RefCell::new(HashMap::new()),
+                foreign_functions: RefCell::new(HashMap::new()),
+                native_resources: native_resource_registry(),
+                warnings: RefCell::new(Vec::new()),
+            }),
+        })
+    }
+
+    /// Registers a native function provided by the artifact's implicit builtin module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the function is not a `slug.builtin` member or its
+    /// module-qualified name is already registered.
+    pub fn register_builtin(&self, function: NativeFunction) -> Result<(), NativeDescriptorError> {
+        if function.module_name() != "slug.builtin" {
+            return Err(NativeDescriptorError::new(
+                "builtin bindings must belong to module slug.builtin",
+            ));
+        }
+        let key = (function.module_name().into(), function.name().into());
+        let mut registry = self.state.foreign_functions.borrow_mut();
+        if registry.contains_key(&key) {
+            return Err(NativeDescriptorError::new(
+                "foreign binding is already defined",
+            ));
+        }
+        registry.insert(key, function);
+        Ok(())
+    }
+
+    /// Executes the artifact root, including its declared entrypoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns ordinary checked VM errors, including unavailable artifact imports.
+    pub fn run(&self) -> VmResult<Value> {
+        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let mut vm = Vm::with_host(host);
+        vm.run_program(&self.state.artifact.modules[self.state.artifact.root].program)
+    }
+
+    fn initialize(&self, index: usize) -> Result<Value, VmHostError> {
+        let module = &self.state.artifact.modules[index];
+        if let Some(exports) = self.state.instances.borrow().get(&module.key) {
+            return Ok(exports.clone());
+        }
+        let host: Rc<dyn VmHost> = Rc::new(self.clone());
+        let mut vm = Vm::with_module_bindings(&host, module.program.bindings());
+        let program = vm
+            .install_named(module.program.clone(), "main")
+            .map_err(|error| VmHostError::new(error.to_string()))?;
+        let live_exports = vm.live_exported_values(program.program());
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(module.key.clone(), live_exports);
+        if let Err(error) = vm.run_module(&program) {
+            self.state.instances.borrow_mut().remove(&module.key);
+            return Err(VmHostError::new(error.to_string()));
+        }
+        let exports = vm.exported_values(program.program());
+        self.state
+            .instances
+            .borrow_mut()
+            .insert(module.key.clone(), exports.clone());
+        Ok(exports)
+    }
+}
+
+impl VmHost for ArtifactHost {
+    fn import_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleExports, VmHostError> {
+        let Some(importer) = importer else {
+            return Err(VmHostError::not_found(format!(
+                "module `{name}` is not present in the compiled artifact"
+            )));
+        };
+        let Some(importer) = self
+            .state
+            .artifact
+            .modules
+            .iter()
+            .position(|module| module.key == importer)
+        else {
+            return Err(VmHostError::not_found(format!(
+                "module `{name}` is not present in the compiled artifact"
+            )));
+        };
+        let Some(edge) = self
+            .state
+            .artifact
+            .imports
+            .iter()
+            .find(|edge| edge.importer == importer && edge.name == name)
+        else {
+            return Err(VmHostError::not_found(format!(
+                "module `{name}` is not present in the compiled artifact"
+            )));
+        };
+        self.initialize(edge.target)
+            .map(|exports| VmModuleExports { exports })
+    }
+
+    fn builtin_globals(&self) -> HashMap<String, Value> {
+        self.state
+            .foreign_functions
+            .borrow()
+            .iter()
+            .filter(|((module, _), _)| module == "slug.builtin")
+            .map(|((_, name), function)| (name.clone(), Value::Native(function.clone())))
+            .collect()
+    }
+
+    fn native_globals(&self) -> HashMap<String, Value> {
+        self.state.native_globals.borrow().clone()
+    }
+
+    fn foreign_function(&self, module: &str, name: &str) -> Option<NativeFunction> {
+        self.state
+            .foreign_functions
+            .borrow()
+            .get(&(module.into(), name.into()))
+            .cloned()
+    }
+
+    fn define_foreign_batch(
+        &self,
+        functions: Vec<NativeFunction>,
+    ) -> Result<(), NativeDescriptorError> {
+        let keys = functions
+            .iter()
+            .map(|function| (function.module_name().into(), function.name().into()))
+            .collect::<Vec<(String, String)>>();
+        let mut registry = self.state.foreign_functions.borrow_mut();
+        if keys
+            .iter()
+            .enumerate()
+            .any(|(index, key)| registry.contains_key(key) || keys[..index].contains(key))
+        {
+            return Err(NativeDescriptorError::new(
+                "foreign binding is already defined",
+            ));
+        }
+        for (key, function) in keys.into_iter().zip(functions) {
+            registry.insert(key, function);
+        }
+        Ok(())
+    }
+
+    fn define_native_global(&self, name: String, value: Value) {
+        self.state.native_globals.borrow_mut().insert(name, value);
+    }
+
+    fn native_resources(&self) -> NativeResourceRegistry {
+        self.state.native_resources.clone()
+    }
+
+    fn configuration(&self) -> &dyn VmConfiguration {
+        self.state.configuration.as_ref()
+    }
+
+    fn warn(&self, message: String) {
+        self.state.warnings.borrow_mut().push(message);
+    }
+
+    fn shutdown(&self) {}
+}
+
 impl ModuleHost {
     /// Creates a graph host backed by an explicitly supplied import resolver.
     ///
@@ -508,6 +843,15 @@ impl ModuleHost {
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
         self.state.graph.compile_source(self, path, source)
+    }
+
+    /// Compiles entry source and its resolved static imports into a closed artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when a static dependency is unavailable.
+    pub fn compile_artifact(&self, path: &str, source: &str) -> Result<Artifact, ModuleLoadError> {
+        self.state.graph.compile_artifact(self, path, source)
     }
 
     #[doc(hidden)]
@@ -721,5 +1065,66 @@ impl Drop for ModuleHostState {
             .shutdown_errors
             .get_mut()
             .extend(self.services.native_resources.finalize_all_for_shutdown());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArtifactHost, ModuleHost};
+    use slug_loader::{ModuleKey, ModuleSource, StaticModuleProvider, StaticModuleResolver};
+    use slug_vm::{EmptyVmConfiguration, Value, cslug};
+    use std::rc::Rc;
+
+    fn host() -> ModuleHost {
+        let resolver = StaticModuleResolver::new([StaticModuleProvider::new(
+            "child",
+            ModuleSource {
+                key: ModuleKey::new("memory:child"),
+                diagnostic_name: "child.slug".into(),
+                text: "export val value = 42\n".into(),
+                activation: None,
+            },
+        )
+        .expect("valid child provider")])
+        .expect("valid resolver");
+        ModuleHost::with_resolver(Rc::new(resolver), Rc::new(EmptyVmConfiguration))
+    }
+
+    #[test]
+    fn executes_decoded_closed_artifact() {
+        let artifact = host()
+            .compile_artifact(
+                "entry.slug",
+                "val child = import(\"child\")\nval main = fn() { child.value }\n",
+            )
+            .expect("compile artifact");
+        assert_eq!(artifact.modules.len(), 2);
+        assert_eq!(artifact.imports.len(), 1);
+        assert_eq!(artifact.imports[0].name, "child");
+
+        let bytes = cslug::encode(&artifact).expect("encode artifact");
+        let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
+        assert_eq!(
+            ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+                .expect("valid artifact")
+                .run()
+                .expect("execute artifact"),
+            Value::Int(42)
+        );
+    }
+
+    #[test]
+    fn rejects_imports_absent_from_closed_artifact() {
+        let artifact = host()
+            .compile_artifact(
+                "entry.slug",
+                "val name = \"missing\"\nval main = fn() { import(name) }\n",
+            )
+            .expect("compile artifact");
+        let error = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+            .expect("valid artifact")
+            .run()
+            .expect_err("missing artifact edge");
+        assert!(error.to_string().contains("compiled artifact"));
     }
 }

@@ -9,7 +9,7 @@ use std::{
 
 use serde::Serialize;
 use slug::{DesktopLoader, build_default_host_vm, default_library_root};
-use slug_frontend::{SourceError, SourceErrorKind};
+use slug_frontend::{ArtifactHost, SourceError, SourceErrorKind};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
     RuntimeErrorKind, SourceSpan, Vm,
@@ -117,15 +117,12 @@ fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())
 }
 
-fn register_native_modules(vm: &mut Vm) {
+fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
     let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
-    vm.define_builtin(
+    vec![
         builtins
             .function("print", NativeArity::Variadic { minimum: 0 }, native_print)
             .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
-    vm.define_builtin(
         builtins
             .function(
                 "println",
@@ -133,15 +130,9 @@ fn register_native_modules(vm: &mut Vm) {
                 native_println,
             )
             .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
-    vm.define_builtin(
         builtins
             .function("len", NativeArity::Exact(1), native_len)
             .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
-    vm.define_builtin(
         builtins
             .function(
                 "chan",
@@ -152,14 +143,17 @@ fn register_native_modules(vm: &mut Vm) {
                 native_channel,
             )
             .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
-    vm.define_builtin(
         builtins
             .function("close", NativeArity::Exact(1), native_close)
             .expect("static builtin function is valid"),
-    )
-    .expect("static builtin binding is unique");
+    ]
+}
+
+fn register_native_modules(vm: &mut Vm) {
+    for function in builtin_functions() {
+        vm.define_builtin(function)
+            .expect("static builtin binding is unique");
+    }
 }
 
 fn main() -> ExitCode {
@@ -190,14 +184,172 @@ fn main() -> ExitCode {
                 "slim build"
             };
             println!(
-                "slug-vm {} ({build})\n\nUsage: {executable} [--diagnostic-format=json] program.slug [arguments...]\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len.",
+                "slug-vm {} ({build})\n\nUsage:\n  {executable} [--diagnostic-format=json] program.slug [arguments...]\n  {executable} [--diagnostic-format=json] compile program.slug output.cslug\n  {executable} [--diagnostic-format=json] run program.cslug [arguments...]\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len. Compiled .cslug artifacts are closed programs and run without source resolution.",
                 env!("CARGO_PKG_VERSION"),
             );
             ExitCode::SUCCESS
         }
+        Some("compile") => {
+            let Some(source_path) = remaining.next() else {
+                eprint_startup_error(
+                    "usage",
+                    "compile",
+                    "compile requires a source path and output path".into(),
+                    json,
+                );
+                return ExitCode::from(1);
+            };
+            let Some(output_path) = remaining.next() else {
+                eprint_startup_error(
+                    "usage",
+                    "compile",
+                    "compile requires a source path and output path".into(),
+                    json,
+                );
+                return ExitCode::from(1);
+            };
+            if remaining.next().is_some() {
+                eprint_startup_error(
+                    "usage",
+                    "compile",
+                    "compile accepts only a source path and output path".into(),
+                    json,
+                );
+                return ExitCode::from(1);
+            }
+            compile(&source_path, &output_path, json)
+        }
+        Some("run") => {
+            let Some(artifact_path) = remaining.next() else {
+                eprint_startup_error("usage", "run", "run requires a .cslug path".into(), json);
+                return ExitCode::from(1);
+            };
+            run_artifact(&artifact_path, &remaining.collect::<Vec<_>>(), json)
+        }
         Some(path) => {
             let program_arguments = remaining.collect::<Vec<_>>();
             run(path, &program_arguments, json)
+        }
+    }
+}
+
+fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
+    let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
+    let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
+    let library_root = default_library_root(slug_home.as_deref());
+    let (resolved_path, source) = match DesktopLoader::load_entry(
+        path,
+        configured_source_root.as_deref(),
+        library_root.as_deref(),
+    ) {
+        Ok(source) => source,
+        Err((path, error)) => {
+            eprint_startup_error(
+                "io",
+                "entry_read",
+                format!("cannot read {}: {error}", path.display()),
+                json,
+            );
+            return ExitCode::from(1);
+        }
+    };
+    let source_root = configured_source_root.unwrap_or_else(|| {
+        resolved_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .into()
+    });
+    let entry_module = resolved_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let (_, loader) =
+        match build_default_host_vm(&source_root, slug_home.as_deref(), &[], entry_module) {
+            Ok(host) => host,
+            Err(error) => {
+                eprint_startup_error("host", "clutch", error.to_string(), json);
+                return ExitCode::from(1);
+            }
+        };
+    let resolved_path = resolved_path.to_string_lossy();
+    let artifact = match loader.compile_artifact(&resolved_path, &source) {
+        Ok(artifact) => artifact,
+        Err(error) => {
+            eprint_startup_error("artifact", "compile", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
+    let bytes = match slug_vm::cslug::encode(&artifact) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprint_startup_error("artifact", "encode", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
+    if let Err(error) = fs::write(output_path, bytes) {
+        eprint_startup_error(
+            "io",
+            "artifact_write",
+            format!("cannot write {output_path}: {error}"),
+            json,
+        );
+        return ExitCode::from(1);
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprint_startup_error(
+                "io",
+                "artifact_read",
+                format!("cannot read {path}: {error}"),
+                json,
+            );
+            return ExitCode::from(1);
+        }
+    };
+    let artifact = match slug_vm::cslug::decode(&bytes, slug_vm::cslug::Limits::default()) {
+        Ok(artifact) => artifact,
+        Err(error) => {
+            eprint_startup_error("artifact", "decode", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
+    let artifact_path = Path::new(path);
+    let source_root = artifact_path.parent().unwrap_or_else(|| Path::new("."));
+    let entry_module = artifact_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
+    let configuration = slug::Configuration::load(
+        source_root,
+        slug_home.as_deref(),
+        env::vars(),
+        program_arguments,
+        entry_module,
+    );
+    let host = match ArtifactHost::new(artifact, std::rc::Rc::new(configuration)) {
+        Ok(host) => host,
+        Err(error) => {
+            eprint_startup_error("artifact", "load", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    };
+    for function in builtin_functions() {
+        if let Err(error) = host.register_builtin(function) {
+            eprint_startup_error("host", "builtin", error.to_string(), json);
+            return ExitCode::from(1);
+        }
+    }
+    match host.run() {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprint_runtime_error(&error, path, "", json);
+            ExitCode::from(1)
         }
     }
 }

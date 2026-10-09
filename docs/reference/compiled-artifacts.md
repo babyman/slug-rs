@@ -2,15 +2,15 @@
 
 ## Status
 
-This document defines the intended external contract for `.cslug` whole-program
-artifacts. The decision to provide that contract is adopted; version 1 has not
-yet been implemented, so this repository does not currently create, load, or
-accept `.cslug` files.
+This document defines the external contract for `.cslug` whole-program
+artifacts. Version 1 is implemented by `slug compile source.slug output.cslug`
+and `slug run program.cslug`. The latter executes only the decoded closed graph;
+it never falls back to source, Clutch, filesystem module, or host module
+resolution.
 
 `.cslug` is deliberately a serialization boundary for the Slug VM, not an
 independent intermediate language or a stable cross-implementation bytecode
-standard. The version-1 binary schema must be specified here before
-implementation begins.
+standard. This document specifies the implemented version-1 binary schema.
 
 ## Artifact identity and scope
 
@@ -68,13 +68,14 @@ fall back to a source resolver, Clutch, filesystem, or host module registry.
 
 ## Version-1 encoding eligibility
 
-Version 1 accepts only a closed graph emitted by the Slug frontend. It does not
-accept arbitrary `slug_vm::Program` values constructed through the unstable
-Rust bytecode API. This keeps the artifact boundary defined by source-derived
-VM state rather than host object reachability.
+Version 1 is supported for closed graphs emitted by the Slug frontend. The
+unstable public Rust bytecode API does not retain construction provenance, so
+the codec validates structural representability rather than asserting that a
+`Program` originated in the frontend. Hosts should create artifacts through the
+frontend graph API, which supplies the complete resolved import table.
 
-The encoder must reject, with a checked encode error, any value or graph member
-outside the version-1 source-derived set. In particular, it must not serialize
+The encoder rejects, with a checked encode error, any value or graph member
+outside the version-1 representable set. In particular, it must not serialize
 native functions, declared-native wrappers, native resources, channels, tasks,
 closures, bindings, overload groups, or other live host/VM state. It must also
 reject a graph that is not closed under its recorded import edges.
@@ -212,9 +213,6 @@ the VM. Those require separate evidence and a later decision.
 
 ## Implementation gate for version 1
 
-Before version 1 is implemented, this document must gain the complete binary
-schema, compatibility fields, canonical encodings, verifier rules, resource
-limits, error mapping, and fixture corpus. The implementation must then prove
-round-trip execution, cross-machine compatibility for the same supported VM
-pair, clean incompatible-version rejection, malformed-input rejection, and
-that source execution still reaches the VM directly.
+Version 1 implementation proves round-trip execution, clean incompatible-version
+and malformed-input rejection, and direct source execution that does not encode
+and decode before reaching the VM.

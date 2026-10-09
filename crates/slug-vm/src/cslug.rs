@@ -1,8 +1,7 @@
 //! Versioned serialization primitives for `.cslug` VM artifacts.
 //!
 //! The codec stays adjacent to the VM because decoding is an executable
-//! validation boundary. The initial surface establishes the fixed artifact
-//! header; graph and bytecode records are added in later codec slices.
+//! validation boundary.
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -116,6 +115,8 @@ pub enum Error {
     NonCanonicalInteger { context: &'static str },
     /// A bounded artifact resource would exceed the caller's configured limit.
     LimitExceeded { context: &'static str },
+    /// A length-delimited string contains invalid UTF-8.
+    InvalidUtf8 { context: &'static str },
     /// Section ordering or framing does not match the version-1 envelope.
     InvalidStructure(String),
     /// A graph index or duplicate graph key is invalid.
@@ -149,6 +150,7 @@ impl core::fmt::Display for Error {
             Self::LimitExceeded { context } => {
                 write!(formatter, ".cslug limit exceeded: {context}")
             }
+            Self::InvalidUtf8 { context } => write!(formatter, "invalid .cslug UTF-8 {context}"),
             Self::InvalidStructure(message) => {
                 write!(formatter, "invalid .cslug structure: {message}")
             }
@@ -173,20 +175,138 @@ pub fn encode_header(output: &mut Vec<u8>) {
     output.extend(Header::version_1().encode());
 }
 
-#[allow(dead_code)] // Wired into the graph encoder once all metadata tables are encoded.
-fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
-    if program
-        .declarations()
-        .iter()
-        .any(|declaration| declaration.foreign)
-        || program.source_count() != 0
-        || program.span_count() != 0
-    {
-        return Err(Error::UnsupportedValue(
-            "program metadata is not yet encodable".into(),
-        ));
+/// An owned closed module graph suitable for `.cslug` persistence.
+#[derive(Clone, Debug)]
+pub struct Artifact {
+    /// Index of the program entry module in `modules`.
+    pub root: usize,
+    /// Every resolved program, identified by its logical module key.
+    pub modules: Vec<Module>,
+    /// The complete logical import resolver table.
+    pub imports: Vec<ImportEdge>,
+}
+
+/// One module belonging to a closed `.cslug` artifact.
+#[derive(Clone, Debug)]
+pub struct Module {
+    /// Stable logical module identity.
+    pub key: String,
+    /// Module-qualified name used by VM host services.
+    pub name: String,
+    /// Installed executable program.
+    pub program: Program,
+}
+
+/// A logical import resolved within an [`Artifact`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImportEdge {
+    /// Index of the importing module.
+    pub importer: usize,
+    /// Logical name passed to `import()`.
+    pub name: String,
+    /// Index of the resolved module.
+    pub target: usize,
+}
+
+/// Encodes a closed program graph in canonical version-1 `.cslug` form.
+///
+/// # Errors
+///
+/// Returns a checked error when graph references are invalid, a program cannot
+/// be represented by version 1, or its executable invariants do not hold.
+pub fn encode(artifact: &Artifact) -> Result<Vec<u8>, Error> {
+    let mut order = (0..artifact.modules.len()).collect::<Vec<_>>();
+    order.sort_unstable_by(|left, right| {
+        artifact.modules[*left]
+            .key
+            .cmp(&artifact.modules[*right].key)
+    });
+    if artifact.modules.is_empty() || artifact.root >= artifact.modules.len() {
+        return Err(Error::InvalidReference("root module index".into()));
+    }
+    for pair in order.windows(2) {
+        if artifact.modules[pair[0]].key == artifact.modules[pair[1]].key {
+            return Err(Error::InvalidReference("duplicate module key".into()));
+        }
+    }
+    let mut remap = vec![0; order.len()];
+    for (encoded, original) in order.iter().copied().enumerate() {
+        remap[original] = encoded;
+    }
+    let mut imports = artifact.imports.clone();
+    for edge in &mut imports {
+        if edge.importer >= remap.len() || edge.target >= remap.len() {
+            return Err(Error::InvalidReference("import module index".into()));
+        }
+        edge.importer = remap[edge.importer];
+        edge.target = remap[edge.target];
+    }
+    imports.sort_unstable_by(|left, right| {
+        (left.importer, &left.name, left.target).cmp(&(right.importer, &right.name, right.target))
+    });
+    for pair in imports.windows(2) {
+        if pair[0].importer == pair[1].importer && pair[0].name == pair[1].name {
+            return Err(Error::InvalidReference("duplicate import edge".into()));
+        }
     }
 
+    let mut output = Vec::new();
+    encode_header(&mut output);
+    let mut graph = Vec::new();
+    uleb(remap[artifact.root], &mut graph);
+    uleb(order.len(), &mut graph);
+    uleb(imports.len(), &mut graph);
+    for edge in &imports {
+        uleb(edge.importer, &mut graph);
+        string(&edge.name, &mut graph);
+        uleb(edge.target, &mut graph);
+    }
+    section(1, &graph, &mut output);
+    for index in order {
+        let module = &artifact.modules[index];
+        let program = encode_scalar_program(&module.program)?;
+        let entry = module.program.find_chunk("main").ok_or_else(|| {
+            Error::InvalidExecutable("program is missing main entry chunk".into())
+        })?;
+        module
+            .program
+            .validate(entry)
+            .map_err(Error::InvalidExecutable)?;
+        let mut payload = Vec::new();
+        string(&module.key, &mut payload);
+        string(&module.name, &mut payload);
+        uleb(program.len(), &mut payload);
+        payload.extend(program);
+        section(2, &payload, &mut output);
+    }
+    section(0, &[], &mut output);
+    Ok(output)
+}
+
+/// Decodes a bounded closed program graph from version-1 `.cslug` bytes.
+///
+/// # Errors
+///
+/// Returns a checked error for malformed, incompatible, unsupported, or
+/// executable-invalid artifacts. No partial graph is returned.
+pub fn decode(bytes: &[u8], limits: Limits) -> Result<Artifact, Error> {
+    let envelope = decode_envelope(bytes, limits)?;
+    Ok(Artifact {
+        root: envelope.root,
+        modules: envelope
+            .modules
+            .into_iter()
+            .map(|module| Module {
+                key: module.key,
+                name: module.name,
+                program: module.program,
+            })
+            .collect(),
+        imports: envelope.imports,
+    })
+}
+
+fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
     let mut output = Vec::new();
     strings(program.bindings(), &mut output);
     strings(program.exports(), &mut output);
@@ -195,9 +315,42 @@ fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
         strings(&declaration.bindings, &mut output);
         boolean(declaration.mutable, &mut output);
         boolean(declaration.exported, &mut output);
-        output.push(0); // non-foreign in this encoder slice
+        boolean(declaration.foreign, &mut output);
+        if declaration.foreign {
+            let (minimum, maximum) = declaration.foreign_arity.ok_or_else(|| {
+                Error::InvalidExecutable("foreign declaration is missing arity".into())
+            })?;
+            uleb(minimum, &mut output);
+            match maximum {
+                None => output.push(0),
+                Some(maximum) => {
+                    output.push(1);
+                    uleb(maximum, &mut output);
+                }
+            }
+            let identity = declaration
+                .foreign_callable_identity
+                .as_ref()
+                .ok_or_else(|| {
+                    Error::InvalidExecutable(
+                        "foreign declaration is missing callable identity".into(),
+                    )
+                })?;
+            let index = program
+                .cslug_callable_identities()
+                .iter()
+                .position(|candidate| candidate == identity)
+                .ok_or_else(|| Error::InvalidReference("foreign callable identity".into()))?;
+            uleb(index, &mut output);
+        }
         optional_string(declaration.resource_type.as_deref(), &mut output);
-        output.push(0); // no foreign resource signature
+        match &declaration.foreign_resource_signature {
+            None => output.push(0),
+            Some(signature) => {
+                output.push(1);
+                encode_resource_signature(signature, &mut output);
+            }
+        }
         optional_string(declaration.documentation.as_deref(), &mut output);
         uleb(declaration.tags.len(), &mut output);
         for tag in &declaration.tags {
@@ -221,12 +374,301 @@ fn encode_scalar_program(program: &Program) -> Result<Vec<u8>, Error> {
             uleb(identity, &mut output);
         }
     }
-    output.extend([0; 12]); // Remaining empty scalar metadata tables.
+    encode_program_metadata(program, &mut output)?;
     uleb(program.cslug_chunks().len(), &mut output);
     for chunk in program.cslug_chunks() {
         encode_chunk(chunk, &mut output)?;
     }
     Ok(output)
+}
+
+fn encode_resource_signature(signature: &ForeignResourceSignature, output: &mut Vec<u8>) {
+    uleb(signature.cslug_parameter_count(), output);
+    for identity in signature.cslug_parameter_identities() {
+        encode_resource_identity(identity, output);
+    }
+    encode_resource_identity(signature.cslug_result_identity(), output);
+}
+
+fn encode_resource_identity(identity: Option<(Option<&str>, &str)>, output: &mut Vec<u8>) {
+    match identity {
+        None => output.push(0),
+        Some((module, name)) => {
+            output.push(1);
+            optional_string(module, output);
+            string(name, output);
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn encode_program_metadata(program: &Program, output: &mut Vec<u8>) -> Result<(), Error> {
+    let (
+        sources,
+        spans,
+        global_names,
+        capture_lists,
+        schema_fields,
+        struct_fields,
+        patterns,
+        interpolations,
+        list_spreads,
+        call_arguments,
+        selected_calls,
+        select_cases,
+    ) = program.cslug_metadata();
+    uleb(sources.len(), output);
+    for source in sources {
+        string(source, output);
+    }
+    uleb(spans.len(), output);
+    for span in spans {
+        let source = sources
+            .iter()
+            .position(|path| path == &span.path)
+            .ok_or_else(|| Error::InvalidReference("source span path".into()))?;
+        uleb(source, output);
+        output.extend(span.line.to_le_bytes());
+        output.extend(span.column.to_le_bytes());
+    }
+    strings(global_names, output);
+    uleb(capture_lists.len(), output);
+    for captures in capture_lists {
+        uleb(captures.len(), output);
+        for capture in captures {
+            match capture {
+                Capture::Local(slot) => {
+                    output.push(0);
+                    uleb(*slot, output);
+                }
+                Capture::Capture(slot) => {
+                    output.push(1);
+                    uleb(*slot, output);
+                }
+            }
+        }
+    }
+    uleb(schema_fields.len(), output);
+    for fields in schema_fields {
+        uleb(fields.len(), output);
+        for field in fields {
+            string(&field.name, output);
+            boolean(field.has_default, output);
+        }
+    }
+    string_lists(struct_fields, output);
+    uleb(patterns.len(), output);
+    for pattern in patterns {
+        encode_match_pattern(pattern, 0, output)?;
+    }
+    string_lists(interpolations, output);
+    bool_lists(list_spreads, output);
+    encode_call_argument_lists(call_arguments, output);
+    uleb(selected_calls.len(), output);
+    for (arguments, identity) in selected_calls {
+        uleb(arguments.index(), output);
+        uleb(*identity, output);
+    }
+    uleb(select_cases.len(), output);
+    for cases in select_cases {
+        uleb(cases.len(), output);
+        for case in cases {
+            let (tag, handler) = match case {
+                SelectCase::Receive { has_handler } => (0, has_handler),
+                SelectCase::Send { has_handler } => (1, has_handler),
+                SelectCase::After { has_handler } => (2, has_handler),
+                SelectCase::Await { has_handler } => (3, has_handler),
+                SelectCase::Default { has_handler } => (4, has_handler),
+            };
+            boolean(*handler, output);
+            output.push(tag);
+        }
+    }
+    Ok(())
+}
+
+fn string_lists(values: &[Vec<String>], output: &mut Vec<u8>) {
+    uleb(values.len(), output);
+    for value in values {
+        strings(value, output);
+    }
+}
+
+fn bool_lists(values: &[Vec<bool>], output: &mut Vec<u8>) {
+    uleb(values.len(), output);
+    for value in values {
+        uleb(value.len(), output);
+        for item in value {
+            boolean(*item, output);
+        }
+    }
+}
+
+fn encode_call_argument_lists(values: &[Vec<CallArgumentKind>], output: &mut Vec<u8>) {
+    uleb(values.len(), output);
+    for arguments in values {
+        uleb(arguments.len(), output);
+        for argument in arguments {
+            match argument {
+                CallArgumentKind::Positional => output.push(0),
+                CallArgumentKind::Spread => output.push(1),
+                CallArgumentKind::Named(name) => {
+                    output.push(2);
+                    string(name, output);
+                }
+            }
+        }
+    }
+}
+
+fn encode_match_pattern(
+    pattern: &MatchPattern,
+    depth: usize,
+    output: &mut Vec<u8>,
+) -> Result<(), Error> {
+    if depth >= 128 {
+        return Err(Error::LimitExceeded {
+            context: "match pattern depth",
+        });
+    }
+    match pattern {
+        MatchPattern::Literal(value) => {
+            output.push(0);
+            encode_value(value, output)?;
+        }
+        MatchPattern::Enum(value) => {
+            output.push(1);
+            uleb(*value, output);
+        }
+        MatchPattern::Wildcard => output.push(2),
+        MatchPattern::Binding => output.push(3),
+        MatchPattern::Pinned(value) => {
+            output.push(4);
+            uleb(*value, output);
+        }
+        MatchPattern::At(value) => {
+            output.push(5);
+            encode_match_pattern(value, depth + 1, output)?;
+        }
+        MatchPattern::Alternatives(values) => {
+            output.push(6);
+            uleb(values.len(), output);
+            for value in values {
+                encode_match_pattern(value, depth + 1, output)?;
+            }
+        }
+        MatchPattern::List { items, rest } => {
+            output.push(7);
+            uleb(items.len(), output);
+            for item in items {
+                encode_match_pattern(item, depth + 1, output)?;
+            }
+            encode_match_rest(*rest, output);
+        }
+        MatchPattern::Map {
+            entries,
+            rest,
+            exact,
+        } => {
+            output.push(8);
+            uleb(entries.len(), output);
+            for (key, value) in entries {
+                match key {
+                    MatchMapKey::String(key) => {
+                        output.push(0);
+                        string(key, output);
+                    }
+                    MatchMapKey::Operand(key) => {
+                        output.push(1);
+                        uleb(*key, output);
+                    }
+                }
+                encode_match_pattern(value, depth + 1, output)?;
+            }
+            encode_match_rest(*rest, output);
+            boolean(*exact, output);
+        }
+        MatchPattern::Constrained {
+            pattern,
+            constraint,
+        } => {
+            output.push(9);
+            encode_match_pattern(pattern, depth + 1, output)?;
+            encode_match_type(constraint, depth + 1, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_match_rest(rest: MatchRest, output: &mut Vec<u8>) {
+    output.push(match rest {
+        MatchRest::None => 0,
+        MatchRest::Discard => 1,
+        MatchRest::Binding => 2,
+    });
+}
+
+fn encode_match_type(value: &MatchType, depth: usize, output: &mut Vec<u8>) -> Result<(), Error> {
+    if depth >= 128 {
+        return Err(Error::LimitExceeded {
+            context: "match type depth",
+        });
+    }
+    match value {
+        MatchType::Any => output.push(0),
+        MatchType::Nil => output.push(1),
+        MatchType::Bool => output.push(2),
+        MatchType::Num => output.push(3),
+        MatchType::Str => output.push(4),
+        MatchType::Bytes => output.push(5),
+        MatchType::Resource { module, name } => {
+            output.push(6);
+            string(module, output);
+            string(name, output);
+        }
+        MatchType::Enum { module, name } => {
+            output.push(7);
+            string(module, output);
+            string(name, output);
+        }
+        MatchType::List(item) => {
+            output.push(8);
+            match item {
+                None => output.push(0),
+                Some(item) => {
+                    output.push(1);
+                    encode_match_type(item, depth + 1, output)?;
+                }
+            }
+        }
+        MatchType::Map(items) => {
+            output.push(9);
+            match items {
+                None => output.push(0),
+                Some((key, value)) => {
+                    output.push(1);
+                    encode_match_type(key, depth + 1, output)?;
+                    encode_match_type(value, depth + 1, output)?;
+                }
+            }
+        }
+        MatchType::Function => output.push(10),
+        MatchType::Task => output.push(11),
+        MatchType::Channel => output.push(12),
+        MatchType::Schema => output.push(13),
+        MatchType::Struct(value) => {
+            output.push(14);
+            optional_usize(*value, output);
+        }
+        MatchType::Union(values) => {
+            output.push(15);
+            uleb(values.len(), output);
+            for value in values {
+                encode_match_type(value, depth + 1, output)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -267,7 +709,6 @@ fn encode_chunk(chunk: &CompiledChunk, output: &mut Vec<u8>) -> Result<(), Error
     Ok(())
 }
 
-#[allow(dead_code)]
 fn encode_value(value: &Value, output: &mut Vec<u8>) -> Result<(), Error> {
     match value {
         Value::Nil => output.push(0),
@@ -297,12 +738,10 @@ fn encode_value(value: &Value, output: &mut Vec<u8>) -> Result<(), Error> {
     Ok(())
 }
 
-#[allow(dead_code)]
 fn boolean(value: bool, output: &mut Vec<u8>) {
     output.push(u8::from(value));
 }
 
-#[allow(dead_code)]
 fn optional_usize(value: Option<usize>, output: &mut Vec<u8>) {
     match value {
         Some(value) => {
@@ -313,7 +752,6 @@ fn optional_usize(value: Option<usize>, output: &mut Vec<u8>) {
     }
 }
 
-#[allow(dead_code)]
 fn optional_string(value: Option<&str>, output: &mut Vec<u8>) {
     match value {
         Some(value) => {
@@ -324,13 +762,11 @@ fn optional_string(value: Option<&str>, output: &mut Vec<u8>) {
     }
 }
 
-#[allow(dead_code)]
 fn string(value: &str, output: &mut Vec<u8>) {
     uleb(value.len(), output);
     output.extend(value.as_bytes());
 }
 
-#[allow(dead_code)]
 fn strings(values: &[String], output: &mut Vec<u8>) {
     uleb(values.len(), output);
     for value in values {
@@ -338,12 +774,10 @@ fn strings(values: &[String], output: &mut Vec<u8>) {
     }
 }
 
-#[allow(dead_code)]
 fn uleb(value: usize, output: &mut Vec<u8>) {
     uleb_u64(value as u64, output);
 }
 
-#[allow(dead_code)]
 fn uleb_u64(mut value: u64, output: &mut Vec<u8>) {
     loop {
         let mut byte = (value & 0x7f) as u8;
@@ -356,6 +790,12 @@ fn uleb_u64(mut value: u64, output: &mut Vec<u8>) {
             return;
         }
     }
+}
+
+fn section(kind: u8, payload: &[u8], output: &mut Vec<u8>) {
+    output.push(kind);
+    uleb(payload.len(), output);
+    output.extend(payload);
 }
 
 /// Resource bounds enforced before the envelope reader allocates or recurses.
@@ -391,15 +831,7 @@ impl Default for Limits {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ImportEdge {
-    pub(crate) importer: usize,
-    pub(crate) name: String,
-    pub(crate) target: usize,
-}
-
 #[derive(Debug)]
-#[allow(dead_code)] // Exposed to the graph loader once full program decoding lands.
 pub(crate) struct Envelope {
     pub(crate) root: usize,
     pub(crate) modules: Vec<ModuleRecord>,
@@ -407,7 +839,6 @@ pub(crate) struct Envelope {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)] // Module fields are consumed by the next graph-loader slice.
 pub(crate) struct ModuleRecord {
     pub(crate) key: String,
     pub(crate) name: String,
@@ -921,7 +1352,7 @@ impl<'a> Reader<'a> {
         let bytes = self.bytes(length, context)?;
         core::str::from_utf8(bytes)
             .map(str::to_owned)
-            .map_err(|_| Error::InvalidStructure(format!("invalid UTF-8 {context}")))
+            .map_err(|_| Error::InvalidUtf8 { context })
     }
 
     fn bool(&mut self, context: &'static str) -> Result<bool, Error> {
@@ -1227,8 +1658,8 @@ const fn uleb_length(mut value: u64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        Error, HEADER_LENGTH, Header, Limits, Reader, decode_envelope, encode_header,
-        encode_scalar_program,
+        Artifact, Error, HEADER_LENGTH, Header, ImportEdge, Limits, Module, Reader, decode,
+        decode_envelope, encode, encode_header, encode_scalar_program,
     };
     use crate::{
         CallableIdentity, Chunk, Entrypoint, EntrypointArguments, Op, PackedOpcode, Program, Value,
@@ -1307,6 +1738,47 @@ mod tests {
     }
 
     #[test]
+    fn public_codec_canonicalizes_a_closed_graph() {
+        let mut root = Program::new();
+        let mut main = Chunk::new("main", 0);
+        main.emit(Op::Nil).emit(Op::Return);
+        root.add_chunk(main);
+        let mut dependency = Program::new();
+        let mut main = Chunk::new("main", 0);
+        main.emit(Op::Nil).emit(Op::Return);
+        dependency.add_chunk(main);
+        let artifact = Artifact {
+            root: 1,
+            modules: vec![
+                Module {
+                    key: "z.root".into(),
+                    name: "root".into(),
+                    program: root,
+                },
+                Module {
+                    key: "a.dependency".into(),
+                    name: "dependency".into(),
+                    program: dependency,
+                },
+            ],
+            imports: vec![ImportEdge {
+                importer: 0,
+                name: "dependency".into(),
+                target: 1,
+            }],
+        };
+
+        let bytes = encode(&artifact).expect("encodes closed graph");
+        assert_eq!(bytes, encode(&artifact).expect("encoding is deterministic"));
+        let decoded = decode(&bytes, Limits::default()).expect("decodes closed graph");
+        assert_eq!(decoded.root, 0);
+        assert_eq!(decoded.modules[0].key, "a.dependency");
+        assert_eq!(decoded.modules[1].key, "z.root");
+        assert_eq!(decoded.imports[0].importer, 1);
+        assert_eq!(decoded.imports[0].target, 0);
+    }
+
+    #[test]
     fn encodes_packed_chunks_with_source_literal_constants() {
         let mut program = Program::new();
         program.set_bindings(vec!["value".into()]);
@@ -1365,6 +1837,25 @@ mod tests {
         let mut flags = Header::version_1().encode();
         flags[8] = 1;
         assert_eq!(Header::decode(&flags), Err(Error::UnsupportedFlags(1)));
+    }
+
+    #[test]
+    fn decoder_handles_deterministic_truncations_and_byte_mutations() {
+        let artifact = minimal_envelope();
+        for length in 0..artifact.len() {
+            let truncated = &artifact[..length];
+            assert!(std::panic::catch_unwind(|| decode(truncated, Limits::default())).is_ok());
+        }
+        for index in 0..artifact.len() {
+            for replacement in u8::MIN..=u8::MAX {
+                let mut mutated = artifact.clone();
+                mutated[index] = replacement;
+                assert!(
+                    std::panic::catch_unwind(|| decode(&mutated, Limits::default())).is_ok(),
+                    "decoder panicked after mutating byte {index} to {replacement}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1524,6 +2015,71 @@ mod tests {
         assert_eq!(program.source_count(), 1);
         assert_eq!(program.span_count(), 1);
         assert_eq!(program.layout_metrics().metadata_pool_slots, 4);
+    }
+
+    #[test]
+    fn round_trips_all_populated_scalar_metadata_tables() {
+        let mut record = vec![0, 0, 0, 0, 0];
+        uleb(1, &mut record);
+        string("main.slug", &mut record);
+        uleb(1, &mut record);
+        uleb(0, &mut record);
+        record.extend(4u32.to_le_bytes());
+        record.extend(8u32.to_le_bytes());
+        uleb(1, &mut record);
+        string("value", &mut record);
+        uleb(1, &mut record);
+        uleb(2, &mut record);
+        record.push(0);
+        uleb(3, &mut record);
+        record.push(1);
+        uleb(1, &mut record);
+        uleb(1, &mut record);
+        uleb(1, &mut record);
+        string("field", &mut record);
+        record.push(1);
+        uleb(1, &mut record);
+        uleb(1, &mut record);
+        string("field", &mut record);
+        uleb(1, &mut record);
+        record.extend([9, 3, 4]);
+        uleb(1, &mut record);
+        uleb(1, &mut record);
+        string("part", &mut record);
+        uleb(1, &mut record);
+        uleb(2, &mut record);
+        record.extend([1, 0]);
+        uleb(1, &mut record);
+        uleb(2, &mut record);
+        record.push(0);
+        record.push(2);
+        string("named", &mut record);
+        uleb(1, &mut record);
+        uleb(0, &mut record);
+        uleb(0, &mut record);
+        uleb(1, &mut record);
+        uleb(1, &mut record);
+        record.extend([1, 1]);
+        main_chunk(&mut record);
+
+        let mut bytes = Vec::new();
+        encode_header(&mut bytes);
+        section(1, &[0, 1, 0], &mut bytes);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut bytes);
+        section(0, &[], &mut bytes);
+
+        let decoded = decode(&bytes, Limits::default()).expect("decodes populated metadata");
+        let encoded = encode(&decoded).expect("encodes populated metadata");
+        assert_eq!(
+            encoded,
+            encode(&decoded).expect("encoding is deterministic")
+        );
+        decode(&encoded, Limits::default()).expect("round-trip program validates");
     }
 
     #[test]
@@ -1801,5 +2357,15 @@ mod tests {
             Reader::new(&non_finite).value("value"),
             Err(Error::UnsupportedValue(_))
         ));
+    }
+
+    #[test]
+    fn reports_invalid_utf8_with_its_own_error_category() {
+        assert_eq!(
+            Reader::new(&[1, 0xff]).string("module key"),
+            Err(Error::InvalidUtf8 {
+                context: "module key"
+            })
+        );
     }
 }

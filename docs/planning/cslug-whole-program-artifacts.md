@@ -49,59 +49,60 @@ unsigned LEB128 lengths, counts, and indexes. The decoded graph is the sole
 import provider: an absent dynamic or static import fails through the ordinary
 checked module-load path rather than falling back to source resolution.
 
-Version 1 encodes only a closed graph emitted by the Slug frontend. The encoder
-rejects arbitrary public Rust bytecode construction and non-source runtime
-values, including native functions/resources, channels, tasks, closures,
-bindings, and overload groups.
+Version 1 artifacts are produced through the Slug frontend's closed-graph API.
+Because the public Rust bytecode API does not retain construction provenance,
+the encoder validates representability and rejects non-source runtime values,
+including native functions/resources, channels, tasks, closures, bindings, and
+overload groups.
 
 ## Implementation slices
 
 ### 1. Establish the codec boundary
 
-- [ ] Add a narrowly owned `cslug` codec surface with `encode` and `decode`;
+- [x] Add a narrowly owned `cslug` codec surface with `encode` and `decode`;
   avoid making the artifact layout a public Rust bytecode API.
-- [ ] Define an owned checked load-error type that is converted at the CLI and
+- [x] Define an owned checked load-error type that is converted at the CLI and
   host boundaries without exposing host panics.
-- [ ] Keep direct `.slug -> CompiledProgram -> VM` execution unchanged and
+- [x] Keep direct `.slug -> CompiledProgram -> VM` execution unchanged and
   add a regression proving it does not invoke the codec.
 
 ### 2. Encode the complete executable state
 
-- [ ] Encode the program header and entry point first, then constants,
+- [x] Encode the program header and entry point first, then constants,
   functions, bytecode, module state, and diagnostic/source metadata.
-- [ ] Require canonical ordering and reject values that cannot be represented
+- [x] Require canonical ordering and reject values that cannot be represented
   by version 1 rather than silently widening the schema.
-- [ ] Add deterministic byte-for-byte encoding tests for representative
+- [x] Add deterministic byte-for-byte encoding tests for representative
   programs and module graphs.
 
 ### 3. Decode and verify before installation
 
-- [ ] Parse only bounded, length-delimited sections with explicit limits for
+- [x] Parse only bounded, length-delimited sections with explicit limits for
   file size, allocations, nesting, tables, constants, and instructions.
-- [ ] Validate every reference, jump target, function/call descriptor, module
+- [x] Validate every reference, jump target, function/call descriptor, module
   reference, entry point, and executable invariant before constructing the
   returned `CompiledProgram`.
-- [ ] Fuzz and regression-test truncated, oversized, invalid-version, invalid
+- [x] Fuzz and regression-test truncated, oversized, invalid-version, invalid
   flag, malformed-index, malformed-constant, and invalid-control-flow inputs.
-- [ ] Prove every failure is a checked load error and no partial program can
+- [x] Prove every failure is a checked load error and no partial program can
   execute.
 
 ### 4. Add host-facing persistence only after codec proof
 
-- [ ] Add explicit CLI or embedding operations to write and load whole-program
+- [x] Add explicit CLI or embedding operations to write and load whole-program
   artifacts, with clean format/VM-compatibility diagnostics.
-- [ ] Test a program encoded on one supported machine/build and loaded on
+- [x] Test a program encoded on one supported machine/build and loaded on
   another compatible machine/build.
-- [ ] Test incompatible versions and verify that recompilation is the stated
+- [x] Test incompatible versions and verify that recompilation is the stated
   recovery path.
 
 ### 5. Evaluate ESP deployment separately
 
-- [ ] Compare `.cslug` size, decode time, RAM use, and boot time against the
+- [x] Compare `.cslug` size, decode time, RAM use, and boot time against the
   private frozen firmware image on the selected ESP path.
-- [ ] Decide separately whether firmware accepts `.cslug` from a trusted build
+- [x] Decide separately whether firmware accepts `.cslug` from a trusted build
   input, retaining its existing untrusted-input validation and resource limits.
-- [ ] Do not replace the frozen-image boundary or add device storage, Clutch
+- [x] Do not replace the frozen-image boundary or add device storage, Clutch
   module artifacts, memory mapping, or zero-copy execution without a new
   decision.
 
@@ -111,3 +112,6 @@ Version 1 is complete only when the format specification, codec, verifier,
 fixtures, public diagnostics, focused VM/CLI coverage, cross-compatible-build
 test, malformed-input suite, and `make check` all pass. The private frozen
 firmware image must remain explicitly distinct from `.cslug`.
+
+The ESP evaluation and decision are recorded in
+[`2026-10-04-cslug-esp-deployment.md`](../decisions/2026-10-04-cslug-esp-deployment.md).

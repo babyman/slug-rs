@@ -4,7 +4,7 @@ This repository is a clean-room Rust workspace implementing the Slug language.
 It starts with the execution boundary recommended by the language package: a
 small, checked VM with Slug-specific bytecode. The bytecode types are a public
 but unstable in-process Rust embedding and testing surface: they are not a file
-format or a compatibility commitment. The planned portable whole-program
+format or a compatibility commitment. The portable whole-program artifact
 contract is documented separately as `.cslug`.
 
 ## Current milestone
@@ -100,8 +100,9 @@ contract is documented separately as `.cslug`.
   names through `$SLUG_HOME/lib/<name>.slug`.
 - The standard library, full type inference, and the remaining language forms are progressive
   milestones beyond this subset.
-- Portable `.cslug` whole-program artifacts are an adopted compatibility target; no
-  encoder or loader is implemented yet.
+- Portable `.cslug` whole-program artifacts can be compiled with `slug compile`
+  and run with `slug run`; they are closed graphs and never fall back to source
+  resolution at load time.
 - Statically registered native functions use an opaque, call-scoped version 0
   Rust facade with structured errors and typed resources. It remains unstable;
   no public C ABI or dynamic native loader exists yet.
@@ -128,12 +129,12 @@ performance.
 
 ## Portable compiled artifacts
 
-`.cslug` will be a versioned, validated serialized form of a complete VM
+`.cslug` is a versioned, validated serialized form of a complete VM
 `CompiledProgram`. It is portable across machines supporting the same declared
 format and VM/bytecode compatibility version. Normal source execution remains
 directly in memory; the format is only for persistence and transport. See
 [compiled artifacts](docs/reference/compiled-artifacts.md) for the adopted
-contract and requirements before version 1 is implemented.
+contract and requirements.
 
 ## Quick start
 
@@ -155,6 +156,14 @@ Run it from the repository root:
 
 ```sh
 cargo run -p slug -- hello.slug
+```
+
+Persist a closed compiled artifact, then run it without consulting source
+resolvers:
+
+```sh
+cargo run -p slug -- compile hello.slug hello.cslug
+cargo run -p slug -- run hello.cslug
 ```
 
 For a persistent interactive session, run the minimal terminal client:
