@@ -1,4 +1,4 @@
-//! Firmware-native providers for the frozen GPIO blink image.
+//! Firmware-native providers for the closed GPIO blink artifact.
 //!
 //! These callbacks own the selected output and blocking delay facility for the
 //! VM lifetime. They intentionally expose only the board-profile `led` alias;
@@ -13,7 +13,8 @@ use esp_hal::{
 };
 use slug_vm::{
     NativeArity, NativeCall, NativeDescriptorError, NativeError, NativeModule, NativeOwnedValue,
-    NativeStatus, NativeValueKind, NativeValueRef, Vm,
+    NativeStatus, NativeValueKind, NativeValueRef,
+    cslug::ArtifactHost,
 };
 
 use crate::capabilities::{LED_ACTIVE_HIGH, MAXIMUM_SLEEP_MS};
@@ -22,16 +23,16 @@ struct GpioState {
     led: RefCell<Output<'static>>,
 }
 
-/// Installs the selected GPIO and blocking-delay capabilities into `vm`.
+/// Registers the selected GPIO and blocking-delay capabilities with `host`.
 ///
 /// `led` must already be configured to its known inactive electrical level.
 /// The VM retains it as native module state until firmware shutdown.
 ///
 /// # Errors
 ///
-/// Returns a checked descriptor error if a private frozen-image binding was
+/// Returns a checked descriptor error if an artifact-host binding was
 /// already installed.
-pub fn install(vm: &mut Vm, led: Output<'static>) -> Result<(), NativeDescriptorError> {
+pub fn register(host: &ArtifactHost, led: Output<'static>) -> Result<(), NativeDescriptorError> {
     let gpio = NativeModule::new(
         "slug.gpio",
         GpioState {
@@ -39,8 +40,8 @@ pub fn install(vm: &mut Vm, led: Output<'static>) -> Result<(), NativeDescriptor
         },
     )?;
     let time = NativeModule::new("slug.time", Delay::new())?;
-    vm.define_native(gpio.function("gpio.write", NativeArity::Exact(2), gpio_write)?)?;
-    vm.define_native(time.function("time.sleepMs", NativeArity::Exact(1), sleep_ms)?)?;
+    host.register_foreign(gpio.function("write", NativeArity::Exact(2), gpio_write)?)?;
+    host.register_foreign(time.function("sleepMs", NativeArity::Exact(1), sleep_ms)?)?;
     Ok(())
 }
 

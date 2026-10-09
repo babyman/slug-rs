@@ -1,5 +1,9 @@
 # General private frozen firmware program plan
 
+> Superseded by the closed version-1 `.cslug` firmware path in
+> [`cslug-whole-program-artifacts.md`](cslug-whole-program-artifacts.md).
+> The retained sections document the previous private-table approach only.
+
 ## Goal
 
 Replace the ESP32-S3 proof's blink-specific source recognizer with a general,

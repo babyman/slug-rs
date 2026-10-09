@@ -15,23 +15,15 @@ mod providers;
 
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, main};
-use slug_vm::{NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, Value, Vm};
+use slug_vm::{EmptyVmConfiguration, Value, cslug::ArtifactHost};
+use alloc::rc::Rc;
 
 use crate::capabilities::{LED_ACTIVE_HIGH, LED_GPIO};
 
 // The ESP-IDF bootloader requires this application descriptor.
 esp_bootloader_esp_idf::esp_app_desc!();
 
-fn uart_println(call: &mut NativeCall<'_>) -> NativeStatus {
-    let value = match call.argument(0) {
-        Ok(value) => value,
-        Err(error) => return call.raise(error),
-    };
-    esp_println::println!("{}", value.to_display_string());
-    call.return_value(NativeOwnedValue::nil())
-}
-
-/// Runs the frozen blink program against firmware-owned GPIO and delay providers.
+/// Runs the closed blink artifact against firmware-owned GPIO and delay providers.
 ///
 /// The bounded allocator serves all VM allocations. Source parsing and desktop
 /// module resolution remain intentionally outside this proof firmware.
@@ -54,22 +46,16 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73_744);
 
-    let (program, entry) = match flash_program::load_blink_program() {
-        Ok(program) => program,
-        Err(error) => panic!("failed to load flash program: {error}"),
+    let artifact = match flash_program::load_blink_artifact() {
+        Ok(artifact) => artifact,
+        Err(error) => panic!("failed to decode flash artifact: {error}"),
     };
-    let module = NativeModule::new("slug.uart", ()).expect("UART module name is valid");
-    let mut vm = Vm::new();
-    vm.define_native(
-        module
-            .function("println", NativeArity::Exact(1), uart_println)
-            .expect("UART println descriptor is valid"),
-    )
-    .expect("UART println is installed once");
-    providers::install(&mut vm, providers::output(peripherals.GPIO2))
-        .expect("GPIO and time providers are installed once");
+    let host = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+        .expect("flash artifact graph is valid");
+    providers::register(&host, providers::output(peripherals.GPIO2))
+        .expect("GPIO and time providers are registered once");
     loop {
-        match vm.run(&program, entry) {
+        match host.run() {
             Ok(Value::Nil) => esp_println::println!("Slug VM completed unexpectedly"),
             Ok(value) => esp_println::println!("Slug VM unexpected result: {value:?}"),
             Err(error) => esp_println::println!("Slug VM runtime error: {error}"),

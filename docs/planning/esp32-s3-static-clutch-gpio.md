@@ -37,12 +37,13 @@ loop construct.
   provide a simulator with the same public contract.
 - Firmware configuration owns `"led" -> GPIO pin`, output polarity, and
   electrical setup. Application source owns neither a pin number nor a mode.
-- The frozen-image build step resolves imports and verifies the selected
-  provider/capability manifest on the desktop. The device loads only the
-  linked, checked image and explicitly registered providers.
+- The firmware build resolves the selected source contracts on the desktop and
+  writes one closed version-1 `.cslug` program artifact. The device decodes
+  only that bounded, checked graph and explicitly registered providers.
 - `sleepMs` is synchronous for this first path. It does not enable the
   scheduler, `after`, or background interrupt producers.
-- The image remains private firmware build input, not a `.cslug` artifact.
+- The device never resolves source, Clutches, module artifacts, files, or
+  dynamic native libraries at runtime.
 
 ## Delivery stages
 
@@ -99,20 +100,18 @@ alias and a boolean.
 Acceptance: frontend/module tests prove imported signatures, argument errors,
 and unavailable-module diagnostics independently of ESP hardware.
 
-### 3. Extend the frozen firmware generator
+### 3. Compile a closed firmware artifact
 
-Replace the hello-only frozen backend shape incrementally with support for the
-target program: imports, module references, booleans, strings, call results,
-entry functions, and the tail-recursive blink function. Have the build step
-consume a declared firmware capability manifest and fail before firmware
-compilation if the source requests an unavailable module or alias.
+Compile the target program and its selected source contracts into a closed
+version-1 `.cslug` graph in `OUT_DIR`. Have the build step fail before firmware
+compilation if source imports a provider outside the static resolver.
 
-Do not expose bytecode fields, create a generated standalone binary, or name
-this output `.cslug`.
+Embed the artifact as immutable flash bytes and decode it under explicit device
+limits before starting the VM-owned artifact host.
 
-Acceptance: desktop tests compile the blink source to firmware build input;
-negative fixtures reject an unlisted provider, unknown alias, and unsupported
-source operation with a checked build diagnostic.
+Acceptance: desktop tests encode/decode the blink source under the device
+limits; the build script writes the same graph as firmware build input; and an
+unlisted provider remains a checked build diagnostic.
 
 ### 4. Implement a desktop GPIO simulation
 
@@ -152,7 +151,8 @@ after rebuild and reflash.
 ## Explicit non-goals
 
 This plan does not add raw pin access, input GPIO, interrupts, PWM, ADC,
-networking, BLE, async timers, dynamic native loading, or `.cslug`. Those
+networking, BLE, async timers, dynamic native loading, or version-2 importable
+module artifacts. Those
 capabilities need distinct ownership, memory, scheduling, and safety rules.
 
 ## Validation ladder

@@ -113,9 +113,9 @@ overload groups.
 - [x] Preserve checked closed-graph imports and live exports, and expose a
   host-facing registration API for statically linked module-qualified native
   functions.
-- [ ] Have the firmware build compile the selected source graph and its static
+- [x] Have the firmware build compile the selected source graph and its static
   providers into a version-1 `.cslug` file in `OUT_DIR`.
-- [ ] Embed and decode that file under finite ESP limits, register the selected
+- [x] Embed and decode that file under finite ESP limits, register the selected
   static providers, and replace the temporary frozen-table loader.
 
 ## Completion gate

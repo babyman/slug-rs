@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Switched the ESP32-S3 blink firmware to compile and embed its closed v1
+  `.cslug` graph, decode it under device limits, and register static GPIO/time
+  providers through the VM-owned artifact host.
+
 - Moved closed `.cslug` graph execution into `slug-vm`, so firmware hosts can
   decode and execute artifacts without linking the source frontend, and added
   static module-qualified native-function registration for embedded providers.

@@ -30,6 +30,8 @@ slug-vm = { path = "../../crates/slug-vm", default-features = false }
 
 [build-dependencies]
 slug-frontend = { path = "../../crates/slug-frontend", default-features = false }
+slug-loader = { path = "../../crates/slug-loader" }
+slug-vm = { path = "../../crates/slug-vm", default-features = false }
 
 [profile.dev]
 opt-level = "s"

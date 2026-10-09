@@ -1,5 +1,5 @@
 fn main() {
-    freeze_blink_program();
+    compile_blink_artifact();
     println!("cargo:rerun-if-env-changed=PATH");
     println!("cargo:rerun-if-env-changed=CARGO_TARGET_XTENSA_ESP32S3_NONE_ELF_LINKER");
     println!("cargo:rustc-link-arg=-Tlinkall.x");
@@ -12,24 +12,56 @@ fn main() {
     }
 }
 
-include!("capabilities.rs");
+fn compile_blink_artifact() {
+    use std::rc::Rc;
 
-fn freeze_blink_program() {
-    let source_path = "programs/blink.slug";
-    println!("cargo:rerun-if-changed={source_path}");
-    println!("cargo:rerun-if-changed=capabilities.rs");
-    let source = std::fs::read_to_string(source_path)
-        .unwrap_or_else(|error| panic!("cannot read {source_path}: {error}"));
-    let capabilities = slug_frontend::FrozenGpioCapabilities {
-        modules: BLINK_MODULES,
-        output_aliases: BLINK_OUTPUT_ALIASES,
-        maximum_sleep_ms: MAXIMUM_SLEEP_MS,
-    };
-    let image = slug_frontend::compile_frozen_gpio_entry(source_path, &source, &capabilities)
-        .unwrap_or_else(|error| panic!("cannot freeze {source_path}: {error}"));
+    use slug_frontend::ModuleHost;
+    use slug_loader::StaticModuleResolver;
+    use slug_vm::{EmptyVmConfiguration, cslug};
+
+    let manifest = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"),
+    );
+    let source_path = manifest.join("programs/blink.slug");
+    let contracts = manifest.join("../../clutch/slug.embedded.clutch/modules");
+    let gpio_path = contracts.join("gpio.slug");
+    let time_path = contracts.join("time.slug");
+    for path in [&source_path, &gpio_path, &time_path] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+
+    let source = read_source(&source_path);
+    let providers = [
+        provider("slug.gpio", &gpio_path),
+        provider("slug.time", &time_path),
+    ];
+    let resolver = StaticModuleResolver::new(providers).expect("embedded providers are distinct");
+    let host = ModuleHost::with_resolver(Rc::new(resolver), Rc::new(EmptyVmConfiguration));
+    let artifact = host
+        .compile_artifact(&source_path.to_string_lossy(), &source)
+        .unwrap_or_else(|error| panic!("cannot compile {}: {error}", source_path.display()));
+    let bytes = cslug::encode(&artifact).expect("embedded artifact is encodable");
     let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set"))
-        .join("slug_blink_program.rs");
-    std::fs::write(output, image).expect("writes generated blink program");
+        .join("slug_blink.cslug");
+    std::fs::write(output, bytes).expect("writes embedded blink artifact");
+}
+
+fn provider(name: &str, path: &std::path::Path) -> slug_loader::StaticModuleProvider {
+    slug_loader::StaticModuleProvider::new(
+        name,
+        slug_loader::ModuleSource {
+            key: slug_loader::ModuleKey::new(format!("static:{name}")),
+            diagnostic_name: path.display().to_string(),
+            text: read_source(path),
+            activation: None,
+        },
+    )
+    .unwrap_or_else(|error| panic!("invalid provider {name}: {error}"))
+}
+
+fn read_source(path: &std::path::Path) -> String {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
 fn linker_is_available() -> bool {

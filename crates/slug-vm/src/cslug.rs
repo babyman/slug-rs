@@ -3,7 +3,14 @@
 //! The codec stays adjacent to the VM because decoding is an executable
 //! validation boundary.
 
-use alloc::{borrow::ToOwned, boxed::Box, rc::Rc, string::String, sync::Arc, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    rc::Rc,
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 use core::cell::RefCell;
 
 use crate::{

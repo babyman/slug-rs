@@ -1312,6 +1312,7 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "slug-frontend",
+ "slug-loader",
  "slug-vm",
 ]
 

@@ -91,3 +91,42 @@ fn artifact_host_registers_static_module_qualified_foreign_functions() {
         Value::Int(7)
     );
 }
+
+#[test]
+fn firmware_blink_graph_encodes_within_device_limits() {
+    let artifact = host([
+        (
+            "slug.gpio",
+            include_str!("../../../clutch/slug.embedded.clutch/modules/gpio.slug"),
+        ),
+        (
+            "slug.time",
+            include_str!("../../../clutch/slug.embedded.clutch/modules/time.slug"),
+        ),
+    ])
+    .compile_artifact(
+        "firmware/slug-esp32-s3/programs/blink.slug",
+        include_str!("../../../firmware/slug-esp32-s3/programs/blink.slug"),
+    )
+    .expect("compile firmware blink graph");
+    let bytes = cslug::encode(&artifact).expect("encode firmware blink graph");
+
+    assert_eq!(
+        cslug::decode(
+            &bytes,
+            cslug::Limits {
+                artifact_bytes: 32 * 1024,
+                section_bytes: 24 * 1024,
+                modules: 3,
+                imports: 2,
+                string_bytes: 512,
+                chunks_per_module: 32,
+                entries_per_table: 512,
+            },
+        )
+        .expect("firmware limits accept blink graph")
+        .modules
+        .len(),
+        3
+    );
+}
