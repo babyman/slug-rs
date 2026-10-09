@@ -18,13 +18,14 @@ error. A host MUST NOT silently provide a substitute capability.
 When selected, `slug.gpio` exports:
 
 ```slug
-foreign write = fn(name:str, level:bool):nil
+foreign write = fn(pin:num, level:bool):nil
 ```
 
-`name` is a host-defined logical output alias, not a raw pin number. A host
-maps aliases such as `"led"` to its safe output configuration. Unknown aliases
-and unavailable output capability are checked host failures. `level` is true
-for the host-defined active level and false for its inactive level.
+`pin` is a finite, non-negative whole physical GPIO number. The host selects a
+finite allow-list of safe output pins; a pin outside that list, a fractional
+number, or an unavailable output capability is a checked host failure.
+Project-level names such as `motor_enable` belong in source code, not in this
+module. `level` is true for electrical high and false for electrical low.
 
 This module does not grant input access, pin-mode selection, interrupt
 registration, PWM, ADC, or arbitrary electrical configuration.

@@ -1,7 +1,8 @@
 /**
- * Writes a boolean level to a host-defined logical output.
+ * Writes a boolean level to a host-selected physical GPIO output.
  *
- * `name` identifies an alias selected by the host, such as `"led"`; it is not
- * a raw GPIO number. An unavailable alias is a checked host failure.
+ * `pin` is a non-negative whole GPIO number. A host selects which physical
+ * outputs are safe and available; an unsupported pin is a checked host
+ * failure. This module does not define project-level pin names.
  */
-export foreign write = fn(name:str, level:bool):nil
+export foreign write = fn(pin:num, level:bool):nil

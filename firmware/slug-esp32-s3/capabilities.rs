@@ -2,15 +2,10 @@
 
 /// Largest synchronous delay accepted by the firmware provider.
 pub const MAXIMUM_SLEEP_MS: u32 = 1_000;
-/// PinPulse Shield's plain indicator LED is attached to this pin.
-pub const LED_GPIO: u8 = 2;
-/// Second host-selected output available to the blink program.
-pub const LED4_GPIO: u8 = 4;
-/// Source alias for the PinPulse Shield indicator on GPIO 2.
-pub const LED_ALIAS: &str = "led";
-/// Source alias for the second host-selected output on GPIO 4.
-pub const LED4_ALIAS: &str = "led4";
-/// The PinPulse Shield lights its indicator when GPIO 2 is high.
-pub const LED_ACTIVE_HIGH: bool = true;
-/// GPIO 4 uses the same active-high output profile.
-pub const LED4_ACTIVE_HIGH: bool = true;
+/// Documented safe, broken-out push-pull output pins for this board.
+///
+/// This excludes PSRAM (35--37), strapping pins (0, 3, 45, 46), USB (19, 20),
+/// UART0 (43, 44), and the onboard RGB LED (48).
+pub const SAFE_OUTPUT_PINS: &[u8] = &[
+    1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 38, 39, 40, 41, 42, 47,
+];

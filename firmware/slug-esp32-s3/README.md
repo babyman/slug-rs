@@ -5,14 +5,14 @@ This standalone package cross-compiles
 `slug.embedded` source contracts through a desktop build dependency into a
 closed version-1 `.cslug` artifact in `OUT_DIR`. Firmware embeds, bounds-checks,
 and executes that artifact through the shared `no_std + alloc` VM on an
-ESP32-S3. It owns push-pull GPIO 2 and GPIO 4 outputs plus a blocking delay
-provider for the active-high `led` and `led4` aliases; it links neither the source
-frontend nor a desktop loader. It is not a member of the desktop Cargo
-workspace.
+ESP32-S3. It exposes a bounded set of safe, push-pull GPIO outputs and a
+blocking delay provider; it links neither the source frontend nor a desktop
+loader. It is not a member of the desktop Cargo workspace.
 
-The `led` alias is the PinPulse Shield indicator on GPIO 2 (active high), and
-`led4` is the second active-high host-selected output on GPIO 4. Source code
-never selects a raw GPIO pin.
+`slug.gpio.write(pin, level)` uses physical GPIO numbers. This board profile
+permits GPIO 1, 2, 4--18, 21, 38--42, and 47; all others are rejected as
+checked host failures. Outputs are configured only on first write. The default
+blink program drives GPIO 2 and GPIO 4 high and low.
 
 ## Prerequisites
 
@@ -79,11 +79,11 @@ espflash monitor --non-interactive --chip esp32s3 --port /dev/cu.usbmodem1101 \
   --elf target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
 ```
 
-The serial monitor repeatedly prints the logical transitions:
+The serial monitor repeatedly prints the physical transitions:
 
 ```text
-Slug GPIO led -> low
-Slug GPIO led -> high
+Slug GPIO 2 -> low
+Slug GPIO 4 -> high
 ```
 
 The program requests each level for 250 ms before tail-recurring, so the LED
@@ -92,14 +92,13 @@ should blink with a 500 ms period. See
 
 ## Hardware verification
 
-Verified on 2026-10-08 with the Lonely Binary ESP32-S3 N16R8 and PinPulse
+Verified on 2026-10-09 with the Lonely Binary ESP32-S3 N16R8 and PinPulse
 Shield over `/dev/cu.usbmodem1101`:
 
 - `espflash` identified an ESP32-S3 revision 0.2 with 16 MB flash and wrote a
-  372,848-byte application image (2.28% of the factory partition).
+  374,368-byte application image (2.28% of the factory partition).
 - The firmware built from the embedded closed `.cslug` artifact and UART
-  repeatedly reported `Slug GPIO led -> low`, `Slug GPIO led4 -> low`, then
-  their corresponding high transitions.
+  repeatedly reported ordered GPIO 2 and GPIO 4 low/high transitions.
 - The PinPulse Shield GPIO 2 indicator was visibly blinking at the expected
   250 ms-on / 250 ms-off cadence.
 - The configured bounded heap is 73,744 bytes. The release ELF reserves

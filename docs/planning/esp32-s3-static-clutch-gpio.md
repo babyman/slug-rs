@@ -13,11 +13,11 @@ val gpio = import("slug.gpio")
 val time = import("slug.time")
 
 val blink = fn() {
-    gpio.write("led", true)
-    gpio.write("led4", true)
+    gpio.write(2, true)
+    gpio.write(4, true)
     time.sleepMs(250)
-    gpio.write("led", false)
-    gpio.write("led4", false)
+    gpio.write(2, false)
+    gpio.write(4, false)
     time.sleepMs(250)
     recur()
 }
@@ -37,8 +37,8 @@ loop construct.
 - `slug.gpio` and `slug.time` are normal imported modules with declared
   signatures. Firmware implements them as static Clutch providers; desktop can
   provide a simulator with the same public contract.
-- Firmware configuration owns `"led" -> GPIO 2`, `"led4" -> GPIO 4`, output polarity, and
-  electrical setup. Application source owns neither a pin number nor a mode.
+- Firmware configuration owns the bounded safe-output allow-list and electrical
+  setup. Application source selects its physical pin number but not its mode.
 - The firmware build resolves the selected source contracts on the desktop and
   writes one closed version-1 `.cslug` program artifact. The device decodes
   only that bounded, checked graph and explicitly registered providers.
@@ -57,11 +57,9 @@ plain digital output. A boolean GPIO write cannot make it blink: it requires a
 WS2812-compatible encoded waveform, normally emitted through a timing-capable
 peripheral such as RMT.
 
-This board therefore cannot use `slug.gpio.write("led", level)` for its
-onboard LED. The GPIO alias remains valid for a separately wired plain LED,
-but the onboard target requires an explicit RGB/LED capability before the
-hardware stages can proceed. GPIO 48 is reserved for that onboard LED profile;
-Slug source continues to name no raw GPIO number.
+This board therefore cannot use `slug.gpio.write(48, level)` for its onboard
+LED. The onboard target requires an explicit RGB/LED capability before the
+hardware stages can proceed. GPIO 48 remains outside the safe output allow-list.
 
 Acceptance: the board identity and LED protocol are recorded from the vendor
 documentation, and the plan does not incorrectly treat the RGB LED as a direct
@@ -88,7 +86,7 @@ Define the source-visible modules and foreign declarations for:
 
 ```slug
 // slug.gpio
-foreign write(name: str, level: bool): nil
+foreign write(pin: num, level: bool): nil
 
 // slug.time
 foreign sleepMs(milliseconds: num): nil
@@ -96,8 +94,8 @@ foreign sleepMs(milliseconds: num): nil
 
 Choose the repository's existing library-module convention when implementing
 these declarations. `sleepMs` validates a finite, non-negative integral value
-and an explicit upper bound before the host call. `write` accepts only a known
-alias and a boolean.
+and an explicit upper bound before the host call. `write` accepts only a
+host-approved whole GPIO number and a boolean.
 
 Acceptance: frontend/module tests prove imported signatures, argument errors,
 and unavailable-module diagnostics independently of ESP hardware.
@@ -118,7 +116,7 @@ unlisted provider remains a checked build diagnostic.
 ### 4. Implement a desktop GPIO simulation
 
 Provide a test-only or desktop static-provider implementation that records
-`write("led", level)` events and a deterministic delay abstraction. It exists
+`write(2, level)` events and a deterministic delay abstraction. It exists
 to prove source contracts and call order, not to emulate electrical behavior or
 wall-clock timing.
 
@@ -128,14 +126,14 @@ surface.
 
 ### 5. Link the ESP32-S3 providers
 
-At firmware startup, take ownership of the configured `esp-hal` GPIO pin and
-create a push-pull output with a known initial inactive level. Register
-`slug.gpio.write` to set that output level, applying board-profile polarity.
+At firmware startup, take ownership of each allow-listed `esp-hal` GPIO pin.
+Register `slug.gpio.write` to lazily create a push-pull output at low level
+on first use.
 Register `slug.time.sleepMs` through the HAL's appropriate blocking delay
 facility with the Stage 2 range checks preserved.
 
-Keep the GPIO object inside host-owned state for the VM lifetime. Do not leak
-an unbounded pin-selection or configuration API into Slug.
+Keep each claimed GPIO object inside host-owned state for the VM lifetime. Do
+not leak an unbounded pin-selection or configuration API into Slug.
 
 Acceptance: the selected target cross-builds, and a UART trace added only for
 the proof reports the high/low calls in the same order as the desktop test.
@@ -162,7 +160,7 @@ capabilities need distinct ownership, memory, scheduling, and safety rules.
 1. Module/signature and simulated-provider tests on the desktop.
 2. Frozen-generator positive and negative tests.
 3. ESP target `cargo check` and release cross-build.
-4. Firmware unit or host tests for alias and delay range checks.
+4. Firmware unit or host tests for pin allow-list and delay range checks.
 5. On-device UART transition trace and physical LED observation.
 
 ## Stage 6 verification record
@@ -183,7 +181,13 @@ follow-up before increasing the closed artifact's complexity.
 On 2026-10-08, the closed `.cslug` firmware was rebuilt and flashed to the
 same board. Its 372,848-byte application image emitted repeated UART sequences
 of `led` (GPIO 2) and `led4` (GPIO 4) low/high transitions, confirming that
-both statically registered output aliases execute through the artifact host.
+both selected GPIO outputs execute through the artifact host.
+
+On 2026-10-09, the numeric-GPIO firmware was built, flashed, and monitored
+through the board's USB port. Its 374,368-byte application image emitted
+repeated `Slug GPIO 2 -> low/high` and `Slug GPIO 4 -> low/high` sequences,
+confirming that the closed artifact uses physical numbers and that both lazily
+claimed outputs execute on device.
 
 Run `make check` before handing off Rust changes; for this documentation plan,
 validate links and run `git diff --check`.

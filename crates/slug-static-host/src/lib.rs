@@ -22,7 +22,7 @@ use slug_vm::{
     VmModuleExports, native_resource_registry,
 };
 
-/// Source contract for a board-alias GPIO output capability.
+/// Source contract for a host-selected physical GPIO output capability.
 pub const GPIO_MODULE_SOURCE: &str =
     include_str!("../../../clutch/slug.embedded.clutch/modules/gpio.slug");
 
@@ -65,8 +65,8 @@ fn provider(name: &str, source: &str) -> Result<StaticModuleProvider, ModuleLoad
 /// One GPIO output change observed by [`StaticHost`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GpioWrite {
-    /// Logical host-selected output alias, never a raw GPIO number.
-    pub name: String,
+    /// Physical GPIO number selected by the program.
+    pub pin: u8,
     /// Level requested by the Slug program.
     pub level: bool,
 }
@@ -96,25 +96,25 @@ struct StaticHostState {
 
 #[derive(Clone)]
 struct SimulationState {
-    output_aliases: Rc<HashSet<String>>,
+    output_pins: Rc<HashSet<u8>>,
     maximum_sleep_ms: u32,
     writes: Rc<RefCell<Vec<GpioWrite>>>,
     sleeps: Rc<RefCell<Vec<u32>>>,
 }
 
 impl StaticHost {
-    /// Creates a host with the selected GPIO aliases and maximum delay.
+    /// Creates a host with the selected physical GPIO outputs and maximum delay.
     ///
     /// # Errors
     ///
     /// Returns a checked error when the fixed module or function descriptors
     /// cannot be constructed.
     pub fn with_gpio_and_time(
-        output_aliases: impl IntoIterator<Item = impl Into<String>>,
+        output_pins: impl IntoIterator<Item = u8>,
         maximum_sleep_ms: u32,
     ) -> Result<Self, StaticHostBuildError> {
         let simulation = SimulationState {
-            output_aliases: Rc::new(output_aliases.into_iter().map(Into::into).collect()),
+            output_pins: Rc::new(output_pins.into_iter().collect()),
             maximum_sleep_ms,
             writes: Rc::new(RefCell::new(Vec::new())),
             sleeps: Rc::new(RefCell::new(Vec::new())),
@@ -396,8 +396,8 @@ fn define_foreign_batch(
 }
 
 fn gpio_write(call: &mut NativeCall<'_>) -> NativeStatus {
-    let name = match call.argument(0).and_then(slug_vm::NativeValueRef::as_str) {
-        Ok(name) => name.to_string(),
+    let pin = match call.argument(0).and_then(gpio_pin_from_value) {
+        Ok(pin) => pin,
         Err(error) => return call.raise(error),
     };
     let level = match call.argument(1).and_then(slug_vm::NativeValueRef::as_bool) {
@@ -408,14 +408,37 @@ fn gpio_write(call: &mut NativeCall<'_>) -> NativeStatus {
         return call
             .report_contract_violation("static GPIO callback has incompatible module state");
     };
-    if !state.output_aliases.contains(&name) {
+    if !state.output_pins.contains(&pin) {
         return call.raise(NativeError::new(
-            "gpio.alias",
-            format!("GPIO output alias `{name}` is unavailable"),
+            "gpio.pin",
+            format!("GPIO output pin {pin} is unavailable"),
         ));
     }
-    state.writes.borrow_mut().push(GpioWrite { name, level });
+    state.writes.borrow_mut().push(GpioWrite { pin, level });
     call.return_value(NativeOwnedValue::nil())
+}
+
+fn gpio_pin_from_value(value: slug_vm::NativeValueRef<'_>) -> Result<u8, NativeError> {
+    match value.kind() {
+        NativeValueKind::Int => u8::try_from(value.as_i64()?).map_err(|_| invalid_gpio_pin()),
+        NativeValueKind::Float => {
+            let value = value.as_f64()?;
+            if !value.is_finite()
+                || value < 0.0
+                || value > f64::from(u8::MAX)
+                || value.fract() != 0.0
+            {
+                return Err(invalid_gpio_pin());
+            }
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            Ok(value as u8)
+        }
+        _ => Err(invalid_gpio_pin()),
+    }
+}
+
+fn invalid_gpio_pin() -> NativeError {
+    NativeError::new("gpio.pin", "GPIO pin must be a whole number from 0 to 255")
 }
 
 fn sleep_ms(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -499,7 +522,7 @@ mod tests {
             "memory:entry",
             "val gpio = import(\"slug.gpio\")\n\
              val time = import(\"slug.time\")\n\
-             gpio.write(\"led\", true)\n\
+             gpio.write(2, true)\n\
              time.sleepMs(250)\n",
         )
         .expect("static module call signatures type check");
@@ -512,10 +535,23 @@ mod tests {
         let error = host
             .compile_source(
                 "memory:entry",
-                "val gpio = import(\"slug.gpio\")\ngpio.write(\"led\", \"on\")\n",
+                "val gpio = import(\"slug.gpio\")\ngpio.write(2, \"on\")\n",
             )
             .expect_err("string level must fail semantic checking");
         assert!(error.to_string().contains("bool"));
+    }
+
+    #[test]
+    fn gpio_pin_must_be_numeric() {
+        let host = host_with(vec![gpio_provider().expect("gpio provider")]);
+
+        let error = host
+            .compile_source(
+                "memory:entry",
+                "val gpio = import(\"slug.gpio\")\ngpio.write(\"led\", true)\n",
+            )
+            .expect_err("string pin must fail semantic checking");
+        assert!(error.to_string().contains("num"));
     }
 
     #[test]
@@ -537,16 +573,16 @@ mod tests {
 
     #[test]
     fn simulator_records_one_gpio_blink_cycle() {
-        let host = StaticHost::with_gpio_and_time(["led"], 1_000)
+        let host = StaticHost::with_gpio_and_time([2], 1_000)
             .expect("fixed simulator host setup succeeds");
 
         host.run_source(
             "memory:blink",
             "val gpio = import(\"slug.gpio\")\n\
              val time = import(\"slug.time\")\n\
-             gpio.write(\"led\", true)\n\
+             gpio.write(2, true)\n\
              time.sleepMs(250)\n\
-             gpio.write(\"led\", false)\n\
+             gpio.write(2, false)\n\
              time.sleepMs(250)\n",
         )
         .expect("one blink cycle executes through static module contracts");
@@ -555,11 +591,11 @@ mod tests {
             host.take_gpio_writes(),
             vec![
                 GpioWrite {
-                    name: "led".into(),
+                    pin: 2,
                     level: true,
                 },
                 GpioWrite {
-                    name: "led".into(),
+                    pin: 2,
                     level: false,
                 },
             ]
@@ -568,18 +604,18 @@ mod tests {
     }
 
     #[test]
-    fn simulator_records_two_selected_output_aliases() {
-        let host = StaticHost::with_gpio_and_time(["led", "led4"], 1_000)
+    fn simulator_records_two_selected_output_pins() {
+        let host = StaticHost::with_gpio_and_time([2, 4], 1_000)
             .expect("fixed simulator host setup succeeds");
 
         host.run_source(
             "memory:two-outputs",
             r#"
                 val gpio = import("slug.gpio")
-                gpio.write("led", true)
-                gpio.write("led4", true)
-                gpio.write("led", false)
-                gpio.write("led4", false)
+                gpio.write(2, true)
+                gpio.write(4, true)
+                gpio.write(2, false)
+                gpio.write(4, false)
             "#,
         )
         .expect("both selected outputs execute through static module contracts");
@@ -588,19 +624,19 @@ mod tests {
             host.take_gpio_writes(),
             vec![
                 GpioWrite {
-                    name: "led".into(),
+                    pin: 2,
                     level: true,
                 },
                 GpioWrite {
-                    name: "led4".into(),
+                    pin: 4,
                     level: true,
                 },
                 GpioWrite {
-                    name: "led".into(),
+                    pin: 2,
                     level: false,
                 },
                 GpioWrite {
-                    name: "led4".into(),
+                    pin: 4,
                     level: false,
                 },
             ]
@@ -608,21 +644,40 @@ mod tests {
     }
 
     #[test]
-    fn simulator_rejects_an_unselected_output_alias() {
-        let host = StaticHost::with_gpio_and_time(["led"], 1_000)
+    fn simulator_rejects_an_unselected_output_pin() {
+        let host = StaticHost::with_gpio_and_time([2], 1_000)
             .expect("fixed simulator host setup succeeds");
 
         let error = host
             .run_source(
                 "memory:unknown-output",
-                "val gpio = import(\"slug.gpio\")\ngpio.write(\"unknown\", true)\n",
+                "val gpio = import(\"slug.gpio\")\ngpio.write(4, true)\n",
             )
-            .expect_err("unselected output alias must be a checked runtime failure");
+            .expect_err("unselected output pin must be a checked runtime failure");
 
         assert!(
             error
                 .to_string()
-                .contains("GPIO output alias `unknown` is unavailable")
+                .contains("GPIO output pin 4 is unavailable")
+        );
+    }
+
+    #[test]
+    fn simulator_rejects_a_fractional_output_pin() {
+        let host = StaticHost::with_gpio_and_time([2], 1_000)
+            .expect("fixed simulator host setup succeeds");
+
+        let error = host
+            .run_source(
+                "memory:fractional-output",
+                "val gpio = import(\"slug.gpio\")\ngpio.write(2.5, true)\n",
+            )
+            .expect_err("fractional pin must be a checked runtime failure");
+
+        assert!(
+            error
+                .to_string()
+                .contains("GPIO pin must be a whole number from 0 to 255")
         );
     }
 }

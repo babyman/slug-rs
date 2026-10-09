@@ -45,7 +45,8 @@ The device gets desktop-equivalent parsing, semantic checks, lowering, and
 closed-graph validation without carrying a parser, resolver, or source files.
 New source features need support in the generic frozen-image renderer and
 loader rather than new per-example recognizers. Static provider manifests
-remain the authority for firmware-native modules and logical board aliases.
+remain the authority for firmware-native modules and their bounded board
+capability policies.
 
 The renderer and loader need explicit bounds and checked validation before a
 program reaches the VM. Generated tables must not expose private VM layouts or

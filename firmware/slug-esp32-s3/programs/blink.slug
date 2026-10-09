@@ -2,11 +2,11 @@ val gpio = import("slug.gpio")
 val time = import("slug.time")
 
 val blink = fn() {
-    gpio.write("led", true)
-    gpio.write("led4", true)
+    gpio.write(2, true)
+    gpio.write(4, true)
     time.sleepMs(250)
-    gpio.write("led", false)
-    gpio.write("led4", false)
+    gpio.write(2, false)
+    gpio.write(4, false)
     time.sleepMs(250)
     recur()
 }
