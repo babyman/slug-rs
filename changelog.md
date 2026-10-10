@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Verified the closed `.cslug` PinPulse light walk on the ESP32-S3: all 29
+  selected numeric outputs chase, flash together, and clear on device.
+
 - Restored the embedded host's non-concurrent `slug.builtin` contract. Closed
   ESP32-S3 artifacts now support implicit and explicit `len`, `print`, and
   `println` without linking the source frontend.

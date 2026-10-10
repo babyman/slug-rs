@@ -190,9 +190,12 @@ repeated `Slug GPIO 2 -> low/high` and `Slug GPIO 4 -> low/high` sequences,
 confirming that the closed artifact uses physical numbers and that both lazily
 claimed outputs execute on device.
 
-The PinPulse 29-output light-walk source is covered by an artifact-host
-regression that reaches its first GPIO callback. Its corrected firmware image
-awaits a separate on-device light-walk observation after USB re-enumeration.
+On 2026-10-10, the corrected 376,384-byte PinPulse release image was flashed
+through `/dev/cu.usbmodem101` and monitored on the same board. UART repeatedly
+reported the ordered 29-pin chase, the all-high lap, and the all-low lap,
+including GPIO 0 and GPIO 48. No `len` resolution or artifact-host runtime
+error occurred; the source program executes its implicit builtin calls on the
+device.
 
 Run `make check` before handing off Rust changes; for this documentation plan,
 validate links and run `git diff --check`.

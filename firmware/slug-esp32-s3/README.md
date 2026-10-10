@@ -114,6 +114,8 @@ ESP32-S3 N16R8 and PinPulse Shield over `/dev/cu.usbmodem1101`:
 - The configured bounded heap is 73,744 bytes. The release ELF reserves
   331,720 bytes for `.stack`; peak heap use is not yet instrumented.
 
-The current light-walk program has a desktop artifact-host regression that
-proves it reaches its first GPIO callback. Reflash it and use the monitor above
-to complete its separate 29-output on-device observation.
+On 2026-10-10, the corrected 376,384-byte light-walk release image was flashed
+through `/dev/cu.usbmodem101`. Its UART trace repeatedly covered the ordered
+29-pin chase, the all-high lap, and the all-low lap, including GPIO 0 and GPIO
+48. The `len(pins)` calls ran through the embedded builtin provider without a
+runtime error.
