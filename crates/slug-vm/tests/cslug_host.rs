@@ -181,6 +181,62 @@ fn artifact_host_registers_static_module_qualified_foreign_functions() {
 }
 
 #[test]
+fn static_providers_must_exactly_match_artifact_foreign_contracts() {
+    let compiled = || {
+        host([("slug.gpio", "export foreign write = fn():num\n")])
+            .compile_artifact(
+                "entry.slug",
+                "val gpio = import(\"slug.gpio\")\nval main = fn() { gpio.write() }\n",
+            )
+            .expect("compile artifact")
+    };
+    let missing = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+        .expect("valid artifact")
+        .install_static_providers([])
+        .expect_err("missing provider is rejected");
+    assert!(matches!(missing, cslug::StaticProviderError::Missing(_)));
+
+    let extra_host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+        .expect("valid artifact");
+    let extra_module = NativeModule::new("slug.extra", ()).expect("valid module");
+    let extra = extra_module
+        .function("write", NativeArity::Exact(0), returns_seven)
+        .expect("valid function");
+    assert!(matches!(
+        extra_host.install_static_providers([cslug::StaticProvider::new(vec![extra])]),
+        Err(cslug::StaticProviderError::Extra(_))
+    ));
+
+    let duplicate_host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+        .expect("valid artifact");
+    let gpio = NativeModule::new("slug.gpio", ()).expect("valid module");
+    let first = gpio
+        .function("write", NativeArity::Exact(0), returns_seven)
+        .expect("valid function");
+    let second_module = NativeModule::new("slug.gpio", ()).expect("valid module");
+    let second = second_module
+        .function("write", NativeArity::Exact(0), returns_seven)
+        .expect("valid function");
+    assert!(matches!(
+        duplicate_host.install_static_providers([cslug::StaticProvider::new(vec![first, second])]),
+        Err(cslug::StaticProviderError::Duplicate(_))
+    ));
+
+    let host = cslug::ArtifactHost::new(compiled(), Rc::new(EmptyVmConfiguration))
+        .expect("valid artifact");
+    let gpio = NativeModule::new("slug.gpio", ()).expect("valid module");
+    let write = gpio
+        .function("write", NativeArity::Exact(0), returns_seven)
+        .expect("valid function");
+    host.install_static_providers([cslug::StaticProvider::new(vec![write])])
+        .expect("matching provider installs");
+    assert_eq!(
+        host.run().expect("matching provider executes"),
+        Value::Int(7)
+    );
+}
+
+#[test]
 fn firmware_blink_graph_encodes_within_device_limits() {
     let artifact = firmware_host()
         .compile_artifact(

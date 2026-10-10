@@ -59,9 +59,9 @@ unselected import fails at build time with its source location.
 
 ### 3. Make static provider libraries declarative
 
-- [ ] Define a small target-native provider registration interface that reports
+- [x] Define a small target-native provider registration interface that reports
   its module/function identities and registers callbacks into `ArtifactHost`.
-- [ ] Validate descriptor contracts against provider declarations in both
+- [x] Validate artifact foreign contracts against provider declarations in both
   directions: no missing declared foreign function and no extra registration.
 - [ ] Keep native callbacks, resources, and HAL state out of `.cslug`.
 - [ ] Convert ESP32-S3 builtins, GPIO, and time from firmware-local special

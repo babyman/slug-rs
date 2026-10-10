@@ -229,6 +229,42 @@ pub struct ArtifactHost {
     state: Rc<ArtifactHostState>,
 }
 
+/// One statically linked native provider selected by an embedded target.
+#[derive(Clone)]
+pub struct StaticProvider {
+    functions: Vec<NativeFunction>,
+}
+
+impl StaticProvider {
+    /// Creates a provider from its module-qualified native functions.
+    #[must_use]
+    pub fn new(functions: Vec<NativeFunction>) -> Self {
+        Self { functions }
+    }
+}
+
+/// Checked failure while matching static providers to an artifact contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StaticProviderError {
+    Missing(String),
+    Extra(String),
+    Duplicate(String),
+    Descriptor(String),
+}
+
+impl core::fmt::Display for StaticProviderError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Missing(name) => write!(formatter, "missing static provider function `{name}`"),
+            Self::Extra(name) => write!(formatter, "extra static provider function `{name}`"),
+            Self::Duplicate(name) => {
+                write!(formatter, "duplicate static provider function `{name}`")
+            }
+            Self::Descriptor(message) => write!(formatter, "invalid static provider: {message}"),
+        }
+    }
+}
+
 struct ArtifactHostState {
     artifact: Artifact,
     configuration: Rc<dyn VmConfiguration>,
@@ -302,6 +338,40 @@ impl ArtifactHost {
         self.define_foreign_batch(functions)
     }
 
+    /// Validates and atomically installs every function selected by static
+    /// embedded providers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked failure when the provider set is missing, adds, or
+    /// duplicates a foreign binding relative to this artifact. No functions are
+    /// registered on failure.
+    pub fn install_static_providers(
+        &self,
+        providers: impl IntoIterator<Item = StaticProvider>,
+    ) -> Result<(), StaticProviderError> {
+        let required = self.required_foreign_functions();
+        let functions = providers
+            .into_iter()
+            .flat_map(|provider| provider.functions)
+            .collect::<Vec<_>>();
+        let mut supplied = HashSet::new();
+        for function in &functions {
+            let name = function.qualified_name();
+            if !supplied.insert(name.clone()) {
+                return Err(StaticProviderError::Duplicate(name));
+            }
+            if !required.contains(&name) {
+                return Err(StaticProviderError::Extra(name));
+            }
+        }
+        if let Some(name) = required.iter().find(|name| !supplied.contains(*name)) {
+            return Err(StaticProviderError::Missing(name.clone()));
+        }
+        self.register_foreign_batch(functions)
+            .map_err(|error| StaticProviderError::Descriptor(error.to_string()))
+    }
+
     /// Registers a native function provided by the artifact's implicit builtin module.
     ///
     /// # Errors
@@ -353,6 +423,28 @@ impl ArtifactHost {
             .borrow_mut()
             .insert(module.key.clone(), exports.clone());
         Ok(exports)
+    }
+
+    fn required_foreign_functions(&self) -> HashSet<String> {
+        self.state
+            .artifact
+            .modules
+            .iter()
+            .flat_map(|module| {
+                module
+                    .program
+                    .declarations()
+                    .iter()
+                    .filter(|declaration| declaration.foreign)
+                    .map(move |declaration| {
+                        declaration
+                            .bindings
+                            .iter()
+                            .map(|binding| format!("{}.{}", module.name, binding))
+                    })
+            })
+            .flatten()
+            .collect()
     }
 }
 
