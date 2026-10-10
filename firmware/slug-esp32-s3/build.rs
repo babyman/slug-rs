@@ -17,7 +17,7 @@ fn compile_blink_artifact() {
 
     use slug_frontend::ModuleHost;
     use slug_loader::StaticModuleResolver;
-    use slug_vm::{EmptyVmConfiguration, cslug};
+    use slug_vm::{EmptyVmConfiguration, NativeArity, NativeModule, VmHost, cslug};
 
     let manifest = std::path::PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"),
@@ -26,17 +26,36 @@ fn compile_blink_artifact() {
     let contracts = manifest.join("../../clutch/slug.embedded.clutch/modules");
     let gpio_path = contracts.join("gpio.slug");
     let time_path = contracts.join("time.slug");
-    for path in [&source_path, &gpio_path, &time_path] {
+    let builtin_path = contracts.join("builtin.slug");
+    for path in [&source_path, &gpio_path, &time_path, &builtin_path] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
 
     let source = read_source(&source_path);
     let providers = [
+        provider("slug.builtin", &builtin_path),
         provider("slug.gpio", &gpio_path),
         provider("slug.time", &time_path),
     ];
     let resolver = StaticModuleResolver::new(providers).expect("embedded providers are distinct");
     let host = ModuleHost::with_resolver(Rc::new(resolver), Rc::new(EmptyVmConfiguration));
+    let builtins = NativeModule::new("slug.builtin", ()).expect("static builtin module is valid");
+    host.define_foreign_batch(vec![
+        builtins
+            .function("print", NativeArity::Variadic { minimum: 0 }, build_builtin)
+            .expect("print descriptor is valid"),
+        builtins
+            .function(
+                "println",
+                NativeArity::Variadic { minimum: 0 },
+                build_builtin,
+            )
+            .expect("println descriptor is valid"),
+        builtins
+            .function("len", NativeArity::Exact(1), build_builtin)
+            .expect("len descriptor is valid"),
+    ])
+    .expect("builtin descriptors are distinct");
     let artifact = host
         .compile_artifact(&source_path.to_string_lossy(), &source)
         .unwrap_or_else(|error| panic!("cannot compile {}: {error}", source_path.display()));
@@ -44,6 +63,10 @@ fn compile_blink_artifact() {
     let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set"))
         .join("slug_blink.cslug");
     std::fs::write(output, bytes).expect("writes embedded blink artifact");
+}
+
+fn build_builtin(call: &mut slug_vm::NativeCall<'_>) -> slug_vm::NativeStatus {
+    call.return_value(slug_vm::NativeOwnedValue::nil())
 }
 
 fn provider(name: &str, path: &std::path::Path) -> slug_loader::StaticModuleProvider {

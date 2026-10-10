@@ -11,10 +11,15 @@ loader. It is not a member of the desktop Cargo workspace.
 
 `slug.gpio.write(pin, level)` uses physical GPIO numbers. The PinPulse
 profile permits the 29 outputs in its light-walk order: GPIO 4--7, 15--18, 8,
-3, 46, 9--14, 1, 2, 42--38, 0, 45, 48, 47, and 21. Serial GPIO 43/44, native
+3, 46, 9--14, 1, 2, 42, 41, 40, 39, 38, 0, 45, 48, 47, and 21. Serial GPIO 43/44, native
 USB GPIO 19/20, and PSRAM GPIO 35--37 remain unavailable. Outputs are
 configured only on first write. The default program initializes every selected
 output low, chases one LED at a time, lights all LEDs, and clears them.
+
+The firmware also provides the non-concurrent `slug.builtin` surface:
+implicit and explicit `print`, `println`, and `len`, plus `Error`. Diagnostic
+output uses the ESP serial stream. `chan` and `close` remain unavailable until
+the embedded concurrency profile exists.
 
 ## Prerequisites
 

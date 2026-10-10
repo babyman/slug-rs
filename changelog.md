@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Restored the embedded host's non-concurrent `slug.builtin` contract. Closed
+  ESP32-S3 artifacts now support implicit and explicit `len`, `print`, and
+  `println` without linking the source frontend.
+
 - Added the PinPulse Shield's Slug light-walk program. It initializes and
   chases all 29 board-validated outputs, then flashes the full lap.
 

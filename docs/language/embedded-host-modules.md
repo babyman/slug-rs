@@ -13,6 +13,17 @@ module source and every declared foreign implementation required to initialize
 it. An unselected module MUST fail through the ordinary checked module-import
 error. A host MUST NOT silently provide a substitute capability.
 
+## `slug.builtin`
+
+The initial embedded profile provides the ordinary implicit and explicitly
+importable `slug.builtin` module with `Error`, `print`, `println`, and `len`.
+`print` and `println` write to the host diagnostic stream. `len` has the same
+string, bytes, list, and map behavior as the desktop host.
+
+The profile deliberately omits `chan` and `close` while embedded concurrency is
+unavailable. VM-provided `cfg`, `int`, and `stacktrace` remain available; the
+current firmware supplies an empty configuration and empty entry arguments.
+
 ## `slug.gpio`
 
 When selected, `slug.gpio` exports:

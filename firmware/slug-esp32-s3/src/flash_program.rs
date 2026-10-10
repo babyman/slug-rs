@@ -10,13 +10,16 @@ const BLINK_ARTIFACT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/slug_bli
 
 /// Decodes the immutable blink artifact from its firmware-resident bytes.
 pub fn load_blink_artifact() -> Result<Artifact, Error> {
-    decode(BLINK_ARTIFACT, Limits {
-        artifact_bytes: 32 * 1024,
-        section_bytes: 24 * 1024,
-        modules: 3,
-        imports: 2,
-        string_bytes: 512,
-        chunks_per_module: 32,
-        entries_per_table: 512,
-    })
+    decode(
+        BLINK_ARTIFACT,
+        Limits {
+            artifact_bytes: 32 * 1024,
+            section_bytes: 24 * 1024,
+            modules: 4,
+            imports: 3,
+            string_bytes: 512,
+            chunks_per_module: 32,
+            entries_per_table: 512,
+        },
+    )
 }

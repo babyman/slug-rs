@@ -33,6 +33,10 @@ loop construct.
 - `slug.gpio` and `slug.time` are normal imported modules with declared
   signatures. Firmware implements them as static Clutch providers; desktop can
   provide a simulator with the same public contract.
+- The build selects a non-concurrent `slug.builtin` contract and matching
+  native functions, so ordinary implicit and explicit `len`, `print`, and
+  `println` retain their desktop behavior. `chan` and `close` remain
+  intentionally absent until the planned embedded concurrency profile.
 - Firmware configuration owns the bounded PinPulse output allow-list and
   electrical setup. Application source selects its physical pin number but not
   its mode.

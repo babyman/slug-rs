@@ -6,14 +6,13 @@ val pins = [
     4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14,
     1, 2, 42, 41, 40, 39, 38, 0, 45, 48, 47, 21,
 ]
-val pin_count = 29
 
 // phase 0 initializes all outputs low, 1 chases one LED, 2 lights the lap,
 // and 3 clears the lap. `recur` keeps this forever-running program in one VM
 // frame while the host retains each claimed GPIO output.
 val chase = fn(index, phase) {
     if (phase == 0) {
-        if (index == pin_count) {
+        if (index == len(pins)) {
             time.sleepMs(1000)
             recur(0, 1)
         } else {
@@ -22,7 +21,7 @@ val chase = fn(index, phase) {
         }
     } else {
         if (phase == 1) {
-            if (index == pin_count) {
+            if (index == len(pins)) {
                 recur(0, 2)
             } else {
                 gpio.write(pins[index], true)
@@ -32,7 +31,7 @@ val chase = fn(index, phase) {
             }
         } else {
             if (phase == 2) {
-                if (index == pin_count) {
+                if (index == len(pins)) {
                     time.sleepMs(600)
                     recur(0, 3)
                 } else {
@@ -40,7 +39,7 @@ val chase = fn(index, phase) {
                     recur(index + 1, 2)
                 }
             } else {
-                if (index == pin_count) {
+                if (index == len(pins)) {
                     time.sleepMs(300)
                     recur(0, 1)
                 } else {
