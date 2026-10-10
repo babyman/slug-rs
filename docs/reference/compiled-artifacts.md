@@ -66,6 +66,28 @@ logical module identity is absent from that graph, including a dynamically
 computed name, must fail as a checked module-load error. Version 1 must not
 fall back to a source resolver, Clutch, filesystem, or host module registry.
 
+### Embedded firmware builds
+
+An embedded firmware build MAY encode a closed version-1 artifact on its
+desktop build host, link its bytes into firmware flash, and decode those bytes
+under target-specific finite limits during boot. This is a build-input use of
+`.cslug`: a device MUST NOT treat an external file, storage partition, network
+payload, or dynamically discovered provider as an artifact source merely
+because it supports the embedded path.
+
+The artifact retains foreign declarations and their module-qualified
+identities, but it never serializes native functions, native resources, or
+native provider state. The firmware target selects and statically links native
+providers separately, and it must register implementations matching the
+artifact's selected source contracts before execution. A missing, extra, or
+duplicate provider is a target-build or host-installation failure, not a
+reason to resolve a module dynamically.
+
+The selected entry source, source contracts, provider libraries, and decode
+limits are target-build configuration, not fields in the version-1 artifact
+schema. They therefore do not alter artifact portability between compatible
+VMs, while still allowing a firmware target to apply stricter limits.
+
 ## Version-1 encoding eligibility
 
 Version 1 is supported for closed graphs emitted by the Slug frontend. The

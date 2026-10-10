@@ -66,6 +66,7 @@ a specified feature is implemented.
 | [esp32-s3-proof-of-concept.md](planning/esp32-s3-proof-of-concept.md) | Bounded bare-metal ESP32-S3 plan for flash-resident Slug source and UART output. |
 | [general-frozen-firmware-programs.md](planning/general-frozen-firmware-programs.md) | Staged migration from the ESP32-S3 blink-only image to a selectable closed program. |
 | [cslug-whole-program-artifacts.md](planning/cslug-whole-program-artifacts.md) | Staged `.cslug` codec, verifier, and ESP-evaluation plan. |
+| [embedded-static-build-toolchain.md](planning/embedded-static-build-toolchain.md) | Actionable plan for descriptor-driven `.slug` to firmware builds with static providers. |
 | [agentic-development-refactoring.md](planning/completed/agentic-development-refactoring.md) | Organizational refactoring plan for discoverable subsystem boundaries and focused validation. |
 | [micro-runtime-followups.md](planning/completed/micro-runtime-followups.md) | Completed correctness, lifecycle, and Cargo feature-matrix follow-ups for the slim VM runtime. |
 | [FFI channel producer prototype ABI 0.13 plan](planning/ffi-channel-producer-v0.13.md) | Prototype ABI 0.13 native-producer work and the completed `slug.io.stdin` Clutch extraction. |

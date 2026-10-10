@@ -13,6 +13,26 @@ module source and every declared foreign implementation required to initialize
 it. An unselected module MUST fail through the ordinary checked module-import
 error. A host MUST NOT silently provide a substitute capability.
 
+## Embedded build selection
+
+An embedded build selects its optional modules before compilation, outside the
+Slug source program. The selected module contracts and their native
+implementations form the complete capability set for that firmware image. A
+program that imports any other module MUST receive the ordinary checked
+module-import error during the host-side build; the device MUST NOT attempt
+source resolution, provider discovery, or a fallback capability at runtime.
+
+Every selected `foreign` declaration MUST have exactly one statically linked
+native implementation for the target. Conversely, a target MUST NOT register a
+foreign function that is absent from its selected source contracts. Native
+implementations are target-owned code and state; `.cslug` contains the closed
+source-derived graph and foreign identities, not native code or hardware
+handles.
+
+These rules add no source syntax. An embedded target chooses its entry source,
+contracts, provider libraries, and resource limits through its build
+descriptor.
+
 ## `slug.builtin`
 
 The initial embedded profile provides the ordinary implicit and explicitly
