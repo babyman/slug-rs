@@ -19,6 +19,13 @@ fn compile_target_artifact() {
         .unwrap_or_else(|_| "esp32-s3-pinpulse.toml".into());
     let descriptor_path = root.join(descriptor_name);
     let descriptor = TargetDescriptor::load(&descriptor_path).expect("valid target descriptor");
+    descriptor
+        .validate_provider_libraries(&[
+            ("slug.builtin", "slug-esp32-s3::builtin"),
+            ("slug.gpio", "slug-esp32-s3::gpio"),
+            ("slug.time", "slug-esp32-s3::time"),
+        ])
+        .expect("descriptor providers linked by this board package");
     println!("cargo:rerun-if-changed={}", descriptor_path.display());
 
     let builtins = NativeModule::new("slug.builtin", ()).expect("valid builtin module");

@@ -37,7 +37,7 @@ artifacts](../decisions/2026-10-09-embedded-static-build-toolchain.md).
   limits, and an ordered list of source-contract/provider pairs.
 - [x] Reject duplicate module names, paths outside the descriptor root,
   unsupported descriptor versions, and zero/unbounded limits.
-- [ ] Reject providers that are not linked by the selected board package.
+- [x] Reject providers that are not linked by the selected board package.
 - [x] Use TOML for the first descriptor and reserve stable diagnostic codes for
   descriptor failures.
 

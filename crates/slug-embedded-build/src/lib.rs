@@ -202,6 +202,33 @@ impl TargetDescriptor {
         })
     }
 
+    /// Verifies that a board package links exactly the providers named by this
+    /// descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error for a missing, extra, or differently named
+    /// provider library.
+    pub fn validate_provider_libraries(
+        &self,
+        linked: &[(&str, &str)],
+    ) -> Result<(), DescriptorError> {
+        let selected = self
+            .providers
+            .iter()
+            .map(|provider| (provider.module.as_str(), provider.library.as_str()))
+            .collect::<HashSet<_>>();
+        let linked = linked.iter().copied().collect::<HashSet<_>>();
+        if selected == linked {
+            Ok(())
+        } else {
+            Err(DescriptorError::new(
+                "provider-link",
+                "selected provider libraries do not match the board package",
+            ))
+        }
+    }
+
     /// Compiles the selected entry graph and validates its encoded bytes under
     /// this target's finite decoder limits.
     ///
@@ -531,7 +558,7 @@ mod tests {
             Self { root }
         }
 
-        fn descriptor(&self, providers: &str) -> String {
+        fn descriptor(providers: &str) -> String {
             format!(
                 "format = {FORMAT_VERSION}\n\
                  [firmware]\n\
@@ -561,7 +588,7 @@ mod tests {
         let fixture = Fixture::new("valid");
         let descriptor = TargetDescriptor::parse(
             &fixture.root,
-            &fixture.descriptor(
+            &Fixture::descriptor(
                 "[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n",
             ),
         )
@@ -589,8 +616,7 @@ mod tests {
         let fixture = Fixture::new("invalid");
         let incompatible = TargetDescriptor::parse(
             &fixture.root,
-            &fixture
-                .descriptor("[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n")
+            &Fixture::descriptor("[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n")
                 .replacen("format = 1", "format = 2", 1),
         )
         .expect_err("reject version");
@@ -598,7 +624,7 @@ mod tests {
 
         let duplicate = TargetDescriptor::parse(
             &fixture.root,
-            &fixture.descriptor(
+            &Fixture::descriptor(
                 "[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n\
                  [[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"second-provider\"\n",
             ),
@@ -608,8 +634,7 @@ mod tests {
 
         let unbounded = TargetDescriptor::parse(
             &fixture.root,
-            &fixture
-                .descriptor("[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n")
+            &Fixture::descriptor("[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n")
                 .replacen("artifact_bytes = 16384", "artifact_bytes = 0", 1),
         )
         .expect_err("reject zero limit");
@@ -627,7 +652,7 @@ mod tests {
             .to_string_lossy();
         let error = TargetDescriptor::parse(
             &fixture.root,
-            &fixture.descriptor(&format!(
+            &Fixture::descriptor(&format!(
                 "[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"../{outside_name}\"\nlibrary = \"gpio-provider\"\n"
             )),
         )
@@ -646,7 +671,7 @@ mod tests {
         .expect("write entry source");
         let descriptor = TargetDescriptor::parse(
             &fixture.root,
-            &fixture.descriptor(
+            &Fixture::descriptor(
                 "[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n",
             ),
         )
@@ -662,7 +687,7 @@ mod tests {
         let fixture = Fixture::new("closure");
         let descriptor = TargetDescriptor::parse(
             &fixture.root,
-            &fixture.descriptor(
+            &Fixture::descriptor(
                 "[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n",
             ),
         )
@@ -686,5 +711,27 @@ mod tests {
             descriptor.compile_artifact(),
             Err(CompileError::Source(_))
         ));
+    }
+
+    #[test]
+    fn validates_selected_provider_libraries() {
+        let fixture = Fixture::new("providers");
+        let descriptor = TargetDescriptor::parse(
+            &fixture.root,
+            &Fixture::descriptor(
+                "[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n",
+            ),
+        )
+        .expect("parse descriptor");
+        descriptor
+            .validate_provider_libraries(&[("slug.gpio", "gpio-provider")])
+            .expect("matching provider library");
+        assert_eq!(
+            descriptor
+                .validate_provider_libraries(&[("slug.gpio", "other-provider")])
+                .expect_err("mismatched provider library")
+                .code(),
+            "provider-link"
+        );
     }
 }
