@@ -27,30 +27,17 @@ val chase = fn(index) {
     }
 }
 
-val cycle = fn(phase) {
-    match phase {
-        0 => {
-            setAll(0, false)
-            time.sleepMs(1000)
-            recur(1)
-        }
-        1 => {
-            chase(0)
-            recur(2)
-        }
-        2 => {
-            setAll(0, true)
-            time.sleepMs(600)
-            recur(3)
-        }
-        _ => {
-            setAll(0, false)
-            time.sleepMs(300)
-            recur(1)
-        }
-    }
+val cycle = fn() {
+    chase(0)
+    setAll(0, true)
+    time.sleepMs(600)
+    setAll(0, false)
+    time.sleepMs(300)
+    recur()
 }
 
 val main = fn() {
-    cycle(0)
+    setAll(0, false)
+    time.sleepMs(1000)
+    cycle()
 }
