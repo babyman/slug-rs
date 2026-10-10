@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Proposed two native-interface decisions: additive `core` and `events`
+  profiles for hosts from microcontroller to server, and typed native calls
+  bound through the clutch manifest, with buffer resources, struct copies, and
+  Slug-created channel producers. The 0.13 prototype C ABI is deprecated and
+  frozen pending replacement.
+
 - Added an ESP32-S3 cross-check to CI, centralized the PinPulse board output
   policy so its allow-list and HAL ownership map cannot drift, and reset the
   proof firmware after reporting startup or VM failures instead of spinning.
