@@ -13,13 +13,9 @@ val gpio = import("slug.gpio")
 val time = import("slug.time")
 
 val blink = fn() {
-    gpio.write(2, true)
     gpio.write(4, true)
-    time.sleepMs(250)
-    gpio.write(2, false)
+    time.sleepMs(80)
     gpio.write(4, false)
-    time.sleepMs(250)
-    recur()
 }
 
 val main = fn() {
@@ -37,8 +33,9 @@ loop construct.
 - `slug.gpio` and `slug.time` are normal imported modules with declared
   signatures. Firmware implements them as static Clutch providers; desktop can
   provide a simulator with the same public contract.
-- Firmware configuration owns the bounded safe-output allow-list and electrical
-  setup. Application source selects its physical pin number but not its mode.
+- Firmware configuration owns the bounded PinPulse output allow-list and
+  electrical setup. Application source selects its physical pin number but not
+  its mode.
 - The firmware build resolves the selected source contracts on the desktop and
   writes one closed version-1 `.cslug` program artifact. The device decodes
   only that bounded, checked graph and explicitly registered providers.
@@ -188,6 +185,10 @@ through the board's USB port. Its 374,368-byte application image emitted
 repeated `Slug GPIO 2 -> low/high` and `Slug GPIO 4 -> low/high` sequences,
 confirming that the closed artifact uses physical numbers and that both lazily
 claimed outputs execute on device.
+
+The PinPulse 29-output light-walk source is covered by an artifact-host
+regression that reaches its first GPIO callback. Its corrected firmware image
+awaits a separate on-device light-walk observation after USB re-enumeration.
 
 Run `make check` before handing off Rust changes; for this documentation plan,
 validate links and run `git diff --check`.

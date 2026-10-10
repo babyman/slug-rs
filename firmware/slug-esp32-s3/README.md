@@ -9,10 +9,12 @@ ESP32-S3. It exposes a bounded set of safe, push-pull GPIO outputs and a
 blocking delay provider; it links neither the source frontend nor a desktop
 loader. It is not a member of the desktop Cargo workspace.
 
-`slug.gpio.write(pin, level)` uses physical GPIO numbers. This board profile
-permits GPIO 1, 2, 4--18, 21, 38--42, and 47; all others are rejected as
-checked host failures. Outputs are configured only on first write. The default
-blink program drives GPIO 2 and GPIO 4 high and low.
+`slug.gpio.write(pin, level)` uses physical GPIO numbers. The PinPulse
+profile permits the 29 outputs in its light-walk order: GPIO 4--7, 15--18, 8,
+3, 46, 9--14, 1, 2, 42--38, 0, 45, 48, 47, and 21. Serial GPIO 43/44, native
+USB GPIO 19/20, and PSRAM GPIO 35--37 remain unavailable. Outputs are
+configured only on first write. The default program initializes every selected
+output low, chases one LED at a time, lights all LEDs, and clears them.
 
 ## Prerequisites
 
@@ -79,21 +81,24 @@ espflash monitor --non-interactive --chip esp32s3 --port /dev/cu.usbmodem1101 \
   --elf target/xtensa-esp32s3-none-elf/release/slug-esp32-s3
 ```
 
-The serial monitor repeatedly prints the physical transitions:
+The serial monitor prints the physical transitions, beginning with the
+initialization pass:
 
 ```text
-Slug GPIO 2 -> low
+Slug GPIO 4 -> low
+Slug GPIO 5 -> low
+...
 Slug GPIO 4 -> high
 ```
 
-The program requests each level for 250 ms before tail-recurring, so the LED
-should blink with a 500 ms period. See
+The chase holds each LED high for 80 ms, then shows the whole lap for 600 ms
+and clears it for 300 ms before tail-recurring. See
 [`docs/planning/esp32-s3-static-clutch-gpio.md`](../../docs/planning/esp32-s3-static-clutch-gpio.md).
 
 ## Hardware verification
 
-Verified on 2026-10-09 with the Lonely Binary ESP32-S3 N16R8 and PinPulse
-Shield over `/dev/cu.usbmodem1101`:
+The earlier two-pin proof was verified on 2026-10-09 with the Lonely Binary
+ESP32-S3 N16R8 and PinPulse Shield over `/dev/cu.usbmodem1101`:
 
 - `espflash` identified an ESP32-S3 revision 0.2 with 16 MB flash and wrote a
   374,368-byte application image (2.28% of the factory partition).
@@ -103,3 +108,7 @@ Shield over `/dev/cu.usbmodem1101`:
   250 ms-on / 250 ms-off cadence.
 - The configured bounded heap is 73,744 bytes. The release ELF reserves
   331,720 bytes for `.stack`; peak heap use is not yet instrumented.
+
+The current light-walk program has a desktop artifact-host regression that
+proves it reaches its first GPIO callback. Reflash it and use the monitor above
+to complete its separate 29-output on-device observation.

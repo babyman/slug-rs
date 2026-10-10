@@ -36,7 +36,7 @@ fn main() -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
     esp_println::println!(
-        "Slug static host: {} safe GPIO outputs; blink uses GPIO 2 and GPIO 4",
+        "Slug static host: {} PinPulse outputs; running the light walk",
         SAFE_OUTPUT_PINS.len()
     );
 
@@ -54,10 +54,16 @@ fn main() -> ! {
         match host.run() {
             Ok(Value::Nil) => esp_println::println!("Slug VM completed unexpectedly"),
             Ok(value) => esp_println::println!("Slug VM unexpected result: {value:?}"),
-            Err(error) => esp_println::println!("Slug VM runtime error: {error}"),
+            Err(error) => {
+                esp_println::println!("Slug VM runtime error: {error}");
+                break;
+            }
         }
         for _ in 0..30_000_000 {
             core::hint::spin_loop();
         }
+    }
+    loop {
+        core::hint::spin_loop();
     }
 }

@@ -3,8 +3,8 @@ use std::rc::Rc;
 use slug_frontend::ModuleHost;
 use slug_loader::{ModuleKey, ModuleSource, StaticModuleProvider, StaticModuleResolver};
 use slug_vm::{
-    EmptyVmConfiguration, NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus,
-    Value, cslug,
+    EmptyVmConfiguration, NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue,
+    NativeStatus, Value, cslug,
 };
 
 fn host(modules: impl IntoIterator<Item = (&'static str, &'static str)>) -> ModuleHost {
@@ -29,6 +29,17 @@ fn host(modules: impl IntoIterator<Item = (&'static str, &'static str)>) -> Modu
 
 fn returns_seven(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::integer(7))
+}
+
+fn stops_after_first_gpio(call: &mut NativeCall<'_>) -> NativeStatus {
+    call.raise(NativeError::new(
+        "test.stop",
+        "light walk reached its first GPIO write",
+    ))
+}
+
+fn returns_nil(call: &mut NativeCall<'_>) -> NativeStatus {
+    call.return_value(NativeOwnedValue::nil())
 }
 
 #[test]
@@ -128,5 +139,52 @@ fn firmware_blink_graph_encodes_within_device_limits() {
         .modules
         .len(),
         3
+    );
+}
+
+#[test]
+fn firmware_light_walk_reaches_its_first_gpio_write() {
+    let artifact = host([
+        (
+            "slug.gpio",
+            include_str!("../../../clutch/slug.embedded.clutch/modules/gpio.slug"),
+        ),
+        (
+            "slug.time",
+            include_str!("../../../clutch/slug.embedded.clutch/modules/time.slug"),
+        ),
+    ])
+    .compile_artifact(
+        "firmware/slug-esp32-s3/programs/blink.slug",
+        include_str!("../../../firmware/slug-esp32-s3/programs/blink.slug"),
+    )
+    .expect("compile firmware light-walk graph");
+    let artifact =
+        cslug::ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration)).expect("valid artifact");
+    let module = NativeModule::new("slug.gpio", ()).expect("valid native module");
+    artifact
+        .register_foreign(
+            module
+                .function("write", NativeArity::Exact(2), stops_after_first_gpio)
+                .expect("valid native function"),
+        )
+        .expect("register GPIO provider");
+    let module = NativeModule::new("slug.time", ()).expect("valid native module");
+    artifact
+        .register_foreign(
+            module
+                .function("sleepMs", NativeArity::Exact(1), returns_nil)
+                .expect("valid native function"),
+        )
+        .expect("register time provider");
+
+    let error = artifact
+        .run()
+        .expect_err("light walk reaches the first GPIO callback");
+    assert!(
+        error
+            .to_string()
+            .contains("light walk reached its first GPIO write"),
+        "unexpected light-walk failure: {error}"
     );
 }

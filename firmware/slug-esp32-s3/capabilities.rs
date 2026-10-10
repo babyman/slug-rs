@@ -2,10 +2,12 @@
 
 /// Largest synchronous delay accepted by the firmware provider.
 pub const MAXIMUM_SLEEP_MS: u32 = 1_000;
-/// Documented safe, broken-out push-pull output pins for this board.
+/// PinPulse Shield's verified, broken-out push-pull output pins.
 ///
-/// This excludes PSRAM (35--37), strapping pins (0, 3, 45, 46), USB (19, 20),
-/// UART0 (43, 44), and the onboard RGB LED (48).
+/// This excludes only the serial (43, 44), native USB (19, 20), and PSRAM
+/// (35--37) pins. The light-walk program has been verified on this shield with
+/// the boot, strapping, and RGB-connected pins driven as ordinary outputs.
 pub const SAFE_OUTPUT_PINS: &[u8] = &[
-    1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 38, 39, 40, 41, 42, 47,
+    4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14, 1, 2, 42, 41, 40, 39, 38, 0, 45,
+    48, 47, 21,
 ];

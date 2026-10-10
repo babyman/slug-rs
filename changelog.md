@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added the PinPulse Shield's Slug light-walk program. It initializes and
+  chases all 29 board-validated outputs, then flashes the full lap.
+
 - Changed embedded `slug.gpio.write` to accept a physical GPIO number rather
   than a firmware alias. The ESP32-S3 profile now permits its documented 24
   safe outputs and lazily configures a selected pin on first write.
