@@ -283,6 +283,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "slug-embedded-build"
+version = "0.1.0"
+dependencies = [
+ "slug-loader",
+ "toml",
+]
+
+[[package]]
 name = "slug-frontend"
 version = "0.1.0"
 dependencies = [

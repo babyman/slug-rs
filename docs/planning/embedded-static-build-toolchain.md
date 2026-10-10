@@ -32,14 +32,14 @@ artifacts](../decisions/2026-10-09-embedded-static-build-toolchain.md).
 
 ### 1. Specify and parse the target descriptor
 
-- [ ] Add a versioned descriptor format owned by a target-neutral build crate.
-- [ ] Require an entry-source path, board/runtime package identifier, artifact
+- [x] Add a versioned descriptor format owned by a target-neutral build crate.
+- [x] Require an entry-source path, board/runtime package identifier, artifact
   limits, and an ordered list of source-contract/provider pairs.
-- [ ] Reject duplicate module names, paths outside the descriptor root,
-  unsupported descriptor versions, zero/unbounded limits, and providers that
-  are not linked by the selected board package.
-- [ ] Document whether the first descriptor is TOML and reserve a stable
-  diagnostic namespace for descriptor failures.
+- [x] Reject duplicate module names, paths outside the descriptor root,
+  unsupported descriptor versions, and zero/unbounded limits.
+- [ ] Reject providers that are not linked by the selected board package.
+- [x] Use TOML for the first descriptor and reserve stable diagnostic codes for
+  descriptor failures.
 
 Acceptance: parser and validation tests cover valid, malformed, duplicate,
 out-of-root, and incompatible descriptors without requiring an ESP toolchain.
