@@ -15,7 +15,7 @@ mod providers;
 
 use alloc::rc::Rc;
 use esp_backtrace as _;
-use esp_hal::{clock::CpuClock, main};
+use esp_hal::{clock::CpuClock, main, system::software_reset};
 use slug_vm::{EmptyVmConfiguration, Value, cslug::ArtifactHost};
 
 use crate::capabilities::SAFE_OUTPUT_PINS;
@@ -42,28 +42,27 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73_744);
 
-    let artifact = match flash_program::load_target_artifact() {
-        Ok(artifact) => artifact,
-        Err(error) => panic!("failed to decode flash artifact: {error}"),
-    };
+    let artifact = flash_program::load_target_artifact()
+        .unwrap_or_else(|error| reset_after_failure("failed to decode flash artifact", error));
     let host = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
-        .expect("flash artifact graph is valid");
+        .unwrap_or_else(|error| reset_after_failure("flash artifact graph is invalid", error));
     providers::register(&host, providers::safe_output_pins(peripherals))
-        .expect("GPIO and time providers are registered once");
-    loop {
-        match host.run() {
-            Ok(Value::Nil) => esp_println::println!("Slug VM completed unexpectedly"),
-            Ok(value) => esp_println::println!("Slug VM unexpected result: {value:?}"),
-            Err(error) => {
-                esp_println::println!("Slug VM runtime error: {error}");
-                break;
-            }
-        }
-        for _ in 0..30_000_000 {
-            core::hint::spin_loop();
-        }
+        .unwrap_or_else(|error| reset_after_failure("provider registration failed", error));
+    match host.run() {
+        Ok(Value::Nil) => reset_after_message("Slug VM completed unexpectedly"),
+        Ok(value) => reset_after_message(&alloc::format!("Slug VM unexpected result: {value:?}")),
+        Err(error) => reset_after_failure("Slug VM runtime error", error),
     }
-    loop {
-        core::hint::spin_loop();
-    }
+}
+
+/// Emits a startup or runtime failure before resetting instead of busy-spinning.
+fn reset_after_failure(error_prefix: &str, error: impl core::fmt::Display) -> ! {
+    esp_println::println!("{error_prefix}: {error}; resetting");
+    software_reset()
+}
+
+/// Emits an unexpected VM completion before resetting the proof firmware.
+fn reset_after_message(message: &str) -> ! {
+    esp_println::println!("{message}; resetting");
+    software_reset()
 }

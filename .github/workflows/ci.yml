@@ -31,3 +31,15 @@ jobs:
         with:
           toolchain: 1.96.1
       - run: make test-ffi-prototype
+
+  embedded-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust for ESP32-S3
+        uses: esp-rs/xtensa-toolchain@v1.6
+        with:
+          buildtargets: esp32s3
+      - name: Check ESP32-S3 firmware
+        run: cargo +esp check
+        working-directory: firmware/slug-esp32-s3

@@ -21,6 +21,10 @@ implicit and explicit `print`, `println`, and `len`, plus `Error`. Diagnostic
 output uses the ESP serial stream. `chan` and `close` remain unavailable until
 the embedded concurrency profile exists.
 
+Any artifact-loading, provider-registration, or VM failure is reported on the
+ESP serial stream and then triggers a software reset. The light-walk artifact
+does not normally complete; an unexpected completion follows the same policy.
+
 ## Prerequisites
 
 Install Espressif's Xtensa toolchain and flasher, then make them available to
@@ -29,7 +33,7 @@ the shell:
 ```sh
 cargo install espup espflash --locked
 espup install --targets esp32s3
-source /Users/evan/export-esp.sh
+source "$HOME/export-esp.sh"
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 

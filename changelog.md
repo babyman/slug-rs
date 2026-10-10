@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added an ESP32-S3 cross-check to CI, centralized the PinPulse board output
+  policy so its allow-list and HAL ownership map cannot drift, and reset the
+  proof firmware after reporting startup or VM failures instead of spinning.
+- Corrected package repository metadata, aligned the ESP32-S3 minimum Rust
+  version with the workspace, and removed unused generated target metadata.
+- Added generated bounded-input coverage proving that the `.cslug` decoder
+  reports malformed artifacts without panicking.
+
 - Removed the obsolete ESP32-specific frozen source recognizers and table
   loader. Firmware now has one descriptor-selected closed `.cslug` path, whose
   generated decode limits are shared by the build host and device.

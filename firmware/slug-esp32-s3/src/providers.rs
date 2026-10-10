@@ -18,7 +18,7 @@ use slug_vm::{
     cslug::{ArtifactHost, StaticProvider, StaticProviderError},
 };
 
-use crate::capabilities::{MAXIMUM_SLEEP_MS, SAFE_OUTPUT_PINS};
+use crate::capabilities::MAXIMUM_SLEEP_MS;
 
 struct GpioState {
     available: RefCell<Vec<(u8, AnyPin<'static>)>>,
@@ -69,44 +69,13 @@ pub fn register(
 /// matches the PinPulse Shield light-walk wiring order.
 #[must_use]
 pub fn safe_output_pins(peripherals: Peripherals) -> Vec<(u8, AnyPin<'static>)> {
-    debug_assert_eq!(
-        SAFE_OUTPUT_PINS,
-        &[
-            4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14, 1, 2, 42, 41, 40, 39, 38,
-            0, 45, 48, 47, 21
-        ]
-    );
-    vec![
-        (4, peripherals.GPIO4.degrade()),
-        (5, peripherals.GPIO5.degrade()),
-        (6, peripherals.GPIO6.degrade()),
-        (7, peripherals.GPIO7.degrade()),
-        (15, peripherals.GPIO15.degrade()),
-        (16, peripherals.GPIO16.degrade()),
-        (17, peripherals.GPIO17.degrade()),
-        (18, peripherals.GPIO18.degrade()),
-        (8, peripherals.GPIO8.degrade()),
-        (3, peripherals.GPIO3.degrade()),
-        (46, peripherals.GPIO46.degrade()),
-        (9, peripherals.GPIO9.degrade()),
-        (10, peripherals.GPIO10.degrade()),
-        (11, peripherals.GPIO11.degrade()),
-        (12, peripherals.GPIO12.degrade()),
-        (13, peripherals.GPIO13.degrade()),
-        (14, peripherals.GPIO14.degrade()),
-        (1, peripherals.GPIO1.degrade()),
-        (2, peripherals.GPIO2.degrade()),
-        (42, peripherals.GPIO42.degrade()),
-        (41, peripherals.GPIO41.degrade()),
-        (40, peripherals.GPIO40.degrade()),
-        (39, peripherals.GPIO39.degrade()),
-        (38, peripherals.GPIO38.degrade()),
-        (0, peripherals.GPIO0.degrade()),
-        (45, peripherals.GPIO45.degrade()),
-        (48, peripherals.GPIO48.degrade()),
-        (47, peripherals.GPIO47.degrade()),
-        (21, peripherals.GPIO21.degrade()),
-    ]
+    macro_rules! collect_output_pins {
+        ($(($pin:literal, $field:ident)),+ $(,)?) => {
+            vec![$(($pin, peripherals.$field.degrade())),+]
+        };
+    }
+
+    crate::capabilities::with_safe_output_pins!(collect_output_pins)
 }
 
 fn gpio_write(call: &mut NativeCall<'_>) -> NativeStatus {
