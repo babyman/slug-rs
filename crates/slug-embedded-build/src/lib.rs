@@ -15,7 +15,7 @@ use slug_loader::{
     ModuleKey, ModuleLoadError, ModuleSource, StaticModuleProvider, StaticModuleResolver,
     module_path,
 };
-use slug_vm::{EmptyVmConfiguration, cslug};
+use slug_vm::{EmptyVmConfiguration, NativeDescriptorError, NativeFunction, VmHost, cslug};
 use std::rc::Rc;
 
 /// Current supported target-descriptor format version.
@@ -109,6 +109,7 @@ pub enum CompileError {
     Encode(cslug::Error),
     /// The encoded graph exceeds the target's declared decoder limits.
     Limits(cslug::Error),
+    Descriptor(NativeDescriptorError),
 }
 
 impl fmt::Display for CompileError {
@@ -121,6 +122,7 @@ impl fmt::Display for CompileError {
                 formatter,
                 "embedded artifact exceeds target limits: {error}"
             ),
+            Self::Descriptor(error) => write!(formatter, "invalid build-time provider: {error}"),
         }
     }
 }
@@ -210,6 +212,22 @@ impl TargetDescriptor {
     ///
     /// Returns a checked source, encoding, or target-limit failure.
     pub fn compile_artifact(&self) -> Result<CompiledArtifact, CompileError> {
+        self.compile_artifact_with_foreign([])
+    }
+
+    /// Compiles after installing build-host-only foreign descriptors.
+    ///
+    /// These callbacks are used only to resolve source declarations on the
+    /// desktop build host. They are never serialized into `.cslug`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked descriptor, source, encoding, limit, or native
+    /// descriptor failure.
+    pub fn compile_artifact_with_foreign(
+        &self,
+        functions: impl IntoIterator<Item = NativeFunction>,
+    ) -> Result<CompiledArtifact, CompileError> {
         let source = fs::read_to_string(&self.entry).map_err(|error| {
             CompileError::Read(DescriptorError::new(
                 "read",
@@ -245,6 +263,8 @@ impl TargetDescriptor {
             .collect::<Result<Vec<_>, _>>()?;
         let resolver = StaticModuleResolver::new(providers).map_err(CompileError::Source)?;
         let host = ModuleHost::with_resolver(Rc::new(resolver), Rc::new(EmptyVmConfiguration));
+        host.define_foreign_batch(functions.into_iter().collect())
+            .map_err(CompileError::Descriptor)?;
         let artifact = host
             .compile_artifact(&self.entry.to_string_lossy(), &source)
             .map_err(CompileError::Source)?;
