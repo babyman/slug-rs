@@ -14,8 +14,11 @@ fn compile_target_artifact() {
 
     let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest"))
         .join("../..");
-    let descriptor_path = root.join("esp32-s3-pinpulse.toml");
-    let descriptor = TargetDescriptor::load(&descriptor_path).expect("valid PinPulse descriptor");
+    println!("cargo:rerun-if-env-changed=SLUG_TARGET_DESCRIPTOR");
+    let descriptor_name = std::env::var("SLUG_TARGET_DESCRIPTOR")
+        .unwrap_or_else(|_| "esp32-s3-pinpulse.toml".into());
+    let descriptor_path = root.join(descriptor_name);
+    let descriptor = TargetDescriptor::load(&descriptor_path).expect("valid target descriptor");
     println!("cargo:rerun-if-changed={}", descriptor_path.display());
 
     let builtins = NativeModule::new("slug.builtin", ()).expect("valid builtin module");

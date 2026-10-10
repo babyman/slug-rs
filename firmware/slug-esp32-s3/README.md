@@ -54,6 +54,14 @@ cargo +esp check
 cargo +esp build --release
 ```
 
+The default build uses the repository-root `esp32-s3-pinpulse.toml` target
+descriptor. Select another descriptor relative to the repository root without
+editing firmware Rust source:
+
+```sh
+SLUG_TARGET_DESCRIPTOR=esp32-s3-hello.toml cargo +esp check
+```
+
 The release firmware is:
 
 ```text

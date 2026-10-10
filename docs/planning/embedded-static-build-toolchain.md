@@ -76,7 +76,7 @@ runtime failure.
 - [x] Add the PinPulse descriptor with `blink.slug` as its default entry.
 - [x] Replace `compile_blink_artifact`, `slug_blink.cslug`, and
   `load_blink_artifact` with descriptor-derived names and generated metadata.
-- [ ] Keep the board package responsible for heap/stack/linker policy, GPIO
+- [x] Keep the board package responsible for heap/stack/linker policy, GPIO
   pin ownership, serial output, and `espflash` documentation only.
 - [ ] Make release builds record artifact size, firmware size, and configured
   heap/stack limits in machine-readable build output.

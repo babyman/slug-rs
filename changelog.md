@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Made ESP32-S3 firmware application selection descriptor-driven. The default
+  PinPulse light walk and the separate hello program cross-build through
+  `SLUG_TARGET_DESCRIPTOR` without firmware Rust-source changes.
+
 - Defined the descriptor-driven embedded static build boundary and its
   implementation plan: a selected Slug entry and closed source contracts
   compile to `.cslug`, which firmware embeds alongside statically linked
