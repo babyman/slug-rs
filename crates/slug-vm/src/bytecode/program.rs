@@ -1,10 +1,7 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    mem,
-    sync::Arc,
-};
+use alloc::{collections::VecDeque, string::String, sync::Arc, vec::Vec};
+use core::mem;
 
-use crate::CallableIdentity;
+use crate::{CallableIdentity, platform::HashMap};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
@@ -83,6 +80,11 @@ impl Entrypoint {
             callable_identity,
         }
     }
+
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) const fn cslug_parts(self) -> (EntrypointArguments, usize) {
+        (self.arguments, self.callable_identity)
+    }
 }
 
 /// Layout measurements for private bytecode metadata.
@@ -114,6 +116,74 @@ impl Program {
         Self::default()
     }
 
+    /// Rebuilds the scalar metadata decoded from a `.cslug` program record.
+    ///
+    /// This is crate-internal codec plumbing, not a stable bytecode builder.
+    #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
+    pub(crate) fn from_cslug_scalar_metadata(
+        bindings: Vec<String>,
+        exports: Vec<String>,
+        declarations: Vec<ModuleDeclaration>,
+        entrypoint: Option<Entrypoint>,
+        callable_identities: Vec<CallableIdentity>,
+        sources: Vec<Arc<str>>,
+        spans: Vec<SourceSpan>,
+        global_names: Vec<String>,
+        capture_lists: Vec<Vec<Capture>>,
+        schema_fields: Vec<Vec<SchemaField>>,
+        struct_fields: Vec<Vec<String>>,
+        match_patterns: Vec<MatchPattern>,
+        interpolations: Vec<Vec<String>>,
+        list_spreads: Vec<Vec<bool>>,
+        call_arguments: Vec<Vec<CallArgumentKind>>,
+        selected_calls: Vec<(CallArgumentsId, usize)>,
+        select_cases: Vec<Vec<SelectCase>>,
+    ) -> Self {
+        let source_ids = sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| (source.clone(), SourceId(index as u32)))
+            .collect();
+        let span_ids = spans
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, span)| (span, SpanId(index as u32)))
+            .collect();
+        Self {
+            bindings,
+            declarations,
+            exports,
+            entrypoint,
+            callable_identities,
+            sources,
+            source_ids,
+            spans,
+            span_ids,
+            global_names,
+            capture_lists,
+            schema_fields,
+            struct_fields,
+            match_patterns,
+            interpolations,
+            list_spreads,
+            call_arguments,
+            selected_calls,
+            select_cases,
+            ..Self::default()
+        }
+    }
+
+    /// Installs chunks decoded from a `.cslug` program record.
+    pub(crate) fn set_cslug_chunks(&mut self, chunks: Vec<CompiledChunk>) {
+        self.names = chunks
+            .iter()
+            .enumerate()
+            .map(|(index, chunk)| (chunk.name.clone(), index))
+            .collect();
+        self.chunks = chunks;
+    }
+
     pub(crate) fn contains_non_finite_number(&self) -> bool {
         self.chunks.iter().any(|chunk| {
             chunk.constants.iter().any(|constant| match constant {
@@ -121,6 +191,49 @@ impl Program {
                 Constant::Function(_) => false,
             })
         })
+    }
+
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) fn cslug_chunks(&self) -> &[CompiledChunk] {
+        &self.chunks
+    }
+
+    #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.
+    pub(crate) fn cslug_callable_identities(&self) -> &[CallableIdentity] {
+        &self.callable_identities
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn cslug_metadata(
+        &self,
+    ) -> (
+        &[Arc<str>],
+        &[SourceSpan],
+        &[String],
+        &[Vec<Capture>],
+        &[Vec<SchemaField>],
+        &[Vec<String>],
+        &[MatchPattern],
+        &[Vec<String>],
+        &[Vec<bool>],
+        &[Vec<CallArgumentKind>],
+        &[(CallArgumentsId, usize)],
+        &[Vec<SelectCase>],
+    ) {
+        (
+            &self.sources,
+            &self.spans,
+            &self.global_names,
+            &self.capture_lists,
+            &self.schema_fields,
+            &self.struct_fields,
+            &self.match_patterns,
+            &self.interpolations,
+            &self.list_spreads,
+            &self.call_arguments,
+            &self.selected_calls,
+            &self.select_cases,
+        )
     }
 
     pub fn add_chunk(&mut self, mut chunk: Chunk) -> usize {
@@ -219,10 +332,10 @@ impl Program {
         let (largest_chunk_instructions, largest_constant_pool, largest_local_frame) =
             self.largest_chunk_metrics();
         BytecodeLayoutMetrics {
-            program_inline_bytes: std::mem::size_of::<Self>(),
+            program_inline_bytes: mem::size_of::<Self>(),
             instructions,
-            instruction_bytes: instructions * std::mem::size_of::<PackedInstruction>(),
-            instruction_size_bytes: std::mem::size_of::<PackedInstruction>(),
+            instruction_bytes: instructions * mem::size_of::<PackedInstruction>(),
+            instruction_size_bytes: mem::size_of::<PackedInstruction>(),
             chunk_storage_bytes,
             constant_pool_slots,
             constant_pool_capacity_bytes,
@@ -235,8 +348,8 @@ impl Program {
             largest_local_frame,
             largest_metadata_pool,
             span_table_entries: self.spans.len(),
-            inline_span_bytes: instructions * std::mem::size_of::<Option<SpanId>>(),
-            compressed_span_map_bytes: span_runs * (std::mem::size_of::<u32>() * 2),
+            inline_span_bytes: instructions * mem::size_of::<Option<SpanId>>(),
+            compressed_span_map_bytes: span_runs * (mem::size_of::<u32>() * 2),
         }
     }
 
@@ -244,12 +357,12 @@ impl Program {
         self.chunks.iter().fold((0, 0, 0), |totals, chunk| {
             (
                 totals.0
-                    + chunk.code.capacity() * std::mem::size_of::<PackedInstruction>()
-                    + chunk.constants.capacity() * std::mem::size_of::<Constant>()
-                    + chunk.parameters.capacity() * std::mem::size_of::<ParameterSignature>()
+                    + chunk.code.capacity() * mem::size_of::<PackedInstruction>()
+                    + chunk.constants.capacity() * mem::size_of::<Constant>()
+                    + chunk.parameters.capacity() * mem::size_of::<ParameterSignature>()
                     + chunk.name.capacity(),
                 totals.1 + chunk.constants.len(),
-                totals.2 + chunk.constants.capacity() * std::mem::size_of::<Constant>(),
+                totals.2 + chunk.constants.capacity() * mem::size_of::<Constant>(),
             )
         })
     }
@@ -271,23 +384,23 @@ impl Program {
             + self.selected_calls.len()
             + self.select_cases.len();
         let capacity_bytes = self.callable_identities.capacity()
-            * std::mem::size_of::<CallableIdentity>()
-            + self.global_names.capacity() * std::mem::size_of::<String>()
-            + self.capture_lists.capacity() * std::mem::size_of::<Vec<Capture>>()
-            + self.schema_fields.capacity() * std::mem::size_of::<Vec<SchemaField>>()
-            + self.struct_fields.capacity() * std::mem::size_of::<Vec<String>>()
-            + self.match_patterns.capacity() * std::mem::size_of::<MatchPattern>()
-            + self.interpolations.capacity() * std::mem::size_of::<Vec<String>>()
-            + self.list_spreads.capacity() * std::mem::size_of::<Vec<bool>>()
-            + self.call_arguments.capacity() * std::mem::size_of::<Vec<CallArgumentKind>>()
-            + self.selected_calls.capacity() * std::mem::size_of::<(CallArgumentsId, usize)>()
-            + self.select_cases.capacity() * std::mem::size_of::<Vec<SelectCase>>();
+            * mem::size_of::<CallableIdentity>()
+            + self.global_names.capacity() * mem::size_of::<String>()
+            + self.capture_lists.capacity() * mem::size_of::<Vec<Capture>>()
+            + self.schema_fields.capacity() * mem::size_of::<Vec<SchemaField>>()
+            + self.struct_fields.capacity() * mem::size_of::<Vec<String>>()
+            + self.match_patterns.capacity() * mem::size_of::<MatchPattern>()
+            + self.interpolations.capacity() * mem::size_of::<Vec<String>>()
+            + self.list_spreads.capacity() * mem::size_of::<Vec<bool>>()
+            + self.call_arguments.capacity() * mem::size_of::<Vec<CallArgumentKind>>()
+            + self.selected_calls.capacity() * mem::size_of::<(CallArgumentsId, usize)>()
+            + self.select_cases.capacity() * mem::size_of::<Vec<SelectCase>>();
         (slots, capacity_bytes)
     }
 
     fn source_table_capacity_bytes(&self) -> usize {
-        self.sources.capacity() * std::mem::size_of::<Arc<str>>()
-            + self.spans.capacity() * std::mem::size_of::<SourceSpan>()
+        self.sources.capacity() * mem::size_of::<Arc<str>>()
+            + self.spans.capacity() * mem::size_of::<SourceSpan>()
     }
 
     fn largest_chunk_metrics(&self) -> (usize, usize, usize) {
@@ -908,6 +1021,9 @@ impl Program {
     }
 
     pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {
+        if self.names.len() != self.chunks.len() {
+            return Err("program contains duplicate function chunk names".into());
+        }
         if let Some(entrypoint) = self.entrypoint
             && self
                 .callable_identity(entrypoint.callable_identity)
@@ -916,8 +1032,28 @@ impl Program {
             return Err("program entrypoint references missing callable identity".into());
         }
         for (chunk_index, compiled) in self.chunks.iter().enumerate() {
+            if compiled
+                .callable_identity
+                .is_some_and(|identity| self.callable_identity(identity).is_none())
+            {
+                return Err(format!(
+                    "function `{}` references missing callable identity",
+                    compiled.name
+                ));
+            }
             if let Some(error) = compiled.invalid_instructions.values().next() {
                 return Err(error.clone());
+            }
+            if let Some(span) = compiled.code.iter().find_map(|instruction| {
+                instruction
+                    .span
+                    .filter(|span| span.index() >= self.spans.len())
+            }) {
+                return Err(format!(
+                    "function `{}` references missing source span {}",
+                    compiled.name,
+                    span.index()
+                ));
             }
             let chunk = Self::unpack_chunk(compiled)?;
             if chunk.locals < chunk.arity {

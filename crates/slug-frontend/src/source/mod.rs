@@ -112,6 +112,12 @@ pub(crate) fn compile_with_resolver(
     Ok(compilation)
 }
 
+pub(crate) fn static_import_names(path: &str, source: &str) -> Result<Vec<String>, SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    Ok(typecheck::static_import_names(&expressions))
+}
+
 pub(crate) struct CompiledSource {
     pub(crate) program: Program,
     pub(crate) snapshot: ModuleSnapshot,

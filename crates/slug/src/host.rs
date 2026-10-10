@@ -161,6 +161,19 @@ impl DesktopLoader {
         self.state.graph.compile_source(self, path, source)
     }
 
+    /// Compiles entry source and all static imports into a closed artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when a static dependency is unavailable.
+    pub fn compile_artifact(
+        &self,
+        path: &str,
+        source: &str,
+    ) -> Result<slug_vm::cslug::Artifact, ModuleLoadError> {
+        self.state.graph.compile_artifact(self, path, source)
+    }
+
     /// Resolves one import without initializing it.
     ///
     /// # Errors
@@ -248,16 +261,16 @@ impl ModuleResolver for DesktopLoader {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
     }
+}
 
+impl ModuleGraphHost for DesktopLoader {
     fn stage_activation(
         &self,
         source: &ModuleSource,
     ) -> Result<Option<Box<dyn slug_loader::ModuleActivationTransaction>>, ModuleLoadError> {
         self.state.resolver.stage_activation(source)
     }
-}
 
-impl ModuleGraphHost for DesktopLoader {
     fn builtin_globals(&self) -> HashMap<String, Value> {
         self.state.resolver.builtin_globals()
     }

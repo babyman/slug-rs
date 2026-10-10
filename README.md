@@ -4,7 +4,7 @@ This repository is a clean-room Rust workspace implementing the Slug language.
 It starts with the execution boundary recommended by the language package: a
 small, checked VM with Slug-specific bytecode. The bytecode types are a public
 but unstable in-process Rust embedding and testing surface: they are not a file
-format or a compatibility commitment. The planned portable compiled-module
+format or a compatibility commitment. The portable whole-program artifact
 contract is documented separately as `.cslug`.
 
 ## Current milestone
@@ -59,8 +59,9 @@ contract is documented separately as `.cslug`.
   `slug.core.clutch` provides the explicit `slug.std`, `slug.io.stdin`, and
   `slug.math` standard modules. A host may
   configure a clutch-scoped Rust plugin or a manifest-selected experimental
-  native library that supports any subset of the clutch's modules. The local `slug.io.fs` clutch commits a macOS ARM native
-  library and reports a checked unavailable-platform error elsewhere. The
+  native library that supports any subset of the clutch's modules. The local `slug.io.fs` clutch has macOS ARM native
+  source, which `make stage-native-clutches` builds locally; it reports a
+  checked unavailable-platform error elsewhere. The
   `slug.db.sqlite` clutch proves variadic SQL binding and native-built
   `list<map>` query rows by building its adapter into a temporary installed
   layout during integration tests.
@@ -100,8 +101,9 @@ contract is documented separately as `.cslug`.
   names through `$SLUG_HOME/lib/<name>.slug`.
 - The standard library, full type inference, and the remaining language forms are progressive
   milestones beyond this subset.
-- Portable `.cslug` compiled modules are an adopted compatibility target; no
-  encoder or loader is implemented yet.
+- Portable `.cslug` whole-program artifacts can be compiled with `slug compile`
+  and run with `slug run`; they are closed graphs and never fall back to source
+  resolution at load time.
 - Statically registered native functions use an opaque, call-scoped version 0
   Rust facade with structured errors and typed resources. It remains unstable;
   no public C ABI or dynamic native loader exists yet.
@@ -126,12 +128,14 @@ with closures copying only the declared captured slots. The current model
 intentionally favors clear semantics and diagnostics over compact bytecode or
 performance.
 
-## Portable compiled modules
+## Portable compiled artifacts
 
-`.cslug` will be a versioned, portable compiled-module format. It will remain
-separate from the public-but-unstable in-process `Program`, `Chunk`, and `Op`
-types, which may change freely. See [compiled artifacts](docs/reference/compiled-artifacts.md)
-for the adopted contract and the requirements before version 1 is implemented.
+`.cslug` is a versioned, validated serialized form of a complete VM
+`CompiledProgram`. It is portable across machines supporting the same declared
+format and VM/bytecode compatibility version. Normal source execution remains
+directly in memory; the format is only for persistence and transport. See
+[compiled artifacts](docs/reference/compiled-artifacts.md) for the adopted
+contract and requirements.
 
 ## Quick start
 
@@ -153,6 +157,14 @@ Run it from the repository root:
 
 ```sh
 cargo run -p slug -- hello.slug
+```
+
+Persist a closed compiled artifact, then run it without consulting source
+resolvers:
+
+```sh
+cargo run -p slug -- compile hello.slug hello.cslug
+cargo run -p slug -- run hello.cslug
 ```
 
 For a persistent interactive session, run the minimal terminal client:

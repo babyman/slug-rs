@@ -1,0 +1,6 @@
+val gpio = import("slug.gpio")
+val time = import("slug.time")
+
+val main = fn() {
+    println("Hello from Slug on ESP32-S3")
+}

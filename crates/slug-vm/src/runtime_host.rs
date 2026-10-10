@@ -4,9 +4,12 @@
 //! bytecode without knowing how modules, configuration, or native descriptors
 //! are assembled. It is not a general embedding API.
 
-use std::collections::HashMap;
+use alloc::{string::String, vec::Vec};
+use core::fmt;
 
-use crate::{NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value};
+use crate::{
+    NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value, platform::HashMap,
+};
 
 /// Checked failure returned by a VM host callback.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,12 +41,13 @@ impl VmHostError {
     }
 }
 
-impl std::fmt::Display for VmHostError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for VmHostError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl std::error::Error for VmHostError {}
 
 /// Live exports returned by an initialized source module.

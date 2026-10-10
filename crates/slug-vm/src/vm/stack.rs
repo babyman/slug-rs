@@ -3,7 +3,8 @@
 //! These helpers keep underflow, unresolved binding, and missing-local faults
 //! tied to the active source span instead of exposing unchecked indexing.
 
-use std::cmp::Ordering;
+use alloc::{string::String, vec::Vec};
+use core::cmp::Ordering;
 
 use crate::{
     SourceSpan, Value,

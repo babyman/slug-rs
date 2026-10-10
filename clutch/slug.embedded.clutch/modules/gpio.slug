@@ -1,0 +1,8 @@
+/**
+ * Writes a boolean level to a host-selected physical GPIO output.
+ *
+ * `pin` is a non-negative whole GPIO number. A host selects which physical
+ * outputs are safe and available; an unsupported pin is a checked host
+ * failure. This module does not define project-level pin names.
+ */
+export foreign write = fn(pin:num, level:bool):nil

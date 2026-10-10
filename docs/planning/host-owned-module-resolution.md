@@ -24,7 +24,8 @@ desktop diagnostics. It does not implement the portable `.cslug` format.
 - Native registrations remain module-qualified, transactional, and subject to
   the current shutdown and resource-lifecycle rules.
 - The first ROM representation is uncompressed and directly addressable.
-  Embedded source is acceptable until the `.cslug` implementation gate is met.
+  Embedded source modules remain the import representation; a future
+  whole-program `.cslug` path is independent of this resolver.
 
 ## 0. Establish a compatibility baseline
 
@@ -147,20 +148,16 @@ remain green in the desktop-host configuration.
 **Gate:** `import()` resolves entirely from compiled-in data on the embedded
 target, with no filesystem requirement.
 
-## 6. Add `.cslug` only after its independent contract is ready
+## 6. Keep `.cslug` outside module resolution
 
-- [ ] Complete the version-1 binary schema, validator, limits, and fixtures in
-  `docs/reference/compiled-artifacts.md` before accepting artifact payloads.
-- [ ] Add a `ModulePayload::Cslug(&'static [u8])` path that validates input
-  before producing private executable representation.
-- [ ] Keep payload bytes uncompressed and directly addressable in the first
-  firmware implementation; measure flash size, boot time, and RAM before
-  proposing compression.
-- [ ] Prove source and artifact modules preserve logical identity, dependency
-  checks, diagnostics, and module initialization rules.
+- [ ] Retain source-module payloads for desktop, Clutch, and embedded import
+  resolution while initial `.cslug` files represent whole programs.
+- [ ] Coordinate any future whole-program artifact host path with the separate
+  [`.cslug` artifact plan](cslug-whole-program-artifacts.md); do not add
+  `ModulePayload::Cslug` as an implementation shortcut.
 
-**Gate:** malformed or incompatible embedded artifacts fail through checked
-module diagnostics, and no private `Program` or opcode layout is serialized.
+**Gate:** module resolution remains source-based, and no private `Program` or
+opcode layout is serialized.
 
 ## 7. Complete documentation and delivery
 

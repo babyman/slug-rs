@@ -13,7 +13,7 @@ These requirements deliberately do **not** standardize private VM bytecode,
 opcode numbers, instruction layout, stack layout, garbage collection, host
 threading, or a foreign-function ABI. Those are implementation choices. The
 private bytecode must not be serialized or treated as a cross-version
-interface. The separate `.cslug` compiled-module contract is specified in
+interface. The separate `.cslug` whole-program artifact contract is specified in
 [`../reference/compiled-artifacts.md`](../reference/compiled-artifacts.md); it is not a promise
 about an implementation's private bytecode.
 
@@ -159,13 +159,14 @@ The evaluator MUST keep these host capabilities separate from Slug bindings.
 Host services cannot become names visible to a Slug program except through a
 `slug.builtin` export, imported library module, or declared foreign function.
 
-The host MAY obtain an entry program or imported module from a filesystem, a
-compiled artifact, statically embedded data, or an in-memory embedding API.
-Resolution policy is a host service: the evaluator requests a logical module
-identity and MUST NOT require filesystem paths, environment variables, package
-layout, or storage access in order to execute an import. A host may use paths
-as private cache keys or diagnostic labels when it has a filesystem, but that
-choice must not alter the module-resolution and error behavior required above.
+The host MAY obtain an entry program from source, a whole-program compiled
+artifact, statically embedded data, or an in-memory embedding API. Imported
+modules remain subject to the source module-resolution rules. Resolution policy
+is a host service: the evaluator requests a logical module identity and MUST
+NOT require filesystem paths, environment variables, package layout, or
+storage access in order to execute an import. A host may use paths as private
+cache keys or diagnostic labels when it has a filesystem, but that choice must
+not alter the module-resolution and error behavior required above.
 
 Foreign functions are not required for the portable fixture set unless a
 fixture imports a library that declares one. A declared function resolves by
@@ -173,6 +174,11 @@ its module name and local declaration name, not by an ambient host-global name.
 If a required foreign function is unavailable, the implementation MUST report
 a Slug module or foreign-resolution error rather than substitute host behavior
 silently.
+
+Optional embedded capabilities follow the source contracts in
+[Embedded host modules](embedded-host-modules.md). A host selects them as a
+whole module and retains the same checked unavailable-module behavior when it
+does not select one.
 
 ## Configuration service
 

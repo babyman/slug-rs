@@ -6,10 +6,21 @@
 //! They are distinct from the future portable `.cslug` compiled-module format
 //! documented in `docs/reference/compiled-artifacts.md`.
 
+#![cfg_attr(target_os = "none", no_std)]
+
+#[macro_use]
+extern crate alloc;
+
 mod bytecode;
 mod collections;
+pub mod cslug;
 mod native;
+mod platform;
 mod runtime_host;
+#[cfg(not(target_os = "none"))]
+mod scheduler_signal;
+#[cfg(target_os = "none")]
+#[path = "scheduler_signal_embedded.rs"]
 mod scheduler_signal;
 mod value;
 mod vm;

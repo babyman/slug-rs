@@ -1,7 +1,15 @@
-use std::{cell::RefCell, collections::HashSet, rc::Rc};
+use alloc::{
+    boxed::Box,
+    rc::Rc,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::{cell::RefCell, cmp, mem};
+
+use crate::platform::HashSet;
 
 #[cfg(feature = "concurrency")]
-use std::cell::Cell;
+use core::cell::Cell;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Duration;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
@@ -570,28 +578,28 @@ impl Vm {
         #[cfg(feature = "concurrency")]
         let (task_state_size_bytes, task_state_alignment_bytes) = task_state_layout();
         VmLayoutMetrics {
-            value_size_bytes: std::mem::size_of::<Value>(),
-            value_alignment_bytes: std::mem::align_of::<Value>(),
-            local_slot_size_bytes: std::mem::size_of::<LocalSlot>(),
-            local_slot_alignment_bytes: std::mem::align_of::<LocalSlot>(),
-            frame_size_bytes: std::mem::size_of::<Frame>(),
-            frame_alignment_bytes: std::mem::align_of::<Frame>(),
-            closure_size_bytes: std::mem::size_of::<Closure>(),
-            closure_alignment_bytes: std::mem::align_of::<Closure>(),
+            value_size_bytes: mem::size_of::<Value>(),
+            value_alignment_bytes: mem::align_of::<Value>(),
+            local_slot_size_bytes: mem::size_of::<LocalSlot>(),
+            local_slot_alignment_bytes: mem::align_of::<LocalSlot>(),
+            frame_size_bytes: mem::size_of::<Frame>(),
+            frame_alignment_bytes: mem::align_of::<Frame>(),
+            closure_size_bytes: mem::size_of::<Closure>(),
+            closure_alignment_bytes: mem::align_of::<Closure>(),
             #[cfg(feature = "concurrency")]
-            task_size_bytes: std::mem::size_of::<Task>(),
+            task_size_bytes: mem::size_of::<Task>(),
             #[cfg(feature = "concurrency")]
-            task_alignment_bytes: std::mem::align_of::<Task>(),
+            task_alignment_bytes: mem::align_of::<Task>(),
             #[cfg(feature = "concurrency")]
             task_state_size_bytes,
             #[cfg(feature = "concurrency")]
             task_state_alignment_bytes,
             #[cfg(feature = "concurrency")]
-            task_execution_size_bytes: std::mem::size_of::<TaskExecution>(),
+            task_execution_size_bytes: mem::size_of::<TaskExecution>(),
             #[cfg(feature = "concurrency")]
-            task_execution_alignment_bytes: std::mem::align_of::<TaskExecution>(),
-            instruction_size_bytes: std::mem::size_of::<crate::bytecode::PackedInstruction>(),
-            instruction_alignment_bytes: std::mem::align_of::<crate::Instruction>(),
+            task_execution_alignment_bytes: mem::align_of::<TaskExecution>(),
+            instruction_size_bytes: mem::size_of::<crate::bytecode::PackedInstruction>(),
+            instruction_alignment_bytes: mem::align_of::<crate::Instruction>(),
         }
     }
 
@@ -752,10 +760,10 @@ impl Vm {
         environment: &mut InteractiveEnvironment,
     ) -> VmResult<InteractiveExecution> {
         Self::synchronize_host_interactive_environment(environment);
-        let host_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
-        let host_imported = std::mem::replace(
+        let host_globals = mem::replace(&mut self.globals, environment.globals.clone());
+        let host_imported = mem::replace(
             &mut self.imported_globals,
-            std::mem::take(&mut environment.imported_globals),
+            mem::take(&mut environment.imported_globals),
         );
         if let Err(error) = self.start_named(program, entry) {
             environment
@@ -809,17 +817,17 @@ impl Vm {
         environment: &mut InteractiveEnvironment,
     ) -> (GlobalEnvironment, HashSet<String>) {
         debug_assert!(self.host_execution.is_none());
-        let host_globals = std::mem::replace(&mut self.globals, environment.globals.clone());
-        let host_imported = std::mem::replace(
+        let host_globals = mem::replace(&mut self.globals, environment.globals.clone());
+        let host_imported = mem::replace(
             &mut self.imported_globals,
-            std::mem::take(&mut execution.imported_globals),
+            mem::take(&mut execution.imported_globals),
         );
         self.module_program = execution.module_program.take();
-        self.module_metadata = std::mem::take(&mut execution.module_metadata);
-        self.stack = std::mem::take(&mut execution.stack);
-        self.frames = std::mem::take(&mut execution.frames);
-        self.cleanup = std::mem::take(&mut execution.cleanup);
-        self.progress = std::mem::replace(&mut execution.progress, Rc::new(ProgressDriver::new()));
+        self.module_metadata = mem::take(&mut execution.module_metadata);
+        self.stack = mem::take(&mut execution.stack);
+        self.frames = mem::take(&mut execution.frames);
+        self.cleanup = mem::take(&mut execution.cleanup);
+        self.progress = mem::replace(&mut execution.progress, Rc::new(ProgressDriver::new()));
         self.current_waiter = execution.current_waiter.take();
         self.suspension = execution.suspension.take();
         self.resume = execution.resume.take();
@@ -836,7 +844,7 @@ impl Vm {
         host_globals: GlobalEnvironment,
         host_imported: HashSet<String>,
     ) -> InteractiveExecution {
-        let execution_imported = std::mem::take(&mut self.imported_globals);
+        let execution_imported = mem::take(&mut self.imported_globals);
         environment.globals.clone_from(&self.globals);
         environment.imported_globals.clone_from(&execution_imported);
         self.globals = host_globals;
@@ -844,11 +852,11 @@ impl Vm {
         InteractiveExecution {
             module_program: self.module_program.take(),
             imported_globals: execution_imported,
-            module_metadata: std::mem::take(&mut self.module_metadata),
-            stack: std::mem::take(&mut self.stack),
-            frames: std::mem::take(&mut self.frames),
-            cleanup: std::mem::take(&mut self.cleanup),
-            progress: std::mem::replace(&mut self.progress, Rc::new(ProgressDriver::new())),
+            module_metadata: mem::take(&mut self.module_metadata),
+            stack: mem::take(&mut self.stack),
+            frames: mem::take(&mut self.frames),
+            cleanup: mem::take(&mut self.cleanup),
+            progress: mem::replace(&mut self.progress, Rc::new(ProgressDriver::new())),
             current_waiter: self.current_waiter.take(),
             suspension: self.suspension.take(),
             resume: self.resume.take(),
@@ -1201,7 +1209,7 @@ impl Vm {
             .declarations()
             .iter()
             .filter_map(|declaration| declaration.resource_type.as_deref())
-            .collect::<std::collections::HashSet<_>>();
+            .collect::<HashSet<_>>();
         let Some(host) = self.host.clone() else {
             return if program
                 .declarations()
@@ -1218,7 +1226,7 @@ impl Vm {
                 Ok(())
             };
         };
-        let mut registered_resource_types = std::collections::HashSet::new();
+        let mut registered_resource_types = HashSet::new();
         for declaration in program
             .declarations()
             .iter()
@@ -1242,8 +1250,8 @@ impl Vm {
         host: &dyn VmHost,
         program: &Program,
         declaration: &ModuleDeclaration,
-    ) -> VmResult<std::collections::HashSet<String>> {
-        let mut resource_types = std::collections::HashSet::new();
+    ) -> VmResult<HashSet<String>> {
+        let mut resource_types = HashSet::new();
         for name in &declaration.bindings {
             let function = host
                 .foreign_function(program.module_name(), name)
@@ -1331,8 +1339,8 @@ impl Vm {
     fn validate_resource_type_registrations(
         &self,
         program: &Program,
-        declared: &std::collections::HashSet<&str>,
-        registered: std::collections::HashSet<String>,
+        declared: &HashSet<&str>,
+        registered: HashSet<String>,
     ) -> VmResult<()> {
         for name in declared {
             if !registered.contains(*name) {
@@ -2106,12 +2114,12 @@ impl Vm {
                 let (left, right) = self.pop_pair_at(None)?;
                 self.stack.push(Value::Bool(left == right));
             }
-            PackedOpcode::Greater => self.compare_at(None, std::cmp::Ordering::Greater)?,
+            PackedOpcode::Greater => self.compare_at(None, cmp::Ordering::Greater)?,
             PackedOpcode::GreaterNum => {
-                self.numeric_compare_at(None, std::cmp::Ordering::Greater)?;
+                self.numeric_compare_at(None, cmp::Ordering::Greater)?;
             }
-            PackedOpcode::Less => self.compare_at(None, std::cmp::Ordering::Less)?,
-            PackedOpcode::LessNum => self.numeric_compare_at(None, std::cmp::Ordering::Less)?,
+            PackedOpcode::Less => self.compare_at(None, cmp::Ordering::Less)?,
+            PackedOpcode::LessNum => self.numeric_compare_at(None, cmp::Ordering::Less)?,
             PackedOpcode::Jump => self.jump_at(operand, None)?,
             PackedOpcode::JumpIfFalse => {
                 if !self.peek_at(None)?.is_truthy() {
@@ -2677,12 +2685,12 @@ impl Vm {
                 let (left, right) = self.pop_pair_at(span)?;
                 self.stack.push(Value::Bool(left == right));
             }
-            Op::Greater => self.compare_at(span, std::cmp::Ordering::Greater)?,
-            Op::GreaterNum => self.numeric_compare_at(span, std::cmp::Ordering::Greater)?,
-            Op::Less => self.compare_at(span, std::cmp::Ordering::Less)?,
-            Op::LessNum => self.numeric_compare_at(span, std::cmp::Ordering::Less)?,
-            Op::GuardGreater => self.guard_compare_at(span, std::cmp::Ordering::Greater)?,
-            Op::GuardLess => self.guard_compare_at(span, std::cmp::Ordering::Less)?,
+            Op::Greater => self.compare_at(span, cmp::Ordering::Greater)?,
+            Op::GreaterNum => self.numeric_compare_at(span, cmp::Ordering::Greater)?,
+            Op::Less => self.compare_at(span, cmp::Ordering::Less)?,
+            Op::LessNum => self.numeric_compare_at(span, cmp::Ordering::Less)?,
+            Op::GuardGreater => self.guard_compare_at(span, cmp::Ordering::Greater)?,
+            Op::GuardLess => self.guard_compare_at(span, cmp::Ordering::Less)?,
             Op::Jump(target) => self.jump_at(*target, span)?,
             Op::JumpIfFalse(target) => {
                 if !self.peek_at(span)?.is_truthy() {
@@ -4516,7 +4524,6 @@ impl Vm {
                 match arguments[0] {
                     Value::Int(value) => Ok(Value::Int(value)),
                     Value::Float(value) => {
-                        let value = value.trunc();
                         if (MIN_I64_AS_F64..EXCLUSIVE_MAX_I64_AS_F64).contains(&value) {
                             #[allow(clippy::cast_possible_truncation)]
                             return Ok(Value::Int(value as i64));

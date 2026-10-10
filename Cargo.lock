@@ -283,6 +283,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "slug-embedded-build"
+version = "0.1.0"
+dependencies = [
+ "slug-frontend",
+ "slug-loader",
+ "slug-vm",
+ "toml",
+]
+
+[[package]]
 name = "slug-frontend"
 version = "0.1.0"
 dependencies = [
@@ -318,6 +328,15 @@ version = "0.1.0"
 dependencies = [
  "slug-frontend",
  "slug-nil-loader",
+ "slug-vm",
+]
+
+[[package]]
+name = "slug-static-host"
+version = "0.1.0"
+dependencies = [
+ "slug-frontend",
+ "slug-loader",
  "slug-vm",
 ]
 

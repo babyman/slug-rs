@@ -1,0 +1,33 @@
+/**
+ * slug.builtin — the non-concurrent foundation supplied by embedded hosts.
+ *
+ * cfg, int, and stacktrace are VM builtins. This selected host contract
+ * deliberately omits chan and close while the embedded concurrency profile
+ * remains unavailable.
+ */
+
+/**
+ * Standard error payload shape for idiomatic error handling.
+ */
+export val Error = struct {
+    type:str = "Error",
+    msg:str,
+    code = nil,
+    data = nil,
+    cause = nil,
+}
+
+/**
+ * Writes values to the host's diagnostic output without a trailing newline.
+ */
+export foreign print = fn(...values):nil
+
+/**
+ * Writes values to the host's diagnostic output with a trailing newline.
+ */
+export foreign println = fn(...values):nil
+
+/**
+ * Returns the Unicode scalar, byte, list-element, or map-entry count.
+ */
+export foreign len = fn(value:str|bytes|list|map):num

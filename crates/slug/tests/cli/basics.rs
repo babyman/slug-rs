@@ -13,10 +13,78 @@ fn help_describes_the_current_public_capability() {
     };
     assert!(stdout.contains(build));
     assert!(stdout.contains("Usage:"));
+    assert!(stdout.contains("compile"));
+    assert!(stdout.contains("run"));
     assert!(stdout.contains(
         "bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len"
     ));
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn compiles_and_runs_a_closed_artifact_with_builtins() {
+    let source_path = fixture_path("compiled-artifact");
+    let artifact_path = source_path.with_extension("cslug");
+    let child_name = format!("slug_cli_artifact_child_{}", std::process::id());
+    let child_path = std::env::temp_dir().join(format!("{child_name}.slug"));
+    fs::write(&child_path, "export val message = \"closed\"\n").expect("write artifact child");
+    fs::write(
+        &source_path,
+        format!(
+            "val child = import(\"{child_name}\")\nval main = fn(args:list) {{ println(len(args), child.message, args[0]) }}\n"
+        ),
+    )
+    .expect("write artifact source");
+
+    let compile = slug()
+        .args([
+            "compile",
+            source_path.to_str().unwrap(),
+            artifact_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("compile artifact");
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    assert!(compile.stdout.is_empty());
+    assert!(compile.stderr.is_empty());
+
+    fs::remove_file(&source_path).expect("remove artifact source");
+    fs::remove_file(&child_path).expect("remove artifact child");
+    let run = slug()
+        .args(["run", artifact_path.to_str().unwrap(), "persisted"])
+        .output()
+        .expect("run artifact");
+    fs::remove_file(&artifact_path).expect("remove artifact");
+
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(run.stdout).unwrap(),
+        "1 closed persisted\n"
+    );
+    assert!(run.stderr.is_empty());
+}
+
+#[test]
+fn rejects_malformed_artifacts_cleanly() {
+    let path = fixture_path("malformed-artifact").with_extension("cslug");
+    fs::write(&path, b"not a compiled artifact").expect("write malformed artifact");
+    let output = slug()
+        .args(["run", path.to_str().unwrap()])
+        .output()
+        .expect("run artifact");
+    fs::remove_file(path).expect("remove malformed artifact");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid .cslug"));
 }
 
 #[test]

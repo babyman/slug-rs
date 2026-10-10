@@ -1,0 +1,2 @@
+# Board-specific Espressif configuration belongs here when it is required.
+[env]

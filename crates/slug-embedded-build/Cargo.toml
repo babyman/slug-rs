@@ -1,0 +1,17 @@
+[package]
+name = "slug-embedded-build"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+description = "Descriptor validation for static embedded Slug builds"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/babyman/slug-rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+slug-frontend = { path = "../slug-frontend", default-features = false }
+slug-loader = { path = "../slug-loader" }
+slug-vm = { path = "../slug-vm", default-features = false }
+toml = "0.8"

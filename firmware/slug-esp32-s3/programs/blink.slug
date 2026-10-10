@@ -1,0 +1,43 @@
+val gpio = import("slug.gpio")
+val time = import("slug.time")
+
+// PinPulse shield LEDs follow the physical pin order around the board.
+val pins = [
+    4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14,
+    1, 2, 42, 41, 40, 39, 38, 0, 45, 48, 47, 21,
+]
+
+val setAll = fn(index, level) {
+    if (index == len(pins)) {
+        nil
+    } else {
+        gpio.write(pins[index], level)
+        recur(index + 1, level)
+    }
+}
+
+val chase = fn(index) {
+    if (index == len(pins)) {
+        nil
+    } else {
+        gpio.write(pins[index], true)
+        time.sleepMs(80)
+        gpio.write(pins[index], false)
+        recur(index + 1)
+    }
+}
+
+val cycle = fn() {
+    chase(0)
+    setAll(0, true)
+    time.sleepMs(600)
+    setAll(0, false)
+    time.sleepMs(300)
+    recur()
+}
+
+val main = fn() {
+    setAll(0, false)
+    time.sleepMs(1000)
+    cycle()
+}

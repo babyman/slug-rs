@@ -31,6 +31,7 @@ normative.
 | `errors.md` | Error categories and diagnostic behavior. |
 | `deferred-work.md` | Deferred-action execution and recovery behavior. |
 | `filesystem.md` | Opaque file resources and explicit lifecycle. |
+| `embedded-host-modules.md` | Optional GPIO and blocking-delay module contracts for selected hosts. |
 | `nominal-types.md` | Nominal native resource handles, fieldless enums, and transparent aliases. |
 | `maps.md` | Map literals, keys, and operations. |
 | `match-and-destructuring.md` | Match expressions and destructuring patterns. |

@@ -12,11 +12,18 @@ use crate::{
         environment::ModuleSnapshot,
     },
 };
-use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
+use slug_loader::{
+    ModuleActivationTransaction, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver,
+    ModuleSource,
+};
 use slug_vm::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
-    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports,
+    cslug::{Artifact, ImportEdge, Module as ArtifactModule},
+    native_resource_registry,
 };
+
+pub use slug_vm::cslug::ArtifactHost;
 
 /// Host-owned roots used to load Slug module source.
 #[derive(Clone)]
@@ -68,6 +75,27 @@ struct ModuleGraphState {
 /// supplies VM services, while a resolver owns source and any activation
 /// transaction. Desktop policy does not belong to the graph itself.
 pub trait ModuleGraphHost: ModuleResolver {
+    /// Stages host capabilities required by a resolved module.
+    ///
+    /// The graph sequences this transaction around module initialization, but
+    /// the embedding host owns native registration and activation storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when the host cannot stage an activation lease.
+    fn stage_activation(
+        &self,
+        source: &ModuleSource,
+    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
+        if source.activation.is_some() {
+            return Err(ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message: "module activation requires host support".into(),
+            });
+        }
+        Ok(None)
+    }
+
     fn builtin_globals(&self) -> HashMap<String, Value>;
 
     fn module_vm(&self, bindings: &[String]) -> Vm;
@@ -165,6 +193,112 @@ impl ModuleGraph {
     ) -> Result<Program, SourceError> {
         self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, true)
             .map(|compilation| compilation.program)
+    }
+
+    /// Compiles an entry source and every literal import into a closed artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when an entry or static dependency
+    /// cannot be resolved and compiled.
+    pub fn compile_artifact(
+        &self,
+        resolver: &dyn ModuleResolver,
+        path: &str,
+        source: &str,
+    ) -> Result<Artifact, ModuleLoadError> {
+        let mut modules = Vec::new();
+        let mut indexes = HashMap::new();
+        let mut imports = Vec::new();
+        let key = ModuleKey::new(path);
+        let root = self.collect_artifact_module(
+            resolver,
+            &key,
+            path,
+            path,
+            source,
+            &mut modules,
+            &mut indexes,
+            &mut imports,
+        )?;
+        Ok(Artifact {
+            root,
+            modules,
+            imports,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_artifact_module(
+        &self,
+        resolver: &dyn ModuleResolver,
+        key: &ModuleKey,
+        name: &str,
+        diagnostic_name: &str,
+        source: &str,
+        modules: &mut Vec<ArtifactModule>,
+        indexes: &mut HashMap<ModuleKey, usize>,
+        imports: &mut Vec<ImportEdge>,
+    ) -> Result<usize, ModuleLoadError> {
+        if let Some(index) = indexes.get(key) {
+            return Ok(*index);
+        }
+        let mut compilation = self
+            .compile_source_for_module(
+                resolver,
+                key,
+                diagnostic_name,
+                source,
+                name != "slug.builtin",
+            )
+            .map_err(|error| ModuleLoadError::Source {
+                location: diagnostic_name.into(),
+                message: error.to_string(),
+            })?;
+        compilation.program.set_module_name(name);
+        compilation.program.set_module_key(key.as_str());
+        self.state
+            .semantic_snapshots
+            .borrow_mut()
+            .insert(key.clone(), compilation.snapshot);
+        self.state
+            .compiled
+            .borrow_mut()
+            .insert(key.clone(), compilation.program.clone());
+
+        let index = modules.len();
+        indexes.insert(key.clone(), index);
+        modules.push(ArtifactModule {
+            key: key.as_str().into(),
+            name: name.into(),
+            program: compilation.program,
+        });
+        for import_name in
+            crate::source::static_import_names(diagnostic_name, source).map_err(|error| {
+                ModuleLoadError::Source {
+                    location: diagnostic_name.into(),
+                    message: error.to_string(),
+                }
+            })?
+        {
+            let module_source = resolver.resolve(ModuleRequest::new(Some(key), &import_name))?;
+            let target = self.collect_artifact_module(
+                resolver,
+                &module_source.key,
+                &import_name,
+                &module_source.diagnostic_name,
+                &module_source.text,
+                modules,
+                indexes,
+                imports,
+            )?;
+            imports.push(ImportEdge {
+                importer: index,
+                name: import_name,
+                target,
+            });
+        }
+        Ok(index)
     }
 
     fn compile_source_for_module(
@@ -462,13 +596,6 @@ impl ModuleResolver for ModuleHost {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         self.state.resolver.resolve(request)
     }
-
-    fn stage_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Box<dyn slug_loader::ModuleActivationTransaction>>, ModuleLoadError> {
-        self.state.resolver.stage_activation(source)
-    }
 }
 
 impl ModuleHost {
@@ -491,6 +618,15 @@ impl ModuleHost {
     /// Returns a checked source error for invalid syntax or semantics.
     pub fn compile_source(&self, path: &str, source: &str) -> Result<Program, SourceError> {
         self.state.graph.compile_source(self, path, source)
+    }
+
+    /// Compiles entry source and its resolved static imports into a closed artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when a static dependency is unavailable.
+    pub fn compile_artifact(&self, path: &str, source: &str) -> Result<Artifact, ModuleLoadError> {
+        self.state.graph.compile_artifact(self, path, source)
     }
 
     #[doc(hidden)]
@@ -704,5 +840,66 @@ impl Drop for ModuleHostState {
             .shutdown_errors
             .get_mut()
             .extend(self.services.native_resources.finalize_all_for_shutdown());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArtifactHost, ModuleHost};
+    use slug_loader::{ModuleKey, ModuleSource, StaticModuleProvider, StaticModuleResolver};
+    use slug_vm::{EmptyVmConfiguration, Value, cslug};
+    use std::rc::Rc;
+
+    fn host() -> ModuleHost {
+        let resolver = StaticModuleResolver::new([StaticModuleProvider::new(
+            "child",
+            ModuleSource {
+                key: ModuleKey::new("memory:child"),
+                diagnostic_name: "child.slug".into(),
+                text: "export val value = 42\n".into(),
+                activation: None,
+            },
+        )
+        .expect("valid child provider")])
+        .expect("valid resolver");
+        ModuleHost::with_resolver(Rc::new(resolver), Rc::new(EmptyVmConfiguration))
+    }
+
+    #[test]
+    fn executes_decoded_closed_artifact() {
+        let artifact = host()
+            .compile_artifact(
+                "entry.slug",
+                "val child = import(\"child\")\nval main = fn() { child.value }\n",
+            )
+            .expect("compile artifact");
+        assert_eq!(artifact.modules.len(), 2);
+        assert_eq!(artifact.imports.len(), 1);
+        assert_eq!(artifact.imports[0].name, "child");
+
+        let bytes = cslug::encode(&artifact).expect("encode artifact");
+        let artifact = cslug::decode(&bytes, cslug::Limits::default()).expect("decode artifact");
+        assert_eq!(
+            ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+                .expect("valid artifact")
+                .run()
+                .expect("execute artifact"),
+            Value::Int(42)
+        );
+    }
+
+    #[test]
+    fn rejects_imports_absent_from_closed_artifact() {
+        let artifact = host()
+            .compile_artifact(
+                "entry.slug",
+                "val name = \"missing\"\nval main = fn() { import(name) }\n",
+            )
+            .expect("compile artifact");
+        let error = ArtifactHost::new(artifact, Rc::new(EmptyVmConfiguration))
+            .expect("valid artifact")
+            .run()
+            .expect_err("missing artifact edge");
+        assert!(error.to_string().contains("compiled artifact"));
     }
 }

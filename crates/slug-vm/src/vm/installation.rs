@@ -1,6 +1,6 @@
 //! Immutable bytecode ownership after VM installation-time validation.
 
-use std::rc::Rc;
+use alloc::rc::Rc;
 
 use crate::Program;
 

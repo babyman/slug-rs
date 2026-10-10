@@ -77,6 +77,7 @@ impl Compiler {
     pub(super) fn compile(mut self) -> Result<CompiledProgram, SourceError> {
         let mut exports = Vec::new();
         let mut bindings = Vec::new();
+        let mut foreign_callable_identities = Vec::new();
         let entrypoint = self.entrypoint()?;
         for expression in &self.expressions {
             if let ExprKind::Declare {
@@ -129,6 +130,9 @@ impl Compiler {
             {
                 let foreign_callable_identity =
                     self.foreign_identities.get(&expression.span).cloned();
+                if let Some(identity) = &foreign_callable_identity {
+                    foreign_callable_identities.push(identity.clone());
+                }
                 let foreign_resource_signature = self
                     .foreign_resource_signatures
                     .get(&expression.span)
@@ -232,6 +236,9 @@ impl Compiler {
         }
         state.emit(Op::Return, &SourceSpan::new(self.path.clone(), 1, 1));
         self.chunks.push(state.finish("main", 0));
+        for identity in foreign_callable_identities {
+            self.intern_callable_identity(identity);
+        }
         let mut program = ProgramBuilder::new();
         for chunk in self.chunks {
             program.add_chunk(chunk);

@@ -6,7 +6,7 @@
 mod module;
 mod source;
 
-pub use module::{ModuleGraph, ModuleGraphHost, ModuleHost, ModuleInstance};
+pub use module::{ArtifactHost, ModuleGraph, ModuleGraphHost, ModuleHost, ModuleInstance};
 pub use source::{
     InteractiveCompilation, InteractiveCompilerState, SourceError, SourceErrorKind,
     SourceReadiness, compile, compile_interactive_forms, source_readiness,

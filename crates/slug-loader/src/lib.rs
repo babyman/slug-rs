@@ -3,7 +3,7 @@
 //!
 //! This crate deliberately has no desktop policy or VM construction.
 
-use std::{fmt, path::PathBuf};
+use std::{collections::HashMap, fmt, path::PathBuf};
 
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -91,28 +91,76 @@ pub trait ModuleResolver {
     /// Returns a checked failure when the name is invalid, unavailable, or its
     /// host-provided source cannot be read.
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError>;
+}
 
-    /// Stages host capabilities required by a resolved module.
-    ///
-    /// Resolvers without import-scoped activation keep the default. A resolver
-    /// that returns an activation lease must override this method rather than
-    /// leaving the frontend to know its storage representation.
+/// One source module selected by a statically linked host.
+///
+/// Static providers are selected by their embedding host at construction time.
+/// They do not access storage, discover plugins, or load shared libraries.
+#[derive(Clone)]
+pub struct StaticModuleProvider {
+    name: String,
+    source: ModuleSource,
+}
+
+impl StaticModuleProvider {
+    /// Creates a static provider for a valid dotted module name.
     ///
     /// # Errors
     ///
-    /// Returns a checked error when this resolver cannot stage the source's
-    /// activation lease.
-    fn stage_activation(
-        &self,
-        source: &ModuleSource,
-    ) -> Result<Option<Box<dyn ModuleActivationTransaction>>, ModuleLoadError> {
-        if source.activation.is_some() {
-            return Err(ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message: "module activation requires resolver support".into(),
-            });
+    /// Returns an invalid-name error when `name` is not a valid logical module
+    /// name.
+    pub fn new(name: impl Into<String>, source: ModuleSource) -> Result<Self, ModuleLoadError> {
+        let name = name.into();
+        module_path(&name)?;
+        Ok(Self { name, source })
+    }
+}
+
+/// Fixed in-memory registry for source modules supplied by a host.
+///
+/// This resolver is the storage-independent half of static Clutch providers.
+/// A desktop simulator or firmware bootstrap selects its providers explicitly;
+/// neither path inherits desktop Clutch discovery or dynamic-library policy.
+pub struct StaticModuleResolver {
+    providers: HashMap<String, StaticModuleProvider>,
+}
+
+impl StaticModuleResolver {
+    /// Creates a static registry from explicitly selected providers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when more than one provider uses the same
+    /// logical module name.
+    pub fn new(
+        providers: impl IntoIterator<Item = StaticModuleProvider>,
+    ) -> Result<Self, ModuleLoadError> {
+        let mut registered = HashMap::new();
+        for provider in providers {
+            let name = provider.name.clone();
+            if registered.insert(name.clone(), provider).is_some() {
+                return Err(ModuleLoadError::Clutch {
+                    location: name,
+                    message: "duplicate static module provider".into(),
+                });
+            }
         }
-        Ok(None)
+        Ok(Self {
+            providers: registered,
+        })
+    }
+}
+
+impl ModuleResolver for StaticModuleResolver {
+    fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
+        self.providers
+            .get(request.name)
+            .map(|provider| provider.source.clone())
+            .ok_or_else(|| ModuleLoadError::NotFound {
+                name: request.name.into(),
+                searched: vec!["static providers".into()],
+            })
     }
 }
 
@@ -173,7 +221,10 @@ pub fn module_path(name: &str) -> Result<PathBuf, ModuleLoadError> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{ModuleLoadError, module_path};
+    use super::{
+        ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
+        StaticModuleProvider, StaticModuleResolver, module_path,
+    };
 
     #[test]
     fn maps_valid_dotted_names_to_relative_slug_paths() {
@@ -191,5 +242,34 @@ mod tests {
                 Err(ModuleLoadError::InvalidName(name.into()))
             );
         }
+    }
+
+    #[test]
+    fn resolves_only_explicitly_registered_static_modules() {
+        let source = ModuleSource {
+            key: ModuleKey::new("static:slug.gpio"),
+            diagnostic_name: "static:slug.gpio".into(),
+            text: "foreign write(name: str, level: bool): nil".into(),
+            activation: None,
+        };
+        let resolver = StaticModuleResolver::new([
+            StaticModuleProvider::new("slug.gpio", source).expect("valid static provider")
+        ])
+        .expect("register static provider");
+
+        let module_source = resolver
+            .resolve(ModuleRequest::new(None, "slug.gpio"))
+            .expect("resolve registered provider");
+        assert_eq!(module_source.key.as_str(), "static:slug.gpio");
+
+        assert_eq!(
+            resolver
+                .resolve(ModuleRequest::new(None, "slug.unavailable"))
+                .expect_err("unregistered static module is unavailable"),
+            ModuleLoadError::NotFound {
+                name: "slug.unavailable".into(),
+                searched: vec!["static providers".into()],
+            }
+        );
     }
 }

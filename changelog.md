@@ -2,6 +2,140 @@
 
 ## Unreleased
 
+- Added an ESP32-S3 cross-check to CI, centralized the PinPulse board output
+  policy so its allow-list and HAL ownership map cannot drift, and reset the
+  proof firmware after reporting startup or VM failures instead of spinning.
+- Corrected package repository metadata, aligned the ESP32-S3 minimum Rust
+  version with the workspace, and removed unused generated target metadata.
+- Added generated bounded-input coverage proving that the `.cslug` decoder
+  reports malformed artifacts without panicking.
+
+- Removed the obsolete ESP32-specific frozen source recognizers and table
+  loader. Firmware now has one descriptor-selected closed `.cslug` path, whose
+  generated decode limits are shared by the build host and device.
+
+- Simplified the PinPulse ESP32-S3 light-walk source into reusable clear,
+  chase, and cycle helpers while preserving its output sequence and timing.
+
+- Marked the descriptor-driven embedded static build-toolchain implementation
+  plan complete; remaining CI, hardware-evidence, and measurement work is
+  recorded as explicitly deferred follow-up.
+
+- Made ESP32-S3 firmware application selection descriptor-driven. The default
+  PinPulse light walk and the separate hello program cross-build through
+  `SLUG_TARGET_DESCRIPTOR` without firmware Rust-source changes.
+
+- Defined the descriptor-driven embedded static build boundary and its
+  implementation plan: a selected Slug entry and closed source contracts
+  compile to `.cslug`, which firmware embeds alongside statically linked
+  native providers before flashing. The source language and runtime dynamic
+  loading authority remain unchanged.
+
+- Verified the closed `.cslug` PinPulse light walk on the ESP32-S3: all 29
+  selected numeric outputs chase, flash together, and clear on device.
+
+- Restored the embedded host's non-concurrent `slug.builtin` contract. Closed
+  ESP32-S3 artifacts now support implicit and explicit `len`, `print`, and
+  `println` without linking the source frontend.
+
+- Added the PinPulse Shield's Slug light-walk program. It initializes and
+  chases all 29 board-validated outputs, then flashes the full lap.
+
+- Changed embedded `slug.gpio.write` to accept a physical GPIO number rather
+  than a firmware alias. The ESP32-S3 profile now permits its documented 24
+  safe outputs and lazily configures a selected pin on first write.
+
+- Documented the reproducible ESP32-S3 toolchain, release build, USB flash,
+  and non-interactive UART-monitor workflow for the closed `.cslug` firmware.
+
+- Switched the ESP32-S3 blink firmware to compile and embed its closed v1
+  `.cslug` graph, decode it under device limits, and register static GPIO/time
+  providers through the VM-owned artifact host.
+
+- Moved closed `.cslug` graph execution into `slug-vm`, so firmware hosts can
+  decode and execute artifacts without linking the source frontend, and added
+  static module-qualified native-function registration for embedded providers.
+
+- Extracted the target-neutral `slug.gpio` and `slug.time` source contracts
+  into the source-only `slug.embedded` Clutch for desktop simulation and
+  firmware builds.
+
+- Defined the version-2 compiled-module artifact contract: source and
+  compiled providers may link into one closed `.cslug` program, while Clutch
+  native capabilities remain host-selected rather than artifact-embedded.
+
+- Defined the private general frozen-program path for ESP32-S3 firmware. It
+  will compile a selected closed Slug entry graph during the firmware build
+  while remaining distinct from portable `.cslug` artifacts.
+
+- Moved ESP32-S3 private frozen-image table loading into the shared `no_std`
+  VM, with checked entry and constant-reference validation before installation.
+
+- Restored `no_std + alloc` compilation of the `.cslug` decoder so ESP32-S3
+  firmware builds continue through the shared VM runtime.
+
+- Added `slug compile source.slug output.cslug` and `slug run program.cslug`.
+  Compiled artifacts preserve CLI builtins and execute their closed module graph
+  without source resolver fallback.
+
+- Added version-1 `.cslug` encoding and checked loading for closed
+  whole-program graphs. Direct source execution remains in memory, while the
+  ESP32-S3 deployment path continues to use its distinct private frozen image.
+
+- Verified the ESP32-S3 GPIO proof on the PinPulse Shield: the frozen Slug
+  program now repeatedly blinks its active-high GPIO 2 indicator after flash.
+
+- Linked ESP32-S3 firmware-native GPIO and blocking-delay providers to the
+  frozen blink image. The PinPulse Shield `led` alias now owns active-high
+  GPIO 2 for the VM lifetime and emits proof UART transition traces.
+
+- Added a deterministic desktop static-host simulator for the selected GPIO
+  and time modules. It executes the normal import and foreign-call path while
+  recording checked logical output writes and delay requests for embedded
+  program testing.
+
+- Extended the private ESP32-S3 frozen-image generator for a selected GPIO 2
+  blink source, with build-time checks for modules, output aliases, delays,
+  and unsupported operations. Firmware still boots the UART proof program.
+
+- Added shared static-host source contracts for `slug.gpio.write` and
+  `slug.time.sleepMs`, with checked import and signature coverage independent
+  of ESP32 hardware.
+
+- Moved imported-module activation sequencing to the frontend host boundary,
+  keeping source resolution storage-independent while allowing static hosts to
+  own native capability registration.
+
+- Defined static Clutch providers for firmware-native modules and staged the
+  ESP32-S3 `slug.gpio`/`slug.time` path to a portable-source LED blink proof.
+
+- Added a target-selected `no_std + alloc` profile to `slug-vm` for freestanding
+  ESP32-S3 builds. The proof firmware now executes shared Slug bytecode directly
+  and reports its result over UART; desktop VM behavior is unchanged.
+
+- Added a minimal UART-backed `println` native capability to the ESP32-S3 proof
+  firmware, exercised through a direct Slug VM bytecode call.
+
+- Added a checked firmware-local flash program loader for the ESP32-S3 proof,
+  keeping its compact static image distinct from Slug's future portable
+  compiled-artifact format.
+
+- Defined the private frozen-firmware-image boundary: desktop compilation may
+  generate firmware build input without publishing a `.cslug` artifact format.
+
+- Added the first desktop frozen-image backend for the ESP32-S3 proof. It
+  validates and emits the minimal `main { println("text") }` entry shape into
+  firmware build input without linking the frontend to the device.
+
+- Added a standalone ESP32-S3 bare-metal firmware bootstrap with a bounded
+  allocator and UART readiness line. It is isolated from the desktop workspace
+  while embedded Slug runtime support is developed.
+
+- Recorded the bare-metal ESP32-S3 embedded-host boundary and staged proof of
+  concept: a `no_std + alloc` runtime path, flash-resident source resolver,
+  explicit UART `println` capability, a shared-core portability rule, and
+  measured resource limits. Desktop Slug behavior is unchanged.
+
 - Restored Windows compilation for the experimental native Clutch loader.
 
 - Prevented project, library, and importer-relative module imports from
