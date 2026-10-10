@@ -509,7 +509,7 @@ fn rooted_file(root: &Path, value: &str, description: &str) -> Result<PathBuf, D
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{ArtifactLimits, FORMAT_VERSION, TargetDescriptor};
+    use super::{ArtifactLimits, CompileError, FORMAT_VERSION, TargetDescriptor};
 
     struct Fixture {
         root: PathBuf,
@@ -655,5 +655,36 @@ mod tests {
         let artifact = descriptor.compile_artifact().expect("compile artifact");
         assert!(!artifact.bytes.is_empty());
         assert_eq!(artifact.inputs.len(), 2);
+    }
+
+    #[test]
+    fn produces_distinct_artifacts_and_rejects_unselected_imports() {
+        let fixture = Fixture::new("closure");
+        let descriptor = TargetDescriptor::parse(
+            &fixture.root,
+            &fixture.descriptor(
+                "[[providers]]\nmodule = \"slug.gpio\"\ncontract = \"contracts/gpio.slug\"\nlibrary = \"gpio-provider\"\n",
+            ),
+        )
+        .expect("parse descriptor");
+        let first = descriptor
+            .compile_artifact()
+            .expect("compile first artifact");
+        fs::write(fixture.root.join("app.slug"), "val main = fn() { 42 }\n")
+            .expect("replace entry source");
+        let second = descriptor
+            .compile_artifact()
+            .expect("compile second artifact");
+        assert_ne!(first.bytes, second.bytes);
+
+        fs::write(
+            fixture.root.join("app.slug"),
+            "val main = fn() { import(\"slug.unselected\") }\n",
+        )
+        .expect("write unselected import");
+        assert!(matches!(
+            descriptor.compile_artifact(),
+            Err(CompileError::Source(_))
+        ));
     }
 }

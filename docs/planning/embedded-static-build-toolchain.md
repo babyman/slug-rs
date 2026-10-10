@@ -87,7 +87,7 @@ source.
 
 ### 5. Establish validation and release gates
 
-- [ ] Add target-neutral unit/integration coverage to the normal workspace
+- [x] Add target-neutral unit/integration coverage to the normal workspace
   test suite.
 - [ ] Add an ESP cross-build job that runs without attached hardware.
 - [ ] Add a board-owned manual flash/UART acceptance record with the exact
