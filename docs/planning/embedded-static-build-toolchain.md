@@ -46,10 +46,10 @@ out-of-root, and incompatible descriptors without requiring an ESP toolchain.
 
 ### 2. Extract target-neutral artifact compilation
 
-- [ ] Move the host-side compilation currently in
+- [x] Move the host-side compilation currently in
   `firmware/slug-esp32-s3/build.rs` into a reusable build crate or CLI.
-- [ ] Build `StaticModuleResolver` exclusively from descriptor contracts.
-- [ ] Compile the entry graph through `ModuleHost::compile_artifact`, encode
+- [x] Build `StaticModuleResolver` exclusively from descriptor contracts.
+- [x] Compile the entry graph through `ModuleHost::compile_artifact`, encode
   `.cslug`, then decode it with the target limits before emitting it.
 - [ ] Emit Cargo rebuild directives for the entry source, every selected
   contract, and the descriptor; do not rely on a hard-coded blink filename.

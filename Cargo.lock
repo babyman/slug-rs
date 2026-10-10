@@ -286,7 +286,9 @@ dependencies = [
 name = "slug-embedded-build"
 version = "0.1.0"
 dependencies = [
+ "slug-frontend",
  "slug-loader",
+ "slug-vm",
  "toml",
 ]
 
