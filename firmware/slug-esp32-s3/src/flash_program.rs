@@ -6,7 +6,7 @@
 
 use slug_vm::cslug::{Artifact, Error, Limits, decode};
 
-const BLINK_ARTIFACT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/slug_blink.cslug"));
+const BLINK_ARTIFACT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/slug_program.cslug"));
 
 /// Decodes the immutable blink artifact from its firmware-resident bytes.
 pub fn load_blink_artifact() -> Result<Artifact, Error> {
