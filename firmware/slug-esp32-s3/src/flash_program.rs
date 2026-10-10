@@ -4,22 +4,13 @@
 //! graph and static provider contracts. It is validated under device-specific
 //! limits before execution.
 
-use slug_vm::cslug::{Artifact, Error, Limits, decode};
+use slug_vm::cslug::{Artifact, Error, decode};
 
-const BLINK_ARTIFACT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/slug_program.cslug"));
+const TARGET_ARTIFACT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/slug_program.cslug"));
 
-/// Decodes the immutable blink artifact from its firmware-resident bytes.
-pub fn load_blink_artifact() -> Result<Artifact, Error> {
-    decode(
-        BLINK_ARTIFACT,
-        Limits {
-            artifact_bytes: 32 * 1024,
-            section_bytes: 24 * 1024,
-            modules: 4,
-            imports: 3,
-            string_bytes: 512,
-            chunks_per_module: 32,
-            entries_per_table: 512,
-        },
-    )
+include!(concat!(env!("OUT_DIR"), "/slug_target_limits.rs"));
+
+/// Decodes the descriptor-selected artifact from its firmware-resident bytes.
+pub fn load_target_artifact() -> Result<Artifact, Error> {
+    decode(TARGET_ARTIFACT, TARGET_ARTIFACT_LIMITS)
 }

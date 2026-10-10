@@ -42,11 +42,23 @@ fn compile_target_artifact() {
     let output_directory = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     std::fs::write(output_directory.join("slug_program.cslug"), &artifact.bytes)
         .expect("write target artifact");
+    let limits = descriptor.cslug_limits();
+    let limits_source = format!(
+        "const TARGET_ARTIFACT_LIMITS: slug_vm::cslug::Limits = slug_vm::cslug::Limits {{ artifact_bytes: {}, section_bytes: {}, modules: {}, imports: {}, string_bytes: {}, chunks_per_module: {}, entries_per_table: {} }};\n",
+        limits.artifact_bytes,
+        limits.section_bytes,
+        limits.modules,
+        limits.imports,
+        limits.string_bytes,
+        limits.chunks_per_module,
+        limits.entries_per_table,
+    );
+    std::fs::write(output_directory.join("slug_target_limits.rs"), limits_source)
+        .expect("write target artifact limits");
     let metadata = format!(
         "{{\"artifact\":\"slug_program.cslug\",\"artifact_bytes\":{},\"limits\":{{\"artifact_bytes\":{},\"section_bytes\":{},\"modules\":{},\"imports\":{},\"string_bytes\":{},\"chunks_per_module\":{},\"entries_per_table\":{}}}}}\n",
-        artifact.bytes.len(), descriptor.limits.artifact_bytes, descriptor.limits.section_bytes,
-        descriptor.limits.modules, descriptor.limits.imports, descriptor.limits.string_bytes,
-        descriptor.limits.chunks_per_module, descriptor.limits.entries_per_table,
+        artifact.bytes.len(), limits.artifact_bytes, limits.section_bytes, limits.modules,
+        limits.imports, limits.string_bytes, limits.chunks_per_module, limits.entries_per_table,
     );
     std::fs::write(output_directory.join("slug_target_metadata.json"), metadata)
         .expect("write target metadata");

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Removed the obsolete ESP32-specific frozen source recognizers and table
+  loader. Firmware now has one descriptor-selected closed `.cslug` path, whose
+  generated decode limits are shared by the build host and device.
+
 - Simplified the PinPulse ESP32-S3 light-walk source into reusable clear,
   chase, and cycle helpers while preserving its output sequence and timing.
 

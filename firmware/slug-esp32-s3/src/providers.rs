@@ -1,4 +1,4 @@
-//! Firmware-native providers for the closed GPIO blink artifact.
+//! Firmware-native providers for the closed descriptor-selected artifact.
 //!
 //! These callbacks own the selected outputs and blocking delay facility for the
 //! VM lifetime. A program may select only a physical GPIO listed by the board

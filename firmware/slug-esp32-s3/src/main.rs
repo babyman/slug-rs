@@ -23,7 +23,7 @@ use crate::capabilities::SAFE_OUTPUT_PINS;
 // The ESP-IDF bootloader requires this application descriptor.
 esp_bootloader_esp_idf::esp_app_desc!();
 
-/// Runs the closed blink artifact against firmware-owned GPIO and delay providers.
+/// Runs the closed descriptor-selected artifact against firmware-owned GPIO and delay providers.
 ///
 /// The bounded allocator serves all VM allocations. Source parsing and desktop
 /// module resolution remain intentionally outside this proof firmware.
@@ -42,7 +42,7 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73_744);
 
-    let artifact = match flash_program::load_blink_artifact() {
+    let artifact = match flash_program::load_target_artifact() {
         Ok(artifact) => artifact,
         Err(error) => panic!("failed to decode flash artifact: {error}"),
     };
