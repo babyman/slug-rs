@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Simplified the PinPulse ESP32-S3 light-walk source into reusable clear,
+  chase, and cycle helpers while preserving its output sequence and timing.
+
 - Marked the descriptor-driven embedded static build-toolchain implementation
   plan complete; remaining CI, hardware-evidence, and measurement work is
   recorded as explicitly deferred follow-up.
