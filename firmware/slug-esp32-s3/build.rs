@@ -32,9 +32,17 @@ fn compile_target_artifact() {
     for input in artifact.inputs {
         println!("cargo:rerun-if-changed={}", input.display());
     }
-    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"))
-        .join("slug_program.cslug");
-    std::fs::write(output, artifact.bytes).expect("write target artifact");
+    let output_directory = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
+    std::fs::write(output_directory.join("slug_program.cslug"), &artifact.bytes)
+        .expect("write target artifact");
+    let metadata = format!(
+        "{{\"artifact\":\"slug_program.cslug\",\"artifact_bytes\":{},\"limits\":{{\"artifact_bytes\":{},\"section_bytes\":{},\"modules\":{},\"imports\":{},\"string_bytes\":{},\"chunks_per_module\":{},\"entries_per_table\":{}}}}}\n",
+        artifact.bytes.len(), descriptor.limits.artifact_bytes, descriptor.limits.section_bytes,
+        descriptor.limits.modules, descriptor.limits.imports, descriptor.limits.string_bytes,
+        descriptor.limits.chunks_per_module, descriptor.limits.entries_per_table,
+    );
+    std::fs::write(output_directory.join("slug_target_metadata.json"), metadata)
+        .expect("write target metadata");
 }
 
 fn build_builtin(call: &mut slug_vm::NativeCall<'_>) -> slug_vm::NativeStatus {
