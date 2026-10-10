@@ -1,5 +1,13 @@
 # Finite Slug Numbers
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Finite Slug Numbers](2026-09-26-finite-numbers.md).
+
 ## Context
 
 IEEE-754 NaN and infinities make equality, ordering, map keys, serialization,

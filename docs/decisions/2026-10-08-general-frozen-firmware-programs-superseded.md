@@ -1,5 +1,13 @@
 # General private frozen firmware programs
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Build embedded firmware from closed `.cslug` artifacts](2026-10-09-embedded-static-build-toolchain.md).
+
 ## Context
 
 The ESP32-S3 proof executes the shared VM and has already proved a static

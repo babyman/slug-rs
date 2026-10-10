@@ -1,5 +1,14 @@
 # Build embedded firmware from closed `.cslug` artifacts
 
+## Status
+
+Accepted
+
+## Supersedes
+
+- [Keep `.cslug` off the ESP32-S3 deployment path](2026-10-04-cslug-esp-deployment-superseded.md)
+- [General private frozen firmware programs](2026-10-08-general-frozen-firmware-programs-superseded.md)
+
 ## Context
 
 The ESP32-S3 proof now compiles a Slug entry program and selected embedded
@@ -50,9 +59,9 @@ package. The generated artifact is a firmware build input, not a runtime file:
 the device accepts only the bytes linked into its firmware image.
 
 This supersedes the ESP32-S3 deployment decision in [Keep `.cslug` off the
-ESP32-S3 deployment path](2026-10-04-cslug-esp-deployment.md), the private
+ESP32-S3 deployment path](2026-10-04-cslug-esp-deployment-superseded.md), the private
 frozen-image representation chosen in [General private frozen firmware
-programs](2026-10-08-general-frozen-firmware-programs.md), and the
+programs](2026-10-08-general-frozen-firmware-programs-superseded.md), and the
 firmware-specific portions of [Static Clutch
 providers](2026-10-04-static-clutch-providers.md). Those records remain useful
 history; this record is the authority for future embedded builds.

@@ -1,5 +1,13 @@
 # Keep `.cslug` off the ESP32-S3 deployment path
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Build embedded firmware from closed `.cslug` artifacts](2026-10-09-embedded-static-build-toolchain.md).
+
 ## Context
 
 Version-1 `.cslug` artifacts are desktop persistence and transport files. The

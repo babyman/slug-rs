@@ -1,5 +1,13 @@
 # Discover main by naming convention
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Pass program arguments through main](2026-08-30-main-argument-entrypoints.md).
+
 ## Context
 
 The `@main` tag makes ordinary metadata control program execution and requires

@@ -1,5 +1,13 @@
 # Adopt portable compiled modules
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Make `.cslug` VM-first whole-program artifacts](2026-10-04-vm-first-whole-program-cslug.md).
+
 ## Context
 
 Slug needs a durable distribution and loading path for compiled modules,

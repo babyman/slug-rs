@@ -98,6 +98,12 @@ changes syntax, semantics, runtime architecture, error behavior, or the
 compatibility policy. Follow `docs/decisions/README.md`. Do not create a note
 for mechanical edits or a local bug fix whose design is already specified.
 
+Architectural Decision Records (ADRs) without a status suffix represent current
+decisions. Files ending in `-superseded.md` or `-withdrawn.md` are historical
+and must not be treated as current architectural guidance. When making
+architectural changes, consult current ADRs first. Preserve historical ADRs and
+update their status and references when replacing decisions.
+
 ## Working agreement
 
 - Inspect existing code and tests before choosing an implementation.

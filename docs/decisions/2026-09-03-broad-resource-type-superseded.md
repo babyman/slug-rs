@@ -1,5 +1,13 @@
 # Add a broad source `resource` type
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Adopt nominal resource handles and enums](2026-09-05-nominal-types.md).
+
 ## Context
 
 An opaque native resource is meaningful in a public foreign signature. Leaving

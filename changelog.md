@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Marked superseded ADRs with historical filename suffixes and reciprocal links
+  to their accepted replacements, so current architectural guidance is
+  identifiable without a separate registry.
+
 - Proposed two native-interface decisions: additive `core` and `events`
   profiles for hosts from microcontroller to server, and typed native calls
   bound through the clutch manifest, with buffer resources, struct copies, and

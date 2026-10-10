@@ -126,4 +126,4 @@ test, malformed-input suite, and `make check` all pass. The private frozen
 firmware image must remain explicitly distinct from `.cslug`.
 
 The ESP evaluation and decision are recorded in
-[`2026-10-04-cslug-esp-deployment.md`](../decisions/2026-10-04-cslug-esp-deployment.md).
+[`2026-10-04-cslug-esp-deployment-superseded.md`](../decisions/2026-10-04-cslug-esp-deployment-superseded.md).

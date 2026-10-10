@@ -1,5 +1,13 @@
 # Adopt nominal resource handles and enums
 
+## Status
+
+Accepted
+
+## Supersedes
+
+[Add a broad source `resource` type](2026-09-03-broad-resource-type-superseded.md).
+
 ## Context
 
 Native resources already have module and resource-kind identities at runtime,
@@ -47,7 +55,7 @@ strong typedefs.
 
 ## Migration
 
-This supersedes [Add a broad source `resource` type](2026-09-03-broad-resource-type.md)
+This supersedes [Add a broad source `resource` type](2026-09-03-broad-resource-type-superseded.md)
 and supersedes the nominal-type deferral in
 [Keep resource lifecycle explicit and defer nominal resource syntax](2026-09-03-resource-lifecycle-and-typing.md).
 It preserves the latter record's explicit-close and fallback-destruction rules.
