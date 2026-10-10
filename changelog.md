@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Marked the descriptor-driven embedded static build-toolchain implementation
+  plan complete; remaining CI, hardware-evidence, and measurement work is
+  recorded as explicitly deferred follow-up.
+
 - Made ESP32-S3 firmware application selection descriptor-driven. The default
   PinPulse light walk and the separate hello program cross-build through
   `SLUG_TARGET_DESCRIPTOR` without firmware Rust-source changes.

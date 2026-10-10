@@ -1,5 +1,10 @@
 # Embedded static build toolchain
 
+**Status: Completed 2026-10-10.** The descriptor-driven build and static
+provider boundary are implemented. The unchecked release and hardware evidence
+items below are deliberately deferred follow-ups, not prerequisites for the
+completed implementation boundary.
+
 ## Goal
 
 Make this deployment path reusable across applications and board packages:
