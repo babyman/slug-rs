@@ -4,7 +4,7 @@
 //! VM lifetime. A program may select only a physical GPIO listed by the board
 //! profile; the provider configures it lazily on its first write.
 
-use alloc::{format, string::String, vec, vec::Vec};
+use alloc::{format, string::{String, ToString}, vec, vec::Vec};
 use core::cell::RefCell;
 
 use esp_hal::{
@@ -13,8 +13,9 @@ use esp_hal::{
     peripherals::Peripherals,
 };
 use slug_vm::{
-    NativeArity, NativeCall, NativeDescriptorError, NativeError, NativeModule, NativeOwnedValue,
-    NativeStatus, NativeValueKind, NativeValueRef, cslug::ArtifactHost,
+    NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue, NativeStatus,
+    NativeValueKind, NativeValueRef,
+    cslug::{ArtifactHost, StaticProvider, StaticProviderError},
 };
 
 use crate::capabilities::{MAXIMUM_SLEEP_MS, SAFE_OUTPUT_PINS};
@@ -31,29 +32,35 @@ struct GpioState {
 ///
 /// # Errors
 ///
-/// Returns a checked descriptor error if an artifact-host binding was
-/// already installed.
+/// Returns a checked error when the provider set does not exactly match the
+/// firmware artifact's foreign contract.
 pub fn register(
     host: &ArtifactHost,
     output_pins: Vec<(u8, AnyPin<'static>)>,
-) -> Result<(), NativeDescriptorError> {
+) -> Result<(), StaticProviderError> {
     let gpio = NativeModule::new(
         "slug.gpio",
         GpioState {
             available: RefCell::new(output_pins),
             outputs: RefCell::new(Vec::new()),
         },
-    )?;
-    let time = NativeModule::new("slug.time", Delay::new())?;
-    let builtins = NativeModule::new("slug.builtin", ())?;
-    host.register_foreign_batch(vec![
-        gpio.function("write", NativeArity::Exact(2), gpio_write)?,
-        time.function("sleepMs", NativeArity::Exact(1), sleep_ms)?,
-        builtins.function("print", NativeArity::Variadic { minimum: 0 }, print)?,
-        builtins.function("println", NativeArity::Variadic { minimum: 0 }, println)?,
-        builtins.function("len", NativeArity::Exact(1), native_len)?,
-    ])?;
-    Ok(())
+    )
+    .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    let time = NativeModule::new("slug.time", Delay::new())
+        .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    let builtins = NativeModule::new("slug.builtin", ())
+        .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    let functions = vec![
+        gpio.function("write", NativeArity::Exact(2), gpio_write),
+        time.function("sleepMs", NativeArity::Exact(1), sleep_ms),
+        builtins.function("print", NativeArity::Variadic { minimum: 0 }, print),
+        builtins.function("println", NativeArity::Variadic { minimum: 0 }, println),
+        builtins.function("len", NativeArity::Exact(1), native_len),
+    ]
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    host.install_static_providers([StaticProvider::new(functions)])
 }
 
 /// Returns each physical GPIO output this board profile permits Slug to claim.

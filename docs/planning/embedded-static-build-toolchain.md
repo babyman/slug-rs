@@ -51,7 +51,7 @@ out-of-root, and incompatible descriptors without requiring an ESP toolchain.
 - [x] Build `StaticModuleResolver` exclusively from descriptor contracts.
 - [x] Compile the entry graph through `ModuleHost::compile_artifact`, encode
   `.cslug`, then decode it with the target limits before emitting it.
-- [ ] Emit Cargo rebuild directives for the entry source, every selected
+- [x] Emit Cargo rebuild directives for the entry source, every selected
   contract, and the descriptor; do not rely on a hard-coded blink filename.
 
 Acceptance: two fixtures produce distinct closed artifacts; a dynamic or
@@ -63,8 +63,8 @@ unselected import fails at build time with its source location.
   its module/function identities and registers callbacks into `ArtifactHost`.
 - [x] Validate artifact foreign contracts against provider declarations in both
   directions: no missing declared foreign function and no extra registration.
-- [ ] Keep native callbacks, resources, and HAL state out of `.cslug`.
-- [ ] Convert ESP32-S3 builtins, GPIO, and time from firmware-local special
+- [x] Keep native callbacks, resources, and HAL state out of `.cslug`.
+- [x] Convert ESP32-S3 builtins, GPIO, and time from firmware-local special
   cases to the registration interface.
 
 Acceptance: desktop tests cover matching providers, missing functions, extra
@@ -73,8 +73,8 @@ runtime failure.
 
 ### 4. Parameterize the ESP32-S3 package
 
-- [ ] Add the PinPulse descriptor with `blink.slug` as its default entry.
-- [ ] Replace `compile_blink_artifact`, `slug_blink.cslug`, and
+- [x] Add the PinPulse descriptor with `blink.slug` as its default entry.
+- [x] Replace `compile_blink_artifact`, `slug_blink.cslug`, and
   `load_blink_artifact` with descriptor-derived names and generated metadata.
 - [ ] Keep the board package responsible for heap/stack/linker policy, GPIO
   pin ownership, serial output, and `espflash` documentation only.
