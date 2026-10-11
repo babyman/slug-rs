@@ -44,6 +44,8 @@ pub(crate) mod loader;
 #[doc(hidden)]
 #[allow(dead_code)] // Private spike API; exercised by its fixture integration tests.
 pub mod typed_dispatch_spike;
+pub mod uniform_shim_generator;
+pub mod uniform_shim_spike;
 
 use loader::{LoadedLibrary, library_lease, retain_library_for_foreign_worker};
 

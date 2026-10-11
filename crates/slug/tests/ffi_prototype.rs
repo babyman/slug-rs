@@ -10,7 +10,8 @@ use std::{
 use slug::DesktopLoader as ModuleLoader;
 use slug_desktop_loader::{
     ADD_BINDING, ClutchRepository, DispatchShape, FIXTURE_BINDINGS, FIXTURE_SHIM_BINDINGS,
-    FfiPrototypeLibrary, SHIM_ADD_BINDING, TypedDispatchSpike,
+    FfiPrototypeLibrary, FixtureMismatch, SHIM_ADD_BINDING, TypedDispatchSpike, UniformShimSpike,
+    generate_uniform_shim,
 };
 use slug_vm::{RuntimeErrorKind, Vm};
 
@@ -507,6 +508,15 @@ fn generate_typed_dispatch_shim(directory: &TemporaryDirectory, mode: &str) -> P
     source
 }
 
+fn generate_uniform_typed_dispatch_shim(
+    directory: &TemporaryDirectory,
+    mismatch: Option<FixtureMismatch>,
+) -> PathBuf {
+    let source = directory.path().join("typed-uniform-shim.c");
+    generate_uniform_shim(&source, mismatch).expect("generate uniform typed-dispatch shim");
+    source
+}
+
 fn typed_dispatch_program(
     directory: &TemporaryDirectory,
     source: &str,
@@ -603,6 +613,53 @@ fn generated_typed_dispatch_shim_rejects_a_header_mismatch() {
     );
 }
 
+#[test]
+fn generated_uniform_shim_uses_one_entry_for_the_fixture_contract() {
+    let directory = TemporaryDirectory::new();
+    let shim = generate_uniform_typed_dispatch_shim(&directory, None);
+    let library = compile_typed_dispatch_fixture(&directory, "typed_uniform_shim", Some(&shim));
+    let dispatch = UniformShimSpike::load(library).expect("load uniform shim fixture");
+    let (loader, program) = typed_dispatch_program(
+        &directory,
+        "val spike = import(\"slug.spike\")\nspike.add(20, 22)\n",
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+        .expect("register uniform shim bindings");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
+}
+
+#[test]
+fn generated_uniform_shim_rejects_width_qualifier_and_arity_mismatches() {
+    for mismatch in [
+        FixtureMismatch::Width,
+        FixtureMismatch::Qualifier,
+        FixtureMismatch::Arity,
+    ] {
+        let directory = TemporaryDirectory::new();
+        let source = generate_uniform_typed_dispatch_shim(&directory, Some(mismatch));
+        let output = directory.path().join("typed-uniform-mismatch.o");
+        let compiler = if cfg!(windows) { "clang" } else { "cc" };
+        let output = Command::new(compiler)
+            .args([
+                "-Werror",
+                "-I",
+                "crates/slug-desktop-loader/tests/ffi",
+                "-c",
+            ])
+            .arg(source)
+            .arg("-o")
+            .arg(output)
+            .current_dir(workspace_root())
+            .output()
+            .expect("start uniform mismatch compiler");
+        assert!(
+            !output.status.success(),
+            "{mismatch:?} mismatch must fail against the fixture header"
+        );
+    }
+}
+
 fn assert_typed_dispatch_filesystem_contract(
     dispatch: &TypedDispatchSpike,
     directory: &TemporaryDirectory,
@@ -660,6 +717,39 @@ fn typed_dispatch_candidates_share_the_filesystem_fixture_contract() {
     assert_typed_dispatch_filesystem_contract(
         &TypedDispatchSpike::load(shim_library, &shim_bindings).expect("load shim fixture"),
         &shim_directory,
+    );
+
+    let uniform_directory = TemporaryDirectory::new();
+    let uniform_shim = generate_uniform_typed_dispatch_shim(&uniform_directory, None);
+    let uniform_library = compile_typed_dispatch_fixture(
+        &uniform_directory,
+        "typed_uniform_shim_files",
+        Some(&uniform_shim),
+    );
+    let uniform = UniformShimSpike::load(uniform_library).expect("load uniform shim fixture");
+    let file = uniform_directory.path().join("typed-dispatch.txt");
+    let (loader, program) = typed_dispatch_program(
+        &uniform_directory,
+        &format!(
+            "val spike = import(\"slug.spike\")\n\
+             val output = spike.openWrite(\"{}\")\n\
+             val written = spike.write(output, \"first\\n\")\n\
+             spike.close(output)\n\
+             val input = spike.openRead(\"{}\")\n\
+             val first = spike.readLine(input)\n\
+             val end = spike.readLine(input)\n\
+             spike.close(input)\n\
+             [written, first, end]\n",
+            slug_path_literal(&file),
+            slug_path_literal(&file),
+        ),
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(uniform.foreign_functions().unwrap())
+        .expect("register uniform shim bindings");
+    assert_eq!(
+        vm.run_named(&program, "main").unwrap().to_string(),
+        "[6, \"first\", nil]"
     );
 }
 

@@ -30,6 +30,12 @@ pub use ffi_prototype::typed_dispatch_spike::{
     ADD_BINDING, DispatchBinding, DispatchShape, FIXTURE_BINDINGS, FIXTURE_SHIM_BINDINGS,
     SHIM_ADD_BINDING, TypedDispatchSpike,
 };
+#[doc(hidden)]
+pub use ffi_prototype::uniform_shim_generator::{
+    FixtureMismatch, generate as generate_uniform_shim,
+};
+#[doc(hidden)]
+pub use ffi_prototype::uniform_shim_spike::UniformShimSpike;
 pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
 
 /// Filesystem resolver for an explicitly configured desktop module search path.
