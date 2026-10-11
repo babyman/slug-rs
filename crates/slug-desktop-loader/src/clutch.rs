@@ -1,3 +1,4 @@
+use slug_native_manifest::NativeManifest;
 use slug_vm::{NativeDescriptorError, NativeFunction};
 use std::{
     collections::{HashMap, HashSet},
@@ -406,7 +407,17 @@ pub struct ClutchModule {
 #[doc(hidden)]
 pub struct NativeClutchPlugin {
     pub library: PathBuf,
-    pub abi: String,
+    pub kind: NativeKind,
+}
+
+/// Which `[native]` form a clutch uses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[doc(hidden)]
+pub enum NativeKind {
+    /// The 0.13 prototype ABI, selected by `abi`.
+    Prototype { abi: String },
+    /// Manifest-bound typed bindings called through a generated shim.
+    Typed(Rc<NativeManifest>),
 }
 
 #[doc(hidden)]
@@ -436,8 +447,8 @@ pub fn load_module(root: &Path, name: &str) -> Result<ClutchModule, String> {
                 directory_path(&root, source, "native source")?;
             }
             Ok::<NativeClutchPlugin, String>(NativeClutchPlugin {
-                library: native_library_path(&root, native)?,
-                abi: native.abi.clone(),
+                library: native_library_path(&root, &native.libraries)?,
+                kind: native.kind.clone(),
             })
         })
         .transpose()?;
@@ -474,7 +485,7 @@ struct ClutchModuleEntry {
 #[derive(Debug)]
 struct NativeClutch {
     source: Option<String>,
-    abi: String,
+    kind: NativeKind,
     libraries: HashMap<String, String>,
 }
 
@@ -494,6 +505,21 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
         return Err("`modules` must provide at least one module".into());
     }
     let native = table.get("native").map(parse_native).transpose()?;
+    if let Some(NativeClutch {
+        kind: NativeKind::Typed(typed),
+        ..
+    }) = &native
+        && let Some(module) = typed
+            .functions
+            .iter()
+            .map(|binding| &binding.module)
+            .chain(typed.resources.iter().map(|resource| &resource.module))
+            .find(|module| !modules.contains_key(module.as_str()))
+    {
+        return Err(format!(
+            "native bindings name module `{module}`, which the clutch does not provide"
+        ));
+    }
     let mut result = HashMap::new();
     for (name, entry) in modules {
         if !valid_module_name(name) {
@@ -534,6 +560,24 @@ fn parse_native(value: &toml::Value) -> Result<NativeClutch, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "`native` must be a table".to_string())?;
+    if !table.contains_key("abi") {
+        return parse_typed_native(table);
+    }
+    if let Some(key) = [
+        "profile",
+        "headers",
+        "sources",
+        "link",
+        "resources",
+        "functions",
+    ]
+    .into_iter()
+    .find(|key| table.contains_key(*key))
+    {
+        return Err(format!(
+            "`abi` selects the prototype native form, which cannot be combined with typed `{key}`"
+        ));
+    }
     require_keys(table, &["source", "abi", "libraries"], "native")?;
     let source = table
         .get("source")
@@ -551,14 +595,8 @@ fn parse_native(value: &toml::Value) -> Result<NativeClutch, String> {
     let libraries = table_value(table, "libraries", "native")?
         .as_table()
         .ok_or_else(|| "`libraries` in native must be a table".to_string())?;
-    if libraries.is_empty() {
-        return Err("`libraries` in native must provide at least one platform".into());
-    }
     let mut entries = HashMap::new();
     for (platform, library) in libraries {
-        if !supported_platform(platform) {
-            return Err(format!("unsupported native platform `{platform}`"));
-        }
         let library = library
             .as_str()
             .ok_or_else(|| format!("native library for `{platform}` must be a string"))?;
@@ -566,21 +604,56 @@ fn parse_native(value: &toml::Value) -> Result<NativeClutch, String> {
     }
     Ok(NativeClutch {
         source,
-        abi: abi.to_owned(),
-        libraries: entries,
+        kind: NativeKind::Prototype {
+            abi: abi.to_owned(),
+        },
+        libraries: validate_libraries(entries)?,
     })
 }
 
-fn native_library_path(root: &Path, native: &NativeClutch) -> Result<PathBuf, String> {
-    let platform = current_platform()?;
-    let library = native
+/// Parses the typed form: a `[native]` table without `abi`.
+fn parse_typed_native(table: &toml::map::Map<String, toml::Value>) -> Result<NativeClutch, String> {
+    let manifest = NativeManifest::parse(table).map_err(|error| error.to_string())?;
+    let libraries = manifest
         .libraries
+        .iter()
+        .map(|(platform, library)| (platform.clone(), library.clone()))
+        .collect();
+    Ok(NativeClutch {
+        source: None,
+        libraries: validate_libraries(libraries)?,
+        kind: NativeKind::Typed(Rc::new(manifest)),
+    })
+}
+
+fn validate_libraries(
+    libraries: HashMap<String, String>,
+) -> Result<HashMap<String, String>, String> {
+    if libraries.is_empty() {
+        return Err("`libraries` in native must provide at least one platform".into());
+    }
+    if let Some(platform) = libraries
+        .keys()
+        .find(|platform| !supported_platform(platform))
+    {
+        return Err(format!("unsupported native platform `{platform}`"));
+    }
+    Ok(libraries)
+}
+
+fn native_library_path(
+    root: &Path,
+    libraries: &HashMap<String, String>,
+) -> Result<PathBuf, String> {
+    let platform = current_platform()?;
+    let library = libraries
         .get(platform)
         .ok_or_else(|| format!("native clutch has no library for platform `{platform}`"))?;
     file_path(root, library, "native library")
 }
 
-fn current_platform() -> Result<&'static str, String> {
+#[doc(hidden)]
+pub fn current_platform() -> Result<&'static str, String> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("macos-aarch64"),
         ("macos", "x86_64") => Ok("macos-x86_64"),

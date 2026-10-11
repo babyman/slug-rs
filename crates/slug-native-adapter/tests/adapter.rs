@@ -17,7 +17,7 @@ use slug_loader::{
     ModuleSource, StaticModuleProvider, StaticModuleResolver,
 };
 use slug_native_adapter::{
-    ExpectedBinding,
+    ExpectedBinding, Installed,
     abi::{Cell, Cleanup, Entry, RawBinding, RawTable, SHIM_ABI_VERSION},
     install,
 };
@@ -450,6 +450,14 @@ fn install_table(
     expected: &[ExpectedBinding<'_>],
     owner: &Rc<dyn Any>,
 ) -> Result<Vec<NativeFunction>, String> {
+    install_with_switches(table, expected, owner).map(|installed| installed.functions)
+}
+
+fn install_with_switches(
+    table: &Table,
+    expected: &[ExpectedBinding<'_>],
+    owner: &Rc<dyn Any>,
+) -> Result<Installed, String> {
     // SAFETY: `table` and its strings outlive the returned functions in each
     // test, and every entry follows the contract for its listed signature.
     unsafe { install(&raw const table.raw, expected, owner) }.map_err(|error| error.to_string())
@@ -834,7 +842,8 @@ fn rejects_tables_that_do_not_match_the_expected_bindings() {
 
     // SAFETY: a NULL table is explicitly allowed.
     let message = unsafe { install(std::ptr::null(), &[], &owner) }
-        .expect_err("NULL table")
+        .err()
+        .expect("NULL table")
         .to_string();
     assert_eq!(message, "shim table function returned NULL");
 }
@@ -908,4 +917,29 @@ fn rejects_signatures_it_cannot_encode() {
         let error = install_table(&table(&specs), &expected(&specs), &owner).expect_err(signature);
         assert!(error.contains(message), "{signature}: {error}");
     }
+}
+
+#[test]
+fn null_text_results_fail_when_the_declaration_excludes_nil() {
+    let specs = fixture_specs();
+    let table = table(&specs);
+    let owner: Rc<dyn Any> = Rc::new(());
+    let installed = install_with_switches(&table, &expected(&specs), &owner).expect("install");
+    let switches = installed.text_results.clone();
+    let host = Host::new(installed.functions);
+    assert_eq!(
+        host.run("fx.nothing()")
+            .expect("nil by default")
+            .to_string(),
+        "nil"
+    );
+
+    assert!(switches.reject_null("fx", "nothing"));
+    assert!(!switches.reject_null("fx", "absent"));
+    let error = host.run("fx.nothing()").expect_err("NULL text for `str`");
+    assert_eq!(native_code(&error), Some("native.type"));
+    assert!(
+        error.message.contains("`fx.nothing` returned NULL"),
+        "{error}"
+    );
 }

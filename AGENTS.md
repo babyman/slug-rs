@@ -61,6 +61,7 @@ a Rust change, run `make check`. For documentation-only changes, run
 | Fixture-sidecar validation | `crates/slug/tests/conformance_metadata.rs` | `cargo test -p slug --features metrics --test conformance_metadata` |
 | Typed native manifest bindings and shim generator | `crates/slug-native-manifest/tests/manifest.rs`, `tests/shim.rs` (needs `cc`, or `clang` on Windows) | `cargo test -p slug-native-manifest` |
 | Typed native adapter | `crates/slug-native-adapter/tests/adapter.rs` | `cargo test -p slug-native-adapter` |
+| Typed native clutches through the desktop loader | `crates/slug/tests/typed_native.rs` (needs a C compiler) | `cargo test -p slug --test typed_native` |
 | Repository legacy-syntax fixtures | `crates/slug/tests/legacy_syntax_conformance.rs` | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 
 `make test` runs the full unit, binary, and integration suite. See

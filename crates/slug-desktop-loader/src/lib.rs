@@ -12,19 +12,21 @@ use std::{
 };
 
 use slug_loader::{
-    ModuleActivation as ModuleActivationLease, ModuleActivationTransaction, ModuleKey,
-    ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
+    ForeignDeclaration, ModuleActivation as ModuleActivationLease, ModuleActivationTransaction,
+    ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
 };
 use slug_vm::{NativeDescriptorError, NativeFunction, Value};
 #[doc(hidden)]
 pub mod clutch;
 #[allow(unsafe_code)]
 mod ffi_prototype;
+#[allow(unsafe_code)]
+mod typed_native;
 
-use clutch::StagedClutchPlugin;
 pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
 };
+use clutch::{NativeKind, StagedClutchPlugin};
 #[doc(hidden)]
 pub use ffi_prototype::typed_dispatch_spike::{
     ADD_BINDING, DispatchBinding, DispatchShape, FIXTURE_BINDINGS, FIXTURE_SHIM_BINDINGS,
@@ -37,6 +39,7 @@ pub use ffi_prototype::uniform_shim_generator::{
 #[doc(hidden)]
 pub use ffi_prototype::uniform_shim_spike::UniformShimSpike;
 pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
+use slug_native_adapter::TextResults;
 
 /// Filesystem resolver for an explicitly configured desktop module search path.
 #[derive(Clone, Debug)]
@@ -46,6 +49,8 @@ pub struct DesktopResolver {
     clutch_repository: ClutchRepository,
     activation_sources: Rc<RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>>,
     activation_state: Rc<RefCell<DesktopActivationState>>,
+    /// Text-result switches of each staged typed activation.
+    typed_text_results: Rc<RefCell<HashMap<ModuleActivationLease, TextResults>>>,
 }
 
 #[derive(Debug, Default)]
@@ -138,6 +143,7 @@ impl DesktopResolver {
             clutch_repository,
             activation_sources: Rc::new(RefCell::new(HashMap::new())),
             activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
+            typed_text_results: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -186,7 +192,16 @@ impl DesktopResolver {
                 })
             }
             ClutchPluginSource::Native {
-                root, library, abi, ..
+                root,
+                library,
+                kind: NativeKind::Typed(manifest),
+                ..
+            } => self.stage_typed(lease, root, library, manifest, &mut registrar),
+            ClutchPluginSource::Native {
+                root,
+                library,
+                kind: NativeKind::Prototype { abi },
+                ..
             } => {
                 if abi == ABI_PROFILE {
                     let module = FfiPrototypeLibrary::load(library).map_err(|error| {
@@ -229,6 +244,68 @@ impl DesktopResolver {
             diagnostic_name: source.diagnostic_name.clone(),
             plugin: registrar.finish(),
         }))
+    }
+
+    fn stage_typed(
+        &self,
+        lease: &ModuleActivationLease,
+        root: &Path,
+        library: &Path,
+        manifest: &slug_native_manifest::NativeManifest,
+        registrar: &mut clutch::ClutchPluginRegistrar,
+    ) -> Result<(), ModuleLoadError> {
+        let installed =
+            typed_native::load(library, manifest).map_err(|message| ModuleLoadError::Clutch {
+                location: library.to_string_lossy().into_owned(),
+                message: format!("cannot load typed native library: {message}"),
+            })?;
+        self.typed_text_results
+            .borrow_mut()
+            .insert(lease.clone(), installed.text_results);
+        installed.functions.into_iter().try_for_each(|function| {
+            registrar
+                .define_foreign(function)
+                .map_err(|error| ModuleLoadError::Clutch {
+                    location: root.to_string_lossy().into_owned(),
+                    message: error.to_string(),
+                })
+        })
+    }
+
+    /// Checks a clutch module's `foreign` declarations against its typed
+    /// native bindings. Modules of other clutch forms are not checked.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked clutch error naming the first mismatched declaration.
+    pub fn check_foreign_declarations(
+        &self,
+        source: &ModuleSource,
+        module_name: &str,
+        declarations: &[ForeignDeclaration],
+    ) -> Result<(), ModuleLoadError> {
+        let Some(lease) = &source.activation else {
+            return Ok(());
+        };
+        let Some(ClutchPluginSource::Native {
+            kind: NativeKind::Typed(manifest),
+            ..
+        }) = self.activation_sources.borrow().get(lease).cloned()
+        else {
+            return Ok(());
+        };
+        let non_null_text = typed_native::check_declarations(&manifest, module_name, declarations)
+            .map_err(|message| ModuleLoadError::Clutch {
+                location: source.diagnostic_name.clone(),
+                message,
+            })?;
+        if let Some(text_results) = self.typed_text_results.borrow().get(lease) {
+            for name in non_null_text {
+                // The check above found this binding in the same manifest.
+                let _ = text_results.reject_null(module_name, &name);
+            }
+        }
+        Ok(())
     }
 
     /// Returns plugin-provided functions for one module-qualified declaration.
@@ -370,7 +447,7 @@ impl ModuleResolver for DesktopResolver {
                 (None, Some(native)) => Some(ClutchPluginSource::Native {
                     root: module.root,
                     library: native.library,
-                    abi: native.abi,
+                    kind: native.kind,
                     module_names: module.module_names,
                 }),
                 (None, None) => None,
@@ -467,7 +544,7 @@ enum ClutchPluginSource {
     Native {
         root: PathBuf,
         library: PathBuf,
-        abi: String,
+        kind: NativeKind,
         module_names: Vec<String>,
     },
 }

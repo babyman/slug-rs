@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Desktop clutches can bind `foreign` declarations through typed native
+  bindings. A `[native]` table without `abi` uses the typed form; the loader
+  loads the clutch's shim library, verifies its table through the shared
+  adapter, and checks every `foreign` declaration in each clutch module
+  against its binding before the module is installed. A NULL text result for
+  a declaration annotated `str` fails with `native.type`. The 0.13 prototype
+  form is unchanged. `slug-native-shim stage` builds a typed clutch's
+  library.
+
 - Added the `slug-native-adapter` crate, the shared `no_std + alloc` code that
   calls generated shims. It verifies a shim table against the expected
   canonical signatures, registers each binding as a native function, encodes

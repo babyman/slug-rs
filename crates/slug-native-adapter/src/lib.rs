@@ -26,7 +26,11 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::{any::Any, cell::OnceCell, fmt};
+use core::{
+    any::Any,
+    cell::{Cell, OnceCell},
+    fmt,
+};
 
 use slug_vm::{NativeArity, NativeFunction, NativeModule};
 
@@ -44,6 +48,41 @@ pub struct ExpectedBinding<'a> {
     /// The Slug function name, or `release:<resource>`.
     pub name: &'a str,
     pub signature: &'a str,
+}
+
+/// The result of [`install`]: the Slug-visible functions and the switches a
+/// host sets after checking the bindings' `foreign` declarations.
+pub struct Installed {
+    pub functions: Vec<NativeFunction>,
+    pub text_results: TextResults,
+}
+
+/// Per-binding switches for `cstr` results. By default a NULL text result
+/// becomes `nil`; a binding whose declaration is annotated `str` without
+/// `nil` must instead fail with `native.type`.
+#[derive(Clone, Default)]
+pub struct TextResults(Rc<Vec<(String, Rc<Cell<bool>>)>>);
+
+impl TextResults {
+    /// Makes a NULL text result of `module.name` fail with `native.type`.
+    /// Returns whether the binding exists.
+    #[must_use = "false means the binding does not exist"]
+    pub fn reject_null(&self, module: &str, name: &str) -> bool {
+        let qualified = format!("{module}.{name}");
+        self.0
+            .iter()
+            .find(|(binding, _)| *binding == qualified)
+            .map(|(_, reject)| reject.set(true))
+            .is_some()
+    }
+}
+
+impl fmt::Debug for TextResults {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TextResults")
+            .finish_non_exhaustive()
+    }
 }
 
 /// A shim table that does not match what the host expects.
@@ -83,7 +122,7 @@ pub(crate) fn install_bindings(
     table: Vec<TableBinding>,
     expected: &[ExpectedBinding<'_>],
     owner: &Rc<dyn Any>,
-) -> Result<Vec<NativeFunction>, InstallError> {
+) -> Result<Installed, InstallError> {
     if abi_version != SHIM_ABI_VERSION {
         return Err(InstallError::new(format!(
             "shim ABI version {abi_version} is not the supported version {SHIM_ABI_VERSION}"
@@ -143,17 +182,27 @@ pub(crate) fn install_bindings(
         )));
     }
     let mut functions = Vec::new();
+    let mut text_results = Vec::new();
     for (module, bindings) in modules {
-        functions.extend(install_module(&module, bindings, owner)?);
+        let (module_functions, runtime) = install_module(&module, bindings, owner)?;
+        functions.extend(module_functions);
+        text_results.extend(
+            runtime
+                .iter()
+                .map(|binding| (binding.qualified.clone(), binding.reject_null_text.clone())),
+        );
     }
-    Ok(functions)
+    Ok(Installed {
+        functions,
+        text_results: TextResults(Rc::new(text_results)),
+    })
 }
 
 fn install_module(
     module_name: &str,
     bindings: Vec<Verified>,
     owner: &Rc<dyn Any>,
-) -> Result<Vec<NativeFunction>, InstallError> {
+) -> Result<(Vec<NativeFunction>, Vec<Rc<RuntimeBinding>>), InstallError> {
     let (releases, functions): (Vec<_>, Vec<_>) = bindings
         .into_iter()
         .partition(|binding| binding.table.name.starts_with("release:"));
@@ -203,7 +252,7 @@ fn install_module(
         })
         .collect::<Result<Rc<[_]>, InstallError>>()?;
     let _ = slots.set(resource_types);
-    functions
+    let functions = functions
         .iter()
         .zip(&runtime)
         .enumerate()
@@ -217,7 +266,8 @@ fn install_module(
                 )
                 .map_err(descriptor)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((functions, runtime))
 }
 
 fn runtime_binding(
@@ -274,5 +324,6 @@ fn runtime_binding(
         results,
         close,
         list,
+        reject_null_text: Rc::new(Cell::new(false)),
     })
 }

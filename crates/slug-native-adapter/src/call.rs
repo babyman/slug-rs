@@ -71,6 +71,8 @@ pub(crate) struct RuntimeBinding {
     pub close: Option<usize>,
     /// Results return to Slug as a list because the binding has `out` values.
     pub list: bool,
+    /// A NULL `cstr` return fails with `native.type` instead of becoming nil.
+    pub reject_null_text: Rc<core::cell::Cell<bool>>,
 }
 
 pub(crate) struct ResourceSlot {
@@ -210,6 +212,18 @@ fn run(
             binding.qualified
         ))
     })?;
+
+    if binding.reject_null_text.get()
+        && !binding.list
+        && matches!(binding.results.first(), Some(Kind::Cstr))
+        && matches!(decoded.first(), Some(Decoded::Value(value)) if value.as_ref().kind() == NativeValueKind::Nil)
+    {
+        return Err(NativeError::new(
+            "native.type",
+            format!("`{}` returned NULL for a `str` result", binding.qualified),
+        )
+        .into());
+    }
 
     // Wrap every handle first, so an error below still releases it.
     let mut values = Vec::with_capacity(decoded.len());

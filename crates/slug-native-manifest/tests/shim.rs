@@ -534,3 +534,54 @@ fn the_shim_binary_generates_and_checks() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("usage:"));
 }
+
+#[test]
+fn dynamic_builds_reject_missing_platforms_escaping_paths_and_compiler_errors() {
+    let directory = TemporaryDirectory::new();
+    let manifest = |libraries: &str, sources: &str| {
+        NativeManifest::from_clutch_source(&format!(
+            "[native]\nprofile = \"core\"\nheaders = [\"bad.h\"]\nsources = [{sources}]\n\
+             [native.libraries]\n{libraries}\n\
+             [native.functions.bad]\nf = {{ symbol = \"bad_f\", signature = \"() -> i32\" }}\n"
+        ))
+        .expect("valid manifest")
+    };
+    let error = slug_native_manifest::build_dynamic(
+        directory.path(),
+        &manifest("\"linux-x86_64\" = \"lib.so\"", ""),
+        "bad",
+        "plan9-mips",
+    )
+    .expect_err("missing platform");
+    assert_eq!(
+        error.to_string(),
+        "native.libraries: no library for platform `plan9-mips`"
+    );
+
+    let error = slug_native_manifest::build_dynamic(
+        directory.path(),
+        &manifest("\"linux-x86_64\" = \"../lib.so\"", ""),
+        "bad",
+        "linux-x86_64",
+    )
+    .expect_err("escaping library");
+    assert!(
+        error
+            .to_string()
+            .contains("must be a relative path inside the clutch")
+    );
+
+    directory.write("bad.h", "#include <stdint.h>\nint64_t bad_f(void);\n");
+    let error = slug_native_manifest::build_dynamic(
+        directory.path(),
+        &manifest("\"linux-x86_64\" = \"out/lib.so\"", ""),
+        "bad",
+        "linux-x86_64",
+    )
+    .expect_err("header mismatch");
+    assert!(
+        error.to_string().starts_with("shim: C compiler failed for"),
+        "{error}"
+    );
+    assert!(directory.path().join("out/lib.shim.c").is_file());
+}

@@ -1,4 +1,5 @@
 # Typed native calls, step 1: scalars, text, bytes, handles, and `slug.io.fs`
+# Typed native calls, step 1: scalars, text, bytes, handles, and `slug.io.fs`
 
 ## Goal
 
@@ -147,16 +148,29 @@ ESP32-S3 target in the `embedded-check` job.
 
 ### 4. Desktop dynamic path
 
-- [ ] Accept a typed native section in `clutch.toml` alongside the existing
+- [x] Accept a typed native section in `clutch.toml` alongside the existing
   prototype `abi` form, and dispatch activation on which form is present.
-- [ ] Load the library, resolve `slug_shim_get_table`, check the ABI version,
+- [x] Load the library, resolve `slug_shim_get_table`, check the ABI version,
   and register each binding through the adapter.
-- [ ] Implement the Slug/C type compatibility check where decision 4 places it,
+- [x] Implement the Slug/C type compatibility check where decision 4 places it,
   including `native.type` for a NULL `cstr` result annotated `str` without
   `nil`, which the adapter cannot see.
-- [ ] Extend clutch staging to generate and compile shims for typed clutches.
-- [ ] Port the spike fixture's functional and checked-boundary tests to the
+- [x] Extend clutch staging to generate and compile shims for typed clutches.
+- [x] Port the spike fixture's functional and checked-boundary tests to the
   production path, and keep them in the three-platform job.
+
+The check runs through a `ModuleGraphHost` hook after each clutch module
+compiles and before its activation registers, so a second module from an
+already-active clutch is checked too. The frontend passes each `foreign`
+declaration's annotations as text. The adapter's `install` returns a switch
+per binding that the check sets when a text result excludes `nil`.
+
+Staging is `slug_native_manifest::build_dynamic`, also available as
+`slug-native-shim stage`. `scripts/stage-native-clutches.sh` calls it once
+`slug.io.fs` moves in phase 6, because no first-party clutch is typed before
+then. The production tests use a fixture with plain fixed-width C types
+(`crates/slug/tests/typed_native/`), since the spike's enum status type would
+not match an `i32` binding exactly.
 
 ### 5. Static path
 

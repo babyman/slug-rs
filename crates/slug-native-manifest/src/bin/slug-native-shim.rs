@@ -3,13 +3,16 @@
 //! ```text
 //! slug-native-shim generate <clutch.toml> <provider> <shim.c>
 //! slug-native-shim check <clutch.toml> <provider> <shim.c>
+//! slug-native-shim stage <clutch.toml> <provider> <platform>
 //! ```
+//!
+//! `stage` builds the dynamic library the manifest names for `platform`.
 
-use std::{env, fs, process::ExitCode};
+use std::{env, fs, path::Path, process::ExitCode};
 
 use slug_native_manifest::NativeManifest;
 
-const USAGE: &str = "usage: slug-native-shim (generate|check) <clutch.toml> <provider> <shim.c>";
+const USAGE: &str = "usage: slug-native-shim (generate|check) <clutch.toml> <provider> <shim.c>\n       slug-native-shim stage <clutch.toml> <provider> <platform>";
 
 fn main() -> ExitCode {
     match run(&env::args().skip(1).collect::<Vec<_>>()) {
@@ -40,6 +43,15 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 .map_err(|error| format!("cannot read {shim_path}: {error}"))?;
             slug_native_manifest::check(&manifest, provider, &existing)
                 .map_err(|error| format!("{shim_path}: {error}"))
+        }
+        "stage" => {
+            let root = Path::new(manifest_path)
+                .parent()
+                .unwrap_or_else(|| Path::new("."));
+            let library = slug_native_manifest::build_dynamic(root, &manifest, provider, shim_path)
+                .map_err(|error| format!("{manifest_path}: {error}"))?;
+            println!("staged {}", library.display());
+            Ok(())
         }
         _ => Err(USAGE.into()),
     }

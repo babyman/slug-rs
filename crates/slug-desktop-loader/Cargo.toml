@@ -12,5 +12,7 @@ workspace = true
 
 [dependencies]
 slug-loader = { path = "../slug-loader" }
+slug-native-adapter = { path = "../slug-native-adapter" }
+slug-native-manifest = { path = "../slug-native-manifest" }
 slug-vm = { path = "../slug-vm", default-features = false }
 toml = "0.8"

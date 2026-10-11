@@ -10,15 +10,14 @@ use core::{
     ptr,
 };
 
-use slug_vm::NativeFunction;
-
 use crate::{
-    ExpectedBinding, InstallError,
+    ExpectedBinding, InstallError, Installed,
     abi::{Cell, Cleanup, Entry, RawTable},
 };
 
 /// Verifies a shim table against `expected` and returns one native function
-/// per Slug-visible binding, grouped into one native module per Slug module.
+/// per Slug-visible binding, grouped into one native module per Slug module,
+/// with the switches for their text results.
 ///
 /// The table must contain exactly the expected bindings, each with the same
 /// canonical signature and cell counts. `owner` is kept alive as long as any
@@ -39,7 +38,7 @@ pub unsafe fn install(
     table: *const RawTable,
     expected: &[ExpectedBinding<'_>],
     owner: &Rc<dyn Any>,
-) -> Result<Vec<NativeFunction>, InstallError> {
+) -> Result<Installed, InstallError> {
     // SAFETY: forwarded from this function's contract.
     let (abi_version, bindings) = unsafe { read_table(table)? };
     crate::install_bindings(abi_version, bindings, expected, owner)
