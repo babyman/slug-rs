@@ -99,6 +99,23 @@ There are two directions:
 
 A NULL `handle` or `cstr` result becomes `nil`.
 
+**C types.** The generated shim checks each target against these C types:
+
+| Manifest | C parameter or result |
+|---|---|
+| `bool` | `bool` |
+| `i8`..`i64`, `u8`..`u64` | `int8_t`..`int64_t`, `uint8_t`..`uint64_t` |
+| `f32`, `f64` | `float`, `double` |
+| `str` | `const char *`, `size_t` (two C parameters) |
+| `bytes` | `const uint8_t *`, `size_t` (two C parameters) |
+| `cstr`, borrowed | `const char *` |
+| `cstr owned(free_fn)` | `char *` |
+| `handle<R>` | `ctype *` |
+| `out T` | a pointer to the type of `T` |
+
+A free function named by `owned` has the type `void (void *)`, like `free`
+and `sqlite3_free`.
+
 **Canonical signature text.** The generator and the loader both build this
 text from the parsed model:
 
@@ -183,6 +200,10 @@ uses fixed-size arrays and makes no allocation per call.
   `__declspec(dllexport)` for a Windows dynamic build and to default
   visibility elsewhere, and it is applied only to the `slug_shim_get_table`
   alias.
+- The table function is `slug_shim_table_<provider>`, where the build names
+  the provider. The `slug_shim_get_table` alias is compiled only when
+  `SLUG_SHIM_DYNAMIC` is defined, so one generated file serves both linking
+  forms.
 
 **Building shims.** Shims are generated when a clutch is staged or a static
 image is built, and first-party clutches never commit generated C. The

@@ -4,6 +4,7 @@
 //! through this crate, so they derive the same canonical signature from one
 //! parsed form. See `docs/decisions/2026-10-11-typed-native-manifest-bindings.md`.
 
+mod shim;
 mod signature;
 
 use std::{
@@ -11,6 +12,7 @@ use std::{
     fmt,
 };
 
+pub use shim::{DYNAMIC_DEFINE, SHIM_C_FLAGS, check, generate, table_function};
 pub use signature::{Direction, NativeType, Parameter, Signature};
 use signature::{ParsedSignature, ParsedType};
 
@@ -164,6 +166,12 @@ impl NativeManifest {
             }
         };
         let headers = string_list(native, "headers", "native")?;
+        if let Some(header) = headers.iter().find(|header| !is_include_path(header)) {
+            return Err(ManifestError::new(
+                "native.headers",
+                format!("`{header}` cannot be included; use a relative path with `/` separators"),
+            ));
+        }
         let sources = string_list(native, "sources", "native")?;
         let link = string_list(native, "link", "native")?;
         let libraries = optional_table(native, "libraries", "native")?
@@ -509,6 +517,15 @@ fn is_identifier(text: &str) -> bool {
         .next()
         .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
         && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+/// A path the generated shim can spell as `#include "path"`.
+fn is_include_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && path
+            .chars()
+            .all(|character| character.is_ascii_graphic() && !matches!(character, '"' | '\\'))
 }
 
 fn is_module_name(name: &str) -> bool {

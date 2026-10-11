@@ -182,6 +182,16 @@ fn rejects_invalid_manifests_with_their_location() {
         ),
         (native("source = \"native/source\"\n"), "native", "unknown key `source`"),
         (
+            "[native]\nprofile = \"core\"\nheaders = [\"a\\\\b.h\"]\n".to_owned(),
+            "native.headers",
+            "cannot be included",
+        ),
+        (
+            "[native]\nprofile = \"core\"\nheaders = [\"/usr/include/a.h\"]\n".to_owned(),
+            "native.headers",
+            "cannot be included",
+        ),
+        (
             "[native]\nheaders = [\"h.h\"]\n".to_owned(),
             "native",
             "missing `profile`",

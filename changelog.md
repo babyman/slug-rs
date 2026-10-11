@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added the typed native shim generator and a `slug-native-shim` binary to
+  `slug-native-manifest`. It emits one C file per provider with a uniform
+  entry per binding, exact-type header checks for each target and free
+  function, owned-text release, and a provider-unique table with a
+  dynamic-library alias. A check mode reports stale shims, and
+  `make test-ffi-prototype` now runs its compiler tests on all three
+  platforms.
+
 - Added the `slug-native-manifest` crate. It parses a clutch's typed
   `[native]` bindings, validates them under the step 1 rules, and produces the
   canonical signature text that generated shims and loaders compare.

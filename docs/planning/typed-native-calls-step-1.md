@@ -110,15 +110,16 @@ A crate named `slug-native-manifest` (name not final) that depends on neither
 Rust code in the manifest crate that emits one deterministic C translation
 unit.
 
-- [ ] Emit `slug_shim_`-prefixed internal-linkage entries, exact-type header
+- [x] Emit `slug_shim_`-prefixed internal-linkage entries, exact-type header
   checks for each target and free function, release functions for owned
   results, `strlen` lengths for `cstr` results, and the table with signatures.
-- [ ] Emit the provider-unique table function, plus the exported alias for
+- [x] Emit the provider-unique table function, plus the exported alias for
   dynamic builds.
-- [ ] Add a check mode that regenerates into a temporary location and compares.
-- [ ] Port the spike's width, qualifier, and arity mismatch tests to generated
+- [x] Add a check mode that regenerates and compares. It compares in memory
+  and names the first differing line, so it needs no temporary file.
+- [x] Port the spike's width, qualifier, and arity mismatch tests to generated
   output, and add a mismatch test for a free function.
-- [ ] Test that a generated shim for a function named `write` compiles in a
+- [x] Test that a generated shim for a function named `write` compiles in a
   translation unit that includes the platform's C library headers.
 
 ### 3. Shared adapter
