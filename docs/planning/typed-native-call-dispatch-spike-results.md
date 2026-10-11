@@ -103,7 +103,8 @@ comparison and as evidence that the selected shapes do not need `libffi`, but
 it is not the production choice because a manifest/header mismatch can become
 undefined behavior before any checked Slug boundary is reached.
 
-The existing three-platform CI job remains the functional platform gate for
-these focused tests, including the uniform mismatch tests. Confirmation from
-macOS, Linux, and Windows is still required before the spike plan is archived.
-No timing assertion is added to CI.
+The existing three-platform CI job is the functional platform gate for these
+focused tests, including the uniform mismatch tests. It passed on macOS, Linux,
+and Windows at `f0a3883`, and the
+[spike plan](completed/typed-native-call-dispatch-spike.md) is complete. No
+timing assertion is added to CI.

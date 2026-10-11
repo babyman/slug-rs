@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Completed the typed native-call dispatch spike after its focused tests
+  passed on the macOS, Linux, and Windows CI matrix.
+
 - Recorded the deferred VM follow-ups found while profiling native calls:
   per-instruction dispatch overhead and export-count-independent module
   member lookup.
