@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Specified a uniform entry point for generated native shims: one C
+  signature over fixed-size value cells, a single exported binding table,
+  stale-shim detection by signature hash, and exact-type header checks on every
+  binding. This removes the loader-side shape table the dispatch spike still
+  needed.
+
 - Added an isolated, release-only 0.13 native scalar-call baseline and local
   benchmark command for the typed native-call dispatch spike. Its raw,
   host-specific timing record is ignored rather than used as a CI threshold.
