@@ -14,3 +14,6 @@
 # Development-native clutch staging outputs
 /clutch/*/native/macos-*/
 /clutch/*/native/linux-*/
+
+# Host-specific benchmark evidence; scripts recreate these files locally.
+/docs/planning/local/

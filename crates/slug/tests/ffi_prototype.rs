@@ -4,6 +4,7 @@ use std::{
     process::Command,
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
+    time::Instant,
 };
 
 use slug::DesktopLoader as ModuleLoader;
@@ -439,6 +440,96 @@ fn compile_fixture_with_libraries(
     let status = command.status().expect("start C compiler");
     assert!(status.success(), "compile C fixture");
     output
+}
+
+fn scalar_add_program(
+    directory: &TemporaryDirectory,
+    calls: usize,
+) -> (ModuleLoader, slug_vm::Program) {
+    fs::create_dir_all(directory.path().join("slug")).expect("create scalar fixture module dir");
+    fs::write(
+        directory.path().join("slug/scalar.slug"),
+        "export foreign add = fn(left:num, right:num):num\n",
+    )
+    .expect("write scalar fixture module source");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let main = directory.path().join("scalar-benchmark.slug");
+    let source = format!(
+        "val scalar = import(\"slug.scalar\")\n\
+         val repeat = fn(remaining:num) {{\n\
+           if (remaining == 0) {{ 0 }} else {{\n\
+             scalar.add(remaining, 1)\n\
+             recur(remaining - 1)\n\
+           }}\n\
+         }}\n\
+         repeat({calls})\n"
+    );
+    let program = loader
+        .compile_source(&main.to_string_lossy(), &source)
+        .expect("compile scalar callback program");
+    (loader, program)
+}
+
+#[test]
+fn scalar_add_callback_fixture_uses_the_013_host_table_path() {
+    let directory = TemporaryDirectory::new();
+    let (loader, program) = scalar_add_program(&directory, 3);
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/scalar_add_module.c",
+        "scalar_add",
+    );
+    let module = FfiPrototypeLibrary::load(library).expect("load scalar callback fixture");
+    let mut vm = Vm::with_module_loader(loader);
+    module
+        .register(&mut vm)
+        .expect("register scalar callback fixture");
+
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "0");
+}
+
+/// Produces local, raw timing samples for the frozen 0.13 host-table path.
+///
+/// This stays ignored because benchmark numbers are evidence for the dispatch
+/// spike, not an assertion suitable for a shared CI machine.
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn scalar_add_callback_baseline() {
+    const WARMUP_CALLS: usize = 10_000;
+    const CALLS_PER_SAMPLE: usize = 100_000;
+    const CALLS_PER_SAMPLE_F64: f64 = 100_000.0;
+    const SAMPLE_COUNT: usize = 11;
+
+    let directory = TemporaryDirectory::new();
+    let (loader, warmup) = scalar_add_program(&directory, WARMUP_CALLS);
+    let (_, sample) = scalar_add_program(&directory, CALLS_PER_SAMPLE);
+    let library = compile_fixture(
+        &directory,
+        "crates/slug-vm/tests/ffi/scalar_add_module.c",
+        "scalar_add",
+    );
+    let module = FfiPrototypeLibrary::load(library).expect("load scalar callback fixture");
+    let mut vm = Vm::with_module_loader(loader);
+    module
+        .register(&mut vm)
+        .expect("register scalar callback fixture");
+    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+
+    println!(
+        "configuration: profile=release samples={SAMPLE_COUNT} warmup_calls={WARMUP_CALLS} calls_per_sample={CALLS_PER_SAMPLE} target={}-{}",
+        env::consts::ARCH,
+        env::consts::OS,
+    );
+    for sample_index in 1..=SAMPLE_COUNT {
+        let started = Instant::now();
+        assert_eq!(vm.run_named(&sample, "main").unwrap().to_string(), "0");
+        let elapsed = started.elapsed();
+        println!(
+            "sample {sample_index}: total_ns={} ns_per_call={:.2}",
+            elapsed.as_nanos(),
+            elapsed.as_secs_f64() * 1_000_000_000.0 / CALLS_PER_SAMPLE_F64,
+        );
+    }
 }
 
 #[cfg(unix)]

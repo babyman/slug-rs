@@ -99,13 +99,15 @@ step. It is not a partial implementation of arbitrary C calls.
 
 ### 1. Establish the prototype baseline
 
-- Preserve the current `make test-ffi-prototype` suite and its GitHub Actions
+- [x] Preserve the current `make test-ffi-prototype` suite and its GitHub Actions
   matrix (`macos-latest`, `ubuntu-latest`, and `windows-latest`).
-- Add an isolated 0.13 scalar fixture matching the `add` operation. It must
-  perform no I/O, allocation, formatting, source compilation, or process
+- [x] Add an isolated 0.13 scalar fixture matching the `add` operation. It
+  performs no I/O, allocation, formatting, source compilation, or process
   startup inside the timed loop.
-- Capture the command, compiler and Rust versions, target triple, optimization
-  mode, CPU details where available, sample count, and raw timing output.
+- [x] Capture the command, compiler and Rust versions, target triple,
+  optimization mode, CPU details where available, sample count, and raw timing
+  output. Run `make bench-ffi-prototype-scalar`; it writes the ignored local
+  record at `docs/planning/local/ffi-prototype-scalar-baseline.txt`.
 
 ### 2. Build equivalent private fixtures
 

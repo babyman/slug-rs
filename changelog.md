@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added an isolated, release-only 0.13 native scalar-call baseline and local
+  benchmark command for the typed native-call dispatch spike. Its raw,
+  host-specific timing record is ignored rather than used as a CI threshold.
+
 - Marked superseded ADRs with historical filename suffixes and reciprocal links
   to their accepted replacements, so current architectural guidance is
   identifiable without a separate registry.

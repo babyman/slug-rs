@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-ffi-prototype stage-native-clutches bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-ffi-prototype bench-ffi-prototype-scalar stage-native-clutches bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -51,6 +51,9 @@ test-repl:
 
 test-ffi-prototype:
 	cargo test -p slug --test ffi_prototype
+
+bench-ffi-prototype-scalar:
+	sh scripts/benchmark-ffi-prototype-scalar.sh
 
 stage-native-clutches:
 	sh scripts/stage-native-clutches.sh
