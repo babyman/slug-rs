@@ -183,7 +183,12 @@ must be annotated, and:
 | any `out` parameter | `list` (the C result followed by each `out` value) |
 
 A `cstr` result annotated `str` without `nil` fails with `native.type` if the
-call returns NULL. The number of non-`out` parameters must equal the
+call returns NULL.
+
+At run time an integer parameter accepts only a Slug integer, and a float
+parameter accepts an integer or a float. A value outside the C type's range
+fails with `native.range`, as does an unsigned result above the largest Slug
+integer. The number of non-`out` parameters must equal the
 declaration's arity.
 
 **Cell limit.** A binding has at most 16 argument cells and 16 result cells.

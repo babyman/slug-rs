@@ -43,3 +43,5 @@ jobs:
       - name: Check ESP32-S3 firmware
         run: cargo +esp check
         working-directory: firmware/slug-esp32-s3
+      - name: Check the typed native adapter for ESP32-S3
+        run: cargo +esp check -p slug-native-adapter --target xtensa-esp32s3-none-elf -Z build-std=core,alloc

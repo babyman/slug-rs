@@ -127,17 +127,23 @@ unit.
 A `no_std + alloc` crate that depends on `slug-vm` and is the only code that
 calls a shim entry.
 
-- [ ] Encode arguments into cells by manifest type with range checks,
+- [x] Encode arguments into cells by manifest type with range checks,
   `cstr` copies, and resource type and closed-state checks.
-- [ ] Decode results with UTF-8 validation and NULL-to-`nil` mapping. Run
+- [x] Decode results with UTF-8 validation and NULL-to-`nil` mapping. Run
   cleanup after decoding, including on failure.
-- [ ] Map entry status and boundary failures to the closed list of codes.
-- [ ] Verify each binding's signature, argument count, and result count at
+- [x] Map entry status and boundary failures to the closed list of codes.
+- [x] Verify each binding's signature, argument count, and result count at
   installation.
-- [ ] Allow `unsafe` only for the entry and release calls. Keep
-  `unsafe_code = "deny"` in `slug-vm` and `slug-frontend`.
-- [ ] Unit-test encoding, decoding, and failure mapping against Rust test
+- [x] Confine `unsafe` to one private module: the entry and release calls,
+  plus reading the shim table and copying returned text, which the adapter
+  cannot do safely. Keep `unsafe_code = "deny"` in `slug-vm` and
+  `slug-frontend`.
+- [x] Unit-test encoding, decoding, and failure mapping against Rust test
   entries, without a C compiler.
+
+The adapter takes each binding's cell layout from its canonical signature
+text, so static images carry no manifest model. CI checks it for the
+ESP32-S3 target in the `embedded-check` job.
 
 ### 4. Desktop dynamic path
 
@@ -145,7 +151,9 @@ calls a shim entry.
   prototype `abi` form, and dispatch activation on which form is present.
 - [ ] Load the library, resolve `slug_shim_get_table`, check the ABI version,
   and register each binding through the adapter.
-- [ ] Implement the Slug/C type compatibility check where decision 4 places it.
+- [ ] Implement the Slug/C type compatibility check where decision 4 places it,
+  including `native.type` for a NULL `cstr` result annotated `str` without
+  `nil`, which the adapter cannot see.
 - [ ] Extend clutch staging to generate and compile shims for typed clutches.
 - [ ] Port the spike fixture's functional and checked-boundary tests to the
   production path, and keep them in the three-platform job.

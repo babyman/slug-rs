@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added the `slug-native-adapter` crate, the shared `no_std + alloc` code that
+  calls generated shims. It verifies a shim table against the expected
+  canonical signatures, registers each binding as a native function, encodes
+  arguments with range, NUL, and resource checks, decodes results with UTF-8
+  validation, runs cleanup on every path, and releases handles at most once.
+  Boundary failures use the closed list of `native.*` codes; a nonzero entry
+  status is a `native_contract` error.
+
 - Added the typed native shim generator and a `slug-native-shim` binary to
   `slug-native-manifest`. It emits one C file per provider with a uniform
   entry per binding, exact-type header checks for each target and free

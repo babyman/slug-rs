@@ -307,6 +307,16 @@ name = "slug-loader"
 version = "0.1.0"
 
 [[package]]
+name = "slug-native-adapter"
+version = "0.1.0"
+dependencies = [
+ "slug-frontend",
+ "slug-loader",
+ "slug-native-manifest",
+ "slug-vm",
+]
+
+[[package]]
 name = "slug-native-manifest"
 version = "0.1.0"
 dependencies = [
