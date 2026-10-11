@@ -179,75 +179,87 @@ fn run(
         call.with_resource(index, resource_type, |handle| handle.address.take())?;
     }
     let mut results = [Cell::default(); MAX_CELLS];
-    let decoded = raw::invoke(
+    let outcome = raw::invoke(
         binding.entry,
         &arguments[..binding.arguments.len()],
         &mut results[..binding.results.len()],
-        |status, results| {
-            (status == 0)
-                .then(|| {
-                    results
-                        .iter()
-                        .zip(&binding.results)
-                        .map(|(cell, kind)| decode(*cell, kind))
-                        .collect::<Vec<_>>()
-                })
-                .ok_or(status)
+        |status, cells| {
+            if status != 0 {
+                return Err(Failure::Contract(format!(
+                    "typed native shim for `{}` failed with status {status}",
+                    binding.qualified
+                )));
+            }
+            // Decoding runs before the shim's cleanup, so text is copied first.
+            collect_results(call, binding, resources, cells)
         },
     );
     drop(texts);
     if let Some((index, resource_type)) = close {
         call.close_resource(index, resource_type)?;
     }
-    let decoded = decoded.map_err(|status| {
-        Failure::Contract(format!(
-            "typed native shim for `{}` failed with status {status}",
-            binding.qualified
-        ))
-    })?;
+    outcome
+}
 
-    if binding.reject_null_text.get()
-        && !binding.list
-        && matches!(binding.results.first(), Some(Kind::Cstr))
-        && matches!(decoded.first(), Some(Decoded::Value(value)) if value.as_ref().kind() == NativeValueKind::Nil)
-    {
-        return Err(NativeError::new(
-            "native.type",
-            format!("`{}` returned NULL for a `str` result", binding.qualified),
-        )
-        .into());
-    }
-
-    // Wrap every handle first, so an error below still releases it.
-    let mut values = Vec::with_capacity(decoded.len());
+/// Decodes result cells straight into the Slug result. A single result needs
+/// no collection; a list result allocates only the list itself. Every handle
+/// is wrapped even after a decode failure, so dropping it releases it.
+fn collect_results(
+    call: &mut NativeCall<'_>,
+    binding: &RuntimeBinding,
+    resources: &[ResourceSlot],
+    cells: &[Cell],
+) -> Result<NativeOwnedValue, Failure> {
     let mut failure = None;
-    for value in decoded {
-        values.push(match value {
-            Decoded::Value(value) => value,
-            Decoded::Handle(address, slot) => {
-                let slot = resource_slot(resources, slot)?;
-                call.resource(
-                    &slot.resource_type,
-                    Handle {
-                        address: Some(address),
-                        release: slot.release,
-                        release_results: slot.release_results,
-                    },
-                )?
-            }
-            Decoded::Error(error) => {
-                failure.get_or_insert(error);
-                NativeOwnedValue::nil()
-            }
-        });
+    if !binding.list {
+        let Some((result, kind)) = cells.first().zip(binding.results.first()) else {
+            return Ok(NativeOwnedValue::nil());
+        };
+        if binding.reject_null_text.get() && matches!(kind, Kind::Cstr) && result.address() == 0 {
+            return Err(NativeError::new(
+                "native.type",
+                format!("`{}` returned NULL for a `str` result", binding.qualified),
+            )
+            .into());
+        }
+        let value = wrap(call, resources, decode(*result, kind), &mut failure)?;
+        return failure.map_or(Ok(value), |error| Err(error.into()));
     }
-    if let Some(error) = failure {
-        return Err(error.into());
+    let mut values = Vec::with_capacity(cells.len());
+    for (result, kind) in cells.iter().zip(&binding.results) {
+        values.push(wrap(call, resources, decode(*result, kind), &mut failure)?);
     }
-    Ok(if binding.list {
-        NativeOwnedValue::list(values)
-    } else {
-        values.pop().unwrap_or_else(NativeOwnedValue::nil)
+    failure.map_or_else(
+        || Ok(NativeOwnedValue::list(values)),
+        |error| Err(error.into()),
+    )
+}
+
+/// Turns one decoded cell into a Slug value, creating the resource for a
+/// handle. A decode failure becomes `nil` and is kept as the call's failure.
+fn wrap(
+    call: &mut NativeCall<'_>,
+    resources: &[ResourceSlot],
+    decoded: Decoded,
+    failure: &mut Option<NativeError>,
+) -> Result<NativeOwnedValue, Failure> {
+    Ok(match decoded {
+        Decoded::Value(value) => value,
+        Decoded::Handle(address, slot) => {
+            let slot = resource_slot(resources, slot)?;
+            call.resource(
+                &slot.resource_type,
+                Handle {
+                    address: Some(address),
+                    release: slot.release,
+                    release_results: slot.release_results,
+                },
+            )?
+        }
+        Decoded::Error(error) => {
+            failure.get_or_insert(error);
+            NativeOwnedValue::nil()
+        }
     })
 }
 

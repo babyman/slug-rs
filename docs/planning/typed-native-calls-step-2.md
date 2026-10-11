@@ -99,9 +99,37 @@ decision record for phase 6 settles the mechanism, the key order, and the
 
 ### 1. Adapter per-call cost
 
-- [ ] Profile the production typed scalar call and rank the per-call costs by
+- [x] Profile the production typed scalar call and rank the per-call costs by
   saving and risk.
-- [ ] Apply the fixes you approve, one per commit, and re-measure.
+- [x] Apply the fixes you approve, one per commit, and re-measure.
+
+Instruments' Time Profiler on 30 million typed `add` calls put about 86 ns of
+the typed path's extra cost over a Rust native inside the native callback.
+About 35 ns of that was two heap allocations per call, one for decoded cells
+and one for result values. The ranked fixes were:
+
+1. Decode results inside the call's decode step, straight into the Slug
+   value, with no per-call collection. Approved and applied.
+2. Precompute the binding index instead of parsing the member key, and avoid
+   two `Rc` clones, an estimated 3-6 ns. Not applied.
+
+The C call through the shim (about 8 ns) is the uniform entry's cost, and the
+VM's per-call work is shared with every native call and belongs to
+[VM optimization item 10](vm-optimization.md#10-reduce-per-instruction-overhead-and-indexed-member-lookup-deferred).
+
+Fix 1 measured on the same Apple M3 host:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Profiling harness, typed `add` (median of 5 alternating runs) | 394 ns | 365 ns |
+| `make bench-ffi-prototype-scalar`, production typed path | 371 ns | 336 ns |
+| Same run, 0.13 host-table callback | 339 ns | 336 ns |
+| Same run, typed `slug.io.fs` per operation | 1,900 ns | 1,656 ns |
+| Same run, prototype `slug.io.fs` per operation | 1,577 ns | 1,449 ns |
+
+A scalar typed call now costs the same as the 0.13 callback. The filesystem
+figures are dominated by a flushed write per operation and vary more between
+runs; the typed clutch's gap narrowed from about 20% to about 14%.
 
 ### 2. Decisions
 

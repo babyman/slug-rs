@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Typed native calls no longer allocate per call to decode results: the
+  adapter decodes result cells straight into the Slug value. A scalar typed
+  call dropped from 371 ns to 336 ns on the local benchmark, the same as the
+  0.13 prototype callback.
+
 - Planned step 2 of the typed native-call replacement: profile the adapter's
   per-call cost, add length-delimited `out str` and `out bytes` results and
   cross-module handles, move `slug.db.sqlite` to raw SQLite bindings plus
