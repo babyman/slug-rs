@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Recorded before-and-after measurements for the native-call path and
+  owned-value resolution refactors: native scalar calls are about 2.6x
+  cheaper net of loop overhead, and the source benchmarks run 12-15% faster.
+
 - Positional calls to native functions, including imported foreign
   functions, now skip closure-only argument binding.
 

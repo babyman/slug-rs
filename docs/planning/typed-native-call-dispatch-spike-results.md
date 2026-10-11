@@ -39,6 +39,33 @@ ordinary Slug function call, before any dispatch candidate is involved. The
 empty loop omits the discarded call result, so it slightly understates the
 loop share of each control.
 
+### After the native-call path fixes
+
+A sampling profile of the static Rust native control showed that the native
+callback and `invoke_native` together took about 17 ns per call. The rest of
+the gap was VM call setup: each call deep-copied the declared native's
+identity and resource signature several times, rebuilt its arguments through
+closure-only binding, cloned values it had just popped, and allocated an
+unused overflow message for each integer operation. Four VM refactors removed
+those costs without changing checked behavior. The same benchmark on the same
+host then measured:
+
+| Path | Median ns/call | Minus empty loop | Before fixes, minus loop |
+|---|---:|---:|---:|
+| Empty loop | 141 | 0 | 0 |
+| Ordinary Slug function | 331 | 190 | 210 |
+| Statically registered Rust native | 307 | 166 | 436 |
+| Bounded Rust dispatcher | 328 | 187 | 441 |
+| Original generated shim | 325 | 184 | 441 |
+| Uniform generated shim | 342 | 201 | 449 |
+| 0.13 host-table callback | 353 | 211 | 468 |
+
+A native call now costs slightly less than an ordinary Slug function call, and
+the dispatch candidates remain within noise of each other. About 80 ns of each
+remaining native call is the `scalar.add` member read, a linear scan of the
+imported module's map that grows with module size. Resolving import members
+before execution is the next candidate for per-frame native calls.
+
 The plain-C loop made 100 million direct and uniform-shim calls against the
 same fixture. It measured 1.05 ns/call direct and 1.31 ns/call through the
 uniform shim. This is a small measurable wrapper cost, but it is much smaller
@@ -65,8 +92,8 @@ but retains the unverifiable wrong-signature risk.
 
 The uniform-entry follow-up also passes its local fixture and rejects deliberate
 integer-width, pointer-qualifier, and arity mismatches with `-Werror`. The VM
-controls show that the native registration/call boundary, rather than the shim
-wrapper alone, dominates the measured cost.
+controls showed that the VM's native-call path, rather than the shim wrapper,
+dominated the measured cost; the native-call path fixes above reduced it.
 
 ## Outcome
 
