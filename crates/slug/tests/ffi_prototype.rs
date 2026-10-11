@@ -8,11 +8,7 @@ use std::{
 };
 
 use slug::DesktopLoader as ModuleLoader;
-use slug_desktop_loader::{
-    ADD_BINDING, ClutchRepository, DispatchShape, FIXTURE_BINDINGS, FIXTURE_SHIM_BINDINGS,
-    FfiPrototypeLibrary, FixtureMismatch, SHIM_ADD_BINDING, TypedDispatchSpike, UniformShimSpike,
-    generate_uniform_shim,
-};
+use slug_desktop_loader::{ClutchRepository, FfiPrototypeLibrary};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind, Vm,
 };
@@ -448,410 +444,6 @@ fn compile_fixture_with_libraries(
     output
 }
 
-fn compile_typed_dispatch_fixture(
-    directory: &TemporaryDirectory,
-    name: &str,
-    extra_source: Option<&Path>,
-) -> PathBuf {
-    let output = directory.path().join(format!(
-        "{}{}{}",
-        std::env::consts::DLL_PREFIX,
-        name,
-        std::env::consts::DLL_SUFFIX
-    ));
-    #[cfg(unix)]
-    let mut command = {
-        let mut command = Command::new("cc");
-        command.args([
-            "-I",
-            "crates/slug-desktop-loader/tests/ffi",
-            "crates/slug-desktop-loader/tests/ffi/typed_dispatch_fixture.c",
-        ]);
-        if cfg!(target_os = "macos") {
-            command.arg("-dynamiclib");
-        } else {
-            command.args(["-shared", "-fPIC"]);
-        }
-        command
-    };
-    #[cfg(windows)]
-    let mut command = {
-        let mut command = Command::new("clang");
-        command.args([
-            "-shared",
-            "-I",
-            "crates/slug-desktop-loader/tests/ffi",
-            "crates/slug-desktop-loader/tests/ffi/typed_dispatch_fixture.c",
-        ]);
-        command
-    };
-    if let Some(source) = extra_source {
-        command.arg(source);
-    }
-    command
-        .arg("-o")
-        .arg(output.to_str().expect("temporary library path is UTF-8"))
-        .current_dir(workspace_root());
-    let status = command.status().expect("start typed-dispatch C compiler");
-    assert!(status.success(), "compile typed-dispatch fixture");
-    output
-}
-
-fn generate_typed_dispatch_shim(directory: &TemporaryDirectory, mode: &str) -> PathBuf {
-    let source = directory.path().join(format!("typed-dispatch-{mode}.c"));
-    let status = Command::new("sh")
-        .arg("scripts/generate-typed-dispatch-shim.sh")
-        .arg(mode)
-        .arg(&source)
-        .current_dir(workspace_root())
-        .status()
-        .expect("run typed-dispatch shim generator");
-    assert!(status.success(), "generate typed-dispatch shim");
-    source
-}
-
-fn generate_uniform_typed_dispatch_shim(
-    directory: &TemporaryDirectory,
-    mismatch: Option<FixtureMismatch>,
-) -> PathBuf {
-    let source = directory.path().join("typed-uniform-shim.c");
-    generate_uniform_shim(&source, mismatch).expect("generate uniform typed-dispatch shim");
-    source
-}
-
-fn typed_dispatch_program(
-    directory: &TemporaryDirectory,
-    source: &str,
-) -> (ModuleLoader, slug_vm::Program) {
-    fs::create_dir_all(directory.path().join("slug")).expect("create typed-dispatch module dir");
-    fs::write(
-        directory.path().join("slug/spike.slug"),
-        "export resource File\n\
-         export foreign openRead = fn(path:str):File\n\
-         export foreign openWrite = fn(path:str):File\n\
-         export foreign openAppend = fn(path:str):File\n\
-         export foreign readLine = fn(file:File):str|nil\n\
-         export foreign write = fn(file:File, text:str):num\n\
-         export foreign close = fn(file:File):nil\n\
-         export foreign add = fn(left:num, right:num):num\n",
-    )
-    .expect("write typed-dispatch source contract");
-    let loader = ModuleLoader::new(directory.path(), None);
-    let program = loader
-        .compile_source(
-            &directory
-                .path()
-                .join("typed-dispatch.slug")
-                .to_string_lossy(),
-            source,
-        )
-        .expect("compile typed-dispatch source");
-    (loader, program)
-}
-
-#[test]
-fn rust_typed_dispatch_calls_the_direct_fixture_without_a_shim() {
-    let directory = TemporaryDirectory::new();
-    let library = compile_typed_dispatch_fixture(&directory, "typed_direct", None);
-    let bindings = FIXTURE_BINDINGS
-        .iter()
-        .copied()
-        .chain(std::iter::once(ADD_BINDING))
-        .collect::<Vec<_>>();
-    let dispatch = TypedDispatchSpike::load(library, &bindings).expect("load direct fixture");
-    let (loader, program) = typed_dispatch_program(
-        &directory,
-        "val spike = import(\"slug.spike\")\nspike.add(20, 22)\n",
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-        .expect("register direct bindings");
-    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
-}
-
-#[test]
-fn generated_typed_dispatch_shim_calls_the_same_direct_fixture() {
-    let directory = TemporaryDirectory::new();
-    let shim = generate_typed_dispatch_shim(&directory, "normal");
-    let library = compile_typed_dispatch_fixture(&directory, "typed_shim", Some(&shim));
-    let bindings = FIXTURE_SHIM_BINDINGS
-        .iter()
-        .copied()
-        .chain(std::iter::once(SHIM_ADD_BINDING))
-        .collect::<Vec<_>>();
-    let dispatch = TypedDispatchSpike::load(library, &bindings).expect("load shim fixture");
-    let (loader, program) = typed_dispatch_program(
-        &directory,
-        "val spike = import(\"slug.spike\")\nspike.add(20, 22)\n",
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-        .expect("register shim bindings");
-    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
-}
-
-#[test]
-fn generated_typed_dispatch_shim_rejects_a_header_mismatch() {
-    let directory = TemporaryDirectory::new();
-    let source = generate_typed_dispatch_shim(&directory, "mismatch");
-    let output = directory.path().join("typed-dispatch-mismatch.o");
-    let compiler = if cfg!(windows) { "clang" } else { "cc" };
-    let output = Command::new(compiler)
-        .args([
-            "-Werror",
-            "-I",
-            "crates/slug-desktop-loader/tests/ffi",
-            "-c",
-        ])
-        .arg(source)
-        .arg("-o")
-        .arg(output)
-        .current_dir(workspace_root())
-        .output()
-        .expect("start mismatch compiler");
-    assert!(
-        !output.status.success(),
-        "a generated function-pointer type incompatible with the included header must fail"
-    );
-}
-
-#[test]
-fn generated_uniform_shim_uses_one_entry_for_the_fixture_contract() {
-    let directory = TemporaryDirectory::new();
-    let shim = generate_uniform_typed_dispatch_shim(&directory, None);
-    let library = compile_typed_dispatch_fixture(&directory, "typed_uniform_shim", Some(&shim));
-    let dispatch = UniformShimSpike::load(library).expect("load uniform shim fixture");
-    let (loader, program) = typed_dispatch_program(
-        &directory,
-        "val spike = import(\"slug.spike\")\nspike.add(20, 22)\n",
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-        .expect("register uniform shim bindings");
-    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
-}
-
-#[test]
-fn generated_uniform_shim_rejects_width_qualifier_and_arity_mismatches() {
-    for mismatch in [
-        FixtureMismatch::Width,
-        FixtureMismatch::Qualifier,
-        FixtureMismatch::Arity,
-    ] {
-        let directory = TemporaryDirectory::new();
-        let source = generate_uniform_typed_dispatch_shim(&directory, Some(mismatch));
-        let output = directory.path().join("typed-uniform-mismatch.o");
-        let compiler = if cfg!(windows) { "clang" } else { "cc" };
-        let output = Command::new(compiler)
-            .args([
-                "-Werror",
-                "-I",
-                "crates/slug-desktop-loader/tests/ffi",
-                "-c",
-            ])
-            .arg(source)
-            .arg("-o")
-            .arg(output)
-            .current_dir(workspace_root())
-            .output()
-            .expect("start uniform mismatch compiler");
-        assert!(
-            !output.status.success(),
-            "{mismatch:?} mismatch must fail against the fixture header"
-        );
-    }
-}
-
-fn assert_typed_dispatch_filesystem_contract(
-    dispatch: &TypedDispatchSpike,
-    directory: &TemporaryDirectory,
-) {
-    let file = directory.path().join("typed-dispatch.txt");
-    let (loader, program) = typed_dispatch_program(
-        directory,
-        &format!(
-            "val spike = import(\"slug.spike\")\n\
-             val output = spike.openWrite(\"{}\")\n\
-             val written = spike.write(output, \"first\\n\")\n\
-             spike.close(output)\n\
-             val input = spike.openRead(\"{}\")\n\
-             val first = spike.readLine(input)\n\
-             val end = spike.readLine(input)\n\
-             spike.close(input)\n\
-             [written, first, end]\n",
-            slug_path_literal(&file),
-            slug_path_literal(&file),
-        ),
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-        .expect("register typed-dispatch bindings");
-    assert_eq!(
-        vm.run_named(&program, "main").unwrap().to_string(),
-        "[6, \"first\", nil]"
-    );
-}
-
-#[test]
-fn typed_dispatch_candidates_share_the_filesystem_fixture_contract() {
-    let direct_directory = TemporaryDirectory::new();
-    let direct_library =
-        compile_typed_dispatch_fixture(&direct_directory, "typed_direct_files", None);
-    let direct_bindings = FIXTURE_BINDINGS
-        .iter()
-        .copied()
-        .chain(std::iter::once(ADD_BINDING))
-        .collect::<Vec<_>>();
-    assert_typed_dispatch_filesystem_contract(
-        &TypedDispatchSpike::load(direct_library, &direct_bindings).expect("load direct fixture"),
-        &direct_directory,
-    );
-
-    let shim_directory = TemporaryDirectory::new();
-    let shim = generate_typed_dispatch_shim(&shim_directory, "normal");
-    let shim_library =
-        compile_typed_dispatch_fixture(&shim_directory, "typed_shim_files", Some(&shim));
-    let shim_bindings = FIXTURE_SHIM_BINDINGS
-        .iter()
-        .copied()
-        .chain(std::iter::once(SHIM_ADD_BINDING))
-        .collect::<Vec<_>>();
-    assert_typed_dispatch_filesystem_contract(
-        &TypedDispatchSpike::load(shim_library, &shim_bindings).expect("load shim fixture"),
-        &shim_directory,
-    );
-
-    let uniform_directory = TemporaryDirectory::new();
-    let uniform_shim = generate_uniform_typed_dispatch_shim(&uniform_directory, None);
-    let uniform_library = compile_typed_dispatch_fixture(
-        &uniform_directory,
-        "typed_uniform_shim_files",
-        Some(&uniform_shim),
-    );
-    let uniform = UniformShimSpike::load(uniform_library).expect("load uniform shim fixture");
-    let file = uniform_directory.path().join("typed-dispatch.txt");
-    let (loader, program) = typed_dispatch_program(
-        &uniform_directory,
-        &format!(
-            "val spike = import(\"slug.spike\")\n\
-             val output = spike.openWrite(\"{}\")\n\
-             val written = spike.write(output, \"first\\n\")\n\
-             spike.close(output)\n\
-             val input = spike.openRead(\"{}\")\n\
-             val first = spike.readLine(input)\n\
-             val end = spike.readLine(input)\n\
-             spike.close(input)\n\
-             [written, first, end]\n",
-            slug_path_literal(&file),
-            slug_path_literal(&file),
-        ),
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(uniform.foreign_functions().unwrap())
-        .expect("register uniform shim bindings");
-    assert_eq!(
-        vm.run_named(&program, "main").unwrap().to_string(),
-        "[6, \"first\", nil]"
-    );
-}
-
-#[test]
-fn typed_dispatch_reports_checked_fixture_boundary_failures() {
-    let directory = TemporaryDirectory::new();
-    let library = compile_typed_dispatch_fixture(&directory, "typed_boundary", None);
-    let bindings = FIXTURE_BINDINGS
-        .iter()
-        .copied()
-        .chain(std::iter::once(ADD_BINDING))
-        .collect::<Vec<_>>();
-    let dispatch = TypedDispatchSpike::load(library, &bindings).expect("load direct fixture");
-    let file = directory.path().join("typed-boundary.txt");
-    let (loader, program) = typed_dispatch_program(
-        &directory,
-        &format!(
-            "val spike = import(\"slug.spike\")\n\
-             val file = spike.openWrite(\"{}\")\n\
-             spike.close(file)\n\
-             spike.write(file, \"again\")\n",
-            slug_path_literal(&file),
-        ),
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-        .expect("register typed-dispatch bindings");
-    let error = vm
-        .run_named(&program, "main")
-        .expect_err("closed handle must fail");
-    assert_eq!(error.kind, RuntimeErrorKind::Native);
-    assert!(
-        error.message.contains("resource is closed"),
-        "unexpected closed-handle error: {error}"
-    );
-
-    let nul_library = compile_typed_dispatch_fixture(&directory, "typed_nul", None);
-    let nul_dispatch = TypedDispatchSpike::load(nul_library, &bindings).expect("load NUL fixture");
-    let (nul_loader, nul_program) = typed_dispatch_program(
-        &directory,
-        "val spike = import(\"slug.spike\")\nspike.openWrite(\"bad\\000path\")\n",
-    );
-    let mut nul_vm = Vm::with_module_loader(nul_loader);
-    nul_vm
-        .define_foreign_batch(nul_dispatch.foreign_functions().unwrap())
-        .expect("register NUL bindings");
-    let error = nul_vm
-        .run_named(&nul_program, "main")
-        .expect_err("interior NUL must fail before the C call");
-    assert_eq!(error.kind, RuntimeErrorKind::Native);
-    assert!(
-        error.message.contains("interior NUL"),
-        "unexpected interior-NUL error: {error}"
-    );
-
-    let io_library = compile_typed_dispatch_fixture(&directory, "typed_io", None);
-    let io_dispatch = TypedDispatchSpike::load(io_library, &bindings).expect("load I/O fixture");
-    let input = directory.path().join("typed-input.txt");
-    fs::write(&input, "read-only").expect("write typed I/O input");
-    let (io_loader, io_program) = typed_dispatch_program(
-        &directory,
-        &format!(
-            "val spike = import(\"slug.spike\")\n\
-             val input = spike.openRead(\"{}\")\n\
-             spike.write(input, \"not writable\")\n",
-            slug_path_literal(&input),
-        ),
-    );
-    let mut io_vm = Vm::with_module_loader(io_loader);
-    io_vm
-        .define_foreign_batch(io_dispatch.foreign_functions().unwrap())
-        .expect("register I/O bindings");
-    let error = io_vm
-        .run_named(&io_program, "main")
-        .expect_err("native I/O status must become a checked error");
-    assert_eq!(error.kind, RuntimeErrorKind::Native);
-    assert!(
-        error.message.contains("native write failed"),
-        "unexpected native-I/O error: {error}"
-    );
-
-    let Err(missing) = TypedDispatchSpike::load(
-        compile_typed_dispatch_fixture(&directory, "typed_missing", None),
-        &[slug_desktop_loader::DispatchBinding {
-            name: "missing",
-            symbol: "slug_spike_missing",
-            shape: DispatchShape::I64I64ToI64,
-        }],
-    ) else {
-        panic!("missing symbol must fail at load time");
-    };
-    assert!(missing.to_string().contains("missing `slug_spike_missing`"));
-    assert!(
-        DispatchShape::parse("(i64) -> i64")
-            .expect_err("unsupported shape must be diagnosed")
-            .to_string()
-            .contains("unsupported typed-dispatch shape")
-    );
-}
-
 fn scalar_add_program(
     directory: &TemporaryDirectory,
     calls: usize,
@@ -929,19 +521,6 @@ const SCALAR_CALLS_PER_SAMPLE: usize = 100_000;
 const SCALAR_CALLS_PER_SAMPLE_F64: f64 = 100_000.0;
 const SCALAR_SAMPLE_COUNT: usize = 11;
 
-fn typed_dispatch_scalar_source(calls: usize) -> String {
-    format!(
-        "val spike = import(\"slug.spike\")\n\
-         val repeat = fn(remaining:num) {{\n\
-           if (remaining == 0) {{ 0 }} else {{\n\
-             spike.add(remaining, 1)\n\
-             recur(remaining - 1)\n\
-           }}\n\
-         }}\n\
-         repeat({calls})\n"
-    )
-}
-
 fn report_scalar_samples(label: &str, vm: &mut Vm, sample: &slug_vm::Program) {
     for sample_index in 1..=SCALAR_SAMPLE_COUNT {
         let started = Instant::now();
@@ -953,45 +532,6 @@ fn report_scalar_samples(label: &str, vm: &mut Vm, sample: &slug_vm::Program) {
             elapsed.as_secs_f64() * 1_000_000_000.0 / SCALAR_CALLS_PER_SAMPLE_F64,
         );
     }
-}
-
-fn measure_typed_dispatch_candidate(
-    label: &str,
-    directory: &TemporaryDirectory,
-    library: PathBuf,
-    bindings: &[slug_desktop_loader::DispatchBinding],
-) {
-    let dispatch = TypedDispatchSpike::load(library, bindings).expect("load benchmark candidate");
-    let (loader, warmup) = typed_dispatch_program(
-        directory,
-        &typed_dispatch_scalar_source(SCALAR_WARMUP_CALLS),
-    );
-    let (_, sample) = typed_dispatch_program(
-        directory,
-        &typed_dispatch_scalar_source(SCALAR_CALLS_PER_SAMPLE),
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-        .expect("register benchmark candidate");
-    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
-    report_scalar_samples(label, &mut vm, &sample);
-}
-
-fn measure_uniform_shim_candidate(directory: &TemporaryDirectory, library: PathBuf) {
-    let dispatch = UniformShimSpike::load(library).expect("load uniform benchmark candidate");
-    let (loader, warmup) = typed_dispatch_program(
-        directory,
-        &typed_dispatch_scalar_source(SCALAR_WARMUP_CALLS),
-    );
-    let (_, sample) = typed_dispatch_program(
-        directory,
-        &typed_dispatch_scalar_source(SCALAR_CALLS_PER_SAMPLE),
-    );
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-        .expect("register uniform benchmark candidate");
-    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
-    report_scalar_samples("uniform-generated-shim", &mut vm, &sample);
 }
 
 /// Same loop as the call controls with the call removed, so the loop's own
@@ -1061,8 +601,8 @@ fn scalar_add_callback_fixture_uses_the_013_host_table_path() {
 
 /// Produces local, raw timing samples for the frozen 0.13 host-table path.
 ///
-/// This stays ignored because benchmark numbers are evidence for the dispatch
-/// spike, not an assertion suitable for a shared CI machine.
+/// This stays ignored because benchmark numbers are local evidence, not an
+/// assertion suitable for a shared CI machine.
 #[test]
 #[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
 fn scalar_add_callback_baseline() {
@@ -1103,88 +643,20 @@ fn scalar_add_callback_baseline() {
     }
 }
 
+/// VM controls for the scalar call benchmarks: the loop alone, an ordinary
+/// Slug function, and a statically registered Rust native. The production
+/// typed path is measured in `typed_native.rs`.
 #[test]
 #[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
-fn typed_dispatch_scalar_comparison() {
+fn scalar_call_controls() {
     println!(
-        "comparison configuration: profile=release samples={SCALAR_SAMPLE_COUNT} warmup_calls={SCALAR_WARMUP_CALLS} calls_per_sample={SCALAR_CALLS_PER_SAMPLE} target={}-{}",
+        "controls configuration: profile=release samples={SCALAR_SAMPLE_COUNT} warmup_calls={SCALAR_WARMUP_CALLS} calls_per_sample={SCALAR_CALLS_PER_SAMPLE} target={}-{}",
         env::consts::ARCH,
         env::consts::OS,
-    );
-    let direct_directory = TemporaryDirectory::new();
-    let direct_bindings = FIXTURE_BINDINGS
-        .iter()
-        .copied()
-        .chain(std::iter::once(ADD_BINDING))
-        .collect::<Vec<_>>();
-    measure_typed_dispatch_candidate(
-        "rust-dispatch",
-        &direct_directory,
-        compile_typed_dispatch_fixture(&direct_directory, "typed_bench_direct", None),
-        &direct_bindings,
-    );
-
-    let shim_directory = TemporaryDirectory::new();
-    let shim = generate_typed_dispatch_shim(&shim_directory, "normal");
-    let shim_bindings = FIXTURE_SHIM_BINDINGS
-        .iter()
-        .copied()
-        .chain(std::iter::once(SHIM_ADD_BINDING))
-        .collect::<Vec<_>>();
-    measure_typed_dispatch_candidate(
-        "generated-shim",
-        &shim_directory,
-        compile_typed_dispatch_fixture(&shim_directory, "typed_bench_shim", Some(&shim)),
-        &shim_bindings,
-    );
-
-    let uniform_directory = TemporaryDirectory::new();
-    let uniform_shim = generate_uniform_typed_dispatch_shim(&uniform_directory, None);
-    measure_uniform_shim_candidate(
-        &uniform_directory,
-        compile_typed_dispatch_fixture(
-            &uniform_directory,
-            "typed_bench_uniform_shim",
-            Some(&uniform_shim),
-        ),
     );
     measure_empty_loop_control();
     measure_slug_function_control();
     measure_static_rust_native_control();
-}
-
-/// Measures the wrapper itself outside the VM, using the same generated C
-/// translation unit as the uniform-table fixture.
-#[cfg(not(windows))]
-#[test]
-#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
-fn uniform_shim_plain_c_comparison() {
-    let directory = TemporaryDirectory::new();
-    let shim = generate_uniform_typed_dispatch_shim(&directory, None);
-    let executable = directory.path().join("typed-shim-plain-benchmark");
-    let status = Command::new("cc")
-        .args([
-            "-O3",
-            "-I",
-            "crates/slug-desktop-loader/tests/ffi",
-            "crates/slug-desktop-loader/tests/ffi/typed_dispatch_fixture.c",
-        ])
-        .arg(shim)
-        .arg("crates/slug-desktop-loader/tests/ffi/typed_shim_plain_benchmark.c")
-        .arg("-o")
-        .arg(&executable)
-        .current_dir(workspace_root())
-        .status()
-        .expect("compile plain-C uniform shim benchmark");
-    assert!(status.success(), "compile plain-C uniform shim benchmark");
-    let output = Command::new(executable)
-        .output()
-        .expect("run plain-C uniform shim benchmark");
-    assert!(
-        output.status.success(),
-        "run plain-C uniform shim benchmark"
-    );
-    print!("{}", String::from_utf8_lossy(&output.stdout));
 }
 
 #[cfg(unix)]
@@ -2173,4 +1645,174 @@ fn producer_abi_013_sends_owned_scalar_and_byte_values_then_closes() {
         )
         .expect("compile ABI 0.13 producer program");
     assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "8.5");
+}
+
+/// Builds the current typed `slug.io.fs` clutch into a repository in
+/// `directory`, as clutch staging does.
+fn build_typed_filesystem_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
+    let source = workspace_root().join("clutch/slug.io.fs.clutch");
+    let repository = directory.path().join("clutch");
+    let root = repository.join("slug.io.fs.clutch");
+    for file in [
+        "clutch.toml",
+        "modules/fs.slug",
+        "native/source/fs.c",
+        "native/source/slug_io_fs.h",
+    ] {
+        let target = root.join(file);
+        fs::create_dir_all(target.parent().expect("clutch file has a parent"))
+            .expect("create typed clutch directory");
+        fs::copy(source.join(file), target).expect("copy typed filesystem clutch file");
+    }
+    fs::write(
+        repository.join("manifest.toml"),
+        "[modules]\n\"slug.io.fs\" = \"slug.io.fs.clutch\"\n",
+    )
+    .expect("write typed repository manifest");
+    let manifest = slug_native_manifest::NativeManifest::from_clutch_source(
+        &fs::read_to_string(root.join("clutch.toml")).expect("read typed manifest"),
+    )
+    .expect("valid typed filesystem manifest");
+    slug_native_manifest::build_dynamic(&root, &manifest, "slug_io_fs", current_native_platform())
+        .unwrap_or_else(|error| panic!("build typed filesystem clutch: {error}"));
+    ClutchRepository::from_manifest(&repository).expect("load typed filesystem repository")
+}
+
+fn build_prototype_filesystem_clutch(
+    directory: &TemporaryDirectory,
+    library_name: &str,
+) -> ClutchRepository {
+    build_native_clutch(
+        directory,
+        "slug.io.fs",
+        "slug.io.fs.clutch",
+        "crates/slug/tests/ffi_prototype/fs.slug",
+        "crates/slug/tests/ffi_prototype/fs.c",
+        library_name,
+        &[],
+    )
+}
+
+/// The typed clutch keeps the prototype's observable behavior on success
+/// paths and for use after close.
+#[test]
+fn typed_filesystem_matches_the_prototype_end_to_end() {
+    let run = |directory: &TemporaryDirectory| {
+        let input = directory.path().join("input.txt");
+        let output = directory.path().join("output.txt");
+        fs::write(&input, "first\r\n\nlast").expect("write parity input");
+        let result = run_clutch_cli(
+            directory,
+            &format!(
+                "val fs = import(\"slug.io.fs\")\n\
+                 val input:fs.File = fs.openRead(\"{}\")\n\
+                 defer fs.close(input)\n\
+                 println(fs.readLine(input))\n\
+                 println(fs.readLine(input))\n\
+                 println(fs.readLine(input))\n\
+                 println(fs.readLine(input))\n\
+                 val output = fs.openWrite(\"{}\")\n\
+                 println(fs.write(output, \"one\"))\n\
+                 println(fs.close(output))\n\
+                 println(fs.close(output))\n\
+                 val appended = fs.openAppend(\"{}\")\n\
+                 println(fs.write(appended, \" two\"))\n\
+                 fs.close(appended)\n\
+                 fs.readLine(appended)\n",
+                slug_path_literal(&input),
+                slug_path_literal(&output),
+                slug_path_literal(&output),
+            ),
+        );
+        (
+            result.status.code(),
+            String::from_utf8_lossy(&result.stdout).into_owned(),
+            String::from_utf8_lossy(&result.stderr).contains("native resource is closed"),
+            fs::read_to_string(&output).expect("read parity output"),
+        )
+    };
+    let prototype = TemporaryDirectory::new();
+    build_prototype_filesystem_clutch(&prototype, "parity_slug_io_fs");
+    let typed = TemporaryDirectory::new();
+    build_typed_filesystem_clutch(&typed);
+
+    let expected = run(&prototype);
+    assert_eq!(
+        expected,
+        (
+            Some(1),
+            "first\n\nlast\nnil\n3\nnil\nnil\n4\n".to_owned(),
+            true,
+            "one two".to_owned()
+        )
+    );
+    assert_eq!(run(&typed), expected);
+}
+
+/// Raw end-to-end timing for the filesystem clutch, typed versus prototype:
+/// write and flush lines one at a time, then read them back.
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn filesystem_typed_versus_prototype_end_to_end() {
+    const LINES: usize = 10_000;
+    #[allow(clippy::cast_precision_loss)]
+    const OPERATIONS: f64 = (2 * LINES) as f64;
+    println!(
+        "filesystem configuration: profile=release samples={SCALAR_SAMPLE_COUNT} lines={LINES} target={}-{}",
+        env::consts::ARCH,
+        env::consts::OS,
+    );
+    for label in ["prototype", "typed"] {
+        let directory = TemporaryDirectory::new();
+        let repository = if label == "typed" {
+            build_typed_filesystem_clutch(&directory)
+        } else {
+            build_prototype_filesystem_clutch(&directory, "bench_slug_io_fs")
+        };
+        let path = directory.path().join("lines.txt");
+        let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+        let program = loader
+            .compile_source(
+                &directory.path().join("bench.slug").to_string_lossy(),
+                &format!(
+                    "val fs = import(\"slug.io.fs\")\n\
+                     val writeLines = fn(file:fs.File, remaining:num) {{\n\
+                       if (remaining == 0) {{ nil }} else {{\n\
+                         fs.write(file, \"a line of benchmark text\\n\")\n\
+                         recur(file, remaining - 1)\n\
+                       }}\n\
+                     }}\n\
+                     val readLines = fn(file:fs.File, count:num) {{\n\
+                       if (fs.readLine(file) == nil) {{ count }} else {{ recur(file, count + 1) }}\n\
+                     }}\n\
+                     val output = fs.openWrite(\"{path}\")\n\
+                     writeLines(output, {LINES})\n\
+                     fs.close(output)\n\
+                     val input = fs.openRead(\"{path}\")\n\
+                     val count = readLines(input, 0)\n\
+                     fs.close(input)\n\
+                     count\n",
+                    path = slug_path_literal(&path),
+                ),
+            )
+            .expect("compile filesystem benchmark");
+        let mut vm = Vm::with_module_loader(loader);
+        assert_eq!(
+            vm.run_named(&program, "main").unwrap().to_string(),
+            LINES.to_string()
+        );
+        for sample_index in 1..=SCALAR_SAMPLE_COUNT {
+            let started = Instant::now();
+            assert_eq!(
+                vm.run_named(&program, "main").unwrap().to_string(),
+                LINES.to_string()
+            );
+            let elapsed = started.elapsed();
+            println!(
+                "filesystem-{label} sample {sample_index}: total_ns={} ns_per_operation={:.2}",
+                elapsed.as_nanos(),
+                elapsed.as_secs_f64() * 1_000_000_000.0 / OPERATIONS,
+            );
+        }
+    }
 }

@@ -47,6 +47,23 @@ stage_typed() {
     stage "clutch/$clutch/clutch.toml" "$provider" "$platform"
 }
 
-stage_typed slug.io.fs.clutch slug_io_fs
-stage slug.db.sqlite.clutch clutch/slug.db.sqlite.clutch/native/source/sqlite.c libslug_db_sqlite -lsqlite3
-stage slug.core.clutch clutch/slug.core.clutch/native/source/core.c libslug_core -lm
+# With arguments, stage only the named clutches; otherwise stage them all.
+selected() {
+  wanted=$1
+  shift
+  [ "$#" -eq 0 ] && return 0
+  for clutch in "$@"; do
+    [ "$clutch" = "$wanted" ] && return 0
+  done
+  return 1
+}
+
+if selected slug.io.fs.clutch "$@"; then
+  stage_typed slug.io.fs.clutch slug_io_fs
+fi
+if selected slug.db.sqlite.clutch "$@"; then
+  stage slug.db.sqlite.clutch clutch/slug.db.sqlite.clutch/native/source/sqlite.c libslug_db_sqlite -lsqlite3
+fi
+if selected slug.core.clutch "$@"; then
+  stage slug.core.clutch clutch/slug.core.clutch/native/source/core.c libslug_core -lm
+fi

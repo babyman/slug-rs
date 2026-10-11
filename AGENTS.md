@@ -63,6 +63,7 @@ a Rust change, run `make check`. For documentation-only changes, run
 | Typed native manifest bindings and shim generator | `crates/slug-native-manifest/tests/manifest.rs`, `tests/shim.rs` (needs `cc`, or `clang` on Windows) | `cargo test -p slug-native-manifest` |
 | Typed native adapter | `crates/slug-native-adapter/tests/adapter.rs` | `cargo test -p slug-native-adapter` |
 | Typed native clutches through the desktop loader | `crates/slug/tests/typed_native.rs` (needs a C compiler) | `cargo test -p slug --test typed_native` |
+| `slug.io.fs` through the CLI (stages the clutch first) | `crates/slug/tests/cli/filesystem.rs` | `make test-filesystem-clutch` |
 | Static typed providers (descriptor checks, build, two-shim link) | `crates/slug-embedded-build/tests/typed.rs`, `crates/slug-typed-static-test/` (need `cc` and `ar`) | `cargo test -p slug-embedded-build -p slug-typed-static-test` |
 | Repository legacy-syntax fixtures | `crates/slug/tests/legacy_syntax_conformance.rs` | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 

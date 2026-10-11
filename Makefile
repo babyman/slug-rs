@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-ffi-prototype bench-ffi-prototype-scalar stage-native-clutches bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-ffi-prototype bench-ffi-prototype-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -59,6 +59,11 @@ bench-ffi-prototype-scalar:
 
 stage-native-clutches:
 	sh scripts/stage-native-clutches.sh
+
+# Stages only the typed filesystem clutch and runs its CLI tests.
+test-filesystem-clutch:
+	sh scripts/stage-native-clutches.sh slug.io.fs.clutch
+	cargo test -p slug --features metrics --test cli filesystem
 
 bench-vm:
 	cargo bench -p slug-frontend --bench vm --features metrics

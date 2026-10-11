@@ -1,5 +1,6 @@
 #!/bin/sh
-# Capture reproducible local evidence for the 0.13 scalar callback baseline.
+# Capture reproducible local evidence for scalar native calls: the 0.13
+# callback baseline, the VM controls, and the production typed path.
 # The result file is intentionally ignored: timings are host-specific evidence,
 # never a CI threshold.
 set -eu
@@ -10,6 +11,7 @@ mkdir -p "$result_dir"
 
 {
   echo "command: cargo test --release -p slug --test ffi_prototype -- --ignored --nocapture --test-threads=1"
+  echo "command: cargo test --release -p slug --test typed_native -- --ignored --nocapture --test-threads=1"
   echo "rustc:"
   rustc -Vv
   echo "C compiler:"
@@ -28,6 +30,7 @@ mkdir -p "$result_dir"
     sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | sed -n '1p'
   fi
   cargo test --release -p slug --test ffi_prototype -- --ignored --nocapture --test-threads=1
+  cargo test --release -p slug --test typed_native -- --ignored --nocapture --test-threads=1
 } >"$result_file" 2>&1
 
 cat "$result_file"

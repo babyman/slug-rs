@@ -401,10 +401,11 @@ Slug module. A future loader will:
 5. bind module-qualified `foreign` declarations to registered signatures.
 
 A platform library such as `libm` does not become a Slug-aware module merely by
-exporting C symbols. It requires a handwritten adapter or a separately
-specified declarative bridge. Any TOML bridge format belongs above this ABI and
-must define platform types, calling convention, library discovery, symbol
-ownership, and unsafe pointer policy. It is not part of version 1.
+exporting C symbols. It requires a handwritten adapter or a declarative bridge
+that defines platform types, calling convention, library discovery, symbol
+ownership, and pointer policy. [Typed native bindings](#typed-native-bindings)
+are that bridge for a closed set of types; they sit above this interface and
+are not part of version 1.
 
 ## Deliberate exclusions
 
@@ -454,6 +455,58 @@ flowchart LR
 The ABI is not stable merely because these concepts are documented. Stability
 begins when the version 1 binary declarations, loader validation, and tests are
 released together.
+
+## Typed native bindings
+
+Typed native bindings bind `foreign` declarations to ordinary C functions
+through the clutch manifest, without a Slug-aware C adapter. They replace the
+0.13 prototype one clutch at a time: `slug.io.fs` uses them, while `slug.core`
+and `slug.db.sqlite` remain on the prototype until they move. The contract is
+set by these decision records:
+
+- [Typed native calls](../decisions/2026-10-10-typed-native-calls.md);
+- [Uniform shim entry](../decisions/2026-10-10-uniform-shim-entry.md);
+- [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md);
+  and
+- [Static selection of typed native providers](../decisions/2026-10-11-static-typed-provider-selection.md).
+
+In summary:
+
+- **Bindings.** A clutch `[native]` table without `abi` names the headers and
+  C sources, a resource type and release function for each handle, and a C
+  symbol and signature for each `foreign` function, for example
+  `(handle<File> file, out cstr line) -> i32`. The source `foreign`
+  declarations remain the Slug-visible contract. Library code usually wraps
+  thin raw declarations in Slug functions, as `slug.io.fs` does.
+- **Generated shims.** `slug-native-manifest` generates one C file per
+  provider. Every binding gets the same entry signature over arrays of
+  argument and result cells, and its target and free functions are called
+  through exact-typed function pointers, so a header mismatch fails the build
+  under `-Werror`. Shims are generated at staging or build time and never
+  committed.
+- **Loading.** The desktop loader opens a typed clutch's library and reads its
+  table through `slug_shim_get_table`. A static image links each shim and calls
+  its `slug_shim_table_<provider>` function from generated Rust. Both install
+  the table through `slug-native-adapter`, the only code that calls a shim
+  entry, which rejects any binding whose canonical signature text differs from
+  the manifest.
+- **Checks.** Where a clutch module compiles, each `foreign` declaration must
+  match its binding by the compatibility table in the manifest-bindings record:
+  at desktop activation, or before a static image links. At run time the adapter
+  range-checks numbers, copies `cstr` arguments, checks resource type and
+  closed state, validates returned text as UTF-8, and maps a NULL handle or text
+  result to `nil`.
+- **Errors.** Boundary failures use a closed list of codes: `native.type`,
+  `native.range`, `native.arity`, `native.resource_type`,
+  `native.resource_closed`, `native.interior_nul`, and `native.encoding`. A
+  nonzero entry status is a `native_contract` error. Library failures are
+  ordinary results that Slug code turns into thrown `Error` values.
+- **Resources.** A handle's release function runs at most once, at teardown or
+  from the destructor. A function with a `close` handle parameter closes it
+  explicitly and is idempotent.
+- **Limits.** A binding has at most 16 argument and 16 result cells. `str` and
+  `bytes` results, structs, buffers, constants, channel producers, and MSVC
+  are not supported yet.
 
 ## Experimental C math module
 

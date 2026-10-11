@@ -361,3 +361,55 @@ fn typed_clutch_rejects_null_text_for_a_str_result() {
         "{error}"
     );
 }
+
+const BENCH_WARMUP_CALLS: usize = 10_000;
+const BENCH_CALLS_PER_SAMPLE: usize = 100_000;
+const BENCH_SAMPLE_COUNT: usize = 11;
+
+/// Raw timing samples for one scalar call through the production typed path:
+/// a staged clutch library, the desktop loader, and the shared adapter. The
+/// loop matches the 0.13 baseline and the controls in `ffi_prototype.rs`.
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn typed_scalar_add_benchmark() {
+    let directory = TemporaryDirectory::new();
+    let repository = typed_clutch(&directory, MODULE, MANIFEST, MANIFEST);
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let compile = |calls: usize| {
+        loader
+            .compile_source(
+                &directory.path().join("bench.slug").to_string_lossy(),
+                &format!(
+                    "val files = import(\"fixture.files\")\n\
+                     val repeat = fn(remaining:num) {{\n\
+                       if (remaining == 0) {{ 0 }} else {{\n\
+                         files.add(remaining, 1)\n\
+                         recur(remaining - 1)\n\
+                       }}\n\
+                     }}\n\
+                     repeat({calls})\n"
+                ),
+            )
+            .expect("compile typed scalar benchmark")
+    };
+    let warmup = compile(BENCH_WARMUP_CALLS);
+    let sample = compile(BENCH_CALLS_PER_SAMPLE);
+    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+    println!(
+        "typed configuration: profile=release samples={BENCH_SAMPLE_COUNT} warmup_calls={BENCH_WARMUP_CALLS} calls_per_sample={BENCH_CALLS_PER_SAMPLE} target={}-{}",
+        env::consts::ARCH,
+        env::consts::OS,
+    );
+    for sample_index in 1..=BENCH_SAMPLE_COUNT {
+        let started = std::time::Instant::now();
+        assert_eq!(vm.run_named(&sample, "main").unwrap().to_string(), "0");
+        let elapsed = started.elapsed();
+        #[allow(clippy::cast_precision_loss)]
+        let per_call = elapsed.as_secs_f64() * 1_000_000_000.0 / BENCH_CALLS_PER_SAMPLE as f64;
+        println!(
+            "typed-production sample {sample_index}: total_ns={} ns_per_call={per_call:.2}",
+            elapsed.as_nanos()
+        );
+    }
+}

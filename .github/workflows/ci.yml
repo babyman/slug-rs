@@ -31,6 +31,9 @@ jobs:
         with:
           toolchain: 1.96.1
       - run: make test-ffi-prototype
+      - name: Test the typed filesystem clutch through the CLI
+        if: runner.os != 'Windows'
+        run: make test-filesystem-clutch
 
   embedded-check:
     runs-on: ubuntu-latest

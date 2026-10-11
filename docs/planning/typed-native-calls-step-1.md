@@ -222,18 +222,37 @@ filesystem coverage until the prototype is removed.
 
 ### 7. Measure and clean up
 
-- [ ] Measure scalar per-call cost through the production path against the
+- [x] Measure scalar per-call cost through the production path against the
   0.13 baseline with `make bench-ffi-prototype-scalar`, extended with the new
   path.
-- [ ] Measure end-to-end behavior on the existing filesystem fixtures, typed
+- [x] Measure end-to-end behavior on the existing filesystem fixtures, typed
   versus prototype, and record both in a results document. No CI timing
   thresholds.
-- [ ] Delete the bounded Rust dispatcher, its shape table, and the spike-only
+- [x] Delete the bounded Rust dispatcher, its shape table, and the spike-only
   shim fixtures, which the uniform shim entry record retires when the loader
   lands.
-- [ ] Update `docs/reference/native-abi.md`,
+- [x] Update `docs/reference/native-abi.md`,
   `docs/reference/experimental-clutches.md`, and the README clutch paragraph
   for typed bindings.
+
+[Step 1 measurements](typed-native-calls-step-1-results.md) records the
+results. The production typed path costs about 32 ns more per scalar call than
+the 0.13 callback, and the typed filesystem clutch about 20% more per
+operation. Both were measured before the spike was deleted, so the spike
+candidates appear for comparison. A non-ignored parity test runs one CLI program
+through both filesystem clutches and requires identical results.
+
+`make test-filesystem-clutch` stages only `slug.io.fs` and runs the CLI
+filesystem tests. The three-platform job runs it on macOS and Linux. Those
+older tests write `path.display()` into Slug string literals, so a Windows path
+would produce backslash escapes. Running them on Windows first needs that
+escaping fixed in the tests. Windows covers `slug.io.fs` today through
+`typed_native.rs` and the parity test, which build the clutch and escape paths.
+
+## Status
+
+Phases 1-7 are implemented. Before this plan moves to `completed/`, CI must
+pass the exit gate on all three platforms and the ESP32-S3 check.
 
 ## Exit gate
 

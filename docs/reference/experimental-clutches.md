@@ -12,16 +12,17 @@ The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
 module-scoped Rust plugin initializer, and manifest-selected version-0 native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
 state. Archive loading, package installation, and cross-platform binary
-distribution remain unimplemented. The local `slug.io.fs` clutch commits its
-macOS ARM library as the first installed native-package experiment. The
+distribution remain unimplemented. The `slug.io.fs` clutch binds plain C
+functions through typed native bindings. The
 `slug.db.sqlite` source clutch is built into a temporary installed layout by
 the integration suite, proving variadic SQL bindings and compound value
 transfer through an external C dependency. The bundled `slug.core` clutch
 provides standard collections, standard input, and stateless math through one
 native library. This checkout
 is a development repository: `make stage-native-clutches` builds every native
-source adapter for the current supported platform at its manifest-selected
-location before local programs import it. Those staged libraries are ignored
+library for the current supported platform at its manifest-selected location
+before local programs import it, generating and compiling the shim of each
+typed clutch. Those staged libraries are ignored
 local outputs rather than package artifacts. The staging script supports macOS,
 Linux, and Windows hosts through POSIX-compatible Windows shells with a C
 compiler and each adapter's development dependencies installed.
@@ -70,15 +71,40 @@ abi = "slug-ffi-prototype/0.13"
 "macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
 ```
 
-The optional `native.source` directory contains FFI source or build inputs and
-is never compiled by Slug at runtime. `native.libraries` selects one checked
+A `[native]` table with `abi` uses the 0.13 prototype. A table without `abi`
+uses [typed native bindings](native-abi.md#typed-native-bindings), which bind
+the clutch's `foreign` declarations to plain C functions:
+
+```toml
+[native]
+profile = "core"
+headers = ["native/source/slug_io_fs.h"]
+sources = ["native/source/fs.c"]
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
+
+[native.resources."slug.io.fs".File]
+type = "slug_fs_file"
+release = { symbol = "slug_fs_close", signature = "(handle<File> file) -> void" }
+
+[native.functions."slug.io.fs"]
+readLineRaw = { symbol = "slug_fs_read_line", signature = "(handle<File> file, out cstr line) -> i32" }
+```
+
+Mixing the two forms is a manifest error. For a typed clutch, the loader also
+checks every `foreign` declaration in each of its modules against its binding
+before the module is installed.
+
+The optional prototype `native.source` directory contains FFI source or build
+inputs and is never compiled by Slug at runtime. `native.libraries` selects one checked
 library for the current supported OS/architecture; all paths must remain inside
 the clutch. The library is initialized once for the clutch and may register
 implementations for any of its module identities. A module remains pure Slug
 unless its own `foreign` declarations require one of those registrations. The
-loader accepts only `slug-ffi-prototype/0.13`, validates its library descriptor,
-and
-does not search system paths or fall back to a host plugin.
+loader accepts only `slug-ffi-prototype/0.13` or the typed form, validates the
+library's descriptor or shim table, and does not search system paths or fall
+back to a host plugin.
 
 Native source may include `slug_ffi_helpers.h`, a private header-only SDK that
 builds common asynchronous channel-source lifecycle patterns from the same

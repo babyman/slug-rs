@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Recorded step 1 typed native-call measurements. The production typed path
+  costs about 32 ns more per scalar call than the 0.13 callback, and the typed
+  `slug.io.fs` clutch about 20% more per operation. A parity test runs one
+  filesystem program through both clutches and requires identical results.
+  Deleted the spike's bounded Rust dispatcher, its generated-shim fixtures,
+  and their tests. Updated the native ABI, clutch, and README references for
+  typed bindings. `make test-filesystem-clutch` stages only `slug.io.fs` and
+  runs its CLI tests, and CI runs it on macOS and Linux.
+
 - `slug.io.fs` now runs on typed native bindings. Its public functions are
   Slug wrappers over private typed `foreign` declarations, with the same
   names, signatures, 16 MiB line limit, and idempotent close. Failures are
