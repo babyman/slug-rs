@@ -850,6 +850,89 @@ fn scalar_add_callback_baseline() {
     }
 }
 
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn typed_dispatch_scalar_comparison() {
+    const WARMUP_CALLS: usize = 10_000;
+    const CALLS_PER_SAMPLE: usize = 100_000;
+    const CALLS_PER_SAMPLE_F64: f64 = 100_000.0;
+    const SAMPLE_COUNT: usize = 11;
+
+    fn source(calls: usize) -> String {
+        format!(
+            "val spike = import(\"slug.spike\")\n\
+             val repeat = fn(remaining:num) {{\n\
+               if (remaining == 0) {{ 0 }} else {{\n\
+                 spike.add(remaining, 1)\n\
+                 recur(remaining - 1)\n\
+               }}\n\
+             }}\n\
+             repeat({calls})\n"
+        )
+    }
+
+    struct Candidate<'a> {
+        label: &'a str,
+        directory: &'a TemporaryDirectory,
+        library: PathBuf,
+        bindings: &'a [slug_desktop_loader::DispatchBinding],
+    }
+
+    fn measure(candidate: Candidate<'_>) {
+        let dispatch = TypedDispatchSpike::load(candidate.library, candidate.bindings)
+            .expect("load benchmark candidate");
+        let (loader, warmup) = typed_dispatch_program(candidate.directory, &source(WARMUP_CALLS));
+        let (_, sample) = typed_dispatch_program(candidate.directory, &source(CALLS_PER_SAMPLE));
+        let mut vm = Vm::with_module_loader(loader);
+        vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+            .expect("register benchmark candidate");
+        assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+        for sample_index in 1..=SAMPLE_COUNT {
+            let started = Instant::now();
+            assert_eq!(vm.run_named(&sample, "main").unwrap().to_string(), "0");
+            let elapsed = started.elapsed();
+            println!(
+                "{} sample {sample_index}: total_ns={} ns_per_call={:.2}",
+                candidate.label,
+                elapsed.as_nanos(),
+                elapsed.as_secs_f64() * 1_000_000_000.0 / CALLS_PER_SAMPLE_F64,
+            );
+        }
+    }
+
+    println!(
+        "comparison configuration: profile=release samples={SAMPLE_COUNT} warmup_calls={WARMUP_CALLS} calls_per_sample={CALLS_PER_SAMPLE} target={}-{}",
+        env::consts::ARCH,
+        env::consts::OS,
+    );
+    let direct_directory = TemporaryDirectory::new();
+    let direct_bindings = FIXTURE_BINDINGS
+        .iter()
+        .copied()
+        .chain(std::iter::once(ADD_BINDING))
+        .collect::<Vec<_>>();
+    measure(Candidate {
+        label: "rust-dispatch",
+        directory: &direct_directory,
+        library: compile_typed_dispatch_fixture(&direct_directory, "typed_bench_direct", None),
+        bindings: &direct_bindings,
+    });
+
+    let shim_directory = TemporaryDirectory::new();
+    let shim = generate_typed_dispatch_shim(&shim_directory, "normal");
+    let shim_bindings = FIXTURE_SHIM_BINDINGS
+        .iter()
+        .copied()
+        .chain(std::iter::once(SHIM_ADD_BINDING))
+        .collect::<Vec<_>>();
+    measure(Candidate {
+        label: "generated-shim",
+        directory: &shim_directory,
+        library: compile_typed_dispatch_fixture(&shim_directory, "typed_bench_shim", Some(&shim)),
+        bindings: &shim_bindings,
+    });
+}
+
 #[cfg(unix)]
 #[test]
 fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {

@@ -9,7 +9,7 @@ result_file=${result_dir}/ffi-prototype-scalar-baseline.txt
 mkdir -p "$result_dir"
 
 {
-  echo "command: cargo test --release -p slug --test ffi_prototype scalar_add_callback_baseline -- --ignored --nocapture"
+  echo "command: cargo test --release -p slug --test ffi_prototype -- --ignored --nocapture --test-threads=1"
   echo "rustc:"
   rustc -Vv
   echo "C compiler:"
@@ -27,7 +27,7 @@ mkdir -p "$result_dir"
   elif [ -r /proc/cpuinfo ]; then
     sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | sed -n '1p'
   fi
-  cargo test --release -p slug --test ffi_prototype scalar_add_callback_baseline -- --ignored --nocapture
+  cargo test --release -p slug --test ffi_prototype -- --ignored --nocapture --test-threads=1
 } >"$result_file" 2>&1
 
 cat "$result_file"

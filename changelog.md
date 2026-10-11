@@ -10,6 +10,10 @@
   spike, including a header-checked generated-shim candidate and a bounded
   Rust dispatcher candidate with checked filesystem-shaped failures.
 
+- Selected generated C shims for header-backed typed native bindings after the
+  dispatch spike showed header mismatch diagnostics without a local scalar-call
+  regression against the 0.13 prototype path.
+
 - Marked superseded ADRs with historical filename suffixes and reciprocal links
   to their accepted replacements, so current architectural guidance is
   identifiable without a separate registry.

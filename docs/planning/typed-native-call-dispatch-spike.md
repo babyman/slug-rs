@@ -130,16 +130,20 @@ header and its mismatch test compiles with `-Werror`.
 
 ### 3. Measure and compare
 
-- Benchmark only the scalar `add` call in a release build after warm-up; report
-  median and distribution, not a CI timing threshold.
-- Measure the 0.13 callback baseline and both candidate paths in the same
+- [x] Benchmark only the scalar `add` call in a release build after warm-up;
+  report median and distribution, not a CI timing threshold.
+- [x] Measure the 0.13 callback baseline and both candidate paths in the same
   environment and with identical loop counts.
-- Separately record non-timing results: added lines and generated artifacts,
+- [x] Separately record non-timing results: added lines and generated artifacts,
   required tools, supported platforms, source/library author workflow, and
   failure diagnostics.
-- Repeat functional tests in the existing three-platform CI matrix. Timing
-  comparisons are local evidence only and must not become timing-sensitive CI
-  assertions.
+- [ ] Repeat functional tests in the existing three-platform CI matrix. The
+  focused tests are included in that job; confirmation from macOS, Linux, and
+  Windows remains the final platform gate. Timing comparisons are local
+  evidence only and must not become timing-sensitive CI assertions.
+
+The [spike results](typed-native-call-dispatch-spike-results.md) record the
+local evidence and the remaining CI platform gate.
 
 ## Decision criteria
 
