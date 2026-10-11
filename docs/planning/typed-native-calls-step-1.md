@@ -197,18 +197,28 @@ not been flashed.
 
 ### 6. Move `slug.io.fs`
 
-- [ ] Rewrite `fs.c` as plain exported functions with a header, and replace
+- [x] Rewrite `fs.c` as plain exported functions with a header, and replace
   the prototype manifest section with typed bindings.
-- [ ] Rewrite `fs.slug` as private raw foreign declarations plus exported Slug
+- [x] Rewrite `fs.slug` as private raw foreign declarations plus exported Slug
   wrappers that keep every public name, signature, and documented behavior.
   Failures are thrown as `Error` values with the existing `native.io` and
   `native.alloc` types.
-- [ ] Keep the 16 MiB line limit and idempotent close. A read after close still
+- [x] Keep the 16 MiB line limit and idempotent close. A read after close still
   reports `native resource is closed`.
-- [ ] Pass the existing filesystem CLI tests unchanged, and add tests for the
+- [x] Pass the existing filesystem CLI tests unchanged, and add tests for the
   thrown error values and their `type` fields.
-- [ ] Record the accepted diagnostic change for uncaught `fs` failures in the
+- [x] Record the accepted diagnostic change for uncaught `fs` failures in the
   changelog.
+
+`readLine` reports its outcome as a status plus a borrowed line from a
+per-file buffer, so reading a line no longer allocates. Because a `cstr`
+result ends at its first NUL, a line containing a NUL byte now throws a
+`native.io` error instead of returning text with an embedded NUL. The three
+prototype integration tests that compiled the old `fs.c` now use an unchanged
+copy in `crates/slug/tests/ffi_prototype/`, so the 0.13 loader keeps its
+filesystem coverage until the prototype is removed.
+`scripts/stage-native-clutches.sh` builds the clutch with
+`slug-native-shim stage`.
 
 ### 7. Measure and clean up
 

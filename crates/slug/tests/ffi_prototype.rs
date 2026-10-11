@@ -270,8 +270,8 @@ fn loads_the_filesystem_clutch_through_a_test_built_dynamic_module() {
         &directory,
         "slug.io.fs",
         "slug.io.fs.clutch",
-        "clutch/slug.io.fs.clutch/modules/fs.slug",
-        "clutch/slug.io.fs.clutch/native/source/fs.c",
+        "crates/slug/tests/ffi_prototype/fs.slug",
+        "crates/slug/tests/ffi_prototype/fs.c",
         "slug_io_fs",
         &[],
     );
@@ -345,8 +345,8 @@ fn filesystem_clutch_rejects_lines_larger_than_its_memory_limit() {
         &directory,
         "slug.io.fs",
         "slug.io.fs.clutch",
-        "clutch/slug.io.fs.clutch/modules/fs.slug",
-        "clutch/slug.io.fs.clutch/native/source/fs.c",
+        "crates/slug/tests/ffi_prototype/fs.slug",
+        "crates/slug/tests/ffi_prototype/fs.c",
         "limited_slug_io_fs",
         &[],
     );
@@ -376,8 +376,8 @@ fn one_native_clutch_supports_pure_and_native_backed_modules() {
         &directory,
         "slug.io.fs",
         "slug.io.fs.clutch",
-        "clutch/slug.io.fs.clutch/modules/fs.slug",
-        "clutch/slug.io.fs.clutch/native/source/fs.c",
+        "crates/slug/tests/ffi_prototype/fs.slug",
+        "crates/slug/tests/ffi_prototype/fs.c",
         "shared_slug_io_fs",
         &[],
     );

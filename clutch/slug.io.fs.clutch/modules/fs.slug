@@ -4,38 +4,85 @@
  * Open functions return opaque file resources. Register `close` with `defer`
  * immediately after opening a file; resource destruction is fallback cleanup,
  * not a replacement for explicit close.
+ *
+ * Failures throw `Error` values whose `type` is `native.io` or `native.alloc`.
  */
 
 export resource File
 
+// Typed native bindings, declared in this clutch's manifest.
+foreign openReadRaw = fn(path:str):File|nil
+foreign openWriteRaw = fn(path:str):File|nil
+foreign openAppendRaw = fn(path:str):File|nil
+foreign readLineRaw = fn(file:File):list
+foreign writeRaw = fn(file:File, content:str):num
+foreign closeRaw = fn(file:File):nil
+
+val opened = fn(file:File|nil):File {
+    if (file == nil) {
+        throw Error {type: "native.io", msg: "cannot open file"}
+    } else {
+        file
+    }
+}
+
 /**
  * Opens a text file for line-by-line reading.
  */
-export foreign openRead = fn(path:str):File
+export val openRead = fn(path:str):File {
+    opened(openReadRaw(path))
+}
 
 /**
  * Creates or truncates a text file for writing.
  */
-export foreign openWrite = fn(path:str):File
+export val openWrite = fn(path:str):File {
+    opened(openWriteRaw(path))
+}
 
 /**
  * Opens or creates a text file and writes at its end.
  */
-export foreign openAppend = fn(path:str):File
+export val openAppend = fn(path:str):File {
+    opened(openAppendRaw(path))
+}
 
 /**
  * Reads the next line without its trailing newline, or nil at end of file.
- * Lines longer than 16 MiB fail with a checked native I/O error.
+ * Lines longer than 16 MiB fail with a `native.io` error.
  */
-export foreign readLine = fn(file:File):str|nil
+export val readLine = fn(file:File):str|nil {
+    match readLineRaw(file) {
+        [0, line] => line
+        [1, _] => nil
+        [3, _] => throw Error {type: "native.alloc", msg: "cannot allocate line buffer"}
+        [4, _] => throw Error {type: "native.alloc", msg: "cannot grow line buffer"}
+        [5, _] => throw Error {type: "native.io", msg: "file line exceeds 16 MiB limit"}
+        [6, _] => throw Error {type: "native.io", msg: "file line contains a NUL byte"}
+        _ => throw Error {type: "native.io", msg: "cannot read file"}
+    }
+}
 
 /**
  * Writes text to an open writable file and returns its byte length.
  */
-export foreign write = fn(file:File, content:str):num
+export val write = fn(file:File, content:str):num {
+    val written = writeRaw(file, content)
+    if (written == -1) {
+        throw Error {type: "native.io", msg: "cannot write file"}
+    } else {
+        if (written == -2) {
+            throw Error {type: "native.io", msg: "cannot flush file"}
+        } else {
+            written
+        }
+    }
+}
 
 /**
  * Closes a file resource. Closing is idempotent; later operations on the
  * handle report a checked resource-closed error.
  */
-export foreign close = fn(file:File):nil
+export val close = fn(file:File):nil {
+    closeRaw(file)
+}

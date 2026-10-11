@@ -39,6 +39,14 @@ stage() {
   echo "staged $output"
 }
 
-stage slug.io.fs.clutch clutch/slug.io.fs.clutch/native/source/fs.c libslug_io_fs
+# Typed clutches: generate the shim from clutch.toml and build the library it names.
+stage_typed() {
+  clutch=$1
+  provider=$2
+  cargo run --quiet -p slug-native-manifest --bin slug-native-shim -- \
+    stage "clutch/$clutch/clutch.toml" "$provider" "$platform"
+}
+
+stage_typed slug.io.fs.clutch slug_io_fs
 stage slug.db.sqlite.clutch clutch/slug.db.sqlite.clutch/native/source/sqlite.c libslug_db_sqlite -lsqlite3
 stage slug.core.clutch clutch/slug.core.clutch/native/source/core.c libslug_core -lm

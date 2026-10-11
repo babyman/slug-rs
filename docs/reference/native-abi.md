@@ -535,7 +535,8 @@ It also retains the minor-8 argument-kind and byte borrowing plus temporary
 list/map builders. The builders are call-scoped opaque handles: C transfers a
 map into a list and transfers the final list to the call, or destroys any
 untransferred handle before return. Its test compiles
-`clutch/slug.io.fs.clutch/native/source/fs.c` into a temporary installed
+`crates/slug/tests/ffi_prototype/fs.c`, a copy of the filesystem clutch from
+before it moved to typed bindings, into a temporary installed
 clutch layout and loads it through the ordinary clutch manifest and CLI. This
 proves descriptor-backed text-file resources without establishing a packaged
 distribution contract.

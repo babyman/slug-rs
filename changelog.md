@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `slug.io.fs` now runs on typed native bindings. Its public functions are
+  Slug wrappers over private typed `foreign` declarations, with the same
+  names, signatures, 16 MiB line limit, and idempotent close. Failures are
+  thrown as `Error` values whose `type` is `native.io` or `native.alloc`, so
+  `defer onerror` can inspect them. An uncaught failure now reports
+  `uncaught throw: struct {"type": "native.io", "msg": "cannot open file", ...}`
+  at the wrapper's `throw` instead of `native `slug.io.fs.openRead`: cannot
+  open file` at the call. A line containing a NUL byte now throws a
+  `native.io` error. Run `make stage-native-clutches` to rebuild the library.
+
 - Static targets can select typed C providers. A target-descriptor provider
   entry takes `kind = "typed"` and a `clutch`; the build checks the clutch's
   bindings against the module's `foreign` declarations and the target's
