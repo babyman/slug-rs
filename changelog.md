@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Planned step 1 of the typed native-call replacement: the manifest model,
+  shim generator, shared adapter, desktop and static binding paths, and moving
+  `slug.io.fs` off the 0.13 prototype ABI.
+
 - Decided how static targets select typed native providers. Each foreign
   module has exactly one Rust or manifest-bound C provider chosen at build
   time. Generated shims link side by side under provider-unique table names,
