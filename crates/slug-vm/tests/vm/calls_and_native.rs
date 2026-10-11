@@ -192,6 +192,58 @@ fn native_collection_round_trips_preserve_pre_update_values() {
 }
 
 #[test]
+fn positional_native_calls_keep_checked_arity_and_errors() {
+    fn add(call: &mut NativeCall<'_>) -> NativeStatus {
+        let sum = call
+            .argument(0)
+            .and_then(slug_vm::NativeValueRef::as_i64)
+            .and_then(|left| Ok(left + call.argument(1)?.as_i64()?));
+        match sum {
+            Ok(sum) => call.return_value(NativeOwnedValue::integer(sum)),
+            Err(error) => call.raise(error),
+        }
+    }
+
+    let module = NativeModule::new("test.positional", ()).unwrap();
+    let mut vm = Vm::new();
+    vm.define_native(module.function("add", NativeArity::Exact(2), add).unwrap())
+        .unwrap();
+    let call = |arguments: &[Value]| {
+        let mut main = Chunk::new("main", 0);
+        main.emit(Op::GetGlobal("add".into()));
+        for argument in arguments {
+            let constant = main.constant(argument.clone());
+            main.emit(Op::Constant(constant));
+        }
+        main.emit(Op::CallPositional(arguments.len()))
+            .emit(Op::Return);
+        program_with_main(main)
+    };
+
+    assert_eq!(
+        vm.run(&call(&[Value::Int(40), Value::Int(2)]), 0).unwrap(),
+        Value::Int(42)
+    );
+
+    let error = vm
+        .run(&call(&[Value::Int(1)]), 0)
+        .expect_err("a positional native call must check its arity");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.arity")
+    );
+
+    let error = vm
+        .run(&call(&[Value::Int(1), Value::string("two")]), 0)
+        .expect_err("a positional native call must report native errors");
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.type")
+    );
+}
+
+#[test]
 fn reports_checked_native_conversion_and_structured_errors() {
     fn require_integer(call: &mut NativeCall<'_>) -> NativeStatus {
         let value = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {

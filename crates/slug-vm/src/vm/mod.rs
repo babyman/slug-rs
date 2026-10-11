@@ -4239,6 +4239,9 @@ impl Vm {
         count: usize,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
+        if self.positional_callee_is_native(count) {
+            return self.call_at(program, count, None, span);
+        }
         if self.call_positional_closure_at(program, count, None, span)? {
             #[cfg(feature = "metrics")]
             self.record_exact_positional_closure_call();
@@ -4284,6 +4287,29 @@ impl Vm {
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
         self.call_at(program, count, Some(provided), span)
+    }
+
+    /// Reports whether a positional call's callee is a native function, looking
+    /// through a live binding without cloning it.
+    ///
+    /// Natives take positional arguments as-is, so such a call can skip the
+    /// closure probe and generic argument binding. Anything else, including a
+    /// malformed stack or an uninitialized binding, keeps the general path and
+    /// its checked errors.
+    fn positional_callee_is_native(&self, count: usize) -> bool {
+        let Some(callee) = count
+            .checked_add(1)
+            .and_then(|required| self.stack.len().checked_sub(required))
+            .and_then(|base| self.stack.get(base))
+        else {
+            return false;
+        };
+        let is_native =
+            |value: &Value| matches!(value, Value::Native(_) | Value::DeclaredNative { .. });
+        match callee {
+            Value::Binding { cell, .. } => is_native(&cell.borrow()),
+            value => is_native(value),
+        }
     }
 
     /// Starts an exact positional closure call without constructing generic

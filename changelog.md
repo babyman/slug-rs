@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Positional calls to native functions, including imported foreign
+  functions, now skip closure-only argument binding.
+
 - Reduced VM stack overhead by moving popped values instead of copying them
   when they are not live module bindings.
 
