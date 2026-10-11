@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The typed native adapter now checks its cell and resource-slot lookups on
+  each call, so a broken internal invariant reports `native_contract` instead
+  of panicking the host.
+
 - Recorded step 1 typed native-call measurements. The production typed path
   costs about 32 ns more per scalar call than the 0.13 callback, and the typed
   `slug.io.fs` clutch about 20% more per operation. A parity test runs one

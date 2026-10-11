@@ -154,25 +154,18 @@ fn run(
     binding: &RuntimeBinding,
     resources: &[ResourceSlot],
 ) -> Result<NativeOwnedValue, Failure> {
-    let close = match binding.close {
-        Some(index) => {
-            let Kind::Handle(slot) = binding.arguments[index] else {
-                return Err(Failure::Contract(format!(
-                    "`{}` closes a parameter that is not a handle",
-                    binding.qualified
-                )));
-            };
-            let resource_type = &resources[slot].resource_type;
-            match call.with_resource(index, resource_type, |handle| handle.address) {
-                Ok(Some(_)) => Some((index, resource_type)),
-                // Explicit close is idempotent: no native call, every result nil.
-                Ok(None) => return Ok(nil_results(binding)),
-                Err(error) if error.code() == "native.resource_closed" => {
-                    return Ok(nil_results(binding));
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
+    // Install guarantees these; checking keeps a broken invariant from
+    // panicking the host.
+    if binding.arguments.len() > MAX_CELLS || binding.results.len() > MAX_CELLS {
+        return Err(Failure::Contract(format!(
+            "`{}` exceeds the cell limit",
+            binding.qualified
+        )));
+    }
+    let close = match explicit_close(call, binding, resources)? {
+        // Explicit close is idempotent: no native call, every result nil.
+        Some(None) => return Ok(nil_results(binding)),
+        Some(Some(open)) => Some(open),
         None => None,
     };
 
@@ -232,7 +225,7 @@ fn run(
         values.push(match value {
             Decoded::Value(value) => value,
             Decoded::Handle(address, slot) => {
-                let slot = &resources[slot];
+                let slot = resource_slot(resources, slot)?;
                 call.resource(
                     &slot.resource_type,
                     Handle {
@@ -258,6 +251,32 @@ fn run(
     })
 }
 
+/// For a binding that closes a handle, returns `Some(None)` when the handle is
+/// already closed, or `Some(Some((index, type)))` when it is open.
+#[allow(clippy::type_complexity)]
+fn explicit_close<'r>(
+    call: &NativeCall<'_>,
+    binding: &RuntimeBinding,
+    resources: &'r [ResourceSlot],
+) -> Result<Option<Option<(usize, &'r NativeResourceType<Handle>)>>, Failure> {
+    let Some(index) = binding.close else {
+        return Ok(None);
+    };
+    let Some(Kind::Handle(slot)) = binding.arguments.get(index) else {
+        return Err(Failure::Contract(format!(
+            "`{}` closes a parameter that is not a handle",
+            binding.qualified
+        )));
+    };
+    let resource_type = &resource_slot(resources, *slot)?.resource_type;
+    match call.with_resource(index, resource_type, |handle| handle.address) {
+        Ok(Some(_)) => Ok(Some(Some((index, resource_type)))),
+        Ok(None) => Ok(Some(None)),
+        Err(error) if error.code() == "native.resource_closed" => Ok(Some(None)),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn nil_results(binding: &RuntimeBinding) -> NativeOwnedValue {
     if binding.list {
         NativeOwnedValue::list(
@@ -278,14 +297,14 @@ fn encode(
     kind: &Kind,
     resources: &[ResourceSlot],
     texts: &mut Vec<Vec<u8>>,
-) -> Result<Cell, NativeError> {
+) -> Result<Cell, Failure> {
     let argument = call.argument(index)?;
     Ok(match kind {
         Kind::Bool => Cell::unsigned(u64::from(argument.as_bool()?)),
         Kind::Signed { min, max, name } => {
             let value = argument.as_i64()?;
             if value < *min || value > *max {
-                return Err(out_of_range(index, name, value));
+                return Err(out_of_range(index, name, value).into());
             }
             Cell::signed(value)
         }
@@ -293,13 +312,13 @@ fn encode(
             let value = argument.as_i64()?;
             match u64::try_from(value) {
                 Ok(unsigned) if unsigned <= *max => Cell::unsigned(unsigned),
-                _ => return Err(out_of_range(index, name, value)),
+                _ => return Err(out_of_range(index, name, value).into()),
             }
         }
         Kind::F32 => {
             let value = number(call, index)?;
             if value.is_finite() && value.abs() > f64::from(f32::MAX) {
-                return Err(out_of_range(index, "f32", value));
+                return Err(out_of_range(index, "f32", value).into());
             }
             Cell::float(value)
         }
@@ -318,7 +337,8 @@ fn encode(
                 return Err(NativeError::new(
                     "native.interior_nul",
                     format!("argument {index} contains a NUL byte"),
-                ));
+                )
+                .into());
             }
             let mut copy = Vec::with_capacity(text.len() + 1);
             copy.extend_from_slice(text.as_bytes());
@@ -330,15 +350,23 @@ fn encode(
         }
         Kind::Handle(slot) => {
             let address = call
-                .with_resource(index, &resources[*slot].resource_type, |handle| {
-                    handle.address
-                })?
+                .with_resource(
+                    index,
+                    &resource_slot(resources, *slot)?.resource_type,
+                    |handle| handle.address,
+                )?
                 .ok_or_else(|| {
                     NativeError::new("native.resource_closed", "native resource is closed")
                 })?;
             Cell::pointer(address, 0)
         }
     })
+}
+
+fn resource_slot(resources: &[ResourceSlot], slot: usize) -> Result<&ResourceSlot, Failure> {
+    resources
+        .get(slot)
+        .ok_or_else(|| Failure::Contract(format!("resource slot {slot} is not installed")))
 }
 
 /// A Slug `num`: an integer or a float.
