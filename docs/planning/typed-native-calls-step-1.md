@@ -44,10 +44,13 @@ These decisions are fixed for this plan:
 - Static targets select one provider per module at build time, and one shared
   `no_std + alloc` adapter makes every shim call.
 
-## Decisions to settle in phase 1
+## Decisions settled for phase 1
 
-Each item is settled by an addition to the relevant decision record before
-code depends on it. Recommendations are starting points, not decisions.
+All seven items below are settled in
+[Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md),
+following these recommendations. One refinement: a signature names the Slug
+resource (`handle<File>`), and the resource entry supplies its C type, rather
+than repeating the C type in each signature.
 
 1. **Manifest syntax for typed bindings.** The final keys for functions,
    parameter types and directions, result ownership, handle C types, the
@@ -92,7 +95,7 @@ Each phase lands as its own commits with focused tests, and leaves
 A crate named `slug-native-manifest` (name not final) that depends on neither
 `slug-vm` nor `slug-frontend`.
 
-- [ ] Settle decisions 1-6 above in the decision records.
+- [x] Settle decisions 1-7 above in the decision records.
 - [ ] Parse the typed manifest section into a model of functions, parameters,
   directions, result ownership, handle types, close bindings, and profile.
   Malformed input is a checked error naming the clutch, module, and binding.

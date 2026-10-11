@@ -145,8 +145,10 @@ implemented.
 ## Migration
 
 None for existing builds: descriptors without `kind` select Rust providers, and
-the target-descriptor format version is unchanged. Signatures, result
-ownership, and boundary errors follow
+the target-descriptor format version is unchanged. Manifest keys and the type
+compatibility check are specified in
+[Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md).
+Signatures, result ownership, and boundary errors follow
 [Uniform shim entry](2026-10-10-uniform-shim-entry.md) and
 [Typed native calls](2026-10-10-typed-native-calls.md). This record does not
 change source syntax, bytecode, or `.cslug`.

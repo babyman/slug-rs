@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Specified typed native manifest bindings: the `[native]` keys, signature
+  grammar and canonical text, resource release and explicit close, build-time
+  Slug/C type compatibility, a 16-cell limit, shim compiler flags and export,
+  and generating shims at build time.
+
 - Planned step 1 of the typed native-call replacement: the manifest model,
   shim generator, shared adapter, desktop and static binding paths, and moving
   `slug.io.fs` off the 0.13 prototype ABI.

@@ -203,11 +203,10 @@ Each call builds a small cell array. The spike measured the uniform entry
 within noise of the other dispatch candidates; a plain C call through the shim
 costs about 0.26 ns more than a direct call.
 
-Intentionally not decided here: the manifest's final syntax, including the
-exact spelling of the canonical signature; struct layout encoding; the buffer
-resource; the maximum cell count; per-compiler flag sets and Windows symbol
-export for `slug_shim_get_table`; and a Rust-glue alternative for static Rust
-hosts.
+The manifest keys, the exact canonical signature spelling, the maximum cell
+count, compiler flags, and Windows export are specified in
+[Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md). Intentionally not decided here: struct layout encoding; the buffer
+resource; and a Rust-glue alternative for static Rust hosts.
 
 Follow-up spike work completed before the loader (see the
 [spike results](../planning/typed-native-call-dispatch-spike-results.md)):

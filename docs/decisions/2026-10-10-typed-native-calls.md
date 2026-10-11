@@ -179,7 +179,8 @@ implementation, and a mutable view of any Slug value.
 
 Open questions this record does not settle:
 
-- the manifest's final names and `native.types` syntax;
+- the `native.types` and constants syntax (function, resource, and signature
+  keys are specified in [Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md));
 - whether the default numeric mapping for an unqualified `num` is integer or
   float (the manifest requires an explicit C type, so this affects only
   diagnostics);
