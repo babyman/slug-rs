@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Member access and literal indexes such as `module.name`, `record.field`,
+  and `values[0]` now compile to one instruction instead of two.
+
 - Recorded before-and-after measurements for the native-call path and
   owned-value resolution refactors: native scalar calls are about 2.6x
   cheaper net of loop overhead, and the source benchmarks run 12-15% faster.

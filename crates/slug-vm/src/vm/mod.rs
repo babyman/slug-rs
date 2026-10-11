@@ -2043,6 +2043,9 @@ impl Vm {
                 self.record_collection_construction(entries.len());
                 self.stack.push(Value::Map(Map::new(entries).into_shared()));
             }
+            PackedOpcode::GetIndexConstant => {
+                self.get_index_constant_at(program, operand, None)?;
+            }
             PackedOpcode::GetIndex => {
                 let (collection, index) = self.pop_pair_at(None)?;
                 self.stack.push(
@@ -2650,6 +2653,9 @@ impl Vm {
                     slice_value(collection, start.as_ref(), end.as_ref(), step.as_ref())
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
                 );
+            }
+            Op::GetIndexConstant(constant) => {
+                self.get_index_constant_at(program, *constant, span)?;
             }
             Op::GetIndex => {
                 let (collection, index) = self.pop_pair_at(span)?;
@@ -3309,6 +3315,33 @@ impl Vm {
         }
         self.frames.last_mut().expect("active frame was checked").ip += 1;
         Ok(*instruction)
+    }
+
+    fn get_index_constant_at(
+        &mut self,
+        program: &Program,
+        constant: usize,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let collection = self.pop_at(span)?;
+        let Some(crate::Constant::Value(key)) =
+            self.current_chunk(program)?.constants.get(constant)
+        else {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("index constant {constant} does not exist"),
+                span,
+            ));
+        };
+        let value = index_value(
+            collection,
+            key,
+            #[cfg(feature = "metrics")]
+            &self.metrics,
+        )
+        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?;
+        self.stack.push(value);
+        Ok(())
     }
 
     fn current_chunk<'a>(

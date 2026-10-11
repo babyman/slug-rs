@@ -4640,6 +4640,32 @@ mod tests {
     }
 
     #[test]
+    fn constant_index_keys_lower_to_one_instruction() {
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("indexing compiles");
+            (0..program.chunk_count())
+                .flat_map(|index| {
+                    program
+                        .chunk(index)
+                        .expect("existing chunk")
+                        .code
+                        .iter()
+                        .map(|instruction| instruction.opcode)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let member = opcodes("val record = {\"name\": 1}\nrecord.name\n");
+        assert!(member.contains(&slug_vm::PackedOpcode::GetIndexConstant));
+        assert!(!member.contains(&slug_vm::PackedOpcode::GetIndex));
+
+        let dynamic = opcodes("val values = [1, 2]\nval at = fn(index) { values[index] }\n");
+        assert!(dynamic.contains(&slug_vm::PackedOpcode::GetIndex));
+        assert!(!dynamic.contains(&slug_vm::PackedOpcode::GetIndexConstant));
+    }
+
+    #[test]
     fn narrower_parameter_types_are_more_specific() {
         let narrow = candidate(vec![Type::Str]);
         let broad = candidate(vec![Type::universal()]);
