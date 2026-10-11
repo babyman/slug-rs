@@ -59,6 +59,12 @@ fn compile(directory: &TemporaryDirectory, arguments: &[&str]) -> Output {
         .expect("start the C compiler")
 }
 
+/// A driver's standard output with `\n` line endings: the Windows C runtime
+/// writes text-mode `stdout` with `\r\n`.
+fn driver_stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+}
+
 fn assert_compiled(output: &Output, what: &str) {
     assert!(
         output.status.success(),
@@ -308,7 +314,7 @@ fn generated_shim_runs_every_step_one_type_through_the_uniform_entry() {
          cleanup results\n\
          frees 1\n",
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+    assert_eq!(driver_stdout(&output), expected);
 }
 
 const MISMATCH_HEADER: &str = r"
@@ -471,7 +477,7 @@ fn two_providers_link_into_one_image() {
         "the two-provider driver must exit cleanly"
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        driver_stdout(&output),
         "abi 1\n\
          alpha|add|slug-shim/1;alpha;add;alpha_add;(i64,i64)->i64|2|1\n\
          abi 1\n\

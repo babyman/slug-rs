@@ -4,7 +4,9 @@
 
 - Fixed the typed native clutch tests on Windows. Git can check their
   fixtures out with CRLF line endings, which made three tests' line-based
-  edits match nothing; the tests now normalize line endings when loading them.
+  edits match nothing; the tests now normalize line endings when loading
+  them. The shim compiler tests likewise normalize the `\r\n` that C
+  programs write to standard output on Windows.
 
 - The typed native adapter now checks its cell and resource-slot lookups on
   each call, so a broken internal invariant reports `native_contract` instead
