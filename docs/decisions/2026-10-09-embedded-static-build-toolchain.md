@@ -92,3 +92,8 @@ artifact filename with an explicit descriptor-driven invocation. Preserve
 `programs/blink.slug` as the descriptor's documented default proof application
 until at least one independently selected application has passed the same
 desktop and cross-build validation.
+
+## Related
+
+[Static selection of typed native providers](2026-10-11-static-typed-provider-selection.md)
+adds manifest-bound C providers to descriptor provider selection.

@@ -137,7 +137,9 @@ shim therefore defines its table function under a provider-unique name, such
 as `slug_shim_table_vendor_sensor`, and a shim built as a dynamic library also
 exports `slug_shim_get_table` as an alias for it. The static host calls the
 provider-unique function directly. Both linking forms use the same table, and
-neither uses per-function symbol lookup.
+neither uses per-function symbol lookup. How a static target selects and
+registers shims is specified in
+[Static selection of typed native providers](2026-10-11-static-typed-provider-selection.md).
 
 **Stale-shim detection.** The manifest and the compiled shim are separate
 files. Each binding carries its canonical signature: text that both the

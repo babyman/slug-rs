@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Decided how static targets select typed native providers. Each foreign
+  module has exactly one Rust or manifest-bound C provider chosen at build
+  time. Generated shims link side by side under provider-unique table names,
+  and one shared `no_std` adapter makes every shim call.
+
 - Decided three open typed native-call rules. Generated shims carry each
   binding's canonical signature text for stale-shim detection, with
   provider-unique table symbols. Returned text is always copied, and is
