@@ -137,13 +137,19 @@ header and its mismatch test compiles with `-Werror`.
 - [x] Separately record non-timing results: added lines and generated artifacts,
   required tools, supported platforms, source/library author workflow, and
   failure diagnostics.
+- [x] Exercise the uniform shim entry and prove width, qualifier, and arity
+  mismatches fail against the included header on the local platform. The
+  existing FFI test matrix runs those tests on each supported desktop platform.
+- [x] Add VM controls for an ordinary Slug function and a statically registered
+  Rust native function, plus a plain-C direct-versus-uniform-shim comparison.
 - [ ] Repeat functional tests in the existing three-platform CI matrix. The
   focused tests are included in that job; confirmation from macOS, Linux, and
   Windows remains the final platform gate. Timing comparisons are local
   evidence only and must not become timing-sensitive CI assertions.
 
 The [spike results](typed-native-call-dispatch-spike-results.md) record the
-local evidence and the remaining CI platform gate.
+local evidence and the remaining CI platform gate. Leave this plan active until
+that matrix passes; then move it to `docs/planning/completed/`.
 
 ## Decision criteria
 

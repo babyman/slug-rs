@@ -10,11 +10,19 @@ Run `make bench-ffi-prototype-scalar`. It captures the command, compiler and
 Rust versions, target, operating-system details, sample count, and raw output
 in the ignored `docs/planning/local/ffi-prototype-scalar-baseline.txt`.
 
-The initial macOS ARM64 run used Rust 1.96.1, Apple Clang 21.0.0, release mode,
+The latest macOS ARM64 run used Rust 1.96.1, Apple Clang 21.0.0, release mode,
 11 samples, a 10,000-call warm-up, and 100,000 calls per sample. Its medians
-were 731 ns/call for the 0.13 host-table callback baseline, 690 ns/call for
-the Rust dispatcher, and 679 ns/call for the generated shim. These are local
-evidence, not a CI threshold; the raw output is the authoritative record.
+were 721 ns/call for the 0.13 host-table callback baseline, 698 ns/call for
+the bounded Rust dispatcher, 692 ns/call for the original generated shim, and
+710 ns/call for the uniform generated shim. The controls measured 395 ns/call
+for an ordinary Slug function and 673 ns/call for a statically registered Rust
+native function.
+
+The plain-C loop made 100 million direct and uniform-shim calls against the
+same fixture. It measured 1.05 ns/call direct and 1.31 ns/call through the
+uniform shim. This is a small measurable wrapper cost, but it is much smaller
+than the VM/native-call path and is not a CI threshold. The raw output is the
+authoritative record for all timings.
 
 ## Comparison
 
@@ -25,14 +33,19 @@ evidence, not a CI threshold; the raw output is the authoritative record.
 | Fixture shapes | All six filesystem bindings and scalar `add` pass against the direct fixture. | The same bindings pass through five finite trampolines. |
 | Checked boundaries | Interior NUL, closed resource, end-of-file, native I/O failure, missing symbol, and unsupported shape are covered. | The same checked boundaries are covered. |
 | Platform coverage | The focused tests are part of `make test-ffi-prototype`, which the existing macOS, Linux, and Windows CI matrix runs. | The same matrix invocation covers this candidate. |
-| Scalar cost | No local regression versus 0.13; adapter overhead was not measurable in this run. | No local regression versus 0.13. |
+| Scalar cost | The original and uniform entries measured 692 and 710 ns/call respectively, versus 721 ns/call for 0.13. The uniform wrapper alone measured 1.31 ns/call versus 1.05 ns/call direct. | 698 ns/call; no local regression versus 0.13. |
 | Unsafe boundary | Only the desktop loader performs dynamic loading and calls. | Only the desktop loader performs dynamic loading and calls. |
 
-The fixture and generated adapter add small private C files and one generator
-script. A library author supplies the declaration-owning header and invokes
-the generator during a clutch or static-host build. A static host compiles the
-same generated adapter with its native objects. Rust dispatch avoids that
-build step but retains the unverifiable wrong-signature risk.
+The fixture and generated adapter add small private C files and one generator.
+A library author supplies the declaration-owning header and invokes the
+generator during a clutch or static-host build. A static host compiles the same
+generated adapter with its native objects. Rust dispatch avoids that build step
+but retains the unverifiable wrong-signature risk.
+
+The uniform-entry follow-up also passes its local fixture and rejects deliberate
+integer-width, pointer-qualifier, and arity mismatches with `-Werror`. The VM
+controls show that the native registration/call boundary, rather than the shim
+wrapper alone, dominates the measured cost.
 
 ## Outcome
 
@@ -43,4 +56,6 @@ it is not the production choice because a manifest/header mismatch can become
 undefined behavior before any checked Slug boundary is reached.
 
 The existing three-platform CI job remains the functional platform gate for
-these focused tests. No timing assertion is added to CI.
+these focused tests, including the uniform mismatch tests. Confirmation from
+macOS, Linux, and Windows is still required before the spike plan is archived.
+No timing assertion is added to CI.

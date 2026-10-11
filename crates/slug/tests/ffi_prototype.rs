@@ -13,7 +13,9 @@ use slug_desktop_loader::{
     FfiPrototypeLibrary, FixtureMismatch, SHIM_ADD_BINDING, TypedDispatchSpike, UniformShimSpike,
     generate_uniform_shim,
 };
-use slug_vm::{RuntimeErrorKind, Vm};
+use slug_vm::{
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind, Vm,
+};
 
 trait VmWithModuleLoader {
     fn with_module_loader(loader: ModuleLoader) -> Self;
@@ -878,6 +880,140 @@ fn scalar_add_program(
     (loader, program)
 }
 
+fn scalar_add_slug_program(
+    directory: &TemporaryDirectory,
+    calls: usize,
+) -> (ModuleLoader, slug_vm::Program) {
+    let loader = ModuleLoader::new(directory.path(), None);
+    let main = directory.path().join("scalar-slug-benchmark.slug");
+    let source = format!(
+        "val add = fn(left, right) {{ left + right }}\n\
+         val repeat = fn(remaining:num) {{\n\
+           if (remaining == 0) {{ 0 }} else {{\n\
+             add(remaining, 1)\n\
+             recur(remaining - 1)\n\
+           }}\n\
+         }}\n\
+         repeat({calls})\n"
+    );
+    let program = loader
+        .compile_source(&main.to_string_lossy(), &source)
+        .expect("compile scalar Slug benchmark program");
+    (loader, program)
+}
+
+fn native_scalar_add(call: &mut NativeCall<'_>) -> NativeStatus {
+    let result = (|| {
+        let left = call.argument(0)?.as_i64()?;
+        let right = call.argument(1)?.as_i64()?;
+        let value = left.checked_add(right).ok_or_else(|| {
+            slug_vm::NativeError::new("native.range", "integer addition overflow")
+        })?;
+        Ok(NativeOwnedValue::integer(value))
+    })();
+    match result {
+        Ok(value) => call.return_value(value),
+        Err(error) => call.raise(error),
+    }
+}
+
+fn scalar_add_static_rust_function() -> slug_vm::NativeFunction {
+    NativeModule::new("slug.scalar", ())
+        .expect("static scalar module is valid")
+        .function("add", NativeArity::Exact(2), native_scalar_add)
+        .expect("static scalar function is valid")
+}
+
+const SCALAR_WARMUP_CALLS: usize = 10_000;
+const SCALAR_CALLS_PER_SAMPLE: usize = 100_000;
+const SCALAR_CALLS_PER_SAMPLE_F64: f64 = 100_000.0;
+const SCALAR_SAMPLE_COUNT: usize = 11;
+
+fn typed_dispatch_scalar_source(calls: usize) -> String {
+    format!(
+        "val spike = import(\"slug.spike\")\n\
+         val repeat = fn(remaining:num) {{\n\
+           if (remaining == 0) {{ 0 }} else {{\n\
+             spike.add(remaining, 1)\n\
+             recur(remaining - 1)\n\
+           }}\n\
+         }}\n\
+         repeat({calls})\n"
+    )
+}
+
+fn report_scalar_samples(label: &str, vm: &mut Vm, sample: &slug_vm::Program) {
+    for sample_index in 1..=SCALAR_SAMPLE_COUNT {
+        let started = Instant::now();
+        assert_eq!(vm.run_named(sample, "main").unwrap().to_string(), "0");
+        let elapsed = started.elapsed();
+        println!(
+            "{label} sample {sample_index}: total_ns={} ns_per_call={:.2}",
+            elapsed.as_nanos(),
+            elapsed.as_secs_f64() * 1_000_000_000.0 / SCALAR_CALLS_PER_SAMPLE_F64,
+        );
+    }
+}
+
+fn measure_typed_dispatch_candidate(
+    label: &str,
+    directory: &TemporaryDirectory,
+    library: PathBuf,
+    bindings: &[slug_desktop_loader::DispatchBinding],
+) {
+    let dispatch = TypedDispatchSpike::load(library, bindings).expect("load benchmark candidate");
+    let (loader, warmup) = typed_dispatch_program(
+        directory,
+        &typed_dispatch_scalar_source(SCALAR_WARMUP_CALLS),
+    );
+    let (_, sample) = typed_dispatch_program(
+        directory,
+        &typed_dispatch_scalar_source(SCALAR_CALLS_PER_SAMPLE),
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+        .expect("register benchmark candidate");
+    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+    report_scalar_samples(label, &mut vm, &sample);
+}
+
+fn measure_uniform_shim_candidate(directory: &TemporaryDirectory, library: PathBuf) {
+    let dispatch = UniformShimSpike::load(library).expect("load uniform benchmark candidate");
+    let (loader, warmup) = typed_dispatch_program(
+        directory,
+        &typed_dispatch_scalar_source(SCALAR_WARMUP_CALLS),
+    );
+    let (_, sample) = typed_dispatch_program(
+        directory,
+        &typed_dispatch_scalar_source(SCALAR_CALLS_PER_SAMPLE),
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+        .expect("register uniform benchmark candidate");
+    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+    report_scalar_samples("uniform-generated-shim", &mut vm, &sample);
+}
+
+fn measure_slug_function_control() {
+    let directory = TemporaryDirectory::new();
+    let (loader, warmup) = scalar_add_slug_program(&directory, SCALAR_WARMUP_CALLS);
+    let (_, sample) = scalar_add_slug_program(&directory, SCALAR_CALLS_PER_SAMPLE);
+    let mut vm = Vm::with_module_loader(loader);
+    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+    report_scalar_samples("slug-function-control", &mut vm, &sample);
+}
+
+fn measure_static_rust_native_control() {
+    let directory = TemporaryDirectory::new();
+    let (loader, warmup) = scalar_add_program(&directory, SCALAR_WARMUP_CALLS);
+    let (_, sample) = scalar_add_program(&directory, SCALAR_CALLS_PER_SAMPLE);
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign(scalar_add_static_rust_function())
+        .expect("register static Rust benchmark control");
+    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+    report_scalar_samples("static-rust-native-control", &mut vm, &sample);
+}
+
 #[test]
 fn scalar_add_callback_fixture_uses_the_013_host_table_path() {
     let directory = TemporaryDirectory::new();
@@ -943,55 +1079,8 @@ fn scalar_add_callback_baseline() {
 #[test]
 #[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
 fn typed_dispatch_scalar_comparison() {
-    const WARMUP_CALLS: usize = 10_000;
-    const CALLS_PER_SAMPLE: usize = 100_000;
-    const CALLS_PER_SAMPLE_F64: f64 = 100_000.0;
-    const SAMPLE_COUNT: usize = 11;
-
-    fn source(calls: usize) -> String {
-        format!(
-            "val spike = import(\"slug.spike\")\n\
-             val repeat = fn(remaining:num) {{\n\
-               if (remaining == 0) {{ 0 }} else {{\n\
-                 spike.add(remaining, 1)\n\
-                 recur(remaining - 1)\n\
-               }}\n\
-             }}\n\
-             repeat({calls})\n"
-        )
-    }
-
-    struct Candidate<'a> {
-        label: &'a str,
-        directory: &'a TemporaryDirectory,
-        library: PathBuf,
-        bindings: &'a [slug_desktop_loader::DispatchBinding],
-    }
-
-    fn measure(candidate: Candidate<'_>) {
-        let dispatch = TypedDispatchSpike::load(candidate.library, candidate.bindings)
-            .expect("load benchmark candidate");
-        let (loader, warmup) = typed_dispatch_program(candidate.directory, &source(WARMUP_CALLS));
-        let (_, sample) = typed_dispatch_program(candidate.directory, &source(CALLS_PER_SAMPLE));
-        let mut vm = Vm::with_module_loader(loader);
-        vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
-            .expect("register benchmark candidate");
-        assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
-        for sample_index in 1..=SAMPLE_COUNT {
-            let started = Instant::now();
-            assert_eq!(vm.run_named(&sample, "main").unwrap().to_string(), "0");
-            let elapsed = started.elapsed();
-            println!(
-                "{} sample {sample_index}: total_ns={} ns_per_call={:.2}",
-                candidate.label,
-                elapsed.as_nanos(),
-                elapsed.as_secs_f64() * 1_000_000_000.0 / CALLS_PER_SAMPLE_F64,
-            );
-        }
-    }
-
     println!(
-        "comparison configuration: profile=release samples={SAMPLE_COUNT} warmup_calls={WARMUP_CALLS} calls_per_sample={CALLS_PER_SAMPLE} target={}-{}",
+        "comparison configuration: profile=release samples={SCALAR_SAMPLE_COUNT} warmup_calls={SCALAR_WARMUP_CALLS} calls_per_sample={SCALAR_CALLS_PER_SAMPLE} target={}-{}",
         env::consts::ARCH,
         env::consts::OS,
     );
@@ -1001,12 +1090,12 @@ fn typed_dispatch_scalar_comparison() {
         .copied()
         .chain(std::iter::once(ADD_BINDING))
         .collect::<Vec<_>>();
-    measure(Candidate {
-        label: "rust-dispatch",
-        directory: &direct_directory,
-        library: compile_typed_dispatch_fixture(&direct_directory, "typed_bench_direct", None),
-        bindings: &direct_bindings,
-    });
+    measure_typed_dispatch_candidate(
+        "rust-dispatch",
+        &direct_directory,
+        compile_typed_dispatch_fixture(&direct_directory, "typed_bench_direct", None),
+        &direct_bindings,
+    );
 
     let shim_directory = TemporaryDirectory::new();
     let shim = generate_typed_dispatch_shim(&shim_directory, "normal");
@@ -1015,12 +1104,25 @@ fn typed_dispatch_scalar_comparison() {
         .copied()
         .chain(std::iter::once(SHIM_ADD_BINDING))
         .collect::<Vec<_>>();
-    measure(Candidate {
-        label: "generated-shim",
-        directory: &shim_directory,
-        library: compile_typed_dispatch_fixture(&shim_directory, "typed_bench_shim", Some(&shim)),
-        bindings: &shim_bindings,
-    });
+    measure_typed_dispatch_candidate(
+        "generated-shim",
+        &shim_directory,
+        compile_typed_dispatch_fixture(&shim_directory, "typed_bench_shim", Some(&shim)),
+        &shim_bindings,
+    );
+
+    let uniform_directory = TemporaryDirectory::new();
+    let uniform_shim = generate_uniform_typed_dispatch_shim(&uniform_directory, None);
+    measure_uniform_shim_candidate(
+        &uniform_directory,
+        compile_typed_dispatch_fixture(
+            &uniform_directory,
+            "typed_bench_uniform_shim",
+            Some(&uniform_shim),
+        ),
+    );
+    measure_slug_function_control();
+    measure_static_rust_native_control();
 }
 
 /// Measures the wrapper itself outside the VM, using the same generated C
