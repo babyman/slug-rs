@@ -18,6 +18,27 @@ the bounded Rust dispatcher, 692 ns/call for the original generated shim, and
 for an ordinary Slug function and 673 ns/call for a statically registered Rust
 native function.
 
+An empty-loop control runs the same `repeat` recursion with the call removed,
+so the loop's own compare, subtract, and `recur` cost can be subtracted from
+each control. A later run on the same host measured it at 169 ns/call. That run
+was faster overall than the one above, so the loop-subtracted figures use only
+its own medians:
+
+| Path | Median ns/call | Minus empty loop |
+|---|---:|---:|
+| Empty loop | 169 | 0 |
+| Ordinary Slug function | 379 | 210 |
+| Statically registered Rust native | 605 | 436 |
+| Bounded Rust dispatcher | 610 | 441 |
+| Original generated shim | 610 | 441 |
+| Uniform generated shim | 618 | 449 |
+| 0.13 host-table callback | 637 | 468 |
+
+A native call through the VM therefore costs about 226 ns more than an
+ordinary Slug function call, before any dispatch candidate is involved. The
+empty loop omits the discarded call result, so it slightly understates the
+loop share of each control.
+
 The plain-C loop made 100 million direct and uniform-shim calls against the
 same fixture. It measured 1.05 ns/call direct and 1.31 ns/call through the
 uniform shim. This is a small measurable wrapper cost, but it is much smaller

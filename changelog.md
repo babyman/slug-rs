@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an empty-loop control to the native scalar-call benchmark, so VM
+  native-call costs can be reported without the benchmark loop's own cost.
+
 - Fixed Windows DLL exports for the private typed-native-dispatch fixtures and
   generated shim entry points, restoring their cross-platform test coverage.
 

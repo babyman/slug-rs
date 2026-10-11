@@ -994,6 +994,33 @@ fn measure_uniform_shim_candidate(directory: &TemporaryDirectory, library: PathB
     report_scalar_samples("uniform-generated-shim", &mut vm, &sample);
 }
 
+/// Same loop as the call controls with the call removed, so the loop's own
+/// compare, subtract, and `recur` cost can be subtracted from every other
+/// control's ns/call.
+fn measure_empty_loop_control() {
+    let directory = TemporaryDirectory::new();
+    let loader = ModuleLoader::new(directory.path(), None);
+    let main = directory.path().join("scalar-empty-loop-benchmark.slug");
+    let compile = |calls: usize| {
+        let source = format!(
+            "val repeat = fn(remaining:num) {{\n\
+               if (remaining == 0) {{ 0 }} else {{\n\
+                 recur(remaining - 1)\n\
+               }}\n\
+             }}\n\
+             repeat({calls})\n"
+        );
+        loader
+            .compile_source(&main.to_string_lossy(), &source)
+            .expect("compile empty-loop benchmark program")
+    };
+    let warmup = compile(SCALAR_WARMUP_CALLS);
+    let sample = compile(SCALAR_CALLS_PER_SAMPLE);
+    let mut vm = Vm::with_module_loader(loader);
+    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
+    report_scalar_samples("empty-loop-control", &mut vm, &sample);
+}
+
 fn measure_slug_function_control() {
     let directory = TemporaryDirectory::new();
     let (loader, warmup) = scalar_add_slug_program(&directory, SCALAR_WARMUP_CALLS);
@@ -1121,6 +1148,7 @@ fn typed_dispatch_scalar_comparison() {
             Some(&uniform_shim),
         ),
     );
+    measure_empty_loop_control();
     measure_slug_function_control();
     measure_static_rust_native_control();
 }
