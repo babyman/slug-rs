@@ -1023,6 +1023,40 @@ fn typed_dispatch_scalar_comparison() {
     });
 }
 
+/// Measures the wrapper itself outside the VM, using the same generated C
+/// translation unit as the uniform-table fixture.
+#[cfg(not(windows))]
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn uniform_shim_plain_c_comparison() {
+    let directory = TemporaryDirectory::new();
+    let shim = generate_uniform_typed_dispatch_shim(&directory, None);
+    let executable = directory.path().join("typed-shim-plain-benchmark");
+    let status = Command::new("cc")
+        .args([
+            "-O3",
+            "-I",
+            "crates/slug-desktop-loader/tests/ffi",
+            "crates/slug-desktop-loader/tests/ffi/typed_dispatch_fixture.c",
+        ])
+        .arg(shim)
+        .arg("crates/slug-desktop-loader/tests/ffi/typed_shim_plain_benchmark.c")
+        .arg("-o")
+        .arg(&executable)
+        .current_dir(workspace_root())
+        .status()
+        .expect("compile plain-C uniform shim benchmark");
+    assert!(status.success(), "compile plain-C uniform shim benchmark");
+    let output = Command::new(executable)
+        .output()
+        .expect("run plain-C uniform shim benchmark");
+    assert!(
+        output.status.success(),
+        "run plain-C uniform shim benchmark"
+    );
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+}
+
 #[cfg(unix)]
 #[test]
 fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {
