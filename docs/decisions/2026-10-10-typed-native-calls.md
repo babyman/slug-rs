@@ -53,7 +53,10 @@ signature = "(cstr path, out handle db) -> i32"
 **Calling convention.** For a call to a declared function the VM validates the
 arguments against the Slug declaration (types, arity, resource type, resource
 not closed), converts them to the manifest's C types, calls the symbol
-directly, and converts the result. No host callback is made during a call.
+through its generated shim entry (see
+[Uniform shim entry](2026-10-10-uniform-shim-entry.md)), and converts the
+result. The VM itself performs no unsafe call; only the loader does. No host
+callback is made during a call.
 Native code never receives a VM value, a reference count, or a pointer into
 VM storage that it may write through. A conversion or validation failure is a
 checked Slug error raised by the VM, never a native fault.
@@ -127,8 +130,13 @@ glue. The loader and board packages are the only places that may allow
 **Trust.** A clutch and its manifest are trusted code. At load time the host
 verifies that each symbol resolves and that the declaration's shape is
 compatible with the C signature (for example a `str` parameter cannot bind to
-a plain `i32`), but it cannot verify the C types themselves. A wrong
-signature is undefined behavior. Read-only borrowing of `str` and `bytes` is a
+a plain `i32`). For a binding backed by an included header, the generated shim
+is compiled against that header, so a wrong parameter count, qualifier, or
+integer width is a build error, and a stale shim is rejected by its signature
+hash (see [Generated shims](2026-10-10-generated-shims-for-typed-native-calls.md)).
+The host still cannot verify the C types of a binding that has no header or
+whose target is a macro, and a wrong signature there is undefined behavior.
+Read-only borrowing of `str` and `bytes` is a
 contract the C code must honor, not something the host can enforce.
 
 **Replacement plan.** The prototype ABI is frozen at 0.13 and no longer
