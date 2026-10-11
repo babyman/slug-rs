@@ -11,6 +11,7 @@ abstractions.
 crates/slug-vm/               Runtime, bytecode, dynamic values, and VM tests
 crates/slug-frontend/         Source syntax, semantics, lowering, and module graph
 crates/slug-loader/           Storage-independent import contracts
+crates/slug-native-manifest/  Typed native binding model and canonical signatures
 crates/slug-desktop-loader/   Desktop import resolution and Clutch activation
 crates/slug-nil-loader/       Deny-all resolver for restricted hosts
 crates/slug-restricted-host/  In-memory restricted host facade
@@ -57,6 +58,7 @@ a Rust change, run `make check`. For documentation-only changes, run
 | Configuration loading and `cfg`-related behavior | `crates/slug/tests/configuration.rs` | `cargo test -p slug --features metrics --test configuration` |
 | Fixture execution behavior | `crates/slug/tests/conformance_runner.rs` | `cargo test -p slug --features metrics --test conformance_runner` |
 | Fixture-sidecar validation | `crates/slug/tests/conformance_metadata.rs` | `cargo test -p slug --features metrics --test conformance_metadata` |
+| Typed native manifest bindings | `crates/slug-native-manifest/tests/manifest.rs` | `cargo test -p slug-native-manifest` |
 | Repository legacy-syntax fixtures | `crates/slug/tests/legacy_syntax_conformance.rs` | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 
 `make test` runs the full unit, binary, and integration suite. See

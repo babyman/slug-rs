@@ -96,13 +96,14 @@ A crate named `slug-native-manifest` (name not final) that depends on neither
 `slug-vm` nor `slug-frontend`.
 
 - [x] Settle decisions 1-7 above in the decision records.
-- [ ] Parse the typed manifest section into a model of functions, parameters,
+- [x] Parse the typed manifest section into a model of functions, parameters,
   directions, result ownership, handle types, close bindings, and profile.
-  Malformed input is a checked error naming the clutch, module, and binding.
-- [ ] Produce the canonical signature text from the model, and test that
+  Malformed input is a checked error naming the manifest path of the module
+  and binding; the caller adds the clutch.
+- [x] Produce the canonical signature text from the model, and test that
   formatting, comments, and parameter names do not change it.
-- [ ] Reject bindings above the maximum cell count, duplicate bindings, and
-  unknown types.
+- [x] Reject bindings above the maximum cell count and unknown types. TOML
+  table keys make duplicate bindings unrepresentable.
 
 ### 2. Shim generator
 

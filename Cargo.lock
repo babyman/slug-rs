@@ -307,6 +307,13 @@ name = "slug-loader"
 version = "0.1.0"
 
 [[package]]
+name = "slug-native-manifest"
+version = "0.1.0"
+dependencies = [
+ "toml",
+]
+
+[[package]]
 name = "slug-nil-loader"
 version = "0.1.0"
 dependencies = [

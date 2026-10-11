@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the `slug-native-manifest` crate. It parses a clutch's typed
+  `[native]` bindings, validates them under the step 1 rules, and produces the
+  canonical signature text that generated shims and loaders compare.
+
 - Specified typed native manifest bindings: the `[native]` keys, signature
   grammar and canonical text, resource release and explicit close, build-time
   Slug/C type compatibility, a 16-cell limit, shim compiler flags and export,

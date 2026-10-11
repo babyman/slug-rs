@@ -7,6 +7,7 @@ members = [
     "crates/slug-restricted-host",
     "crates/slug-static-host",
     "crates/slug-embedded-build",
+    "crates/slug-native-manifest",
     "crates/slug-desktop-loader",
     "crates/slug",
     "crates/slug-repl",
