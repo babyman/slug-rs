@@ -281,20 +281,33 @@ fn handle_type(call: &NativeCall<'_>) -> Result<NativeResourceType<Handle>, Nati
         .clone()
         .ok_or_else(|| NativeError::new("native.spike", "uniform shim handle type is unavailable"))
 }
-fn invoke(entry: Entry, arguments: &[Value], results: &mut [Value]) -> Result<(), NativeError> {
-    let mut cleanup = Cleanup {
+/// Runs a shim's cleanup record when dropped. Native results may borrow memory
+/// that `release` frees, so callers keep the guard alive until every result
+/// has been decoded or copied.
+struct CleanupGuard(Cleanup);
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.release.take() {
+            // SAFETY: a shim only supplies its own valid release callback and context.
+            unsafe { release(self.0.context) };
+        }
+    }
+}
+fn invoke(
+    entry: Entry,
+    arguments: &[Value],
+    results: &mut [Value],
+) -> Result<CleanupGuard, NativeError> {
+    let mut guard = CleanupGuard(Cleanup {
         release: None,
         context: std::ptr::null_mut(),
-    };
+    });
     // SAFETY: all entries share this exact ABI; cell arrays remain live through the call.
-    let status = unsafe { entry(arguments.as_ptr(), results.as_mut_ptr(), &raw mut cleanup) };
-    // SAFETY: a shim only supplies its own valid release callback and context.
-    if let Some(release) = cleanup.release {
-        unsafe { release(cleanup.context) };
-    }
+    let status = unsafe { entry(arguments.as_ptr(), results.as_mut_ptr(), &raw mut guard.0) };
     if status == 0 {
-        Ok(())
+        Ok(guard)
     } else {
+        // The guard drops here, so cleanup also runs after a failed call.
         Err(NativeError::new(
             "native.io",
             format!("uniform shim failed with status {status}"),
@@ -325,7 +338,7 @@ fn open(call: &mut NativeCall<'_>) -> NativeStatus {
             length: 0,
         }];
         let mut results = blank_values::<1>();
-        invoke(entry(call)?, &args, &mut results)?;
+        let _cleanup = invoke(entry(call)?, &args, &mut results)?;
         let pointer = unsafe { results[0].data.pointer };
         if pointer.is_null() {
             return Err(NativeError::new("native.io", "native open failed"));
@@ -362,7 +375,7 @@ fn read_line(call: &mut NativeCall<'_>) -> NativeStatus {
                 length: 0,
             }];
             let mut results = blank_values::<1>();
-            invoke(e, &args, &mut results)?;
+            let _cleanup = invoke(e, &args, &mut results)?;
             let pointer = unsafe { results[0].data.pointer }.cast::<c_char>();
             if pointer.is_null() {
                 Ok(NativeOwnedValue::nil())
@@ -400,7 +413,7 @@ fn write(call: &mut NativeCall<'_>) -> NativeStatus {
                 },
             ];
             let mut results = blank_values::<1>();
-            invoke(e, &args, &mut results)?;
+            let _cleanup = invoke(e, &args, &mut results)?;
             Ok(NativeOwnedValue::integer(unsafe { results[0].data.i64 }))
         })?
     })();
@@ -432,7 +445,7 @@ fn add(call: &mut NativeCall<'_>) -> NativeStatus {
             },
         ];
         let mut results = blank_values::<1>();
-        invoke(entry(call)?, &args, &mut results)?;
+        let _cleanup = invoke(entry(call)?, &args, &mut results)?;
         Ok(NativeOwnedValue::integer(unsafe { results[0].data.i64 }))
     })();
     match result {

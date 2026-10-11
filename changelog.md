@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed the uniform shim spike to release a shim's cleanup record only after
+  its results are decoded, and corrected the plain C benchmark so its volatile
+  sink no longer adds per-iteration cost to both loops.
+
 - Specified a uniform entry point for generated native shims: one C
   signature over fixed-size value cells, a single exported binding table,
   stale-shim detection by signature hash, and exact-type header checks on every
