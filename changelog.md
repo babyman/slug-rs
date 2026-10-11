@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed the typed native clutch tests on Windows. Git can check their
+  fixtures out with CRLF line endings, which made three tests' line-based
+  edits match nothing; the tests now normalize line endings when loading them.
+
 - The typed native adapter now checks its cell and resource-slot lookups on
   each call, so a broken internal invariant reports `native_contract` instead
   of panicking the host.

@@ -9,7 +9,10 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        LazyLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use slug::DesktopLoader as ModuleLoader;
@@ -19,8 +22,12 @@ use slug_vm::{RuntimeErrorKind, Value, Vm};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
-const MODULE: &str = include_str!("typed_native/files.slug");
-const MANIFEST: &str = include_str!("typed_native/clutch.toml");
+// Normalized because Git may check fixtures out with CRLF line endings, and
+// the tests edit them by `\n`-terminated lines.
+static MODULE: LazyLock<String> =
+    LazyLock::new(|| include_str!("typed_native/files.slug").replace("\r\n", "\n"));
+static MANIFEST: LazyLock<String> =
+    LazyLock::new(|| include_str!("typed_native/clutch.toml").replace("\r\n", "\n"));
 
 struct TemporaryDirectory(PathBuf);
 
@@ -145,7 +152,7 @@ fn slug_path(path: &Path) -> String {
 #[test]
 fn typed_clutch_reads_writes_and_closes_files() {
     let directory = TemporaryDirectory::new();
-    let repository = typed_clutch(&directory, MODULE, MANIFEST, MANIFEST);
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let file = slug_path(&directory.path().join("lines.txt"));
     let value = run(
         &directory,
@@ -189,7 +196,7 @@ fn typed_clutch_reports_checked_boundary_failures() {
             "native.interior_nul",
         ),
     ] {
-        let repository = typed_clutch(&directory, MODULE, MANIFEST, MANIFEST);
+        let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
         let error = run(&directory, repository, &body).expect_err(&body);
         assert!(error.starts_with(expected), "{body}: {error}");
         if expected == "native.resource_closed" {
@@ -205,7 +212,7 @@ fn typed_clutch_rejects_a_stale_shim() {
         "(i64 left, i64 right) -> i64",
         "(i64 left, i32 right) -> i64",
     );
-    let repository = typed_clutch(&directory, MODULE, MANIFEST, &edited);
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &edited);
     let error = run(&directory, repository, "files.add(1, 2)").expect_err("stale shim");
     assert!(
         error.contains("cannot load typed native library"),
@@ -243,11 +250,11 @@ fn typed_clutch_checks_foreign_declarations_against_bindings() {
             "native binding `fixture.files.negate` has no foreign declaration",
         ),
         (
-            format!("{MODULE}export foreign extra = fn():nil\n"),
+            format!("{}export foreign extra = fn():nil\n", *MODULE),
             "foreign `fixture.files.extra` has no native binding in the clutch manifest",
         ),
     ] {
-        let repository = typed_clutch(&directory, &module, MANIFEST, MANIFEST);
+        let repository = typed_clutch(&directory, &module, &MANIFEST, &MANIFEST);
         let error = run(&directory, repository, "nil").expect_err(expected);
         assert!(error.contains(expected), "{error}");
     }
@@ -267,7 +274,11 @@ fn typed_clutch_manifests_cannot_mix_in_the_prototype_abi() {
         "[modules]\n\"fixture.files\" = \"fixture.clutch\"\n",
     )
     .expect("write repository manifest");
-    fs::write(repository.join("fixture.clutch/modules/files.slug"), MODULE).expect("write module");
+    fs::write(
+        repository.join("fixture.clutch/modules/files.slug"),
+        MODULE.as_str(),
+    )
+    .expect("write module");
     fs::write(
         repository.join("fixture.clutch/clutch.toml"),
         manifest_for_platform(&mixed),
@@ -285,7 +296,7 @@ fn typed_clutch_manifests_cannot_mix_in_the_prototype_abi() {
 #[test]
 fn typed_clutch_runs_through_the_cli() {
     let directory = TemporaryDirectory::new();
-    typed_clutch(&directory, MODULE, MANIFEST, MANIFEST);
+    typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let program = directory.path().join("cli.slug");
     fs::write(
         &program,
@@ -317,7 +328,7 @@ fn typed_clutch_checks_every_module_it_provides() {
     let repository = typed_clutch_with_modules(
         &directory,
         &[
-            ("fixture.files", "files.slug", MODULE),
+            ("fixture.files", "files.slug", &MODULE),
             (
                 "fixture.more",
                 "more.slug",
@@ -344,7 +355,7 @@ fn typed_clutch_checks_every_module_it_provides() {
 #[test]
 fn typed_clutch_rejects_null_text_for_a_str_result() {
     let directory = TemporaryDirectory::new();
-    let repository = typed_clutch(&directory, MODULE, MANIFEST, MANIFEST);
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let value = run(
         &directory,
         repository,
@@ -353,7 +364,7 @@ fn typed_clutch_rejects_null_text_for_a_str_result() {
     .expect("labels");
     assert_eq!(value.to_string(), "[\"positive\", \"positive\", nil]");
 
-    let repository = typed_clutch(&directory, MODULE, MANIFEST, MANIFEST);
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let error = run(&directory, repository, "files.label(-1)").expect_err("NULL for `str`");
     assert!(error.starts_with("native.type"), "{error}");
     assert!(
@@ -373,7 +384,7 @@ const BENCH_SAMPLE_COUNT: usize = 11;
 #[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
 fn typed_scalar_add_benchmark() {
     let directory = TemporaryDirectory::new();
-    let repository = typed_clutch(&directory, MODULE, MANIFEST, MANIFEST);
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
     let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
     let compile = |calls: usize| {
         loader
