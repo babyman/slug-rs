@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Recorded the deferred VM follow-ups found while profiling native calls:
+  per-instruction dispatch overhead and export-count-independent module
+  member lookup.
+
 - Member access and literal indexes such as `module.name`, `record.field`,
   and `values[0]` now compile to one instruction instead of two.
 

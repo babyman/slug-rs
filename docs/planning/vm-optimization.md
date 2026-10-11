@@ -1042,3 +1042,41 @@ and collection counts were unchanged. A subsequent 15-sample
 (1.72x) and 50.912 ms (1.64x). CPython medians vary locally, so the retained
 evidence is the removed per-call allocation plus the paired VM checkpoints;
 these source ratios are not portable claims.
+
+### 10. Reduce per-instruction overhead and indexed member lookup (deferred)
+
+Profiling the native-call path on 2026-10-11 found two general costs that are
+deferred while typed native calls are implemented.
+
+- [ ] Reduce per-instruction overhead. A plain global read discarded as a
+  statement (`GetGlobal`, `Pop`) costs about 44 ns over an empty `recur` loop
+  on the measuring host, so roughly 20 ns per dispatched instruction before
+  the operation's own work. This dominates short operations such as module
+  member reads and should be addressed before adding further
+  superinstructions.
+- [ ] Make module member lookup independent of export count. `GetIndex` on an
+  import map scans its entries in reverse, about 1.7 ns per entry; a
+  64-export module adds about 100 ns in the worst position. The largest
+  shipped module has 9 exports, so this is not yet material.
+
+A position hint checked only by key is unsound for this: `Value::Map` keeps
+duplicate keys (a lookup returns the last one), so a hint naming an earlier
+duplicate would return the wrong value. A per-site runtime cache keyed by map
+identity is sound only if it holds a reference that also prevents in-place
+unique-owner map updates, which would regress update loops. The preferred
+direction is a dedicated module-namespace value with indexed lookup, which
+needs its own decision record.
+
+#### Measurement record: native-call path and constant-key indexing (2026-10-11)
+
+The completed slices are recorded in
+[`typed-native-call-dispatch-spike-results.md`](typed-native-call-dispatch-spike-results.md)
+and the dated
+[benchmark baseline entry](../engineering/benchmark-baseline-2026-09-16.md#native-call-path-and-owned-value-resolution--2026-10-11).
+`GetIndexConstant` (`ddfbe73`) then fused `Constant` and `GetIndex` for literal
+keys. On the private profiling harness (median of five 2,000,000-iteration
+runs, release build), a member read of a one-export module fell from 228 to
+216 ns per loop iteration and a native call through an import from 311 to
+301 ns; the 64-export worst case fell from 336 to 319 ns. Semantic checks,
+duplicate-key behavior, and missing-key `nil` results are unchanged and
+covered by `constant_key_indexing_matches_stack_key_indexing`.
