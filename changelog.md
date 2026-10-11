@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reduced VM stack overhead by moving popped values instead of copying them
+  when they are not live module bindings.
+
 - Made declared foreign functions cheap to copy. A call to an imported native
   function no longer allocates copies of its identity and resource signature,
   removing most of the per-call overhead measured for native calls.

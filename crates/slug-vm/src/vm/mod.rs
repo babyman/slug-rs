@@ -4269,7 +4269,7 @@ impl Vm {
             .into_iter()
             .map(|value| {
                 value
-                    .resolve()
+                    .into_resolved()
                     .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
             })
             .collect::<VmResult<Vec<_>>>()?;
@@ -4454,7 +4454,7 @@ impl Vm {
         let mut named = Vec::new();
         for (value, kind) in values.into_iter().zip(kinds) {
             let value = value
-                .resolve()
+                .into_resolved()
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
             match kind {
                 CallArgumentKind::Positional => positional.push(value),

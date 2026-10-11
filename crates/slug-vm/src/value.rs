@@ -1014,6 +1014,16 @@ impl Value {
         }
     }
 
+    /// Resolves an owned value, moving it instead of cloning when it is not a
+    /// binding.
+    pub(crate) fn into_resolved(self) -> Result<Value, String> {
+        if matches!(self, Self::Binding { .. }) {
+            self.resolve()
+        } else {
+            Ok(self)
+        }
+    }
+
     pub(crate) fn resolve(&self) -> Result<Value, String> {
         let Self::Binding { name, cell } = self else {
             return Ok(self.clone());
