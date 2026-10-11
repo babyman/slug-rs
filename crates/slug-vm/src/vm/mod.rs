@@ -1307,7 +1307,7 @@ impl Vm {
             let value = Value::DeclaredNative {
                 function,
                 callable_identity: identity,
-                resource_signature: Box::new(resource_signature),
+                resource_signature: Rc::new(resource_signature),
             };
             self.install_foreign_value(name, &value);
         }

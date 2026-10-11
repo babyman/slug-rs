@@ -1,4 +1,6 @@
-use alloc::{boxed::Box, collections::VecDeque, rc::Rc, string::String, sync::Arc, vec::Vec};
+#[cfg(feature = "concurrency")]
+use alloc::boxed::Box;
+use alloc::{collections::VecDeque, rc::Rc, string::String, sync::Arc, vec::Vec};
 #[cfg(feature = "concurrency")]
 use core::mem;
 use core::{cell::RefCell, fmt, fmt::Write as _};
@@ -892,7 +894,7 @@ pub enum Value {
     DeclaredNative {
         function: NativeFunction,
         callable_identity: CallableIdentity,
-        resource_signature: Box<ForeignResourceSignature>,
+        resource_signature: Rc<ForeignResourceSignature>,
     },
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
