@@ -67,60 +67,101 @@ parameter, in declaration order, by the manifest's C type:
 | `buffer`        | `pointer` and `length` of the buffer's owned storage                                   |
 
 Results use the same encoding. `results[0]` is the C return value when it is
-not `void`, followed by each `out` parameter in declaration order. A text or
-bytes result is borrowed from native memory and stays valid until the loader
-has copied it and then runs `cleanup`. The cleanup record exists so that
-result ownership, which this record does not decide, can be adopted without
-changing the entry signature.
+not `void`, followed by each `out` parameter in declaration order. A `cstr`
+result's length is set by the shim with `strlen`, and a NULL text result
+becomes `nil`.
 
-The return value of the entry is `0` when the results are valid. A nonzero
-value reports a shim-detected failure; its mapping to a Slug error is the
-separate error-table decision, and until that exists the loader treats it as
-a checked native error. Struct-by-value arguments are reserved: a struct will
-travel as a pointer to a flat copy in its declared layout, and the shim
-assembles the C value.
+**Result ownership.** The loader always copies a text or bytes result before
+the call returns to Slug; invalid UTF-8 in a text result is a checked error,
+never a lossy conversion. The manifest marks each text or bytes result
+(return value or `out` parameter) as either:
 
-**One exported table.** A shim library exports a single symbol:
+- **borrowed** (the default): the library keeps ownership, for example
+  `sqlite3_column_text` or a per-handle line buffer. The loader copies it and
+  frees nothing; or
+- **owned by a named free function**, for example `cstr owned(sqlite3_free)`
+  or `owned(free)`: the caller must free it.
+
+For an owned result the generator emits a release function and points the
+cleanup record at the call's results array, so one record frees several owned
+results without an allocation:
+
+```c
+static void slug_shim_read_text_release(void *context) {
+  slug_value *results = context;
+  sqlite3_free((void *)results[0].as.pointer);
+}
+```
+
+The free function gets the same exact-type header check as the target. The
+loader keeps the results array alive and unmodified until release has run,
+and runs release whenever the shim set it, including when the entry returns a
+failure. A shim sets `release` only after it has filled its results. Handing
+native memory to Slug without a copy is not supported; that belongs to the
+`buffer` resource.
+
+**Entry status.** The entry returns `0` when its results are valid. A nonzero
+value means the shim broke its own contract, and the loader raises a
+`native_contract` error naming the binding and the status. A library's own
+failure is never reported this way: the shim returns the library's status,
+NULL, or sentinel as an ordinary result, and Slug library code maps it to an
+error (see [Typed native calls](2026-10-10-typed-native-calls.md)).
+Struct-by-value arguments are reserved: a struct will travel as a pointer to a
+flat copy in its declared layout, and the shim assembles the C value.
+
+**One table per shim.** Each shim defines one binding table:
 
 ```c
 typedef struct slug_shim_binding {
   const char *module;
   const char *name;
+  const char *signature; /* canonical signature text */
   slug_shim_entry entry;
   uint32_t argument_count;
   uint32_t result_count;
-  uint64_t signature_hash;
 } slug_shim_binding;
 
 typedef struct slug_shim_table {
   uint32_t abi_version;
   uint32_t binding_count;
   const slug_shim_binding *bindings;
-  uint64_t table_hash;
 } slug_shim_table;
 
 const slug_shim_table *slug_shim_get_table(void);
 ```
 
 A dynamic loader resolves that one symbol with the platform loader. A static
-host (firmware, or a game linked as one executable) calls the same function
-directly, so both linking forms use the same table and neither uses per-function
-symbol lookup.
+host (firmware, or a game linked as one executable) may link several shims
+into one image, where a shared symbol name would fail to link. Each generated
+shim therefore defines its table function under a provider-unique name, such
+as `slug_shim_table_vendor_sensor`, and a shim built as a dynamic library also
+exports `slug_shim_get_table` as an alias for it. The static host calls the
+provider-unique function directly. Both linking forms use the same table, and
+neither uses per-function symbol lookup.
 
 **Stale-shim detection.** The manifest and the compiled shim are separate
-files. The signature hash is a fixed 64-bit hash of a binding's canonical
-manifest signature plus the shim ABI version; the algorithm and canonical
-form are specified by the manifest schema. The loader recomputes it from its
-manifest and rejects any binding whose hash, argument count, or result count
-differs, naming the module and function. A shim built from an older manifest
-therefore fails with a checked error and never reaches a call.
+files. Each binding carries its canonical signature: text that both the
+generator and the loader derive from the parsed manifest, never from its
+formatting. It contains everything that changes the generated C for that
+binding: the shim ABI version, module, function, C symbol, each parameter's C
+type and direction, the result type, the ownership of each text or bytes
+result, and the C type names of pointers and handles. Parameter names,
+comments, and manifest layout are excluded. The manifest model specifies the
+exact spelling, which must be deterministic and platform-independent.
+
+The loader rebuilds each binding's signature from its manifest and rejects
+any binding whose signature, argument count, or result count differs. The
+diagnostic names the module and function and shows both signatures. A shim
+built from an older manifest therefore fails with a checked error and never
+reaches a call. Comparing text rather than a hash costs a few dozen bytes per
+binding, avoids specifying a hash algorithm, and cannot collide.
 
 **Header checking on every binding.** For each target that can be named as a
 function, the generator emits an exact-typed function-pointer constant
 initialized from the target symbol, then calls the real symbol:
 
 ```c
-static int64_t (*const slug_check_add)(int64_t, int64_t) = slug_spike_add;
+static int64_t (*const slug_shim_check_add)(int64_t, int64_t) = slug_spike_add;
 ```
 
 This generalizes the spike's negative case. The types come from the manifest
@@ -138,11 +179,14 @@ firmware `build.rs`. The model lives in a crate that depends on neither
 `slug-vm` nor `slug-frontend`. Inputs are the manifest's bindings (symbols,
 C signatures, layouts, constants, and the headers to include); output is one
 deterministic C translation unit containing the entry functions, the checks,
-and the table. A check mode regenerates and diffs, so CI can detect a stale
-committed shim. The generator does not parse C headers.
+and the table. Every generated function except the table function has internal
+linkage and a `slug_shim_` prefix, so it cannot collide with a C library
+declaration such as `write`. A check mode regenerates and diffs, so CI can
+detect a stale committed shim. The generator does not parse C headers.
 
-**Loader boundary.** The loader's only unsafe call site for typed bindings is
-the call through `slug_shim_entry`, plus the one table lookup. The VM and
+**Loader boundary.** The loader's only unsafe call sites for typed bindings are
+the call through `slug_shim_entry` and the cleanup `release` call, plus the one
+table lookup. The VM and
 frontend keep `unsafe_code = "deny"`. The bounded Rust dispatcher and its
 shape table stay only as spike evidence and are deleted when the loader lands.
 
@@ -153,16 +197,18 @@ Out parameters, `cstr` handling, result cleanup, `static inline` and macro
 targets, and later struct-by-value are all handled inside the shim, where the C
 compiler enforces the ABI.
 
-Each call builds a small cell array. At roughly 700 ns per call through the VM
-this is not expected to be visible, but it is unmeasured.
+Each call builds a small cell array. The spike measured the uniform entry
+within noise of the other dispatch candidates; a plain C call through the shim
+costs about 0.26 ns more than a direct call.
 
-Intentionally not decided here: the manifest's final syntax and the canonical
-signature form; the native error table; text-result ownership beyond the
-reserved cleanup record; struct layout encoding; the buffer resource; the
-maximum cell count; per-compiler flag sets and Windows symbol export for
-`slug_shim_get_table`; and a Rust-glue alternative for static Rust hosts.
+Intentionally not decided here: the manifest's final syntax, including the
+exact spelling of the canonical signature; struct layout encoding; the buffer
+resource; the maximum cell count; per-compiler flag sets and Windows symbol
+export for `slug_shim_get_table`; and a Rust-glue alternative for static Rust
+hosts.
 
-Follow-up spike work that should land before the loader does:
+Follow-up spike work completed before the loader (see the
+[spike results](../planning/typed-native-call-dispatch-spike-results.md)):
 
 - rewrite the spike's generated shims to the uniform entry and call them
   through it, which tests this decision directly;

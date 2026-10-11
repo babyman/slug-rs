@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Decided three open typed native-call rules. Generated shims carry each
+  binding's canonical signature text for stale-shim detection, with
+  provider-unique table symbols. Returned text is always copied, and is
+  either borrowed or owned by a named free function. Boundary failures use a
+  closed list of codes, while library failures are mapped to thrown `Error`
+  values by Slug wrappers.
+
 - Completed the typed native-call dispatch spike after its focused tests
   passed on the macOS, Linux, and Windows CI matrix.
 

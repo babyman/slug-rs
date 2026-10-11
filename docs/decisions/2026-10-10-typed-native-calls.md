@@ -68,7 +68,7 @@ checked Slug error raised by the VM, never a native fault.
 | `bool`, `i8`..`i64`, `u8`..`u64`, `f32`, `f64` | `num`, `bool` | A numeric argument must be representable in the C type (whole and in range for integers) or the call fails with a checked error. |
 | `str` | `str` | Passed as pointer and length; borrowed, read-only, valid for the call. |
 | `cstr` argument | `str` | The VM passes a NUL-terminated temporary copy and rejects interior NUL with a checked error. |
-| `cstr` result | `str` or `nil` | The VM copies the bytes before returning and maps a NULL pointer to `nil`. |
+| `cstr` result | `str` or `nil` | The VM copies the bytes before returning and maps a NULL pointer to `nil`. The manifest marks the result borrowed (the default) or owned by a named free function; see [Uniform shim entry](2026-10-10-uniform-shim-entry.md). |
 | `bytes` | `bytes` | Passed as pointer and length; borrowed, read-only, valid for the call. |
 | `handle` | a declared `resource` | The VM keeps the pointer in a typed resource, checks its type and closed state on every call, and runs the close and destructor registered for it. |
 | `buffer` | the `buffer` resource | Pointer and length of the buffer's owned storage. |
@@ -81,11 +81,26 @@ of the C return value followed by each out value in order, which Slug library
 code unpacks. The `foreign` declaration's result annotation describes that
 list.
 
-**Errors.** Typed calls need no host error callback. A native function reports
-failure through its return value (or a follow-up call such as `sqlite3_errmsg`),
-and the Slug wrapper converts it to a thrown `Error`. Usability work (unpacking,
-error mapping, ordinary Slug-shaped results) lives in Slug library code over
-thin, nearly 1:1 foreign declarations.
+**Errors.** Typed calls need no host error callback, and failures have two
+sources:
+
+- **Boundary failures** are detected by the VM or the typed-call adapter, never
+  by native code. They use a closed, adapter-owned list of codes: `native.type`
+  (an argument of the wrong Slug type), `native.range` (a number not
+  representable in the C type), `native.arity`, `native.resource_type`,
+  `native.resource_closed`, `native.interior_nul` (a `cstr` argument containing
+  NUL), `native.encoding` (invalid UTF-8 in a text result), and load-time
+  failures for a missing symbol or a stale shim. A shim that breaks its own
+  contract is a `native_contract` error.
+- **Library failures** are reported by the native function through its return
+  value, an `out` status, a NULL or sentinel result, or a follow-up call such
+  as `sqlite3_errmsg`. They cross the boundary as ordinary results. Slug
+  library code inspects them and throws an `Error` value whose `type` names the
+  failure, for example `Error{type: "native.io", msg: "cannot open file"}`.
+  The manifest has no error table.
+
+Usability work (unpacking, error mapping, ordinary Slug-shaped results) lives
+in Slug library code over thin, nearly 1:1 foreign declarations.
 
 **Compound values stay out of the native boundary.** SQLite becomes the raw
 C API exposed as foreign functions (open, prepare, bind, step, column
@@ -132,8 +147,8 @@ verifies that each symbol resolves and that the declaration's shape is
 compatible with the C signature (for example a `str` parameter cannot bind to
 a plain `i32`). For a binding backed by an included header, the generated shim
 is compiled against that header, so a wrong parameter count, qualifier, or
-integer width is a build error, and a stale shim is rejected by its signature
-hash (see [Generated shims](2026-10-10-generated-shims-for-typed-native-calls.md)).
+integer width is a build error, and a stale shim is rejected by its canonical
+signature (see [Uniform shim entry](2026-10-10-uniform-shim-entry.md)).
 The host still cannot verify the C types of a binding that has no header or
 whose target is a macro, and a wrong signature there is undefined behavior.
 Read-only borrowing of `str` and `bytes` is a
@@ -201,7 +216,13 @@ README's clutch paragraph, and the native fixture notes in `AGENTS.md`.
 ## Migration
 
 Existing Slug programs are unaffected: `slug.io.fs`, `slug.io.stdin`, and the
-`slug.db.sqlite` modules keep their public exports and behavior. The manifest
+`slug.db.sqlite` modules keep their public exports and behavior. One
+diagnostic difference is accepted. A library failure that a C clutch raises
+today as a native fault (for example `native.io` from `slug.io.fs`) is thrown
+by Slug library code instead. Error handlers still see the same `type`, but
+`msg` no longer starts with the native function's qualified name, and an
+uncaught failure is reported as an uncaught throw rather than a native runtime
+error. The manifest
 key `abi = "slug-ffi-prototype/0.13"` is replaced by `[native.functions]`
 bindings, and the C clutch sources under `clutch/*/native/source` are rewritten
 to plain exported functions (or removed) as each clutch moves. The

@@ -41,6 +41,9 @@ library's equivalent development header.
 This decision does not define manifest syntax, native error-code mapping,
 resource-destruction metadata, text-result ownership, structs by value,
 variadics, callbacks, or `libffi` use. Those remain separate decisions.
+Text-result ownership and the shim status are now specified in
+[Uniform shim entry](2026-10-10-uniform-shim-entry.md), and error mapping in
+[Typed native calls](2026-10-10-typed-native-calls.md).
 
 The prototype 0.13 ABI remains frozen until its planned replacement is ready.
 This record narrows the implementation strategy anticipated by
