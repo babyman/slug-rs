@@ -39,7 +39,11 @@ const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
 static NEXT_VALUE_SCOPE: AtomicUsize = AtomicUsize::new(1);
 
-mod loader;
+pub(crate) mod loader;
+
+#[doc(hidden)]
+#[allow(dead_code)] // Private spike API; exercised by its fixture integration tests.
+pub mod typed_dispatch_spike;
 
 use loader::{LoadedLibrary, library_lease, retain_library_for_foreign_worker};
 

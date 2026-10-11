@@ -8,7 +8,10 @@ use std::{
 };
 
 use slug::DesktopLoader as ModuleLoader;
-use slug_desktop_loader::{ClutchRepository, FfiPrototypeLibrary};
+use slug_desktop_loader::{
+    ADD_BINDING, ClutchRepository, DispatchShape, FIXTURE_BINDINGS, FIXTURE_SHIM_BINDINGS,
+    FfiPrototypeLibrary, SHIM_ADD_BINDING, TypedDispatchSpike,
+};
 use slug_vm::{RuntimeErrorKind, Vm};
 
 trait VmWithModuleLoader {
@@ -440,6 +443,321 @@ fn compile_fixture_with_libraries(
     let status = command.status().expect("start C compiler");
     assert!(status.success(), "compile C fixture");
     output
+}
+
+fn compile_typed_dispatch_fixture(
+    directory: &TemporaryDirectory,
+    name: &str,
+    extra_source: Option<&Path>,
+) -> PathBuf {
+    let output = directory.path().join(format!(
+        "{}{}{}",
+        std::env::consts::DLL_PREFIX,
+        name,
+        std::env::consts::DLL_SUFFIX
+    ));
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = Command::new("cc");
+        command.args([
+            "-I",
+            "crates/slug-desktop-loader/tests/ffi",
+            "crates/slug-desktop-loader/tests/ffi/typed_dispatch_fixture.c",
+        ]);
+        if cfg!(target_os = "macos") {
+            command.arg("-dynamiclib");
+        } else {
+            command.args(["-shared", "-fPIC"]);
+        }
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("clang");
+        command.args([
+            "-shared",
+            "-I",
+            "crates/slug-desktop-loader/tests/ffi",
+            "crates/slug-desktop-loader/tests/ffi/typed_dispatch_fixture.c",
+        ]);
+        command
+    };
+    if let Some(source) = extra_source {
+        command.arg(source);
+    }
+    command
+        .arg("-o")
+        .arg(output.to_str().expect("temporary library path is UTF-8"))
+        .current_dir(workspace_root());
+    let status = command.status().expect("start typed-dispatch C compiler");
+    assert!(status.success(), "compile typed-dispatch fixture");
+    output
+}
+
+fn generate_typed_dispatch_shim(directory: &TemporaryDirectory, mode: &str) -> PathBuf {
+    let source = directory.path().join(format!("typed-dispatch-{mode}.c"));
+    let status = Command::new("sh")
+        .arg("scripts/generate-typed-dispatch-shim.sh")
+        .arg(mode)
+        .arg(&source)
+        .current_dir(workspace_root())
+        .status()
+        .expect("run typed-dispatch shim generator");
+    assert!(status.success(), "generate typed-dispatch shim");
+    source
+}
+
+fn typed_dispatch_program(
+    directory: &TemporaryDirectory,
+    source: &str,
+) -> (ModuleLoader, slug_vm::Program) {
+    fs::create_dir_all(directory.path().join("slug")).expect("create typed-dispatch module dir");
+    fs::write(
+        directory.path().join("slug/spike.slug"),
+        "export resource File\n\
+         export foreign openRead = fn(path:str):File\n\
+         export foreign openWrite = fn(path:str):File\n\
+         export foreign openAppend = fn(path:str):File\n\
+         export foreign readLine = fn(file:File):str|nil\n\
+         export foreign write = fn(file:File, text:str):num\n\
+         export foreign close = fn(file:File):nil\n\
+         export foreign add = fn(left:num, right:num):num\n",
+    )
+    .expect("write typed-dispatch source contract");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let program = loader
+        .compile_source(
+            &directory
+                .path()
+                .join("typed-dispatch.slug")
+                .to_string_lossy(),
+            source,
+        )
+        .expect("compile typed-dispatch source");
+    (loader, program)
+}
+
+#[test]
+fn rust_typed_dispatch_calls_the_direct_fixture_without_a_shim() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_typed_dispatch_fixture(&directory, "typed_direct", None);
+    let bindings = FIXTURE_BINDINGS
+        .iter()
+        .copied()
+        .chain(std::iter::once(ADD_BINDING))
+        .collect::<Vec<_>>();
+    let dispatch = TypedDispatchSpike::load(library, &bindings).expect("load direct fixture");
+    let (loader, program) = typed_dispatch_program(
+        &directory,
+        "val spike = import(\"slug.spike\")\nspike.add(20, 22)\n",
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+        .expect("register direct bindings");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
+}
+
+#[test]
+fn generated_typed_dispatch_shim_calls_the_same_direct_fixture() {
+    let directory = TemporaryDirectory::new();
+    let shim = generate_typed_dispatch_shim(&directory, "normal");
+    let library = compile_typed_dispatch_fixture(&directory, "typed_shim", Some(&shim));
+    let bindings = FIXTURE_SHIM_BINDINGS
+        .iter()
+        .copied()
+        .chain(std::iter::once(SHIM_ADD_BINDING))
+        .collect::<Vec<_>>();
+    let dispatch = TypedDispatchSpike::load(library, &bindings).expect("load shim fixture");
+    let (loader, program) = typed_dispatch_program(
+        &directory,
+        "val spike = import(\"slug.spike\")\nspike.add(20, 22)\n",
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+        .expect("register shim bindings");
+    assert_eq!(vm.run_named(&program, "main").unwrap().to_string(), "42");
+}
+
+#[test]
+fn generated_typed_dispatch_shim_rejects_a_header_mismatch() {
+    let directory = TemporaryDirectory::new();
+    let source = generate_typed_dispatch_shim(&directory, "mismatch");
+    let output = directory.path().join("typed-dispatch-mismatch.o");
+    let compiler = if cfg!(windows) { "clang" } else { "cc" };
+    let output = Command::new(compiler)
+        .args([
+            "-Werror",
+            "-I",
+            "crates/slug-desktop-loader/tests/ffi",
+            "-c",
+        ])
+        .arg(source)
+        .arg("-o")
+        .arg(output)
+        .current_dir(workspace_root())
+        .output()
+        .expect("start mismatch compiler");
+    assert!(
+        !output.status.success(),
+        "a generated function-pointer type incompatible with the included header must fail"
+    );
+}
+
+fn assert_typed_dispatch_filesystem_contract(
+    dispatch: &TypedDispatchSpike,
+    directory: &TemporaryDirectory,
+) {
+    let file = directory.path().join("typed-dispatch.txt");
+    let (loader, program) = typed_dispatch_program(
+        directory,
+        &format!(
+            "val spike = import(\"slug.spike\")\n\
+             val output = spike.openWrite(\"{}\")\n\
+             val written = spike.write(output, \"first\\n\")\n\
+             spike.close(output)\n\
+             val input = spike.openRead(\"{}\")\n\
+             val first = spike.readLine(input)\n\
+             val end = spike.readLine(input)\n\
+             spike.close(input)\n\
+             [written, first, end]\n",
+            slug_path_literal(&file),
+            slug_path_literal(&file),
+        ),
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+        .expect("register typed-dispatch bindings");
+    assert_eq!(
+        vm.run_named(&program, "main").unwrap().to_string(),
+        "[6, \"first\", nil]"
+    );
+}
+
+#[test]
+fn typed_dispatch_candidates_share_the_filesystem_fixture_contract() {
+    let direct_directory = TemporaryDirectory::new();
+    let direct_library =
+        compile_typed_dispatch_fixture(&direct_directory, "typed_direct_files", None);
+    let direct_bindings = FIXTURE_BINDINGS
+        .iter()
+        .copied()
+        .chain(std::iter::once(ADD_BINDING))
+        .collect::<Vec<_>>();
+    assert_typed_dispatch_filesystem_contract(
+        &TypedDispatchSpike::load(direct_library, &direct_bindings).expect("load direct fixture"),
+        &direct_directory,
+    );
+
+    let shim_directory = TemporaryDirectory::new();
+    let shim = generate_typed_dispatch_shim(&shim_directory, "normal");
+    let shim_library =
+        compile_typed_dispatch_fixture(&shim_directory, "typed_shim_files", Some(&shim));
+    let shim_bindings = FIXTURE_SHIM_BINDINGS
+        .iter()
+        .copied()
+        .chain(std::iter::once(SHIM_ADD_BINDING))
+        .collect::<Vec<_>>();
+    assert_typed_dispatch_filesystem_contract(
+        &TypedDispatchSpike::load(shim_library, &shim_bindings).expect("load shim fixture"),
+        &shim_directory,
+    );
+}
+
+#[test]
+fn typed_dispatch_reports_checked_fixture_boundary_failures() {
+    let directory = TemporaryDirectory::new();
+    let library = compile_typed_dispatch_fixture(&directory, "typed_boundary", None);
+    let bindings = FIXTURE_BINDINGS
+        .iter()
+        .copied()
+        .chain(std::iter::once(ADD_BINDING))
+        .collect::<Vec<_>>();
+    let dispatch = TypedDispatchSpike::load(library, &bindings).expect("load direct fixture");
+    let file = directory.path().join("typed-boundary.txt");
+    let (loader, program) = typed_dispatch_program(
+        &directory,
+        &format!(
+            "val spike = import(\"slug.spike\")\n\
+             val file = spike.openWrite(\"{}\")\n\
+             spike.close(file)\n\
+             spike.write(file, \"again\")\n",
+            slug_path_literal(&file),
+        ),
+    );
+    let mut vm = Vm::with_module_loader(loader);
+    vm.define_foreign_batch(dispatch.foreign_functions().unwrap())
+        .expect("register typed-dispatch bindings");
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("closed handle must fail");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert!(
+        error.message.contains("resource is closed"),
+        "unexpected closed-handle error: {error}"
+    );
+
+    let nul_library = compile_typed_dispatch_fixture(&directory, "typed_nul", None);
+    let nul_dispatch = TypedDispatchSpike::load(nul_library, &bindings).expect("load NUL fixture");
+    let (nul_loader, nul_program) = typed_dispatch_program(
+        &directory,
+        "val spike = import(\"slug.spike\")\nspike.openWrite(\"bad\\000path\")\n",
+    );
+    let mut nul_vm = Vm::with_module_loader(nul_loader);
+    nul_vm
+        .define_foreign_batch(nul_dispatch.foreign_functions().unwrap())
+        .expect("register NUL bindings");
+    let error = nul_vm
+        .run_named(&nul_program, "main")
+        .expect_err("interior NUL must fail before the C call");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert!(
+        error.message.contains("interior NUL"),
+        "unexpected interior-NUL error: {error}"
+    );
+
+    let io_library = compile_typed_dispatch_fixture(&directory, "typed_io", None);
+    let io_dispatch = TypedDispatchSpike::load(io_library, &bindings).expect("load I/O fixture");
+    let input = directory.path().join("typed-input.txt");
+    fs::write(&input, "read-only").expect("write typed I/O input");
+    let (io_loader, io_program) = typed_dispatch_program(
+        &directory,
+        &format!(
+            "val spike = import(\"slug.spike\")\n\
+             val input = spike.openRead(\"{}\")\n\
+             spike.write(input, \"not writable\")\n",
+            slug_path_literal(&input),
+        ),
+    );
+    let mut io_vm = Vm::with_module_loader(io_loader);
+    io_vm
+        .define_foreign_batch(io_dispatch.foreign_functions().unwrap())
+        .expect("register I/O bindings");
+    let error = io_vm
+        .run_named(&io_program, "main")
+        .expect_err("native I/O status must become a checked error");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert!(
+        error.message.contains("native write failed"),
+        "unexpected native-I/O error: {error}"
+    );
+
+    let Err(missing) = TypedDispatchSpike::load(
+        compile_typed_dispatch_fixture(&directory, "typed_missing", None),
+        &[slug_desktop_loader::DispatchBinding {
+            name: "missing",
+            symbol: "slug_spike_missing",
+            shape: DispatchShape::I64I64ToI64,
+        }],
+    ) else {
+        panic!("missing symbol must fail at load time");
+    };
+    assert!(missing.to_string().contains("missing `slug_spike_missing`"));
+    assert!(
+        DispatchShape::parse("(i64) -> i64")
+            .expect_err("unsupported shape must be diagnosed")
+            .to_string()
+            .contains("unsupported typed-dispatch shape")
+    );
 }
 
 fn scalar_add_program(

@@ -111,14 +111,22 @@ step. It is not a partial implementation of arbitrary C calls.
 
 ### 2. Build equivalent private fixtures
 
-- Give both candidates the same direct C library and the same Slug-visible
+- [x] Give both candidates the same direct C library and the same Slug-visible
   fixture module contract.
-- Exercise successful calls and checked boundary failures: invalid interior-NUL
+- [x] Exercise successful calls and checked boundary failures: invalid interior-NUL
   path, a closed handle, read end-of-file, a native I/O status, missing symbol,
   and unsupported shape.
-- Verify the shim's deliberately mismatched generated declaration is rejected
-  by the C compiler. The Rust-dispatch result for that case must be documented
-  as a load-time limitation or undefined-behavior risk, not hidden by a test.
+- [x] Verify the shim's deliberately mismatched generated declaration is rejected
+  by the C compiler. The Rust-dispatch result for that case is documented as an
+  undefined-behavior risk, not hidden by a test.
+
+The Rust dispatcher converts each resolved symbol address to the function
+pointer type selected by its private shape table. A library whose actual C
+declaration differs from that table can therefore invoke undefined behavior;
+the loader can report a missing symbol or unsupported shape, but cannot verify
+the declaration. The generated shim avoids that particular risk for the
+fixture because its adapter translation unit includes the declaration-owning
+header and its mismatch test compiles with `-Werror`.
 
 ### 3. Measure and compare
 

@@ -6,6 +6,10 @@
   benchmark command for the typed native-call dispatch spike. Its raw,
   host-specific timing record is ignored rather than used as a CI threshold.
 
+- Added private direct-C fixture coverage for the typed native-call dispatch
+  spike, including a header-checked generated-shim candidate and a bounded
+  Rust dispatcher candidate with checked filesystem-shaped failures.
+
 - Marked superseded ADRs with historical filename suffixes and reciprocal links
   to their accepted replacements, so current architectural guidance is
   identifiable without a separate registry.

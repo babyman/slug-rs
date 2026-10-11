@@ -29,7 +29,7 @@ use super::{FfiPrototypeError, c_void, close_library, loader_error, lookup_symbo
 static FOREIGN_WORKER_LIBRARIES: LazyLock<Mutex<Vec<Arc<LoadedLibrary>>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
-pub(super) struct LoadedLibrary(*mut c_void);
+pub(crate) struct LoadedLibrary(*mut c_void);
 
 unsafe impl Send for LoadedLibrary {}
 unsafe impl Sync for LoadedLibrary {}
@@ -72,7 +72,7 @@ impl LoadedLibrary {
         Ok(Self(handle))
     }
 
-    pub(super) unsafe fn symbol<T>(&self, name: &CStr) -> Result<T, FfiPrototypeError>
+    pub(crate) unsafe fn symbol<T>(&self, name: &CStr) -> Result<T, FfiPrototypeError>
     where
         T: Copy,
     {
@@ -103,7 +103,7 @@ impl Drop for LoadedLibrary {
     }
 }
 
-pub(super) fn library_lease(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError> {
+pub(crate) fn library_lease(path: &Path) -> Result<Arc<LoadedLibrary>, FfiPrototypeError> {
     let path = std::fs::canonicalize(path).map_err(|error| {
         FfiPrototypeError::new(format!("cannot resolve FFI module path: {error}"))
     })?;
