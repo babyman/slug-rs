@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Stopped allocating an unused error message on every successful integer
+  addition, subtraction, and shift.
+
 - Added an empty-loop control to the native scalar-call benchmark, so VM
   native-call costs can be reported without the benchmark loop's own cost.
 

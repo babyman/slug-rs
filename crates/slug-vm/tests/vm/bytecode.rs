@@ -409,6 +409,28 @@ fn executes_checked_bitwise_and_shift_bytecode() {
 }
 
 #[test]
+fn reports_checked_integer_overflow() {
+    for (left, right, op) in [
+        (i64::MAX, 1, Op::Add),
+        (i64::MAX, 1, Op::AddNum),
+        (i64::MIN, 1, Op::SubtractNum),
+    ] {
+        let mut main = Chunk::new("main", 0);
+        let left = main.constant(Value::Int(left));
+        let right = main.constant(Value::Int(right));
+        main.emit(Op::Constant(left))
+            .emit(Op::Constant(right))
+            .emit(op)
+            .emit(Op::Return);
+        let error = Vm::new()
+            .run(&program_with_main(main), 0)
+            .expect_err("integer overflow must remain checked");
+        assert_eq!(error.kind, RuntimeErrorKind::Type);
+        assert_eq!(error.message, "integer overflow");
+    }
+}
+
+#[test]
 fn appends_values_through_private_list_bytecode() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));

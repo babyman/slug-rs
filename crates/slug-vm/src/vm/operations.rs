@@ -44,7 +44,7 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
         (Value::Int(a), Value::Int(b)) => a
             .checked_add(b)
             .map(Value::Int)
-            .ok_or((RuntimeErrorKind::Type, "integer overflow".into())),
+            .ok_or_else(|| (RuntimeErrorKind::Type, "integer overflow".into())),
         (Value::Str(a), b) => Ok(Value::string(format!("{a}{b}"))),
         (Value::List(a), Value::List(b)) => Ok(Value::List(a.concat(&b))),
         (Value::Bytes(a), Value::Bytes(b)) => Ok(Value::Bytes(
@@ -260,11 +260,13 @@ pub(super) fn shift(
     let count = u32::try_from(right)
         .ok()
         .filter(|count| *count < i64::BITS)
-        .ok_or((RuntimeErrorKind::Type, "shift count is out of range".into()))?;
-    operation(left, count).map(Value::Int).ok_or((
-        RuntimeErrorKind::Type,
-        "shift result is out of range".into(),
-    ))
+        .ok_or_else(|| (RuntimeErrorKind::Type, "shift count is out of range".into()))?;
+    operation(left, count).map(Value::Int).ok_or_else(|| {
+        (
+            RuntimeErrorKind::Type,
+            "shift result is out of range".into(),
+        )
+    })
 }
 
 pub(super) fn bit_not(value: &Value) -> Result<Value, String> {
@@ -890,7 +892,7 @@ fn integer_or_float(
     if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
         return integer_operation(*left, *right)
             .map(Value::Int)
-            .ok_or((RuntimeErrorKind::Type, "integer overflow".into()));
+            .ok_or_else(|| (RuntimeErrorKind::Type, "integer overflow".into()));
     }
     let (a, b) = numbers(left, right).map_err(|message| (RuntimeErrorKind::Type, message))?;
     finite_float(operation(a, b)).map_err(|message| (RuntimeErrorKind::Type, message))
