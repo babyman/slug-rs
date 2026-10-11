@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Planned step 2 of the typed native-call replacement: profile the adapter's
+  per-call cost, add length-delimited `out str` and `out bytes` results and
+  cross-module handles, move `slug.db.sqlite` to raw SQLite bindings plus
+  Slug wrappers, and make `keys` a builtin.
+
 - Completed step 1 of the typed native-call replacement: CI passed its exit
   gate on macOS, Linux, Windows, and the ESP32-S3 check, and its plan and
   measurements moved to `docs/planning/completed/`.
