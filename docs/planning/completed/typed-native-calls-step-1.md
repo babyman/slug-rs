@@ -4,12 +4,12 @@
 ## Goal
 
 Implement step 1 of the replacement plan in
-[Typed native calls](../decisions/2026-10-10-typed-native-calls.md): typed
+[Typed native calls](../../decisions/2026-10-10-typed-native-calls.md): typed
 calls for scalar, string, bytes, and handle parameters, bound through the
 clutch manifest and called through generated shims with the
-[uniform entry](../decisions/2026-10-10-uniform-shim-entry.md). Prove the same
+[uniform entry](../../decisions/2026-10-10-uniform-shim-entry.md). Prove the same
 binding on a desktop dynamic library and a statically linked target, as
-[static provider selection](../decisions/2026-10-11-static-typed-provider-selection.md)
+[static provider selection](../../decisions/2026-10-11-static-typed-provider-selection.md)
 requires. Then move `slug.io.fs` off the 0.13 prototype ABI.
 
 Step 1 ends when `slug.io.fs` runs on typed calls on macOS, Linux, and
@@ -25,7 +25,7 @@ per-call and end-to-end measurements against the prototype are recorded.
   manifest constants.
 - Typed Rust glue without C, and a header-reading manifest generator.
 - The deferred VM work in
-  [VM optimization item 10](vm-optimization.md#10-reduce-per-instruction-overhead-and-indexed-member-lookup-deferred).
+  [VM optimization item 10](../vm-optimization.md#10-reduce-per-instruction-overhead-and-indexed-member-lookup-deferred).
 
 ## Settled inputs
 
@@ -48,7 +48,7 @@ These decisions are fixed for this plan:
 ## Decisions settled for phase 1
 
 All seven items below are settled in
-[Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md),
+[Typed native manifest bindings](../../decisions/2026-10-11-typed-native-manifest-bindings.md),
 following these recommendations. One refinement: a signature names the Slug
 resource (`handle<File>`), and the resource entry supplies its C type, rather
 than repeating the C type in each signature.
@@ -251,8 +251,9 @@ escaping fixed in the tests. Windows covers `slug.io.fs` today through
 
 ## Status
 
-Phases 1-7 are implemented. Before this plan moves to `completed/`, CI must
-pass the exit gate on all three platforms and the ESP32-S3 check.
+Complete. Phases 1-7 are implemented, and CI passed the exit gate on macOS,
+Linux, and Windows and in the ESP32-S3 check on 2026-10-11, after two
+Windows line-ending fixes to the tests.
 
 ## Exit gate
 

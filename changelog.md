@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Completed step 1 of the typed native-call replacement: CI passed its exit
+  gate on macOS, Linux, Windows, and the ESP32-S3 check, and its plan and
+  measurements moved to `docs/planning/completed/`.
+
 - Fixed the typed native clutch tests on Windows. Git can check their
   fixtures out with CRLF line endings, which made three tests' line-based
   edits match nothing; the tests now normalize line endings when loading

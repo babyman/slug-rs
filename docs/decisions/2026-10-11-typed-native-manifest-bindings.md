@@ -15,7 +15,7 @@ fix the binding model but leave the details an implementation needs open:
 - compiler flags and Windows export; and
 - how shims are built.
 
-[Step 1 of the typed native-call plan](../planning/typed-native-calls-step-1.md)
+[Step 1 of the typed native-call plan](../planning/completed/typed-native-calls-step-1.md)
 needs all of them before its manifest model and generator can be written.
 
 Two facts constrain the answers:

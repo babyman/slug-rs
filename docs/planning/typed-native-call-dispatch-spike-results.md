@@ -1,7 +1,7 @@
 # Typed native-call dispatch spike results
 
 The spike's dispatcher, shims, and fixtures were deleted when the production
-typed path landed. See [Step 1 measurements](typed-native-calls-step-1-results.md)
+typed path landed. See [Step 1 measurements](completed/typed-native-calls-step-1-results.md)
 for the production path, measured beside the spike candidates on the same host.
 
 The private fixture compares a generated C shim with a bounded Rust dispatcher
