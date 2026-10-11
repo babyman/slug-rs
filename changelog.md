@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed Windows DLL exports for the private typed-native-dispatch fixtures and
+  generated shim entry points, restoring their cross-platform test coverage.
+
 - Fixed the uniform shim spike to release a shim's cleanup record only after
   its results are decoded, and corrected the plain C benchmark so its volatile
   sink no longer adds per-iteration cost to both loops.

@@ -84,7 +84,7 @@ static const slug_shim_binding BINDINGS[] = {{
   {{"slug.spike", "add", add, 2, 1, 0x1007ULL}},
 }};
 static const slug_shim_table TABLE = {{SLUG_SHIM_ABI_VERSION, 7, BINDINGS, 0xfeedULL}};
-const slug_shim_table *slug_shim_get_table(void) {{ return &TABLE; }}
+SLUG_TYPED_DISPATCH_FIXTURE_EXPORT const slug_shim_table *slug_shim_get_table(void) {{ return &TABLE; }}
 "#
     )
 }
