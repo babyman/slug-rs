@@ -174,14 +174,26 @@ not match an `i32` binding exactly.
 
 ### 5. Static path
 
-- [ ] Add `kind` to target-descriptor provider entries, defaulting to `rust`.
-- [ ] For a `typed` provider, generate the shim and Rust registration at build
+- [x] Add `kind` to target-descriptor provider entries, defaulting to `rust`.
+- [x] For a `typed` provider, generate the shim and Rust registration at build
   time, compile with the target C compiler, and link.
-- [ ] Reject missing coverage, type incompatibility, header mismatch, and an
+- [x] Reject missing coverage, type incompatibility, header mismatch, and an
   unsupported profile before linking.
-- [ ] A desktop test statically links two generated shims into one binary.
-- [ ] Add a small typed C fixture provider to an ESP32-S3 descriptor and keep
+- [x] A desktop test statically links two generated shims into one binary.
+- [x] Add a small typed C fixture provider to an ESP32-S3 descriptor and keep
   it in the cross-build gate. The PinPulse providers stay in Rust.
+
+Static builds invoke the target C compiler and archiver directly through
+`slug_embedded_build::CToolchain`, with no `cc` build dependency, matching
+`build_dynamic`. A typed entry names its `clutch`; `[firmware] profiles`
+defaults to `["core"]`. One shim is built per clutch, named from the clutch
+directory, and every module the clutch binds must be selected from it. The
+Slug/C check moved to `slug_native_manifest::check_foreign_declarations` so the
+desktop loader and the build share it. The two-shim test is the
+`slug-typed-static-test` crate, whose `build.rs` acts as a board package. The
+ESP32-S3 fixture is `fixture.pulse`, selected by `esp32-s3-typed.toml`; a
+release build links it and was verified to contain its shim table, but it has
+not been flashed.
 
 ### 6. Move `slug.io.fs`
 

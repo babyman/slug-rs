@@ -11,4 +11,5 @@ repository = "https://github.com/babyman/slug-rs"
 workspace = true
 
 [dependencies]
+slug-loader = { path = "../slug-loader" }
 toml = "0.8"

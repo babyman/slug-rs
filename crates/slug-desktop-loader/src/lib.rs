@@ -294,11 +294,12 @@ impl DesktopResolver {
         else {
             return Ok(());
         };
-        let non_null_text = typed_native::check_declarations(&manifest, module_name, declarations)
-            .map_err(|message| ModuleLoadError::Clutch {
-                location: source.diagnostic_name.clone(),
-                message,
-            })?;
+        let non_null_text =
+            slug_native_manifest::check_foreign_declarations(&manifest, module_name, declarations)
+                .map_err(|message| ModuleLoadError::Clutch {
+                    location: source.diagnostic_name.clone(),
+                    message,
+                })?;
         if let Some(text_results) = self.typed_text_results.borrow().get(lease) {
             for name in non_null_text {
                 // The check above found this binding in the same manifest.

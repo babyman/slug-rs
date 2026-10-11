@@ -5,6 +5,7 @@
 //! parsed form. See `docs/decisions/2026-10-11-typed-native-manifest-bindings.md`.
 
 mod build;
+mod compat;
 mod shim;
 mod signature;
 
@@ -14,6 +15,7 @@ use std::{
 };
 
 pub use build::{build_dynamic, c_compiler};
+pub use compat::check_foreign_declarations;
 pub use shim::{DYNAMIC_DEFINE, SHIM_C_FLAGS, check, generate, table_function};
 pub use signature::{Direction, NativeType, Parameter, Signature};
 use signature::{ParsedSignature, ParsedType};

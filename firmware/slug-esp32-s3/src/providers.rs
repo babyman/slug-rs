@@ -4,7 +4,7 @@
 //! VM lifetime. A program may select only a physical GPIO listed by the board
 //! profile; the provider configures it lazily on its first write.
 
-use alloc::{format, string::{String, ToString}, vec, vec::Vec};
+use alloc::{format, rc::Rc, string::{String, ToString}, vec, vec::Vec};
 use core::cell::RefCell;
 
 use esp_hal::{
@@ -19,6 +19,9 @@ use slug_vm::{
 };
 
 use crate::capabilities::MAXIMUM_SLEEP_MS;
+
+// Typed C providers selected by the target descriptor, built by `build.rs`.
+include!(concat!(env!("OUT_DIR"), "/slug_typed_providers.rs"));
 
 struct GpioState {
     available: RefCell<Vec<(u8, AnyPin<'static>)>>,
@@ -50,7 +53,7 @@ pub fn register(
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
     let builtins = NativeModule::new("slug.builtin", ())
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
-    let functions = vec![
+    let mut functions = vec![
         gpio.function("write", NativeArity::Exact(2), gpio_write),
         time.function("sleepMs", NativeArity::Exact(1), sleep_ms),
         builtins.function("print", NativeArity::Variadic { minimum: 0 }, print),
@@ -60,6 +63,11 @@ pub fn register(
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
     .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    let owner: Rc<dyn core::any::Any> = Rc::new(());
+    functions.extend(
+        typed_provider_functions(&owner)
+            .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?,
+    );
     host.install_static_providers([StaticProvider::new(functions)])
 }
 

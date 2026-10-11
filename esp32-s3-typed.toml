@@ -1,0 +1,35 @@
+format = 1
+
+[firmware]
+entry = "firmware/slug-esp32-s3/programs/typed.slug"
+board_package = "slug-esp32-s3"
+
+[limits]
+artifact_bytes = 32768
+section_bytes = 24576
+modules = 6
+imports = 4
+string_bytes = 512
+chunks_per_module = 32
+entries_per_table = 512
+
+[[providers]]
+module = "slug.builtin"
+contract = "clutch/slug.embedded.clutch/modules/builtin.slug"
+library = "slug-esp32-s3::builtin"
+
+[[providers]]
+module = "slug.gpio"
+contract = "clutch/slug.embedded.clutch/modules/gpio.slug"
+library = "slug-esp32-s3::gpio"
+
+[[providers]]
+module = "slug.time"
+contract = "clutch/slug.embedded.clutch/modules/time.slug"
+library = "slug-esp32-s3::time"
+
+[[providers]]
+module = "fixture.pulse"
+contract = "firmware/slug-esp32-s3/typed-fixture/pulse.clutch/modules/pulse.slug"
+kind = "typed"
+clutch = "firmware/slug-esp32-s3/typed-fixture/pulse.clutch"

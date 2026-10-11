@@ -1,0 +1,9 @@
+/**
+ * Clamps a requested pulse count to 1 through 8.
+ */
+export foreign count = fn(requested:num):num
+
+/**
+ * Returns the on and off time, in milliseconds, for a zero-based pulse step.
+ */
+export foreign gapMs = fn(step:num):num

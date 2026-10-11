@@ -121,7 +121,11 @@ pub(crate) fn static_import_names(path: &str, source: &str) -> Result<Vec<String
 
 /// Returns the top-level `foreign` declarations of `source` with their type
 /// annotations rendered as canonical text.
-pub(crate) fn foreign_declarations(
+///
+/// # Errors
+///
+/// Returns a source error when `source` does not parse.
+pub fn foreign_declarations(
     path: &str,
     source: &str,
 ) -> Result<Vec<ForeignDeclaration>, SourceError> {

@@ -13,6 +13,7 @@ crates/slug-frontend/         Source syntax, semantics, lowering, and module gra
 crates/slug-loader/           Storage-independent import contracts
 crates/slug-native-manifest/  Typed native binding model, canonical signatures, shim generator
 crates/slug-native-adapter/   no_std typed shim calls for the VM; the only shim-calling code
+crates/slug-typed-static-test/ Two typed C shims statically linked into one test image
 crates/slug-desktop-loader/   Desktop import resolution and Clutch activation
 crates/slug-nil-loader/       Deny-all resolver for restricted hosts
 crates/slug-restricted-host/  In-memory restricted host facade
@@ -62,6 +63,7 @@ a Rust change, run `make check`. For documentation-only changes, run
 | Typed native manifest bindings and shim generator | `crates/slug-native-manifest/tests/manifest.rs`, `tests/shim.rs` (needs `cc`, or `clang` on Windows) | `cargo test -p slug-native-manifest` |
 | Typed native adapter | `crates/slug-native-adapter/tests/adapter.rs` | `cargo test -p slug-native-adapter` |
 | Typed native clutches through the desktop loader | `crates/slug/tests/typed_native.rs` (needs a C compiler) | `cargo test -p slug --test typed_native` |
+| Static typed providers (descriptor checks, build, two-shim link) | `crates/slug-embedded-build/tests/typed.rs`, `crates/slug-typed-static-test/` (need `cc` and `ar`) | `cargo test -p slug-embedded-build -p slug-typed-static-test` |
 | Repository legacy-syntax fixtures | `crates/slug/tests/legacy_syntax_conformance.rs` | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 
 `make test` runs the full unit, binary, and integration suite. See

@@ -10,6 +10,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod typed;
+
+pub use typed::{CToolchain, TypedBuild, TypedProvider};
+
 use slug_frontend::ModuleHost;
 use slug_loader::{
     ModuleKey, ModuleLoadError, ModuleSource, StaticModuleProvider, StaticModuleResolver,
@@ -34,6 +38,8 @@ pub struct TargetDescriptor {
     pub limits: ArtifactLimits,
     /// Ordered source-contract and static-provider selections.
     pub providers: Vec<ProviderSelection>,
+    /// Native interface profiles the target offers; `core` by default.
+    pub profiles: Vec<String>,
 }
 
 /// Finite decoder limits for one embedded artifact.
@@ -55,8 +61,19 @@ pub struct ProviderSelection {
     pub module: String,
     /// Canonical source contract path below [`TargetDescriptor::root`].
     pub contract: PathBuf,
-    /// Board-package-specific static provider identity.
-    pub library: String,
+    /// Which kind of provider implements the module.
+    pub kind: ProviderKind,
+}
+
+/// How a selected module is implemented natively.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderKind {
+    /// A Rust `NativeModule` linked by the board package, named by its
+    /// board-package-specific identity.
+    Rust { library: String },
+    /// A manifest-bound C provider: the canonical clutch directory whose
+    /// manifest supplies the bindings, compiled through a generated shim.
+    Typed { clutch: PathBuf },
 }
 
 /// Closed artifact bytes produced for one embedded target.
@@ -179,7 +196,12 @@ impl TargetDescriptor {
         }
 
         let firmware = required_table(table, "firmware", "descriptor")?;
-        require_keys(firmware, &["entry", "board_package"], "firmware")?;
+        let mut firmware_keys = firmware.clone();
+        let profiles = match firmware_keys.remove("profiles") {
+            None => vec!["core".to_owned()],
+            Some(value) => parse_profiles(&value)?,
+        };
+        require_keys(&firmware_keys, &["entry", "board_package"], "firmware")?;
         let entry = rooted_file(
             &root,
             required_string(firmware, "entry", "firmware")?,
@@ -199,11 +221,12 @@ impl TargetDescriptor {
             board_package,
             limits,
             providers,
+            profiles,
         })
     }
 
-    /// Verifies that a board package links exactly the providers named by this
-    /// descriptor.
+    /// Verifies that a board package links exactly the Rust providers named by
+    /// this descriptor. Typed providers are built by [`Self::build_typed_providers`].
     ///
     /// # Errors
     ///
@@ -216,7 +239,12 @@ impl TargetDescriptor {
         let selected = self
             .providers
             .iter()
-            .map(|provider| (provider.module.as_str(), provider.library.as_str()))
+            .filter_map(|provider| match &provider.kind {
+                ProviderKind::Rust { library } => {
+                    Some((provider.module.as_str(), library.as_str()))
+                }
+                ProviderKind::Typed { .. } => None,
+            })
             .collect::<HashSet<_>>();
         let linked = linked.iter().copied().collect::<HashSet<_>>();
         if selected == linked {
@@ -358,7 +386,24 @@ fn parse_providers(
         let table = value.as_table().ok_or_else(|| {
             DescriptorError::new("shape", "every `providers` entry must be a table")
         })?;
-        require_keys(table, &["module", "contract", "library"], "provider")?;
+        let mut keys = table.clone();
+        let kind = match keys.remove("kind") {
+            None => "rust".to_owned(),
+            Some(kind) => kind.as_str().map(str::to_owned).ok_or_else(|| {
+                DescriptorError::new("shape", "`kind` in provider must be a string")
+            })?,
+        };
+        let kind_key = match kind.as_str() {
+            "rust" => "library",
+            "typed" => "clutch",
+            other => {
+                return Err(DescriptorError::new(
+                    "kind",
+                    format!("unknown provider kind `{other}`; expected `rust` or `typed`"),
+                ));
+            }
+        };
+        require_keys(&keys, &["module", "contract", kind_key], "provider")?;
         let module = nonempty(
             required_string(table, "module", "provider")?,
             "`module` in provider",
@@ -377,17 +422,76 @@ fn parse_providers(
             required_string(table, "contract", "provider")?,
             "provider contract",
         )?;
-        let library = nonempty(
-            required_string(table, "library", "provider")?,
-            "`library` in provider",
-        )?;
+        let kind = if kind == "rust" {
+            ProviderKind::Rust {
+                library: nonempty(
+                    required_string(table, "library", "provider")?,
+                    "`library` in provider",
+                )?,
+            }
+        } else {
+            ProviderKind::Typed {
+                clutch: rooted_directory(
+                    root,
+                    required_string(table, "clutch", "provider")?,
+                    "provider clutch",
+                )?,
+            }
+        };
         providers.push(ProviderSelection {
             module,
             contract,
-            library,
+            kind,
         });
     }
     Ok(providers)
+}
+
+fn parse_profiles(value: &toml::Value) -> Result<Vec<String>, DescriptorError> {
+    let invalid = || {
+        DescriptorError::new(
+            "profile",
+            "`profiles` in firmware must be a non-empty array of `core` or `events`",
+        )
+    };
+    let profiles = value
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .map(|profile| {
+            profile
+                .as_str()
+                .filter(|profile| matches!(*profile, "core" | "events"))
+                .map(str::to_owned)
+                .ok_or_else(invalid)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if profiles.is_empty() {
+        return Err(invalid());
+    }
+    Ok(profiles)
+}
+
+fn rooted_directory(
+    root: &Path,
+    value: &str,
+    description: &str,
+) -> Result<PathBuf, DescriptorError> {
+    let candidate = Path::new(value);
+    if candidate.is_absolute() {
+        return Err(DescriptorError::new(
+            "path",
+            format!("{description} path `{value}` must be relative to the descriptor root"),
+        ));
+    }
+    let path = canonical_directory(&root.join(candidate), description)?;
+    if !path.starts_with(root) {
+        return Err(DescriptorError::new(
+            "path",
+            format!("{description} path `{value}` escapes the descriptor root"),
+        ));
+    }
+    Ok(path)
 }
 
 fn require_keys(
@@ -597,6 +701,13 @@ mod tests {
         assert_eq!(descriptor.board_package, "slug-esp32-s3");
         assert_eq!(descriptor.providers.len(), 1);
         assert_eq!(descriptor.providers[0].module, "slug.gpio");
+        assert_eq!(
+            descriptor.providers[0].kind,
+            super::ProviderKind::Rust {
+                library: "gpio-provider".into()
+            }
+        );
+        assert_eq!(descriptor.profiles, ["core"]);
         assert_eq!(
             descriptor.limits,
             ArtifactLimits {

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Static targets can select typed C providers. A target-descriptor provider
+  entry takes `kind = "typed"` and a `clutch`; the build checks the clutch's
+  bindings against the module's `foreign` declarations and the target's
+  `[firmware] profiles`, generates and cross-compiles the shim, links it, and
+  generates the Rust registration that installs it through the shared
+  adapter. Existing descriptors are unchanged. The ESP32-S3 firmware gains
+  `esp32-s3-typed.toml`, which adds a small typed C provider.
+
 - Desktop clutches can bind `foreign` declarations through typed native
   bindings. A `[native]` table without `abi` uses the typed form; the loader
   loads the clutch's shim library, verifies its table through the shared

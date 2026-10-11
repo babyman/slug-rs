@@ -1,0 +1,11 @@
+val alpha = import("fixture.alpha")
+val beta = import("fixture.beta")
+
+val main = fn() {
+    val counter = beta.open(0)
+    if (counter != nil) {
+        val first = beta.next(counter)
+        val second = beta.next(counter)
+        [alpha.add(40, 2), alpha.greet("static"), first, second, beta.close(counter), alpha.name(), beta.name()]
+    }
+}

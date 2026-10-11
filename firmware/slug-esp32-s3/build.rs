@@ -27,6 +27,20 @@ fn compile_target_artifact() {
         ])
         .expect("descriptor providers linked by this board package");
     println!("cargo:rerun-if-changed={}", descriptor_path.display());
+    let output_directory = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
+    let toolchain = slug_embedded_build::CToolchain {
+        compiler: "xtensa-esp32s3-elf-gcc".into(),
+        archiver: "xtensa-esp32s3-elf-ar".into(),
+        flags: vec!["-mlongcalls".into(), "-Os".into(), "-ffunction-sections".into(), "-fdata-sections".into()],
+    };
+    let typed = descriptor
+        .build_typed_providers(&toolchain, &output_directory)
+        .unwrap_or_else(|error| panic!("{error}"));
+    for directive in typed.cargo_directives() {
+        println!("{directive}");
+    }
+    std::fs::write(output_directory.join("slug_typed_providers.rs"), &typed.registration)
+        .expect("write typed provider registration");
 
     let builtins = NativeModule::new("slug.builtin", ()).expect("valid builtin module");
     let artifact = descriptor
@@ -39,7 +53,6 @@ fn compile_target_artifact() {
     for input in artifact.inputs {
         println!("cargo:rerun-if-changed={}", input.display());
     }
-    let output_directory = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     std::fs::write(output_directory.join("slug_program.cslug"), &artifact.bytes)
         .expect("write target artifact");
     let limits = descriptor.cslug_limits();

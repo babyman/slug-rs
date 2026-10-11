@@ -291,6 +291,7 @@ version = "0.1.0"
 dependencies = [
  "slug-frontend",
  "slug-loader",
+ "slug-native-manifest",
  "slug-vm",
  "toml",
 ]
@@ -323,6 +324,7 @@ dependencies = [
 name = "slug-native-manifest"
 version = "0.1.0"
 dependencies = [
+ "slug-loader",
  "toml",
 ]
 
@@ -357,6 +359,15 @@ version = "0.1.0"
 dependencies = [
  "slug-frontend",
  "slug-loader",
+ "slug-vm",
+]
+
+[[package]]
+name = "slug-typed-static-test"
+version = "0.1.0"
+dependencies = [
+ "slug-embedded-build",
+ "slug-native-adapter",
  "slug-vm",
 ]
 
