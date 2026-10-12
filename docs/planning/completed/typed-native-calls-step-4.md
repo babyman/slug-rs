@@ -3,7 +3,7 @@
 ## Goal
 
 Implement step 4 of the replacement plan in
-[Typed native calls](../decisions/2026-10-10-typed-native-calls.md): remove
+[Typed native calls](../../decisions/2026-10-10-typed-native-calls.md): remove
 the prototype loader, its tests, the headers, and the helper SDK. Since
 step 3, no first-party clutch uses the prototype, so nothing that ships
 depends on it.
@@ -12,6 +12,12 @@ Step 4 ends when the repository has one native form, typed bindings, and
 nothing runtime-visible names the prototype ABI. Removal must not lose
 coverage of loader behavior that typed clutches rely on, and the CI jobs must
 pass on macOS, Linux, Windows, and ESP32-S3.
+
+## Status
+
+Complete. Phases 1-4 are implemented, and CI passed the exit gate on macOS,
+Linux, and Windows, with the ESP32-S3 jobs, on 2026-10-12. This completes the
+typed native-call replacement: typed bindings are the only native clutch form.
 
 ## Out of scope
 
@@ -22,7 +28,7 @@ pass on macOS, Linux, Windows, and ESP32-S3.
 - New typed features: structs, buffers, constants, `str` and `bytes` return
   values, and producers on embedded targets.
 - Performance work, which stays deferred
-  ([VM optimization item 11](vm-optimization.md#11-append-to-uniquely-owned-collections-in-place-deferred)).
+  ([VM optimization item 11](../vm-optimization.md#11-append-to-uniquely-owned-collections-in-place-deferred)).
 
 ## What exists today
 
@@ -136,7 +142,7 @@ The audit of the 37 tests:
 | The callback baseline, the scalar controls, and the typed-versus-prototype comparisons | Benchmarks, handled by decision 5. |
 
 One gap was real. The
-[deterministic shutdown](../decisions/2026-09-07-deterministic-native-clutch-shutdown.md)
+[deterministic shutdown](../../decisions/2026-09-07-deterministic-native-clutch-shutdown.md)
 rule says that native functions report `native.plugin_inactive` after
 finalization. Only the prototype loader did this. A typed function that a VM
 still held after its loader shut down kept calling into the library. That

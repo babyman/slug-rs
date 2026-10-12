@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Completed step 4, and with it the typed native-call replacement: CI passed
+  its exit gate, and its plan moved to `docs/planning/completed/`.
+
 - The same-named resources test builds its clutch once instead of relinking
   the library between its two programs, which failed on Windows when the
   linker could not replace a DLL still held open.
