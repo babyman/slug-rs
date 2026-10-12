@@ -30,6 +30,7 @@ pub(crate) enum CellType {
     Bytes,
     Cstr,
     Handle(String),
+    Producer,
 }
 
 pub(crate) struct Parsed {
@@ -89,6 +90,9 @@ pub(crate) fn parse(text: &str) -> Result<Parsed, String> {
         "void" => None,
         text => Some(cell_type(text)?),
     };
+    if matches!(result, Some(CellType::Producer)) {
+        return Err("a `producer` is an argument only".into());
+    }
     if matches!(result, Some(CellType::Str | CellType::Bytes)) {
         return Err("a `str` or `bytes` result must be an `out` parameter".into());
     }
@@ -110,10 +114,11 @@ fn parameter(text: &str) -> Result<(Direction, CellType), String> {
     };
     let cell_type = cell_type(text)?;
     match (direction, &cell_type) {
-        (Direction::Close, CellType::Handle(_)) | (Direction::In | Direction::Out, _) => {
-            Ok((direction, cell_type))
+        (Direction::Close, CellType::Handle(_)) | (Direction::In, _) => Ok((direction, cell_type)),
+        (Direction::Out, CellType::Producer) | (Direction::Close, _) => {
+            Err(alloc::format!("invalid parameter `{text}`"))
         }
-        (Direction::Close, _) => Err(alloc::format!("invalid parameter `{text}`")),
+        (Direction::Out, _) => Ok((direction, cell_type)),
     }
 }
 
@@ -133,6 +138,7 @@ fn cell_type(text: &str) -> Result<CellType, String> {
         "str" => CellType::Str,
         "bytes" => CellType::Bytes,
         "cstr" => CellType::Cstr,
+        "producer" => CellType::Producer,
         _ => {
             if let Some((base, free)) = text.split_once(" owned(") {
                 let owned = match base {

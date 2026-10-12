@@ -463,3 +463,176 @@ fn a_module_importing_its_sibling_during_initialization_shares_the_activation() 
         .expect("run sibling-import program");
     assert_eq!(value.to_string(), "[3, 7]");
 }
+
+const STREAM_HEADER: &str = r#"
+#ifndef FIXTURE_STREAM_H
+#define FIXTURE_STREAM_H
+#include <stdint.h>
+#include "slug_producer.h"
+/* Starts a worker thread that sends 1..count, then closes and releases. */
+int32_t stream_start(slug_producer *producer, int64_t count);
+#endif
+"#;
+
+const STREAM_SOURCE: &str = r#"
+#include "native/stream.h"
+
+#include <stdlib.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <time.h>
+#endif
+
+typedef struct {
+  slug_producer *producer;
+  int64_t count;
+} stream_job;
+
+static void pause_briefly(void) {
+#if defined(_WIN32)
+  Sleep(1);
+#else
+  const struct timespec delay = {0, 1000000};
+  nanosleep(&delay, NULL);
+#endif
+}
+
+static void run(stream_job *job) {
+  int64_t value;
+  for (value = 1; value <= job->count; value++) {
+    int32_t status;
+    while ((status = slug_producer_send_i64(job->producer, value)) == SLUG_PRODUCER_FULL) {
+      pause_briefly();
+    }
+    if (status != SLUG_PRODUCER_SENT) break;
+  }
+  slug_producer_close(job->producer);
+  slug_producer_release(job->producer);
+  free(job);
+}
+
+#if defined(_WIN32)
+static DWORD WINAPI worker(void *job) {
+  run(job);
+  return 0;
+}
+#else
+static void *worker(void *job) {
+  run(job);
+  return NULL;
+}
+#endif
+
+int32_t stream_start(slug_producer *producer, int64_t count) {
+  stream_job *job = malloc(sizeof *job);
+  if (job == NULL) {
+    slug_producer_release(producer);
+    return -1;
+  }
+  job->producer = producer;
+  job->count = count;
+#if defined(_WIN32)
+  {
+    HANDLE thread = CreateThread(NULL, 0, worker, job, 0, NULL);
+    if (thread == NULL) {
+      run(job);
+      return -1;
+    }
+    CloseHandle(thread);
+  }
+#else
+  {
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, worker, job) != 0) {
+      run(job);
+      return -1;
+    }
+    pthread_detach(thread);
+  }
+#endif
+  return 0;
+}
+"#;
+
+#[test]
+fn a_typed_producer_streams_from_a_c_worker_thread() {
+    let directory = TemporaryDirectory::new();
+    let repository = directory.path().join("clutch");
+    let root = repository.join("stream.clutch");
+    fs::create_dir_all(root.join("modules")).expect("create modules");
+    fs::create_dir_all(root.join("native")).expect("create native");
+    fs::write(
+        repository.join("manifest.toml"),
+        "[modules]\n\"fixture.stream\" = \"stream.clutch\"\n",
+    )
+    .expect("write repository manifest");
+    fs::write(
+        root.join("modules/stream.slug"),
+        "export foreign start = fn(numbers:chan, count:num):num\n",
+    )
+    .expect("write module");
+    fs::write(root.join("native/stream.h"), STREAM_HEADER).expect("write header");
+    fs::write(root.join("native/stream.c"), STREAM_SOURCE).expect("write source");
+    let library = format!(
+        "{}fixture_stream{}",
+        env::consts::DLL_PREFIX,
+        env::consts::DLL_SUFFIX
+    );
+    let manifest = format!(
+        "[modules]\n\"fixture.stream\" = {{ source = \"modules/stream.slug\" }}\n\n\
+         [native]\nprofile = \"events\"\nheaders = [\"native/stream.h\"]\n\
+         sources = [\"native/stream.c\"]\n{}\n\
+         [native.libraries]\n\"{platform}\" = \"native/{platform}/{library}\"\n\n\
+         [native.functions.\"fixture.stream\"]\n\
+         start = {{ symbol = \"stream_start\", signature = \"(producer numbers, i64 count) -> i32\" }}\n",
+        if cfg!(unix) && !cfg!(target_os = "macos") {
+            "link = [\"pthread\"]"
+        } else {
+            ""
+        },
+        platform = platform(),
+    );
+    fs::write(root.join("clutch.toml"), &manifest).expect("write clutch manifest");
+    build_dynamic(
+        &root,
+        &NativeManifest::from_clutch_source(&manifest).expect("valid stream manifest"),
+        "fixture_stream",
+        platform(),
+    )
+    .unwrap_or_else(|error| panic!("build stream clutch: {error}"));
+    let lib = directory.path().join("lib/slug");
+    fs::create_dir_all(&lib).expect("create SLUG_HOME library");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib/slug/builtin.slug"),
+        lib.join("builtin.slug"),
+    )
+    .expect("copy builtin module");
+    let program = directory.path().join("stream.slug");
+    fs::write(
+        &program,
+        "val stream = import(\"fixture.stream\")\n\
+         val numbers = chan(4)\n\
+         println(stream.start(numbers, 200))\n\
+         val total = fn(sum) {\n\
+           val value = select { recv numbers }\n\
+           if (value == nil) { sum } else { recur(sum + value) }\n\
+         }\n\
+         println(total(0))\n",
+    )
+    .expect("write stream program");
+    let output = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .env("SLUG_HOME", directory.path())
+        .arg(&program)
+        .output()
+        .expect("run slug CLI");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // 1 + 2 + ... + 200 through a channel of capacity 4: the worker retries
+    // while the channel is full, then closes it.
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "0\n20100\n");
+}

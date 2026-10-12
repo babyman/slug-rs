@@ -111,7 +111,7 @@ pub(crate) fn library_lease(path: &Path) -> Result<Arc<LoadedLibrary>, FfiProtot
     Ok(Arc::new(unsafe { LoadedLibrary::open(&path) }?))
 }
 
-pub(super) fn retain_library_for_foreign_worker(library: Arc<LoadedLibrary>) {
+pub(crate) fn retain_library_for_foreign_worker(library: Arc<LoadedLibrary>) {
     FOREIGN_WORKER_LIBRARIES
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

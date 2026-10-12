@@ -16,7 +16,10 @@ use std::{
 
 pub use build::{build_dynamic, c_compiler};
 pub use compat::check_foreign_declarations;
-pub use shim::{DYNAMIC_DEFINE, SHIM_C_FLAGS, check, generate, table_function};
+pub use shim::{
+    DYNAMIC_DEFINE, PRODUCER_HEADER, PRODUCER_HEADER_NAME, SHIM_C_FLAGS, check, generate,
+    table_function, uses_producers,
+};
 pub use signature::{Direction, NativeType, Parameter, Signature};
 use signature::{ParsedSignature, ParsedType};
 
@@ -212,6 +215,7 @@ impl NativeManifest {
             .sort_by(|left, right| (&left.module, &left.name).cmp(&(&right.module, &right.name)));
         functions
             .sort_by(|left, right| (&left.module, &left.name).cmp(&(&right.module, &right.name)));
+        check_producer_profile(profile, &functions)?;
         if !functions.is_empty() && headers.is_empty() {
             return Err(ManifestError::new(
                 "native.headers",
@@ -234,6 +238,29 @@ impl NativeManifest {
         self.functions
             .iter()
             .chain(self.resources.iter().map(|resource| &resource.release))
+    }
+}
+
+/// A `producer` argument needs the `events` profile.
+fn check_producer_profile(profile: Profile, functions: &[Binding]) -> Result<(), ManifestError> {
+    if profile == Profile::Events {
+        return Ok(());
+    }
+    match functions.iter().find(|binding| {
+        binding
+            .signature
+            .parameters
+            .iter()
+            .any(|parameter| parameter.native_type == NativeType::Producer)
+    }) {
+        Some(binding) => Err(ManifestError::new(
+            format!(
+                "native.functions.\"{}\".{}.signature",
+                binding.module, binding.name
+            ),
+            "a `producer` argument needs `profile = \"events\"`",
+        )),
+        None => Ok(()),
     }
 }
 
@@ -448,7 +475,11 @@ fn validate(signature: &Signature) -> Result<(), String> {
                     return Err("only a result can be `owned`".into());
                 }
             }
-            Direction::Out => {}
+            Direction::Out => {
+                if *native_type == NativeType::Producer {
+                    return Err("a `producer` is an argument only".into());
+                }
+            }
             Direction::Close => {
                 if !matches!(native_type, NativeType::Handle { .. }) {
                     return Err("only a `handle` parameter can be `close`".into());
@@ -465,6 +496,9 @@ fn validate(signature: &Signature) -> Result<(), String> {
         Some(NativeType::Str { .. } | NativeType::Bytes { .. })
     ) {
         return Err("a `str` or `bytes` result must be an `out` parameter".into());
+    }
+    if signature.result == Some(NativeType::Producer) {
+        return Err("a `producer` is an argument only".into());
     }
     if signature.argument_cells() > MAX_CELLS {
         return Err(format!("more than {MAX_CELLS} argument cells"));

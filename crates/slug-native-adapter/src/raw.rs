@@ -3,12 +3,14 @@
 
 #![allow(unsafe_code)]
 
-use alloc::{format, rc::Rc, string::String, vec::Vec};
+use alloc::{boxed::Box, format, rc::Rc, string::String, vec::Vec};
+
 use core::{
     any::Any,
     ffi::{CStr, c_char},
     ptr,
 };
+use slug_vm::{NativeChannelProducer, NativeProducerStatus, NativeSendValue};
 
 use crate::{
     ExpectedBinding, InstallError, Installed,
@@ -161,4 +163,163 @@ pub(crate) fn copy_bytes(cell: Cell) -> Option<Vec<u8>> {
     // SAFETY: per the shim contract, a non-NULL text or bytes result points
     // at `length` readable bytes that live at least until cleanup runs.
     Some(unsafe { core::slice::from_raw_parts(pointer, length) }.to_vec())
+}
+
+/// The host function table a `slug_producer *` carries: C's
+/// `slug_producer_api`, version 1.
+#[repr(C)]
+struct ProducerApi {
+    version: u32,
+    send_nil: unsafe extern "C" fn(*mut ProducerHandle) -> i32,
+    send_bool: unsafe extern "C" fn(*mut ProducerHandle, bool) -> i32,
+    send_i64: unsafe extern "C" fn(*mut ProducerHandle, i64) -> i32,
+    send_f64: unsafe extern "C" fn(*mut ProducerHandle, f64) -> i32,
+    send_text: unsafe extern "C" fn(*mut ProducerHandle, *const c_char, usize) -> i32,
+    send_bytes: unsafe extern "C" fn(*mut ProducerHandle, *const u8, usize) -> i32,
+    is_closed: unsafe extern "C" fn(*mut ProducerHandle) -> bool,
+    close: unsafe extern "C" fn(*mut ProducerHandle),
+    release: unsafe extern "C" fn(*mut ProducerHandle),
+}
+
+/// C's `slug_producer`, extended with the VM producer it wraps. The table
+/// pointer must stay the first field.
+#[repr(C)]
+struct ProducerHandle {
+    api: *const ProducerApi,
+    producer: NativeChannelProducer,
+}
+
+static PRODUCER_API: ProducerApi = ProducerApi {
+    version: 1,
+    send_nil: producer_send_nil,
+    send_bool: producer_send_bool,
+    send_i64: producer_send_i64,
+    send_f64: producer_send_f64,
+    send_text: producer_send_text,
+    send_bytes: producer_send_bytes,
+    is_closed: producer_is_closed,
+    close: producer_close,
+    release: producer_release,
+};
+
+const SENT: i32 = 0;
+const FULL: i32 = 1;
+const CLOSED: i32 = 2;
+const INVALID: i32 = 3;
+
+/// Boxes `producer` as a C `slug_producer` and returns its address. C owns it
+/// until it calls release, or [`release_producer`] frees it if the call never
+/// starts.
+pub(crate) fn mint_producer(producer: NativeChannelProducer) -> usize {
+    Box::into_raw(Box::new(ProducerHandle {
+        api: &raw const PRODUCER_API,
+        producer,
+    }))
+    .expose_provenance()
+}
+
+/// Frees a producer minted for a call that failed before reaching C.
+pub(crate) fn release_producer(address: usize) {
+    // SAFETY: `address` came from `mint_producer` and was never handed to C.
+    unsafe { producer_release(ptr::with_exposed_provenance_mut(address)) };
+}
+
+/// # Safety
+///
+/// `handle` must be NULL or a live handle from `mint_producer`.
+unsafe fn send(handle: *mut ProducerHandle, value: NativeSendValue) -> i32 {
+    // SAFETY: forwarded from this function's contract.
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return CLOSED;
+    };
+    match handle.producer.try_send(value) {
+        NativeProducerStatus::Sent => SENT,
+        NativeProducerStatus::Full(_) => FULL,
+        NativeProducerStatus::Closed(_) => CLOSED,
+    }
+}
+
+unsafe extern "C" fn producer_send_nil(handle: *mut ProducerHandle) -> i32 {
+    // SAFETY: C passes the handle it was given, per the producer contract.
+    unsafe { send(handle, NativeSendValue::nil()) }
+}
+
+unsafe extern "C" fn producer_send_bool(handle: *mut ProducerHandle, value: bool) -> i32 {
+    // SAFETY: as above.
+    unsafe { send(handle, NativeSendValue::boolean(value)) }
+}
+
+unsafe extern "C" fn producer_send_i64(handle: *mut ProducerHandle, value: i64) -> i32 {
+    // SAFETY: as above.
+    unsafe { send(handle, NativeSendValue::integer(value)) }
+}
+
+unsafe extern "C" fn producer_send_f64(handle: *mut ProducerHandle, value: f64) -> i32 {
+    if !value.is_finite() {
+        return INVALID;
+    }
+    // SAFETY: as above.
+    unsafe { send(handle, NativeSendValue::float(value)) }
+}
+
+/// # Safety
+///
+/// `data` must be NULL with `length` 0, or point to `length` readable bytes.
+unsafe fn copy_buffer(data: *const u8, length: usize) -> Option<Vec<u8>> {
+    if length == 0 {
+        return Some(Vec::new());
+    }
+    if data.is_null() {
+        return None;
+    }
+    // SAFETY: forwarded from this function's contract.
+    Some(unsafe { core::slice::from_raw_parts(data, length) }.to_vec())
+}
+
+unsafe extern "C" fn producer_send_text(
+    handle: *mut ProducerHandle,
+    text: *const c_char,
+    length: usize,
+) -> i32 {
+    // SAFETY: C passes `length` readable bytes, per the producer contract.
+    let Some(bytes) = (unsafe { copy_buffer(text.cast(), length) }) else {
+        return INVALID;
+    };
+    match String::from_utf8(bytes) {
+        // SAFETY: C passes the handle it was given.
+        Ok(text) => unsafe { send(handle, NativeSendValue::string(text)) },
+        Err(_) => INVALID,
+    }
+}
+
+unsafe extern "C" fn producer_send_bytes(
+    handle: *mut ProducerHandle,
+    data: *const u8,
+    length: usize,
+) -> i32 {
+    // SAFETY: C passes `length` readable bytes, per the producer contract.
+    let Some(bytes) = (unsafe { copy_buffer(data, length) }) else {
+        return INVALID;
+    };
+    // SAFETY: C passes the handle it was given.
+    unsafe { send(handle, NativeSendValue::bytes(bytes)) }
+}
+
+unsafe extern "C" fn producer_is_closed(handle: *mut ProducerHandle) -> bool {
+    // SAFETY: C passes the handle it was given.
+    unsafe { handle.as_ref() }.is_none_or(|handle| handle.producer.is_closed())
+}
+
+unsafe extern "C" fn producer_close(handle: *mut ProducerHandle) {
+    // SAFETY: C passes the handle it was given.
+    if let Some(handle) = unsafe { handle.as_ref() } {
+        handle.producer.close();
+    }
+}
+
+unsafe extern "C" fn producer_release(handle: *mut ProducerHandle) {
+    if !handle.is_null() {
+        // SAFETY: release is called once, on a handle from `mint_producer`.
+        drop(unsafe { Box::from_raw(handle) });
+    }
 }

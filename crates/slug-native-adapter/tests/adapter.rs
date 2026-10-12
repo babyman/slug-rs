@@ -22,9 +22,9 @@ use slug_native_adapter::{
     install,
 };
 use slug_vm::{
-    EmptyVmConfiguration, NativeDescriptorError, NativeFunction, NativeResourceRegistry,
-    RuntimeError, RuntimeErrorKind, Value, Vm, VmConfiguration, VmHost, VmHostError,
-    VmModuleExports, native_resource_registry,
+    EmptyVmConfiguration, NativeArity, NativeDescriptorError, NativeFunction, NativeModule,
+    NativeResourceRegistry, RuntimeError, RuntimeErrorKind, Value, Vm, VmConfiguration, VmHost,
+    VmHostError, VmModuleExports, native_resource_registry,
 };
 
 // ---- Rust entries following the shim contract ----
@@ -287,6 +287,49 @@ unsafe extern "C" fn count_entry(
     0
 }
 
+/// A mirror of C's `slug_producer_api`, as a library would see it.
+#[repr(C)]
+struct ProducerApi {
+    version: u32,
+    send_nil: unsafe extern "C" fn(*mut c_void) -> i32,
+    send_bool: unsafe extern "C" fn(*mut c_void, bool) -> i32,
+    send_i64: unsafe extern "C" fn(*mut c_void, i64) -> i32,
+    send_f64: unsafe extern "C" fn(*mut c_void, f64) -> i32,
+    send_text: unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> i32,
+    send_bytes: unsafe extern "C" fn(*mut c_void, *const u8, usize) -> i32,
+    is_closed: unsafe extern "C" fn(*mut c_void) -> bool,
+    close: unsafe extern "C" fn(*mut c_void),
+    release: unsafe extern "C" fn(*mut c_void),
+}
+
+/// Sends one of each value through the producer, then two invalid values,
+/// and returns the statuses as a number: one digit per send.
+unsafe extern "C" fn feed(arguments: *const Cell, results: *mut Cell, _: *mut Cleanup) -> i32 {
+    let arguments = unsafe { cells(arguments, 2) };
+    let producer = std::ptr::with_exposed_provenance_mut::<c_void>(arguments[0].address());
+    let api = unsafe { &**producer.cast::<*const ProducerApi>() };
+    assert_eq!(api.version, 1);
+    let statuses = unsafe {
+        [
+            (api.send_i64)(producer, arguments[1].as_signed()),
+            (api.send_text)(producer, c"line".as_ptr(), 4),
+            (api.send_bytes)(producer, [0xca_u8, 0xfe].as_ptr(), 2),
+            (api.send_nil)(producer),
+            (api.send_bool)(producer, true),
+            (api.send_f64)(producer, 1.5),
+            (api.send_f64)(producer, f64::NAN),
+            (api.send_text)(producer, c"\xff".as_ptr(), 1),
+        ]
+    };
+    let closed = unsafe { (api.is_closed)(producer) };
+    unsafe { (api.release)(producer) };
+    let digits = statuses.iter().fold(i64::from(closed), |acc, status| {
+        acc * 10 + i64::from(*status)
+    });
+    (unsafe { cells_mut(results, 1) })[0] = Cell::signed(digits);
+    0
+}
+
 unsafe extern "C" fn release(arguments: *const Cell, _: *mut Cell, _: *mut Cleanup) -> i32 {
     let cell = unsafe { cells(arguments, 1) }[0];
     drop(unsafe {
@@ -435,6 +478,13 @@ fn fixture_specs() -> Vec<Spec> {
             0,
         ),
         spec(
+            "feed",
+            "slug-shim/1;fx;feed;fx_feed;(producer,i64)->i32",
+            feed,
+            2,
+            1,
+        ),
+        spec(
             "line",
             "slug-shim/1;fx;line;fx_line;(i64,out str)->i32",
             line,
@@ -529,6 +579,8 @@ fn install_with_switches(
 
 const FX_SOURCE: &str = "\
 export resource Counter
+export foreign makeChannel = fn(capacity:num):chan
+export foreign feed = fn(lines:chan, value:num):num
 export foreign add = fn(a:num, b:num):num
 export foreign narrow = fn(a:num, b:num):num
 export foreign scale = fn(a:num, b:num):num
@@ -580,8 +632,22 @@ impl Host {
             )
             .unwrap()
         };
+        let channels = NativeModule::new("fx", ()).unwrap();
+        let make_channel = channels
+            .function("makeChannel", NativeArity::Exact(1), |call| {
+                let capacity = call
+                    .argument(0)
+                    .and_then(slug_vm::NativeValueRef::as_i64)
+                    .ok()
+                    .and_then(|capacity| usize::try_from(capacity).ok())
+                    .unwrap_or_default();
+                let channel = call.plain_channel(capacity);
+                call.return_value(channel)
+            })
+            .unwrap();
         let foreign = functions
             .into_iter()
+            .chain(std::iter::once(make_channel))
             .map(|function| {
                 (
                     (function.module_name().into(), function.name().into()),
@@ -1043,4 +1109,35 @@ fn decodes_length_results_and_shares_handles_between_modules() {
         "[[0, \"a\\0b\"], [0, nil], [0x\"cafe\"], 2]"
     );
     assert_eq!(count(&OWNED_FREES), frees + 1, "owned bytes are freed once");
+}
+
+#[test]
+fn a_producer_argument_sends_every_value_type_into_a_slug_channel() {
+    let (host, _table) = fixture_host();
+    let value = host
+        .run(
+            "val lines = fx.makeChannel(8)\n\
+             val statuses = fx.feed(lines, 5)\n\
+             val received = [select { recv lines }, select { recv lines }, select { recv lines }, \
+             select { recv lines }, select { recv lines }, select { recv lines }]\n\
+             [statuses, received]",
+        )
+        .expect("feed a Slug channel");
+    // Six sends report sent (0), the NaN and invalid UTF-8 report invalid
+    // (3), and the producer was still open, so the digits read 33.
+    assert_eq!(
+        value.to_string(),
+        "[33, [5, \"line\", 0x\"cafe\", nil, true, 1.5]]"
+    );
+
+    let error = host
+        .run("fx.feed(fx.makeChannel(0), 5)")
+        .expect_err("an unbuffered channel is rejected");
+    assert_eq!(native_code(&error), Some("native.type"));
+
+    // A failure on a later argument releases the producer already minted.
+    let error = host
+        .run("val dynamic = fn(value) { value }\nfx.feed(fx.makeChannel(1), dynamic(\"x\"))")
+        .expect_err("a bad second argument is rejected");
+    assert_eq!(native_code(&error), Some("native.type"));
 }

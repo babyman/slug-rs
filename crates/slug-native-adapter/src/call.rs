@@ -35,6 +35,8 @@ pub(crate) enum Kind {
     Cstr,
     /// Index into the module's resource slots.
     Handle(usize),
+    /// A producer minted from a channel argument.
+    Producer,
 }
 
 impl Kind {
@@ -56,6 +58,7 @@ impl Kind {
             CellType::Bytes => Self::Bytes,
             CellType::Cstr => Self::Cstr,
             CellType::Handle(name) => Self::Handle(resource(name)?),
+            CellType::Producer => Self::Producer,
         })
     }
 }
@@ -171,8 +174,16 @@ fn run(
 
     let mut arguments = [Cell::default(); MAX_CELLS];
     let mut texts = Vec::new();
+    let mut producers = Vec::new();
     for (index, kind) in binding.arguments.iter().enumerate() {
-        arguments[index] = encode(call, index, kind, resources, &mut texts)?;
+        match encode(call, index, kind, resources, &mut texts, &mut producers) {
+            Ok(encoded) => arguments[index] = encoded,
+            Err(failure) => {
+                // The call never reaches C, so no producer was handed over.
+                producers.into_iter().for_each(raw::release_producer);
+                return Err(failure);
+            }
+        }
     }
     if let Some((index, resource_type)) = close {
         // Take the handle so the VM's close callback does not release it.
@@ -309,6 +320,7 @@ fn encode(
     kind: &Kind,
     resources: &[ResourceSlot],
     texts: &mut Vec<Vec<u8>>,
+    producers: &mut Vec<usize>,
 ) -> Result<Cell, Failure> {
     let argument = call.argument(index)?;
     Ok(match kind {
@@ -358,6 +370,11 @@ fn encode(
             // The copy's heap buffer does not move when `texts` grows.
             let address = copy.as_ptr().expose_provenance();
             texts.push(copy);
+            Cell::pointer(address, 0)
+        }
+        Kind::Producer => {
+            let address = raw::mint_producer(call.producer(index)?);
+            producers.push(address);
             Cell::pointer(address, 0)
         }
         Kind::Handle(slot) => {
@@ -450,6 +467,8 @@ fn decode(cell: Cell, kind: &Kind) -> Decoded {
             }
         },
         Kind::Handle(slot) => return Decoded::Handle(cell.address(), *slot),
+        // Rejected as a result when the signature is parsed.
+        Kind::Producer => NativeOwnedValue::nil(),
     };
     Decoded::Value(value)
 }

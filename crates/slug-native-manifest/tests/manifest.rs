@@ -425,3 +425,61 @@ text = { symbol = "db_text", signature = "(out str text) -> void" }
         "another module's resource is named through an import"
     );
 }
+
+#[test]
+fn producer_arguments_need_the_events_profile_and_match_channels() {
+    use slug_loader::{ForeignDeclaration, ForeignParameter};
+    use slug_native_manifest::{check_foreign_declarations, uses_producers};
+
+    let source = |profile: &str, signature: &str| {
+        format!(
+            "[native]\nprofile = \"{profile}\"\nheaders = [\"io.h\"]\n\n\
+             [native.functions.io]\nstart = {{ symbol = \"io_start\", signature = \"{signature}\" }}\n"
+        )
+    };
+    let manifest = NativeManifest::from_clutch_source(&source("events", "(producer lines) -> i32"))
+        .expect("valid events manifest");
+    assert!(uses_producers(&manifest));
+    assert_eq!(
+        manifest.functions[0].canonical_signature(),
+        "slug-shim/1;io;start;io_start;(producer)->i32"
+    );
+    let declaration = |annotation: &str| ForeignDeclaration {
+        name: "start".into(),
+        parameters: vec![ForeignParameter {
+            name: "lines".into(),
+            annotation: Some(annotation.into()),
+            variadic: false,
+            has_default: false,
+        }],
+        result: Some("num".into()),
+    };
+    for annotation in ["chan", "chan<str>"] {
+        check_foreign_declarations(&manifest, "io", &[declaration(annotation)])
+            .unwrap_or_else(|error| panic!("{annotation}: {error}"));
+    }
+    assert!(check_foreign_declarations(&manifest, "io", &[declaration("str")]).is_err());
+
+    for (profile, signature, message) in [
+        (
+            "core",
+            "(producer lines) -> i32",
+            "needs `profile = \"events\"`",
+        ),
+        (
+            "events",
+            "(out producer lines) -> void",
+            "a `producer` is an argument only",
+        ),
+        (
+            "events",
+            "() -> producer",
+            "a `producer` is an argument only",
+        ),
+    ] {
+        let error = NativeManifest::from_clutch_source(&source(profile, signature))
+            .expect_err(signature)
+            .to_string();
+        assert!(error.contains(message), "{signature}: {error}");
+    }
+}

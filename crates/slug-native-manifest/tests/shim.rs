@@ -634,3 +634,99 @@ fn dynamic_builds_reject_missing_platforms_escaping_paths_and_compiler_errors() 
     );
     assert!(directory.path().join("out/lib.shim.c").is_file());
 }
+
+const PRODUCER_FIXTURE_HEADER: &str = r#"
+#include "slug_producer.h"
+int32_t pr_feed(slug_producer *producer, int64_t value);
+"#;
+
+const PRODUCER_FIXTURE_SOURCE: &str = r#"
+#include "pr.h"
+
+int32_t pr_feed(slug_producer *producer, int64_t value) {
+  static const uint8_t bytes[] = {0xca, 0xfe};
+  int32_t sent = 0;
+  sent += slug_producer_send_i64(producer, value) == SLUG_PRODUCER_SENT;
+  sent += slug_producer_send_text(producer, "hi", 2) == SLUG_PRODUCER_SENT;
+  sent += slug_producer_send_bytes(producer, bytes, sizeof bytes) == SLUG_PRODUCER_SENT;
+  sent += slug_producer_send_nil(producer) == SLUG_PRODUCER_SENT;
+  sent += slug_producer_send_bool(producer, true) == SLUG_PRODUCER_SENT;
+  sent += slug_producer_send_f64(producer, 1.5) == SLUG_PRODUCER_SENT;
+  if (!slug_producer_is_closed(producer)) slug_producer_close(producer);
+  slug_producer_release(producer);
+  return sent;
+}
+"#;
+
+/// A fake host table that logs each call, standing in for the adapter.
+const PRODUCER_DRIVER: &str = r#"
+#include "slug_producer.h"
+
+typedef struct fake_producer { slug_producer base; int closed; } fake_producer;
+
+static int32_t fake_nil(slug_producer *p) { (void)p; printf("nil\n"); return SLUG_PRODUCER_SENT; }
+static int32_t fake_bool(slug_producer *p, bool v) { (void)p; printf("bool %d\n", v ? 1 : 0); return SLUG_PRODUCER_SENT; }
+static int32_t fake_i64(slug_producer *p, int64_t v) { (void)p; printf("i64 %" PRId64 "\n", v); return SLUG_PRODUCER_SENT; }
+static int32_t fake_f64(slug_producer *p, double v) { (void)p; printf("f64 %.1f\n", v); return SLUG_PRODUCER_SENT; }
+static int32_t fake_text(slug_producer *p, const char *t, size_t n) { (void)p; printf("text %.*s\n", (int)n, t); return SLUG_PRODUCER_SENT; }
+static int32_t fake_bytes(slug_producer *p, const uint8_t *d, size_t n) { (void)p; printf("bytes %02x%02x %u\n", d[0], d[1], (unsigned)n); return SLUG_PRODUCER_SENT; }
+static bool fake_is_closed(slug_producer *p) { return ((fake_producer *)p)->closed != 0; }
+static void fake_close(slug_producer *p) { ((fake_producer *)p)->closed = 1; printf("close\n"); }
+static void fake_release(slug_producer *p) { (void)p; printf("release\n"); }
+
+static const slug_producer_api API = {
+  SLUG_PRODUCER_API_VERSION, fake_nil, fake_bool, fake_i64, fake_f64, fake_text, fake_bytes,
+  fake_is_closed, fake_close, fake_release,
+};
+
+const slug_shim_table *slug_shim_table_pr(void);
+
+int main(void) {
+  fake_producer producer = {{&API}, 0};
+  slug_value a[2];
+  slug_value r[1];
+  slug_shim_cleanup cleanup = {NULL, NULL};
+  print_table(slug_shim_table_pr());
+  a[0].as.pointer = &producer;
+  a[1].as.i64 = 42;
+  find(slug_shim_table_pr(), "feed")(a, r, &cleanup);
+  printf("sent %" PRId64 "\n", r[0].as.i64);
+  return 0;
+}
+"#;
+
+#[test]
+fn a_producer_argument_reaches_the_host_table_through_the_header() {
+    let directory = TemporaryDirectory::new();
+    directory.write("pr.h", PRODUCER_FIXTURE_HEADER);
+    directory.write("pr.c", PRODUCER_FIXTURE_SOURCE);
+    directory.write(
+        slug_native_manifest::PRODUCER_HEADER_NAME,
+        slug_native_manifest::PRODUCER_HEADER,
+    );
+    write_shim(
+        &directory,
+        "[native]\nprofile = \"events\"\nheaders = [\"pr.h\"]\n\n[native.functions.pr]\n\
+         feed = { symbol = \"pr_feed\", signature = \"(producer lines, i64 value) -> i32\" }\n",
+        "pr",
+    );
+    directory.write("driver.c", &format!("{DRIVER_PRELUDE}{PRODUCER_DRIVER}"));
+    let program = format!("producer{}", env::consts::EXE_SUFFIX);
+    let output = compile(
+        &directory,
+        &["pr.c", "pr_shim.c", "driver.c", "-o", &program],
+    );
+    assert_compiled(&output, "a producer shim, its library, and a fake host");
+    let output = Command::new(directory.path().join(&program))
+        .output()
+        .expect("run the producer driver");
+    assert!(
+        output.status.success(),
+        "the producer driver must exit cleanly"
+    );
+    assert_eq!(
+        driver_stdout(&output),
+        "abi 1\npr|feed|slug-shim/1;pr;feed;pr_feed;(producer,i64)->i32|2|1\n\
+         i64 42\ntext hi\nbytes cafe 2\nnil\nbool 1\nf64 1.5\nclose\nrelease\nsent 6\n"
+    );
+}

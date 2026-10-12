@@ -117,6 +117,7 @@ fn argument_annotation(native_type: &NativeType) -> String {
         NativeType::Bool => "bool".into(),
         NativeType::Str { .. } | NativeType::Cstr { .. } => "str".into(),
         NativeType::Bytes { .. } => "bytes".into(),
+        NativeType::Producer => "chan".into(),
         NativeType::Handle { resource, .. } => resource.clone(),
         _ => "num".into(),
     }
@@ -168,6 +169,8 @@ fn annotation_matches(annotation: &str, expected: &str) -> bool {
                 Some((_, resource)) => member
                     .rsplit_once('.')
                     .is_some_and(|(_, name)| name == resource),
+                // A producer accepts any channel element type.
+                None if *wanted == "chan" => *member == "chan" || member.starts_with("chan<"),
                 None => member == wanted,
             });
         position.map(|index| members.swap_remove(index)).is_some()

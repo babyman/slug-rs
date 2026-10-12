@@ -7,7 +7,10 @@ use std::{
     process::Command,
 };
 
-use crate::{DYNAMIC_DEFINE, ManifestError, NativeManifest, SHIM_C_FLAGS, generate};
+use crate::{
+    DYNAMIC_DEFINE, ManifestError, NativeManifest, PRODUCER_HEADER, PRODUCER_HEADER_NAME,
+    SHIM_C_FLAGS, generate,
+};
 
 /// The C compiler used for shims: `$CC` when set, otherwise `clang` on
 /// Windows and `cc` elsewhere.
@@ -19,7 +22,8 @@ pub fn c_compiler() -> String {
 /// Generates the shim for `manifest` and compiles it, with the manifest's
 /// sources and link libraries, into the dynamic library the manifest names
 /// for `platform`. The generated shim is written beside the library with the
-/// extension `shim.c`. Returns the library path.
+/// extension `shim.c`, with the producer header next to it on the include
+/// path. Returns the library path.
 ///
 /// # Errors
 ///
@@ -50,13 +54,23 @@ pub fn build_dynamic(
     fs::write(&shim, generate(manifest, provider)?).map_err(|error| {
         ManifestError::new("shim", format!("cannot write {}: {error}", shim.display()))
     })?;
+    // The clutch's sources include the producer header from beside the shim.
+    let header = directory.join(PRODUCER_HEADER_NAME);
+    fs::write(&header, PRODUCER_HEADER).map_err(|error| {
+        ManifestError::new(
+            "shim",
+            format!("cannot write {}: {error}", header.display()),
+        )
+    })?;
 
     let mut command = Command::new(c_compiler());
     command
         .args(SHIM_C_FLAGS)
         .arg(format!("-D{DYNAMIC_DEFINE}"))
         .arg("-I")
-        .arg(clutch_root);
+        .arg(clutch_root)
+        .arg("-I")
+        .arg(directory);
     if platform.starts_with("macos-") {
         command.arg("-dynamiclib");
     } else if platform.starts_with("windows-") {

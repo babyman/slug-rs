@@ -121,14 +121,24 @@ progress after any native call.
 
 ### 3. The `producer` type
 
-- [ ] Parse `producer` in the manifest model, require the `events` profile,
+- [x] Parse `producer` in the manifest model, require the `events` profile,
   and accept the `chan` annotation in the compatibility check.
-- [ ] Generate the `slug_producer.h` header and the host function table type.
-- [ ] Mint and pass the capability in the adapter, and implement the host
+- [x] Generate the `slug_producer.h` header and the host function table type.
+- [x] Mint and pass the capability in the adapter, and implement the host
   functions over the VM producer.
-- [ ] Tests: a C fixture whose worker thread sends every value type, handles
+- [x] Tests: a C fixture whose worker thread sends every value type, handles
   `full` by retrying, observes `closed` after the receiver is dropped, closes,
   and releases.
+
+The coverage is split by layer. A shim compile test drives every host
+function through the header's inline wrappers against a fake host table. An
+adapter test sends each value type through the VM, including `invalid` for
+a non-finite float and for bad UTF-8. A desktop test runs a real C worker
+thread that streams 200 integers through a capacity-4 channel, retrying on
+`full`. The VM tests from phase 2 cover `closed` after the VM is gone. The
+desktop loader now keeps any typed library that uses producers loaded for
+the process lifetime, and the adapter releases producers it minted when a
+later argument fails before the call.
 
 ### 4. Move `slug.core`
 

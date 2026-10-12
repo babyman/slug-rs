@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Typed native bindings accept a `producer` argument under the `events`
+  profile: the adapter mints a producer from a buffered Slug channel and
+  passes C a `slug_producer *` whose host function table sends nil, bool,
+  integer, float, text, and bytes values, reports closed, closes, and
+  releases. The shim build writes `slug_producer.h` beside each shim, and a
+  library that receives a producer stays loaded.
+
 - Native code can now send into a buffered channel that Slug created:
   `NativeCall::producer` mints a producer from a channel argument, sharing
   the channel's capacity with Slug senders. Closing the producer closes the

@@ -30,6 +30,10 @@ pub enum NativeType {
     Cstr {
         owned: Option<String>,
     },
+    /// A producer capability minted from a buffered Slug channel argument,
+    /// passed as `slug_producer *`. Arguments only; needs the `events`
+    /// profile.
+    Producer,
     /// A pointer to the resource's C type, held by a Slug resource.
     /// `resource` is `R` for the binding's own module, or `module.R` for a
     /// resource another module of the same clutch declares.
@@ -55,6 +59,7 @@ impl NativeType {
             "f64" => Self::F64,
             "str" => Self::Str { owned: None },
             "bytes" => Self::Bytes { owned: None },
+            "producer" => Self::Producer,
             _ => return None,
         })
     }
@@ -72,6 +77,7 @@ impl NativeType {
             Self::U64 => "u64",
             Self::F32 => "f32",
             Self::F64 => "f64",
+            Self::Producer => "producer",
             Self::Str { owned } | Self::Bytes { owned } | Self::Cstr { owned } => {
                 output.push_str(match self {
                     Self::Str { .. } => "str",

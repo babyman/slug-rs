@@ -8,12 +8,17 @@ use std::{any::Any, path::Path, rc::Rc};
 use slug_native_adapter::{ExpectedBinding, Installed, abi::GetTable};
 use slug_native_manifest::{Binding, NativeManifest};
 
-use crate::ffi_prototype::loader::library_lease;
+use crate::ffi_prototype::loader::{library_lease, retain_library_for_foreign_worker};
 
 /// Loads a typed clutch's library and returns its Slug-visible functions.
 /// The functions keep the library loaded.
 pub(crate) fn load(library: &Path, manifest: &NativeManifest) -> Result<Installed, String> {
     let lease = library_lease(library).map_err(|error| error.to_string())?;
+    // A worker that received a producer may still be returning through library
+    // code after its last send, so such a library is never unloaded.
+    if slug_native_manifest::uses_producers(manifest) {
+        retain_library_for_foreign_worker(lease.clone());
+    }
     // SAFETY: a dynamic shim exports `slug_shim_get_table` with this type.
     let get_table: GetTable =
         unsafe { lease.symbol(c"slug_shim_get_table") }.map_err(|error| error.to_string())?;

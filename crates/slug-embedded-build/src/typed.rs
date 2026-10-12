@@ -14,8 +14,8 @@ use std::{
 };
 
 use slug_native_manifest::{
-    Binding, NativeManifest, Profile, SHIM_C_FLAGS, check_foreign_declarations, generate,
-    table_function,
+    Binding, NativeManifest, PRODUCER_HEADER, PRODUCER_HEADER_NAME, Profile, SHIM_C_FLAGS,
+    check_foreign_declarations, generate, table_function,
 };
 
 use crate::{DescriptorError, ProviderKind, TargetDescriptor};
@@ -292,6 +292,9 @@ fn build_provider(
         generate(&provider.manifest, &provider.name).map_err(|error| failure(error.to_string()))?;
     fs::write(&shim, text)
         .map_err(|error| failure(format!("cannot write {}: {error}", shim.display())))?;
+    let header = work.join(PRODUCER_HEADER_NAME);
+    fs::write(&header, PRODUCER_HEADER)
+        .map_err(|error| failure(format!("cannot write {}: {error}", header.display())))?;
 
     build.inputs.push(provider.clutch.join("clutch.toml"));
     let mut sources = vec![shim];
@@ -319,6 +322,8 @@ fn build_provider(
                 .args(&toolchain.flags)
                 .arg("-I")
                 .arg(&provider.clutch)
+                .arg("-I")
+                .arg(&work)
                 .arg("-c")
                 .arg(source)
                 .arg("-o")
