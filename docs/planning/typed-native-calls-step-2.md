@@ -154,20 +154,38 @@ module gets its own scope.
 
 ### 4. Move `slug.db.sqlite`
 
-- [ ] Rewrite `sqlite.c` as the thin helpers with a header, and bind the rest
+- [x] Rewrite `sqlite.c` as the thin helpers with a header, and bind the rest
   of SQLite directly in a typed manifest that links `sqlite3`.
-- [ ] Rewrite `sqlite.slug` and `statement.slug` as private raw declarations
+- [x] Rewrite `sqlite.slug` and `statement.slug` as private raw declarations
   plus exported wrappers. They bind variadic parameters by type, build rows as
   maps, and reset and clear a statement after each use, including on failure.
   `transaction.slug` is unchanged.
-- [ ] Stage the clutch through `slug-native-shim stage`.
+- [x] Stage the clutch through `slug-native-shim stage`.
+
+Eleven helpers cover what cannot be bound directly; 15 bindings, including
+both releases, call SQLite itself. The statement module holds the statement bindings, and the one-shot
+`exec` and `query` in `slug.db.sqlite` reuse it by importing it at call time,
+so the clutch does not depend on an import cycle.
+
+Slug code cannot distinguish an integer from a float of the same value, so a
+whole number in the 64-bit range binds as a SQLite integer and any other
+number as a real. A float such as `2.0` therefore binds as an integer, which
+is visible only through SQL's `typeof`.
+
+Moving the clutch exposed two older bugs, each fixed in its own commit: the
+desktop loader staged a clutch twice when one of its modules imported a
+sibling while it initialized, and the VM abandoned deferred work that called
+Slug functions more than one level deep, which skipped the transaction
+module's rollback.
 
 ### 5. Tests and measurement
 
-- [ ] Point the five SQLite integration tests at the typed clutch, keeping a
+- [x] Point the five SQLite integration tests at the typed clutch, keeping a
   prototype copy for the 0.13 loader's list and map builder coverage until
   step 4. Add tests for thrown error types, NUL text and blob columns, and
-  close with open statements.
+  close with open statements. `crates/slug/tests/typed_sqlite.rs` runs them
+  through the CLI, which registers the `slug.builtin` functions the wrappers
+  use.
 - [ ] Measure exec and query end to end against the prototype and record the
   results.
 

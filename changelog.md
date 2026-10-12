@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `slug.db.sqlite`, `slug.db.sqlite.statement`, and
+  `slug.db.sqlite.transaction` now run on typed native bindings: thin C
+  helpers plus direct SQLite bindings, wrapped in Slug code that keeps every
+  public name and signature. Failures are thrown as `Error` values whose
+  `type` is `sqlite.error` or `sqlite.bind`, so an uncaught failure now
+  reports `uncaught throw: struct {"type": "sqlite.error", ...}` at the
+  wrapper instead of `native ...: message` at the call. Text columns may
+  contain NUL bytes. A whole-number float such as `2.0` now binds as a SQLite
+  integer. Run `make stage-native-clutches` to rebuild the library.
+
 - Fixed deferred work that calls Slug functions more than one level deep.
   Inside `defer`, `defer onerror`, or `defer onsuccess`, a call chain such as
   `middle()` calling `leaf()`, or a called function returning from inside a

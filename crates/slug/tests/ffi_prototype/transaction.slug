@@ -1,0 +1,49 @@
+/**
+ * Transaction helpers composed entirely from `slug.db.sqlite`.
+ *
+ * This module has no native implementation: it demonstrates that a Clutch can
+ * combine ordinary Slug modules with sibling modules served by its native
+ * library.
+ */
+
+val sqlite = import("slug.db.sqlite")
+
+/**
+ * Begins a SQLite transaction on `db`.
+ */
+export val begin = fn(db:sqlite.Database) {
+    sqlite.exec(db, "BEGIN")
+}
+
+/**
+ * Commits the active transaction on `db`.
+ */
+export val commit = fn(db:sqlite.Database) {
+    sqlite.exec(db, "COMMIT")
+}
+
+/**
+ * Rolls back the active transaction on `db`.
+ */
+export val rollback = fn(db:sqlite.Database) {
+    sqlite.exec(db, "ROLLBACK")
+}
+
+/**
+ * Runs `work` in a transaction, committing its result on success.
+ *
+ * If `work` raises an error, the transaction is rolled back and that error is
+ * rethrown unchanged.
+ */
+export val transaction = fn(db:sqlite.Database, work:fn<any|nil, sqlite.Database>) {
+    begin(db)
+
+    defer onerror(err) {
+        rollback(db)
+        throw err
+    }
+
+    val result = work(db)
+    commit(db)
+    result
+}

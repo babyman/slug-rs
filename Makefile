@@ -52,6 +52,7 @@ test-repl:
 test-ffi-prototype:
 	cargo test -p slug --test ffi_prototype
 	cargo test -p slug --test typed_native
+	cargo test -p slug --test typed_sqlite
 	cargo test -p slug-native-manifest
 
 bench-ffi-prototype-scalar:

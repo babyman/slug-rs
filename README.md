@@ -64,9 +64,9 @@ contract is documented separately as `.cslug`.
   its manifest declares each C signature, and `make stage-native-clutches`
   generates a header-checked shim and builds the library on macOS, Linux, or
   Windows. Other platforms report a checked unavailable-platform error. The
-  `slug.db.sqlite` clutch proves variadic SQL binding and native-built
-  `list<map>` query rows by building its adapter into a temporary installed
-  layout during integration tests.
+  `slug.db.sqlite` clutch binds SQLite's C API the same way, with Slug code
+  over the raw calls providing variadic SQL binding, `list<map>` query rows,
+  prepared statements, and transactions.
   This checkout is a development clutch repository: run
   `make stage-native-clutches` before executing a program that imports one of
   its native modules. Staged platform libraries are local build outputs, not

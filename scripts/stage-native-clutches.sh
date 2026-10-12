@@ -62,7 +62,7 @@ if selected slug.io.fs.clutch "$@"; then
   stage_typed slug.io.fs.clutch slug_io_fs
 fi
 if selected slug.db.sqlite.clutch "$@"; then
-  stage slug.db.sqlite.clutch clutch/slug.db.sqlite.clutch/native/source/sqlite.c libslug_db_sqlite -lsqlite3
+  stage_typed slug.db.sqlite.clutch slug_db_sqlite
 fi
 if selected slug.core.clutch "$@"; then
   stage slug.core.clutch clutch/slug.core.clutch/native/source/core.c libslug_core -lm

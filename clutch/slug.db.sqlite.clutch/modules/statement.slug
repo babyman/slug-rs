@@ -3,24 +3,141 @@
  *
  * Import `slug.db.sqlite` to open the owning database, then use this module to
  * prepare, execute, query, and deterministically finalize statements.
+ *
+ * Failures throw `Error` values whose `type` is `sqlite.error`, carrying
+ * SQLite's message, or `sqlite.bind` for an unsupported parameter.
  */
 
 val sqlite = import("slug.db.sqlite")
 export resource Statement
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign prepareRaw = fn(database:sqlite.Database, sql:str):list
+foreign databaseErrorRaw = fn(database:sqlite.Database):str
+foreign errorRaw = fn(statement:Statement):str
+foreign changesRaw = fn(statement:Statement):num
+foreign bindNullRaw = fn(statement:Statement, index:num):num
+foreign bindIntRaw = fn(statement:Statement, index:num, value:num):num
+foreign bindFloatRaw = fn(statement:Statement, index:num, value:num):num
+foreign bindTextRaw = fn(statement:Statement, index:num, value:str):num
+foreign bindBytesRaw = fn(statement:Statement, index:num, value:bytes):num
+foreign stepRaw = fn(statement:Statement):num
+foreign resetRaw = fn(statement:Statement):num
+foreign clearRaw = fn(statement:Statement):num
+foreign columnCountRaw = fn(statement:Statement):num
+foreign columnTypeRaw = fn(statement:Statement, column:num):num
+foreign columnNameRaw = fn(statement:Statement, column:num):str
+foreign columnIntRaw = fn(statement:Statement, column:num):num
+foreign columnFloatRaw = fn(statement:Statement, column:num):num
+foreign columnTextRaw = fn(statement:Statement, column:num):list
+foreign columnBytesRaw = fn(statement:Statement, column:num):list
+foreign closeRaw = fn(statement:Statement):num
+
+// SQLite result codes and fundamental column types.
+val SQLITE_OK = 0
+val SQLITE_ROW = 100
+val SQLITE_DONE = 101
+val SQLITE_INTEGER = 1
+val SQLITE_FLOAT = 2
+val SQLITE_TEXT = 3
+val SQLITE_BLOB = 4
+
+val fail = fn(statement:Statement) {
+    throw Error {type: "sqlite.error", msg: errorRaw(statement)}
+}
+
+/**
+ * Binds one parameter. A whole number in the 64-bit integer range binds as a
+ * SQLite integer; any other number binds as a real.
+ */
+val bindValue = fn(statement:Statement, index:num, value):num {
+    match value {
+        nil => bindNullRaw(statement, index)
+        text:str => bindTextRaw(statement, index, text)
+        data:bytes => bindBytesRaw(statement, index, data)
+        number:num => {
+            if (number >= -9223372036854775807 - 1 && number <= 9223372036854775807 && int(number) == number) {
+                bindIntRaw(statement, index, int(number))
+            } else {
+                bindFloatRaw(statement, index, number)
+            }
+        }
+        _ => throw Error {type: "sqlite.bind", msg: "unsupported SQL parameter"}
+    }
+}
+
+val bindAll = fn(statement:Statement, parameters:list, index:num) {
+    match parameters {
+        [] => nil
+        [value, ...rest] => {
+            if (bindValue(statement, index, value) != SQLITE_OK) {
+                fail(statement)
+            } else {
+                recur(statement, rest, index + 1)
+            }
+        }
+    }
+}
+
+val columnValue = fn(statement:Statement, column:num) {
+    match columnTypeRaw(statement, column) {
+        1 => columnIntRaw(statement, column)
+        2 => columnFloatRaw(statement, column)
+        3 => columnTextRaw(statement, column)[0]
+        4 => columnBytesRaw(statement, column)[0]
+        _ => nil
+    }
+}
+
+val row = fn(statement:Statement, column:num, count:num, values:map):map {
+    if (column == count) {
+        values
+    } else {
+        val entry = {[columnNameRaw(statement, column)]: columnValue(statement, column)}
+        recur(statement, column + 1, count, values + entry)
+    }
+}
+
+val rows = fn(statement:Statement, collected:list):list {
+    val status = stepRaw(statement)
+    if (status == SQLITE_DONE) {
+        collected
+    } else {
+        if (status == SQLITE_ROW) {
+            recur(statement, collected + [row(statement, 0, columnCountRaw(statement), {})])
+        } else {
+            fail(statement)
+        }
+    }
+}
 
 /**
  * Compiles `sql` against `database` and returns a reusable statement handle.
  *
  * Close the statement before closing its database, normally with `defer`.
  */
-export foreign prepare = fn(database:sqlite.Database, sql:str):Statement
+export val prepare = fn(database:sqlite.Database, sql:str):Statement {
+    match prepareRaw(database, sql) {
+        [0, prepared] => prepared
+        [_, prepared] => {
+            val message = databaseErrorRaw(database)
+            if (prepared != nil) {
+                closeRaw(prepared)
+            }
+            throw Error {type: "sqlite.error", msg: message}
+        }
+    }
+}
 
 /**
  * Finalizes `statement` and releases its native SQLite statement.
  *
  * A closed statement resource cannot be used again.
  */
-export foreign close = fn(statement:Statement):num
+export val close = fn(statement:Statement):num {
+    closeRaw(statement)
+    0
+}
 
 /**
  * Executes `statement` with positional parameters and returns SQLite's
@@ -30,7 +147,18 @@ export foreign close = fn(statement:Statement):num
  * allowing it to be called again with different `nil`, number, string, or byte
  * parameters.
  */
-export foreign exec = fn(statement:Statement, ...parameters:any|nil):num
+export val exec = fn(statement:Statement, ...parameters:any|nil):num {
+    defer {
+        resetRaw(statement)
+        clearRaw(statement)
+    }
+    bindAll(statement, parameters, 1)
+    if (stepRaw(statement) == SQLITE_DONE) {
+        changesRaw(statement)
+    } else {
+        fail(statement)
+    }
+}
 
 /**
  * Executes `statement` with positional parameters and returns all result rows.
@@ -39,4 +167,11 @@ export foreign exec = fn(statement:Statement, ...parameters:any|nil):num
  * `slug.db.sqlite.query`. The statement is reset and its bindings are cleared
  * after the query completes, so it may be reused.
  */
-export foreign query = fn(statement:Statement, ...parameters:any|nil):list<map>
+export val query = fn(statement:Statement, ...parameters:any|nil):list<map> {
+    defer {
+        resetRaw(statement)
+        clearRaw(statement)
+    }
+    bindAll(statement, parameters, 1)
+    rows(statement, [])
+}

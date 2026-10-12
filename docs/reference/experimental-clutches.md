@@ -12,11 +12,10 @@ The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
 module-scoped Rust plugin initializer, and manifest-selected version-0 native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
 state. Archive loading, package installation, and cross-platform binary
-distribution remain unimplemented. The `slug.io.fs` clutch binds plain C
-functions through typed native bindings. The
-`slug.db.sqlite` source clutch is built into a temporary installed layout by
-the integration suite, proving variadic SQL bindings and compound value
-transfer through an external C dependency. The bundled `slug.core` clutch
+distribution remain unimplemented. The `slug.io.fs` and `slug.db.sqlite`
+clutches bind plain C functions through typed native bindings. The SQLite
+clutch's Slug code over raw SQLite calls provides variadic SQL bindings,
+row maps, prepared statements, and transactions. The bundled `slug.core` clutch
 provides standard collections, standard input, and stateless math through one
 native library. This checkout
 is a development repository: `make stage-native-clutches` builds every native

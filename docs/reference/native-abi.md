@@ -460,8 +460,8 @@ released together.
 
 Typed native bindings bind `foreign` declarations to ordinary C functions
 through the clutch manifest, without a Slug-aware C adapter. They replace the
-0.13 prototype one clutch at a time: `slug.io.fs` uses them, while `slug.core`
-and `slug.db.sqlite` remain on the prototype until they move. The contract is
+0.13 prototype one clutch at a time: `slug.io.fs` and `slug.db.sqlite` use
+them, while `slug.core` remains on the prototype until it moves. The contract is
 set by these decision records:
 
 - [Typed native calls](../decisions/2026-10-10-typed-native-calls.md);
@@ -555,7 +555,10 @@ runtime-owned storage and invokes its supplied C destructor. On `full`,
 `closed`, or invalid input, C retains and releases that buffer itself.
 `producer_destroy` remains the prototype's explicit producer-release operation.
 
-The `slug.db.sqlite` clutch is the compound-value SQLite experiment. It owns a
+The prototype integration tests keep a copy of the `slug.db.sqlite` clutch
+from before it moved to typed bindings, in `crates/slug/tests/ffi_prototype/`,
+to cover the compound-value builders until the prototype is removed. That copy
+is the compound-value SQLite experiment. It owns a
 typed `Database` resource, opens an ordinary SQLite path (including
 `:memory:`), and exposes variadic `exec` and `query` functions. The adapter
 receives already-bound Slug values directly from each variadic argument and

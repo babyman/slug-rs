@@ -108,12 +108,12 @@ fn build_native_clutch(
     .expect("copy clutch declaration");
     if module_name == "slug.db.sqlite" {
         fs::copy(
-            workspace_root().join("clutch/slug.db.sqlite.clutch/modules/statement.slug"),
+            workspace_root().join("crates/slug/tests/ffi_prototype/statement.slug"),
             clutch_root.join("modules/statement.slug"),
         )
         .expect("copy SQLite statement module");
         fs::copy(
-            workspace_root().join("clutch/slug.db.sqlite.clutch/modules/transaction.slug"),
+            workspace_root().join("crates/slug/tests/ffi_prototype/transaction.slug"),
             clutch_root.join("modules/transaction.slug"),
         )
         .expect("copy SQLite transaction module");
@@ -667,8 +667,8 @@ fn sqlite_database_clutch_binds_slug_values_and_returns_rows() {
         &directory,
         "slug.db.sqlite",
         "slug.db.sqlite.clutch",
-        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
-        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "crates/slug/tests/ffi_prototype/sqlite.slug",
+        "crates/slug/tests/ffi_prototype/sqlite.c",
         "slug_db_sqlite",
         &["-lsqlite3"],
     );
@@ -708,8 +708,8 @@ fn sqlite_clutch_preserves_database_and_statement_identities() {
         &directory,
         "slug.db.sqlite",
         "slug.db.sqlite.clutch",
-        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
-        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "crates/slug/tests/ffi_prototype/sqlite.slug",
+        "crates/slug/tests/ffi_prototype/sqlite.c",
         "slug_db_sqlite",
         &["-lsqlite3"],
     );
@@ -749,8 +749,8 @@ fn sqlite_transaction_module_commits_successful_work() {
         &directory,
         "slug.db.sqlite",
         "slug.db.sqlite.clutch",
-        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
-        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "crates/slug/tests/ffi_prototype/sqlite.slug",
+        "crates/slug/tests/ffi_prototype/sqlite.c",
         "slug_db_sqlite",
         &["-lsqlite3"],
     );
@@ -789,8 +789,8 @@ fn sqlite_transaction_module_rolls_back_and_rethrows_work_errors() {
         &directory,
         "slug.db.sqlite",
         "slug.db.sqlite.clutch",
-        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
-        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "crates/slug/tests/ffi_prototype/sqlite.slug",
+        "crates/slug/tests/ffi_prototype/sqlite.c",
         "slug_db_sqlite",
         &["-lsqlite3"],
     );
@@ -832,8 +832,8 @@ fn sqlite_statement_failures_clear_partial_bindings_before_reuse() {
         &directory,
         "slug.db.sqlite",
         "slug.db.sqlite.clutch",
-        "clutch/slug.db.sqlite.clutch/modules/sqlite.slug",
-        "clutch/slug.db.sqlite.clutch/native/source/sqlite.c",
+        "crates/slug/tests/ffi_prototype/sqlite.slug",
+        "crates/slug/tests/ffi_prototype/sqlite.c",
         "slug_db_sqlite",
         &["-lsqlite3"],
     );
