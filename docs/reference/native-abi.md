@@ -460,15 +460,17 @@ released together.
 
 Typed native bindings bind `foreign` declarations to ordinary C functions
 through the clutch manifest, without a Slug-aware C adapter. They replace the
-0.13 prototype one clutch at a time: `slug.io.fs` and `slug.db.sqlite` use
-them, while `slug.core` remains on the prototype until it moves. The contract is
-set by these decision records:
+0.13 prototype: `slug.io.fs`, `slug.db.sqlite`, and `slug.core` use them, and
+no first-party clutch still uses the prototype. The contract is set by these
+decision records:
 
 - [Typed native calls](../decisions/2026-10-10-typed-native-calls.md);
 - [Uniform shim entry](../decisions/2026-10-10-uniform-shim-entry.md);
 - [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md);
+- [Static selection of typed native providers](../decisions/2026-10-11-static-typed-provider-selection.md);
+- [Typed native length results and shared handles](../decisions/2026-10-11-typed-native-length-results-and-shared-handles.md);
   and
-- [Static selection of typed native providers](../decisions/2026-10-11-static-typed-provider-selection.md).
+- [Typed native producers](../decisions/2026-10-11-typed-native-producers.md).
 
 In summary:
 
@@ -504,14 +506,26 @@ In summary:
 - **Resources.** A handle's release function runs at most once, at teardown or
   from the destructor. A function with a `close` handle parameter closes it
   explicitly and is idempotent.
+- **Producers.** Under `profile = "events"`, a `producer` argument, annotated
+  `chan` or `chan<T>` in Slug, mints a producer capability from a buffered
+  Slug channel and passes C a `slug_producer *`. C sends nil, bool, integer,
+  float, text, and bytes values through the host function table that the
+  capability carries, with the inline wrappers in the generated
+  `slug_producer.h`. Sends never block: they report `sent`, `full`, `closed`,
+  or `invalid`, and the host copies text and bytes, so C keeps its buffer.
+  Native and Slug sends share the channel's capacity. C may send from any
+  thread, and must release each capability exactly once. A library that has
+  received a producer stays loaded for the process lifetime. `slug.io.stdin`
+  starts its reader thread this way.
 - **Limits.** A binding has at most 16 argument and 16 result cells. `str` and
-  `bytes` results, structs, buffers, constants, channel producers, and MSVC
-  are not supported yet.
+  `bytes` return values (as opposed to `out` results), structs, buffers,
+  constants, producers on embedded targets, and MSVC are not supported yet.
 
 ## Experimental C math module
 
 The `ffi-prototype` test suite contains C module fixtures with scalar `add` and
-`sqrt` functions. The same internal loader is selected by an experimental
+`sqrt` functions, including a copy of the `slug.core` clutch from before it
+moved to typed bindings, in `crates/slug/tests/ffi_prototype/`. The same internal loader is selected by an experimental
 clutch's native manifest entry. Its header, loader, and fixtures exercise
 opaque calls, version rejection, and structured errors; they are not version 1
 declarations and accept no third-party compatibility promise. The

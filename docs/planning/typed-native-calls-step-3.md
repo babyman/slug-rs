@@ -163,10 +163,32 @@ as staging does and runs on every CI platform, including Windows.
 
 ### 5. Measure and document
 
-- [ ] Measure standard-input throughput, typed versus prototype, and record
+- [x] Measure standard-input throughput, typed versus prototype, and record
   it.
-- [ ] Update `native-abi.md`, `experimental-clutches.md`, and the README for
+- [x] Update `native-abi.md`, `experimental-clutches.md`, and the README for
   producers and the moved clutch.
+
+`stdin_typed_versus_prototype_end_to_end`, an ignored test that
+`make bench-ffi-prototype-scalar` runs, pipes 100,000 lines into the release
+CLI, which counts them through `readLines()`. An empty-input run of the same
+program is the startup control and is subtracted. Medians of 11 samples on an
+Apple M3, in nanoseconds per line, from two runs:
+
+| Run | Prototype | Typed |
+|---:|---:|---:|
+| 1 | 853 | 730 |
+| 2 | 833 | 797 |
+
+The two are within run-to-run noise. Per-line cost is the VM's receive loop.
+Both forms copy each line into the host. The typed reader reuses one line
+buffer where the prototype allocated one per line, and that difference does
+not show.
+
+Measuring exposed a VM race that both forms hit. If a producer sent its last
+lines and closed between the VM's final drain and its check for a live
+producer, the VM reported "task remains blocked with no runnable work" with
+the lines still queued. It failed in about 3% of 100,000-line runs and is
+fixed, with a VM test that sweeps the close across the VM's wake-up.
 
 ## Exit gate
 

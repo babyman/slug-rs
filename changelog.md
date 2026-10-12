@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Measured standard-input throughput through the CLI: typed and prototype
+  `slug.io.stdin` are within noise, at roughly 0.7 to 0.85 µs per line. The
+  native ABI, experimental clutch, and README docs now describe typed
+  producers and the typed `slug.core` clutch.
+
 - Fixed a race in which a program receiving from a native producer could
   fail with "task remains blocked with no runnable work" at end of stream.
   If the producer sent its last values and closed after the VM's final

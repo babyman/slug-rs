@@ -1943,3 +1943,135 @@ fn sqlite_typed_versus_prototype_end_to_end() {
         }
     }
 }
+
+/// Builds the current typed `slug.core` clutch into a repository in
+/// `directory`, as clutch staging does.
+fn build_typed_core_clutch(directory: &TemporaryDirectory) {
+    let source = workspace_root().join("clutch/slug.core.clutch");
+    let repository = directory.path().join("clutch");
+    let root = repository.join("slug.core.clutch");
+    for file in [
+        "clutch.toml",
+        "modules/std.slug",
+        "modules/stdin.slug",
+        "modules/math.slug",
+        "native/source/core.c",
+        "native/source/slug_core.h",
+    ] {
+        let target = root.join(file);
+        fs::create_dir_all(target.parent().expect("clutch file has a parent"))
+            .expect("create typed clutch directory");
+        fs::copy(source.join(file), target).expect("copy typed core clutch file");
+    }
+    fs::write(
+        repository.join("manifest.toml"),
+        "[modules]\n\
+         \"slug.std\" = \"slug.core.clutch\"\n\
+         \"slug.io.stdin\" = \"slug.core.clutch\"\n\
+         \"slug.math\" = \"slug.core.clutch\"\n",
+    )
+    .expect("write typed repository manifest");
+    let manifest = slug_native_manifest::NativeManifest::from_clutch_source(
+        &fs::read_to_string(root.join("clutch.toml")).expect("read typed manifest"),
+    )
+    .expect("valid typed core manifest");
+    slug_native_manifest::build_dynamic(&root, &manifest, "slug_core", current_native_platform())
+        .unwrap_or_else(|error| panic!("build typed core clutch: {error}"));
+}
+
+/// Raw end-to-end timing for standard input, typed versus prototype: the CLI
+/// counts piped lines through `readLines()`. An empty-input run of the same
+/// program is the startup control, subtracted from the per-line cost.
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn stdin_typed_versus_prototype_end_to_end() {
+    use std::io::Write as _;
+
+    const LINES: usize = 100_000;
+    #[allow(clippy::cast_precision_loss)]
+    const LINES_F64: f64 = LINES as f64;
+    const PROGRAM: &str = "val { readLines } = import(\"slug.io.stdin\")\n\
+                           val count = fn(lines, total) {\n\
+                             match select { recv lines } {\n\
+                               nil => total\n\
+                               _ => recur(lines, total + 1)\n\
+                             }\n\
+                           }\n\
+                           println(count(readLines(), 0))\n";
+    println!(
+        "stdin configuration: profile=release samples={SCALAR_SAMPLE_COUNT} lines={LINES} target={}-{}",
+        env::consts::ARCH,
+        env::consts::OS,
+    );
+    let input = "a line of benchmark text\n".repeat(LINES);
+    let run = |directory: &TemporaryDirectory, input: &str| {
+        let started = Instant::now();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_slug"))
+            .env("SLUG_HOME", directory.path())
+            .arg(directory.path().join("cli.slug"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("run stdin benchmark");
+        child
+            .stdin
+            .take()
+            .expect("piped stdin")
+            .write_all(input.as_bytes())
+            .expect("write benchmark input");
+        let output = child.wait_with_output().expect("collect benchmark output");
+        let elapsed = started.elapsed();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            elapsed,
+        )
+    };
+    for label in ["prototype", "typed"] {
+        let directory = TemporaryDirectory::new();
+        if label == "typed" {
+            build_typed_core_clutch(&directory);
+        } else {
+            build_core_clutch(&directory);
+        }
+        let library = directory.path().join("lib/slug");
+        fs::create_dir_all(&library).expect("create SLUG_HOME library");
+        fs::copy(
+            workspace_root().join("lib/slug/builtin.slug"),
+            library.join("builtin.slug"),
+        )
+        .expect("copy builtin module");
+        fs::write(directory.path().join("cli.slug"), PROGRAM).expect("write benchmark program");
+        assert_eq!(run(&directory, &input).0, LINES.to_string());
+        let mut controls = Vec::new();
+        let mut totals = Vec::new();
+        for sample_index in 1..=SCALAR_SAMPLE_COUNT {
+            let (count, control) = run(&directory, "");
+            assert_eq!(count, "0");
+            let (count, total) = run(&directory, &input);
+            assert_eq!(count, LINES.to_string());
+            println!(
+                "stdin-{label} sample {sample_index}: control_ns={} total_ns={} ns_per_line={:.2}",
+                control.as_nanos(),
+                total.as_nanos(),
+                total.saturating_sub(control).as_secs_f64() * 1_000_000_000.0 / LINES_F64,
+            );
+            controls.push(control);
+            totals.push(total);
+        }
+        controls.sort();
+        totals.sort();
+        let (control, total) = (controls[controls.len() / 2], totals[totals.len() / 2]);
+        println!(
+            "stdin-{label} median: control_ns={} total_ns={} ns_per_line={:.2}",
+            control.as_nanos(),
+            total.as_nanos(),
+            total.saturating_sub(control).as_secs_f64() * 1_000_000_000.0 / LINES_F64,
+        );
+    }
+}

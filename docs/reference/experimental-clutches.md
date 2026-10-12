@@ -12,12 +12,13 @@ The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
 module-scoped Rust plugin initializer, and manifest-selected version-0 native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
 state. Archive loading, package installation, and cross-platform binary
-distribution remain unimplemented. The `slug.io.fs` and `slug.db.sqlite`
-clutches bind plain C functions through typed native bindings. The SQLite
-clutch's Slug code over raw SQLite calls provides variadic SQL bindings,
+distribution remain unimplemented. The `slug.io.fs`, `slug.db.sqlite`, and
+`slug.core` clutches bind plain C functions through typed native bindings. The
+SQLite clutch's Slug code over raw SQLite calls provides variadic SQL bindings,
 row maps, prepared statements, and transactions. The bundled `slug.core` clutch
-provides standard collections, standard input, and stateless math through one
-native library. This checkout
+provides standard collections, standard input, and stateless math. Its
+standard-input reader runs on a C thread and sends lines into a Slug channel
+through a producer, under the `events` profile. This checkout
 is a development repository: `make stage-native-clutches` builds every native
 library for the current supported platform at its manifest-selected location
 before local programs import it, generating and compiling the shim of each
@@ -105,10 +106,12 @@ loader accepts only `slug-ffi-prototype/0.13` or the typed form, validates the
 library's descriptor or shim table, and does not search system paths or fall
 back to a host plugin.
 
-Native source may include `slug_ffi_helpers.h`, a private header-only SDK that
-builds common asynchronous channel-source lifecycle patterns from the same
-prototype ABI. It is optional convenience code, not a separate Clutch ABI or
-runtime dependency.
+Prototype native source may include `slug_ffi_helpers.h`, a private
+header-only SDK that builds common asynchronous channel-source lifecycle
+patterns from the same prototype ABI. It is optional convenience code, not a
+separate Clutch ABI or runtime dependency. No first-party clutch uses it: a
+typed clutch's C source includes the generated `slug_producer.h` instead, from
+beside its shim.
 
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
