@@ -41,7 +41,6 @@ a specified feature is implemented.
 | [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
-| [ffi-helpers.md](reference/ffi-helpers.md) | Private header-only helpers for common native channel-source lifecycle patterns. |
 
 ### Engineering
 
@@ -69,7 +68,7 @@ a specified feature is implemented.
 | [embedded-static-build-toolchain.md](planning/completed/embedded-static-build-toolchain.md) | Completed implementation plan for descriptor-driven `.slug` to firmware builds with static providers. |
 | [agentic-development-refactoring.md](planning/completed/agentic-development-refactoring.md) | Organizational refactoring plan for discoverable subsystem boundaries and focused validation. |
 | [micro-runtime-followups.md](planning/completed/micro-runtime-followups.md) | Completed correctness, lifecycle, and Cargo feature-matrix follow-ups for the slim VM runtime. |
-| [FFI channel producer prototype ABI 0.13 plan](planning/ffi-channel-producer-v0.13.md) | Prototype ABI 0.13 native-producer work and the completed `slug.io.stdin` Clutch extraction. |
+| [FFI channel producer prototype ABI 0.13 plan](planning/completed/ffi-channel-producer-v0.13.md) | Completed prototype ABI 0.13 native-producer work and `slug.io.stdin` Clutch extraction; the prototype has since been removed. |
 | [Type Checking Phase 3_ Complete Inference Across Ordinary Expressions.md](planning/Type%20Checking%20Phase%203_%20Complete%20Inference%20Across%20Ordinary%20Expressions.md) | Acceptance criteria and execution packages for complete ordinary-expression inference. |
 | [nominal-types-implementation.md](planning/completed/nominal-types-implementation.md) | Checklist for nominal resources, enums, and aliases. |
 | [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |

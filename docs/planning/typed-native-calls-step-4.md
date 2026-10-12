@@ -150,23 +150,29 @@ releases resources, so it leaves the switch active.
 
 ### 2. Remove the loader
 
-- [ ] Move the shared dynamic-library code into `dynamic_library` and rename
+- [x] Move the shared dynamic-library code into `dynamic_library` and rename
   its error type.
-- [ ] Delete the prototype loader, its exports, and the `abi` manifest form.
+- [x] Delete the prototype loader, its exports, and the `abi` manifest form.
 
 ### 3. Remove the tests, fixtures, headers, and SDK
 
-- [ ] Move the scalar-call controls to `typed_native.rs`, and delete
+- [x] Move the scalar-call controls to `typed_native.rs`, and delete
   `ffi_prototype.rs`, its clutch copies, and the C fixtures.
-- [ ] Delete `include/`, and drop `-I include` from any remaining build
+- [x] Delete `include/`, and drop `-I include` from any remaining build
   command.
-- [ ] Rename the make targets, the benchmark script, and the CI job.
+- [x] Rename the make targets, the benchmark script, and the CI job.
+
+`make check` dropped from 2004 to 1905 tests: exactly `ffi_prototype.rs`'s
+33 tests, which it ran in three configurations. No other suite lost a test.
 
 ### 4. Documentation and records
 
-- [ ] Remove the prototype sections from `native-abi.md` and
+- [x] Remove the prototype sections from `native-abi.md` and
   `experimental-clutches.md`, delete `ffi-helpers.md`, and update the docs
   index, the README, and `AGENTS.md`.
+
+  The README needed no change. `native-abi.md` also gained a shutdown bullet
+  for typed bindings.
 - [ ] Supersede and cross-reference the decision records as classified, and
   move the 0.13 producer plan to `completed/`.
 

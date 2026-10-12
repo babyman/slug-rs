@@ -19,7 +19,7 @@ crates/slug-nil-loader/       Deny-all resolver for restricted hosts
 crates/slug-restricted-host/  In-memory restricted host facade
 crates/slug/                  CLI, configuration, fixture tooling, and server mode
 crates/slug-repl/             Terminal REPL client for `slug --server`
-tests/      Shared Slug conformance fixtures and native C fixtures
+tests/      Shared Slug conformance fixtures
 docs/       Architecture, development policy, and canonical language documents
 .agents/    Agent workflows and decision-record guidance
 ```

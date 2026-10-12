@@ -1,5 +1,9 @@
 # FFI channel producer prototype ABI 0.13 implementation plan
 
+Historical. This work was completed, and the 0.13 prototype it extended was
+removed in
+[step 4 of the typed native-call plan](../typed-native-calls-step-4.md).
+
 ## Purpose
 
 Move `slug.io.stdin` out of the core executable only after a native Clutch can

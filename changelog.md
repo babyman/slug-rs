@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Removed the prototype from the native ABI and experimental clutch
+  references, and deleted the helper SDK reference. The completed 0.13
+  producer plan moved to `docs/planning/completed/`.
+
 - Renamed the native build names: `make test-ffi-prototype` is now
   `make test-native`, `make bench-ffi-prototype-scalar` is now
   `make bench-native-scalar` (script `scripts/benchmark-native-scalar.sh`,

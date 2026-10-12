@@ -9,7 +9,7 @@ may rely on. A later released clutch format requires a new decision record,
 versioned schema, and regression coverage.
 
 The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
-module-scoped Rust plugin initializer, and manifest-selected version-0 native
+module-scoped Rust plugin initializer, and manifest-selected typed native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
 state. Archive loading, package installation, and cross-platform binary
 distribution remain unimplemented. The `slug.io.fs`, `slug.db.sqlite`, and
@@ -55,25 +55,9 @@ The optional `plugin` value is an opaque host configuration key, not a
 source-visible path or arbitrary native-library search instruction.
 
 Optionally, a clutch may provide one native implementation library for any
-subset of its modules:
-
-```toml
-[modules]
-"slug.arcade" = { source = "modules/arcade.slug" }
-"slug.arcade.audio" = { source = "modules/audio.slug" }
-"slug.arcade.input" = { source = "modules/input.slug" }
-
-[native]
-source = "native/source"
-abi = "slug-ffi-prototype/0.13"
-
-[native.libraries]
-"macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
-```
-
-A `[native]` table with `abi` uses the 0.13 prototype. A table without `abi`
-uses [typed native bindings](native-abi.md#typed-native-bindings), which bind
-the clutch's `foreign` declarations to plain C functions:
+subset of its modules. Its `[native]` table uses
+[typed native bindings](native-abi.md#typed-native-bindings), which bind the
+clutch's `foreign` declarations to plain C functions:
 
 ```toml
 [native]
@@ -92,26 +76,16 @@ release = { symbol = "slug_fs_close", signature = "(handle<File> file) -> void" 
 readLineRaw = { symbol = "slug_fs_read_line", signature = "(handle<File> file, out cstr line) -> i32" }
 ```
 
-Mixing the two forms is a manifest error. For a typed clutch, the loader also
-checks every `foreign` declaration in each of its modules against its binding
-before the module is installed.
-
-The optional prototype `native.source` directory contains FFI source or build
-inputs and is never compiled by Slug at runtime. `native.libraries` selects one checked
-library for the current supported OS/architecture; all paths must remain inside
-the clutch. The library is initialized once for the clutch and may register
-implementations for any of its module identities. A module remains pure Slug
-unless its own `foreign` declarations require one of those registrations. The
-loader accepts only `slug-ffi-prototype/0.13` or the typed form, validates the
-library's descriptor or shim table, and does not search system paths or fall
-back to a host plugin.
-
-Prototype native source may include `slug_ffi_helpers.h`, a private
-header-only SDK that builds common asynchronous channel-source lifecycle
-patterns from the same prototype ABI. It is optional convenience code, not a
-separate Clutch ABI or runtime dependency. No first-party clutch uses it: a
-typed clutch's C source includes the generated `slug_producer.h` instead, from
-beside its shim.
+The headers and sources are build inputs for the generated shim and are never
+compiled by Slug at runtime. `native.libraries` selects one checked library
+for the current supported OS/architecture; all paths must remain inside the
+clutch. The library is loaded once for the clutch and may serve any of its
+module identities. A module remains pure Slug unless it declares `foreign`
+functions. The loader checks the library's shim table and every `foreign`
+declaration in each of the clutch's modules against its binding before the
+module is installed. It does not search system paths or fall back to a host
+plugin. A C source that sends into a Slug channel includes the generated
+`slug_producer.h` from beside its shim.
 
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
@@ -158,8 +132,8 @@ nominal-resource validation remain the native-ABI boundary.
 For a clutch with a host plugin or native library, loading is transactional:
 
 1. validate the selected clutch manifest and paths;
-2. initialize the plugin once, or load and validate the selected native
-   descriptor, under a clutch-owned registration scope;
+2. initialize the plugin once, or load the selected native library and
+   validate its shim table, under a clutch-owned registration scope;
 3. load requested source modules and validate each module's `foreign`
    declarations against that scope; and
 4. publish the module and registrations only after all preceding steps pass.
