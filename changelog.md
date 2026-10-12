@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed a race in which a program receiving from a native producer could
+  fail with "task remains blocked with no runnable work" at end of stream.
+  If the producer sent its last values and closed after the VM's final
+  drain but before the VM checked for a live producer, the VM gave up with
+  those values and the close still queued. It now drains once more. Reading
+  100,000 lines through `slug.io.stdin` failed in about 3% of runs, on the
+  prototype as well as on typed bindings.
+
 - The `slug.core` clutch now uses typed native bindings. `slug.io.stdin`
   starts a plain C reader thread that sends lines through a producer minted
   from the module's channel, and `slug.math` wraps raw C functions. Failed

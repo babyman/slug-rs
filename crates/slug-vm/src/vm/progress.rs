@@ -87,7 +87,9 @@ impl ProgressDriver {
     #[cfg(all(not(target_os = "none"), not(feature = "concurrency")))]
     pub(super) fn wait_for_progress(&self) -> bool {
         if !self.has_live_native_source() {
-            return false;
+            // A producer may have sent, closed, and released since the
+            // caller's last drain; whatever it sent before closing is queued.
+            return self.make_available_progress();
         }
         let observed = self.snapshot();
         if self.make_available_progress() {

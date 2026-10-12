@@ -616,12 +616,17 @@ mod minted_producers {
     use super::*;
     use slug_vm::{NativeChannelProducer, NativeProducerStatus, NativeSendValue};
 
+    /// Values the closing-race worker sends before it closes.
+    const RACE_SENDS: i64 = 2;
+
     #[derive(Default)]
     struct Minted {
         producers: Mutex<Vec<NativeChannelProducer>>,
         statuses: Mutex<Vec<String>>,
         threaded: bool,
         close_after_mint: bool,
+        /// The worker thread closes the channel this long after its sends.
+        close_after: Option<std::time::Duration>,
     }
 
     fn status_name(status: &NativeProducerStatus) -> String {
@@ -640,11 +645,17 @@ mod minted_producers {
         let state = call.state::<Arc<Minted>>().expect("minted state").clone();
         if state.threaded {
             let worker = producer.clone();
+            let state = state.clone();
             std::thread::spawn(move || {
-                for value in [
-                    NativeSendValue::string("hello"),
-                    NativeSendValue::integer(7),
-                ] {
+                let values = if state.close_after.is_some() {
+                    (0..RACE_SENDS).map(NativeSendValue::integer).collect()
+                } else {
+                    vec![
+                        NativeSendValue::string("hello"),
+                        NativeSendValue::integer(7),
+                    ]
+                };
+                for value in values {
                     let mut value = value;
                     loop {
                         match worker.try_send(value) {
@@ -656,6 +667,13 @@ mod minted_producers {
                             NativeProducerStatus::Closed(_) => return,
                         }
                     }
+                }
+                if let Some(delay) = state.close_after {
+                    let started = std::time::Instant::now();
+                    while started.elapsed() < delay {
+                        std::hint::spin_loop();
+                    }
+                    worker.close();
                 }
             });
         } else {
@@ -703,6 +721,38 @@ mod minted_producers {
             .run_named(&program, "main")
             .expect("receive from the worker thread");
         assert_eq!(value.to_string(), "[\"hello\", 7]");
+    }
+
+    #[test]
+    fn a_receiver_sees_sends_that_race_with_a_closing_producer() {
+        // The worker sends and closes while the VM may be between draining
+        // the channel and checking for a live producer; the VM must still
+        // deliver every value and the close rather than report a blocked task.
+        let program = compile(
+            "minted-closing-race.slug",
+            "val channel = make_channel(1)\n\
+             attach(channel)\n\
+             val count = fn(total) {\n\
+               match select { recv channel } {\n\
+                 nil => total\n\
+                 _ => recur(total + 1)\n\
+               }\n\
+             }\n\
+             count(0)\n",
+        )
+        .expect("compile closing race source");
+        // Sweep the close across the VM's wake-up and drain.
+        for micros in 0..400 {
+            let state = Arc::new(Minted {
+                threaded: true,
+                close_after: Some(std::time::Duration::from_micros(micros)),
+                ..Minted::default()
+            });
+            let value = vm_with_attach(state)
+                .run_named(&program, "main")
+                .expect("receive every value before the close");
+            assert_eq!(value.to_string(), RACE_SENDS.to_string());
+        }
     }
 
     #[test]
