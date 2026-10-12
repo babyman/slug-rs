@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reorganized the README around an introduction to the Slug language and the
+  slug-rs implementation, with concise paths for trying the CLI, REPL, compiled
+  artifacts, native modules, development, and deeper documentation.
+
 - Completed step 4, and with it the typed native-call replacement: CI passed
   its exit gate, and its plan moved to `docs/planning/completed/`.
 
