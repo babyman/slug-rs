@@ -2,11 +2,24 @@
 "slug.io.fs" = { source = "modules/fs.slug" }
 
 [native]
-source = "native/source"
-abi = "slug-ffi-prototype/0.13"
+profile = "core"
+headers = ["native/source/slug_io_fs.h"]
+sources = ["native/source/fs.c"]
 
 [native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
 "macos-x86_64" = "native/macos-x86_64/libslug_io_fs.dylib"
 "linux-x86_64" = "native/linux-x86_64/libslug_io_fs.so"
 "windows-x86_64" = "native/windows-x86_64/slug_io_fs.dll"
+
+[native.resources."slug.io.fs".File]
+type = "slug_fs_file"
+release = { symbol = "slug_fs_close", signature = "(handle<File> file) -> void" }
+
+[native.functions."slug.io.fs"]
+openReadRaw = { symbol = "slug_fs_open_read", signature = "(cstr path) -> handle<File>" }
+openWriteRaw = { symbol = "slug_fs_open_write", signature = "(cstr path) -> handle<File>" }
+openAppendRaw = { symbol = "slug_fs_open_append", signature = "(cstr path) -> handle<File>" }
+readLineRaw = { symbol = "slug_fs_read_line", signature = "(handle<File> file, out cstr line) -> i32" }
+writeRaw = { symbol = "slug_fs_write", signature = "(handle<File> file, str content) -> i64" }
+closeRaw = { symbol = "slug_fs_close", signature = "(close handle<File> file) -> void" }

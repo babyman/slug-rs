@@ -29,3 +29,11 @@ also proves a delayed send receives `closed` after Slug drops the receiver.
 
 The unstable prototype minor version is now 6. Existing fixtures remain
 compatible when rebuilt against the header.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native
+producers](2026-10-11-typed-native-producers.md). Typed producers copy text
+and bytes on every send, so C keeps its buffer whatever the status; the
+rejected-value rule still holds.

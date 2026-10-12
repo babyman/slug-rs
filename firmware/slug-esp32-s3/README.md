@@ -17,7 +17,7 @@ configured only on first write. The default program initializes every selected
 output low, chases one LED at a time, lights all LEDs, and clears them.
 
 The firmware also provides the non-concurrent `slug.builtin` surface:
-implicit and explicit `print`, `println`, and `len`, plus `Error`. Diagnostic
+implicit and explicit `print`, `println`, `len`, and `keys`, plus `Error`. Diagnostic
 output uses the ESP serial stream. `chan` and `close` remain unavailable until
 the embedded concurrency profile exists.
 
@@ -66,6 +66,34 @@ editing firmware Rust source:
 SLUG_TARGET_DESCRIPTOR=esp32-s3-hello.toml cargo +esp check
 ```
 
+`esp32-s3-typed.toml` adds a typed C provider: `fixture.pulse`, from
+[`typed-fixture/pulse.clutch`](typed-fixture/pulse.clutch). `build.rs`
+generates its shim, cross-compiles it with `xtensa-esp32s3-elf-gcc`, archives
+it, and links it; the generated registration installs it through
+`slug-native-adapter` beside the Rust GPIO and delay providers. Its program,
+[`programs/typed.slug`](programs/typed.slug), pulses GPIO 4 with timings from
+the C provider:
+
+```sh
+SLUG_TARGET_DESCRIPTOR=esp32-s3-typed.toml cargo +esp check
+```
+
+A typed provider entry names its clutch instead of a board-package library:
+
+```toml
+[[providers]]
+module = "fixture.pulse"
+contract = "firmware/slug-esp32-s3/typed-fixture/pulse.clutch/modules/pulse.slug"
+kind = "typed"
+clutch = "firmware/slug-esp32-s3/typed-fixture/pulse.clutch"
+```
+
+The build fails before linking when the clutch's bindings do not exactly cover
+the contract's `foreign` declarations, a declaration's types are incompatible,
+the shim fails its header checks, or the provider needs a profile the target
+does not offer. `[firmware] profiles` lists the offered profiles and defaults
+to `["core"]`.
+
 The release firmware is:
 
 ```text
@@ -110,7 +138,7 @@ Slug GPIO 4 -> high
 
 The chase holds each LED high for 80 ms, then shows the whole lap for 600 ms
 and clears it for 300 ms before tail-recurring. See
-[`docs/planning/esp32-s3-static-clutch-gpio.md`](../../docs/planning/esp32-s3-static-clutch-gpio.md).
+[`docs/planning/completed/esp32-s3-static-clutch-gpio.md`](../../docs/planning/completed/esp32-s3-static-clutch-gpio.md).
 
 ## Hardware verification
 

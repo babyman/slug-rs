@@ -4,11 +4,19 @@
 "slug.math" = { source = "modules/math.slug" }
 
 [native]
-source = "native/source"
-abi = "slug-ffi-prototype/0.13"
+profile = "events"
+headers = ["native/source/slug_core.h"]
+sources = ["native/source/core.c"]
 
 [native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_core.dylib"
 "macos-x86_64" = "native/macos-x86_64/libslug_core.dylib"
 "linux-x86_64" = "native/linux-x86_64/libslug_core.so"
 "windows-x86_64" = "native/windows-x86_64/slug_core.dll"
+
+[native.functions."slug.io.stdin"]
+startReaderRaw = { symbol = "slug_core_start_reader", signature = "(producer lines) -> i32" }
+
+[native.functions."slug.math"]
+addRaw = { symbol = "slug_core_add", signature = "(i64 left, i64 right, out i64 sum) -> bool" }
+sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64" }

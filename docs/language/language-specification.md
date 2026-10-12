@@ -621,7 +621,8 @@ does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
 The bundled declaration module documents `cfg(key, default)`, `int(value)`,
-`print(...values)`, `println(...values)`, and `len(value)`. The host registers
+`print(...values)`, `println(...values)`, `len(value)`, and `keys(map)`. The
+host registers
 its functions
 independently of the file. When present,
 `lib/slug/builtin.slug` documents those functions and may export foundational
@@ -656,6 +657,13 @@ input operation waits.
 
 Calling `len` with any other value, including `nil`, or with an argument count
 other than one is a checked runtime error.
+
+### Map keys
+
+`keys(map)` accepts exactly one `map` and returns a new list of its keys, in
+the map's unspecified enumeration order. Each key keeps its value type.
+Calling `keys` with any other value, or with an argument count other than one,
+is a checked runtime error.
 
 ### Integer conversion
 

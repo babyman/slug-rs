@@ -11,12 +11,15 @@ abstractions.
 crates/slug-vm/               Runtime, bytecode, dynamic values, and VM tests
 crates/slug-frontend/         Source syntax, semantics, lowering, and module graph
 crates/slug-loader/           Storage-independent import contracts
+crates/slug-native-manifest/  Typed native binding model, canonical signatures, shim generator
+crates/slug-native-adapter/   no_std typed shim calls for the VM; the only shim-calling code
+crates/slug-typed-static-test/ Two typed C shims statically linked into one test image
 crates/slug-desktop-loader/   Desktop import resolution and Clutch activation
 crates/slug-nil-loader/       Deny-all resolver for restricted hosts
 crates/slug-restricted-host/  In-memory restricted host facade
 crates/slug/                  CLI, configuration, fixture tooling, and server mode
 crates/slug-repl/             Terminal REPL client for `slug --server`
-tests/      Shared Slug conformance fixtures and native C fixtures
+tests/      Shared Slug conformance fixtures
 docs/       Architecture, development policy, and canonical language documents
 .agents/    Agent workflows and decision-record guidance
 ```
@@ -57,6 +60,12 @@ a Rust change, run `make check`. For documentation-only changes, run
 | Configuration loading and `cfg`-related behavior | `crates/slug/tests/configuration.rs` | `cargo test -p slug --features metrics --test configuration` |
 | Fixture execution behavior | `crates/slug/tests/conformance_runner.rs` | `cargo test -p slug --features metrics --test conformance_runner` |
 | Fixture-sidecar validation | `crates/slug/tests/conformance_metadata.rs` | `cargo test -p slug --features metrics --test conformance_metadata` |
+| Typed native manifest bindings and shim generator | `crates/slug-native-manifest/tests/manifest.rs`, `tests/shim.rs` (needs `cc`, or `clang` on Windows) | `cargo test -p slug-native-manifest` |
+| Typed native adapter | `crates/slug-native-adapter/tests/adapter.rs` | `cargo test -p slug-native-adapter` |
+| Typed native clutches through the desktop loader | `crates/slug/tests/typed_native.rs` (needs a C compiler) | `cargo test -p slug --test typed_native` |
+| `slug.db.sqlite` on typed bindings (Unix, needs system SQLite) | `crates/slug/tests/typed_sqlite.rs` | `cargo test -p slug --test typed_sqlite` |
+| `slug.io.fs` through the CLI (stages the clutch first) | `crates/slug/tests/cli/filesystem.rs` | `make test-filesystem-clutch` |
+| Static typed providers (descriptor checks, build, two-shim link) | `crates/slug-embedded-build/tests/typed.rs`, `crates/slug-typed-static-test/` (need `cc` and `ar`) | `cargo test -p slug-embedded-build -p slug-typed-static-test` |
 | Repository legacy-syntax fixtures | `crates/slug/tests/legacy_syntax_conformance.rs` | `cargo test -p slug --features metrics --test legacy_syntax_conformance` |
 
 `make test` runs the full unit, binary, and integration suite. See
@@ -97,6 +106,12 @@ Create an agent note under `docs/decisions/` for a non-trivial decision that
 changes syntax, semantics, runtime architecture, error behavior, or the
 compatibility policy. Follow `docs/decisions/README.md`. Do not create a note
 for mechanical edits or a local bug fix whose design is already specified.
+
+Architectural Decision Records (ADRs) without a status suffix represent current
+decisions. Files ending in `-superseded.md` or `-withdrawn.md` are historical
+and must not be treated as current architectural guidance. When making
+architectural changes, consult current ADRs first. Preserve historical ADRs and
+update their status and references when replacing decisions.
 
 ## Working agreement
 

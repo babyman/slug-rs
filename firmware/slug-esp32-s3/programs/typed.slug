@@ -1,0 +1,27 @@
+val gpio = import("slug.gpio")
+val time = import("slug.time")
+val pulse = import("fixture.pulse")
+
+// Pulses GPIO 4 with timings from the typed C provider, slowing each step.
+val blink = fn(step, count) {
+    if (step == count) {
+        nil
+    } else {
+        gpio.write(4, true)
+        time.sleepMs(pulse.gapMs(step))
+        gpio.write(4, false)
+        time.sleepMs(pulse.gapMs(step))
+        recur(step + 1, count)
+    }
+}
+
+val cycle = fn() {
+    blink(0, pulse.count(5))
+    time.sleepMs(1000)
+    recur()
+}
+
+val main = fn() {
+    gpio.write(4, false)
+    cycle()
+}

@@ -1,0 +1,12 @@
+[modules]
+"fixture.alpha" = { source = "modules/alpha.slug" }
+
+[native]
+profile = "core"
+headers = ["native/alpha.h"]
+sources = ["native/alpha.c"]
+
+[native.functions."fixture.alpha"]
+add = { symbol = "alpha_add", signature = "(i64 left, i64 right) -> i64" }
+greet = { symbol = "alpha_greet", signature = "(cstr name) -> cstr owned(free)" }
+name = { symbol = "alpha_name", signature = "() -> cstr" }

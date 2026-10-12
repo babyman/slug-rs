@@ -4,7 +4,7 @@
 //! VM lifetime. A program may select only a physical GPIO listed by the board
 //! profile; the provider configures it lazily on its first write.
 
-use alloc::{format, string::{String, ToString}, vec, vec::Vec};
+use alloc::{format, rc::Rc, string::{String, ToString}, vec, vec::Vec};
 use core::cell::RefCell;
 
 use esp_hal::{
@@ -19,6 +19,9 @@ use slug_vm::{
 };
 
 use crate::capabilities::MAXIMUM_SLEEP_MS;
+
+// Typed C providers selected by the target descriptor, built by `build.rs`.
+include!(concat!(env!("OUT_DIR"), "/slug_typed_providers.rs"));
 
 struct GpioState {
     available: RefCell<Vec<(u8, AnyPin<'static>)>>,
@@ -50,16 +53,22 @@ pub fn register(
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
     let builtins = NativeModule::new("slug.builtin", ())
         .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
-    let functions = vec![
+    let mut functions = vec![
         gpio.function("write", NativeArity::Exact(2), gpio_write),
         time.function("sleepMs", NativeArity::Exact(1), sleep_ms),
         builtins.function("print", NativeArity::Variadic { minimum: 0 }, print),
         builtins.function("println", NativeArity::Variadic { minimum: 0 }, println),
         builtins.function("len", NativeArity::Exact(1), native_len),
+        builtins.function("keys", NativeArity::Exact(1), native_keys),
     ]
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
     .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?;
+    let owner: Rc<dyn core::any::Any> = Rc::new(());
+    functions.extend(
+        typed_provider_functions(&owner)
+            .map_err(|error| StaticProviderError::Descriptor(error.to_string()))?,
+    );
     host.install_static_providers([StaticProvider::new(functions)])
 }
 
@@ -257,5 +266,29 @@ const fn level_for(level: bool) -> Level {
     match level {
         true => Level::High,
         false => Level::Low,
+    }
+}
+
+/// The `keys` builtin: a map's keys, in its enumeration order.
+fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
+    let result = (|| {
+        let map = call.argument(0)?;
+        if map.kind() != NativeValueKind::Map {
+            return Err(NativeError::new(
+                "native.type",
+                format!("`keys` expects map, got {:?}", map.kind()),
+            ));
+        }
+        let mut keys = Vec::new();
+        let mut index = 0;
+        while let Some((key, _)) = map.map_get(index)? {
+            keys.push(key.to_owned());
+            index += 1;
+        }
+        Ok(NativeOwnedValue::list(keys))
+    })();
+    match result {
+        Ok(keys) => call.return_value(keys),
+        Err(error) => call.raise(error),
     }
 }

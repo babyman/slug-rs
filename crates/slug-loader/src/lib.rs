@@ -81,6 +81,29 @@ pub trait ModuleActivationTransaction {
     fn retain(self: Box<Self>);
 }
 
+/// A `foreign` declaration as written in module source, for hosts that check
+/// it against a native binding before the module is installed.
+///
+/// Type annotations are rendered as canonical text: union members are sorted
+/// and joined with `|`, and type arguments are written `name<a,b>`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForeignDeclaration {
+    pub name: String,
+    pub parameters: Vec<ForeignParameter>,
+    /// The result annotation, or `None` when it is omitted.
+    pub result: Option<String>,
+}
+
+/// One parameter of a [`ForeignDeclaration`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForeignParameter {
+    pub name: String,
+    /// The type annotation, or `None` when it is omitted.
+    pub annotation: Option<String>,
+    pub variadic: bool,
+    pub has_default: bool,
+}
+
 /// Resolves logical module identities into host-provided source.
 pub trait ModuleResolver {
     /// Resolves one requested module without exposing host storage to the

@@ -1,0 +1,6 @@
+export resource Counter
+
+export foreign open = fn(start:num):Counter|nil
+export foreign next = fn(counter:Counter):num
+export foreign close = fn(counter:Counter):nil
+export foreign name = fn():str

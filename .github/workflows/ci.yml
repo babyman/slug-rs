@@ -19,7 +19,7 @@ jobs:
       - run: make stage-native-clutches
       - run: make ci
 
-  ffi-prototype:
+  native:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,7 +30,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.1
-      - run: make test-ffi-prototype
+      - run: make test-native
+      - name: Test the typed filesystem clutch through the CLI
+        if: runner.os != 'Windows'
+        run: make test-filesystem-clutch
 
   embedded-check:
     runs-on: ubuntu-latest
@@ -43,3 +46,10 @@ jobs:
       - name: Check ESP32-S3 firmware
         run: cargo +esp check
         working-directory: firmware/slug-esp32-s3
+      - name: Check ESP32-S3 firmware with a typed C provider
+        run: cargo +esp check
+        working-directory: firmware/slug-esp32-s3
+        env:
+          SLUG_TARGET_DESCRIPTOR: esp32-s3-typed.toml
+      - name: Check the typed native adapter for ESP32-S3
+        run: cargo +esp check -p slug-native-adapter --target xtensa-esp32s3-none-elf -Z build-std=core,alloc

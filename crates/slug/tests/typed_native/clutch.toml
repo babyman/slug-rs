@@ -1,0 +1,27 @@
+[modules]
+"fixture.files" = { source = "modules/files.slug" }
+
+[native]
+profile = "core"
+headers = ["native/source/fixture.h"]
+sources = ["native/source/fixture.c"]
+
+[native.libraries]
+"PLATFORM" = "native/PLATFORM/LIBRARY"
+
+[native.resources."fixture.files".File]
+type = "fx_file"
+release = { symbol = "fx_close", signature = "(handle<File> file) -> void" }
+
+[native.functions."fixture.files"]
+openRead = { symbol = "fx_open_read", signature = "(cstr path) -> handle<File>" }
+openWrite = { symbol = "fx_open_write", signature = "(cstr path) -> handle<File>" }
+readLine = { symbol = "fx_read_line", signature = "(handle<File> file, out cstr line) -> i32" }
+write = { symbol = "fx_write", signature = "(handle<File> file, str text) -> i64" }
+close = { symbol = "fx_close", signature = "(close handle<File> file) -> void" }
+closedCount = { symbol = "fx_closed_count", signature = "() -> i64" }
+add = { symbol = "fx_add", signature = "(i64 left, i64 right) -> i64" }
+negate = { symbol = "fx_negate", signature = "(i8 value) -> i8" }
+describe = { symbol = "fx_describe", signature = "(i64 value) -> cstr owned(free)" }
+label = { symbol = "fx_label", signature = "(i64 value) -> cstr" }
+labelOrNil = { symbol = "fx_label", signature = "(i64 value) -> cstr" }

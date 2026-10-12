@@ -48,3 +48,10 @@ an ABI-v1 compatibility commitment.
 
 Before importing a native clutch from this checkout, run
 `make stage-native-clutches`.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native manifest
+bindings](2026-10-11-typed-native-manifest-bindings.md). Staging now generates
+and compiles each clutch's typed shim through `slug-native-shim stage`.

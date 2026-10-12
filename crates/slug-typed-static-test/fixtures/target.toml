@@ -1,0 +1,26 @@
+format = 1
+
+[firmware]
+entry = "main.slug"
+board_package = "slug-typed-static-test"
+
+[limits]
+artifact_bytes = 65536
+section_bytes = 65536
+modules = 8
+imports = 8
+string_bytes = 4096
+chunks_per_module = 64
+entries_per_table = 1024
+
+[[providers]]
+module = "fixture.alpha"
+contract = "alpha.clutch/modules/alpha.slug"
+kind = "typed"
+clutch = "alpha.clutch"
+
+[[providers]]
+module = "fixture.beta"
+contract = "beta.clutch/modules/beta.slug"
+kind = "typed"
+clutch = "beta.clutch"

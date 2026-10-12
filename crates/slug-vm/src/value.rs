@@ -1,7 +1,13 @@
-use alloc::{boxed::Box, collections::VecDeque, rc::Rc, string::String, sync::Arc, vec::Vec};
+#[cfg(feature = "concurrency")]
+use alloc::boxed::Box;
+use alloc::{collections::VecDeque, rc::Rc, string::String, sync::Arc, vec::Vec};
 #[cfg(feature = "concurrency")]
 use core::mem;
-use core::{cell::RefCell, fmt, fmt::Write as _};
+use core::{
+    cell::{OnceCell, RefCell},
+    fmt,
+    fmt::Write as _,
+};
 
 use crate::platform::HashMap;
 
@@ -28,7 +34,9 @@ pub enum Builtin {
 /// A FIFO channel with bounded buffering and parked task wait queues.
 pub struct Channel {
     pub(crate) state: Rc<RefCell<ChannelState>>,
-    native_producer: Option<NativeChannelProducer>,
+    /// Set when native code creates the channel, or when a producer is first
+    /// minted from a Slug-created channel.
+    native_producer: OnceCell<NativeChannelProducer>,
 }
 
 pub(crate) struct ChannelState {
@@ -346,7 +354,7 @@ impl Channel {
                 receivers: VecDeque::new(),
                 closed: false,
             })),
-            native_producer: None,
+            native_producer: OnceCell::new(),
         }
     }
 
@@ -361,24 +369,46 @@ impl Channel {
                     receivers: VecDeque::new(),
                     closed: false,
                 })),
-                native_producer: Some(producer.receiver_handle()),
+                native_producer: OnceCell::from(producer.receiver_handle()),
             },
             producer,
         )
     }
 
+    /// Mints a producer lease for native code. The first mint attaches a
+    /// producer queue whose occupancy counts the messages already buffered,
+    /// so native and Slug sends share the channel's capacity. Returns `None`
+    /// for an unbuffered channel, which no native send could ever enter.
+    pub(crate) fn attach_native_producer(&self) -> Option<NativeChannelProducer> {
+        let state = self.state.borrow();
+        if state.capacity == 0 {
+            return None;
+        }
+        if let Some(existing) = self.native_producer.get() {
+            return Some(existing.producer_lease());
+        }
+        let producer =
+            NativeChannelProducer::bounded_with_occupied(state.capacity, state.messages.len());
+        if state.closed {
+            producer.close();
+        }
+        drop(state);
+        let _ = self.native_producer.set(producer.receiver_handle());
+        Some(producer)
+    }
+
     pub(crate) fn has_native_producer(&self) -> bool {
-        self.native_producer.is_some()
+        self.native_producer.get().is_some()
     }
 
     pub(crate) fn revoke_native_producer(&self) {
-        if let Some(producer) = &self.native_producer {
+        if let Some(producer) = self.native_producer.get() {
             producer.close();
         }
     }
 
     pub(crate) fn register_progress_signal(&self, signal: &Arc<ProgressSignal>) {
-        if let Some(producer) = &self.native_producer {
+        if let Some(producer) = self.native_producer.get() {
             producer.register_progress_signal(signal);
         }
     }
@@ -386,24 +416,24 @@ impl Channel {
     #[cfg(not(target_os = "none"))]
     pub(crate) fn has_live_native_producer(&self) -> bool {
         self.native_producer
-            .as_ref()
+            .get()
             .is_some_and(NativeChannelProducer::has_external_producer)
     }
 
     pub(crate) fn reserve_buffer_slot(&self) -> bool {
         self.native_producer
-            .as_ref()
+            .get()
             .is_none_or(NativeChannelProducer::reserve_slot)
     }
 
     pub(crate) fn release_buffer_slot(&self) {
-        if let Some(producer) = &self.native_producer {
+        if let Some(producer) = self.native_producer.get() {
             producer.release_slot();
         }
     }
 
     pub(crate) fn drain_native(&self) -> bool {
-        let Some(producer) = &self.native_producer else {
+        let Some(producer) = self.native_producer.get() else {
             return false;
         };
         let values = producer.drain(usize::MAX);
@@ -892,7 +922,7 @@ pub enum Value {
     DeclaredNative {
         function: NativeFunction,
         callable_identity: CallableIdentity,
-        resource_signature: Box<ForeignResourceSignature>,
+        resource_signature: Rc<ForeignResourceSignature>,
     },
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
@@ -1009,6 +1039,16 @@ impl Value {
             #[cfg(feature = "concurrency")]
             Self::Task(_) => "task",
             Self::NativeResource(_) => "native resource",
+        }
+    }
+
+    /// Resolves an owned value, moving it instead of cloning when it is not a
+    /// binding.
+    pub(crate) fn into_resolved(self) -> Result<Value, String> {
+        if matches!(self, Self::Binding { .. }) {
+            self.resolve()
+        } else {
+            Ok(self)
         }
     }
 

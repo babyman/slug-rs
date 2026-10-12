@@ -1,5 +1,13 @@
 # Pass program arguments through main
 
+## Status
+
+Accepted
+
+## Supersedes
+
+[Discover main by naming convention](2026-08-23-main-entrypoint-convention-superseded.md).
+
 ## Context
 
 `argv()` and `argm()` expose program invocation data through global builtins,
@@ -7,7 +15,7 @@ while the runtime separately discovers and invokes `main()`. This splits one
 program boundary across unrelated mechanisms. It also leaves no signature-level
 indication that a program consumes its invocation arguments.
 
-The earlier [main entrypoint convention](2026-08-23-main-entrypoint-convention.md)
+The earlier [main entrypoint convention](2026-08-23-main-entrypoint-convention-superseded.md)
 selected a source-ordered callable that could be called without arguments. That
 rule cannot distinguish a raw argument list from a parsed argument map, and
 ordinary runtime overload dispatch does not use parameter annotations to make
@@ -16,7 +24,7 @@ that distinction.
 ## Decision
 
 This decision supersedes
-[Discover main by naming convention](2026-08-23-main-entrypoint-convention.md).
+[Discover main by naming convention](2026-08-23-main-entrypoint-convention-superseded.md).
 
 After successful top-level evaluation, a program has exactly one eligible local
 entrypoint when it declares one of these signatures:

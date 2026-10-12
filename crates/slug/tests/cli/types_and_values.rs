@@ -1043,8 +1043,7 @@ fn persistently_merges_removes_and_enumerates_maps() {
     let path = fixture_path("persistent-map-updates");
     fs::write(
         &path,
-        "val {keys} = import(\"slug.std\")\n\
-         val original = {first: 1, second: 2}\n\
+        "val original = {first: 1, second: 2}\n\
          val merged = original + {second: 20, third: 3}\n\
          val removed = merged - \"second\"\n\
          val repeated = merged + {second: 30}\n\
@@ -1072,8 +1071,7 @@ fn standard_clutch_preserves_non_string_map_keys() {
     let path = fixture_path("standard-clutch-map-keys");
     fs::write(
         &path,
-        "val {keys} = import(\"slug.std\")\n\
-         val values = {[1]: \"one\", [true]: \"yes\", name: \"Slug\", [0x\"01\"]: \"byte\"}\n\
+        "val values = {[1]: \"one\", [true]: \"yes\", name: \"Slug\", [0x\"01\"]: \"byte\"}\n\
          val updated = values + {[1.0]: \"one-point-zero\"}\n\
          val missingRemoved = updated - \"missing\"\n\
          println(updated[1], updated[1.0], updated[true], updated.name, updated[0x\"01\"], updated[\"missing\"], missingRemoved == updated, len(keys(updated)))\n",
@@ -1130,8 +1128,7 @@ fn parses_multiline_maps_with_raw_quoted_keys() {
     let path = fixture_path("multiline-raw-quoted-map");
     fs::write(
         &path,
-        "val {keys} = import(\"slug.std\")\n\
-         val m = {\n\
+        "val m = {\n\
          'k1': 1,\n\
          'k2': 2\n\
          }\n\
@@ -1256,4 +1253,53 @@ fn rejects_malformed_hexadecimal_and_byte_literals_with_locations() {
             "{stderr}"
         );
     }
+}
+
+#[test]
+fn keys_is_an_implicit_builtin_and_not_a_slug_std_export() {
+    let path = fixture_path("keys-builtin");
+    fs::write(
+        &path,
+        "val std = import(\"slug.std\")\n\
+         val builtin = import(\"slug.builtin\")\n\
+         val mixed = {name: \"Slug\", [7]: \"seven\", [true]: \"yes\"}\n\
+         val pair = fn(values) { match values { [\"a\", \"b\"] => \"a and b\"; [\"b\", \"a\"] => \"a and b\"; _ => \"other\" } }\n\
+         println(len(keys(mixed)), keys({}), pair(keys({b: 2, a: 1})))\n\
+         println(builtin.keys({k: 1}), std.keys == nil)\n\
+         val shadow = fn(keys) { keys }\n\
+         println(shadow(\"local wins\"))\n",
+    )
+    .expect("write keys builtin source");
+    let output = slug().arg(&path).output().expect("run keys builtin source");
+    fs::remove_file(path).expect("remove keys builtin source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "3 [] a and b\n[\"k\"] true\nlocal wins\n"
+    );
+}
+
+#[test]
+fn keys_rejects_a_value_that_is_not_a_map() {
+    let path = fixture_path("keys-not-a-map");
+    fs::write(
+        &path,
+        "val dynamic = fn(value) { value }\nkeys(dynamic([1, 2]))\n",
+    )
+    .expect("write keys type-error source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run keys type-error source");
+    fs::remove_file(path).expect("remove keys type-error source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("`keys` expects map, got List"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

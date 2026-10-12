@@ -76,6 +76,8 @@ pub enum Op {
     StructCopy(Vec<String>),
     StructCopyPooled(StructFieldsId),
     GetIndex,
+    /// `GetIndex` whose key is a value constant of the current chunk.
+    GetIndexConstant(usize),
     GetSlice {
         has_start: bool,
         has_end: bool,

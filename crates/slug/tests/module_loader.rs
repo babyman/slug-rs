@@ -2665,6 +2665,33 @@ fn rejects_foreign_bindings_that_cannot_accept_the_declared_arity() {
 }
 
 #[test]
+fn cyclic_imports_reject_calls_before_the_defining_binding_initializes() {
+    let root = root("cyclic-uninitialized-call");
+    fs::create_dir_all(&root).expect("create module directory");
+    fs::write(
+        root.join("a.slug"),
+        "val b = import(\"b\")\nexport val f = fn() { 1 }\n",
+    )
+    .expect("write first cyclic module");
+    fs::write(
+        root.join("b.slug"),
+        "val a = import(\"a\")\nexport val from_b = a.f()\n",
+    )
+    .expect("write second cyclic module");
+    let loader = ModuleLoader::new(&root, None);
+
+    let error = loader
+        .initialize(None, "a")
+        .expect_err("call before initialization must fail");
+
+    assert!(
+        error.to_string().contains("binding `f` is not initialized"),
+        "unexpected error: {error}"
+    );
+    fs::remove_dir_all(root).expect("remove module test directory");
+}
+
+#[test]
 fn cyclic_imports_reject_reads_before_the_defining_binding_initializes() {
     let root = root("cyclic-uninitialized");
     fs::create_dir_all(&root).expect("create module directory");

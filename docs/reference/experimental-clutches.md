@@ -9,19 +9,20 @@ may rely on. A later released clutch format requires a new decision record,
 versioned schema, and regression coverage.
 
 The source resolver, `$SLUG_HOME/clutch/manifest.toml` CLI discovery,
-module-scoped Rust plugin initializer, and manifest-selected version-0 native
+module-scoped Rust plugin initializer, and manifest-selected typed native
 loader are implemented. `Vm::shutdown` and final loader drop clean plugin
 state. Archive loading, package installation, and cross-platform binary
-distribution remain unimplemented. The local `slug.io.fs` clutch commits its
-macOS ARM library as the first installed native-package experiment. The
-`slug.db.sqlite` source clutch is built into a temporary installed layout by
-the integration suite, proving variadic SQL bindings and compound value
-transfer through an external C dependency. The bundled `slug.core` clutch
-provides standard collections, standard input, and stateless math through one
-native library. This checkout
+distribution remain unimplemented. The `slug.io.fs`, `slug.db.sqlite`, and
+`slug.core` clutches bind plain C functions through typed native bindings. The
+SQLite clutch's Slug code over raw SQLite calls provides variadic SQL bindings,
+row maps, prepared statements, and transactions. The bundled `slug.core` clutch
+provides standard collections, standard input, and stateless math. Its
+standard-input reader runs on a C thread and sends lines into a Slug channel
+through a producer, under the `events` profile. This checkout
 is a development repository: `make stage-native-clutches` builds every native
-source adapter for the current supported platform at its manifest-selected
-location before local programs import it. Those staged libraries are ignored
+library for the current supported platform at its manifest-selected location
+before local programs import it, generating and compiling the shim of each
+typed clutch. Those staged libraries are ignored
 local outputs rather than package artifacts. The staging script supports macOS,
 Linux, and Windows hosts through POSIX-compatible Windows shells with a C
 compiler and each adapter's development dependencies installed.
@@ -54,36 +55,37 @@ The optional `plugin` value is an opaque host configuration key, not a
 source-visible path or arbitrary native-library search instruction.
 
 Optionally, a clutch may provide one native implementation library for any
-subset of its modules:
+subset of its modules. Its `[native]` table uses
+[typed native bindings](native-abi.md#typed-native-bindings), which bind the
+clutch's `foreign` declarations to plain C functions:
 
 ```toml
-[modules]
-"slug.arcade" = { source = "modules/arcade.slug" }
-"slug.arcade.audio" = { source = "modules/audio.slug" }
-"slug.arcade.input" = { source = "modules/input.slug" }
-
 [native]
-source = "native/source"
-abi = "slug-ffi-prototype/0.13"
+profile = "core"
+headers = ["native/source/slug_io_fs.h"]
+sources = ["native/source/fs.c"]
 
 [native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_io_fs.dylib"
+
+[native.resources."slug.io.fs".File]
+type = "slug_fs_file"
+release = { symbol = "slug_fs_close", signature = "(handle<File> file) -> void" }
+
+[native.functions."slug.io.fs"]
+readLineRaw = { symbol = "slug_fs_read_line", signature = "(handle<File> file, out cstr line) -> i32" }
 ```
 
-The optional `native.source` directory contains FFI source or build inputs and
-is never compiled by Slug at runtime. `native.libraries` selects one checked
-library for the current supported OS/architecture; all paths must remain inside
-the clutch. The library is initialized once for the clutch and may register
-implementations for any of its module identities. A module remains pure Slug
-unless its own `foreign` declarations require one of those registrations. The
-loader accepts only `slug-ffi-prototype/0.13`, validates its library descriptor,
-and
-does not search system paths or fall back to a host plugin.
-
-Native source may include `slug_ffi_helpers.h`, a private header-only SDK that
-builds common asynchronous channel-source lifecycle patterns from the same
-prototype ABI. It is optional convenience code, not a separate Clutch ABI or
-runtime dependency.
+The headers and sources are build inputs for the generated shim and are never
+compiled by Slug at runtime. `native.libraries` selects one checked library
+for the current supported OS/architecture; all paths must remain inside the
+clutch. The library is loaded once for the clutch and may serve any of its
+module identities. A module remains pure Slug unless it declares `foreign`
+functions. The loader checks the library's shim table and every `foreign`
+declaration in each of the clutch's modules against its binding before the
+module is installed. It does not search system paths or fall back to a host
+plugin. A C source that sends into a Slug channel includes the generated
+`slug_producer.h` from beside its shim.
 
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
@@ -130,8 +132,8 @@ nominal-resource validation remain the native-ABI boundary.
 For a clutch with a host plugin or native library, loading is transactional:
 
 1. validate the selected clutch manifest and paths;
-2. initialize the plugin once, or load and validate the selected native
-   descriptor, under a clutch-owned registration scope;
+2. initialize the plugin once, or load the selected native library and
+   validate its shim table, under a clutch-owned registration scope;
 3. load requested source modules and validate each module's `foreign`
    declarations against that scope; and
 4. publish the module and registrations only after all preceding steps pass.

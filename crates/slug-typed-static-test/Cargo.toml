@@ -1,0 +1,19 @@
+[package]
+name = "slug-typed-static-test"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+description = "Links two generated typed native shims into one static image for testing"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/babyman/slug-rs"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+slug-native-adapter = { path = "../slug-native-adapter" }
+slug-vm = { path = "../slug-vm", default-features = false }
+
+[build-dependencies]
+slug-embedded-build = { path = "../slug-embedded-build" }

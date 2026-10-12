@@ -24,10 +24,18 @@ open state are validated by the native boundary.
 `readLine(file):str|nil` returns one line without a final `\n`, also removing
 the preceding `\r` from CRLF input. Empty lines are `""`; end of file is `nil`.
 To bound native memory use, a line may contain at most 16 MiB of UTF-8 bytes;
-reading a longer line returns a checked `native.io` error.
+reading a longer line throws a `native.io` error. A line containing a NUL byte
+also throws a `native.io` error.
 `write(file, content):num` writes all of `content` and returns its UTF-8 byte
-length. Reading a writable handle or writing a readable handle is a checked
-runtime error.
+length. Reading a writable handle or writing a readable handle throws a
+`native.io` error.
+
+Failures throw `Error` values, which `defer onerror` can handle. Their `type`
+is `native.io` for an open, read, write, or flush failure and `native.alloc`
+when the line buffer cannot be allocated, and `msg` describes the failure, for
+example `Error {type: "native.io", msg: "cannot open file"}`. Using a closed
+handle or passing a value that is not an open `File` remains a checked
+boundary error rather than a thrown value.
 
 `close(file):nil` is idempotent. Any later operation on that handle produces a
 checked resource-closed error. Programs must register `close` with `defer`
@@ -41,8 +49,8 @@ is open. See [Nominal types](nominal-types.md) for the general resource rule.
 
 The experimental CLI installation provides this module through the
 `slug.io.fs` entry in `$SLUG_HOME/clutch/manifest.toml`, which selects the
-`$SLUG_HOME/clutch/slug.io.fs.clutch` clutch. The current Rust subset implements
-its native foreign function implementation and imported type paths such as
-`fs.File`. The clutch contains its C source under `native/source/` and its
-local macOS ARM library under `native/macos-aarch64/`. Other platforms receive
-a checked clutch-load error until a matching native library is installed.
+`$SLUG_HOME/clutch/slug.io.fs.clutch` clutch. The module is Slug code over typed
+native bindings declared in the clutch manifest. The clutch contains its C
+source and header under `native/source/`; `make stage-native-clutches` builds
+the library for the current platform. Other platforms receive a checked
+clutch-load error until a matching native library is installed.

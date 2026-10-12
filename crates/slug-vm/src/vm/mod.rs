@@ -1307,7 +1307,7 @@ impl Vm {
             let value = Value::DeclaredNative {
                 function,
                 callable_identity: identity,
-                resource_signature: Box::new(resource_signature),
+                resource_signature: Rc::new(resource_signature),
             };
             self.install_foreign_value(name, &value);
         }
@@ -2043,6 +2043,9 @@ impl Vm {
                 self.record_collection_construction(entries.len());
                 self.stack.push(Value::Map(Map::new(entries).into_shared()));
             }
+            PackedOpcode::GetIndexConstant => {
+                self.get_index_constant_at(program, operand, None)?;
+            }
             PackedOpcode::GetIndex => {
                 let (collection, index) = self.pop_pair_at(None)?;
                 self.stack.push(
@@ -2651,6 +2654,9 @@ impl Vm {
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
                 );
             }
+            Op::GetIndexConstant(constant) => {
+                self.get_index_constant_at(program, *constant, span)?;
+            }
             Op::GetIndex => {
                 let (collection, index) = self.pop_pair_at(span)?;
                 self.stack.push(
@@ -2869,7 +2875,9 @@ impl Vm {
                 }
                 frame.scope_depth -= 1;
                 let actions = frame.scopes.pop().unwrap_or_default();
-                if self.frames.last().is_some_and(|frame| frame.cleanup_action) {
+                // Leaving a scope while cleanup is in progress resumes this
+                // frame once the scope's own actions have run.
+                if !self.cleanup.is_empty() {
                     self.cleanup.push(Cleanup::Resume);
                 }
                 self.cleanup.push(Cleanup::Actions {
@@ -3309,6 +3317,33 @@ impl Vm {
         }
         self.frames.last_mut().expect("active frame was checked").ip += 1;
         Ok(*instruction)
+    }
+
+    fn get_index_constant_at(
+        &mut self,
+        program: &Program,
+        constant: usize,
+        span: Option<&SourceSpan>,
+    ) -> VmResult<()> {
+        let collection = self.pop_at(span)?;
+        let Some(crate::Constant::Value(key)) =
+            self.current_chunk(program)?.constants.get(constant)
+        else {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("index constant {constant} does not exist"),
+                span,
+            ));
+        };
+        let value = index_value(
+            collection,
+            key,
+            #[cfg(feature = "metrics")]
+            &self.metrics,
+        )
+        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?;
+        self.stack.push(value);
+        Ok(())
     }
 
     fn current_chunk<'a>(
@@ -4239,6 +4274,9 @@ impl Vm {
         count: usize,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
+        if self.positional_callee_is_native(count) {
+            return self.call_at(program, count, None, span);
+        }
         if self.call_positional_closure_at(program, count, None, span)? {
             #[cfg(feature = "metrics")]
             self.record_exact_positional_closure_call();
@@ -4269,7 +4307,7 @@ impl Vm {
             .into_iter()
             .map(|value| {
                 value
-                    .resolve()
+                    .into_resolved()
                     .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
             })
             .collect::<VmResult<Vec<_>>>()?;
@@ -4284,6 +4322,29 @@ impl Vm {
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
         self.call_at(program, count, Some(provided), span)
+    }
+
+    /// Reports whether a positional call's callee is a native function, looking
+    /// through a live binding without cloning it.
+    ///
+    /// Natives take positional arguments as-is, so such a call can skip the
+    /// closure probe and generic argument binding. Anything else, including a
+    /// malformed stack or an uninitialized binding, keeps the general path and
+    /// its checked errors.
+    fn positional_callee_is_native(&self, count: usize) -> bool {
+        let Some(callee) = count
+            .checked_add(1)
+            .and_then(|required| self.stack.len().checked_sub(required))
+            .and_then(|base| self.stack.get(base))
+        else {
+            return false;
+        };
+        let is_native =
+            |value: &Value| matches!(value, Value::Native(_) | Value::DeclaredNative { .. });
+        match callee {
+            Value::Binding { cell, .. } => is_native(&cell.borrow()),
+            value => is_native(value),
+        }
     }
 
     /// Starts an exact positional closure call without constructing generic
@@ -4454,7 +4515,7 @@ impl Vm {
         let mut named = Vec::new();
         for (value, kind) in values.into_iter().zip(kinds) {
             let value = value
-                .resolve()
+                .into_resolved()
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
             match kind {
                 CallArgumentKind::Positional => positional.push(value),
@@ -4887,7 +4948,17 @@ impl Vm {
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }
-        match function.invoke(arguments) {
+        let invocation = function.invoke(arguments);
+        // A producer minted from a channel argument needs progress wakeups,
+        // as a native-created channel result does.
+        for argument in arguments {
+            if let Value::Channel(channel) = argument
+                && channel.has_native_producer()
+            {
+                self.progress.track_native_channel(channel);
+            }
+        }
+        match invocation {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);
                 if value.contains_non_finite_number() {

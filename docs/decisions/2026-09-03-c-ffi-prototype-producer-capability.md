@@ -7,7 +7,7 @@ C integration can complete later on a foreign thread without exposing the VM or
 retaining arbitrary Slug values.
 
 This narrows the asynchronous-use exclusion in
-[`2026-09-03-c-ffi-prototype-opaque-resources.md`](2026-09-03-c-ffi-prototype-opaque-resources.md)
+[`2026-09-03-c-ffi-prototype-opaque-resources-superseded.md`](2026-09-03-c-ffi-prototype-opaque-resources-superseded.md)
 to one explicitly owned producer capability.
 
 ## Decision
@@ -33,3 +33,9 @@ value, native-to-Slug callbacks, or arbitrary cross-thread invocation.
 The unstable prototype minor version is now 3. Existing C module descriptors
 remain source-compatible when rebuilt against the header because new host-table
 entries append to the table.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native
+producers](2026-10-11-typed-native-producers.md).

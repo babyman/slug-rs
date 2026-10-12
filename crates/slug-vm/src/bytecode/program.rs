@@ -717,6 +717,7 @@ impl Program {
             Op::StructPooled(v) => (PackedOpcode::Struct, v.0, 0, 0),
             Op::StructCopyPooled(v) => (PackedOpcode::StructCopy, v.0, 0, 0),
             Op::GetIndex => (PackedOpcode::GetIndex, 0, 0, 0),
+            Op::GetIndexConstant(v) => (PackedOpcode::GetIndexConstant, operand(*v), 0, 0),
             Op::GetSlice {
                 has_start,
                 has_end,
@@ -851,6 +852,7 @@ impl Program {
             PackedOpcode::Struct => Op::StructPooled(StructFieldsId(instruction.a)),
             PackedOpcode::StructCopy => Op::StructCopyPooled(StructFieldsId(instruction.a)),
             PackedOpcode::GetIndex => Op::GetIndex,
+            PackedOpcode::GetIndexConstant => Op::GetIndexConstant(n(instruction.a)),
             PackedOpcode::GetSlice => Op::GetSlice {
                 has_start: instruction.a != 0,
                 has_end: instruction.b != 0,
@@ -1141,6 +1143,14 @@ impl Program {
                 "{} references missing constant {index}",
                 location()
             )),
+            Op::GetIndexConstant(index)
+                if !matches!(chunk.constants.get(*index), Some(Constant::Value(_))) =>
+            {
+                Err(format!(
+                    "{} references missing index constant {index}",
+                    location()
+                ))
+            }
             Op::GetLocal(slot) | Op::SetLocal(slot) | Op::JumpIfProvided { slot, .. }
                 if *slot >= chunk.locals =>
             {
@@ -1611,7 +1621,12 @@ impl Program {
                 1 + usize::from(*has_start) + usize::from(*has_end) + usize::from(*has_step),
                 1,
             ),
-            Op::Negate | Op::Not | Op::BitNot | Op::Spawn | Op::SelectApply => (1, 1),
+            Op::Negate
+            | Op::Not
+            | Op::BitNot
+            | Op::Spawn
+            | Op::SelectApply
+            | Op::GetIndexConstant(_) => (1, 1),
             Op::Jump(_)
             | Op::JumpIfFalse(_)
             | Op::JumpIfProvided { .. }

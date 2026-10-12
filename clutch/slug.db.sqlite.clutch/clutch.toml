@@ -4,11 +4,49 @@
 "slug.db.sqlite.transaction" = { source = "modules/transaction.slug" }
 
 [native]
-source = "native/source"
-abi = "slug-ffi-prototype/0.13"
+profile = "core"
+headers = ["native/source/slug_db_sqlite.h"]
+sources = ["native/source/sqlite.c"]
+link = ["sqlite3"]
 
 [native.libraries]
 "macos-aarch64" = "native/macos-aarch64/libslug_db_sqlite.dylib"
 "macos-x86_64" = "native/macos-x86_64/libslug_db_sqlite.dylib"
 "linux-x86_64" = "native/linux-x86_64/libslug_db_sqlite.so"
 "windows-x86_64" = "native/windows-x86_64/slug_db_sqlite.dll"
+
+[native.resources."slug.db.sqlite".Database]
+type = "sqlite3"
+release = { symbol = "sqlite3_close_v2", signature = "(handle<Database> database) -> i32" }
+
+[native.resources."slug.db.sqlite.statement".Statement]
+type = "sqlite3_stmt"
+release = { symbol = "sqlite3_finalize", signature = "(handle<Statement> statement) -> i32" }
+
+[native.functions."slug.db.sqlite"]
+openRaw = { symbol = "slug_sqlite_open", signature = "(cstr path, out handle<Database> database) -> i32" }
+errorRaw = { symbol = "sqlite3_errmsg", signature = "(handle<Database> database) -> cstr" }
+hasStatementsRaw = { symbol = "slug_sqlite_has_statements", signature = "(handle<Database> database) -> bool" }
+closeRaw = { symbol = "sqlite3_close", signature = "(close handle<Database> database) -> i32" }
+
+[native.functions."slug.db.sqlite.statement"]
+prepareRaw = { symbol = "slug_sqlite_prepare", signature = "(handle<slug.db.sqlite.Database> database, str sql, out handle<Statement> statement) -> i32" }
+databaseErrorRaw = { symbol = "sqlite3_errmsg", signature = "(handle<slug.db.sqlite.Database> database) -> cstr" }
+errorRaw = { symbol = "slug_sqlite_statement_error", signature = "(handle<Statement> statement) -> cstr" }
+changesRaw = { symbol = "slug_sqlite_statement_changes", signature = "(handle<Statement> statement) -> i32" }
+bindNullRaw = { symbol = "sqlite3_bind_null", signature = "(handle<Statement> statement, i32 index) -> i32" }
+bindIntRaw = { symbol = "slug_sqlite_bind_int64", signature = "(handle<Statement> statement, i32 index, i64 value) -> i32" }
+bindFloatRaw = { symbol = "sqlite3_bind_double", signature = "(handle<Statement> statement, i32 index, f64 value) -> i32" }
+bindTextRaw = { symbol = "slug_sqlite_bind_text", signature = "(handle<Statement> statement, i32 index, str value) -> i32" }
+bindBytesRaw = { symbol = "slug_sqlite_bind_blob", signature = "(handle<Statement> statement, i32 index, bytes value) -> i32" }
+stepRaw = { symbol = "sqlite3_step", signature = "(handle<Statement> statement) -> i32" }
+resetRaw = { symbol = "sqlite3_reset", signature = "(handle<Statement> statement) -> i32" }
+clearRaw = { symbol = "sqlite3_clear_bindings", signature = "(handle<Statement> statement) -> i32" }
+columnCountRaw = { symbol = "sqlite3_column_count", signature = "(handle<Statement> statement) -> i32" }
+columnTypeRaw = { symbol = "sqlite3_column_type", signature = "(handle<Statement> statement, i32 column) -> i32" }
+columnNameRaw = { symbol = "sqlite3_column_name", signature = "(handle<Statement> statement, i32 column) -> cstr" }
+columnIntRaw = { symbol = "slug_sqlite_column_int64", signature = "(handle<Statement> statement, i32 column) -> i64" }
+columnFloatRaw = { symbol = "sqlite3_column_double", signature = "(handle<Statement> statement, i32 column) -> f64" }
+columnTextRaw = { symbol = "slug_sqlite_column_text", signature = "(handle<Statement> statement, i32 column, out str text) -> void" }
+columnBytesRaw = { symbol = "slug_sqlite_column_blob", signature = "(handle<Statement> statement, i32 column, out bytes data) -> void" }
+closeRaw = { symbol = "sqlite3_finalize", signature = "(close handle<Statement> statement) -> i32" }

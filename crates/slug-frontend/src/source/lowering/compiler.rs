@@ -929,8 +929,13 @@ impl Compiler {
             }
             ExprKind::Index { collection, index } => {
                 self.expression(state, collection)?;
-                self.expression(state, index)?;
-                state.emit(Op::GetIndex, &expression.span);
+                if let ExprKind::Value(key) = &index.kind {
+                    let constant = state.constant(key.clone());
+                    state.emit(Op::GetIndexConstant(constant), &expression.span);
+                } else {
+                    self.expression(state, index)?;
+                    state.emit(Op::GetIndex, &expression.span);
+                }
             }
             ExprKind::Slice {
                 collection,

@@ -200,7 +200,9 @@ impl Nursery {
         }
         let deadline = self.timers.borrow().next_deadline();
         if deadline.is_none() && !self.progress.has_live_native_source() {
-            return false;
+            // A producer may have sent, closed, and released since the drain
+            // above; whatever it sent before closing is queued by now.
+            return self.progress.make_available_progress();
         }
         let timeout = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
         #[cfg(feature = "metrics")]

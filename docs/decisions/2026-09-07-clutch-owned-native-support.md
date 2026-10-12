@@ -30,9 +30,15 @@ single-module descriptor libraries remain valid and simply support a subset.
 This does not add archive clutches, `.cslug`, dependency resolution, multiple
 native libraries per clutch, or live unloading. It supersedes the one-native-
 module-per-clutch restriction in
-[`2026-09-07-exploded-clutch-native-library-layout.md`](2026-09-07-exploded-clutch-native-library-layout.md).
+[`2026-09-07-exploded-clutch-native-library-layout-superseded.md`](2026-09-07-exploded-clutch-native-library-layout-superseded.md).
 
 ## Migration
 
 Remove `native = true` from every module entry and retain the clutch-level
 `[native]` table. Existing libraries and source imports need no other change.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native manifest
+bindings](2026-10-11-typed-native-manifest-bindings.md).

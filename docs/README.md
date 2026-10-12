@@ -41,7 +41,6 @@ a specified feature is implemented.
 | [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
-| [ffi-helpers.md](reference/ffi-helpers.md) | Private header-only helpers for common native channel-source lifecycle patterns. |
 
 ### Engineering
 
@@ -59,22 +58,26 @@ a specified feature is implemented.
 | Document | Purpose |
 |---|---|
 | [language-foundation-roadmap.md](planning/language-foundation-roadmap.md) | Dependency-ordered implementation tasks for source compatibility. |
-| [expression-foundation-inventory.md](planning/expression-foundation-inventory.md) | Current expression-support boundary and dependency-ordered implementation slices. |
 | [type-system-plan.md](planning/type-system-plan.md) | Dependency-ordered plan for the next static-checking milestones. |
-| [body-derived-inference-follow-up.md](planning/body-derived-inference-follow-up.md) | Implementation checklist for known-call and nil-partitioned body-derived inference. |
+| [inferred-overload-alternatives-follow-up.md](planning/inferred-overload-alternatives-follow-up.md) | Deferred work after finite inferred `+` alternatives. |
 | [host-owned-module-resolution.md](planning/host-owned-module-resolution.md) | Staged extraction of filesystem-free module resolution with desktop and embedded hosts. |
-| [esp32-s3-proof-of-concept.md](planning/esp32-s3-proof-of-concept.md) | Bounded bare-metal ESP32-S3 plan for flash-resident Slug source and UART output. |
-| [general-frozen-firmware-programs.md](planning/general-frozen-firmware-programs.md) | Staged migration from the ESP32-S3 blink-only image to a selectable closed program. |
-| [cslug-whole-program-artifacts.md](planning/cslug-whole-program-artifacts.md) | Staged `.cslug` codec, verifier, and ESP-evaluation plan. |
+| [immutable-collection-value-redesign.md](planning/immutable-collection-value-redesign.md) | Staged collection and `Value` representation work that preserves immutable semantics. |
+| [interactive-slim-retained-cells.md](planning/interactive-slim-retained-cells.md) | Retained interactive cells with one execution model across runtime configurations. |
+| [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |
+| [completed/](planning/completed/) | Retained plans for completed or superseded implementation work, including: |
+| [cslug-whole-program-artifacts.md](planning/completed/cslug-whole-program-artifacts.md) | Completed `.cslug` codec, verifier, host persistence, and firmware artifact path. |
+| [esp32-s3-static-clutch-gpio.md](planning/completed/esp32-s3-static-clutch-gpio.md) | Completed ESP32-S3 static-provider GPIO plan and on-device verification record. |
+| [general-frozen-firmware-programs.md](planning/completed/general-frozen-firmware-programs.md) | Superseded private frozen-image firmware plan. |
+| [esp32-s3-proof-of-concept.md](planning/completed/esp32-s3-proof-of-concept.md) | Bounded bare-metal ESP32-S3 plan for flash-resident Slug source and UART output. |
 | [embedded-static-build-toolchain.md](planning/completed/embedded-static-build-toolchain.md) | Completed implementation plan for descriptor-driven `.slug` to firmware builds with static providers. |
+| [body-derived-inference-follow-up.md](planning/completed/body-derived-inference-follow-up.md) | Completed known-call and nil-partitioned body-derived inference. |
+| [expression-foundation-inventory.md](planning/completed/expression-foundation-inventory.md) | Historical expression-support boundary and implementation slices. |
+| [type-checking-phase-3-complete-inference-across-ordinary-expressions.md](planning/completed/type-checking-phase-3-complete-inference-across-ordinary-expressions.md) | Acceptance criteria and execution packages for complete ordinary-expression inference. |
+| [nominal-types-implementation.md](planning/completed/nominal-types-implementation.md) | Checklist for nominal resources, enums, and aliases. |
 | [agentic-development-refactoring.md](planning/completed/agentic-development-refactoring.md) | Organizational refactoring plan for discoverable subsystem boundaries and focused validation. |
 | [micro-runtime-followups.md](planning/completed/micro-runtime-followups.md) | Completed correctness, lifecycle, and Cargo feature-matrix follow-ups for the slim VM runtime. |
-| [FFI channel producer prototype ABI 0.13 plan](planning/ffi-channel-producer-v0.13.md) | Prototype ABI 0.13 native-producer work and the completed `slug.io.stdin` Clutch extraction. |
-| [Type Checking Phase 3_ Complete Inference Across Ordinary Expressions.md](planning/Type%20Checking%20Phase%203_%20Complete%20Inference%20Across%20Ordinary%20Expressions.md) | Acceptance criteria and execution packages for complete ordinary-expression inference. |
-| [nominal-types-implementation.md](planning/completed/nominal-types-implementation.md) | Checklist for nominal resources, enums, and aliases. |
-| [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |
+| [FFI channel producer prototype ABI 0.13 plan](planning/completed/ffi-channel-producer-v0.13.md) | Completed prototype ABI 0.13 native-producer work and `slug.io.stdin` Clutch extraction; the prototype has since been removed. |
 | [ai-assisted-development.md](planning/completed/ai-assisted-development.md) | Plan for trustworthy agent guidance, bounded working sets, and reproducible validation. |
-| [completed/](planning/completed/) | Retained plans for completed implementation work. |
 
 Hand-authored documents describe decisions and requirements. Files in
 `generated/` are derived artifacts: edit their source manifest and regenerate

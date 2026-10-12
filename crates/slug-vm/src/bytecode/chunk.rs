@@ -92,6 +92,8 @@ pub enum PackedOpcode {
     Recur,
     RecurPositional,
     Return,
+    // Append new opcodes here: a `.cslug` artifact stores the ordinal as its tag.
+    GetIndexConstant,
 }
 
 impl PackedOpcode {
@@ -174,6 +176,7 @@ impl PackedOpcode {
             PackedOpcode::Recur,
             PackedOpcode::RecurPositional,
             PackedOpcode::Return,
+            PackedOpcode::GetIndexConstant,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

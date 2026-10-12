@@ -4,9 +4,18 @@
  * Use this module for one-shot SQL statements. For a statement that will be
  * reused, import `slug.db.sqlite.statement` and prepare it from a database
  * opened here. Close the database explicitly, normally with `defer`.
+ *
+ * Failures throw `Error` values whose `type` is `sqlite.error`, carrying
+ * SQLite's message, or `sqlite.bind` for an unsupported parameter.
  */
 
 export resource Database
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign openRaw = fn(path:str):list
+foreign errorRaw = fn(database:Database):str
+foreign hasStatementsRaw = fn(database:Database):bool
+foreign closeRaw = fn(database:Database):num
 
 /**
  * Opens a SQLite database at `path` and returns its native handle.
@@ -14,7 +23,17 @@ export resource Database
  * Pass `":memory:"` to create an in-memory database for the lifetime of the
  * returned handle.
  */
-export foreign open = fn(path:str):Database
+export val open = fn(path:str):Database {
+    match openRaw(path) {
+        [0, database] => database
+        [_, nil] => throw Error {type: "sqlite.error", msg: "cannot open database"}
+        [_, database] => {
+            val message = errorRaw(database)
+            closeRaw(database)
+            throw Error {type: "sqlite.error", msg: message}
+        }
+    }
+}
 
 /**
  * Closes `database` and releases its native SQLite handle.
@@ -22,7 +41,20 @@ export foreign open = fn(path:str):Database
  * Close all prepared statements created from the database before closing it.
  * A closed database resource cannot be used again.
  */
-export foreign close = fn(database:Database):num
+export val close = fn(database:Database):num {
+    if (hasStatementsRaw(database)) {
+        throw Error {
+            type: "sqlite.error",
+            msg: "unable to close due to unfinalized statements or unfinished backups",
+        }
+    } else {
+        if (closeRaw(database) == 0) {
+            0
+        } else {
+            throw Error {type: "sqlite.error", msg: "cannot close database"}
+        }
+    }
+}
 
 /**
  * Executes one SQL statement with positional parameters and returns SQLite's
@@ -32,7 +64,13 @@ export foreign close = fn(database:Database):num
  * numbers, strings, and bytes, which bind as SQLite NULL, integer or real,
  * text, and blob values respectively.
  */
-export foreign exec = fn(database:Database, sql:str, ...parameters:any|nil):num
+export val exec = fn(database:Database, sql:str, ...parameters:any|nil):num {
+    // Imported at call time: the statement module imports this one.
+    val statement = import("slug.db.sqlite.statement")
+    val prepared = statement.prepare(database, sql)
+    defer statement.close(prepared)
+    statement.exec(prepared, ...parameters)
+}
 
 /**
  * Executes a query with positional parameters and returns all rows.
@@ -40,4 +78,9 @@ export foreign exec = fn(database:Database, sql:str, ...parameters:any|nil):num
  * Each row is a map keyed by its SQL column names. SQLite NULL, integer, real,
  * text, and blob columns become Slug `nil`, `num`, `str`, and `bytes` values.
  */
-export foreign query = fn(database:Database, sql:str, ...parameters:any|nil):list<map>;
+export val query = fn(database:Database, sql:str, ...parameters:any|nil):list<map> {
+    val statement = import("slug.db.sqlite.statement")
+    val prepared = statement.prepare(database, sql)
+    defer statement.close(prepared)
+    statement.query(prepared, ...parameters)
+}

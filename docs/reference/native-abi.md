@@ -8,13 +8,14 @@ architecture contract, not a source-language specification. Slug programs
 continue to observe the rules in `language/`; this interface defines how trusted
 host code supplies those rules without depending on VM internals.
 
-The call-scoped static Rust facade and an internal clutch-only dynamic loader
-implement version 0 of this design contract. The loader accepts only the
-version-0 prototype descriptor selected by a clutch manifest; it does not
-create a public binary ABI or accept third-party compatibility promises. The
-Rust API may change while channels and concurrency exercise the design. A
-public ABI becomes a compatibility promise only when version 1 is published
-with its C-compatible declarations and conformance tests.
+The call-scoped static Rust facade implements version 0 of this design
+contract. Native clutches bind plain C functions through
+[typed native bindings](#typed-native-bindings), which sit above this
+interface; they create no public binary ABI and accept no third-party
+compatibility promise. The Rust API may change while channels and concurrency
+exercise the design. A public ABI becomes a compatibility promise only when
+version 1 is published with its C-compatible declarations and conformance
+tests.
 
 The terms in this document are intentionally distinct:
 
@@ -167,14 +168,6 @@ type/range error; numeric narrowing is never implicit. UTF-8 strings and byte
 slices borrowed from a value have the same lifetime as the call unless copied.
 A callback may return a value it constructs during that call; the runtime takes
 ownership of the successful result before invalidating the call context.
-
-Prototype ABI 0.12 additionally gives C adapters opaque, callback-lifetime
-value tokens. An adapter may obtain an argument token, inspect a map's length
-and ordered entries, and append a token's value to a list builder. Tokens are
-validated by the host, cannot be retained after the callback, do not expose VM
-storage, and do not permit mutation. This supports generic collection adapters
-such as `slug.std.keys` without making individual collection operations ABI
-endpoints.
 
 Version 1 has no persistent arbitrary Slug-value root. Without native-to-Slug
 callbacks, channels and resources do not yet provide a concrete consumer that
@@ -401,10 +394,11 @@ Slug module. A future loader will:
 5. bind module-qualified `foreign` declarations to registered signatures.
 
 A platform library such as `libm` does not become a Slug-aware module merely by
-exporting C symbols. It requires a handwritten adapter or a separately
-specified declarative bridge. Any TOML bridge format belongs above this ABI and
-must define platform types, calling convention, library discovery, symbol
-ownership, and unsafe pointer policy. It is not part of version 1.
+exporting C symbols. It requires a handwritten adapter or a declarative bridge
+that defines platform types, calling convention, library discovery, symbol
+ownership, and pointer policy. [Typed native bindings](#typed-native-bindings)
+are that bridge for a closed set of types; they sit above this interface and
+are not part of version 1.
 
 ## Deliberate exclusions
 
@@ -455,87 +449,70 @@ The ABI is not stable merely because these concepts are documented. Stability
 begins when the version 1 binary declarations, loader validation, and tests are
 released together.
 
-## Experimental C math module
+## Typed native bindings
 
-The `ffi-prototype` test suite contains C module fixtures with scalar `add` and
-`sqrt` functions. The same internal loader is selected by an experimental
-clutch's native manifest entry. Its header, loader, and fixtures exercise
-opaque calls, version rejection, and structured errors; they are not version 1
-declarations and accept no third-party compatibility promise. The
-prototype deliberately supports only exact arities, fixed-width and
-length-delimited descriptor fields, opaque member-key dispatch, and integer
-callback statuses. A clutch-owned library lease is released at deterministic VM
-shutdown only after resources and module state have been finalized; stale
-callbacks fail without entering unloaded code. It does not bridge arbitrary C
-libraries. Its test loader supports macOS, Linux,
-and Windows shared libraries. Prototype modules may allocate one
-opaque module-state pointer during initialization; callbacks receive it and the
-runtime calls the descriptor's teardown callback after the final module owner
-releases it. Modules may also declare named opaque C resource types with one
-destructor each. A callback can transfer a non-null C pointer into a Slug
-`resource`, borrow that pointer only for a synchronous callback, or close the
-resource by argument index. The host checks module/type identity and closed
-state, and invokes the C destructor exactly once on close or final release.
+Typed native bindings bind `foreign` declarations to ordinary C functions
+through the clutch manifest, without a Slug-aware C adapter. They are the only
+native clutch form: they replaced the 0.13 C FFI prototype, which has been
+removed, and `slug.io.fs`, `slug.db.sqlite`, and `slug.core` use them. The
+contract is set by these decision records:
 
-The prototype also exposes an explicitly owned, thread-safe producer capability
-for integer messages. C may create a channel during a callback, transfer its
-receiver result to Slug, and retain the paired producer for a background thread.
-The producer can send or be destroyed from that thread, but it cannot inspect
-or enter the VM, retain a Slug value, or invoke Slug code.
+- [Typed native calls](../decisions/2026-10-10-typed-native-calls.md);
+- [Uniform shim entry](../decisions/2026-10-10-uniform-shim-entry.md);
+- [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md);
+- [Static selection of typed native providers](../decisions/2026-10-11-static-typed-provider-selection.md);
+- [Typed native length results and shared handles](../decisions/2026-10-11-typed-native-length-results-and-shared-handles.md);
+  and
+- [Typed native producers](../decisions/2026-10-11-typed-native-producers.md).
 
-Integer producer sends report `sent`, `full`, or `closed`. A `full` result
-leaves the C caller responsible for retaining and retrying its integer; a
-`closed` result ends that producer's useful lifetime and the caller destroys
-the capability.
+In summary:
 
-The text experiment now makes that transfer rule explicit for C-owned buffers:
-the producer receives a buffer, length, and C destructor. On `sent`, the host
-copies the text into its owned message and invokes the destructor. On `full`,
-`closed`, or invalid UTF-8, C retains the buffer and is responsible for retry
-or release. A dropped Slug receiver makes later producer sends return `closed`.
-
-Prototype ABI 0.13 appends idempotent producer close plus non-blocking `nil`,
-boolean, float, and bytes sends to the host table. All producer sends report
-`sent`, `full`, `closed`, or `invalid`; only `sent` transfers a text or bytes
-buffer to the runtime. A successful text or bytes send copies the buffer into
-runtime-owned storage and invokes its supplied C destructor. On `full`,
-`closed`, or invalid input, C retains and releases that buffer itself.
-`producer_destroy` remains the prototype's explicit producer-release operation.
-
-The `slug.db.sqlite` clutch is the compound-value SQLite experiment. It owns a
-typed `Database` resource, opens an ordinary SQLite path (including
-`:memory:`), and exposes variadic `exec` and `query` functions. The adapter
-receives already-bound Slug values directly from each variadic argument and
-binds `nil`, integer, float, text, and bytes as SQLite NULL, integer, real,
-text, and blob parameters. Query rows are built only through the public
-prototype table: native code creates a list, creates a map per row, fills map
-entries, and transfers each map into the list. SQLite NULL, integer, real,
-text, and blob columns return as Slug `nil`, `num`, `str`, and `bytes` values.
-Prepared statements, transactions, pooling, and migrations remain outside the
-experiment.
-
-The same clutch also supplies `slug.db.sqlite.statement`. Its source wrapper
-exposes native prepared-statement operations from the clutch's one loaded
-library. A `Statement` is a typed native resource; close and shutdown finalize
-it before the database handle is released.
-
-`slug.db.sqlite.transaction` is a third module in that clutch implemented only
-in Slug. It imports `slug.db.sqlite` and composes `BEGIN`, `COMMIT`, and
-`ROLLBACK`; it has no native descriptor. This proves that native support is
-optional per Clutch module rather than a library-wide wrapper requirement.
-
-Prototype ABI minor 11 uses one library descriptor containing one or more
-module descriptors. The library owns one loaded-code lease and lifecycle while
-each module retains its own foreign registrations and resource declarations.
-Only the library descriptor may declare a teardown callback; module descriptors
-do not own native state or lifecycle callbacks.
-Its resource operations require fully qualified `(module_name, resource_name)`
-identities, rather than the earlier ambiguous short resource names.
-It also retains the minor-8 argument-kind and byte borrowing plus temporary
-list/map builders. The builders are call-scoped opaque handles: C transfers a
-map into a list and transfers the final list to the call, or destroys any
-untransferred handle before return. Its test compiles
-`clutch/slug.io.fs.clutch/native/source/fs.c` into a temporary installed
-clutch layout and loads it through the ordinary clutch manifest and CLI. This
-proves descriptor-backed text-file resources without establishing a packaged
-distribution contract.
+- **Bindings.** A clutch `[native]` table without `abi` names the headers and
+  C sources, a resource type and release function for each handle, and a C
+  symbol and signature for each `foreign` function, for example
+  `(handle<File> file, out cstr line) -> i32`. The source `foreign`
+  declarations remain the Slug-visible contract. Library code usually wraps
+  thin raw declarations in Slug functions, as `slug.io.fs` does.
+- **Generated shims.** `slug-native-manifest` generates one C file per
+  provider. Every binding gets the same entry signature over arrays of
+  argument and result cells, and its target and free functions are called
+  through exact-typed function pointers, so a header mismatch fails the build
+  under `-Werror`. Shims are generated at staging or build time and never
+  committed.
+- **Loading.** The desktop loader opens a typed clutch's library and reads its
+  table through `slug_shim_get_table`. A static image links each shim and calls
+  its `slug_shim_table_<provider>` function from generated Rust. Both install
+  the table through `slug-native-adapter`, the only code that calls a shim
+  entry, which rejects any binding whose canonical signature text differs from
+  the manifest.
+- **Checks.** Where a clutch module compiles, each `foreign` declaration must
+  match its binding by the compatibility table in the manifest-bindings record:
+  at desktop activation, or before a static image links. At run time the adapter
+  range-checks numbers, copies `cstr` arguments, checks resource type and
+  closed state, validates returned text as UTF-8, and maps a NULL handle or text
+  result to `nil`.
+- **Errors.** Boundary failures use a closed list of codes: `native.type`,
+  `native.range`, `native.arity`, `native.resource_type`,
+  `native.resource_closed`, `native.interior_nul`, and `native.encoding`. A
+  nonzero entry status is a `native_contract` error. Library failures are
+  ordinary results that Slug code turns into thrown `Error` values.
+- **Resources.** A handle's release function runs at most once, at teardown or
+  from the destructor. A function with a `close` handle parameter closes it
+  explicitly and is idempotent.
+- **Shutdown.** Once a clutch is finalized, its functions fail with
+  `native.plugin_inactive` instead of calling into the library, and its open
+  handles are still released.
+- **Producers.** Under `profile = "events"`, a `producer` argument, annotated
+  `chan` or `chan<T>` in Slug, mints a producer capability from a buffered
+  Slug channel and passes C a `slug_producer *`. C sends nil, bool, integer,
+  float, text, and bytes values through the host function table that the
+  capability carries, with the inline wrappers in the generated
+  `slug_producer.h`. Sends never block: they report `sent`, `full`, `closed`,
+  or `invalid`, and the host copies text and bytes, so C keeps its buffer.
+  Native and Slug sends share the channel's capacity. C may send from any
+  thread, and must release each capability exactly once. A library that has
+  received a producer stays loaded for the process lifetime. `slug.io.stdin`
+  starts its reader thread this way.
+- **Limits.** A binding has at most 16 argument and 16 result cells. `str` and
+  `bytes` return values (as opposed to `out` results), structs, buffers,
+  constants, producers on embedded targets, and MSVC are not supported yet.

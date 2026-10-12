@@ -117,6 +117,30 @@ fn native_close(call: &mut NativeCall<'_>) -> NativeStatus {
     call.return_value(NativeOwnedValue::nil())
 }
 
+/// The `keys` builtin: a map's keys, in its enumeration order.
+fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
+    let result = (|| {
+        let map = call.argument(0)?;
+        if map.kind() != slug_vm::NativeValueKind::Map {
+            return Err(slug_vm::NativeError::new(
+                "native.type",
+                format!("`keys` expects map, got {:?}", map.kind()),
+            ));
+        }
+        let mut keys = Vec::new();
+        let mut index = 0;
+        while let Some((key, _)) = map.map_get(index)? {
+            keys.push(key.to_owned());
+            index += 1;
+        }
+        Ok(NativeOwnedValue::list(keys))
+    })();
+    match result {
+        Ok(keys) => call.return_value(keys),
+        Err(error) => call.raise(error),
+    }
+}
+
 fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
     let builtins = NativeModule::new("slug.builtin", ()).expect("static native module is valid");
     vec![
@@ -132,6 +156,9 @@ fn builtin_functions() -> Vec<slug_vm::NativeFunction> {
             .expect("static builtin function is valid"),
         builtins
             .function("len", NativeArity::Exact(1), native_len)
+            .expect("static builtin function is valid"),
+        builtins
+            .function("keys", NativeArity::Exact(1), native_keys)
             .expect("static builtin function is valid"),
         builtins
             .function(

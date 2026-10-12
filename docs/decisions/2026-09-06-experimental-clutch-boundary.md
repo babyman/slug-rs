@@ -64,3 +64,9 @@ become public ABIs.
 
 None. Existing imports, library roots, source modules, and native registrations
 remain unchanged until an opt-in implementation is added.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native manifest
+bindings](2026-10-11-typed-native-manifest-bindings.md).

@@ -408,3 +408,48 @@ with the reapplied recycler. Each checkpoint is a single local sample; the
 source timing should be repeated before assigning the apparent binary-tree
 improvement to one slice. The key retained measurement is that only setup
 instructions, not recursive call/tree execution, remain on rich fallback.
+
+## Native-call path and owned-value resolution — 2026-10-11
+
+Four VM refactors, made while profiling native calls, also affect general
+execution. Integer `+`, `-`, and shift operators no longer allocate an unused
+overflow message, and values the VM already owns are moved instead of
+cloned when resolved after a stack pop. Declared native functions share
+their identity and resource signature instead of copying them, and positional
+native calls skip closure-only argument binding. Source semantics and
+checked errors are unchanged.
+
+Both revisions were measured back to back on the same laptop from clean trees:
+`4629151` before the refactors and `a4c6c1f` after. Each source cell shows
+two 15-sample runs with three warmups.
+
+| Workload            | Before median       | After median        | Change |
+|---------------------|--------------------:|--------------------:|-------:|
+| function-call       | 38.184 / 38.019 ms  | 32.814 / 32.625 ms  |   −14% |
+| n-body              | 16.575 / 16.824 ms  | 14.271 / 14.169 ms  |   −15% |
+| typed-n-body        | 16.287 / 16.329 ms  | 14.288 / 13.801 ms  |   −14% |
+| spectral-norm       |  7.538 /  7.717 ms  |  6.492 /  6.487 ms  |   −15% |
+| typed-spectral-norm |  6.964 /  7.249 ms  |  6.361 /  6.189 ms  |   −12% |
+| binary-trees        | 40.275 / 40.416 ms  | 35.583 / 34.928 ms  |   −13% |
+| fannkuch-redux      | 136.867 / 136.865 ms | 119.849 / 117.713 ms |  −13% |
+
+The in-process suite (`make bench-vm`, one checkpoint each) shows the same
+direction. Its counters confirm the call-path change: native calls no longer
+take generic argument binding.
+
+| Workload                 | Before                | After                 | Generic call bindings |
+|--------------------------|----------------------:|----------------------:|----------------------:|
+| native-calls             |  73.339 ms / 1000 runs |  52.283 ms / 1000 runs |          200,000 → 0 |
+| fannkuch-redux-7         | 1349.085 ms / 10 runs | 1173.728 ms / 10 runs |          223,600 → 0 |
+| function-call            |  358.779 ms / 10 runs |  317.664 ms / 10 runs |                0 → 0 |
+| binary-trees             |  384.037 ms / 10 runs |  334.306 ms / 10 runs |                0 → 0 |
+| ordinary-calls-200       |  74.607 ms / 1000 runs |  65.559 ms / 1000 runs |                0 → 0 |
+| arithmetic-and-branches  |  84.431 ms / 1000 runs |  75.684 ms / 1000 runs |                0 → 0 |
+
+Timer- and select-bound workloads did not change beyond noise. Apart from
+the generic bindings above, the instruction, dispatch, frame, and collection
+counters are identical between the two revisions. Executable layout metadata
+is 8 bytes smaller per callable identity (32 to 64 bytes in these programs),
+because an identity is now a shared `Rc<str>` rather than an owned `String`. The timing change therefore comes
+from per-operation cost rather than different execution. The native-call breakdown is recorded in
+[`typed-native-call-dispatch-spike-results.md`](../planning/completed/typed-native-call-dispatch-spike-results.md).

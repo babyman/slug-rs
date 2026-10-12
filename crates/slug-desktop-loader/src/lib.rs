@@ -5,27 +5,30 @@
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use slug_loader::{
-    ModuleActivation as ModuleActivationLease, ModuleActivationTransaction, ModuleKey,
-    ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
+    ForeignDeclaration, ModuleActivation as ModuleActivationLease, ModuleActivationTransaction,
+    ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
 };
 use slug_vm::{NativeDescriptorError, NativeFunction, Value};
 #[doc(hidden)]
 pub mod clutch;
 #[allow(unsafe_code)]
-mod ffi_prototype;
+mod dynamic_library;
+#[allow(unsafe_code)]
+mod typed_native;
 
 use clutch::StagedClutchPlugin;
 pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
 };
-pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
+pub use dynamic_library::NativeLibraryError;
+use slug_native_adapter::TextResults;
 
 /// Filesystem resolver for an explicitly configured desktop module search path.
 #[derive(Clone, Debug)]
@@ -35,12 +38,18 @@ pub struct DesktopResolver {
     clutch_repository: ClutchRepository,
     activation_sources: Rc<RefCell<HashMap<ModuleActivationLease, ClutchPluginSource>>>,
     activation_state: Rc<RefCell<DesktopActivationState>>,
+    /// Text-result switches of each staged typed activation.
+    typed_text_results: Rc<RefCell<HashMap<ModuleActivationLease, TextResults>>>,
 }
 
 #[derive(Debug, Default)]
 struct DesktopActivationState {
     foreign_functions: HashMap<(String, String), NativeFunction>,
     active_plugins: HashMap<ModuleActivationLease, DesktopActivation>,
+    /// Activations registered while their module initializes, before
+    /// `retain`. A sibling module imported during that initialization shares
+    /// the activation instead of staging the clutch again.
+    registered: HashSet<ModuleActivationLease>,
     shutdown_errors: Vec<String>,
 }
 
@@ -72,10 +81,25 @@ impl ModuleActivationTransaction for DesktopActivation {
             .map_err(|error| ModuleLoadError::Clutch {
                 location: self.diagnostic_name.clone(),
                 message: error.to_string(),
-            })
+            })?;
+        if let Some(lease) = &self.lease {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .registered
+                .insert(lease.clone());
+        }
+        Ok(())
     }
 
     fn rollback(&self) {
+        if let Some(lease) = &self.lease {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .registered
+                .remove(lease);
+        }
         remove_foreign_batch(
             &mut self
                 .resolver
@@ -87,6 +111,13 @@ impl ModuleActivationTransaction for DesktopActivation {
     }
 
     fn cleanup(&mut self) {
+        if let Some(lease) = &self.lease {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .registered
+                .remove(lease);
+        }
         if let Err(error) = self.plugin.cleanup() {
             self.resolver
                 .activation_state
@@ -103,7 +134,9 @@ impl ModuleActivationTransaction for DesktopActivation {
             return;
         };
         let state = activation.resolver.activation_state.clone();
-        state.borrow_mut().active_plugins.insert(lease, activation);
+        let mut state = state.borrow_mut();
+        state.registered.remove(&lease);
+        state.active_plugins.insert(lease, activation);
     }
 }
 
@@ -127,6 +160,7 @@ impl DesktopResolver {
             clutch_repository,
             activation_sources: Rc::new(RefCell::new(HashMap::new())),
             activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
+            typed_text_results: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -143,13 +177,11 @@ impl DesktopResolver {
         let Some(lease) = &source.activation else {
             return Ok(None);
         };
-        if self
-            .activation_state
-            .borrow()
-            .active_plugins
-            .contains_key(lease)
         {
-            return Ok(None);
+            let state = self.activation_state.borrow();
+            if state.active_plugins.contains_key(lease) || state.registered.contains(lease) {
+                return Ok(None);
+            }
         }
         let plugin = self
             .activation_sources
@@ -175,37 +207,11 @@ impl DesktopResolver {
                 })
             }
             ClutchPluginSource::Native {
-                root, library, abi, ..
-            } => {
-                if abi == ABI_PROFILE {
-                    let module = FfiPrototypeLibrary::load(library).map_err(|error| {
-                        ModuleLoadError::Clutch {
-                            location: library.to_string_lossy().into_owned(),
-                            message: format!("cannot load native plugin: {error}"),
-                        }
-                    })?;
-                    module
-                        .stage(&mut registrar)
-                        .map_err(|error| ModuleLoadError::Clutch {
-                            location: root.to_string_lossy().into_owned(),
-                            message: format!("native plugin initialization failed: {error}"),
-                        })?;
-                    registrar
-                        .set_cleanup_operation(move || {
-                            module.shutdown();
-                            Ok(())
-                        })
-                        .map_err(|error| ModuleLoadError::Clutch {
-                            location: root.to_string_lossy().into_owned(),
-                            message: format!("cannot retain native plugin cleanup: {error}"),
-                        })
-                } else {
-                    Err(ModuleLoadError::Clutch {
-                        location: root.to_string_lossy().into_owned(),
-                        message: format!("unsupported native ABI `{abi}`"),
-                    })
-                }
-            }
+                root,
+                library,
+                manifest,
+                ..
+            } => self.stage_typed(lease, root, library, manifest, &mut registrar),
         };
         if let Err(error) = result {
             let mut staged = registrar.finish();
@@ -218,6 +224,76 @@ impl DesktopResolver {
             diagnostic_name: source.diagnostic_name.clone(),
             plugin: registrar.finish(),
         }))
+    }
+
+    fn stage_typed(
+        &self,
+        lease: &ModuleActivationLease,
+        root: &Path,
+        library: &Path,
+        manifest: &slug_native_manifest::NativeManifest,
+        registrar: &mut clutch::ClutchPluginRegistrar,
+    ) -> Result<(), ModuleLoadError> {
+        let installed =
+            typed_native::load(library, manifest).map_err(|message| ModuleLoadError::Clutch {
+                location: library.to_string_lossy().into_owned(),
+                message: format!("cannot load typed native library: {message}"),
+            })?;
+        self.typed_text_results
+            .borrow_mut()
+            .insert(lease.clone(), installed.text_results);
+        let clutch_error = |message: String| ModuleLoadError::Clutch {
+            location: root.to_string_lossy().into_owned(),
+            message,
+        };
+        installed.functions.into_iter().try_for_each(|function| {
+            registrar
+                .define_foreign(function)
+                .map_err(|error| clutch_error(error.to_string()))
+        })?;
+        // Functions a VM still holds after shutdown must not enter the library.
+        let activity = installed.activity;
+        registrar
+            .set_cleanup_operation(move || {
+                activity.deactivate();
+                Ok(())
+            })
+            .map_err(|error| clutch_error(format!("cannot retain native plugin cleanup: {error}")))
+    }
+
+    /// Checks a clutch module's `foreign` declarations against its typed
+    /// native bindings. Modules of other clutch forms are not checked.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked clutch error naming the first mismatched declaration.
+    pub fn check_foreign_declarations(
+        &self,
+        source: &ModuleSource,
+        module_name: &str,
+        declarations: &[ForeignDeclaration],
+    ) -> Result<(), ModuleLoadError> {
+        let Some(lease) = &source.activation else {
+            return Ok(());
+        };
+        let Some(ClutchPluginSource::Native { manifest, .. }) =
+            self.activation_sources.borrow().get(lease).cloned()
+        else {
+            return Ok(());
+        };
+        let non_null_text =
+            slug_native_manifest::check_foreign_declarations(&manifest, module_name, declarations)
+                .map_err(|message| ModuleLoadError::Clutch {
+                    location: source.diagnostic_name.clone(),
+                    message,
+                })?;
+        if let Some(text_results) = self.typed_text_results.borrow().get(lease) {
+            for name in non_null_text {
+                // The check above found this binding in the same manifest.
+                let _ = text_results.reject_null(module_name, &name);
+            }
+        }
+        Ok(())
     }
 
     /// Returns plugin-provided functions for one module-qualified declaration.
@@ -359,7 +435,7 @@ impl ModuleResolver for DesktopResolver {
                 (None, Some(native)) => Some(ClutchPluginSource::Native {
                     root: module.root,
                     library: native.library,
-                    abi: native.abi,
+                    manifest: native.manifest,
                     module_names: module.module_names,
                 }),
                 (None, None) => None,
@@ -456,7 +532,7 @@ enum ClutchPluginSource {
     Native {
         root: PathBuf,
         library: PathBuf,
-        abi: String,
+        manifest: Rc<slug_native_manifest::NativeManifest>,
         module_names: Vec<String>,
     },
 }

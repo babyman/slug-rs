@@ -12,33 +12,31 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-case "$platform" in
-  macos-*)
-    suffix=dylib
-    linker=-dynamiclib
-    ;;
-  linux-*)
-    suffix=so
-    linker='-shared -fPIC'
-    ;;
-  windows-*)
-    suffix=dll
-    linker=-shared
-    ;;
-esac
-
+# Generates the shim from clutch.toml and builds the library it names.
 stage() {
   clutch=$1
-  source=$2
-  output_name=$3
-  libraries=${4-}
-  output="clutch/$clutch/native/$platform/$output_name.$suffix"
-  mkdir -p "$(dirname "$output")"
-  # shellcheck disable=SC2086
-  cc -I include $linker "$source" -o "$output" $libraries
-  echo "staged $output"
+  provider=$2
+  cargo run --quiet -p slug-native-manifest --bin slug-native-shim -- \
+    stage "clutch/$clutch/clutch.toml" "$provider" "$platform"
 }
 
-stage slug.io.fs.clutch clutch/slug.io.fs.clutch/native/source/fs.c libslug_io_fs
-stage slug.db.sqlite.clutch clutch/slug.db.sqlite.clutch/native/source/sqlite.c libslug_db_sqlite -lsqlite3
-stage slug.core.clutch clutch/slug.core.clutch/native/source/core.c libslug_core -lm
+# With arguments, stage only the named clutches; otherwise stage them all.
+selected() {
+  wanted=$1
+  shift
+  [ "$#" -eq 0 ] && return 0
+  for clutch in "$@"; do
+    [ "$clutch" = "$wanted" ] && return 0
+  done
+  return 1
+}
+
+if selected slug.io.fs.clutch "$@"; then
+  stage slug.io.fs.clutch slug_io_fs
+fi
+if selected slug.db.sqlite.clutch "$@"; then
+  stage slug.db.sqlite.clutch slug_db_sqlite
+fi
+if selected slug.core.clutch "$@"; then
+  stage slug.core.clutch slug_core
+fi

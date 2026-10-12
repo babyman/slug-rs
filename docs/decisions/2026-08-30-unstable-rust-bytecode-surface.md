@@ -27,7 +27,7 @@ as a portable module representation.
 The future `.cslug` format remains the only portable compiled-module contract.
 It must translate into an implementation representation rather than encode
 these Rust types directly. This clarifies, but does not supersede, [Portable
-compiled modules](2026-08-16-portable-compiled-modules.md).
+compiled modules](2026-08-16-portable-compiled-modules-superseded.md).
 
 ## Consequences
 

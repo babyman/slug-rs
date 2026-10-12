@@ -9,12 +9,12 @@ use crate::{
     SourceError,
     source::{
         InteractiveCompilation, InteractiveCompilerState, compile_with_resolver,
-        environment::ModuleSnapshot,
+        environment::ModuleSnapshot, foreign_declarations,
     },
 };
 use slug_loader::{
-    ModuleActivationTransaction, ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver,
-    ModuleSource,
+    ForeignDeclaration, ModuleActivationTransaction, ModuleKey, ModuleLoadError, ModuleRequest,
+    ModuleResolver, ModuleSource,
 };
 use slug_vm::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
@@ -94,6 +94,22 @@ pub trait ModuleGraphHost: ModuleResolver {
             });
         }
         Ok(None)
+    }
+
+    /// Checks the `foreign` declarations of a module whose source carries an
+    /// activation, after it compiles and before its activation registers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked error when a declaration does not match the native
+    /// binding the host will register for it.
+    fn check_foreign_declarations(
+        &self,
+        _source: &ModuleSource,
+        _module_name: &str,
+        _declarations: &[ForeignDeclaration],
+    ) -> Result<(), ModuleLoadError> {
+        Ok(())
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value>;
@@ -377,7 +393,12 @@ impl ModuleGraph {
         }
 
         let mut activation = host.stage_activation(&source)?;
-        let program = match self.compile_cached_or_source(host, &source, request.name) {
+        let program = match self
+            .compile_cached_or_source(host, &source, request.name)
+            .and_then(|program| {
+                Self::check_foreign_declarations(host, &source, request.name)?;
+                Ok(program)
+            }) {
             Ok(program) => program,
             Err(error) => {
                 if let Some(activation) = activation.as_mut() {
@@ -449,6 +470,24 @@ impl ModuleGraph {
             activation.retain();
         }
         Ok(instance)
+    }
+
+    fn check_foreign_declarations<H: ModuleGraphHost>(
+        host: &H,
+        source: &ModuleSource,
+        module_name: &str,
+    ) -> Result<(), ModuleLoadError> {
+        if source.activation.is_none() {
+            return Ok(());
+        }
+        let declarations =
+            foreign_declarations(&source.diagnostic_name, &source.text).map_err(|error| {
+                ModuleLoadError::Source {
+                    location: source.diagnostic_name.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+        host.check_foreign_declarations(source, module_name, &declarations)
     }
 
     fn compile_cached_or_source(

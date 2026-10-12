@@ -59,12 +59,16 @@ contract is documented separately as `.cslug`.
   `slug.core.clutch` provides the explicit `slug.std`, `slug.io.stdin`, and
   `slug.math` standard modules. A host may
   configure a clutch-scoped Rust plugin or a manifest-selected experimental
-  native library that supports any subset of the clutch's modules. The local `slug.io.fs` clutch has macOS ARM native
-  source, which `make stage-native-clutches` builds locally; it reports a
-  checked unavailable-platform error elsewhere. The
-  `slug.db.sqlite` clutch proves variadic SQL binding and native-built
-  `list<map>` query rows by building its adapter into a temporary installed
-  layout during integration tests.
+  native library that supports any subset of the clutch's modules. The
+  `slug.io.fs` clutch binds plain C functions through typed native bindings:
+  its manifest declares each C signature, and `make stage-native-clutches`
+  generates a header-checked shim and builds the library on macOS, Linux, or
+  Windows. Other platforms report a checked unavailable-platform error. The
+  `slug.db.sqlite` clutch binds SQLite's C API the same way, with Slug code
+  over the raw calls providing variadic SQL binding, `list<map>` query rows,
+  prepared statements, and transactions. `slug.core` binds its math functions
+  the same way, and its standard-input reader is a C thread that sends lines
+  into a Slug channel through a typed producer.
   This checkout is a development clutch repository: run
   `make stage-native-clutches` before executing a program that imports one of
   its native modules. Staged platform libraries are local build outputs, not

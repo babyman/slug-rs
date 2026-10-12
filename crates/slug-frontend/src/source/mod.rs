@@ -3,6 +3,7 @@
 
 use std::{collections::HashMap, fmt};
 
+use slug_loader::{ForeignDeclaration, ForeignParameter};
 use slug_vm::{Program, SourceSpan};
 
 #[path = "syntax/ast.rs"]
@@ -116,6 +117,63 @@ pub(crate) fn static_import_names(path: &str, source: &str) -> Result<Vec<String
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
     Ok(typecheck::static_import_names(&expressions))
+}
+
+/// Returns the top-level `foreign` declarations of `source` with their type
+/// annotations rendered as canonical text.
+///
+/// # Errors
+///
+/// Returns a source error when `source` does not parse.
+pub fn foreign_declarations(
+    path: &str,
+    source: &str,
+) -> Result<Vec<ForeignDeclaration>, SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    Ok(expressions
+        .iter()
+        .filter_map(|expression| match &expression.kind {
+            ast::ExprKind::Foreign {
+                name, signature, ..
+            } => Some(ForeignDeclaration {
+                name: name.clone(),
+                parameters: signature
+                    .parameters
+                    .iter()
+                    .map(|parameter| ForeignParameter {
+                        name: parameter.name.clone(),
+                        annotation: parameter.annotation.as_ref().map(annotation_text),
+                        variadic: parameter.variadic,
+                        has_default: parameter.default.is_some(),
+                    })
+                    .collect(),
+                result: signature.return_annotation.as_ref().map(annotation_text),
+            }),
+            _ => None,
+        })
+        .collect())
+}
+
+fn annotation_text(annotation: &ast::TypeAnnotation) -> String {
+    let join = |elements: &[ast::TypeAnnotation]| {
+        elements
+            .iter()
+            .map(annotation_text)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    match annotation {
+        ast::TypeAnnotation::Name(name) => name.clone(),
+        ast::TypeAnnotation::Apply { name, arguments } => format!("{name}<{}>", join(arguments)),
+        ast::TypeAnnotation::Tuple(elements) => format!("({})", join(elements)),
+        ast::TypeAnnotation::Union(members) => {
+            let mut members = members.iter().map(annotation_text).collect::<Vec<_>>();
+            members.sort();
+            members.dedup();
+            members.join("|")
+        }
+    }
 }
 
 pub(crate) struct CompiledSource {

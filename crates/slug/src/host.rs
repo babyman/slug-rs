@@ -271,6 +271,17 @@ impl ModuleGraphHost for DesktopLoader {
         self.state.resolver.stage_activation(source)
     }
 
+    fn check_foreign_declarations(
+        &self,
+        source: &ModuleSource,
+        module_name: &str,
+        declarations: &[slug_loader::ForeignDeclaration],
+    ) -> Result<(), ModuleLoadError> {
+        self.state
+            .resolver
+            .check_foreign_declarations(source, module_name, declarations)
+    }
+
     fn builtin_globals(&self) -> HashMap<String, Value> {
         self.state.resolver.builtin_globals()
     }

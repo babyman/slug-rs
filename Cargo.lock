@@ -268,6 +268,7 @@ dependencies = [
  "slug-desktop-loader",
  "slug-frontend",
  "slug-loader",
+ "slug-native-manifest",
  "slug-nil-loader",
  "slug-vm",
  "toml",
@@ -278,6 +279,8 @@ name = "slug-desktop-loader"
 version = "0.1.0"
 dependencies = [
  "slug-loader",
+ "slug-native-adapter",
+ "slug-native-manifest",
  "slug-vm",
  "toml",
 ]
@@ -288,6 +291,7 @@ version = "0.1.0"
 dependencies = [
  "slug-frontend",
  "slug-loader",
+ "slug-native-manifest",
  "slug-vm",
  "toml",
 ]
@@ -305,6 +309,24 @@ dependencies = [
 [[package]]
 name = "slug-loader"
 version = "0.1.0"
+
+[[package]]
+name = "slug-native-adapter"
+version = "0.1.0"
+dependencies = [
+ "slug-frontend",
+ "slug-loader",
+ "slug-native-manifest",
+ "slug-vm",
+]
+
+[[package]]
+name = "slug-native-manifest"
+version = "0.1.0"
+dependencies = [
+ "slug-loader",
+ "toml",
+]
 
 [[package]]
 name = "slug-nil-loader"
@@ -337,6 +359,15 @@ version = "0.1.0"
 dependencies = [
  "slug-frontend",
  "slug-loader",
+ "slug-vm",
+]
+
+[[package]]
+name = "slug-typed-static-test"
+version = "0.1.0"
+dependencies = [
+ "slug-embedded-build",
+ "slug-native-adapter",
  "slug-vm",
 ]
 

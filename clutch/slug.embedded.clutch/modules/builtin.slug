@@ -31,3 +31,9 @@ export foreign println = fn(...values):nil
  * Returns the Unicode scalar, byte, list-element, or map-entry count.
  */
 export foreign len = fn(value:str|bytes|list|map):num
+
+/**
+ * Returns a map's keys as a new list, in the map's unspecified enumeration
+ * order. Each key keeps its value type.
+ */
+export foreign keys = fn(m:map):list

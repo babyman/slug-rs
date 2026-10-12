@@ -9,6 +9,10 @@ date: 2026-09-26
 
 Accepted
 
+## Supersedes
+
+[Finite Slug Numbers](2026-09-25-finite-numbers-superseded.md).
+
 ## Context
 
 IEEE-754 NaN and infinities make equality, ordering, map keys, serialization,

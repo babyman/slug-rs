@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, rc::Rc, string::String, sync::Arc, vec::Vec};
 
 use crate::Value;
 
@@ -77,13 +77,13 @@ metadata_id!(SelectCasesId);
 
 /// Opaque input identity used only for private runtime callable selection.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CallableIdentity(String);
+pub struct CallableIdentity(Rc<str>);
 
 impl CallableIdentity {
     #[doc(hidden)]
     #[must_use]
     pub fn new(canonical_input: impl Into<String>) -> Self {
-        Self(canonical_input.into())
+        Self(canonical_input.into().into())
     }
 
     #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.

@@ -241,6 +241,10 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
     assert!(imported.ok, "{imported:?}");
     assert_eq!(imported.result, completed(serde_json::json!(5), "idle"));
 
+    let keys = submit(&mut server, 5, &session, "keys({only: 1})");
+    assert!(keys.ok, "{keys:?}");
+    assert_eq!(keys.result, completed(serde_json::json!(["only"]), "idle"));
+
     let missing = submit(&mut server, 4, &session, "import(\"missing.module\")");
     assert!(!missing.ok);
     assert_eq!(

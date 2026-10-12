@@ -1,20 +1,35 @@
 /**
  * Basic numeric operations implemented by the native core Clutch.
  *
- * The functions accept and return Slug numbers and report invalid native
- * operations as checked runtime errors.
+ * Invalid operations throw `Error` values whose `type` is `math.range` or
+ * `math.domain`.
  */
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign addRaw = fn(left:num, right:num):list
+foreign sqrtRaw = fn(value:num):num
 
 /**
  * Returns the integer sum of `left` and `right`.
  *
- * The operation reports an error when the result cannot fit in a Slug integer.
+ * Throws a `math.range` error when the result cannot fit in a Slug integer.
  */
-export foreign add = fn(left:num, right:num):num
+export val add = fn(left:num, right:num):num {
+    match addRaw(left, right) {
+        [true, sum] => sum
+        _ => throw Error {type: "math.range", msg: "integer addition overflowed"}
+    }
+}
 
 /**
  * Returns the non-negative square root of `value`.
  *
- * `value` must not be negative.
+ * Throws a `math.domain` error when `value` is negative.
  */
-export foreign sqrt = fn(value:num):num
+export val sqrt = fn(value:num):num {
+    if (value < 0) {
+        throw Error {type: "math.domain", msg: "sqrt requires a non-negative number"}
+    } else {
+        sqrtRaw(value)
+    }
+}

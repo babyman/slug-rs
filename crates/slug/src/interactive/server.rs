@@ -27,7 +27,8 @@ mod builtins;
 mod presentation;
 
 use builtins::{
-    NativeCallback, native_channel, native_close, native_len, native_print, native_println,
+    NativeCallback, native_channel, native_close, native_keys, native_len, native_print,
+    native_println,
 };
 use presentation::{
     InitializeParams, SubmitParams, completed_result, protocol_value, required_params,
@@ -897,6 +898,11 @@ impl Server {
             .expect("static interactive length function is valid");
         self.define_session_builtin(length)
             .expect("interactive length binding is unique");
+        let keys = module
+            .function("keys", NativeArity::Exact(1), native_keys)
+            .expect("static interactive keys function is valid");
+        self.define_session_builtin(keys)
+            .expect("interactive keys binding is unique");
         let channel = module
             .function(
                 "chan",

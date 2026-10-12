@@ -2,6 +2,328 @@
 
 ## Unreleased
 
+- Completed step 4, and with it the typed native-call replacement: CI passed
+  its exit gate, and its plan moved to `docs/planning/completed/`.
+
+- The same-named resources test builds its clutch once instead of relinking
+  the library between its two programs, which failed on Windows when the
+  linker could not replace a DLL still held open.
+
+- Superseded seventeen 0.13 prototype decision records, renamed with the
+  `-superseded.md` suffix and linked to the typed native records that replace
+  them. Twelve records whose rules still hold, including the producer
+  semantics, cross-reference the typed records that now implement them.
+
+- Removed the prototype from the native ABI and experimental clutch
+  references, and deleted the helper SDK reference. The completed 0.13
+  producer plan moved to `docs/planning/completed/`.
+
+- Renamed the native build names: `make test-ffi-prototype` is now
+  `make test-native`, `make bench-ffi-prototype-scalar` is now
+  `make bench-native-scalar` (script `scripts/benchmark-native-scalar.sh`,
+  local record `docs/planning/local/native-scalar.txt`), and the CI job
+  `ffi-prototype` is now `native`.
+
+- Removed the 0.13 C FFI prototype: its desktop loader, the
+  `abi = "slug-ffi-prototype/0.13"` manifest form, the `include/` headers and
+  helper SDK, and the prototype tests and C fixtures. Typed bindings are the
+  only native clutch form. A manifest that still sets `abi` fails with the
+  ordinary unknown-key error. `slug-desktop-loader` no longer exports
+  `ABI_PROFILE`, `FfiPrototypeError`, or `FfiPrototypeLibrary`.
+
+- The scalar-call VM controls (empty loop, Slug function, static Rust
+  native) moved beside the typed scalar benchmark in `typed_native.rs`.
+
+- `slug-desktop-loader` keeps its platform library loading in a
+  `dynamic_library` module shared by native clutch forms, with errors
+  reported as `NativeLibraryError`.
+
+- A typed native function that a VM still holds after its clutch shuts down
+  now fails with `native.plugin_inactive` instead of calling into the
+  library, as the deterministic native shutdown rule requires and the 0.13
+  prototype already did. `slug-native-adapter` returns an `Activity` switch
+  with each installed table, which the desktop loader deactivates during
+  clutch cleanup.
+
+- Step 4 decisions accepted, except that a manifest still using the
+  prototype `abi` key gets the ordinary unknown-key error rather than a
+  dedicated one.
+
+- Typed native tests now cover resource release during error unwinding and
+  VM teardown, resource arguments on dynamic calls, and same-named resources
+  in two modules, behavior previously tested only through the 0.13
+  prototype.
+
+- Planned step 4 of the typed native-call replacement: removing the 0.13
+  prototype loader, its tests, headers, and helper SDK, after porting any
+  loader coverage that typed clutches still need.
+
+- Completed step 3 of the typed native-call replacement: CI passed its exit
+  gate, and its plan moved to `docs/planning/completed/`. No first-party
+  clutch uses the 0.13 prototype.
+
+- Measured standard-input throughput through the CLI: typed and prototype
+  `slug.io.stdin` are within noise, at roughly 0.7 to 0.85 µs per line. The
+  native ABI, experimental clutch, and README docs now describe typed
+  producers and the typed `slug.core` clutch.
+
+- Fixed a race in which a program receiving from a native producer could
+  fail with "task remains blocked with no runnable work" at end of stream.
+  If the producer sent its last values and closed after the VM's final
+  drain but before the VM checked for a live producer, the VM gave up with
+  those values and the close still queued. It now drains once more. Reading
+  100,000 lines through `slug.io.stdin` failed in about 3% of runs, on the
+  prototype as well as on typed bindings.
+
+- The `slug.core` clutch now uses typed native bindings. `slug.io.stdin`
+  starts a plain C reader thread that sends lines through a producer minted
+  from the module's channel, and `slug.math` wraps raw C functions. Failed
+  `slug.math` calls now throw `Error` values typed `math.range` and
+  `math.domain` instead of reporting native errors, so an uncaught failure
+  reports the thrown struct. The shim build links libm on Linux.
+
+- The typed producer test's C worker now declares `nanosleep` on Linux, where
+  shims build with `-std=c11` and glibc hides POSIX functions without
+  `_POSIX_C_SOURCE`.
+
+- Typed native bindings accept a `producer` argument under the `events`
+  profile: the adapter mints a producer from a buffered Slug channel and
+  passes C a `slug_producer *` whose host function table sends nil, bool,
+  integer, float, text, and bytes values, reports closed, closes, and
+  releases. The shim build writes `slug_producer.h` beside each shim, and a
+  library that receives a producer stays loaded.
+
+- Native code can now send into a buffered channel that Slug created:
+  `NativeCall::producer` mints a producer from a channel argument, sharing
+  the channel's capacity with Slug senders. Closing the producer closes the
+  channel, and the producer reports closed once the receiver or VM is gone.
+
+- Decided typed native producers: a `producer` argument minted from a
+  buffered Slug channel, host functions reached through the capability,
+  copied text and bytes, and a generated `slug_producer.h` header.
+
+- Planned step 3 of the typed native-call replacement: a `producer` binding
+  type through which native code sends into a Slug-created channel, and
+  moving the `slug.core` clutch (`slug.io.stdin`, `slug.math`) to typed
+  bindings.
+
+- Recorded in-place appends to uniquely owned lists as deferred VM
+  optimization item 11, with the typed SQLite measurements that motivate it.
+
+- Completed step 2 of the typed native-call replacement: CI passed its exit
+  gate, and its plan moved to `docs/planning/completed/`.
+
+- Implemented step 2 of the typed native-call replacement. It completes once
+  CI passes its exit gate.
+
+- `keys(map)` is now a builtin, declared in `slug.builtin` beside `len` and
+  available in every module without an import, on desktop and embedded
+  hosts. Its order is the map's unspecified enumeration order, as the maps
+  documentation states. `slug.std` no longer exports `keys`: replace
+  `val {keys} = import("slug.std")` or `std.keys(map)` with `keys(map)`. The
+  `slug.core` prototype library no longer implements it.
+
+- Measured typed `slug.db.sqlite` against the prototype: about 4x slower to
+  insert, and slower to read rows back as results grow, because rows are
+  built in Slug with copying list appends. The causes and follow-ups are
+  recorded in the step 2 plan.
+
+- `slug.db.sqlite`, `slug.db.sqlite.statement`, and
+  `slug.db.sqlite.transaction` now run on typed native bindings: thin C
+  helpers plus direct SQLite bindings, wrapped in Slug code that keeps every
+  public name and signature. Failures are thrown as `Error` values whose
+  `type` is `sqlite.error` or `sqlite.bind`, so an uncaught failure now
+  reports `uncaught throw: struct {"type": "sqlite.error", ...}` at the
+  wrapper instead of `native ...: message` at the call. Text columns may
+  contain NUL bytes. A whole-number float such as `2.0` now binds as a SQLite
+  integer. Run `make stage-native-clutches` to rebuild the library.
+
+- Fixed deferred work that calls Slug functions more than one level deep.
+  Inside `defer`, `defer onerror`, or `defer onsuccess`, a call chain such as
+  `middle()` calling `leaf()`, or a called function returning from inside a
+  block with locals, abandoned the rest of the deferred block without an
+  error; on success it could produce a wrong value and then fail with
+  "ended without Return".
+
+- Fixed importing a clutch module that imports a sibling module of the same
+  clutch while it initializes. The loader staged the clutch's native library
+  a second time and failed with "foreign binding ... is already defined"; a
+  clutch's activation now counts as active as soon as it registers.
+
+- Typed native bindings accept length-delimited `out str` and `out bytes`
+  results, borrowed or owned, which may contain NUL bytes. A signature may
+  pass `handle<module.R>`, a resource another module of the same clutch
+  declares, and the adapter installs a table's modules in one resource scope.
+
+- Decided length-delimited `out str` and `out bytes` results, handles shared
+  between a clutch's modules, and thin C helpers for typed native bindings.
+
+- Typed native calls no longer allocate per call to decode results: the
+  adapter decodes result cells straight into the Slug value. A scalar typed
+  call dropped from 371 ns to 336 ns on the local benchmark, the same as the
+  0.13 prototype callback.
+
+- Planned step 2 of the typed native-call replacement: profile the adapter's
+  per-call cost, add length-delimited `out str` and `out bytes` results and
+  cross-module handles, move `slug.db.sqlite` to raw SQLite bindings plus
+  Slug wrappers, and make `keys` a builtin.
+
+- Completed step 1 of the typed native-call replacement: CI passed its exit
+  gate on macOS, Linux, Windows, and the ESP32-S3 check, and its plan and
+  measurements moved to `docs/planning/completed/`.
+
+- Fixed the typed native clutch tests on Windows. Git can check their
+  fixtures out with CRLF line endings, which made three tests' line-based
+  edits match nothing; the tests now normalize line endings when loading
+  them. The shim compiler tests likewise normalize the `\r\n` that C
+  programs write to standard output on Windows.
+
+- The typed native adapter now checks its cell and resource-slot lookups on
+  each call, so a broken internal invariant reports `native_contract` instead
+  of panicking the host.
+
+- Recorded step 1 typed native-call measurements. The production typed path
+  costs about 32 ns more per scalar call than the 0.13 callback, and the typed
+  `slug.io.fs` clutch about 20% more per operation. A parity test runs one
+  filesystem program through both clutches and requires identical results.
+  Deleted the spike's bounded Rust dispatcher, its generated-shim fixtures,
+  and their tests. Updated the native ABI, clutch, and README references for
+  typed bindings. `make test-filesystem-clutch` stages only `slug.io.fs` and
+  runs its CLI tests, and CI runs it on macOS and Linux.
+
+- `slug.io.fs` now runs on typed native bindings. Its public functions are
+  Slug wrappers over private typed `foreign` declarations, with the same
+  names, signatures, 16 MiB line limit, and idempotent close. Failures are
+  thrown as `Error` values whose `type` is `native.io` or `native.alloc`, so
+  `defer onerror` can inspect them. An uncaught failure now reports
+  `uncaught throw: struct {"type": "native.io", "msg": "cannot open file", ...}`
+  at the wrapper's `throw` instead of `native `slug.io.fs.openRead`: cannot
+  open file` at the call. A line containing a NUL byte now throws a
+  `native.io` error. Run `make stage-native-clutches` to rebuild the library.
+
+- Static targets can select typed C providers. A target-descriptor provider
+  entry takes `kind = "typed"` and a `clutch`; the build checks the clutch's
+  bindings against the module's `foreign` declarations and the target's
+  `[firmware] profiles`, generates and cross-compiles the shim, links it, and
+  generates the Rust registration that installs it through the shared
+  adapter. Existing descriptors are unchanged. The ESP32-S3 firmware gains
+  `esp32-s3-typed.toml`, which adds a small typed C provider.
+
+- Desktop clutches can bind `foreign` declarations through typed native
+  bindings. A `[native]` table without `abi` uses the typed form; the loader
+  loads the clutch's shim library, verifies its table through the shared
+  adapter, and checks every `foreign` declaration in each clutch module
+  against its binding before the module is installed. A NULL text result for
+  a declaration annotated `str` fails with `native.type`. The 0.13 prototype
+  form is unchanged. `slug-native-shim stage` builds a typed clutch's
+  library.
+
+- Added the `slug-native-adapter` crate, the shared `no_std + alloc` code that
+  calls generated shims. It verifies a shim table against the expected
+  canonical signatures, registers each binding as a native function, encodes
+  arguments with range, NUL, and resource checks, decodes results with UTF-8
+  validation, runs cleanup on every path, and releases handles at most once.
+  Boundary failures use the closed list of `native.*` codes; a nonzero entry
+  status is a `native_contract` error.
+
+- Added the typed native shim generator and a `slug-native-shim` binary to
+  `slug-native-manifest`. It emits one C file per provider with a uniform
+  entry per binding, exact-type header checks for each target and free
+  function, owned-text release, and a provider-unique table with a
+  dynamic-library alias. A check mode reports stale shims, and
+  `make test-ffi-prototype` now runs its compiler tests on all three
+  platforms.
+
+- Added the `slug-native-manifest` crate. It parses a clutch's typed
+  `[native]` bindings, validates them under the step 1 rules, and produces the
+  canonical signature text that generated shims and loaders compare.
+
+- Specified typed native manifest bindings: the `[native]` keys, signature
+  grammar and canonical text, resource release and explicit close, build-time
+  Slug/C type compatibility, a 16-cell limit, shim compiler flags and export,
+  and generating shims at build time.
+
+- Planned step 1 of the typed native-call replacement: the manifest model,
+  shim generator, shared adapter, desktop and static binding paths, and moving
+  `slug.io.fs` off the 0.13 prototype ABI.
+
+- Decided how static targets select typed native providers. Each foreign
+  module has exactly one Rust or manifest-bound C provider chosen at build
+  time. Generated shims link side by side under provider-unique table names,
+  and one shared `no_std` adapter makes every shim call.
+
+- Decided three open typed native-call rules. Generated shims carry each
+  binding's canonical signature text for stale-shim detection, with
+  provider-unique table symbols. Returned text is always copied, and is
+  either borrowed or owned by a named free function. Boundary failures use a
+  closed list of codes, while library failures are mapped to thrown `Error`
+  values by Slug wrappers.
+
+- Completed the typed native-call dispatch spike after its focused tests
+  passed on the macOS, Linux, and Windows CI matrix.
+
+- Recorded the deferred VM follow-ups found while profiling native calls:
+  per-instruction dispatch overhead and export-count-independent module
+  member lookup.
+
+- Member access and literal indexes such as `module.name`, `record.field`,
+  and `values[0]` now compile to one instruction instead of two.
+
+- Recorded before-and-after measurements for the native-call path and
+  owned-value resolution refactors: native scalar calls are about 2.6x
+  cheaper net of loop overhead, and the source benchmarks run 12-15% faster.
+
+- Positional calls to native functions, including imported foreign
+  functions, now skip closure-only argument binding.
+
+- Reduced VM stack overhead by moving popped values instead of copying them
+  when they are not live module bindings.
+
+- Made declared foreign functions cheap to copy. A call to an imported native
+  function no longer allocates copies of its identity and resource signature,
+  removing most of the per-call overhead measured for native calls.
+
+- Stopped allocating an unused error message on every successful integer
+  addition, subtraction, and shift.
+
+- Added an empty-loop control to the native scalar-call benchmark, so VM
+  native-call costs can be reported without the benchmark loop's own cost.
+
+- Fixed Windows DLL exports for the private typed-native-dispatch fixtures and
+  generated shim entry points, restoring their cross-platform test coverage.
+
+- Fixed the uniform shim spike to release a shim's cleanup record only after
+  its results are decoded, and corrected the plain C benchmark so its volatile
+  sink no longer adds per-iteration cost to both loops.
+
+- Specified a uniform entry point for generated native shims: one C
+  signature over fixed-size value cells, a single exported binding table,
+  stale-shim detection by signature hash, and exact-type header checks on every
+  binding. This removes the loader-side shape table the dispatch spike still
+  needed.
+
+- Added an isolated, release-only 0.13 native scalar-call baseline and local
+  benchmark command for the typed native-call dispatch spike. Its raw,
+  host-specific timing record is ignored rather than used as a CI threshold.
+
+- Added private direct-C fixture coverage for the typed native-call dispatch
+  spike, including a header-checked generated-shim candidate and a bounded
+  Rust dispatcher candidate with checked filesystem-shaped failures.
+
+- Selected generated C shims for header-backed typed native bindings after the
+  dispatch spike showed header mismatch diagnostics without a local scalar-call
+  regression against the 0.13 prototype path.
+
+- Marked superseded ADRs with historical filename suffixes and reciprocal links
+  to their accepted replacements, so current architectural guidance is
+  identifiable without a separate registry.
+
+- Proposed two native-interface decisions: additive `core` and `events`
+  profiles for hosts from microcontroller to server, and typed native calls
+  bound through the clutch manifest, with buffer resources, struct copies, and
+  Slug-created channel producers. The 0.13 prototype C ABI is deprecated and
+  frozen pending replacement.
+
 - Added an ESP32-S3 cross-check to CI, centralized the PinPulse board output
   policy so its allow-list and HAL ownership map cannot drift, and reset the
   proof firmware after reporting startup or VM failures instead of spinning.

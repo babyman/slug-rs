@@ -8,9 +8,13 @@ semantics, runtime or bytecode architecture, public diagnostics, or a
 compatibility promise. Do not create one for formatting, mechanical renames, or
 a local correction with an established rule.
 
-Place records at `YYYY-MM-DD-short-title.md`. Records are immutable after their
-decision is implemented. Supersede an older record with a new record that links
-to it instead of editing history.
+Place current records at `YYYY-MM-DD-short-title.md`. Records are immutable
+after their decision is implemented, except for status and cross-reference
+metadata. When replacing a decision, rename the older record to
+`YYYY-MM-DD-short-title-superseded.md`, mark it `Superseded`, and link to the
+replacement. Mark the replacement `Accepted` and link back with `Supersedes`.
+Files ending in `-superseded.md` or `-withdrawn.md` are historical and are not
+current architectural guidance.
 
 Use this structure:
 

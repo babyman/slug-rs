@@ -16,7 +16,7 @@ use super::{RuntimeErrorKind, Vm, VmResult, frames::LocalSlot, numbers, operatio
 impl Vm {
     pub(super) fn pop_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
         self.pop_unresolved_at(span)?
-            .resolve()
+            .into_resolved()
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
     }
 
@@ -47,7 +47,7 @@ impl Vm {
             .into_iter()
             .map(|value| {
                 value
-                    .resolve()
+                    .into_resolved()
                     .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
             })
             .collect()

@@ -1,0 +1,17 @@
+[modules]
+"fixture.beta" = { source = "modules/beta.slug" }
+
+[native]
+profile = "core"
+headers = ["native/beta.h"]
+sources = ["native/beta.c"]
+
+[native.resources."fixture.beta".Counter]
+type = "beta_counter"
+release = { symbol = "beta_close", signature = "(handle<Counter> counter) -> void" }
+
+[native.functions."fixture.beta"]
+open = { symbol = "beta_open", signature = "(i64 start) -> handle<Counter>" }
+next = { symbol = "beta_next", signature = "(handle<Counter> counter) -> i64" }
+close = { symbol = "beta_close", signature = "(close handle<Counter> counter) -> void" }
+name = { symbol = "beta_name", signature = "() -> cstr" }

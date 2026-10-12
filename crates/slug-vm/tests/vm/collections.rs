@@ -258,3 +258,57 @@ fn rejects_duplicate_fields_in_struct_schema_bytecode() {
     assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
     assert_eq!(error.message, "duplicate struct schema field 'name'");
 }
+
+#[test]
+fn constant_key_indexing_matches_stack_key_indexing() {
+    let map = Value::Map(std::rc::Rc::new(vec![
+        (Value::string("name"), Value::string("Slug")),
+        (Value::string("name"), Value::string("shadowing")),
+    ]));
+    let list = Value::list(vec![Value::Int(10), Value::Int(20)]);
+    let cases = [
+        (map.clone(), Value::string("name")),
+        (map, Value::string("missing")),
+        (list.clone(), Value::Int(-1)),
+        (list, Value::Int(5)),
+        (Value::Int(1), Value::string("name")),
+    ];
+    for (collection, key) in cases {
+        let run = |fused: bool| {
+            let mut main = Chunk::new("main", 0);
+            let collection = main.constant(collection.clone());
+            let key = main.constant(key.clone());
+            main.emit(Op::Constant(collection));
+            if fused {
+                main.emit(Op::GetIndexConstant(key));
+            } else {
+                main.emit(Op::Constant(key)).emit(Op::GetIndex);
+            }
+            main.emit(Op::Return);
+            Vm::new()
+                .run(&program_with_main(main), 0)
+                .map_err(|error| (error.kind, error.message))
+        };
+        assert_eq!(run(true), run(false), "indexing {collection} with {key}");
+    }
+}
+
+#[test]
+fn rejects_constant_key_indexing_without_a_value_constant() {
+    let mut main = Chunk::new("main", 0);
+    main.emit(Op::Nil)
+        .emit(Op::GetIndexConstant(0))
+        .emit(Op::Return);
+
+    let error = Vm::new()
+        .run(&program_with_main(main), 0)
+        .expect_err("a missing index constant must be rejected before execution");
+    assert_eq!(error.kind, RuntimeErrorKind::InvalidBytecode);
+    assert!(
+        error
+            .message
+            .contains("references missing index constant 0"),
+        "{}",
+        error.message
+    );
+}

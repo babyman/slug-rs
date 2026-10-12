@@ -30,3 +30,9 @@ send becomes full, and retries it only after Slug drains the first integer.
 
 The unstable prototype minor version is now 5. Existing fixtures remain
 compatible when rebuilt against the header.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native
+producers](2026-10-11-typed-native-producers.md).

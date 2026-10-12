@@ -265,3 +265,118 @@ fn rejects_file_operations_after_explicit_close() {
             .contains("native resource is closed")
     );
 }
+
+fn run_filesystem_program(
+    name: &str,
+    setup: impl FnOnce(&std::path::Path),
+    body: &str,
+) -> std::process::Output {
+    let root = std::env::temp_dir().join(format!("slug-cli-fs-{name}-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create filesystem error fixture root");
+    setup(&root);
+    let program = root.join("program.slug");
+    fs::write(
+        &program,
+        format!(
+            "val fs = import(\"slug.io.fs\")\n{}\n",
+            body.replace("ROOT", &root.to_string_lossy().replace('\\', "/"))
+        ),
+    )
+    .expect("write filesystem error program");
+    let output = slug()
+        .arg(&program)
+        .output()
+        .expect("run filesystem error program");
+    fs::remove_dir_all(root).expect("remove filesystem error fixture root");
+    output
+}
+
+/// Prepares files in a fixture root before its program runs.
+type Setup = fn(&std::path::Path);
+
+#[test]
+fn filesystem_failures_throw_error_values_with_native_types() {
+    let report = "val report = fn(action) {\n\
+                  defer onerror(err) { println(err.type + \": \" + err.msg) }\n\
+                  action()\n\
+                  }\n";
+    let cases: [(&str, Setup, &str, &str); 5] = [
+        (
+            "missing",
+            |_| {},
+            "report(fn() { fs.openRead(\"ROOT/missing.txt\") })",
+            "native.io: cannot open file\n",
+        ),
+        (
+            "long-line",
+            |root| {
+                fs::write(root.join("long.txt"), vec![b'x'; 16 * 1024 * 1024 + 1])
+                    .expect("write oversized line");
+            },
+            "val file = fs.openRead(\"ROOT/long.txt\")\n\
+             defer fs.close(file)\n\
+             report(fn() { fs.readLine(file) })",
+            "native.io: file line exceeds 16 MiB limit\n",
+        ),
+        (
+            "nul-line",
+            |root| fs::write(root.join("nul.txt"), b"a\0b\n").expect("write NUL line"),
+            "val file = fs.openRead(\"ROOT/nul.txt\")\n\
+             defer fs.close(file)\n\
+             report(fn() { fs.readLine(file) })",
+            "native.io: file line contains a NUL byte\n",
+        ),
+        (
+            "write-readable",
+            |root| fs::write(root.join("in.txt"), "line\n").expect("write input"),
+            "val file = fs.openRead(\"ROOT/in.txt\")\n\
+             defer fs.close(file)\n\
+             report(fn() { fs.write(file, \"text\") })",
+            "native.io: cannot write file\n",
+        ),
+        (
+            "read-writable",
+            |_| {},
+            "val file = fs.openWrite(\"ROOT/out.txt\")\n\
+             defer fs.close(file)\n\
+             report(fn() { fs.readLine(file) })",
+            "native.io: cannot read file\n",
+        ),
+    ];
+    for (name, setup, body, expected) in cases {
+        let output = run_filesystem_program(name, setup, &format!("{report}{body}"));
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{name}");
+    }
+}
+
+#[test]
+fn uncaught_filesystem_failures_report_the_thrown_error() {
+    let output = run_filesystem_program("uncaught", |_| {}, "fs.openRead(\"ROOT/missing.txt\")");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("uncaught throw"), "{stderr}");
+    assert!(stderr.contains("native.io"), "{stderr}");
+    assert!(stderr.contains("cannot open file"), "{stderr}");
+}
+
+#[test]
+fn closing_a_file_twice_is_idempotent() {
+    let output = run_filesystem_program(
+        "double-close",
+        |_| {},
+        "val file = fs.openWrite(\"ROOT/out.txt\")\n\
+         println(fs.close(file))\n\
+         println(fs.close(file))",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "nil\nnil\n");
+}

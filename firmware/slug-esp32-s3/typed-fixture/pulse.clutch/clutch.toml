@@ -1,0 +1,13 @@
+# A small typed C provider proving the static typed path on the ESP32-S3.
+# Selected by `esp32-s3-typed.toml`; see the firmware README.
+[modules]
+"fixture.pulse" = { source = "modules/pulse.slug" }
+
+[native]
+profile = "core"
+headers = ["native/pulse.h"]
+sources = ["native/pulse.c"]
+
+[native.functions."fixture.pulse"]
+count = { symbol = "pulse_count", signature = "(i32 requested) -> i32" }
+gapMs = { symbol = "pulse_gap_ms", signature = "(u32 step) -> u32" }

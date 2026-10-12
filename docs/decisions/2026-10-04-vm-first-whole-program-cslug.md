@@ -1,8 +1,16 @@
 # Make `.cslug` VM-first whole-program artifacts
 
+## Status
+
+Accepted
+
+## Supersedes
+
+[Adopt portable compiled modules](2026-08-16-portable-compiled-modules-superseded.md).
+
 ## Context
 
-The earlier [portable compiled modules](2026-08-16-portable-compiled-modules.md)
+The earlier [portable compiled modules](2026-08-16-portable-compiled-modules-superseded.md)
 decision defined `.cslug` as a VM-independent, stable compiled-module
 contract. The ESP path instead needs a small deployable executable unit aligned
 with the VM and the existing private frozen-firmware-image work. No `.cslug`
@@ -28,7 +36,7 @@ The existing private frozen firmware image remains distinct: it is coupled to a
 firmware build and is not `.cslug`.
 
 This supersedes [Adopt portable compiled modules]
-(2026-08-16-portable-compiled-modules.md).
+(2026-08-16-portable-compiled-modules-superseded.md).
 
 ## Consequences
 
