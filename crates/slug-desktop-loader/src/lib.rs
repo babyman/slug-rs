@@ -5,7 +5,7 @@
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     rc::Rc,
@@ -46,6 +46,10 @@ pub struct DesktopResolver {
 struct DesktopActivationState {
     foreign_functions: HashMap<(String, String), NativeFunction>,
     active_plugins: HashMap<ModuleActivationLease, DesktopActivation>,
+    /// Activations registered while their module initializes, before
+    /// `retain`. A sibling module imported during that initialization shares
+    /// the activation instead of staging the clutch again.
+    registered: HashSet<ModuleActivationLease>,
     shutdown_errors: Vec<String>,
 }
 
@@ -77,10 +81,25 @@ impl ModuleActivationTransaction for DesktopActivation {
             .map_err(|error| ModuleLoadError::Clutch {
                 location: self.diagnostic_name.clone(),
                 message: error.to_string(),
-            })
+            })?;
+        if let Some(lease) = &self.lease {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .registered
+                .insert(lease.clone());
+        }
+        Ok(())
     }
 
     fn rollback(&self) {
+        if let Some(lease) = &self.lease {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .registered
+                .remove(lease);
+        }
         remove_foreign_batch(
             &mut self
                 .resolver
@@ -92,6 +111,13 @@ impl ModuleActivationTransaction for DesktopActivation {
     }
 
     fn cleanup(&mut self) {
+        if let Some(lease) = &self.lease {
+            self.resolver
+                .activation_state
+                .borrow_mut()
+                .registered
+                .remove(lease);
+        }
         if let Err(error) = self.plugin.cleanup() {
             self.resolver
                 .activation_state
@@ -108,7 +134,9 @@ impl ModuleActivationTransaction for DesktopActivation {
             return;
         };
         let state = activation.resolver.activation_state.clone();
-        state.borrow_mut().active_plugins.insert(lease, activation);
+        let mut state = state.borrow_mut();
+        state.registered.remove(&lease);
+        state.active_plugins.insert(lease, activation);
     }
 }
 
@@ -149,13 +177,11 @@ impl DesktopResolver {
         let Some(lease) = &source.activation else {
             return Ok(None);
         };
-        if self
-            .activation_state
-            .borrow()
-            .active_plugins
-            .contains_key(lease)
         {
-            return Ok(None);
+            let state = self.activation_state.borrow();
+            if state.active_plugins.contains_key(lease) || state.registered.contains(lease) {
+                return Ok(None);
+            }
         }
         let plugin = self
             .activation_sources

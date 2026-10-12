@@ -424,3 +424,42 @@ fn typed_scalar_add_benchmark() {
         );
     }
 }
+
+#[test]
+fn a_module_importing_its_sibling_during_initialization_shares_the_activation() {
+    let directory = TemporaryDirectory::new();
+    let manifest = MANIFEST.replace(
+        "\"fixture.files\" = { source = \"modules/files.slug\" }\n",
+        "\"fixture.files\" = { source = \"modules/files.slug\" }\n\
+             \"fixture.more\" = { source = \"modules/more.slug\" }\n",
+    ) + "\n[native.functions.\"fixture.more\"]\n\
+           sum = { symbol = \"fx_add\", signature = \"(i64 left, i64 right) -> i64\" }\n";
+    let repository = typed_clutch_with_modules(
+        &directory,
+        &[
+            ("fixture.files", "files.slug", &MODULE),
+            (
+                "fixture.more",
+                "more.slug",
+                "val files = import(\"fixture.files\")\n\
+                 export foreign sum = fn(left:num, right:num):num\n\
+                 export val both = fn() { [sum(1, 2), files.add(3, 4)] }\n",
+            ),
+        ],
+        &manifest,
+        &manifest,
+    );
+    // `fixture.more` activates the clutch, then imports `fixture.files` while
+    // it initializes; the clutch must not be staged a second time.
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let program = loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            "val more = import(\"fixture.more\")\nmore.both()\n",
+        )
+        .expect("compile sibling-import program");
+    let value = Vm::with_host(Rc::new(loader))
+        .run_named(&program, "main")
+        .expect("run sibling-import program");
+    assert_eq!(value.to_string(), "[3, 7]");
+}
