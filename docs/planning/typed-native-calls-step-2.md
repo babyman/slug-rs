@@ -240,3 +240,9 @@ review. Its order is the map's unspecified enumeration order.
 - The prototype loader keeps its list and map builder coverage.
 - Measurements against the prototype are recorded.
 - `keys` is a builtin, and no longer needs the prototype.
+
+## Status
+
+Phases 1-6 are implemented and pass locally on macOS. Before this plan moves
+to `completed/`, CI must pass the exit gate: the typed SQLite tests on Linux
+as well as macOS, and the three-platform and ESP32-S3 jobs.

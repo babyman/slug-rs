@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Implemented step 2 of the typed native-call replacement. It completes once
+  CI passes its exit gate.
+
 - `keys(map)` is now a builtin, declared in `slug.builtin` beside `len` and
   available in every module without an import, on desktop and embedded
   hosts. Its order is the map's unspecified enumeration order, as the maps
