@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The scalar-call VM controls (empty loop, Slug function, static Rust
+  native) moved beside the typed scalar benchmark in `typed_native.rs`.
+
 - `slug-desktop-loader` keeps its platform library loading in a
   `dynamic_library` module shared by native clutch forms, with errors
   reported as `NativeLibraryError`.

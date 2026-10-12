@@ -9,9 +9,7 @@ use std::{
 
 use slug::DesktopLoader as ModuleLoader;
 use slug_desktop_loader::{ClutchRepository, FfiPrototypeLibrary};
-use slug_vm::{
-    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeErrorKind, Vm,
-};
+use slug_vm::{RuntimeErrorKind, Vm};
 
 trait VmWithModuleLoader {
     fn with_module_loader(loader: ModuleLoader) -> Self;
@@ -468,114 +466,7 @@ fn scalar_add_program(
     (loader, program)
 }
 
-fn scalar_add_slug_program(
-    directory: &TemporaryDirectory,
-    calls: usize,
-) -> (ModuleLoader, slug_vm::Program) {
-    let loader = ModuleLoader::new(directory.path(), None);
-    let main = directory.path().join("scalar-slug-benchmark.slug");
-    let source = format!(
-        "val add = fn(left, right) {{ left + right }}\n\
-         val repeat = fn(remaining:num) {{\n\
-           if (remaining == 0) {{ 0 }} else {{\n\
-             add(remaining, 1)\n\
-             recur(remaining - 1)\n\
-           }}\n\
-         }}\n\
-         repeat({calls})\n"
-    );
-    let program = loader
-        .compile_source(&main.to_string_lossy(), &source)
-        .expect("compile scalar Slug benchmark program");
-    (loader, program)
-}
-
-fn native_scalar_add(call: &mut NativeCall<'_>) -> NativeStatus {
-    let result = (|| {
-        let left = call.argument(0)?.as_i64()?;
-        let right = call.argument(1)?.as_i64()?;
-        let value = left.checked_add(right).ok_or_else(|| {
-            slug_vm::NativeError::new("native.range", "integer addition overflow")
-        })?;
-        Ok(NativeOwnedValue::integer(value))
-    })();
-    match result {
-        Ok(value) => call.return_value(value),
-        Err(error) => call.raise(error),
-    }
-}
-
-fn scalar_add_static_rust_function() -> slug_vm::NativeFunction {
-    NativeModule::new("slug.scalar", ())
-        .expect("static scalar module is valid")
-        .function("add", NativeArity::Exact(2), native_scalar_add)
-        .expect("static scalar function is valid")
-}
-
-const SCALAR_WARMUP_CALLS: usize = 10_000;
-const SCALAR_CALLS_PER_SAMPLE: usize = 100_000;
-const SCALAR_CALLS_PER_SAMPLE_F64: f64 = 100_000.0;
 const SCALAR_SAMPLE_COUNT: usize = 11;
-
-fn report_scalar_samples(label: &str, vm: &mut Vm, sample: &slug_vm::Program) {
-    for sample_index in 1..=SCALAR_SAMPLE_COUNT {
-        let started = Instant::now();
-        assert_eq!(vm.run_named(sample, "main").unwrap().to_string(), "0");
-        let elapsed = started.elapsed();
-        println!(
-            "{label} sample {sample_index}: total_ns={} ns_per_call={:.2}",
-            elapsed.as_nanos(),
-            elapsed.as_secs_f64() * 1_000_000_000.0 / SCALAR_CALLS_PER_SAMPLE_F64,
-        );
-    }
-}
-
-/// Same loop as the call controls with the call removed, so the loop's own
-/// compare, subtract, and `recur` cost can be subtracted from every other
-/// control's ns/call.
-fn measure_empty_loop_control() {
-    let directory = TemporaryDirectory::new();
-    let loader = ModuleLoader::new(directory.path(), None);
-    let main = directory.path().join("scalar-empty-loop-benchmark.slug");
-    let compile = |calls: usize| {
-        let source = format!(
-            "val repeat = fn(remaining:num) {{\n\
-               if (remaining == 0) {{ 0 }} else {{\n\
-                 recur(remaining - 1)\n\
-               }}\n\
-             }}\n\
-             repeat({calls})\n"
-        );
-        loader
-            .compile_source(&main.to_string_lossy(), &source)
-            .expect("compile empty-loop benchmark program")
-    };
-    let warmup = compile(SCALAR_WARMUP_CALLS);
-    let sample = compile(SCALAR_CALLS_PER_SAMPLE);
-    let mut vm = Vm::with_module_loader(loader);
-    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
-    report_scalar_samples("empty-loop-control", &mut vm, &sample);
-}
-
-fn measure_slug_function_control() {
-    let directory = TemporaryDirectory::new();
-    let (loader, warmup) = scalar_add_slug_program(&directory, SCALAR_WARMUP_CALLS);
-    let (_, sample) = scalar_add_slug_program(&directory, SCALAR_CALLS_PER_SAMPLE);
-    let mut vm = Vm::with_module_loader(loader);
-    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
-    report_scalar_samples("slug-function-control", &mut vm, &sample);
-}
-
-fn measure_static_rust_native_control() {
-    let directory = TemporaryDirectory::new();
-    let (loader, warmup) = scalar_add_program(&directory, SCALAR_WARMUP_CALLS);
-    let (_, sample) = scalar_add_program(&directory, SCALAR_CALLS_PER_SAMPLE);
-    let mut vm = Vm::with_module_loader(loader);
-    vm.define_foreign(scalar_add_static_rust_function())
-        .expect("register static Rust benchmark control");
-    assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
-    report_scalar_samples("static-rust-native-control", &mut vm, &sample);
-}
 
 #[test]
 fn scalar_add_callback_fixture_uses_the_013_host_table_path() {
@@ -637,22 +528,6 @@ fn scalar_add_callback_baseline() {
             elapsed.as_secs_f64() * 1_000_000_000.0 / CALLS_PER_SAMPLE_F64,
         );
     }
-}
-
-/// VM controls for the scalar call benchmarks: the loop alone, an ordinary
-/// Slug function, and a statically registered Rust native. The production
-/// typed path is measured in `typed_native.rs`.
-#[test]
-#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
-fn scalar_call_controls() {
-    println!(
-        "controls configuration: profile=release samples={SCALAR_SAMPLE_COUNT} warmup_calls={SCALAR_WARMUP_CALLS} calls_per_sample={SCALAR_CALLS_PER_SAMPLE} target={}-{}",
-        env::consts::ARCH,
-        env::consts::OS,
-    );
-    measure_empty_loop_control();
-    measure_slug_function_control();
-    measure_static_rust_native_control();
 }
 
 #[cfg(unix)]

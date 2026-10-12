@@ -18,7 +18,10 @@ use std::{
 use slug::DesktopLoader as ModuleLoader;
 use slug_desktop_loader::ClutchRepository;
 use slug_native_manifest::{NativeManifest, build_dynamic};
-use slug_vm::{RuntimeErrorKind, Value, Vm};
+use slug_vm::{
+    NativeArity, NativeCall, NativeError, NativeModule, NativeOwnedValue, NativeStatus,
+    RuntimeErrorKind, Value, Vm,
+};
 
 static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -538,41 +541,42 @@ const BENCH_WARMUP_CALLS: usize = 10_000;
 const BENCH_CALLS_PER_SAMPLE: usize = 100_000;
 const BENCH_SAMPLE_COUNT: usize = 11;
 
-/// Raw timing samples for one scalar call through the production typed path:
-/// a staged clutch library, the desktop loader, and the shared adapter. The
-/// loop matches the 0.13 baseline and the controls in `ffi_prototype.rs`.
-#[test]
-#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
-fn typed_scalar_add_benchmark() {
-    let directory = TemporaryDirectory::new();
-    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
-    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+/// A program that evaluates `call` once per iteration of a counting loop,
+/// after `prelude`. An empty `call` measures the loop alone.
+fn scalar_loop(prelude: &str, call: &str, calls: usize) -> String {
+    format!(
+        "{prelude}\
+         val repeat = fn(remaining:num) {{\n\
+           if (remaining == 0) {{ 0 }} else {{\n\
+             {call}\n\
+             recur(remaining - 1)\n\
+           }}\n\
+         }}\n\
+         repeat({calls})\n"
+    )
+}
+
+/// Compiles the warmup and sample programs for `call`, runs the warmup, and
+/// prints one timing line per sample.
+fn report_scalar_samples(
+    label: &str,
+    directory: &TemporaryDirectory,
+    loader: &ModuleLoader,
+    vm: &mut Vm,
+    prelude: &str,
+    call: &str,
+) {
     let compile = |calls: usize| {
         loader
             .compile_source(
                 &directory.path().join("bench.slug").to_string_lossy(),
-                &format!(
-                    "val files = import(\"fixture.files\")\n\
-                     val repeat = fn(remaining:num) {{\n\
-                       if (remaining == 0) {{ 0 }} else {{\n\
-                         files.add(remaining, 1)\n\
-                         recur(remaining - 1)\n\
-                       }}\n\
-                     }}\n\
-                     repeat({calls})\n"
-                ),
+                &scalar_loop(prelude, call, calls),
             )
-            .expect("compile typed scalar benchmark")
+            .unwrap_or_else(|error| panic!("compile {label} benchmark: {error}"))
     };
     let warmup = compile(BENCH_WARMUP_CALLS);
     let sample = compile(BENCH_CALLS_PER_SAMPLE);
-    let mut vm = Vm::with_host(Rc::new(loader.clone()));
     assert_eq!(vm.run_named(&warmup, "main").unwrap().to_string(), "0");
-    println!(
-        "typed configuration: profile=release samples={BENCH_SAMPLE_COUNT} warmup_calls={BENCH_WARMUP_CALLS} calls_per_sample={BENCH_CALLS_PER_SAMPLE} target={}-{}",
-        env::consts::ARCH,
-        env::consts::OS,
-    );
     for sample_index in 1..=BENCH_SAMPLE_COUNT {
         let started = std::time::Instant::now();
         assert_eq!(vm.run_named(&sample, "main").unwrap().to_string(), "0");
@@ -580,9 +584,93 @@ fn typed_scalar_add_benchmark() {
         #[allow(clippy::cast_precision_loss)]
         let per_call = elapsed.as_secs_f64() * 1_000_000_000.0 / BENCH_CALLS_PER_SAMPLE as f64;
         println!(
-            "typed-production sample {sample_index}: total_ns={} ns_per_call={per_call:.2}",
+            "{label} sample {sample_index}: total_ns={} ns_per_call={per_call:.2}",
             elapsed.as_nanos()
         );
+    }
+}
+
+fn print_bench_configuration(label: &str) {
+    println!(
+        "{label} configuration: profile=release samples={BENCH_SAMPLE_COUNT} warmup_calls={BENCH_WARMUP_CALLS} calls_per_sample={BENCH_CALLS_PER_SAMPLE} target={}-{}",
+        env::consts::ARCH,
+        env::consts::OS,
+    );
+}
+
+/// Raw timing samples for one scalar call through the production typed path:
+/// a staged clutch library, the desktop loader, and the shared adapter. The
+/// loop matches [`scalar_call_controls`].
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn typed_scalar_add_benchmark() {
+    let directory = TemporaryDirectory::new();
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    print_bench_configuration("typed");
+    report_scalar_samples(
+        "typed-production",
+        &directory,
+        &loader,
+        &mut vm,
+        "val files = import(\"fixture.files\")\n",
+        "files.add(remaining, 1)",
+    );
+}
+
+fn native_scalar_add(call: &mut NativeCall<'_>) -> NativeStatus {
+    let result = (|| {
+        let left = call.argument(0)?.as_i64()?;
+        let right = call.argument(1)?.as_i64()?;
+        let value = left
+            .checked_add(right)
+            .ok_or_else(|| NativeError::new("native.range", "integer addition overflow"))?;
+        Ok(NativeOwnedValue::integer(value))
+    })();
+    match result {
+        Ok(value) => call.return_value(value),
+        Err(error) => call.raise(error),
+    }
+}
+
+/// VM controls for the scalar call benchmark: the loop alone, whose cost is
+/// subtracted from every other line's ns/call, an ordinary Slug function,
+/// and a statically registered Rust native.
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn scalar_call_controls() {
+    print_bench_configuration("controls");
+    let directory = TemporaryDirectory::new();
+    fs::create_dir_all(directory.path().join("slug")).expect("create control module directory");
+    fs::write(
+        directory.path().join("slug/scalar.slug"),
+        "export foreign add = fn(left:num, right:num):num\n",
+    )
+    .expect("write control module source");
+    let loader = ModuleLoader::new(directory.path(), None);
+    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    vm.define_foreign(
+        NativeModule::new("slug.scalar", ())
+            .expect("static scalar module is valid")
+            .function("add", NativeArity::Exact(2), native_scalar_add)
+            .expect("static scalar function is valid"),
+    )
+    .expect("register static Rust control");
+    for (label, prelude, call) in [
+        ("empty-loop-control", "", ""),
+        (
+            "slug-function-control",
+            "val add = fn(left, right) { left + right }\n",
+            "add(remaining, 1)",
+        ),
+        (
+            "static-rust-native-control",
+            "val scalar = import(\"slug.scalar\")\n",
+            "scalar.add(remaining, 1)",
+        ),
+    ] {
+        report_scalar_samples(label, &directory, &loader, &mut vm, prelude, call);
     }
 }
 
