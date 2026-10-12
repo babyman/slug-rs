@@ -8,7 +8,7 @@ use std::{any::Any, path::Path, rc::Rc};
 use slug_native_adapter::{ExpectedBinding, Installed, abi::GetTable};
 use slug_native_manifest::{Binding, NativeManifest};
 
-use crate::ffi_prototype::loader::{library_lease, retain_library_for_foreign_worker};
+use crate::dynamic_library::{library_lease, retain_library_for_foreign_worker};
 
 /// Loads a typed clutch's library and returns its Slug-visible functions.
 /// The functions keep the library loaded.

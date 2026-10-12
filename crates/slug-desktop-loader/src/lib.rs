@@ -19,6 +19,8 @@ use slug_vm::{NativeDescriptorError, NativeFunction, Value};
 #[doc(hidden)]
 pub mod clutch;
 #[allow(unsafe_code)]
+mod dynamic_library;
+#[allow(unsafe_code)]
 mod ffi_prototype;
 #[allow(unsafe_code)]
 mod typed_native;
@@ -27,6 +29,7 @@ pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
 };
 use clutch::{NativeKind, StagedClutchPlugin};
+pub use dynamic_library::NativeLibraryError;
 pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
 use slug_native_adapter::TextResults;
 

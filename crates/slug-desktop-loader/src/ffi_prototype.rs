@@ -20,9 +20,6 @@ use std::{
     },
 };
 
-#[cfg(unix)]
-use std::ffi::CStr;
-
 use crate::ClutchPluginRegistrar;
 use slug_vm::{
     NativeArity, NativeCall, NativeChannelProducer, NativeDescriptorError, NativeError,
@@ -39,11 +36,9 @@ const MAX_RESOURCES: usize = 64;
 static NEXT_LIBRARY_SCOPE: AtomicUsize = AtomicUsize::new(1);
 static NEXT_VALUE_SCOPE: AtomicUsize = AtomicUsize::new(1);
 
-pub(crate) mod loader;
-
-#[doc(hidden)]
-#[allow(dead_code)] // Private spike API; exercised by its fixture integration tests.
-use loader::{LoadedLibrary, library_lease, retain_library_for_foreign_worker};
+use crate::dynamic_library::{
+    LoadedLibrary, NativeLibraryError, library_lease, retain_library_for_foreign_worker,
+};
 
 #[repr(C)]
 struct HostApi {
@@ -342,6 +337,12 @@ impl fmt::Display for FfiPrototypeError {
 }
 
 impl Error for FfiPrototypeError {}
+
+impl From<NativeLibraryError> for FfiPrototypeError {
+    fn from(error: NativeLibraryError) -> Self {
+        Self::new(error.to_string())
+    }
+}
 
 impl FfiPrototypeLibrary {
     /// Loads and validates one C library that follows the prototype header.
@@ -1507,14 +1508,6 @@ unsafe fn text_from_ffi(value: FfiText) -> Option<String> {
     std::str::from_utf8(bytes).ok().map(str::to_owned)
 }
 
-#[cfg(unix)]
-unsafe fn c_string(value: *const c_char) -> Option<String> {
-    if value.is_null() {
-        return None;
-    }
-    unsafe { CStr::from_ptr(value).to_str().ok().map(str::to_owned) }
-}
-
 fn ffi_callback(call: &mut NativeCall<'_>) -> NativeStatus {
     let function = call.member_key().and_then(|member_key| {
         call.state::<FfiModuleState>().and_then(|state| {
@@ -1737,72 +1730,4 @@ unsafe fn validate_resources(
         resources.push(RegisteredResource { name, destroy });
     }
     Ok(resources)
-}
-
-#[cfg(unix)]
-const RTLD_NOW: i32 = 2;
-
-#[cfg(target_os = "macos")]
-#[link(name = "System")]
-unsafe extern "C" {
-    fn dlopen(path: *const c_char, mode: i32) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
-    fn dlerror() -> *const c_char;
-    fn dlclose(handle: *mut c_void) -> i32;
-}
-
-#[cfg(target_os = "linux")]
-#[link(name = "dl")]
-unsafe extern "C" {
-    fn dlopen(path: *const c_char, mode: i32) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
-    fn dlerror() -> *const c_char;
-    fn dlclose(handle: *mut c_void) -> i32;
-}
-
-#[cfg(unix)]
-unsafe fn lookup_symbol(handle: *mut c_void, name: *const c_char) -> *mut c_void {
-    unsafe { dlsym(handle, name) }
-}
-
-#[cfg(windows)]
-unsafe fn lookup_symbol(handle: *mut c_void, name: *const c_char) -> *mut c_void {
-    unsafe { GetProcAddress(handle, name.cast()) }
-}
-
-#[cfg(unix)]
-unsafe fn loader_error() -> String {
-    let error = unsafe { dlerror() };
-    unsafe { c_string(error) }.unwrap_or_else(|| "unknown dynamic loader error".into())
-}
-
-#[cfg(unix)]
-unsafe fn close_library(handle: *mut c_void) {
-    if !handle.is_null() {
-        // SAFETY: `handle` is an open library handle owned by this final lease.
-        let _ = unsafe { dlclose(handle) };
-    }
-}
-
-#[cfg(windows)]
-unsafe fn loader_error() -> String {
-    let error = unsafe { GetLastError() };
-    format!("Windows error {error}")
-}
-
-#[cfg(windows)]
-unsafe fn close_library(handle: *mut c_void) {
-    if !handle.is_null() {
-        // SAFETY: `handle` is an open library handle owned by this final lease.
-        let _ = unsafe { FreeLibrary(handle) };
-    }
-}
-
-#[cfg(windows)]
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn LoadLibraryW(path: *const u16) -> *mut c_void;
-    fn GetProcAddress(handle: *mut c_void, name: *const u8) -> *mut c_void;
-    fn GetLastError() -> u32;
-    fn FreeLibrary(handle: *mut c_void) -> i32;
 }

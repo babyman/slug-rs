@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `slug-desktop-loader` keeps its platform library loading in a
+  `dynamic_library` module shared by native clutch forms, with errors
+  reported as `NativeLibraryError`.
+
 - A typed native function that a VM still holds after its clutch shuts down
   now fails with `native.plugin_inactive` instead of calling into the
   library, as the deterministic native shutdown rule requires and the 0.13
