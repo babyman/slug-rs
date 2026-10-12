@@ -243,7 +243,9 @@ Intentionally unsupported in this record:
 Each needs its own addition when a clutch requires it.
 [Typed native length results and shared handles](2026-10-11-typed-native-length-results-and-shared-handles.md)
 adds length-delimited `out str` and `out bytes` results and handles shared
-between a clutch's modules.
+between a clutch's modules, and
+[Typed native producers](2026-10-11-typed-native-producers.md) adds the
+`producer` argument for the `events` profile.
 
 The step 1 plan's phase 1 implements this record. The typed native calls,
 uniform shim entry, and static provider records link here for the items they

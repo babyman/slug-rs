@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Decided typed native producers: a `producer` argument minted from a
+  buffered Slug channel, host functions reached through the capability,
+  copied text and bytes, and a generated `slug_producer.h` header.
+
 - Planned step 3 of the typed native-call replacement: a `producer` binding
   type through which native code sends into a Slug-created channel, and
   moving the `slug.core` clutch (`slug.io.stdin`, `slug.math`) to typed

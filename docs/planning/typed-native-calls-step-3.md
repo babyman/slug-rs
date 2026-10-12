@@ -99,9 +99,13 @@ the diagnostic change in decision 6.
 
 ### 1. Decisions
 
-- [ ] Record decisions 1-4, 7, and 8 in a decision record that extends
+- [x] Record decisions 1-4, 7, and 8 in a decision record that extends
   [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md),
-  and decisions 5 and 6 in this plan.
+  and decisions 5 and 6 in this plan:
+  [Typed native producers](../decisions/2026-10-11-typed-native-producers.md).
+  The record adds one rule the plan did not state: minting a producer from an
+  unbuffered channel fails with `native.type`, because no native send into it
+  could ever succeed.
 
 ### 2. Producers on Slug channels in the VM
 
