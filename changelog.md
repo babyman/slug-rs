@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Recorded in-place appends to uniquely owned lists as deferred VM
+  optimization item 11, with the typed SQLite measurements that motivate it.
+
 - Completed step 2 of the typed native-call replacement: CI passed its exit
   gate, and its plan moved to `docs/planning/completed/`.
 

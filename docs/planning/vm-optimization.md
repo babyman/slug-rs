@@ -1080,3 +1080,18 @@ runs, release build), a member read of a one-export module fell from 228 to
 301 ns; the 64-export worst case fell from 336 to 319 ns. Semantic checks,
 duplicate-key behavior, and missing-key `nil` results are unchanged and
 covered by `constant_key_indexing_matches_stack_key_indexing`.
+
+### 11. Append to uniquely owned collections in place (deferred)
+
+Deferred on 2026-10-11 while typed native calls are completed: make it work,
+make it right, then make it fast. Typed `slug.db.sqlite` builds query results
+in Slug with `collected + [row]` and each row with `values + entry`.
+[Its step 2 measurement](completed/typed-native-calls-step-2.md#5-tests-and-measurement)
+showed the per-row query cost growing with the result size, and building an
+8,000-element list with `acc + [x]` in a `recur` loop took 0.11 s against
+0.04 s for 4,000, so each list append copies the whole list.
+
+- [ ] Append to a list in place when the left operand is the only reference,
+  as unique-owner map updates already do, and measure `+` on lists in a loop.
+- [ ] Re-measure typed SQLite queries, and decide whether a per-row C helper
+  that reads all of a row's columns in one call is still worth adding.
