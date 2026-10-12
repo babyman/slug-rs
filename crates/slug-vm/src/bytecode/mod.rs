@@ -5,6 +5,7 @@
 //! the portable .cslug contract remains distinct.
 
 mod chunk;
+mod liveness;
 mod metadata;
 mod op;
 mod program;
@@ -21,5 +22,6 @@ pub use program::{BytecodeLayoutMetrics, Program, ProgramBuilder};
 
 #[doc(hidden)]
 pub use chunk::{CompiledChunk, PackedInstruction, PackedOpcode};
+pub(crate) use liveness::MOVE_LOCAL;
 pub(crate) use metadata::CallArgumentsId;
 pub use program::{Entrypoint, EntrypointArguments};

@@ -5,6 +5,7 @@ use crate::{CallableIdentity, platform::HashMap};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
+    liveness,
     metadata::{
         CallArgumentsId, Capture, CaptureListId, Constant, GlobalNameId, InterpolationId,
         ListSpreadId, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
@@ -175,7 +176,10 @@ impl Program {
     }
 
     /// Installs chunks decoded from a `.cslug` program record.
-    pub(crate) fn set_cslug_chunks(&mut self, chunks: Vec<CompiledChunk>) {
+    pub(crate) fn set_cslug_chunks(&mut self, mut chunks: Vec<CompiledChunk>) {
+        for chunk in &mut chunks {
+            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals);
+        }
         self.names = chunks
             .iter()
             .enumerate()
@@ -256,6 +260,8 @@ impl Program {
             }
             self.pool_instruction_metadata(&mut instruction.op);
         }
+        let mut code: Vec<_> = chunk.code.iter().map(Self::pack_instruction).collect();
+        liveness::mark_last_local_reads(&mut code, chunk.locals);
         let compiled = CompiledChunk {
             name: chunk.name.clone(),
             arity: chunk.arity,
@@ -267,7 +273,7 @@ impl Program {
             callable_identity: chunk.callable_identity,
             locals: chunk.locals,
             constants: chunk.constants.clone(),
-            code: chunk.code.iter().map(Self::pack_instruction).collect(),
+            code,
             invalid_instructions,
         };
         let index = self.chunks.len();

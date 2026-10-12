@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Appending to a list held only by a local, such as `acc :+ x` or
+  `acc + [x]` in a `recur` loop, now extends it in place instead of copying
+  it: the VM moves a local on its last read. Building a 20,000-element list
+  this way drops from 0.57 s to under 10 ms, and typed SQLite query cost no
+  longer grows with the number of rows returned.
+
 - Runtime values shrank from 40 to 24 bytes on 64-bit hosts, which cuts
   the memory used by stacks, locals, lists, and maps. Binary trees at depth
   19 peak at 52.5 MB instead of 68.7 MB and run about 15% faster.

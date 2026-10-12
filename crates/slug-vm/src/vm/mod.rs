@@ -24,7 +24,7 @@ use crate::{
     CallArgumentKind, CallableIdentity, Capture, ForeignResourceSignature, MatchPatternId,
     ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceSpan, SpanId, Value,
     VmHost,
-    bytecode::{EntrypointArguments, Op, PackedInstruction, PackedOpcode, SelectCase},
+    bytecode::{EntrypointArguments, MOVE_LOCAL, Op, PackedInstruction, PackedOpcode, SelectCase},
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
@@ -1998,6 +1998,10 @@ impl Vm {
                 self.pop_at(None)?;
             }
             PackedOpcode::Duplicate => self.stack.push(self.peek_at(None)?.clone()),
+            PackedOpcode::GetLocal if instruction.b == MOVE_LOCAL => {
+                let value = self.take_local(operand)?;
+                self.stack.push(value);
+            }
             PackedOpcode::GetLocal => self.stack.push(self.local_value(operand, None)?),
             PackedOpcode::SetLocal => {
                 let value = self.pop_at(None)?;

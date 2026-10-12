@@ -1091,10 +1091,13 @@ showed the per-row query cost growing with the result size, and building an
 8,000-element list with `acc + [x]` in a `recur` loop took 0.11 s against
 0.04 s for 4,000, so each list append copies the whole list.
 
-- [ ] Append to a list in place when the left operand is the only reference,
+- [x] Append to a list in place when the left operand is the only reference,
   as unique-owner map updates already do, and measure `+` on lists in a loop.
-- [ ] Re-measure typed SQLite queries, and decide whether a per-row C helper
-  that reads all of a row's columns in one call is still worth adding.
+  Done by moving locals on their last read; see item 12.
+- [x] Re-measure typed SQLite queries, and decide whether a per-row C helper
+  that reads all of a row's columns in one call is still worth adding. Query
+  cost no longer grows with result size; the helper stays undecided until a
+  workload needs the remaining per-value native-call cost cut (item 12).
 
 ### 12. Value, ownership, and hot-path sweep (proposed)
 
@@ -1112,7 +1115,7 @@ Recommended order:
   resource signature behind one `Rc`. `Value` falls from 40 to 24 bytes, which
   shrinks the operand stack, locals, list elements, and map entries. About 25
   changed lines.
-- [ ] **Move locals on their last read (closes item 11).** An installation
+- [x] **Move locals on their last read (closes item 11).** An installation
   pass marks each `GetLocal` after which the slot is dead, and the VM moves
   the value out instead of cloning it. A sole-owner list then appends in
   place: a 20,000-element `acc :+ x` loop drops from 0.57 s to under 10 ms.
@@ -1201,3 +1204,37 @@ and resource signature behind one `Rc<ForeignDeclaration>`.
 
 `make check` passed. No diagnostic, call-frame, or scheduler behavior changed;
 the CLI binary size is unchanged within 16 bytes.
+
+#### Measurement record: move locals on last read (2026-10-12)
+
+`liveness::mark_last_local_reads` runs when a chunk is installed, from either
+`Program::add_chunk` or a decoded `.cslug` record, and sets packed operand `b`
+on each final `GetLocal`. It recomputes the flag every time, so the flag never
+comes from untrusted input. The VM moves a direct local out, leaving `nil`, and
+still clones a captured cell. Focused tests cover an in-place append, an
+earlier read that must clone, a read on only one branch, and a captured slot.
+
+Interleaved A/B harness, seven rounds, against the 24-byte `Value` commit:
+
+| Workload | Before | After |
+|---|---:|---:|
+| fc | 1.25 s | 1.22 s |
+| gg | 0.65 s | 0.65 s |
+| bt | 0.44 s | 0.43 s |
+| fk | 0.96 s | 0.88 s |
+| ap (20k appends) | 0.57 s | <0.01 s |
+
+Typed `slug.db.sqlite` query cost was timed as the median of eleven runs: a
+program that inserts N three-column rows and queries them, minus one that
+only inserts. Results are in nanoseconds per row:
+
+| Rows | Pre-sweep | 24-byte `Value` | Move on last read |
+|---:|---:|---:|---:|
+| 1,000 | 7,512 | 6,611 | 4,793 |
+| 4,000 | 13,196 | 11,279 | 4,612 |
+| 8,000 | 20,881 | 17,179 | 4,516 |
+
+`collected + [row]` no longer copies the result list, so the per-row cost is
+now flat. It remains about eight times the 0.13 prototype's 575 ns, mostly
+native calls per column value. A per-row C helper is the next step if a
+workload needs it. `make check` passed.

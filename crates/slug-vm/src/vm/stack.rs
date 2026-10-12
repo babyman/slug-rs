@@ -75,6 +75,24 @@ impl Vm {
         }
     }
 
+    /// Moves a direct local out after its last read, leaving `nil` behind.
+    /// A captured slot is a cell shared with closures, so it is cloned.
+    pub(super) fn take_local(&mut self, slot: usize) -> VmResult<Value> {
+        match self
+            .frames
+            .last_mut()
+            .and_then(|frame| frame.locals.get_mut(slot))
+        {
+            Some(LocalSlot::Direct(value)) => Ok(core::mem::replace(value, Value::Nil)),
+            Some(LocalSlot::Captured(cell)) => Ok(cell.borrow().clone()),
+            None => Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("local {slot} does not exist"),
+                None,
+            )),
+        }
+    }
+
     pub(super) fn promote_local_at(
         &mut self,
         slot: usize,
