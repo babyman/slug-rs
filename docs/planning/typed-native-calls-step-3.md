@@ -109,10 +109,15 @@ the diagnostic change in decision 6.
 
 ### 2. Producers on Slug channels in the VM
 
-- [ ] Mint a producer from an existing channel, sharing one queue per channel.
-- [ ] Drain it and register it for progress like a native-created channel.
-- [ ] VM tests for sends of each value type, `full` and `closed`, revocation
+- [x] Mint a producer from an existing channel, sharing one queue per channel.
+- [x] Drain it and register it for progress like a native-created channel.
+- [x] VM tests for sends of each value type, `full` and `closed`, revocation
   when the receiver or the VM goes away, and close.
+
+`NativeCall::producer(index)` mints from a channel argument. The channel's
+producer slot is now set once, either at native creation or at the first
+mint, and the VM registers a channel argument that has a producer for
+progress after any native call.
 
 ### 3. The `producer` type
 

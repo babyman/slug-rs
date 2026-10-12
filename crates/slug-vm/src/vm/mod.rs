@@ -4948,7 +4948,17 @@ impl Vm {
         if let Some(signature) = resource_signature {
             self.validate_foreign_resource_arguments(function, signature, arguments, span)?;
         }
-        match function.invoke(arguments) {
+        let invocation = function.invoke(arguments);
+        // A producer minted from a channel argument needs progress wakeups,
+        // as a native-created channel result does.
+        for argument in arguments {
+            if let Value::Channel(channel) = argument
+                && channel.has_native_producer()
+            {
+                self.progress.track_native_channel(channel);
+            }
+        }
+        match invocation {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);
                 if value.contains_non_finite_number() {

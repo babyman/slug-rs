@@ -106,10 +106,15 @@ struct NativeProducerState {
 impl NativeChannelProducer {
     #[must_use]
     pub(crate) fn bounded(capacity: usize) -> Self {
+        Self::bounded_with_occupied(capacity, 0)
+    }
+
+    #[must_use]
+    pub(crate) fn bounded_with_occupied(capacity: usize, occupied: usize) -> Self {
         Self {
             state: Arc::new(NativeProducerState {
                 capacity,
-                occupied: AtomicUsize::new(0),
+                occupied: AtomicUsize::new(occupied),
                 queue: Mutex::new(VecDeque::new()),
                 closed: AtomicBool::new(false),
                 producer_leases: AtomicUsize::new(1),
@@ -228,6 +233,15 @@ impl NativeChannelProducer {
         }
     }
 
+    /// A new producer lease on this queue, for another native producer.
+    pub(crate) fn producer_lease(&self) -> Self {
+        self.state.producer_leases.fetch_add(1, Ordering::AcqRel);
+        Self {
+            state: self.state.clone(),
+            producer_lease: true,
+        }
+    }
+
     fn notify_progress(&self) {
         let signals = {
             let mut signals = self
@@ -295,6 +309,13 @@ struct EmbeddedNativeProducerState {
 impl NativeChannelProducer {
     #[must_use]
     pub(crate) fn bounded(capacity: usize) -> Self {
+        Self::bounded_with_occupied(capacity, 0)
+    }
+
+    /// The embedded queue counts only its own entries, so buffered Slug
+    /// messages need no occupancy offset here.
+    #[must_use]
+    pub(crate) fn bounded_with_occupied(capacity: usize, _occupied: usize) -> Self {
         Self {
             state: Rc::new(RefCell::new(EmbeddedNativeProducerState {
                 capacity,
@@ -382,6 +403,15 @@ impl NativeChannelProducer {
         Self {
             state: self.state.clone(),
             producer_lease: false,
+        }
+    }
+
+    /// A new producer lease on this queue, for another native producer.
+    pub(crate) fn producer_lease(&self) -> Self {
+        self.state.borrow_mut().producer_leases += 1;
+        Self {
+            state: self.state.clone(),
+            producer_lease: true,
         }
     }
 
@@ -1469,6 +1499,29 @@ impl NativeCall<'_> {
     pub fn channel(&mut self, capacity: usize) -> (NativeOwnedValue, NativeChannelProducer) {
         let (channel, producer) = Channel::native(capacity);
         (NativeOwnedValue(Value::Channel(Rc::new(channel))), producer)
+    }
+
+    /// Mints a native producer capability from a channel argument, attaching a
+    /// producer queue to a Slug-created channel the first time.
+    ///
+    /// The producer may be used from any thread. It shares the channel's
+    /// capacity with Slug senders, and closing it closes the channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns `native.type` when the argument is not a channel or is an
+    /// unbuffered channel, which no native send could ever enter.
+    pub fn producer(&self, index: usize) -> Result<NativeChannelProducer, NativeError> {
+        let value = self.argument(index)?;
+        let Value::Channel(channel) = value.value else {
+            return Err(value.type_error("chan"));
+        };
+        channel.attach_native_producer().ok_or_else(|| {
+            NativeError::new(
+                "native.type",
+                format!("argument {index} must be a buffered channel to receive native sends"),
+            )
+        })
     }
 
     /// Creates an ordinary Slug channel without issuing a native producer capability.

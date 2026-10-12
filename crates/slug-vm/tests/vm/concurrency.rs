@@ -609,3 +609,175 @@ fn a_native_event_can_win_before_a_later_select_timer() {
     vm.define_native(function).unwrap();
     assert_eq!(vm.run_named(&program, "main").unwrap(), Value::Int(7));
 }
+
+/// Producers minted from Slug-created channels, as typed native bindings use
+/// them: `attach(channel)` mints one and keeps it in module state.
+mod minted_producers {
+    use super::*;
+    use slug_vm::{NativeChannelProducer, NativeProducerStatus, NativeSendValue};
+
+    #[derive(Default)]
+    struct Minted {
+        producers: Mutex<Vec<NativeChannelProducer>>,
+        statuses: Mutex<Vec<String>>,
+        threaded: bool,
+        close_after_mint: bool,
+    }
+
+    fn status_name(status: &NativeProducerStatus) -> String {
+        match status {
+            NativeProducerStatus::Sent => "sent".into(),
+            NativeProducerStatus::Full(_) => "full".into(),
+            NativeProducerStatus::Closed(_) => "closed".into(),
+        }
+    }
+
+    fn attach(call: &mut NativeCall<'_>) -> NativeStatus {
+        let producer = match call.producer(0) {
+            Ok(producer) => producer,
+            Err(error) => return call.raise(error),
+        };
+        let state = call.state::<Arc<Minted>>().expect("minted state").clone();
+        if state.threaded {
+            let worker = producer.clone();
+            std::thread::spawn(move || {
+                for value in [
+                    NativeSendValue::string("hello"),
+                    NativeSendValue::integer(7),
+                ] {
+                    let mut value = value;
+                    loop {
+                        match worker.try_send(value) {
+                            NativeProducerStatus::Sent => break,
+                            NativeProducerStatus::Full(rejected) => {
+                                value = rejected;
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                            }
+                            NativeProducerStatus::Closed(_) => return,
+                        }
+                    }
+                }
+            });
+        } else {
+            let mut statuses = state.statuses.lock().unwrap();
+            statuses.push(status_name(&producer.try_send(NativeSendValue::nil())));
+            statuses.push(status_name(
+                &producer.try_send(NativeSendValue::boolean(true)),
+            ));
+        }
+        if state.close_after_mint {
+            producer.close();
+        }
+        state.producers.lock().unwrap().push(producer);
+        call.return_value(slug_vm::NativeOwnedValue::nil())
+    }
+
+    fn vm_with_attach(state: Arc<Minted>) -> Vm {
+        let mut vm = vm_with_channel_constructor();
+        let module = NativeModule::new("test.minted", state).unwrap();
+        vm.define_native(
+            module
+                .function("attach", NativeArity::Exact(1), attach)
+                .unwrap(),
+        )
+        .unwrap();
+        vm
+    }
+
+    #[test]
+    fn a_producer_feeds_a_slug_channel_from_another_thread() {
+        let state = Arc::new(Minted {
+            threaded: true,
+            ..Minted::default()
+        });
+        let program = compile(
+            "minted-threaded.slug",
+            "val channel = make_channel(1)\n\
+             attach(channel)\n\
+             val first = select { recv channel }\n\
+             val second = select { recv channel }\n\
+             [first, second]\n",
+        )
+        .expect("compile threaded producer source");
+        let value = vm_with_attach(state)
+            .run_named(&program, "main")
+            .expect("receive from the worker thread");
+        assert_eq!(value.to_string(), "[\"hello\", 7]");
+    }
+
+    #[test]
+    fn a_producer_shares_the_channel_capacity_and_closes_with_the_vm() {
+        let state = Arc::new(Minted::default());
+        let program = compile(
+            "minted-capacity.slug",
+            "val channel = make_channel(2)\n\
+             select { send channel, 1 }\n\
+             attach(channel)\n\
+             val a = select { recv channel }\n\
+             val b = select { recv channel }\n\
+             val c = select { recv channel }\n\
+             [a, b, c]\n",
+        )
+        .expect("compile capacity source");
+        let mut vm = vm_with_attach(state.clone());
+        vm.start_named(&program, "main")
+            .expect("start capacity program");
+        assert!(matches!(vm.run_until_stalled(), VmProgress::Stalled));
+        // The buffered Slug value occupied one of two slots when the producer
+        // was minted, so the first native send fit and the second did not.
+        assert_eq!(*state.statuses.lock().unwrap(), ["sent", "full"]);
+
+        let producer = state.producers.lock().unwrap()[0].clone();
+        assert_eq!(
+            producer.try_send(NativeSendValue::float(1.5)),
+            NativeProducerStatus::Sent
+        );
+        assert!(matches!(
+            vm.run_until_stalled(),
+            VmProgress::Completed(value) if value.to_string() == "[1, nil, 1.5]"
+        ));
+        drop(vm);
+        assert!(matches!(
+            producer.try_send(NativeSendValue::integer(9)),
+            NativeProducerStatus::Closed(_)
+        ));
+    }
+
+    #[test]
+    fn closing_a_producer_closes_the_slug_channel() {
+        let state = Arc::new(Minted {
+            close_after_mint: true,
+            ..Minted::default()
+        });
+        let program = compile(
+            "minted-close.slug",
+            "val channel = make_channel(2)\n\
+             attach(channel)\n\
+             val first = select { recv channel }\n\
+             val second = select { recv channel }\n\
+             val after = select { recv channel }\n\
+             [first, second, after]\n",
+        )
+        .expect("compile close source");
+        let value = vm_with_attach(state)
+            .run_named(&program, "main")
+            .expect("receive until the producer closes");
+        // Both values sent before close are delivered, then the closed
+        // channel yields nil.
+        assert_eq!(value.to_string(), "[nil, true, nil]");
+    }
+
+    #[test]
+    fn an_unbuffered_channel_cannot_mint_a_producer() {
+        let program = compile("minted-unbuffered.slug", "attach(make_channel(0))\n")
+            .expect("compile unbuffered source");
+        let error = vm_with_attach(Arc::new(Minted::default()))
+            .run_named(&program, "main")
+            .expect_err("an unbuffered channel is rejected");
+        assert_eq!(
+            error.native.as_ref().map(|native| native.code.as_str()),
+            Some("native.type")
+        );
+        assert!(error.message.contains("buffered channel"), "{error}");
+    }
+}

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Native code can now send into a buffered channel that Slug created:
+  `NativeCall::producer` mints a producer from a channel argument, sharing
+  the channel's capacity with Slug senders. Closing the producer closes the
+  channel, and the producer reports closed once the receiver or VM is gone.
+
 - Decided typed native producers: a `producer` argument minted from a
   buffered Slug channel, host functions reached through the capability,
   copied text and bytes, and a generated `slug_producer.h` header.
