@@ -7,7 +7,7 @@ It does not reopen the rule that function bodies, rather than callers, derive
 their alternatives.
 
 Known-direct-call constraints and nil-partitioned parameter inference are
-tracked separately in [Body-Derived Inference Follow-Up](body-derived-inference-follow-up.md).
+tracked separately in [Body-Derived Inference Follow-Up](completed/body-derived-inference-follow-up.md).
 They now supply singleton facts through a direct, non-generic known callee
 whose signature has no inferred alternatives. Extending that propagation to a
 uniquely selected inferred alternative is the first remaining semantic stage.

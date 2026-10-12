@@ -180,30 +180,18 @@ are stable:
   and source location where fixture metadata makes them exact.
 - [ ] Run `make check`.
 
-## 8. Stabilize the native ABI and add external FFI
+## 8. Native interface
 
-After channels and concurrency have exercised the native boundary:
-
-- [ ] Stress resource cleanup, close races, cross-thread sends, cancellation,
-  producer revocation, and runtime teardown.
-- [ ] Publish the version 1 C declarations, version negotiation, loader
-  validation, and ABI conformance tests together.
-- [ ] Add dynamic Slug-aware module loading only after version 1 is fixed.
-- [ ] Specify any TOML raw C bridge independently of the native module ABI.
+The version 1 C ABI and dynamic-loading sequence previously planned here is
+superseded. Native interface work now follows
+[Typed native calls](../decisions/2026-10-10-typed-native-calls.md) and
+[Native interface profiles](../decisions/2026-10-10-native-interface-profiles.md),
+with the VM-facing contract in [the native ABI reference](../reference/native-abi.md).
+The completed steps are recorded under [`completed/`](completed/).
 
 ## 9. Optimize only from measurements
 
-After the source foundation and representative workloads exist, follow the
-separate [VM Optimization Plan](vm-optimization.md).
-
-- [ ] Establish the Stage 0 benchmark and instrumentation baseline.
-- [ ] Optimize dispatch, metadata, and local storage one measured stage at a
-  time.
-- [ ] Keep private bytecode optimization separate from the portable `.cslug`
-  format.
-- [ ] Re-run conformance and checked-failure coverage after every representation
-  change.
-
-Portable `.cslug` encoding and loading remain a later compatibility milestone.
-Do not serialize the private `Program`, `Chunk`, or `Op` representation as a
-shortcut.
+VM and bytecode performance work is tracked in the separate
+[VM Optimization Plan](vm-optimization.md). Keep private bytecode optimization
+separate from the portable `.cslug` format, and re-run conformance and
+checked-failure coverage after every representation change.

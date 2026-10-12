@@ -1,7 +1,7 @@
 # Body-Derived Inference Follow-Up
 
 This task list implements the semantic decision in
-[Propagate known calls and nil partitions in body-derived inference](../decisions/2026-09-20-body-derived-call-and-nil-partition-inference.md).
+[Propagate known calls and nil partitions in body-derived inference](../../decisions/2026-09-20-body-derived-call-and-nil-partition-inference.md).
 It extends the completed direct numeric and finite `+` work without allowing
 callers to define a function's signature.
 

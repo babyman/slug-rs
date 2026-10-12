@@ -113,7 +113,7 @@ was changed: no checked error for prototype manifests.
 
    I'll bring you the classification before renaming anything. Every link
    to a renamed record is updated.
-8. **The 0.13 producer plan.** `docs/planning/ffi-channel-producer-v0.13.md`
+8. **The 0.13 producer plan.** `docs/planning/completed/ffi-channel-producer-v0.13.md`
    describes finished work. Recommendation: move it to
    `docs/planning/completed/` and update its links.
 

@@ -1,5 +1,10 @@
 # Expression Foundation Inventory
 
+> Archived. The implementation boundary it records has been reached except for
+> declaration metadata and `slug.meta`, which the
+> [language foundation roadmap](../language-foundation-roadmap.md) tracks. The
+> generated support matrix is the current status summary; rows below may be stale.
+
 This inventory turns roadmap milestone 2 into independently implementable source-language slices. It compares the
 normative grammar and language specification with the current AST, parser, compiler, VM, and focused tests. It is an
 implementation planning record, not a language specification.

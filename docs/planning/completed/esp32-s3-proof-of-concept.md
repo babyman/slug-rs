@@ -157,6 +157,6 @@ modules, a better embedded map implementation, source compression, or portable
 portable artifacts remain a separate decision.
 
 The next selected capability is deliberately narrower: the
-[ESP32-S3 static Clutch GPIO plan](../esp32-s3-static-clutch-gpio.md) defines a
+[ESP32-S3 static Clutch GPIO plan](esp32-s3-static-clutch-gpio.md) defines a
 logical LED output and blocking delay through static providers, without using
 the desktop dynamic Clutch loader.

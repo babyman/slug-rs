@@ -138,7 +138,7 @@ Slug GPIO 4 -> high
 
 The chase holds each LED high for 80 ms, then shows the whole lap for 600 ms
 and clears it for 300 ms before tail-recurring. See
-[`docs/planning/esp32-s3-static-clutch-gpio.md`](../../docs/planning/esp32-s3-static-clutch-gpio.md).
+[`docs/planning/completed/esp32-s3-static-clutch-gpio.md`](../../docs/planning/completed/esp32-s3-static-clutch-gpio.md).
 
 ## Hardware verification
 

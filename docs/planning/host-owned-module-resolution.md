@@ -153,7 +153,7 @@ target, with no filesystem requirement.
 - [ ] Retain source-module payloads for desktop, Clutch, and embedded import
   resolution while initial `.cslug` files represent whole programs.
 - [ ] Coordinate any future whole-program artifact host path with the separate
-  [`.cslug` artifact plan](cslug-whole-program-artifacts.md); do not add
+  [`.cslug` artifact plan](completed/cslug-whole-program-artifacts.md); do not add
   `ModulePayload::Cslug` as an implementation shortcut.
 
 **Gate:** module resolution remains source-based, and no private `Program` or
