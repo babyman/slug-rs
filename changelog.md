@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Completed step 3 of the typed native-call replacement: CI passed its exit
+  gate, and its plan moved to `docs/planning/completed/`. No first-party
+  clutch uses the 0.13 prototype.
+
 - Measured standard-input throughput through the CLI: typed and prototype
   `slug.io.stdin` are within noise, at roughly 0.7 to 0.85 µs per line. The
   native ABI, experimental clutch, and README docs now describe typed

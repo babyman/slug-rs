@@ -3,7 +3,7 @@
 ## Goal
 
 Implement step 3 of the replacement plan in
-[Typed native calls](../decisions/2026-10-10-typed-native-calls.md): add the
+[Typed native calls](../../decisions/2026-10-10-typed-native-calls.md): add the
 interface through which native code sends values into a channel that Slug
 created, and move `slug.io.stdin` to it.
 
@@ -17,6 +17,11 @@ Step 3 ends when `slug.io.stdin` and `slug.math` run on typed bindings, their
 tests pass on macOS, Linux, and Windows, and native code can send every
 producer value type through a Slug-created channel.
 
+## Status
+
+Complete. Phases 1-5 are implemented, and CI passed the exit gate on macOS,
+Linux, and Windows, with the ESP32-S3 jobs, on 2026-10-12.
+
 ## Out of scope
 
 - Removing the prototype loader, its headers, the helper SDK, and the
@@ -25,7 +30,7 @@ producer value type through a Slug-created channel.
   `core` profile, and the static build already rejects an `events` provider.
 - Structs, buffers, lists, and maps sent through a producer.
 - Performance work, which stays deferred
-  ([VM optimization item 11](vm-optimization.md#11-append-to-uniquely-owned-collections-in-place-deferred)).
+  ([VM optimization item 11](../vm-optimization.md#11-append-to-uniquely-owned-collections-in-place-deferred)).
 
 ## What exists today
 
@@ -100,9 +105,9 @@ the diagnostic change in decision 6.
 ### 1. Decisions
 
 - [x] Record decisions 1-4, 7, and 8 in a decision record that extends
-  [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md),
+  [Typed native manifest bindings](../../decisions/2026-10-11-typed-native-manifest-bindings.md),
   and decisions 5 and 6 in this plan:
-  [Typed native producers](../decisions/2026-10-11-typed-native-producers.md).
+  [Typed native producers](../../decisions/2026-10-11-typed-native-producers.md).
   The record adds one rule the plan did not state: minting a producer from an
   unbuffered channel fails with `native.type`, because no native send into it
   could ever succeed.

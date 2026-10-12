@@ -7,7 +7,7 @@ events: the Slug program creates the channel, and native code receives a
 producer capability minted from it. It leaves open how the capability crosses
 a typed binding, how native code reaches the host's send functions, and how a
 Slug-created channel accepts native sends.
-[Step 3 of the typed native-call plan](../planning/typed-native-calls-step-3.md)
+[Step 3 of the typed native-call plan](../planning/completed/typed-native-calls-step-3.md)
 needs all three to move `slug.io.stdin`.
 
 The VM supports native sends only into a channel that native code created:
