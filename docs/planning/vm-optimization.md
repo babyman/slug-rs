@@ -1095,3 +1095,88 @@ showed the per-row query cost growing with the result size, and building an
   as unique-owner map updates already do, and measure `+` on lists in a loop.
 - [ ] Re-measure typed SQLite queries, and decide whether a per-row C helper
   that reads all of a row's columns in one call is still worth adding.
+
+### 12. Value, ownership, and hot-path sweep (proposed)
+
+The 2026-10-12 sweep revisited items 10 and 11 alongside a wider VM review.
+Each candidate was judged on execution time, runtime footprint, and
+implementation simplicity; the largest wins improve all three. The spikes are
+measurement-only commits on local branch `spike/vm-sweep` (workloads and the
+interleaved A/B harness are in its `spike/` directory). They are not merge
+candidates.
+
+Recommended order:
+
+- [ ] **24-byte `Value`.** Store list-view bounds as `u32`, make
+  `CallableIdentity` a thin `Rc`, and keep a declared native's identity and
+  resource signature behind one `Rc`. `Value` falls from 40 to 24 bytes, which
+  shrinks the operand stack, locals, list elements, and map entries. About 25
+  changed lines.
+- [ ] **Move locals on their last read (closes item 11).** An installation
+  pass marks each `GetLocal` after which the slot is dead, and the VM moves
+  the value out instead of cloning it. A sole-owner list then appends in
+  place: a 20,000-element `acc :+ x` loop drops from 0.57 s to under 10 ms.
+  Liveness is a single fixed-point pass over the packed code. `Recur`,
+  `Return`, and `Throw` end liveness, `SetLocal` kills a slot, and
+  `MakeClosure` keeps every slot live. A promoted (captured) slot is still
+  cloned. The pass must also run on `.cslug`-loaded chunks.
+- [ ] **Fast exits on the call path (most of item 10).** Return without going
+  through the cleanup queue when no defer scope, cleanup action, or pending
+  cleanup exists. Restart an exact positional `recur` by moving stack
+  arguments straight into direct locals, with no temporary vector or closure
+  clone. Keep the frame's `Rc<Program>` across instructions instead of cloning
+  it for every dispatch.
+- [ ] **Cheap global hashing.** Global names are short identifiers, so an
+  in-tree FNV-1a hasher for the global environment replaces SipHash. This
+  defers compiler-resolved global slots (item 7) until a profile needs them.
+- [ ] **Cold error construction.** Mark `error`/`error_at` `#[cold]` and
+  `#[inline(never)]`.
+- [ ] **One packed dispatch loop.** This is the largest simplicity and size
+  win, but it must be a deliberate rewrite rather than a deletion. The
+  rich-`Op` fallback reconstructs an `Op` from the packed instruction, and 397
+  of its lines are unreachable or duplicate the packed hot path: un-pooled
+  variants that `pack_instruction` rejects, plus re-implementations of packed
+  ops. The `span: Option<&SourceSpan>` parameter on 45 helpers is always
+  `None` since diagnostics resolve the active `SpanId` lazily, and the owned
+  `call` path duplicates `call_at` for the root call alone. Deleting only
+  the dead arms made dispatch about 25–30% slower: LLVM merged the loop
+  differently (measured with interleaved runs, so not host drift). The rewrite
+  should therefore match once on `PackedOpcode`, keep the instruction pointer
+  and chunk in loop locals that are refreshed on frame changes, and put
+  explicit `#[inline]`/`#[cold]` boundaries on rare operations. Accept it only
+  on an interleaved A/B run.
+
+Measured but not recommended now: returning `Box<RuntimeError>` from
+`VmResult` (104-byte to pointer-sized error) showed no execution change
+within noise and saved 16 KB, while changing the public error API. A module
+namespace value (item 10, second bullet) remains immaterial at nine exports.
+
+#### Measurement record: sweep spikes (2026-10-12)
+
+Command: `python3 -I spike/ladder.py` on branch `spike/vm-sweep`. It runs
+seven interleaved rounds of every binary per workload and reports the median
+wall-clock seconds. Release profile, base `e9b740c`. Workloads: 5,000,000
+`function-call` iterations (fc), 5,000,000 discarded global reads (gg),
+binary trees at depth 19 (bt), fannkuch-redux over eight values (fk), and a
+20,000-element list append (ap).
+
+| Step (cumulative) | fc | gg | bt | fk | ap | bt peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| Base | 1.49 | 0.82 | 0.52 | 1.10 | 0.67 | 68.7 MB |
+| 24-byte `Value` | 1.24 | 0.66 | 0.43 | 0.96 | 0.57 | 52.5 MB |
+| + return/recur fast paths | 1.02 | 0.54 | 0.44 | 0.92 | 0.57 | 52.5 MB |
+| + cached frame program | 0.95 | 0.50 | 0.41 | 0.87 | 0.58 | 52.5 MB |
+| + move on last read | 0.94 | 0.49 | 0.41 | 0.79 | <0.01 | 52.6 MB |
+| + FNV globals, cold errors | 0.88 | 0.40 | 0.38 | 0.75 | <0.01 | 52.5 MB |
+
+Running sequential, non-interleaved runs drifted by up to 30% within one
+session on the measuring laptop, so future comparisons should use interleaved
+A/B runs. With `make bench-source`, `function-call` went from 34.3 to 20.8 ms
+(1.34x to 0.80x CPython), `binary-trees` from 35.5 to 27.1 ms (1.25x to
+0.93x), and `fannkuch-redux` from 117.7 to 81.7 ms (3.87x to 2.66x). The base
+and spike runs were taken hours apart, so these are directional only. The full
+workspace suite passed on the combined spike except
+`records_direct_local_vector_reuse_across_recur`. The fast `recur` path does
+not yet record that metric. Fannkuch's remaining gap comes from `+:` prepend
+and from appends to list views, which always copy. That belongs to the
+collection-representation work rather than to dispatch.
