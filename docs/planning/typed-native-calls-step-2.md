@@ -163,9 +163,9 @@ module gets its own scope.
 - [x] Stage the clutch through `slug-native-shim stage`.
 
 Eleven helpers cover what cannot be bound directly; 15 bindings, including
-both releases, call SQLite itself. The statement module holds the statement bindings, and the one-shot
-`exec` and `query` in `slug.db.sqlite` reuse it by importing it at call time,
-so the clutch does not depend on an import cycle.
+both releases, call SQLite itself. The statement module holds the statement
+bindings, and the one-shot `exec` and `query` in `slug.db.sqlite` reuse it by
+importing it at call time, so the clutch does not depend on an import cycle.
 
 Slug code cannot distinguish an integer from a float of the same value, so a
 whole number in the 64-bit range binds as a SQLite integer and any other
@@ -186,8 +186,36 @@ module's rollback.
   close with open statements. `crates/slug/tests/typed_sqlite.rs` runs them
   through the CLI, which registers the `slug.builtin` functions the wrappers
   use.
-- [ ] Measure exec and query end to end against the prototype and record the
+- [x] Measure exec and query end to end against the prototype and record the
   results.
+
+`sqlite_typed_versus_prototype_end_to_end`, an ignored test that
+`make bench-ffi-prototype-scalar` runs, inserts rows through a prepared
+statement with three parameters, then reads them back with one query. The
+query cost is the second program minus the first. Medians of 11 samples on an
+Apple M3, in nanoseconds per row:
+
+| Rows | Prototype insert | Typed insert | Prototype query | Typed query |
+|---:|---:|---:|---:|---:|
+| 1,000 | 1,603 | 7,811 | 575 | 7,406 |
+| 4,000 | 1,598 | 6,895 | 136 | 13,174 |
+
+The typed clutch is about 4x slower to insert and much slower to read rows
+back, and its query cost per row grows with the result size. Two causes:
+
+1. **Native calls per value.** An insert makes seven native calls (three
+   binds, step, changes, reset, clear) plus the Slug binding logic, where the
+   prototype made one. Reading a row makes two calls plus three per column.
+2. **Quadratic list and map building.** The row loop builds its result with
+   `collected + [row]` and each row with `values + entry`. The VM copies the
+   whole list on each append: building a list of 8,000 this way takes
+   0.11 s against 0.04 s for 4,000.
+
+Follow-ups, for a ranking before any change: an in-place append when the
+VM's list or map value is uniquely owned (part of the deferred VM
+optimization work), and a per-row C helper that reads all of a row's
+columns in one call, as decision 6 allows. Behavior matches the prototype on
+every tested path.
 
 ### 6. `keys` builtin
 

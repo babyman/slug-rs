@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Measured typed `slug.db.sqlite` against the prototype: about 4x slower to
+  insert, and slower to read rows back as results grow, because rows are
+  built in Slug with copying list appends. The causes and follow-ups are
+  recorded in the step 2 plan.
+
 - `slug.db.sqlite`, `slug.db.sqlite.statement`, and
   `slug.db.sqlite.transaction` now run on typed native bindings: thin C
   helpers plus direct SQLite bindings, wrapped in Slug code that keeps every

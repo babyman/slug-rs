@@ -1816,3 +1816,134 @@ fn filesystem_typed_versus_prototype_end_to_end() {
         }
     }
 }
+
+/// Builds the current typed `slug.db.sqlite` clutch into a repository in
+/// `directory`, as clutch staging does.
+#[cfg(unix)]
+fn build_typed_sqlite_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
+    let source = workspace_root().join("clutch/slug.db.sqlite.clutch");
+    let repository = directory.path().join("clutch");
+    let root = repository.join("slug.db.sqlite.clutch");
+    for file in [
+        "clutch.toml",
+        "modules/sqlite.slug",
+        "modules/statement.slug",
+        "modules/transaction.slug",
+        "native/source/sqlite.c",
+        "native/source/slug_db_sqlite.h",
+    ] {
+        let target = root.join(file);
+        fs::create_dir_all(target.parent().expect("clutch file has a parent"))
+            .expect("create typed clutch directory");
+        fs::copy(source.join(file), target).expect("copy typed SQLite clutch file");
+    }
+    fs::write(
+        repository.join("manifest.toml"),
+        "[modules]\n\
+         \"slug.db.sqlite\" = \"slug.db.sqlite.clutch\"\n\
+         \"slug.db.sqlite.statement\" = \"slug.db.sqlite.clutch\"\n\
+         \"slug.db.sqlite.transaction\" = \"slug.db.sqlite.clutch\"\n",
+    )
+    .expect("write typed repository manifest");
+    let manifest = slug_native_manifest::NativeManifest::from_clutch_source(
+        &fs::read_to_string(root.join("clutch.toml")).expect("read typed manifest"),
+    )
+    .expect("valid typed SQLite manifest");
+    slug_native_manifest::build_dynamic(
+        &root,
+        &manifest,
+        "slug_db_sqlite",
+        current_native_platform(),
+    )
+    .unwrap_or_else(|error| panic!("build typed SQLite clutch: {error}"));
+    ClutchRepository::from_manifest(&repository).expect("load typed SQLite repository")
+}
+
+/// Raw end-to-end timing for the `SQLite` clutch, typed versus prototype:
+/// rows inserted through a prepared statement, then read back with one query.
+#[cfg(unix)]
+#[test]
+#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+fn sqlite_typed_versus_prototype_end_to_end() {
+    const ROWS: usize = 2_000;
+    #[allow(clippy::cast_precision_loss)]
+    const ROWS_F64: f64 = ROWS as f64;
+    println!(
+        "sqlite configuration: profile=release samples={SCALAR_SAMPLE_COUNT} rows={ROWS} target={}-{}",
+        env::consts::ARCH,
+        env::consts::OS,
+    );
+    let source = |query: bool| {
+        format!(
+            "val sqlite = import(\"slug.db.sqlite\")\n\
+             val statement = import(\"slug.db.sqlite.statement\")\n\
+             val db = sqlite.open(\":memory:\")\n\
+             sqlite.exec(db, \"create table person(id integer, name text, score real)\")\n\
+             val insert = statement.prepare(db, \"insert into person(id, name, score) values (?, ?, ?)\")\n\
+             val fill = fn(remaining:num) {{\n\
+               if (remaining == 0) {{ nil }} else {{\n\
+                 statement.exec(insert, remaining, \"person name\", 1.5)\n\
+                 recur(remaining - 1)\n\
+               }}\n\
+             }}\n\
+             fill({ROWS})\n\
+             statement.close(insert)\n\
+             val result = {}\n\
+             sqlite.close(db)\n\
+             result\n",
+            if query {
+                "sqlite.query(db, \"select id, name, score from person order by id\")[ROWS_LAST].id"
+            } else {
+                "0"
+            }
+            .replace("ROWS_LAST", &(ROWS - 1).to_string())
+        )
+    };
+    for label in ["prototype", "typed"] {
+        let directory = TemporaryDirectory::new();
+        let repository = if label == "typed" {
+            build_typed_sqlite_clutch(&directory)
+        } else {
+            build_native_clutch(
+                &directory,
+                "slug.db.sqlite",
+                "slug.db.sqlite.clutch",
+                "crates/slug/tests/ffi_prototype/sqlite.slug",
+                "crates/slug/tests/ffi_prototype/sqlite.c",
+                "bench_slug_db_sqlite",
+                &["-lsqlite3"],
+            )
+        };
+        let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+        let mut vm = Vm::with_module_loader(loader.clone());
+        for (phase, query) in [("insert", false), ("insert-and-query", true)] {
+            let program = loader
+                .compile_source(
+                    &directory
+                        .path()
+                        .join(format!("{phase}.slug"))
+                        .to_string_lossy(),
+                    &source(query),
+                )
+                .expect("compile SQLite benchmark");
+            let expected = if query { ROWS.to_string() } else { "0".into() };
+            assert_eq!(
+                vm.run_named(&program, "main").unwrap().to_string(),
+                expected
+            );
+            for sample_index in 1..=SCALAR_SAMPLE_COUNT {
+                let started = Instant::now();
+                assert_eq!(
+                    vm.run_named(&program, "main").unwrap().to_string(),
+                    expected
+                );
+                let elapsed = started.elapsed();
+                println!(
+                    "sqlite-{label}-{phase} sample {sample_index}: total_ns={} ns_per_row={:.2}",
+                    elapsed.as_nanos(),
+                    elapsed.as_secs_f64() * 1_000_000_000.0 / ROWS_F64,
+                );
+            }
+        }
+    }
+}
