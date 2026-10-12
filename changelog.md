@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Planned step 4 of the typed native-call replacement: removing the 0.13
+  prototype loader, its tests, headers, and helper SDK, after porting any
+  loader coverage that typed clutches still need.
+
 - Completed step 3 of the typed native-call replacement: CI passed its exit
   gate, and its plan moved to `docs/planning/completed/`. No first-party
   clutch uses the 0.13 prototype.
