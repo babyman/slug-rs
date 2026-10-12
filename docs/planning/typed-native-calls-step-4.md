@@ -52,6 +52,9 @@ pass on macOS, Linux, Windows, and ESP32-S3.
 
 ## Decisions
 
+Decisions 1, 2, and 4-8 were accepted as recommended on 2026-10-12. Decision 3
+was changed: no checked error for prototype manifests.
+
 1. **What is removed.** Recommendation: the prototype loader and its public
    exports, the `abi` manifest form, `include/` with both headers,
    `docs/reference/ffi-helpers.md`, `crates/slug/tests/ffi_prototype.rs` and
@@ -68,13 +71,10 @@ pass on macOS, Linux, Windows, and ESP32-S3.
    desktop test, in its own commit before anything is deleted. Drop the
    tests for prototype-only features (descriptor validation, member-key
    dispatch, list and map builders, destructor transfer), without porting.
-3. **A manifest that still uses `abi`.** Recommendation: a checked manifest
-   error that names the cause, for example "the 0.13 prototype native ABI
-   was removed; declare typed bindings under `[native.functions]`". A
-   generic unknown-key error would leave a third-party clutch author
-   guessing. The step 3 test that rejects mixing `abi` with typed keys
-   becomes a test of this error. This changes a diagnostic and needs your
-   acceptance.
+3. **A manifest that still uses `abi`.** Decided: no special handling. The
+   prototype is purged without backward compatibility, so `abi` is an
+   unknown `[native]` key and fails with the ordinary manifest error. The
+   step 3 test that rejects mixing `abi` with typed keys is deleted.
 4. **Shared dynamic-library code.** Recommendation: move `LoadedLibrary`,
    `library_lease`, and `retain_library_for_foreign_worker` into a
    `dynamic_library` module of `slug-desktop-loader`, and rename
@@ -115,17 +115,44 @@ pass on macOS, Linux, Windows, and ESP32-S3.
 
 ### 1. Coverage audit
 
-- [ ] Classify each test in `ffi_prototype.rs`: covered by a typed test,
+- [x] Classify each test in `ffi_prototype.rs`: covered by a typed test,
   needed and uncovered, or prototype-only.
-- [ ] Port each needed, uncovered behavior to a typed desktop test, with the
+- [x] Port each needed, uncovered behavior to a typed desktop test, with the
   fixture C it needs.
+
+The audit of the 37 tests:
+
+| Prototype tests | Outcome |
+|---|---|
+| Filesystem clutch, its 16 MiB line limit, the five SQLite tests, `slug.math`, pure and native modules in one clutch | Covered by `typed_native`, `cli filesystem`, `typed_sqlite`, and `typed_core`. |
+| Borrowing and closing resources, `native.resource_closed` | Covered by `typed_native`. |
+| Producers: sends of every value type, `full` retry, `closed` after the receiver or VM is gone, close | Covered by the adapter producer test, the desktop C worker test, and the VM minted-producer tests. |
+| Resource release during error unwinding and VM teardown, and reloading a library a live handle keeps loaded | Ported: `typed_resources_are_released_by_unwinding_and_vm_teardown`. |
+| Resource arguments checked on dynamic calls | Ported: `typed_dynamic_calls_check_resource_arguments`. |
+| Same-named resources in two modules | Ported, now also rejecting a handle passed to the other module: `typed_resources_of_the_same_name_stay_distinct_between_modules`. |
+| Stale functions after shutdown fail with `native.plugin_inactive` | Ported, and missing: see below. |
+| Source and native resource lists that disagree, a resource result of the wrong type | Not applicable: typed resources come from the manifest, and the declaration check rejects a mismatched annotation. |
+| ABI major, descriptor size, stale collection handles, missing destroy callback, unknown status, member-key dispatch, library state, owned text transfer | Prototype-only. |
+| The callback baseline, the scalar controls, and the typed-versus-prototype comparisons | Benchmarks, handled by decision 5. |
+
+One gap was real. The
+[deterministic shutdown](../decisions/2026-09-07-deterministic-native-clutch-shutdown.md)
+rule says that native functions report `native.plugin_inactive` after
+finalization. Only the prototype loader did this. A typed function that a VM
+still held after its loader shut down kept calling into the library. That
+was safe, because the function keeps the library loaded, but it broke the
+rule. `slug-native-adapter` now returns an `Activity` switch with each
+installed table. When it is deactivated, the table's functions fail with
+`native.plugin_inactive` and resource release still runs. The desktop loader
+deactivates it in the clutch's cleanup step. A static image's code is
+linked in and cannot be unloaded, and the static host's shutdown only
+releases resources, so it leaves the switch active.
 
 ### 2. Remove the loader
 
 - [ ] Move the shared dynamic-library code into `dynamic_library` and rename
   its error type.
-- [ ] Delete the prototype loader, its exports, and the `abi` manifest form,
-  and report the decision 3 error for a manifest that uses `abi`.
+- [ ] Delete the prototype loader, its exports, and the `abi` manifest form.
 
 ### 3. Remove the tests, fixtures, headers, and SDK
 

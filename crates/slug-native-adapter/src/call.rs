@@ -89,6 +89,7 @@ pub(crate) struct ModuleState {
     pub _owner: Rc<dyn Any>,
     pub bindings: Vec<Rc<RuntimeBinding>>,
     pub resources: Rc<OnceCell<Rc<[ResourceSlot]>>>,
+    pub activity: crate::Activity,
 }
 
 /// A native handle owned by a Slug resource. `address` is `None` once an
@@ -133,6 +134,15 @@ impl From<NativeError> for Failure {
 
 /// The callback registered for every Slug-visible typed binding.
 pub(crate) fn call_binding(call: &mut NativeCall<'_>) -> NativeStatus {
+    if call
+        .state::<ModuleState>()
+        .is_some_and(|state| state.activity.is_inactive())
+    {
+        return call.raise(NativeError::new(
+            "native.plugin_inactive",
+            "typed native library is no longer active",
+        ));
+    }
     let Some((binding, resources)) = binding(call) else {
         return call.report_contract_violation("typed native binding has no adapter state");
     };

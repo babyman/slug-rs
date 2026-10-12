@@ -433,6 +433,30 @@ fn typed_resources_are_released_by_unwinding_and_vm_teardown() {
 }
 
 #[test]
+fn typed_functions_are_inactive_after_shutdown() {
+    let directory = TemporaryDirectory::new();
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let program = compile_files_program(&directory, &loader, "files.add(1, 2)");
+    let mut first = Vm::with_host(Rc::new(loader.clone()));
+    let mut second = Vm::with_host(Rc::new(loader.clone()));
+    assert_eq!(first.run_named(&program, "main").unwrap().to_string(), "3");
+    assert_eq!(second.run_named(&program, "main").unwrap().to_string(), "3");
+
+    // Shutting one VM down finalizes the shared loader's clutches; a VM that
+    // still holds their functions must not call into the library.
+    first.shutdown();
+    let error = second
+        .run_named(&program, "main")
+        .expect_err("a stale typed function must not run");
+    assert_eq!(error.kind, RuntimeErrorKind::Native);
+    assert_eq!(
+        error.native.as_ref().map(|error| error.code.as_str()),
+        Some("native.plugin_inactive")
+    );
+}
+
+#[test]
 fn typed_resources_of_the_same_name_stay_distinct_between_modules() {
     let directory = TemporaryDirectory::new();
     let manifest = MANIFEST.replace(

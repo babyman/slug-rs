@@ -277,14 +277,23 @@ impl DesktopResolver {
         self.typed_text_results
             .borrow_mut()
             .insert(lease.clone(), installed.text_results);
+        let clutch_error = |message: String| ModuleLoadError::Clutch {
+            location: root.to_string_lossy().into_owned(),
+            message,
+        };
         installed.functions.into_iter().try_for_each(|function| {
             registrar
                 .define_foreign(function)
-                .map_err(|error| ModuleLoadError::Clutch {
-                    location: root.to_string_lossy().into_owned(),
-                    message: error.to_string(),
-                })
-        })
+                .map_err(|error| clutch_error(error.to_string()))
+        })?;
+        // Functions a VM still holds after shutdown must not enter the library.
+        let activity = installed.activity;
+        registrar
+            .set_cleanup_operation(move || {
+                activity.deactivate();
+                Ok(())
+            })
+            .map_err(|error| clutch_error(format!("cannot retain native plugin cleanup: {error}")))
     }
 
     /// Checks a clutch module's `foreign` declarations against its typed

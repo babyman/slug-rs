@@ -889,6 +889,34 @@ fn releases_open_handles_exactly_once() {
 }
 
 #[test]
+fn deactivated_functions_fail_without_calling_the_library_and_still_release() {
+    let specs = fixture_specs();
+    let table = table(&specs);
+    let owner: Rc<dyn Any> = Rc::new(());
+    let installed =
+        install_with_switches(&table, &expected(&specs), &owner).expect("install fixture");
+    let activity = installed.activity.clone();
+    let host = Host::new(installed.functions);
+    let releases = count(&RELEASES);
+    host.run("val left = fx.open(\"left\")\nfx.add(1, 2)")
+        .expect("run while active");
+    assert_eq!(
+        count(&RELEASES),
+        releases + 1,
+        "the open handle is released"
+    );
+
+    activity.deactivate();
+    let error = host.run("fx.add(1, 2)").expect_err("inactive function");
+    assert_eq!(native_code(&error), Some("native.plugin_inactive"));
+    let error = host
+        .run("fx.open(\"late\")")
+        .expect_err("inactive function");
+    assert_eq!(native_code(&error), Some("native.plugin_inactive"));
+    assert_eq!(count(&RELEASES), releases + 1, "no handle was opened");
+}
+
+#[test]
 fn keeps_the_owner_alive_while_functions_exist() {
     let specs = fixture_specs();
     let table = table(&specs);

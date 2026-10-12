@@ -55,6 +55,34 @@ pub struct ExpectedBinding<'a> {
 pub struct Installed {
     pub functions: Vec<NativeFunction>,
     pub text_results: TextResults,
+    pub activity: Activity,
+}
+
+/// Whether a table's functions may still call into its library. A host
+/// deactivates it when it finalizes the clutch; a function called after
+/// that fails with `native.plugin_inactive` instead of entering the
+/// library. Resource release is unaffected.
+#[derive(Clone, Default)]
+pub struct Activity(Rc<Cell<bool>>);
+
+impl Activity {
+    /// Makes every function of the table fail with `native.plugin_inactive`.
+    pub fn deactivate(&self) {
+        self.0.set(true);
+    }
+
+    pub(crate) fn is_inactive(&self) -> bool {
+        self.0.get()
+    }
+}
+
+impl fmt::Debug for Activity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Activity")
+            .field("inactive", &self.0.get())
+            .finish()
+    }
 }
 
 /// Per-binding switches for `cstr` results. By default a NULL text result
@@ -240,6 +268,7 @@ fn install_modules(
 
     let scope = NativeModule::new_shared_scope();
     let slots = Rc::new(OnceCell::new());
+    let activity = Activity::default();
     let descriptor = |error: slug_vm::NativeDescriptorError| InstallError::new(error.to_string());
     let mut installed = Vec::new();
     for (module_name, functions) in functions_by_module {
@@ -251,6 +280,7 @@ fn install_modules(
             _owner: owner.clone(),
             bindings: runtime.clone(),
             resources: slots.clone(),
+            activity: activity.clone(),
         };
         let module =
             NativeModule::new_with_scope(module_name.as_str(), state, scope).map_err(descriptor)?;
@@ -269,6 +299,7 @@ fn install_modules(
                 _owner: owner.clone(),
                 bindings: Vec::new(),
                 resources: slots.clone(),
+                activity: activity.clone(),
             };
             let module = NativeModule::new_with_scope(resource.module.as_str(), state, scope)
                 .map_err(descriptor)?;
@@ -320,6 +351,7 @@ fn install_modules(
     Ok(Installed {
         functions,
         text_results: TextResults(Rc::new(text_results)),
+        activity,
     })
 }
 

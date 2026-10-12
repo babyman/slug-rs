@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A typed native function that a VM still holds after its clutch shuts down
+  now fails with `native.plugin_inactive` instead of calling into the
+  library, as the deterministic native shutdown rule requires and the 0.13
+  prototype already did. `slug-native-adapter` returns an `Activity` switch
+  with each installed table, which the desktop loader deactivates during
+  clutch cleanup.
+
+- Step 4 decisions accepted, except that a manifest still using the
+  prototype `abi` key gets the ordinary unknown-key error rather than a
+  dedicated one.
+
 - Typed native tests now cover resource release during error unwinding and
   VM teardown, resource arguments on dynamic calls, and same-named resources
   in two modules, behavior previously tested only through the 0.13
