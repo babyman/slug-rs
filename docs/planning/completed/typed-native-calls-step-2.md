@@ -3,7 +3,7 @@
 ## Goal
 
 Implement step 2 of the replacement plan in
-[Typed native calls](../decisions/2026-10-10-typed-native-calls.md): move the
+[Typed native calls](../../decisions/2026-10-10-typed-native-calls.md): move the
 `slug.db.sqlite` clutch to raw SQLite foreign functions plus Slug library code.
 Keep every public name, signature, and documented behavior of
 `slug.db.sqlite`, `slug.db.sqlite.statement`, and
@@ -115,7 +115,7 @@ and one for result values. The ranked fixes were:
 
 The C call through the shim (about 8 ns) is the uniform entry's cost, and the
 VM's per-call work is shared with every native call and belongs to
-[VM optimization item 10](vm-optimization.md#10-reduce-per-instruction-overhead-and-indexed-member-lookup-deferred).
+[VM optimization item 10](../vm-optimization.md#10-reduce-per-instruction-overhead-and-indexed-member-lookup-deferred).
 
 Fix 1 measured on the same Apple M3 host:
 
@@ -134,8 +134,8 @@ runs; the typed clutch's gap narrowed from about 20% to about 14%.
 ### 2. Decisions
 
 - [x] Record decisions 1-3 in a decision record that extends
-  [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md):
-  [Typed native length results and shared handles](../decisions/2026-10-11-typed-native-length-results-and-shared-handles.md).
+  [Typed native manifest bindings](../../decisions/2026-10-11-typed-native-manifest-bindings.md):
+  [Typed native length results and shared handles](../../decisions/2026-10-11-typed-native-length-results-and-shared-handles.md).
 - [x] Record decisions 4 and 5 in this plan.
 
 ### 3. Length results and cross-module handles
@@ -225,7 +225,7 @@ every tested path.
 - [x] Implement it, document it in `lib/slug/builtin.slug` and the language
   specification, and remove `keys` from the core clutch's native library.
 
-[`keys` is a builtin](../decisions/2026-10-11-keys-builtin.md) settles the
+[`keys` is a builtin](../../decisions/2026-10-11-keys-builtin.md) settles the
 mechanism. A VM builtin could not be re-exported: a module that declares
 `keys` binds the name throughout itself before its initializer runs, so
 `export val keys = keys` fails. `keys` is therefore a host builtin declared in
@@ -243,6 +243,7 @@ review. Its order is the map's unspecified enumeration order.
 
 ## Status
 
-Phases 1-6 are implemented and pass locally on macOS. Before this plan moves
-to `completed/`, CI must pass the exit gate: the typed SQLite tests on Linux
-as well as macOS, and the three-platform and ESP32-S3 jobs.
+Complete. Phases 1-6 are implemented, and CI passed the exit gate, including
+the typed SQLite tests on Linux and macOS and the three-platform and ESP32-S3
+jobs, on 2026-10-11. The SQLite performance follow-ups in phase 5 remain open
+for a ranking.

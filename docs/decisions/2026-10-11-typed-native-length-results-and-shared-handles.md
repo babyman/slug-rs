@@ -2,7 +2,7 @@
 
 ## Context
 
-[Step 2 of the typed native-call plan](../planning/typed-native-calls-step-2.md)
+[Step 2 of the typed native-call plan](../planning/completed/typed-native-calls-step-2.md)
 moves `slug.db.sqlite` to raw SQLite functions. Three things it needs are
 outside [Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md):
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Completed step 2 of the typed native-call replacement: CI passed its exit
+  gate, and its plan moved to `docs/planning/completed/`.
+
 - Implemented step 2 of the typed native-call replacement. It completes once
   CI passes its exit gate.
 
