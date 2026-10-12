@@ -1,152 +1,119 @@
-#include "slug_ffi_prototype.h"
-#include "slug_ffi_helpers.h"
+#if !defined(_WIN32)
+/* nanosleep is POSIX; shims build with -std=c11. */
+#define _POSIX_C_SOURCE 200809L
+#endif
 
-#include <limits.h>
+#include "slug_core.h"
+
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-#define SLUG_TEXT(value) ((slug_ffi_text){value, sizeof(value) - 1})
-#define STDIN_CHANNEL_CAPACITY 32u
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <time.h>
+#endif
 
-typedef struct {
-  slug_ffi_async_stream *input_stream;
-} core_state;
+static atomic_bool reader_started = false;
 
-static void stdin_worker(slug_ffi_async_sender *out, void *context) {
+static void pause_briefly(void) {
+#if defined(_WIN32)
+  Sleep(1);
+#else
+  struct timespec delay = {0, 1000000};
+  nanosleep(&delay, NULL);
+#endif
+}
+
+/* Sends one line, retrying while the channel is full. Returns false when the
+ * reader must stop. */
+static bool send_line(slug_producer *lines, const char *line, size_t length) {
+  for (;;) {
+    switch (slug_producer_send_text(lines, line, length)) {
+      case SLUG_PRODUCER_SENT:
+        return true;
+      case SLUG_PRODUCER_FULL:
+        pause_briefly();
+        break;
+      default:
+        return false;
+    }
+  }
+}
+
+static void read_lines(slug_producer *lines) {
   char *line = NULL;
   size_t length = 0;
   size_t capacity = 0;
   int character;
-  (void)context;
 
   while ((character = fgetc(stdin)) != EOF) {
     if (character == '\n') {
       if (length > 0 && line[length - 1] == '\r') length--;
-      if (line == NULL) {
-        line = malloc(1);
-        if (line == NULL) return;
-      }
-      if (!slug_ffi_async_sender_send_text(
-              out, (slug_ffi_text){line, (uint64_t)length}, free)) return;
-      line = NULL;
+      if (!send_line(lines, line == NULL ? "" : line, length)) break;
       length = 0;
-      capacity = 0;
       continue;
     }
-
     if (length == capacity) {
       size_t next_capacity = capacity == 0 ? 128 : capacity * 2;
-      char *expanded;
-      if (next_capacity <= capacity) {
-        free(line);
-        return;
-      }
-      expanded = realloc(line, next_capacity);
-      if (expanded == NULL) {
-        free(line);
-        return;
-      }
+      char *expanded = next_capacity > capacity ? realloc(line, next_capacity) : NULL;
+      if (expanded == NULL) break;
       line = expanded;
       capacity = next_capacity;
     }
     line[length++] = (char)character;
   }
-
-  if (ferror(stdin)) {
-    free(line);
-    return;
-  }
-  if (line != NULL) {
-    slug_ffi_async_sender_send_text(out, (slug_ffi_text){line, (uint64_t)length}, free);
-  }
+  /* An unterminated final line is still a line. */
+  if (feof(stdin) && !ferror(stdin) && length > 0) send_line(lines, line, length);
+  free(line);
+  slug_producer_close(lines);
+  slug_producer_release(lines);
 }
 
-static int32_t read_lines(const slug_ffi_host_api *host, slug_ffi_call *call,
-                          void *raw_state) {
-  core_state *state = raw_state;
-  if (state != NULL && slug_ffi_async_stream_set_result(state->input_stream, call)) {
-    return SLUG_FFI_OK;
+#if defined(_WIN32)
+static DWORD WINAPI reader_thread(LPVOID lines) {
+  read_lines(lines);
+  return 0;
+}
+#else
+static void *reader_thread(void *lines) {
+  read_lines(lines);
+  return NULL;
+}
+#endif
+
+int32_t slug_core_start_reader(slug_producer *lines) {
+  if (atomic_exchange(&reader_started, true)) {
+    slug_producer_release(lines);
+    return SLUG_CORE_READER_RUNNING;
   }
-  host->set_error(call, SLUG_TEXT("native.io"), SLUG_TEXT("cannot create standard-input stream"));
-  return SLUG_FFI_ERROR;
+#if defined(_WIN32)
+  HANDLE thread = CreateThread(NULL, 0, reader_thread, lines, 0, NULL);
+  if (thread != NULL) {
+    CloseHandle(thread);
+    return SLUG_CORE_READER_STARTED;
+  }
+#else
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, reader_thread, lines) == 0) {
+    pthread_detach(thread);
+    return SLUG_CORE_READER_STARTED;
+  }
+#endif
+  atomic_store(&reader_started, false);
+  slug_producer_release(lines);
+  return SLUG_CORE_READER_FAILED;
 }
 
-static int32_t add(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
-  int64_t left, right;
-  (void)state;
-  if (!host->argument_i64(call, 0, &left) || !host->argument_i64(call, 1, &right)) {
-    return SLUG_FFI_ERROR;
+bool slug_core_add(int64_t left, int64_t right, int64_t *sum) {
+  if ((right > 0 && left > INT64_MAX - right) || (right < 0 && left < INT64_MIN - right)) {
+    return false;
   }
-  if ((right > 0 && left > INT64_MAX - right) ||
-      (right < 0 && left < INT64_MIN - right)) {
-    host->set_error(call, SLUG_TEXT("math.range"), SLUG_TEXT("integer addition overflowed"));
-    return SLUG_FFI_ERROR;
-  }
-  host->set_i64(call, left + right);
-  return SLUG_FFI_OK;
+  *sum = left + right;
+  return true;
 }
 
-static int32_t square_root(const slug_ffi_host_api *host, slug_ffi_call *call,
-                           void *state) {
-  double value;
-  (void)state;
-  if (!host->argument_f64(call, 0, &value)) return SLUG_FFI_ERROR;
-  if (value < 0.0) {
-    host->set_error(call, SLUG_TEXT("math.domain"),
-                    SLUG_TEXT("sqrt requires a non-negative number"));
-    return SLUG_FFI_ERROR;
-  }
-  host->set_f64(call, sqrt(value));
-  return SLUG_FFI_OK;
-}
-
-static const slug_ffi_function_descriptor STDIN_FUNCTIONS[] = {
-    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("readLines"),
-     SLUG_TEXT("stdin.read_lines/v1"), 0, 0, read_lines},
-};
-
-static const slug_ffi_function_descriptor MATH_FUNCTIONS[] = {
-    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("add"), SLUG_TEXT("math.add/v1"), 2, 2, add},
-    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("sqrt"), SLUG_TEXT("math.sqrt/v1"), 1, 1,
-     square_root},
-};
-
-static const slug_ffi_module_descriptor MODULES[] = {
-    {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
-     sizeof(slug_ffi_module_descriptor), SLUG_TEXT("slug.io.stdin"), STDIN_FUNCTIONS, 1, NULL, 0},
-    {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
-     sizeof(slug_ffi_module_descriptor), SLUG_TEXT("slug.math"), MATH_FUNCTIONS, 2, NULL, 0},
-};
-
-static void destroy_library(void *raw_state) {
-  core_state *state = raw_state;
-  if (state == NULL) return;
-  slug_ffi_async_stream_destroy(state->input_stream);
-  free(state);
-}
-
-static const slug_ffi_library_descriptor LIBRARY = {
-    SLUG_FFI_PROTOTYPE_ABI_MAJOR,
-    SLUG_FFI_PROTOTYPE_ABI_MINOR,
-    sizeof(slug_ffi_library_descriptor),
-    destroy_library,
-    MODULES,
-    2,
-};
-
-SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_init(
-    const slug_ffi_host_api *host, void **out_state) {
-  core_state *state;
-  if (host == NULL || host->abi_major != SLUG_FFI_PROTOTYPE_ABI_MAJOR ||
-      host->table_size < sizeof(slug_ffi_host_api) || out_state == NULL) return NULL;
-  state = calloc(1, sizeof(core_state));
-  if (state == NULL) return NULL;
-  state->input_stream = slug_ffi_async_stream_create(
-      host, STDIN_CHANNEL_CAPACITY, stdin_worker, NULL, NULL);
-  if (state->input_stream == NULL) {
-    free(state);
-    return NULL;
-  }
-  *out_state = state;
-  return &LIBRARY;
-}
+double slug_core_sqrt(double value) { return sqrt(value); }

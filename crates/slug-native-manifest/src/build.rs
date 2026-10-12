@@ -21,7 +21,8 @@ pub fn c_compiler() -> String {
 
 /// Generates the shim for `manifest` and compiles it, with the manifest's
 /// sources and link libraries, into the dynamic library the manifest names
-/// for `platform`. The generated shim is written beside the library with the
+/// for `platform`. On Linux it also links libm, so that every platform offers
+/// the C math functions. The generated shim is written beside the library with the
 /// extension `shim.c`, with the producer header next to it on the include
 /// path. Returns the library path.
 ///
@@ -84,6 +85,11 @@ pub fn build_dynamic(
     command.arg(&shim).arg("-o").arg(&output);
     for library in &manifest.link {
         command.arg(format!("-l{library}"));
+    }
+    // The C math functions are part of the C library everywhere except Linux,
+    // where they live in a separate libm.
+    if platform.starts_with("linux-") {
+        command.arg("-lm");
     }
     let result = command.output().map_err(|error| {
         ManifestError::new("shim", format!("cannot start the C compiler: {error}"))

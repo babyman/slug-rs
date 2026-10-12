@@ -191,9 +191,9 @@ fn build_core_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
     .expect("write core clutch repository manifest");
     for (source, destination) in [
         ("clutch/slug.core.clutch/modules/std.slug", "std.slug"),
-        ("clutch/slug.core.clutch/modules/stdin.slug", "stdin.slug"),
-        ("clutch/slug.core.clutch/modules/math.slug", "math.slug"),
-        ("clutch/slug.core.clutch/native/source/core.c", "core.c"),
+        ("crates/slug/tests/ffi_prototype/stdin.slug", "stdin.slug"),
+        ("crates/slug/tests/ffi_prototype/math.slug", "math.slug"),
+        ("crates/slug/tests/ffi_prototype/core.c", "core.c"),
     ] {
         let destination = if destination == "core.c" {
             clutch_root.join("native/source").join(destination)
@@ -202,11 +202,7 @@ fn build_core_clutch(directory: &TemporaryDirectory) -> ClutchRepository {
         };
         fs::copy(workspace_root().join(source), destination).expect("copy core clutch source");
     }
-    let built = compile_fixture(
-        directory,
-        "clutch/slug.core.clutch/native/source/core.c",
-        "core",
-    );
+    let built = compile_fixture(directory, "crates/slug/tests/ffi_prototype/core.c", "core");
     let library = clutch_root
         .join("native")
         .join(target)

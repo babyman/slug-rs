@@ -142,14 +142,24 @@ later argument fails before the call.
 
 ### 4. Move `slug.core`
 
-- [ ] Rewrite `core.c` as plain C: the stdin reader and the math functions,
+- [x] Rewrite `core.c` as plain C: the stdin reader and the math functions,
   with a header and a typed manifest using the `events` profile.
-- [ ] Rewrite `stdin.slug` and `math.slug` as raw declarations plus wrappers
+- [x] Rewrite `stdin.slug` and `math.slug` as raw declarations plus wrappers
   that keep every public name, signature, and documented behavior.
-- [ ] Stage the clutch through `slug-native-shim stage`.
-- [ ] Keep the existing stdin and math tests unchanged, keeping a prototype
+- [x] Stage the clutch through `slug-native-shim stage`.
+- [x] Keep the existing stdin and math tests unchanged, keeping a prototype
   copy only where a prototype test needs one, and add tests for the thrown
   `math` error types.
+
+`stdin.slug` keeps its channel and a `started` flag at module scope, so only
+the first `readLines()` mints a producer; the C reader also ignores a second
+start. `sqrt` checks for a negative input in Slug and binds a one-line C
+helper over `sqrt`. Because C's math functions live in a separate libm only
+on Linux, the shim build now links `-lm` there rather than the manifest
+gaining per-platform link lists. The prototype math test keeps copies of the
+prototype `core.c`, `stdin.slug`, and `math.slug` under
+`crates/slug/tests/ffi_prototype/`. A new `typed_core` test builds the clutch
+as staging does and runs on every CI platform, including Windows.
 
 ### 5. Measure and document
 

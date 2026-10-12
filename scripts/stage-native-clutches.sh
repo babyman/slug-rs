@@ -12,35 +12,8 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-case "$platform" in
-  macos-*)
-    suffix=dylib
-    linker=-dynamiclib
-    ;;
-  linux-*)
-    suffix=so
-    linker='-shared -fPIC'
-    ;;
-  windows-*)
-    suffix=dll
-    linker=-shared
-    ;;
-esac
-
+# Generates the shim from clutch.toml and builds the library it names.
 stage() {
-  clutch=$1
-  source=$2
-  output_name=$3
-  libraries=${4-}
-  output="clutch/$clutch/native/$platform/$output_name.$suffix"
-  mkdir -p "$(dirname "$output")"
-  # shellcheck disable=SC2086
-  cc -I include $linker "$source" -o "$output" $libraries
-  echo "staged $output"
-}
-
-# Typed clutches: generate the shim from clutch.toml and build the library it names.
-stage_typed() {
   clutch=$1
   provider=$2
   cargo run --quiet -p slug-native-manifest --bin slug-native-shim -- \
@@ -59,11 +32,11 @@ selected() {
 }
 
 if selected slug.io.fs.clutch "$@"; then
-  stage_typed slug.io.fs.clutch slug_io_fs
+  stage slug.io.fs.clutch slug_io_fs
 fi
 if selected slug.db.sqlite.clutch "$@"; then
-  stage_typed slug.db.sqlite.clutch slug_db_sqlite
+  stage slug.db.sqlite.clutch slug_db_sqlite
 fi
 if selected slug.core.clutch "$@"; then
-  stage slug.core.clutch clutch/slug.core.clutch/native/source/core.c libslug_core -lm
+  stage slug.core.clutch slug_core
 fi

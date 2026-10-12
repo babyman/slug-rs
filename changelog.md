@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The `slug.core` clutch now uses typed native bindings. `slug.io.stdin`
+  starts a plain C reader thread that sends lines through a producer minted
+  from the module's channel, and `slug.math` wraps raw C functions. Failed
+  `slug.math` calls now throw `Error` values typed `math.range` and
+  `math.domain` instead of reporting native errors, so an uncaught failure
+  reports the thrown struct. The shim build links libm on Linux.
+
 - The typed producer test's C worker now declares `nanosleep` on Linux, where
   shims build with `-std=c11` and glibc hides POSIX functions without
   `_POSIX_C_SOURCE`.
