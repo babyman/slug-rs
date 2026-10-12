@@ -400,6 +400,14 @@ fn reports_vm_runtime_layouts() {
     assert!(layout.task_state_size_bytes > layout.task_size_bytes);
 }
 
+/// Every stack slot, local, list element, and map entry is a `Value`, so its
+/// size is a deliberate representation choice rather than an accident.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn keeps_values_at_three_words() {
+    assert_eq!(std::mem::size_of::<Value>(), 24);
+}
+
 #[test]
 fn rejects_missing_instruction_span_metadata_before_execution() {
     let mut main = Chunk::new("main", 0);

@@ -76,14 +76,16 @@ metadata_id!(SelectedCallId);
 metadata_id!(SelectCasesId);
 
 /// Opaque input identity used only for private runtime callable selection.
+///
+/// A thin `Rc<String>` rather than `Rc<str>` keeps it one pointer wide.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CallableIdentity(Rc<str>);
+pub struct CallableIdentity(Rc<String>);
 
 impl CallableIdentity {
     #[doc(hidden)]
     #[must_use]
     pub fn new(canonical_input: impl Into<String>) -> Self {
-        Self(canonical_input.into().into())
+        Self(Rc::new(canonical_input.into()))
     }
 
     #[allow(dead_code)] // Consumed by the in-progress `.cslug` encoder.

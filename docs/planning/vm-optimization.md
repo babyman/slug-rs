@@ -1107,7 +1107,7 @@ candidates.
 
 Recommended order:
 
-- [ ] **24-byte `Value`.** Store list-view bounds as `u32`, make
+- [x] **24-byte `Value`.** Store list-view bounds as `u32`, make
   `CallableIdentity` a thin `Rc`, and keep a declared native's identity and
   resource signature behind one `Rc`. `Value` falls from 40 to 24 bytes, which
   shrinks the operand stack, locals, list elements, and map entries. About 25
@@ -1180,3 +1180,24 @@ workspace suite passed on the combined spike except
 not yet record that metric. Fannkuch's remaining gap comes from `+:` prepend
 and from appends to list views, which always copy. That belongs to the
 collection-representation work rather than to dispatch.
+
+#### Measurement record: 24-byte `Value` (2026-10-12)
+
+Command: the interleaved A/B harness from `spike/vm-sweep`, seven rounds,
+release profile, comparing the pre-sweep binary with this change. `Value` falls
+from 40 to 24 bytes on 64-bit hosts. `keeps_values_at_three_words` now asserts
+that size. List views store `u32` bounds, `CallableIdentity` is a thin `Rc`,
+module-binding names are thin `Rc`s, and a declared native shares its identity
+and resource signature behind one `Rc<ForeignDeclaration>`.
+
+| Workload | Before | After |
+|---|---:|---:|
+| fc (5M calls) | 1.50 s | 1.24 s |
+| gg (5M global reads) | 0.82 s | 0.65 s |
+| bt (trees, depth 19) | 0.52 s | 0.44 s |
+| fk (fannkuch 8) | 1.09 s | 0.96 s |
+| ap (20k appends) | 0.66 s | 0.57 s |
+| bt peak RSS | 68.7 MB | 52.5 MB |
+
+`make check` passed. No diagnostic, call-frame, or scheduler behavior changed;
+the CLI binary size is unchanged within 16 bytes.

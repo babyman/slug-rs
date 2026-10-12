@@ -59,13 +59,15 @@ impl MapKey {
 #[derive(Clone)]
 pub struct List {
     values: Rc<Vec<Value>>,
-    start: usize,
-    end: usize,
+    // `u32` bounds keep `Value` at 24 bytes. A list cannot reach 2^32
+    // elements: at 24 bytes each its allocation would fail first.
+    start: u32,
+    end: u32,
 }
 
 impl List {
     pub(crate) fn from_values(values: Vec<Value>) -> Self {
-        let end = values.len();
+        let end = u32::try_from(values.len()).expect("list length fits in u32");
         Self {
             values: Rc::new(values),
             start: 0,
@@ -73,26 +75,36 @@ impl List {
         }
     }
 
+    fn range(&self) -> core::ops::Range<usize> {
+        self.start as usize..self.end as usize
+    }
+
+    fn spans_storage(&self) -> bool {
+        self.start == 0 && self.end as usize == self.values.len()
+    }
+
     pub(crate) fn len(&self) -> usize {
-        self.end - self.start
+        (self.end - self.start) as usize
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<&Value> {
         self.values
-            .get(self.start + index)
+            .get(self.start as usize + index)
             .filter(|_| index < self.len())
     }
 
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &Value> {
-        self.values[self.start..self.end].iter()
+        self.values[self.range()].iter()
     }
 
     pub(crate) fn view(&self, start: usize, end: usize) -> Self {
         assert!(start <= end && end <= self.len(), "list view is in bounds");
+        // Both offsets are bounded by this list's `u32` length.
+        let offset = |index: usize| self.start + u32::try_from(index).expect("bounded by len");
         Self {
             values: self.values.clone(),
-            start: self.start + start,
-            end: self.start + end,
+            start: offset(start),
+            end: offset(end),
         }
     }
 
@@ -103,7 +115,7 @@ impl List {
 
     #[cfg(feature = "metrics")]
     pub(crate) fn is_view(&self) -> bool {
-        self.start != 0 || self.end != self.values.len()
+        !self.spans_storage()
     }
 
     pub(crate) fn concat(self, other: &Self) -> Self {
@@ -135,7 +147,7 @@ impl List {
     }
 
     fn into_values(self) -> Vec<Value> {
-        if self.start == 0 && self.end == self.values.len() {
+        if self.spans_storage() {
             Rc::try_unwrap(self.values).unwrap_or_else(|values| (*values).clone())
         } else {
             self.iter().cloned().collect()
@@ -147,7 +159,7 @@ impl Deref for List {
     type Target = [Value];
 
     fn deref(&self) -> &Self::Target {
-        &self.values[self.start..self.end]
+        &self.values[self.range()]
     }
 }
 

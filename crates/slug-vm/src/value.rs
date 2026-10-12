@@ -568,8 +568,8 @@ pub(crate) fn binding_cell(value: Value) -> BindingCell {
     Rc::new(RefCell::new(value))
 }
 
-pub(crate) fn module_binding(name: impl Into<Rc<str>>) -> Value {
-    let name = name.into();
+pub(crate) fn module_binding(name: impl Into<String>) -> Value {
+    let name = Rc::new(name.into());
     Value::Binding {
         name,
         cell: binding_cell(Value::Uninitialized),
@@ -894,6 +894,15 @@ pub struct EnumValue {
     pub case: Rc<str>,
 }
 
+/// A foreign declaration's private identity and resource positions, shared
+/// behind one `Rc` so a declared native stays within the 24-byte `Value`.
+#[derive(Debug)]
+#[doc(hidden)]
+pub struct ForeignDeclaration {
+    pub(crate) identity: CallableIdentity,
+    pub(crate) resources: ForeignResourceSignature,
+}
+
 /// The dynamic values used by the initial Slug VM core.
 ///
 /// Collections are reference-counted so closures and later concurrency support
@@ -921,8 +930,7 @@ pub enum Value {
     /// A host callable paired with the source declaration's private identity.
     DeclaredNative {
         function: NativeFunction,
-        callable_identity: CallableIdentity,
-        resource_signature: Rc<ForeignResourceSignature>,
+        declaration: Rc<ForeignDeclaration>,
     },
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
@@ -930,7 +938,7 @@ pub enum Value {
     Overloads(Rc<Vec<Value>>),
     /// A live module binding exposed through an import map.
     Binding {
-        name: Rc<str>,
+        name: Rc<String>,
         cell: BindingCell,
     },
 }

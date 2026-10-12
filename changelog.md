@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Runtime values shrank from 40 to 24 bytes on 64-bit hosts, which cuts
+  the memory used by stacks, locals, lists, and maps. Binary trees at depth
+  19 peak at 52.5 MB instead of 68.7 MB and run about 15% faster.
+
 - Reorganized the README around an introduction to the Slug language and the
   slug-rs implementation, with concise paths for trying the CLI, REPL, compiled
   artifacts, native modules, development, and deeper documentation.

@@ -15,6 +15,7 @@ use std::time::Duration;
 #[cfg(any(feature = "concurrency", feature = "metrics"))]
 use std::time::Instant;
 
+use crate::value::ForeignDeclaration;
 #[cfg(feature = "concurrency")]
 use crate::value::Task;
 #[cfg(feature = "concurrency")]
@@ -1306,8 +1307,10 @@ impl Vm {
                     })?;
             let value = Value::DeclaredNative {
                 function,
-                callable_identity: identity,
-                resource_signature: Rc::new(resource_signature),
+                declaration: Rc::new(ForeignDeclaration {
+                    identity,
+                    resources: resource_signature,
+                }),
             };
             self.install_foreign_value(name, &value);
         }
@@ -3490,7 +3493,7 @@ impl Vm {
             }
             Value::DeclaredNative {
                 function,
-                resource_signature,
+                declaration,
                 ..
             } => {
                 let arguments = self.stack[base + 1..]
@@ -3504,7 +3507,7 @@ impl Vm {
                 let result = self.invoke_native(
                     &function,
                     &arguments,
-                    Some(&resource_signature),
+                    Some(&declaration.resources),
                     span.as_ref(),
                 )?;
                 self.stack.truncate(base);
@@ -3663,7 +3666,7 @@ impl Vm {
             }
             Value::DeclaredNative {
                 function,
-                resource_signature,
+                declaration,
                 ..
             } => {
                 let arguments = self.stack[base + 1..]
@@ -3675,7 +3678,7 @@ impl Vm {
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let result =
-                    self.invoke_native(&function, &arguments, Some(&resource_signature), span)?;
+                    self.invoke_native(&function, &arguments, Some(&declaration.resources), span)?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -4119,10 +4122,8 @@ impl Vm {
                             .collect(),
                     })
             }
-            Value::DeclaredNative {
-                callable_identity, ..
-            } => Some(CallableRuntimeSignature {
-                identity: Some(callable_identity),
+            Value::DeclaredNative { declaration, .. } => Some(CallableRuntimeSignature {
+                identity: Some(declaration.identity.clone()),
                 shape: Vec::new(),
             }),
             _ => None,

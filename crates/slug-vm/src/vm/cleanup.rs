@@ -500,7 +500,7 @@ impl Vm {
             }
             Value::DeclaredNative {
                 function,
-                resource_signature,
+                declaration,
                 ..
             } => {
                 let arguments = if recovers_error {
@@ -512,7 +512,7 @@ impl Vm {
                     Vec::new()
                 };
                 let value =
-                    self.invoke_native(&function, &arguments, Some(&resource_signature), None)?;
+                    self.invoke_native(&function, &arguments, Some(&declaration.resources), None)?;
                 if recovers_error {
                     self.recover_from_error(value, frame_depth)
                 } else {
