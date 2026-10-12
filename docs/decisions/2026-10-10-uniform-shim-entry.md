@@ -209,7 +209,7 @@ count, compiler flags, and Windows export are specified in
 resource; and a Rust-glue alternative for static Rust hosts.
 
 Follow-up spike work completed before the loader (see the
-[spike results](../planning/typed-native-call-dispatch-spike-results.md)):
+[spike results](../planning/completed/typed-native-call-dispatch-spike-results.md)):
 
 - rewrite the spike's generated shims to the uniform entry and call them
   through it, which tests this decision directly;

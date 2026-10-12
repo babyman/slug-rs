@@ -1,7 +1,7 @@
 # ESP32-S3 Slug proof of concept
 
 > Superseded by the closed version-1 `.cslug` firmware workflow documented in
-> [`firmware/slug-esp32-s3/README.md`](../../firmware/slug-esp32-s3/README.md).
+> [`../../../firmware/slug-esp32-s3/README.md`](../../../firmware/slug-esp32-s3/README.md).
 > The retained sections document the initial private frozen-image proof.
 
 ## Goal
@@ -16,7 +16,7 @@ val main = fn() {
 ```
 
 This plan implements the boundary adopted by
-[Embedded host capabilities](../decisions/2026-10-03-embedded-host-capabilities.md).
+[Embedded host capabilities](../../decisions/2026-10-03-embedded-host-capabilities.md).
 It is deliberately a functional and measurable baseline rather than an
 embedded distribution format or full device platform.
 
@@ -153,10 +153,10 @@ for the documented hardware acceptance step.
 After the proof of concept, decide from measurements whether to add more native
 modules, a better embedded map implementation, source compression, or portable
 `.cslug` artifacts. The private frozen-image boundary is defined by
-[Frozen firmware image boundary](../decisions/2026-10-04-frozen-firmware-image-boundary.md);
+[Frozen firmware image boundary](../../decisions/2026-10-04-frozen-firmware-image-boundary.md);
 portable artifacts remain a separate decision.
 
 The next selected capability is deliberately narrower: the
-[ESP32-S3 static Clutch GPIO plan](esp32-s3-static-clutch-gpio.md) defines a
+[ESP32-S3 static Clutch GPIO plan](../esp32-s3-static-clutch-gpio.md) defines a
 logical LED output and blocking delay through static providers, without using
 the desktop dynamic Clutch loader.

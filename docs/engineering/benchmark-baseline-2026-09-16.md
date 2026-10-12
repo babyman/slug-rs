@@ -452,4 +452,4 @@ counters are identical between the two revisions. Executable layout metadata
 is 8 bytes smaller per callable identity (32 to 64 bytes in these programs),
 because an identity is now a shared `Rc<str>` rather than an owned `String`. The timing change therefore comes
 from per-operation cost rather than different execution. The native-call breakdown is recorded in
-[`typed-native-call-dispatch-spike-results.md`](../planning/typed-native-call-dispatch-spike-results.md).
+[`typed-native-call-dispatch-spike-results.md`](../planning/completed/typed-native-call-dispatch-spike-results.md).

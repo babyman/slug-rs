@@ -1,7 +1,7 @@
 # Typed native-call dispatch spike results
 
 The spike's dispatcher, shims, and fixtures were deleted when the production
-typed path landed. See [Step 1 measurements](completed/typed-native-calls-step-1-results.md)
+typed path landed. See [Step 1 measurements](typed-native-calls-step-1-results.md)
 for the production path, measured beside the spike candidates on the same host.
 
 The private fixture compares a generated C shim with a bounded Rust dispatcher
@@ -110,5 +110,5 @@ undefined behavior before any checked Slug boundary is reached.
 The existing three-platform CI job is the functional platform gate for these
 focused tests, including the uniform mismatch tests. It passed on macOS, Linux,
 and Windows at `f0a3883`, and the
-[spike plan](completed/typed-native-call-dispatch-spike.md) is complete. No
+[spike plan](typed-native-call-dispatch-spike.md) is complete. No
 timing assertion is added to CI.

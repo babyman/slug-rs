@@ -149,7 +149,7 @@ header and its mismatch test compiles with `-Werror`.
   Timing comparisons are local evidence only and must not become
   timing-sensitive CI assertions.
 
-The [spike results](../typed-native-call-dispatch-spike-results.md) record the
+The [spike results](typed-native-call-dispatch-spike-results.md) record the
 local evidence. The spike is complete.
 
 ## Decision criteria

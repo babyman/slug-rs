@@ -1070,7 +1070,7 @@ needs its own decision record.
 #### Measurement record: native-call path and constant-key indexing (2026-10-11)
 
 The completed slices are recorded in
-[`typed-native-call-dispatch-spike-results.md`](typed-native-call-dispatch-spike-results.md)
+[`completed/typed-native-call-dispatch-spike-results.md`](completed/typed-native-call-dispatch-spike-results.md)
 and the dated
 [benchmark baseline entry](../engineering/benchmark-baseline-2026-09-16.md#native-call-path-and-owned-value-resolution--2026-10-11).
 `GetIndexConstant` (`ddfbe73`) then fused `Constant` and `GetIndex` for literal
