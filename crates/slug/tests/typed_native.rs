@@ -373,6 +373,143 @@ fn typed_clutch_rejects_null_text_for_a_str_result() {
     );
 }
 
+/// Compiles `body` after importing `fixture.files`, for a VM that runs
+/// several programs on one loader.
+fn compile_files_program(
+    directory: &TemporaryDirectory,
+    loader: &ModuleLoader,
+    body: &str,
+) -> slug_vm::Program {
+    loader
+        .compile_source(
+            &directory.path().join("main.slug").to_string_lossy(),
+            &format!("val files = import(\"fixture.files\")\n{body}\n"),
+        )
+        .unwrap_or_else(|error| panic!("compile {body}: {error}"))
+}
+
+#[test]
+fn typed_resources_are_released_by_unwinding_and_vm_teardown() {
+    let directory = TemporaryDirectory::new();
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository.clone());
+    let mut vm = Vm::with_host(Rc::new(loader.clone()));
+    let first = slug_path(&directory.path().join("first.txt"));
+    let unwinding = compile_files_program(
+        &directory,
+        &loader,
+        &format!(
+            "val attempt = fn() {{ val file = files.openWrite(\"{first}\"); throw \"stop\" }}\n\
+             attempt()"
+        ),
+    );
+    vm.run_named(&unwinding, "main")
+        .expect_err("the throw unwinds the open file");
+    let count = compile_files_program(&directory, &loader, "files.closedCount()");
+    assert_eq!(vm.run_named(&count, "main").unwrap().to_string(), "1");
+
+    let second = slug_path(&directory.path().join("second.txt"));
+    let escaping = compile_files_program(
+        &directory,
+        &loader,
+        &format!("files.openWrite(\"{second}\")"),
+    );
+    let escaped = vm
+        .run_named(&escaping, "main")
+        .expect("open a file that outlives the VM");
+    drop(vm);
+    drop(loader);
+
+    // The escaped handle keeps the library loaded, so a new loader shares
+    // its release count.
+    let loader = ModuleLoader::with_clutch_repository(directory.path(), None, repository);
+    let mut replacement = Vm::with_host(Rc::new(loader.clone()));
+    let count = compile_files_program(&directory, &loader, "files.closedCount()");
+    assert_eq!(
+        replacement.run_named(&count, "main").unwrap().to_string(),
+        "2"
+    );
+    drop(escaped);
+}
+
+#[test]
+fn typed_resources_of_the_same_name_stay_distinct_between_modules() {
+    let directory = TemporaryDirectory::new();
+    let manifest = MANIFEST.replace(
+        "\"fixture.files\" = { source = \"modules/files.slug\" }\n",
+        "\"fixture.files\" = { source = \"modules/files.slug\" }\n\
+         \"fixture.more\" = { source = \"modules/more.slug\" }\n",
+    ) + "\n[native.resources.\"fixture.more\".File]\n\
+         type = \"fx_file\"\n\
+         release = { symbol = \"fx_close\", signature = \"(handle<File> file) -> void\" }\n\n\
+         [native.functions.\"fixture.more\"]\n\
+         openWrite = { symbol = \"fx_open_write\", signature = \"(cstr path) -> handle<File>\" }\n\
+         write = { symbol = \"fx_write\", signature = \"(handle<File> file, str text) -> i64\" }\n";
+    let more = "export resource File\n\
+                export foreign openWrite = fn(path:str):File|nil\n\
+                export foreign write = fn(file:File, text:str):num\n";
+    let file = slug_path(&directory.path().join("lines.txt"));
+    for (body, expected) in [
+        (
+            format!(
+                "val more = import(\"fixture.more\")\n\
+                 val invoke = fn(write, handle, text) {{ write(handle, text) }}\n\
+                 [invoke(files.write, files.openWrite(\"{file}\"), \"a\"), \
+                  invoke(more.write, more.openWrite(\"{file}\"), \"bc\")]"
+            ),
+            Ok("[1, 2]"),
+        ),
+        (
+            format!(
+                "val more = import(\"fixture.more\")\n\
+                 val invoke = fn(write, handle) {{ write(handle, \"x\") }}\n\
+                 invoke(files.write, more.openWrite(\"{file}\"))"
+            ),
+            Err("native_contract"),
+        ),
+    ] {
+        let repository = typed_clutch_with_modules(
+            &directory,
+            &[
+                ("fixture.files", "files.slug", &MODULE),
+                ("fixture.more", "more.slug", more),
+            ],
+            &manifest,
+            &manifest,
+        );
+        match (run(&directory, repository, &body), expected) {
+            (Ok(value), Ok(expected)) => assert_eq!(value.to_string(), expected),
+            (Err(error), Err(expected)) => {
+                assert!(error.starts_with(expected), "{body}: {error}");
+                assert!(
+                    error.contains(
+                        "wrong resource type for its argument; expected `fixture.files.File`"
+                    ),
+                    "{error}"
+                );
+            }
+            (result, expected) => panic!("{body}: got {result:?}, expected {expected:?}"),
+        }
+    }
+}
+
+#[test]
+fn typed_dynamic_calls_check_resource_arguments() {
+    let directory = TemporaryDirectory::new();
+    let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
+    let error = run(
+        &directory,
+        repository,
+        "val invoke = fn(callback, value) { callback(value) }\ninvoke(files.close, 1)",
+    )
+    .expect_err("a dynamic call passes a number where a handle is declared");
+    assert!(error.starts_with("native_contract"), "{error}");
+    assert!(
+        error.contains("non-resource argument where `fixture.files.File` is declared"),
+        "{error}"
+    );
+}
+
 const BENCH_WARMUP_CALLS: usize = 10_000;
 const BENCH_CALLS_PER_SAMPLE: usize = 100_000;
 const BENCH_SAMPLE_COUNT: usize = 11;

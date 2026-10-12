@@ -5,6 +5,7 @@ export foreign openWrite = fn(path:str):File|nil
 export foreign readLine = fn(file:File):list
 export foreign write = fn(file:File, text:str):num
 export foreign close = fn(file:File):nil
+export foreign closedCount = fn():num
 export foreign add = fn(left:num, right:num):num
 export foreign negate = fn(value:num):num
 export foreign describe = fn(value:num):str

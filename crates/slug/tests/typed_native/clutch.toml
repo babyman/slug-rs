@@ -19,6 +19,7 @@ openWrite = { symbol = "fx_open_write", signature = "(cstr path) -> handle<File>
 readLine = { symbol = "fx_read_line", signature = "(handle<File> file, out cstr line) -> i32" }
 write = { symbol = "fx_write", signature = "(handle<File> file, str text) -> i64" }
 close = { symbol = "fx_close", signature = "(close handle<File> file) -> void" }
+closedCount = { symbol = "fx_closed_count", signature = "() -> i64" }
 add = { symbol = "fx_add", signature = "(i64 left, i64 right) -> i64" }
 negate = { symbol = "fx_negate", signature = "(i8 value) -> i8" }
 describe = { symbol = "fx_describe", signature = "(i64 value) -> cstr owned(free)" }

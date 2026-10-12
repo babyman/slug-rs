@@ -42,10 +42,15 @@ int64_t fx_write(fx_file *file, const char *text, size_t length) {
   return (int64_t)length;
 }
 
+static int64_t closed_count = 0;
+
 void fx_close(fx_file *file) {
   fclose(file->stream);
   free(file);
+  closed_count++;
 }
+
+int64_t fx_closed_count(void) { return closed_count; }
 
 int64_t fx_add(int64_t left, int64_t right) { return left + right; }
 

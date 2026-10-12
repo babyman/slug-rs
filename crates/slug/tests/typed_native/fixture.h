@@ -17,6 +17,8 @@ fx_file *fx_open_write(const char *path);
 int32_t fx_read_line(fx_file *file, const char **line);
 int64_t fx_write(fx_file *file, const char *text, size_t length);
 void fx_close(fx_file *file);
+/* Counts files closed explicitly or released by the host. */
+int64_t fx_closed_count(void);
 int64_t fx_add(int64_t left, int64_t right);
 int8_t fx_negate(int8_t value);
 char *fx_describe(int64_t value);

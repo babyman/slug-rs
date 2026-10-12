@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Typed native tests now cover resource release during error unwinding and
+  VM teardown, resource arguments on dynamic calls, and same-named resources
+  in two modules, behavior previously tested only through the 0.13
+  prototype.
+
 - Planned step 4 of the typed native-call replacement: removing the 0.13
   prototype loader, its tests, headers, and helper SDK, after porting any
   loader coverage that typed clutches still need.
