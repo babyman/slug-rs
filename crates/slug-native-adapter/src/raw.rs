@@ -150,14 +150,15 @@ pub(crate) fn invoke<R>(
     decoded
 }
 
-/// Copies the text a `cstr` result cell points at.
+/// Copies the data a text or bytes result cell points at.
 ///
-/// Only call this on a non-NULL `cstr` cell an entry has just written, before
-/// its cleanup runs: the shim contract makes `length` the text's `strlen`.
-pub(crate) fn copy_text(cell: Cell) -> Option<Vec<u8>> {
+/// Only call this on a non-NULL `cstr`, `str`, or `bytes` cell an entry has
+/// just written, before its cleanup runs. The shim contract makes `length` the
+/// text's `strlen` for `cstr` and the length the callee wrote otherwise.
+pub(crate) fn copy_bytes(cell: Cell) -> Option<Vec<u8>> {
     let length = usize::try_from(cell.length).ok()?;
     let pointer = ptr::with_exposed_provenance::<u8>(cell.address());
-    // SAFETY: per the shim contract, a non-NULL text result points at
-    // `length` readable bytes that live at least until cleanup runs.
+    // SAFETY: per the shim contract, a non-NULL text or bytes result points
+    // at `length` readable bytes that live at least until cleanup runs.
     Some(unsafe { core::slice::from_raw_parts(pointer, length) }.to_vec())
 }

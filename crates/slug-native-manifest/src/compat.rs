@@ -115,8 +115,8 @@ fn check_declaration(
 fn argument_annotation(native_type: &NativeType) -> String {
     match native_type {
         NativeType::Bool => "bool".into(),
-        NativeType::Str | NativeType::Cstr { .. } => "str".into(),
-        NativeType::Bytes => "bytes".into(),
+        NativeType::Str { .. } | NativeType::Cstr { .. } => "str".into(),
+        NativeType::Bytes { .. } => "bytes".into(),
         NativeType::Handle { resource, .. } => resource.clone(),
         _ => "num".into(),
     }
@@ -140,11 +140,36 @@ fn compare(what: &str, annotation: Option<&str>, accepted: &[&str]) -> Result<()
             accepted[0]
         ));
     };
-    if accepted.contains(&annotation) {
+    if accepted
+        .iter()
+        .any(|expected| annotation_matches(annotation, expected))
+    {
         return Ok(());
     }
     Err(format!(
         "{what} is annotated `{annotation}`, but its native binding needs `{}`",
         accepted.join("` or `")
     ))
+}
+
+/// Compares union annotations member by member, in any order. A qualified
+/// resource member, `module.R`, matches any import-qualified spelling of `R`,
+/// such as `alias.R`; the VM checks the exact resource identity at run time.
+fn annotation_matches(annotation: &str, expected: &str) -> bool {
+    let mut members = annotation.split('|').collect::<Vec<_>>();
+    let wanted = expected.split('|').collect::<Vec<_>>();
+    if members.len() != wanted.len() {
+        return false;
+    }
+    wanted.iter().all(|wanted| {
+        let position = members
+            .iter()
+            .position(|member| match wanted.rsplit_once('.') {
+                Some((_, resource)) => member
+                    .rsplit_once('.')
+                    .is_some_and(|(_, name)| name == resource),
+                None => member == wanted,
+            });
+        position.map(|index| members.swap_remove(index)).is_some()
+    })
 }

@@ -140,11 +140,17 @@ runs; the typed clutch's gap narrowed from about 20% to about 14%.
 
 ### 3. Length results and cross-module handles
 
-- [ ] Parse `out str`, `out bytes`, and `handle<module.R>` in the manifest
+- [x] Parse `out str`, `out bytes`, and `handle<module.R>` in the manifest
   model, generate them in shims, and encode and decode them in the adapter.
-- [ ] Install one shim table's modules in one native scope.
-- [ ] Extend the generator compile tests, the adapter tests, and the desktop
+- [x] Install one shim table's modules in one native scope.
+- [x] Extend the generator compile tests, the adapter tests, and the desktop
   compatibility check.
+
+The shared scope comes from `NativeModule::new_shared_scope`, a hidden
+`slug-vm` constructor that draws from the same counter as `NativeModule::new`.
+A resource's type is registered on its declaring module, even when that module
+binds no functions. A mutation test shows the cross-module call fails when each
+module gets its own scope.
 
 ### 4. Move `slug.db.sqlite`
 

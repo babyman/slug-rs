@@ -181,11 +181,136 @@ pub(crate) fn install_bindings(
             missing.module, missing.name
         )));
     }
+    install_modules(modules, owner)
+}
+
+/// A resource of one installed table: its module, name, and release binding.
+struct TableResource<'a> {
+    module: String,
+    name: String,
+    release: &'a Verified,
+}
+
+/// Collects every release binding of a table as one of its resources.
+fn table_resources(
+    releases: &[(String, Verified)],
+) -> Result<Vec<TableResource<'_>>, InstallError> {
+    releases
+        .iter()
+        .map(|(module, release)| {
+            let name = &release.table.name["release:".len()..];
+            let parameters = &release.parsed.parameters;
+            if parameters.len() != 1
+                || parameters[0] != (Direction::In, CellType::Handle(name.to_owned()))
+            {
+                return Err(InstallError::new(format!(
+                    "shim binding `{module}.{}` must take exactly one `handle<{name}>`",
+                    release.table.name
+                )));
+            }
+            Ok(TableResource {
+                module: module.clone(),
+                name: name.to_owned(),
+                release,
+            })
+        })
+        .collect()
+}
+
+/// Installs every module of one table in one native resource scope, so a
+/// handle declared by one module can be passed to another.
+fn install_modules(
+    modules: BTreeMap<String, Vec<Verified>>,
+    owner: &Rc<dyn Any>,
+) -> Result<Installed, InstallError> {
+    let mut functions_by_module = Vec::new();
+    let mut releases = Vec::new();
+    for (module, bindings) in modules {
+        let (module_releases, functions): (Vec<_>, Vec<_>) = bindings
+            .into_iter()
+            .partition(|binding| binding.table.name.starts_with("release:"));
+        releases.extend(
+            module_releases
+                .into_iter()
+                .map(|release| (module.clone(), release)),
+        );
+        functions_by_module.push((module, functions));
+    }
+    let resources = table_resources(&releases)?;
+
+    let scope = NativeModule::new_shared_scope();
+    let slots = Rc::new(OnceCell::new());
+    let descriptor = |error: slug_vm::NativeDescriptorError| InstallError::new(error.to_string());
+    let mut installed = Vec::new();
+    for (module_name, functions) in functions_by_module {
+        let runtime = functions
+            .iter()
+            .map(|function| runtime_binding(&module_name, function, &resources).map(Rc::new))
+            .collect::<Result<Vec<_>, _>>()?;
+        let state = ModuleState {
+            _owner: owner.clone(),
+            bindings: runtime.clone(),
+            resources: slots.clone(),
+        };
+        let module =
+            NativeModule::new_with_scope(module_name.as_str(), state, scope).map_err(descriptor)?;
+        installed.push((module_name, module, functions, runtime));
+    }
+    // Resource types belong to their declaring module, even one that binds no
+    // functions of its own.
+    let mut resource_only = Vec::new();
+    for resource in &resources {
+        if !installed.iter().any(|(name, ..)| *name == resource.module)
+            && !resource_only
+                .iter()
+                .any(|(name, _): &(String, NativeModule)| *name == resource.module)
+        {
+            let state = ModuleState {
+                _owner: owner.clone(),
+                bindings: Vec::new(),
+                resources: slots.clone(),
+            };
+            let module = NativeModule::new_with_scope(resource.module.as_str(), state, scope)
+                .map_err(descriptor)?;
+            resource_only.push((resource.module.clone(), module));
+        }
+    }
+    let resource_types = resources
+        .iter()
+        .map(|resource| {
+            let module = installed
+                .iter()
+                .map(|(name, module, ..)| (name, module))
+                .chain(resource_only.iter().map(|(name, module)| (name, module)))
+                .find(|(name, _)| **name == resource.module)
+                .map(|(_, module)| module)
+                .ok_or_else(|| InstallError::new("resource module is not installed"))?;
+            Ok(call::ResourceSlot {
+                resource_type: module
+                    .resource_type(resource.name.as_str(), Handle::close, Handle::destroy)
+                    .map_err(descriptor)?,
+                release: resource.release.table.entry,
+                release_results: resource.release.parsed.result_cells(),
+            })
+        })
+        .collect::<Result<Rc<[_]>, InstallError>>()?;
+    let _ = slots.set(resource_types);
+
     let mut functions = Vec::new();
     let mut text_results = Vec::new();
-    for (module, bindings) in modules {
-        let (module_functions, runtime) = install_module(&module, bindings, owner)?;
-        functions.extend(module_functions);
+    for (_, module, module_functions, runtime) in &installed {
+        for (index, (function, binding)) in module_functions.iter().zip(runtime).enumerate() {
+            functions.push(
+                module
+                    .function_with_member_key(
+                        function.table.name.as_str(),
+                        NativeArity::Exact(binding.arguments.len()),
+                        index.to_string(),
+                        call::call_binding,
+                    )
+                    .map_err(descriptor)?,
+            );
+        }
         text_results.extend(
             runtime
                 .iter()
@@ -198,92 +323,22 @@ pub(crate) fn install_bindings(
     })
 }
 
-fn install_module(
-    module_name: &str,
-    bindings: Vec<Verified>,
-    owner: &Rc<dyn Any>,
-) -> Result<(Vec<NativeFunction>, Vec<Rc<RuntimeBinding>>), InstallError> {
-    let (releases, functions): (Vec<_>, Vec<_>) = bindings
-        .into_iter()
-        .partition(|binding| binding.table.name.starts_with("release:"));
-
-    let mut resources = Vec::new();
-    for release in &releases {
-        let resource = &release.table.name["release:".len()..];
-        let parameters = &release.parsed.parameters;
-        if parameters.len() != 1
-            || parameters[0] != (Direction::In, CellType::Handle(resource.to_owned()))
-        {
-            return Err(InstallError::new(format!(
-                "shim binding `{module_name}.{}` must take exactly one `handle<{resource}>`",
-                release.table.name
-            )));
-        }
-        resources.push((resource.to_owned(), release));
-    }
-
-    let resource_names = resources
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .collect::<Vec<_>>();
-    let runtime = functions
-        .iter()
-        .map(|function| runtime_binding(module_name, function, &resource_names).map(Rc::new))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let slots = Rc::new(OnceCell::new());
-    let state = ModuleState {
-        _owner: owner.clone(),
-        bindings: runtime.clone(),
-        resources: slots.clone(),
-    };
-    let descriptor = |error: slug_vm::NativeDescriptorError| InstallError::new(error.to_string());
-    let module = NativeModule::new(module_name, state).map_err(descriptor)?;
-    let resource_types = resources
-        .iter()
-        .map(|(name, release)| {
-            Ok(call::ResourceSlot {
-                resource_type: module
-                    .resource_type(name.as_str(), Handle::close, Handle::destroy)
-                    .map_err(descriptor)?,
-                release: release.table.entry,
-                release_results: release.parsed.result_cells(),
-            })
-        })
-        .collect::<Result<Rc<[_]>, InstallError>>()?;
-    let _ = slots.set(resource_types);
-    let functions = functions
-        .iter()
-        .zip(&runtime)
-        .enumerate()
-        .map(|(index, (function, binding))| {
-            module
-                .function_with_member_key(
-                    function.table.name.as_str(),
-                    NativeArity::Exact(binding.arguments.len()),
-                    index.to_string(),
-                    call::call_binding,
-                )
-                .map_err(descriptor)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((functions, runtime))
-}
-
 fn runtime_binding(
     module_name: &str,
     function: &Verified,
-    resources: &[&str],
+    resources: &[TableResource<'_>],
 ) -> Result<RuntimeBinding, InstallError> {
     let qualified = format!("{module_name}.{}", function.table.name);
     let kind = |cell_type: &CellType| -> Result<Kind, InstallError> {
         Kind::new(cell_type, |resource| {
+            // `R` names the binding's own module; `module.R` another module.
+            let (module, name) = resource.rsplit_once('.').unwrap_or((module_name, resource));
             resources
                 .iter()
-                .position(|name| *name == resource)
+                .position(|candidate| candidate.module == module && candidate.name == name)
                 .ok_or_else(|| {
                     InstallError::new(format!(
-                        "shim binding `{qualified}` uses resource `{resource}`, which has no `release:{resource}` binding"
+                        "shim binding `{qualified}` uses resource `{resource}`, which has no `release:{name}` binding in `{module}`"
                     ))
                 })
         })

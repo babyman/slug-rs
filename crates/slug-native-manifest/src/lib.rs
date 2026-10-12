@@ -272,7 +272,7 @@ fn parse_resource(
         module,
         &format!("release:{name}"),
         release,
-        &[(name, c_type)],
+        &[(module, name, c_type)],
         &release_location,
     )?;
     let own_handle = NativeType::Handle {
@@ -319,8 +319,13 @@ fn parse_function(
     require_keys(entry, &["symbol", "signature", "macro"], location)?;
     let handles = resources
         .iter()
-        .filter(|resource| resource.module == module)
-        .map(|resource| (resource.name.as_str(), resource.c_type.as_str()))
+        .map(|resource| {
+            (
+                resource.module.as_str(),
+                resource.name.as_str(),
+                resource.c_type.as_str(),
+            )
+        })
         .collect::<Vec<_>>();
     parse_binding(module, name, entry, &handles, location)
 }
@@ -329,7 +334,7 @@ fn parse_binding(
     module: &str,
     name: &str,
     entry: &Table,
-    handles: &[(&str, &str)],
+    handles: &[(&str, &str, &str)],
     location: &str,
 ) -> Result<Binding, ManifestError> {
     let symbol = required_string(entry, "symbol", location)?;
@@ -349,7 +354,7 @@ fn parse_binding(
     let text = required_string(entry, "signature", location)?;
     let parsed = signature::parse(text)
         .map_err(|message| ManifestError::new(&signature_location, message))?;
-    let signature = resolve(parsed, handles)
+    let signature = resolve(parsed, module, handles)
         .map_err(|message| ManifestError::new(&signature_location, message))?;
     validate(&signature).map_err(|message| ManifestError::new(&signature_location, message))?;
     Ok(Binding {
@@ -361,11 +366,25 @@ fn parse_binding(
     })
 }
 
-/// Resolves each `handle<R>` against the module's `(resource, C type)` pairs.
-fn resolve(parsed: ParsedSignature, handles: &[(&str, &str)]) -> Result<Signature, String> {
+/// Resolves each handle against the clutch's `(module, resource, C type)`
+/// triples: `handle<R>` in the binding's own module, `handle<module.R>` in any
+/// module of the clutch. A same-module handle is spelled `R` canonically.
+fn resolve(
+    parsed: ParsedSignature,
+    own_module: &str,
+    handles: &[(&str, &str, &str)],
+) -> Result<Signature, String> {
     let resolve_type = |parsed: ParsedType| -> Result<NativeType, String> {
         Ok(match parsed {
-            ParsedType::Plain(native_type) => native_type,
+            ParsedType::Plain(native_type) => {
+                if let NativeType::Str { owned: Some(free) }
+                | NativeType::Bytes { owned: Some(free) } = &native_type
+                    && !is_identifier(free)
+                {
+                    return Err(format!("`{free}` is not a C identifier"));
+                }
+                native_type
+            }
             ParsedType::Cstr { owned } => {
                 if let Some(free) = &owned
                     && !is_identifier(free)
@@ -375,12 +394,25 @@ fn resolve(parsed: ParsedSignature, handles: &[(&str, &str)]) -> Result<Signatur
                 NativeType::Cstr { owned }
             }
             ParsedType::Handle { resource } => {
-                let (_, c_type) = handles
+                let (module, name) = resource
+                    .rsplit_once('.')
+                    .unwrap_or((own_module, resource.as_str()));
+                let (_, _, c_type) = handles
                     .iter()
-                    .find(|(name, _)| *name == resource)
-                    .ok_or_else(|| format!("unknown resource `{resource}` in this module"))?;
+                    .find(|(owner, candidate, _)| *owner == module && *candidate == name)
+                    .ok_or_else(|| {
+                        if module == own_module {
+                            format!("unknown resource `{name}` in this module")
+                        } else {
+                            format!("unknown resource `{name}` in module `{module}`")
+                        }
+                    })?;
                 NativeType::Handle {
-                    resource,
+                    resource: if module == own_module {
+                        name.to_owned()
+                    } else {
+                        format!("{module}.{name}")
+                    },
                     c_type: (*c_type).to_owned(),
                 }
             }
@@ -407,15 +439,16 @@ fn validate(signature: &Signature) -> Result<(), String> {
         let native_type = &parameter.native_type;
         match parameter.direction {
             Direction::In => {
-                if matches!(native_type, NativeType::Cstr { owned: Some(_) }) {
+                if matches!(
+                    native_type,
+                    NativeType::Cstr { owned: Some(_) }
+                        | NativeType::Str { owned: Some(_) }
+                        | NativeType::Bytes { owned: Some(_) }
+                ) {
                     return Err("only a result can be `owned`".into());
                 }
             }
-            Direction::Out => {
-                if matches!(native_type, NativeType::Str | NativeType::Bytes) {
-                    return Err("`str` and `bytes` are arguments only".into());
-                }
-            }
+            Direction::Out => {}
             Direction::Close => {
                 if !matches!(native_type, NativeType::Handle { .. }) {
                     return Err("only a `handle` parameter can be `close`".into());
@@ -427,8 +460,11 @@ fn validate(signature: &Signature) -> Result<(), String> {
     if closes > 1 {
         return Err("at most one parameter can be `close`".into());
     }
-    if matches!(signature.result, Some(NativeType::Str | NativeType::Bytes)) {
-        return Err("`str` and `bytes` are arguments only".into());
+    if matches!(
+        signature.result,
+        Some(NativeType::Str { .. } | NativeType::Bytes { .. })
+    ) {
+        return Err("a `str` or `bytes` result must be an `out` parameter".into());
     }
     if signature.argument_cells() > MAX_CELLS {
         return Err(format!("more than {MAX_CELLS} argument cells"));

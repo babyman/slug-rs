@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Typed native bindings accept length-delimited `out str` and `out bytes`
+  results, borrowed or owned, which may contain NUL bytes. A signature may
+  pass `handle<module.R>`, a resource another module of the same clutch
+  declares, and the adapter installs a table's modules in one resource scope.
+
 - Decided length-delimited `out str` and `out bytes` results, handles shared
   between a clutch's modules, and thin C helpers for typed native bindings.
 

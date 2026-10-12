@@ -154,21 +154,37 @@ fn c_type(native_type: &NativeType) -> String {
         NativeType::U64 => "uint64_t".into(),
         NativeType::F32 => "float".into(),
         NativeType::F64 => "double".into(),
-        NativeType::Str | NativeType::Cstr { owned: None } => "const char *".into(),
-        NativeType::Bytes => "const uint8_t *".into(),
-        NativeType::Cstr { owned: Some(_) } => "char *".into(),
+        NativeType::Str { owned: None } | NativeType::Cstr { owned: None } => "const char *".into(),
+        NativeType::Str { owned: Some(_) } | NativeType::Cstr { owned: Some(_) } => "char *".into(),
+        NativeType::Bytes { owned: None } => "const uint8_t *".into(),
+        NativeType::Bytes { owned: Some(_) } => "uint8_t *".into(),
         NativeType::Handle { c_type, .. } => format!("{c_type} *"),
     }
 }
 
 /// The C parameter types of one manifest parameter: `str` and `bytes` pass a
-/// pointer and a `size_t` length, and `out` passes a pointer to the result.
+/// pointer and a `size_t` length, and `out` passes a pointer to each.
 fn c_parameter_types(parameter: &Parameter) -> Vec<String> {
     let base = c_type(&parameter.native_type);
-    match (parameter.direction, &parameter.native_type) {
-        (Direction::Out, _) => vec![pointer_to(&base)],
-        (_, NativeType::Str | NativeType::Bytes) => vec![base, "size_t".into()],
-        _ => vec![base],
+    let length_delimited = matches!(
+        parameter.native_type,
+        NativeType::Str { .. } | NativeType::Bytes { .. }
+    );
+    match (parameter.direction, length_delimited) {
+        (Direction::Out, true) => vec![pointer_to(&base), "size_t *".into()],
+        (Direction::Out, false) => vec![pointer_to(&base)],
+        (_, true) => vec![base, "size_t".into()],
+        (_, false) => vec![base],
+    }
+}
+
+/// The free function of an owned text or bytes result.
+fn owned_free(native_type: &NativeType) -> Option<&str> {
+    match native_type {
+        NativeType::Cstr { owned } | NativeType::Str { owned } | NativeType::Bytes { owned } => {
+            owned.as_deref()
+        }
+        _ => None,
     }
 }
 
@@ -203,7 +219,7 @@ fn argument_expression(native_type: &NativeType, cell: usize) -> Vec<String> {
         }
         NativeType::F32 => vec![format!("(float){value}.f64")],
         NativeType::F64 => vec![format!("{value}.f64")],
-        NativeType::Str | NativeType::Bytes => vec![
+        NativeType::Str { .. } | NativeType::Bytes { .. } => vec![
             format!("({}){value}.pointer", c_type(native_type)),
             format!("(size_t)arguments[{cell}].length"),
         ],
@@ -213,7 +229,9 @@ fn argument_expression(native_type: &NativeType, cell: usize) -> Vec<String> {
     }
 }
 
-/// Statements that store `value` of `native_type` in result cell `cell`.
+/// Statements that store `value` of `native_type` in result cell `cell`. A
+/// length-delimited `out` value stores the length the callee wrote to
+/// `<value>_length`.
 fn store_result(output: &mut String, native_type: &NativeType, value: &str, cell: usize) {
     let target = format!("results[{cell}]");
     match native_type {
@@ -237,7 +255,15 @@ fn store_result(output: &mut String, native_type: &NativeType, value: &str, cell
             );
             return;
         }
-        NativeType::Handle { .. } | NativeType::Str | NativeType::Bytes => {
+        NativeType::Str { .. } | NativeType::Bytes { .. } => {
+            let _ = writeln!(output, "  {target}.as.pointer = {value};");
+            let _ = writeln!(
+                output,
+                "  {target}.length = {value} ? (uint64_t){value}_length : 0u;"
+            );
+            return;
+        }
+        NativeType::Handle { .. } => {
             let _ = writeln!(output, "  {target}.as.pointer = {value};");
         }
     }
@@ -248,8 +274,8 @@ fn zero_value(native_type: &NativeType) -> &'static str {
     match native_type {
         NativeType::Bool => "false",
         NativeType::F32 | NativeType::F64 => "0.0",
-        NativeType::Str
-        | NativeType::Bytes
+        NativeType::Str { .. }
+        | NativeType::Bytes { .. }
         | NativeType::Cstr { .. }
         | NativeType::Handle { .. } => "NULL",
         _ => "0",
@@ -295,8 +321,8 @@ fn write_target(output: &mut String, entry: &str, binding: &Binding) -> String {
 fn write_release(output: &mut String, entry: &str, signature: &Signature) -> bool {
     // (result cell, free function) for each owned result.
     let mut owned = Vec::new();
-    if let Some(NativeType::Cstr { owned: Some(free) }) = &signature.result {
-        owned.push((0, free.as_str()));
+    if let Some(free) = signature.result.as_ref().and_then(owned_free) {
+        owned.push((0, free));
     }
     let first_out_cell = usize::from(signature.result.is_some());
     let outs = signature
@@ -304,8 +330,8 @@ fn write_release(output: &mut String, entry: &str, signature: &Signature) -> boo
         .iter()
         .filter(|parameter| parameter.direction == Direction::Out);
     for (offset, parameter) in outs.enumerate() {
-        if let NativeType::Cstr { owned: Some(free) } = &parameter.native_type {
-            owned.push((first_out_cell + offset, free.as_str()));
+        if let Some(free) = owned_free(&parameter.native_type) {
+            owned.push((first_out_cell + offset, free));
         }
     }
     if owned.is_empty() {
@@ -369,6 +395,13 @@ fn write_entry(output: &mut String, index: usize, binding: &Binding) {
                 zero_value(&parameter.native_type)
             );
             call_arguments.push(format!("&{local}"));
+            if matches!(
+                parameter.native_type,
+                NativeType::Str { .. } | NativeType::Bytes { .. }
+            ) {
+                let _ = writeln!(output, "  size_t {local}_length = 0;");
+                call_arguments.push(format!("&{local}_length"));
+            }
             out_index += 1;
         } else {
             call_arguments.extend(argument_expression(&parameter.native_type, argument_cell));

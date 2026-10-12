@@ -231,10 +231,11 @@ fn rejects_invalid_manifests_with_their_location() {
         (function("(void) -> void"), "native.functions.\"m\".f.signature", "`void` is only valid as a result"),
         (function("(i32) -> void extra"), "native.functions.\"m\".f.signature", "unexpected `extra` after result type"),
         (function("(i32 $) -> void"), "native.functions.\"m\".f.signature", "unexpected character `$`"),
-        (function("(i32) -> str"), "native.functions.\"m\".f.signature", "`str` and `bytes` are arguments only"),
-        (function("(out bytes) -> void"), "native.functions.\"m\".f.signature", "`str` and `bytes` are arguments only"),
+        (function("(i32) -> str"), "native.functions.\"m\".f.signature", "a `str` or `bytes` result must be an `out` parameter"),
+        (function("(bytes owned(free)) -> void"), "native.functions.\"m\".f.signature", "only a result can be `owned`"),
         (function("(cstr owned(free)) -> void"), "native.functions.\"m\".f.signature", "only a result can be `owned`"),
-        (function("() -> i32 owned(free)"), "native.functions.\"m\".f.signature", "only `cstr` can be `owned`, not `i32`"),
+        (function("() -> i32 owned(free)"), "native.functions.\"m\".f.signature", "only `cstr`, `str`, and `bytes` can be `owned`, not `i32`"),
+        (function("(handle<other.Missing>) -> void"), "native.functions.\"m\".f.signature", "unknown resource `Missing` in module `other`"),
         (function("(close i32) -> void"), "native.functions.\"m\".f.signature", "only a `handle` parameter can be `close`"),
         (function("(handle<Missing>) -> void"), "native.functions.\"m\".f.signature", "unknown resource `Missing` in this module"),
         (
@@ -309,5 +310,118 @@ fn errors_display_their_manifest_location() {
     assert_eq!(
         error.to_string(),
         "native.functions.\"m\".f.signature: unknown type `int`"
+    );
+}
+
+#[test]
+fn length_results_and_shared_handles_have_canonical_text() {
+    let manifest = NativeManifest::from_clutch_source(
+        r#"
+[native]
+profile = "core"
+headers = ["db.h"]
+
+[native.resources.db.Database]
+type = "sqlite3"
+release = { symbol = "db_close", signature = "(handle<Database>) -> void" }
+
+[native.resources."db.statement".Statement]
+type = "sqlite3_stmt"
+release = { symbol = "stmt_close", signature = "(handle<Statement>) -> void" }
+
+[native.functions.db]
+text = { symbol = "db_text", signature = "(handle<db.Database> database, out str text, out bytes owned(free) blob) -> i32" }
+
+[native.functions."db.statement"]
+prepare = { symbol = "db_prepare", signature = "(handle<db.Database> database, str sql) -> handle<Statement>" }
+"#,
+    )
+    .expect("valid manifest");
+    let canonical = |name: &str| {
+        manifest
+            .bindings()
+            .find(|binding| binding.name == name)
+            .expect("binding exists")
+            .canonical_signature()
+    };
+    assert_eq!(
+        canonical("text"),
+        "slug-shim/1;db;text;db_text;(handle<Database:sqlite3>,out str,out bytes owned(free))->i32"
+    );
+    assert_eq!(
+        canonical("prepare"),
+        "slug-shim/1;db.statement;prepare;db_prepare;(handle<db.Database:sqlite3>,str)->handle<Statement:sqlite3_stmt>"
+    );
+    let text = manifest
+        .functions
+        .iter()
+        .find(|binding| binding.name == "text")
+        .unwrap();
+    assert_eq!(text.signature.argument_cells(), 1);
+    assert_eq!(text.signature.result_cells(), 3);
+}
+
+#[test]
+fn cross_module_handles_match_import_qualified_annotations() {
+    use slug_loader::{ForeignDeclaration, ForeignParameter};
+    use slug_native_manifest::check_foreign_declarations;
+
+    let manifest = NativeManifest::from_clutch_source(
+        r#"
+[native]
+profile = "core"
+headers = ["db.h"]
+
+[native.resources.db.Database]
+type = "sqlite3"
+release = { symbol = "db_close", signature = "(handle<Database>) -> void" }
+
+[native.functions."db.statement"]
+check = { symbol = "db_check", signature = "(handle<db.Database> database) -> i32" }
+reopen = { symbol = "db_reopen", signature = "(str path) -> handle<db.Database>" }
+text = { symbol = "db_text", signature = "(out str text) -> void" }
+"#,
+    )
+    .expect("valid manifest");
+    let declaration = |name: &str, parameter: Option<&str>, result: &str| ForeignDeclaration {
+        name: name.into(),
+        parameters: parameter
+            .map(|annotation| ForeignParameter {
+                name: "value".into(),
+                annotation: Some(annotation.into()),
+                variadic: false,
+                has_default: false,
+            })
+            .into_iter()
+            .collect(),
+        result: Some(result.into()),
+    };
+    let valid = [
+        declaration("check", Some("sqlite.Database"), "num"),
+        declaration("reopen", Some("str"), "nil|sqlite.Database"),
+        declaration("text", None, "list"),
+    ];
+    check_foreign_declarations(&manifest, "db.statement", &valid).expect("compatible");
+
+    let wrong_resource = [
+        declaration("check", Some("sqlite.Statement"), "num"),
+        valid[1].clone(),
+        valid[2].clone(),
+    ];
+    let error = check_foreign_declarations(&manifest, "db.statement", &wrong_resource)
+        .expect_err("a different resource must not match");
+    assert!(
+        error.contains("parameter `value` is annotated `sqlite.Statement`"),
+        "{error}"
+    );
+
+    let unqualified = [
+        declaration("check", Some("Database"), "num"),
+        valid[1].clone(),
+        valid[2].clone(),
+    ];
+    assert!(
+        check_foreign_declarations(&manifest, "db.statement", &unqualified).is_err(),
+        "another module's resource is named through an import"
     );
 }

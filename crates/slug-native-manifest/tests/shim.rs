@@ -102,6 +102,9 @@ char *fx_describe(fx_counter *counter);
 void fx_free(void *pointer);
 void fx_close(fx_counter *counter);
 int32_t fx_frees(void);
+int32_t fx_line(int64_t which, const char **text, size_t *length);
+void fx_blob(uint8_t **data, size_t *length);
+int64_t fx_count(fx_counter *counter);
 #endif
 ";
 
@@ -144,6 +147,21 @@ char *fx_describe(fx_counter *counter) {
 void fx_free(void *pointer) { frees += 1; free(pointer); }
 void fx_close(fx_counter *counter) { free(counter); }
 int32_t fx_frees(void) { return frees; }
+int32_t fx_line(int64_t which, const char **text, size_t *length) {
+  static const char line[] = {'a', '\0', 'b'};
+  if (which < 0) return 1;
+  *text = line;
+  *length = sizeof line;
+  return 0;
+}
+void fx_blob(uint8_t **data, size_t *length) {
+  uint8_t *bytes = malloc(2);
+  bytes[0] = 0xca;
+  bytes[1] = 0xfe;
+  *data = bytes;
+  *length = 2;
+}
+int64_t fx_count(fx_counter *counter) { return counter->count; }
 "#;
 
 const FIXTURE_MANIFEST: &str = r#"
@@ -167,6 +185,11 @@ name = { symbol = "fx_name", signature = "(handle<Counter>) -> cstr" }
 next = { symbol = "fx_next", signature = "(handle<Counter>, out cstr, out i64) -> i32" }
 describe = { symbol = "fx_describe", signature = "(handle<Counter>) -> cstr owned(fx_free)" }
 frees = { symbol = "fx_frees", signature = "() -> i32" }
+line = { symbol = "fx_line", signature = "(i64 which, out str text) -> i32" }
+blob = { symbol = "fx_blob", signature = "(out bytes owned(fx_free) data) -> void" }
+
+[native.functions."fx.more"]
+count = { symbol = "fx_count", signature = "(handle<fx.Counter> counter) -> i64" }
 "#;
 
 /// Mirrors the generated ABI types, which each shim defines privately.
@@ -261,8 +284,24 @@ int main(void) {
   print_text("describe", &r[0]);
   printf("cleanup %s\n", cleanup.context == (void *)r ? "results" : "other");
   cleanup.release(cleanup.context);
+  find(table, "count")(a, r, &cleanup);
+  printf("count %" PRId64 "\n", r[0].as.i64);
+  a[0].as.i64 = 0;
+  find(table, "line")(a, r, &cleanup);
+  printf("line %" PRId64 " %u %u %u %" PRIu64 "\n", r[0].as.i64,
+         ((const unsigned char *)r[1].as.pointer)[0], ((const unsigned char *)r[1].as.pointer)[1],
+         ((const unsigned char *)r[1].as.pointer)[2], r[1].length);
+  a[0].as.i64 = -1;
+  find(table, "line")(a, r, &cleanup);
+  printf("line %" PRId64 " %s %" PRIu64 "\n", r[0].as.i64, r[1].as.pointer == NULL ? "nil" : "text", r[1].length);
+  cleanup.release = NULL;
+  find(table, "blob")(a, r, &cleanup);
+  printf("blob %02x%02x %" PRIu64 " %s\n", ((const unsigned char *)r[0].as.pointer)[0],
+         ((const unsigned char *)r[0].as.pointer)[1], r[0].length, cleanup.release == NULL ? "none" : "set");
+  cleanup.release(cleanup.context);
   find(table, "frees")(a, r, &cleanup);
   printf("frees %" PRId64 "\n", r[0].as.i64);
+  a[0].as.pointer = counter;
   find(table, "release:Counter")(a, r, &cleanup);
   return 0;
 }
@@ -312,7 +351,11 @@ fn generated_shim_runs_every_step_one_type_through_the_uniform_entry() {
          cleanup none\n\
          describe <alpha> 7\n\
          cleanup results\n\
-         frees 1\n",
+         count 1\n\
+         line 0 97 0 98 3\n\
+         line 1 nil 0\n\
+         blob cafe 2 set\n\
+         frees 2\n",
     );
     assert_eq!(driver_stdout(&output), expected);
 }

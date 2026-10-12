@@ -90,7 +90,7 @@ pub(crate) fn parse(text: &str) -> Result<Parsed, String> {
         text => Some(cell_type(text)?),
     };
     if matches!(result, Some(CellType::Str | CellType::Bytes)) {
-        return Err("`str` and `bytes` are arguments only".into());
+        return Err("a `str` or `bytes` result must be an `out` parameter".into());
     }
     Ok(Parsed {
         module: module.into(),
@@ -110,11 +110,10 @@ fn parameter(text: &str) -> Result<(Direction, CellType), String> {
     };
     let cell_type = cell_type(text)?;
     match (direction, &cell_type) {
-        (Direction::Close, CellType::Handle(_)) | (Direction::In, _) => Ok((direction, cell_type)),
-        (Direction::Out, CellType::Str | CellType::Bytes) | (Direction::Close, _) => {
-            Err(alloc::format!("invalid parameter `{text}`"))
+        (Direction::Close, CellType::Handle(_)) | (Direction::In | Direction::Out, _) => {
+            Ok((direction, cell_type))
         }
-        (Direction::Out, _) => Ok((direction, cell_type)),
+        (Direction::Close, _) => Err(alloc::format!("invalid parameter `{text}`")),
     }
 }
 
@@ -135,15 +134,23 @@ fn cell_type(text: &str) -> Result<CellType, String> {
         "bytes" => CellType::Bytes,
         "cstr" => CellType::Cstr,
         _ => {
-            if let Some(free) = text.strip_prefix("cstr owned(") {
-                if free.strip_suffix(')').is_some_and(is_identifier) {
-                    return Ok(CellType::Cstr);
+            if let Some((base, free)) = text.split_once(" owned(") {
+                let owned = match base {
+                    "cstr" => Some(CellType::Cstr),
+                    "str" => Some(CellType::Str),
+                    "bytes" => Some(CellType::Bytes),
+                    _ => None,
+                };
+                if let Some(owned) = owned
+                    && free.strip_suffix(')').is_some_and(is_identifier)
+                {
+                    return Ok(owned);
                 }
             } else if let Some((resource, c_type)) = text
                 .strip_prefix("handle<")
                 .and_then(|rest| rest.strip_suffix('>'))
                 .and_then(|rest| rest.split_once(':'))
-                && is_identifier(resource)
+                && resource.split('.').all(is_identifier)
                 && is_identifier(c_type)
             {
                 return Ok(CellType::Handle(resource.into()));

@@ -246,6 +246,47 @@ unsafe extern "C" fn close_raw(arguments: *const Cell, results: *mut Cell, _: *m
     0
 }
 
+unsafe extern "C" fn line(arguments: *const Cell, results: *mut Cell, _: *mut Cleanup) -> i32 {
+    const LINE: &[u8] = b"a\0b";
+    let which = unsafe { cells(arguments, 1) }[0].as_signed();
+    let results = unsafe { cells_mut(results, 2) };
+    results[0] = Cell::signed(0);
+    results[1] = if which < 0 {
+        Cell::pointer(0, 99)
+    } else {
+        Cell::pointer(LINE.as_ptr().expose_provenance(), LINE.len() as u64)
+    };
+    0
+}
+
+unsafe extern "C" fn free_owned_bytes(context: *mut c_void) {
+    let cell = unsafe { cells_mut(context.cast(), 1) }[0];
+    let pointer = std::ptr::with_exposed_provenance_mut::<u8>(cell.address());
+    let length = usize::try_from(cell.length).unwrap();
+    drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(pointer, length)) });
+    bump(&OWNED_FREES);
+}
+
+unsafe extern "C" fn blob(_: *const Cell, results: *mut Cell, cleanup: *mut Cleanup) -> i32 {
+    let bytes = Box::into_raw(vec![0xca_u8, 0xfe].into_boxed_slice());
+    let results_cells = unsafe { cells_mut(results, 1) };
+    results_cells[0] = Cell::pointer(bytes.cast::<u8>().expose_provenance(), 2);
+    let cleanup = unsafe { &mut *cleanup };
+    cleanup.release = Some(free_owned_bytes);
+    cleanup.context = results.cast();
+    0
+}
+
+unsafe extern "C" fn count_entry(
+    arguments: *const Cell,
+    results: *mut Cell,
+    _: *mut Cleanup,
+) -> i32 {
+    let counter = counter(unsafe { cells(arguments, 1) }[0]);
+    (unsafe { cells_mut(results, 1) })[0] = Cell::signed(counter.count);
+    0
+}
+
 unsafe extern "C" fn release(arguments: *const Cell, _: *mut Cell, _: *mut Cleanup) -> i32 {
     let cell = unsafe { cells(arguments, 1) }[0];
     drop(unsafe {
@@ -393,6 +434,27 @@ fn fixture_specs() -> Vec<Spec> {
             1,
             0,
         ),
+        spec(
+            "line",
+            "slug-shim/1;fx;line;fx_line;(i64,out str)->i32",
+            line,
+            1,
+            2,
+        ),
+        spec(
+            "blob",
+            "slug-shim/1;fx;blob;fx_blob;(out bytes owned(fx_free))->void",
+            blob,
+            0,
+            1,
+        ),
+        spec(
+            "count",
+            "slug-shim/1;fx.more;count;fx_count;(handle<fx.Counter:fx_counter>)->i64",
+            count_entry,
+            1,
+            1,
+        ),
     ]
 }
 
@@ -483,6 +545,14 @@ export foreign broken = fn():num
 export foreign open = fn(name:str):Counter|nil
 export foreign next = fn(counter:Counter):list
 export foreign closeRaw = fn(counter:Counter):num|nil
+export foreign line = fn(which:num):list
+export foreign blob = fn():list
+";
+
+/// A second module whose binding takes the `fx` module's `Counter`.
+const FX_MORE_SOURCE: &str = "\
+val fx = import(\"fx\")
+export foreign count = fn(counter:fx.Counter):num
 ";
 
 #[derive(Clone)]
@@ -498,16 +568,18 @@ struct HostState {
 
 impl Host {
     fn new(functions: Vec<NativeFunction>) -> Self {
-        let provider = StaticModuleProvider::new(
-            "fx",
-            ModuleSource {
-                key: ModuleKey::new("static:fx"),
-                diagnostic_name: "static:fx".into(),
-                text: FX_SOURCE.into(),
-                activation: None,
-            },
-        )
-        .unwrap();
+        let provider = |name: &str, text: &str| {
+            StaticModuleProvider::new(
+                name,
+                ModuleSource {
+                    key: ModuleKey::new(format!("static:{name}")),
+                    diagnostic_name: format!("static:{name}"),
+                    text: text.into(),
+                    activation: None,
+                },
+            )
+            .unwrap()
+        };
         let foreign = functions
             .into_iter()
             .map(|function| {
@@ -518,7 +590,11 @@ impl Host {
             })
             .collect();
         Self(Rc::new(HostState {
-            resolver: StaticModuleResolver::new([provider]).unwrap(),
+            resolver: StaticModuleResolver::new([
+                provider("fx", FX_SOURCE),
+                provider("fx.more", FX_MORE_SOURCE),
+            ])
+            .unwrap(),
             graph: ModuleGraph::new(),
             configuration: EmptyVmConfiguration,
             foreign: RefCell::new(foreign),
@@ -903,8 +979,11 @@ fn rejects_signatures_it_cannot_encode() {
             "slug-shim/2;fx;f;f;()->void",
             "unsupported signature prefix",
         ),
-        ("slug-shim/1;fx;f;f;(str)->str", "arguments only"),
-        ("slug-shim/1;fx;f;f;(out str)->void", "invalid parameter"),
+        (
+            "slug-shim/1;fx;f;f;(str)->str",
+            "must be an `out` parameter",
+        ),
+        ("slug-shim/1;fx;f;f;(close str)->void", "invalid parameter"),
         ("slug-shim/1;fx;f;f;(close i64)->void", "invalid parameter"),
         ("slug-shim/1;fx;f;f;(int)->void", "unknown type `int`"),
         (
@@ -942,4 +1021,26 @@ fn null_text_results_fail_when_the_declaration_excludes_nil() {
         error.message.contains("`fx.nothing` returned NULL"),
         "{error}"
     );
+}
+
+#[test]
+fn decodes_length_results_and_shares_handles_between_modules() {
+    let (host, _table) = fixture_host();
+    let frees = count(&OWNED_FREES);
+    let value = host
+        .run(
+            "val more = import(\"fx.more\")\n\
+             val counter = fx.open(\"shared\")\n\
+             if (counter != nil) {\n\
+               fx.next(counter)\n\
+               fx.next(counter)\n\
+               [fx.line(0), fx.line(-1), fx.blob(), more.count(counter)]\n\
+             }",
+        )
+        .expect("run length and shared-handle program");
+    assert_eq!(
+        value.to_string(),
+        "[[0, \"a\\0b\"], [0, nil], [0x\"cafe\"], 2]"
+    );
+    assert_eq!(count(&OWNED_FREES), frees + 1, "owned bytes are freed once");
 }

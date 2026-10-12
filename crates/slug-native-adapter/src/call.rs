@@ -405,7 +405,8 @@ enum Decoded {
 }
 
 fn decode(cell: Cell, kind: &Kind) -> Decoded {
-    if matches!(kind, Kind::Cstr | Kind::Handle(_)) && cell.address() == 0 {
+    if matches!(kind, Kind::Cstr | Kind::Str | Kind::Bytes | Kind::Handle(_)) && cell.address() == 0
+    {
         return Decoded::Value(NativeOwnedValue::nil());
     }
     let value = match kind {
@@ -424,7 +425,7 @@ fn decode(cell: Cell, kind: &Kind) -> Decoded {
             }
         },
         Kind::F32 | Kind::F64 => NativeOwnedValue::float(cell.as_float()),
-        Kind::Cstr => match raw::copy_text(cell).map(String::from_utf8) {
+        Kind::Cstr | Kind::Str => match raw::copy_bytes(cell).map(String::from_utf8) {
             Some(Ok(text)) => NativeOwnedValue::string(text),
             Some(Err(_)) => {
                 return Decoded::Error(NativeError::new(
@@ -439,9 +440,16 @@ fn decode(cell: Cell, kind: &Kind) -> Decoded {
                 ));
             }
         },
+        Kind::Bytes => match raw::copy_bytes(cell) {
+            Some(bytes) => NativeOwnedValue::bytes(bytes),
+            None => {
+                return Decoded::Error(NativeError::new(
+                    "native.range",
+                    "bytes result is too long for this platform",
+                ));
+            }
+        },
         Kind::Handle(slot) => return Decoded::Handle(cell.address(), *slot),
-        // Rejected for results when the signature is parsed.
-        Kind::Str | Kind::Bytes => NativeOwnedValue::nil(),
     };
     Decoded::Value(value)
 }

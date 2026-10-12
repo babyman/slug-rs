@@ -16,16 +16,23 @@ pub enum NativeType {
     U64,
     F32,
     F64,
-    /// Borrowed pointer and length; arguments only.
-    Str,
-    /// Borrowed pointer and length; arguments only.
-    Bytes,
+    /// Pointer and length. An argument is borrowed for the call; an `out`
+    /// result is borrowed or, with `owned`, freed by the named function.
+    Str {
+        owned: Option<String>,
+    },
+    /// Pointer and length, with the same rules as `Str`.
+    Bytes {
+        owned: Option<String>,
+    },
     /// NUL-terminated text. In result position, `owned` names the function
     /// that frees it; without one the library keeps ownership.
     Cstr {
         owned: Option<String>,
     },
     /// A pointer to the resource's C type, held by a Slug resource.
+    /// `resource` is `R` for the binding's own module, or `module.R` for a
+    /// resource another module of the same clutch declares.
     Handle {
         resource: String,
         c_type: String,
@@ -46,8 +53,8 @@ impl NativeType {
             "u64" => Self::U64,
             "f32" => Self::F32,
             "f64" => Self::F64,
-            "str" => Self::Str,
-            "bytes" => Self::Bytes,
+            "str" => Self::Str { owned: None },
+            "bytes" => Self::Bytes { owned: None },
             _ => return None,
         })
     }
@@ -65,10 +72,12 @@ impl NativeType {
             Self::U64 => "u64",
             Self::F32 => "f32",
             Self::F64 => "f64",
-            Self::Str => "str",
-            Self::Bytes => "bytes",
-            Self::Cstr { owned } => {
-                output.push_str("cstr");
+            Self::Str { owned } | Self::Bytes { owned } | Self::Cstr { owned } => {
+                output.push_str(match self {
+                    Self::Str { .. } => "str",
+                    Self::Bytes { .. } => "bytes",
+                    _ => "cstr",
+                });
                 if let Some(free) = owned {
                     let _ = write!(output, " owned({free})");
                 }
@@ -192,7 +201,7 @@ fn tokenize(text: &str) -> Result<Vec<Token<'_>>, String> {
         } else if let Some(stripped) = rest.strip_prefix("->") {
             tokens.push(Token::Symbol("->"));
             rest = stripped;
-        } else if let Some(symbol) = ["(", ")", ",", "<", ">"]
+        } else if let Some(symbol) = ["(", ")", ",", "<", ">", "."]
             .into_iter()
             .find(|symbol| rest.starts_with(symbol))
         {
@@ -305,7 +314,12 @@ impl<'a> Parser<'a> {
             "cstr" => ParsedType::Cstr { owned: None },
             "handle" => {
                 self.expect_symbol("<")?;
-                let resource = self.identifier("a resource name")?.to_owned();
+                let mut resource = self.identifier("a resource name")?.to_owned();
+                while self.peek() == Some(&Token::Symbol(".")) {
+                    self.next();
+                    resource.push('.');
+                    resource.push_str(self.identifier("a resource name")?);
+                }
                 self.expect_symbol(">")?;
                 ParsedType::Handle { resource }
             }
@@ -321,10 +335,18 @@ impl<'a> Parser<'a> {
             self.next();
             let free = self.identifier("a free function")?.to_owned();
             self.expect_symbol(")")?;
-            if !matches!(parsed, ParsedType::Cstr { .. }) {
-                return Err(format!("only `cstr` can be `owned`, not `{name}`"));
-            }
-            return Ok(ParsedType::Cstr { owned: Some(free) });
+            return match parsed {
+                ParsedType::Cstr { .. } => Ok(ParsedType::Cstr { owned: Some(free) }),
+                ParsedType::Plain(NativeType::Str { .. }) => {
+                    Ok(ParsedType::Plain(NativeType::Str { owned: Some(free) }))
+                }
+                ParsedType::Plain(NativeType::Bytes { .. }) => {
+                    Ok(ParsedType::Plain(NativeType::Bytes { owned: Some(free) }))
+                }
+                _ => Err(format!(
+                    "only `cstr`, `str`, and `bytes` can be `owned`, not `{name}`"
+                )),
+            };
         }
         Ok(parsed)
     }

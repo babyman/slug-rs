@@ -938,6 +938,14 @@ impl NativeModule {
         Self::new_with_scope(name, state, NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed))
     }
 
+    /// Allocates a resource scope shared by several modules, from the same
+    /// counter as [`Self::new`], so it never equals another module's id.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new_shared_scope() -> usize {
+        NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed)
+    }
+
     #[doc(hidden)]
     pub fn new_with_scope<T: Any>(
         name: impl Into<Rc<str>>,
