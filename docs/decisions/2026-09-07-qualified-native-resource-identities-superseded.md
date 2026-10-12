@@ -1,5 +1,16 @@
 # Qualify native resource identities by module
 
+## Status
+
+Superseded
+
+## Superseded by
+
+- [Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md)
+- [Typed native length results and shared handles](2026-10-11-typed-native-length-results-and-shared-handles.md)
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 ABI 0.10 gave one native library a shared resource lookup table so sibling

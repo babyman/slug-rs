@@ -1,5 +1,17 @@
 # Typed native length results and shared handles
 
+## Status
+
+Accepted
+
+## Supersedes
+
+- [Exercise C resource handles with SQLite](2026-09-04-c-ffi-prototype-sqlite-handle-superseded.md)
+- [Make SQLite statement ownership explicit](2026-09-04-c-ffi-prototype-sqlite-statements-superseded.md)
+- [Represent native Clutches with library descriptors](2026-09-07-native-library-descriptor-superseded.md)
+- [Qualify native resource identities by module](2026-09-07-qualified-native-resource-identities-superseded.md)
+- [Transfer compound query values through the prototype FFI](2026-09-07-sqlite-compound-ffi-values-superseded.md)
+
 ## Context
 
 [Step 2 of the typed native-call plan](../planning/completed/typed-native-calls-step-2.md)

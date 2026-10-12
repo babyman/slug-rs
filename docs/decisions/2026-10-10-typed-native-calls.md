@@ -1,5 +1,16 @@
 # Typed native calls
 
+## Status
+
+Accepted
+
+## Supersedes
+
+- [Give C prototype modules explicit state ownership](2026-09-03-c-ffi-prototype-module-lifecycle-superseded.md)
+- [Contain the C FFI prototype in one unsafe module](2026-09-03-feature-gated-c-ffi-prototype-superseded.md)
+- [Enable the native clutch prototype by default](2026-09-07-enable-native-clutch-prototype-superseded.md)
+- [Make native library descriptors the sole lifecycle owner](2026-09-07-library-owned-ffi-lifecycle-superseded.md)
+
 ## Context
 
 The version 0.13 prototype C ABI exposes the VM to native code through a host
@@ -192,18 +203,18 @@ Open questions this record does not settle:
   and a `.slug` skeleton.
 
 These records keep their module-level and semantic content, but their C ABI
-mechanics are superseded once step 4 lands: [feature-gated C FFI prototype](2026-09-03-feature-gated-c-ffi-prototype.md),
-[descriptor validation](2026-09-03-c-ffi-prototype-descriptor-validation.md),
-[module lifecycle](2026-09-03-c-ffi-prototype-module-lifecycle.md),
-[opaque resources](2026-09-03-c-ffi-prototype-opaque-resources.md),
-[SQLite handle](2026-09-04-c-ffi-prototype-sqlite-handle.md),
-[SQLite statements](2026-09-04-c-ffi-prototype-sqlite-statements.md),
-[cross-platform loader](2026-09-06-cross-platform-c-ffi-prototype-loader.md),
-[library-owned lifecycle](2026-09-07-library-owned-ffi-lifecycle.md),
-[SQLite compound values](2026-09-07-sqlite-compound-ffi-values.md),
-[test-built filesystem clutch](2026-09-07-test-built-filesystem-clutch-ffi.md),
-[helper SDK](2026-09-09-ffi-helper-sdk.md), and
-[worker library leases](2026-09-15-ffi-worker-library-leases.md). The
+mechanics are superseded once step 4 lands: [feature-gated C FFI prototype](2026-09-03-feature-gated-c-ffi-prototype-superseded.md),
+[descriptor validation](2026-09-03-c-ffi-prototype-descriptor-validation-superseded.md),
+[module lifecycle](2026-09-03-c-ffi-prototype-module-lifecycle-superseded.md),
+[opaque resources](2026-09-03-c-ffi-prototype-opaque-resources-superseded.md),
+[SQLite handle](2026-09-04-c-ffi-prototype-sqlite-handle-superseded.md),
+[SQLite statements](2026-09-04-c-ffi-prototype-sqlite-statements-superseded.md),
+[cross-platform loader](2026-09-06-cross-platform-c-ffi-prototype-loader-superseded.md),
+[library-owned lifecycle](2026-09-07-library-owned-ffi-lifecycle-superseded.md),
+[SQLite compound values](2026-09-07-sqlite-compound-ffi-values-superseded.md),
+[test-built filesystem clutch](2026-09-07-test-built-filesystem-clutch-ffi-superseded.md),
+[helper SDK](2026-09-09-ffi-helper-sdk-superseded.md), and
+[worker library leases](2026-09-15-ffi-worker-library-leases-superseded.md). The
 [producer capability](2026-09-03-c-ffi-prototype-producer-capability.md),
 [backpressure](2026-09-04-c-ffi-prototype-producer-backpressure.md),
 [revocation and text ownership](2026-09-04-c-ffi-prototype-producer-revocation-and-text-ownership.md),

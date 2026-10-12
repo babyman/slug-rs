@@ -173,8 +173,20 @@ releases resources, so it leaves the switch active.
 
   The README needed no change. `native-abi.md` also gained a shutdown bullet
   for typed bindings.
-- [ ] Supersede and cross-reference the decision records as classified, and
+- [x] Supersede and cross-reference the decision records as classified, and
   move the 0.13 producer plan to `completed/`.
+
+Accepted on 2026-10-12 as proposed. Seventeen records are renamed
+`-superseded.md`: the twelve the typed-calls record lists, plus enabling the
+prototype, the library descriptor, qualified resource identities, the
+exploded library layout, and the core standard-library clutch. Each links its
+replacement, and each replacement links back under `Supersedes`. Twelve
+records whose rules still hold gained a cross-reference to the typed record
+that now implements them: the four producer records, the clutch boundary,
+clutch-owned native support, deterministic shutdown, staging, the SQLite
+statement module, the core clutch's stdin and math scope, and the interface
+profiles. Every link to a renamed record is updated, and the active
+host-owned module resolution plan now names `typed_native` as its gate.
 
 ## Exit gate
 

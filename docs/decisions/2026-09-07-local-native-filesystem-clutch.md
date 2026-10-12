@@ -27,9 +27,9 @@ module never falls back to a host plugin. On any platform without a declared
 library, importing the module returns the existing checked clutch error.
 
 This supersedes the filesystem-facade migration statement in
-[`2026-09-07-exploded-clutch-native-library-layout.md`](2026-09-07-exploded-clutch-native-library-layout.md)
+[`2026-09-07-exploded-clutch-native-library-layout-superseded.md`](2026-09-07-exploded-clutch-native-library-layout-superseded.md)
 and the test-only loading decision in
-[`2026-09-07-test-built-filesystem-clutch-ffi.md`](2026-09-07-test-built-filesystem-clutch-ffi.md).
+[`2026-09-07-test-built-filesystem-clutch-ffi-superseded.md`](2026-09-07-test-built-filesystem-clutch-ffi-superseded.md).
 
 ## Consequences
 

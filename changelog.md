@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Superseded seventeen 0.13 prototype decision records, renamed with the
+  `-superseded.md` suffix and linked to the typed native records that replace
+  them. Twelve records whose rules still hold, including the producer
+  semantics, cross-reference the typed records that now implement them.
+
 - Removed the prototype from the native ABI and experimental clutch
   references, and deleted the helper SDK reference. The completed 0.13
   producer plan moved to `docs/planning/completed/`.

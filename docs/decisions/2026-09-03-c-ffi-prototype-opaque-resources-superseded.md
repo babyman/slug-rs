@@ -1,5 +1,15 @@
 # Represent C handles as checked Slug resources
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 Scalar FFI calls and module-state teardown do not validate the important case

@@ -1,5 +1,15 @@
 # Add a private FFI helper SDK
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native producers](2026-10-11-typed-native-producers.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 The ABI 0.13 primitive producer boundary is intentionally explicit, but a

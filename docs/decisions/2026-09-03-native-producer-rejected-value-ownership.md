@@ -29,3 +29,9 @@ it according to their own documented backpressure policy.
 
 The version 0 Rust facade is unstable. Callers matching `Full` or `Closed`
 must bind or discard the returned value.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native
+producers](2026-10-11-typed-native-producers.md).

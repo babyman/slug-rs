@@ -14,7 +14,7 @@ library exports descriptors for both module names. The manifest selects the
 core Clutch for each name; `slug.io.stdin` remains its source import identity.
 
 This supersedes the scope statement in
-`2026-09-09-core-standard-library-clutch.md` that limited the package to
+`2026-09-09-core-standard-library-clutch-superseded.md` that limited the package to
 `slug.std`.
 
 ## Consequences
@@ -30,3 +30,9 @@ Existing programs continue to use `import("slug.io.stdin")` and
 `import("slug.std")`. Development checkouts run the same
 `make stage-native-clutches` command, which now stages the stdin adapter as
 part of `libslug_core`.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native
+producers](2026-10-11-typed-native-producers.md).

@@ -1,5 +1,15 @@
 # Give C prototype modules explicit state ownership
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native calls](2026-10-10-typed-native-calls.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 The C math fixture proved a stateless callback boundary, but it did not answer

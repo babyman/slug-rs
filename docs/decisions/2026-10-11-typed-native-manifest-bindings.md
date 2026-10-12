@@ -1,5 +1,18 @@
 # Typed native manifest bindings
 
+## Status
+
+Accepted
+
+## Supersedes
+
+- [Validate C prototype members by opaque key](2026-09-03-c-ffi-prototype-descriptor-validation-superseded.md)
+- [Represent C handles as checked Slug resources](2026-09-03-c-ffi-prototype-opaque-resources-superseded.md)
+- [Load C FFI prototype modules on supported CI platforms](2026-09-06-cross-platform-c-ffi-prototype-loader-superseded.md)
+- [Define the exploded clutch native-library layout](2026-09-07-exploded-clutch-native-library-layout-superseded.md)
+- [Qualify native resource identities by module](2026-09-07-qualified-native-resource-identities-superseded.md)
+- [Test-built filesystem clutch FFI](2026-09-07-test-built-filesystem-clutch-ffi-superseded.md)
+
 ## Context
 
 [Typed native calls](2026-10-10-typed-native-calls.md),

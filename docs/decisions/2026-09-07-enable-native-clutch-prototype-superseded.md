@@ -5,7 +5,13 @@ date: 2026-09-07
 
 ## Status
 
-Accepted for the local version-0 experiment.
+Superseded
+
+## Superseded by
+
+[Typed native calls](2026-10-10-typed-native-calls.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
 
 ## Context
 
@@ -23,8 +29,8 @@ selected local clutches and may change incompatibly while the language is
 pre-release.
 
 This supersedes the feature-gating portions of
-[`2026-09-07-test-built-filesystem-clutch-ffi.md`](2026-09-07-test-built-filesystem-clutch-ffi.md)
-and [`2026-09-06-cross-platform-c-ffi-prototype-loader.md`](2026-09-06-cross-platform-c-ffi-prototype-loader.md).
+[`2026-09-07-test-built-filesystem-clutch-ffi-superseded.md`](2026-09-07-test-built-filesystem-clutch-ffi-superseded.md)
+and [`2026-09-06-cross-platform-c-ffi-prototype-loader-superseded.md`](2026-09-06-cross-platform-c-ffi-prototype-loader-superseded.md).
 
 ## Consequences
 

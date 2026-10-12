@@ -7,6 +7,10 @@ date: 2026-09-10
 
 Accepted
 
+## Supersedes
+
+- [Package the core standard library as a Clutch](2026-09-09-core-standard-library-clutch-superseded.md)
+
 ## Context
 
 `slug.math` is a bundled, stateless standard module, but it was installed as
@@ -44,3 +48,8 @@ SQLite remain separate Clutches because they represent distinct capabilities.
 Existing programs continue to use `import("slug.math")`. Development checkouts
 continue to use `make stage-native-clutches`; it now builds math into
 `libslug_core`.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native calls](2026-10-10-typed-native-calls.md).

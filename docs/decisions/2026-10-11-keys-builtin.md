@@ -1,5 +1,13 @@
 # `keys` is a builtin
 
+## Status
+
+Accepted
+
+## Supersedes
+
+- [Package the core standard library as a Clutch](2026-09-09-core-standard-library-clutch-superseded.md)
+
 ## Context
 
 `keys(map)` returns a map's keys. Slug code cannot enumerate a map's keys,

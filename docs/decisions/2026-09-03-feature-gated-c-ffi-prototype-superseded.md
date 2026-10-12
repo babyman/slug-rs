@@ -1,5 +1,15 @@
 # Contain the C FFI prototype in one unsafe module
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native calls](2026-10-10-typed-native-calls.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 The Rust runtime forbade unsafe code everywhere. A dynamic C module experiment

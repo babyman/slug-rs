@@ -1,5 +1,15 @@
 # Exercise C resource handles with SQLite
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native length results and shared handles](2026-10-11-typed-native-length-results-and-shared-handles.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 The custom counter resource validates the host's lifecycle mechanics, but a

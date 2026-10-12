@@ -23,3 +23,9 @@ database resources and plugin state.
 ## Migration
 
 None.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native length results and shared
+handles](2026-10-11-typed-native-length-results-and-shared-handles.md).

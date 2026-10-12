@@ -45,3 +45,8 @@ Existing source imports and manifests need no changes. Tests that assumed a
 resident library now assert a fresh module state after reload, and native
 callbacks retained after shutdown receive the new structured inactive-plugin
 error.
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native calls](2026-10-10-typed-native-calls.md).

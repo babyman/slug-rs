@@ -1,5 +1,14 @@
 # Typed native producers
 
+## Status
+
+Accepted
+
+## Supersedes
+
+- [Add a private FFI helper SDK](2026-09-09-ffi-helper-sdk-superseded.md)
+- [FFI worker library leases](2026-09-15-ffi-worker-library-leases-superseded.md)
+
 ## Context
 
 [Typed native calls](2026-10-10-typed-native-calls.md) keeps `chan` for

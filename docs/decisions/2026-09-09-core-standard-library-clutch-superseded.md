@@ -1,5 +1,16 @@
 # Package the core standard library as a Clutch
 
+## Status
+
+Superseded
+
+## Superseded by
+
+- [`keys` is a builtin](2026-10-11-keys-builtin.md)
+- [Include math in the core Clutch](2026-09-10-core-clutch-math.md)
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 `slug.std` was split between a source file under `lib/slug` and a static Rust

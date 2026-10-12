@@ -1,5 +1,15 @@
 # Validate C prototype members by opaque key
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 The first C math module dispatched callbacks by their arity. That was enough

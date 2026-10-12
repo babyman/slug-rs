@@ -1,5 +1,15 @@
 # Test-built filesystem clutch FFI
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 The `slug.io.fs` clutch proves source-module resolution, plugin registration,

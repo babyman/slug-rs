@@ -50,7 +50,7 @@ native-Clutch tests pass without behavioral changes.
 | Entry lookup | `src/main.rs::read_entry_source` | CLI module tests preserve explicit-path and library fallback behavior. |
 | Desktop import candidates | `src/module.rs::ModuleLoader::load` | `resolves_importer_relative_source_and_library_roots`, `source_imports_use_the_configured_library_fallback`, and `source_imports_check_module_name_values_and_loader_failures`. |
 | Shared source graph | `ModuleLoader` compiler, snapshot, and instance caches | `baseline_graph_preserves_resolution_cache_liveness_and_import_snapshots`; `cyclic_imports_resolve_predeclared_function_bindings`. |
-| Retry and native lifecycle | Clutch staging and loader shutdown | `clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations`, the Clutch tests in `module_loader.rs`, and `ffi_prototype.rs`. |
+| Retry and native lifecycle | Clutch staging and loader shutdown | `clutch_plugin_failures_cleanup_and_do_not_leak_foreign_registrations`, the Clutch tests in `module_loader.rs`, and `typed_native.rs` (which replaced `ffi_prototype.rs` when the 0.13 prototype was removed). |
 | Configuration and interactive compilation | `ModuleLoader` and `Vm` | `configuration.rs::exposes_cfg_to_program_and_imported_modules` and server interactive-session tests. |
 | VM integration | `Vm::import_at` and module-binding construction | `module_loader.rs` import tests and `vm/calls_and_native.rs` shared-loader coverage. |
 
@@ -126,8 +126,8 @@ programs behave identically through the new abstraction.
 - [x] Confirm an ordinary source or ROM module cannot request a dynamic native
   library merely by naming an import.
 
-**Gate:** `ffi_prototype`, module-loader Clutch, and shutdown lifecycle tests
-remain green in the desktop-host configuration.
+**Gate:** `typed_native` (formerly `ffi_prototype`), module-loader Clutch, and
+shutdown lifecycle tests remain green in the desktop-host configuration.
 
 ## 5. Add the embedded resolver
 

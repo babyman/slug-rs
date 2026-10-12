@@ -5,7 +5,13 @@ date: 2026-09-07
 
 ## Status
 
-Accepted for the version-0 clutch experiment.
+Superseded
+
+## Superseded by
+
+[Typed native manifest bindings](2026-10-11-typed-native-manifest-bindings.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
 
 ## Context
 
@@ -83,7 +89,7 @@ target fails explicitly instead of falling back to the Rust test facade.
 ### Neutral
 
 This narrows the test-built dynamic-module decision in
-[`2026-09-07-test-built-filesystem-clutch-ffi.md`](2026-09-07-test-built-filesystem-clutch-ffi.md).
+[`2026-09-07-test-built-filesystem-clutch-ffi-superseded.md`](2026-09-07-test-built-filesystem-clutch-ffi-superseded.md).
 It does not define packaged archives, signatures, dependency resolution,
 cross-compilation, universal binaries, or ABI version 1.
 

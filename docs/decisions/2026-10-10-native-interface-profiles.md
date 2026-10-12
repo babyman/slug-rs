@@ -124,3 +124,8 @@ Existing providers are classified retroactively: embedded providers as `core`,
 desktop clutches as `core` plus `events`. No source, bytecode, or artifact
 compatibility promise changes. The migration of native C clutches off the
 prototype ABI is described in [Typed native calls](2026-10-10-typed-native-calls.md).
+
+## Cross-references
+
+Since the 0.13 C FFI prototype was removed, typed native bindings implement
+this decision; see [Typed native calls](2026-10-10-typed-native-calls.md).

@@ -1,5 +1,15 @@
 # Make SQLite statement ownership explicit
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[Typed native length results and shared handles](2026-10-11-typed-native-length-results-and-shared-handles.md).
+
+The 0.13 C FFI prototype was removed in step 4 of the typed native-call plan.
+
 ## Context
 
 An SQLite database handle alone cannot expose whether the resource model safely
