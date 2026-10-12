@@ -19,7 +19,7 @@ jobs:
       - run: make stage-native-clutches
       - run: make ci
 
-  ffi-prototype:
+  native:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,7 +30,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.1
-      - run: make test-ffi-prototype
+      - run: make test-native
       - name: Test the typed filesystem clutch through the CLI
         if: runner.os != 'Windows'
         run: make test-filesystem-clutch

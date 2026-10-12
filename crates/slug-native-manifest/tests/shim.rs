@@ -1,5 +1,5 @@
 //! Generated shims compiled with the platform C compiler: `cc`, or `clang` on
-//! Windows, as in the `ffi-prototype` CI job.
+//! Windows, as in the `native` CI job.
 
 use std::{
     env,

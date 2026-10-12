@@ -122,7 +122,7 @@ impl NativeManifest {
     ///
     /// # Errors
     ///
-    /// Returns a checked error for invalid TOML, a missing or prototype-form
+    /// Returns a checked error for invalid TOML, a missing or malformed
     /// `[native]` table, or any invalid typed binding.
     pub fn from_clutch_source(source: &str) -> Result<Self, ManifestError> {
         let root = source

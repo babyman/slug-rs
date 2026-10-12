@@ -6,7 +6,7 @@
 set -eu
 
 result_dir=${SLUG_BENCHMARK_RESULTS_DIR:-docs/planning/local}
-result_file=${result_dir}/ffi-prototype-scalar-baseline.txt
+result_file=${result_dir}/native-scalar.txt
 mkdir -p "$result_dir"
 
 {

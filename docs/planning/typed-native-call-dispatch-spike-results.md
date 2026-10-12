@@ -10,9 +10,9 @@ manifest schema, public C ABI, error mapping, or result-text ownership rule.
 
 ## Local measurement
 
-Run `make bench-ffi-prototype-scalar`. It captures the command, compiler and
+Run `make bench-native-scalar`. It captures the command, compiler and
 Rust versions, target, operating-system details, sample count, and raw output
-in the ignored `docs/planning/local/ffi-prototype-scalar-baseline.txt`.
+in the ignored `docs/planning/local/native-scalar.txt`.
 
 The latest macOS ARM64 run used Rust 1.96.1, Apple Clang 21.0.0, release mode,
 11 samples, a 10,000-call warm-up, and 100,000 calls per sample. Its medians
@@ -84,7 +84,7 @@ authoritative record for all timings.
 | Dynamic binding build tools | Requires a C compiler to generate and compile the adapter with the library or clutch source. | Resolves the shared-library symbol without compiling an adapter. |
 | Fixture shapes | All six filesystem bindings and scalar `add` pass against the direct fixture. | The same bindings pass through five finite trampolines. |
 | Checked boundaries | Interior NUL, closed resource, end-of-file, native I/O failure, missing symbol, and unsupported shape are covered. | The same checked boundaries are covered. |
-| Platform coverage | The focused tests are part of `make test-ffi-prototype`, which the existing macOS, Linux, and Windows CI matrix runs. | The same matrix invocation covers this candidate. |
+| Platform coverage | The focused tests are part of `make test-native`, which the existing macOS, Linux, and Windows CI matrix runs. | The same matrix invocation covers this candidate. |
 | Scalar cost | The original and uniform entries measured 692 and 710 ns/call respectively, versus 721 ns/call for 0.13. The uniform wrapper alone measured 1.31 ns/call versus 1.05 ns/call direct. | 698 ns/call; no local regression versus 0.13. |
 | Unsafe boundary | Only the desktop loader performs dynamic loading and calls. | Only the desktop loader performs dynamic loading and calls. |
 

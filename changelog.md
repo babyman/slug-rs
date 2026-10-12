@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Renamed the native build names: `make test-ffi-prototype` is now
+  `make test-native`, `make bench-ffi-prototype-scalar` is now
+  `make bench-native-scalar` (script `scripts/benchmark-native-scalar.sh`,
+  local record `docs/planning/local/native-scalar.txt`), and the CI job
+  `ffi-prototype` is now `native`.
+
 - Removed the 0.13 C FFI prototype: its desktop loader, the
   `abi = "slug-ffi-prototype/0.13"` manifest form, the `include/` headers and
   helper SDK, and the prototype tests and C fixtures. Typed bindings are the

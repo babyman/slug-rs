@@ -569,7 +569,7 @@ fn print_bench_configuration(label: &str) {
 /// a staged clutch library, the desktop loader, and the shared adapter. The
 /// loop matches [`scalar_call_controls`].
 #[test]
-#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+#[ignore = "run with make bench-native-scalar; records local timing evidence"]
 fn typed_scalar_add_benchmark() {
     let directory = TemporaryDirectory::new();
     let repository = typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);
@@ -605,7 +605,7 @@ fn native_scalar_add(call: &mut NativeCall<'_>) -> NativeStatus {
 /// subtracted from every other line's ns/call, an ordinary Slug function,
 /// and a statically registered Rust native.
 #[test]
-#[ignore = "run with make bench-ffi-prototype-scalar; records local timing evidence"]
+#[ignore = "run with make bench-native-scalar; records local timing evidence"]
 fn scalar_call_controls() {
     print_bench_configuration("controls");
     let directory = TemporaryDirectory::new();
