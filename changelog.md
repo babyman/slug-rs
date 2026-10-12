@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The same-named resources test builds its clutch once instead of relinking
+  the library between its two programs, which failed on Windows when the
+  linker could not replace a DLL still held open.
+
 - Superseded seventeen 0.13 prototype decision records, renamed with the
   `-superseded.md` suffix and linked to the typed native records that replace
   them. Twelve records whose rules still hold, including the producer

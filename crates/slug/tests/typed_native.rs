@@ -442,6 +442,17 @@ fn typed_resources_of_the_same_name_stay_distinct_between_modules() {
     let more = "export resource File\n\
                 export foreign openWrite = fn(path:str):File|nil\n\
                 export foreign write = fn(file:File, text:str):num\n";
+    // One build serves both programs: relinking a DLL that Windows may still
+    // hold open fails.
+    let repository = typed_clutch_with_modules(
+        &directory,
+        &[
+            ("fixture.files", "files.slug", &MODULE),
+            ("fixture.more", "more.slug", more),
+        ],
+        &manifest,
+        &manifest,
+    );
     let file = slug_path(&directory.path().join("lines.txt"));
     for (body, expected) in [
         (
@@ -462,16 +473,7 @@ fn typed_resources_of_the_same_name_stay_distinct_between_modules() {
             Err("native_contract"),
         ),
     ] {
-        let repository = typed_clutch_with_modules(
-            &directory,
-            &[
-                ("fixture.files", "files.slug", &MODULE),
-                ("fixture.more", "more.slug", more),
-            ],
-            &manifest,
-            &manifest,
-        );
-        match (run(&directory, repository, &body), expected) {
+        match (run(&directory, repository.clone(), &body), expected) {
             (Ok(value), Ok(expected)) => assert_eq!(value.to_string(), expected),
             (Err(error), Err(expected)) => {
                 assert!(error.starts_with(expected), "{body}: {error}");
