@@ -176,9 +176,9 @@ fn rejects_invalid_manifests_with_their_location() {
     };
     let cases = [
         (
-            "[native]\nabi = \"slug-ffi-prototype/0.13\"\n".to_owned(),
+            native("abi = \"slug-ffi-prototype/0.13\"\n"),
             "native",
-            "`abi` selects the prototype form",
+            "unknown key `abi`",
         ),
         (native("source = \"native/source\"\n"), "native", "unknown key `source`"),
         (

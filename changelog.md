@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Removed the 0.13 C FFI prototype: its desktop loader, the
+  `abi = "slug-ffi-prototype/0.13"` manifest form, the `include/` headers and
+  helper SDK, and the prototype tests and C fixtures. Typed bindings are the
+  only native clutch form. A manifest that still sets `abi` fails with the
+  ordinary unknown-key error. `slug-desktop-loader` no longer exports
+  `ABI_PROFILE`, `FfiPrototypeError`, or `FfiPrototypeLibrary`.
+
 - The scalar-call VM controls (empty loop, Slug function, static Rust
   native) moved beside the typed scalar benchmark in `typed_native.rs`.
 

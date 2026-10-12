@@ -264,39 +264,6 @@ fn typed_clutch_checks_foreign_declarations_against_bindings() {
 }
 
 #[test]
-fn typed_clutch_manifests_cannot_mix_in_the_prototype_abi() {
-    let directory = TemporaryDirectory::new();
-    let mixed = MANIFEST.replace(
-        "[native]\n",
-        "[native]\nabi = \"slug-ffi-prototype/0.13\"\n",
-    );
-    let repository = directory.path().join("clutch");
-    fs::create_dir_all(repository.join("fixture.clutch/modules")).expect("create clutch");
-    fs::write(
-        repository.join("manifest.toml"),
-        "[modules]\n\"fixture.files\" = \"fixture.clutch\"\n",
-    )
-    .expect("write repository manifest");
-    fs::write(
-        repository.join("fixture.clutch/modules/files.slug"),
-        MODULE.as_str(),
-    )
-    .expect("write module");
-    fs::write(
-        repository.join("fixture.clutch/clutch.toml"),
-        manifest_for_platform(&mixed),
-    )
-    .expect("write manifest");
-    let error = ClutchRepository::from_manifest(&repository).expect_err("mixed native forms");
-    assert!(
-        error.to_string().contains(
-            "`abi` selects the prototype native form, which cannot be combined with typed `profile`"
-        ),
-        "{error}"
-    );
-}
-
-#[test]
 fn typed_clutch_runs_through_the_cli() {
     let directory = TemporaryDirectory::new();
     typed_clutch(&directory, &MODULE, &MANIFEST, &MANIFEST);

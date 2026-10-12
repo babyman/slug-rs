@@ -407,17 +407,8 @@ pub struct ClutchModule {
 #[doc(hidden)]
 pub struct NativeClutchPlugin {
     pub library: PathBuf,
-    pub kind: NativeKind,
-}
-
-/// Which `[native]` form a clutch uses.
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[doc(hidden)]
-pub enum NativeKind {
-    /// The 0.13 prototype ABI, selected by `abi`.
-    Prototype { abi: String },
-    /// Manifest-bound typed bindings called through a generated shim.
-    Typed(Rc<NativeManifest>),
+    /// The clutch's typed bindings, called through a generated shim.
+    pub manifest: Rc<NativeManifest>,
 }
 
 #[doc(hidden)]
@@ -443,12 +434,9 @@ pub fn load_module(root: &Path, name: &str) -> Result<ClutchModule, String> {
         .native
         .as_ref()
         .map(|native| {
-            if let Some(source) = &native.source {
-                directory_path(&root, source, "native source")?;
-            }
             Ok::<NativeClutchPlugin, String>(NativeClutchPlugin {
                 library: native_library_path(&root, &native.libraries)?,
-                kind: native.kind.clone(),
+                manifest: native.manifest.clone(),
             })
         })
         .transpose()?;
@@ -484,8 +472,7 @@ struct ClutchModuleEntry {
 
 #[derive(Debug)]
 struct NativeClutch {
-    source: Option<String>,
-    kind: NativeKind,
+    manifest: Rc<NativeManifest>,
     libraries: HashMap<String, String>,
 }
 
@@ -505,15 +492,12 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
         return Err("`modules` must provide at least one module".into());
     }
     let native = table.get("native").map(parse_native).transpose()?;
-    if let Some(NativeClutch {
-        kind: NativeKind::Typed(typed),
-        ..
-    }) = &native
-        && let Some(module) = typed
+    if let Some(NativeClutch { manifest, .. }) = &native
+        && let Some(module) = manifest
             .functions
             .iter()
             .map(|binding| &binding.module)
-            .chain(typed.resources.iter().map(|resource| &resource.module))
+            .chain(manifest.resources.iter().map(|resource| &resource.module))
             .find(|module| !modules.contains_key(module.as_str()))
     {
         return Err(format!(
@@ -560,59 +544,6 @@ fn parse_native(value: &toml::Value) -> Result<NativeClutch, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "`native` must be a table".to_string())?;
-    if !table.contains_key("abi") {
-        return parse_typed_native(table);
-    }
-    if let Some(key) = [
-        "profile",
-        "headers",
-        "sources",
-        "link",
-        "resources",
-        "functions",
-    ]
-    .into_iter()
-    .find(|key| table.contains_key(*key))
-    {
-        return Err(format!(
-            "`abi` selects the prototype native form, which cannot be combined with typed `{key}`"
-        ));
-    }
-    require_keys(table, &["source", "abi", "libraries"], "native")?;
-    let source = table
-        .get("source")
-        .map(|source| {
-            source
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| "`source` in native must be a string".to_string())
-        })
-        .transpose()?;
-    let abi = string(table, "abi", "native")?;
-    if abi != crate::ffi_prototype::ABI_PROFILE {
-        return Err(format!("unsupported native ABI `{abi}`"));
-    }
-    let libraries = table_value(table, "libraries", "native")?
-        .as_table()
-        .ok_or_else(|| "`libraries` in native must be a table".to_string())?;
-    let mut entries = HashMap::new();
-    for (platform, library) in libraries {
-        let library = library
-            .as_str()
-            .ok_or_else(|| format!("native library for `{platform}` must be a string"))?;
-        entries.insert(platform.clone(), library.to_owned());
-    }
-    Ok(NativeClutch {
-        source,
-        kind: NativeKind::Prototype {
-            abi: abi.to_owned(),
-        },
-        libraries: validate_libraries(entries)?,
-    })
-}
-
-/// Parses the typed form: a `[native]` table without `abi`.
-fn parse_typed_native(table: &toml::map::Map<String, toml::Value>) -> Result<NativeClutch, String> {
     let manifest = NativeManifest::parse(table).map_err(|error| error.to_string())?;
     let libraries = manifest
         .libraries
@@ -620,9 +551,8 @@ fn parse_typed_native(table: &toml::map::Map<String, toml::Value>) -> Result<Nat
         .map(|(platform, library)| (platform.clone(), library.clone()))
         .collect();
     Ok(NativeClutch {
-        source: None,
         libraries: validate_libraries(libraries)?,
-        kind: NativeKind::Typed(Rc::new(manifest)),
+        manifest: Rc::new(manifest),
     })
 }
 
@@ -706,20 +636,6 @@ fn source_path(root: &Path, source: &str) -> Result<PathBuf, String> {
     }
     if !canonical.is_file() {
         return Err(format!("module source path `{source}` is not a file"));
-    }
-    Ok(canonical)
-}
-
-fn directory_path(root: &Path, source: &str, kind: &str) -> Result<PathBuf, String> {
-    let relative = contained_relative_path(source, kind)?;
-    let path = root.join(relative);
-    let canonical = fs::canonicalize(&path)
-        .map_err(|error| format!("cannot access {kind} {}: {error}", path.display()))?;
-    if !canonical.starts_with(root) {
-        return Err(format!("{kind} path `{source}` escapes the clutch root"));
-    }
-    if !canonical.is_dir() {
-        return Err(format!("{kind} path `{source}` is not a directory"));
     }
     Ok(canonical)
 }

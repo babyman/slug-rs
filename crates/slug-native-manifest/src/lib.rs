@@ -143,12 +143,6 @@ impl NativeManifest {
     ///
     /// Returns a checked error naming the offending manifest path.
     pub fn parse(native: &Table) -> Result<Self, ManifestError> {
-        if native.contains_key("abi") {
-            return Err(ManifestError::new(
-                "native",
-                "`abi` selects the prototype form, which cannot be combined with typed bindings",
-            ));
-        }
         require_keys(
             native,
             &[

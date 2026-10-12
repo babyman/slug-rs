@@ -21,16 +21,13 @@ pub mod clutch;
 #[allow(unsafe_code)]
 mod dynamic_library;
 #[allow(unsafe_code)]
-mod ffi_prototype;
-#[allow(unsafe_code)]
 mod typed_native;
 
+use clutch::StagedClutchPlugin;
 pub use clutch::{
     ClutchPluginInitializer, ClutchPluginRegistrar, ClutchRepository, ClutchRepositoryError,
 };
-use clutch::{NativeKind, StagedClutchPlugin};
 pub use dynamic_library::NativeLibraryError;
-pub use ffi_prototype::{ABI_PROFILE, FfiPrototypeError, FfiPrototypeLibrary};
 use slug_native_adapter::TextResults;
 
 /// Filesystem resolver for an explicitly configured desktop module search path.
@@ -212,44 +209,9 @@ impl DesktopResolver {
             ClutchPluginSource::Native {
                 root,
                 library,
-                kind: NativeKind::Typed(manifest),
+                manifest,
                 ..
             } => self.stage_typed(lease, root, library, manifest, &mut registrar),
-            ClutchPluginSource::Native {
-                root,
-                library,
-                kind: NativeKind::Prototype { abi },
-                ..
-            } => {
-                if abi == ABI_PROFILE {
-                    let module = FfiPrototypeLibrary::load(library).map_err(|error| {
-                        ModuleLoadError::Clutch {
-                            location: library.to_string_lossy().into_owned(),
-                            message: format!("cannot load native plugin: {error}"),
-                        }
-                    })?;
-                    module
-                        .stage(&mut registrar)
-                        .map_err(|error| ModuleLoadError::Clutch {
-                            location: root.to_string_lossy().into_owned(),
-                            message: format!("native plugin initialization failed: {error}"),
-                        })?;
-                    registrar
-                        .set_cleanup_operation(move || {
-                            module.shutdown();
-                            Ok(())
-                        })
-                        .map_err(|error| ModuleLoadError::Clutch {
-                            location: root.to_string_lossy().into_owned(),
-                            message: format!("cannot retain native plugin cleanup: {error}"),
-                        })
-                } else {
-                    Err(ModuleLoadError::Clutch {
-                        location: root.to_string_lossy().into_owned(),
-                        message: format!("unsupported native ABI `{abi}`"),
-                    })
-                }
-            }
         };
         if let Err(error) = result {
             let mut staged = registrar.finish();
@@ -314,10 +276,8 @@ impl DesktopResolver {
         let Some(lease) = &source.activation else {
             return Ok(());
         };
-        let Some(ClutchPluginSource::Native {
-            kind: NativeKind::Typed(manifest),
-            ..
-        }) = self.activation_sources.borrow().get(lease).cloned()
+        let Some(ClutchPluginSource::Native { manifest, .. }) =
+            self.activation_sources.borrow().get(lease).cloned()
         else {
             return Ok(());
         };
@@ -475,7 +435,7 @@ impl ModuleResolver for DesktopResolver {
                 (None, Some(native)) => Some(ClutchPluginSource::Native {
                     root: module.root,
                     library: native.library,
-                    kind: native.kind,
+                    manifest: native.manifest,
                     module_names: module.module_names,
                 }),
                 (None, None) => None,
@@ -572,7 +532,7 @@ enum ClutchPluginSource {
     Native {
         root: PathBuf,
         library: PathBuf,
-        kind: NativeKind,
+        manifest: Rc<slug_native_manifest::NativeManifest>,
         module_names: Vec<String>,
     },
 }
