@@ -475,6 +475,11 @@ int32_t stream_start(slug_producer *producer, int64_t count);
 "#;
 
 const STREAM_SOURCE: &str = r#"
+#if !defined(_WIN32)
+/* nanosleep is POSIX; shims build with -std=c11. */
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "native/stream.h"
 
 #include <stdlib.h>

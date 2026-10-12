@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The typed producer test's C worker now declares `nanosleep` on Linux, where
+  shims build with `-std=c11` and glibc hides POSIX functions without
+  `_POSIX_C_SOURCE`.
+
 - Typed native bindings accept a `producer` argument under the `events`
   profile: the adapter mints a producer from a buffered Slug channel and
   passes C a `slug_producer *` whose host function table sends nil, bool,
