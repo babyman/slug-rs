@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Planned step 3 of the typed native-call replacement: a `producer` binding
+  type through which native code sends into a Slug-created channel, and
+  moving the `slug.core` clutch (`slug.io.stdin`, `slug.math`) to typed
+  bindings.
+
 - Recorded in-place appends to uniquely owned lists as deferred VM
   optimization item 11, with the typed SQLite measurements that motivate it.
 
