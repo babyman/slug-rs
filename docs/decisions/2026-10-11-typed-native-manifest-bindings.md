@@ -241,6 +241,9 @@ Intentionally unsupported in this record:
 - more than 16 cells.
 
 Each needs its own addition when a clutch requires it.
+[Typed native length results and shared handles](2026-10-11-typed-native-length-results-and-shared-handles.md)
+adds length-delimited `out str` and `out bytes` results and handles shared
+between a clutch's modules.
 
 The step 1 plan's phase 1 implements this record. The typed native calls,
 uniform shim entry, and static provider records link here for the items they

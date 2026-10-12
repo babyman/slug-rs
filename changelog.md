@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Decided length-delimited `out str` and `out bytes` results, handles shared
+  between a clutch's modules, and thin C helpers for typed native bindings.
+
 - Typed native calls no longer allocate per call to decode results: the
   adapter decodes result cells straight into the Slug value. A scalar typed
   call dropped from 371 ns to 336 ns on the local benchmark, the same as the

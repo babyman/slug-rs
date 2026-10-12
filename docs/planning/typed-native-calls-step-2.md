@@ -133,9 +133,10 @@ runs; the typed clutch's gap narrowed from about 20% to about 14%.
 
 ### 2. Decisions
 
-- [ ] Record decisions 1-3 in a decision record that extends
-  [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md).
-- [ ] Record decisions 4 and 5 in this plan.
+- [x] Record decisions 1-3 in a decision record that extends
+  [Typed native manifest bindings](../decisions/2026-10-11-typed-native-manifest-bindings.md):
+  [Typed native length results and shared handles](../decisions/2026-10-11-typed-native-length-results-and-shared-handles.md).
+- [x] Record decisions 4 and 5 in this plan.
 
 ### 3. Length results and cross-module handles
 
