@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fixed deferred work that calls Slug functions more than one level deep.
+  Inside `defer`, `defer onerror`, or `defer onsuccess`, a call chain such as
+  `middle()` calling `leaf()`, or a called function returning from inside a
+  block with locals, abandoned the rest of the deferred block without an
+  error; on success it could produce a wrong value and then fail with
+  "ended without Return".
+
 - Fixed importing a clutch module that imports a sibling module of the same
   clutch while it initializes. The loader staged the clutch's native library
   a second time and failed with "foreign binding ... is already defined"; a

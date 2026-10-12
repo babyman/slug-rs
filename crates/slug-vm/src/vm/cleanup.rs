@@ -40,15 +40,15 @@ impl Vm {
                 None,
             )
         })?;
-        let returns_to_cleanup_action = !self
+        // An ordinary function returning while cleanup is in progress, at any
+        // depth below a deferred action, resumes its caller. Without the
+        // marker the cleanup loop would go on to drive the enclosing cleanup.
+        let resumes_caller = !self
             .frames
             .last()
             .expect("frame was checked")
             .cleanup_action
-            && self
-                .frames
-                .get(self.frames.len().saturating_sub(2))
-                .is_some_and(|parent| parent.cleanup_action);
+            && !self.cleanup.is_empty();
         let frame = self.frames.last_mut().expect("frame was checked");
         let scopes = mem::take(&mut frame.scopes);
         let cleanup_recovers = frame.cleanup_action && frame.cleanup_recovers;
@@ -60,7 +60,7 @@ impl Vm {
                 None,
             ));
         }
-        if returns_to_cleanup_action {
+        if resumes_caller {
             self.cleanup.push(Cleanup::Resume);
         }
         self.cleanup.push(if cleanup_recovers {

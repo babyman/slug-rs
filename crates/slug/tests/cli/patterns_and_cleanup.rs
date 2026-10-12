@@ -1498,3 +1498,86 @@ fn non_tail_match_discards_its_subject_before_producing_a_result() {
     );
     assert!(output.stderr.is_empty());
 }
+
+fn run_cleanup_source(kind: &str, source: &str) -> std::process::Output {
+    let path = fixture_path(kind);
+    fs::write(&path, source).expect("write cleanup source");
+    let output = slug().arg(&path).output().expect("run cleanup source");
+    fs::remove_file(path).expect("remove cleanup source");
+    output
+}
+
+#[test]
+fn deferred_work_completes_calls_nested_more_than_one_level() {
+    let output = run_cleanup_source(
+        "defer-nested-calls",
+        "val leaf = fn() { 7 }\n\
+         val middle = fn() { leaf() }\n\
+         val inner = fn(...values) { 8 }\n\
+         val spread = fn(...values) { inner(...values) }\n\
+         val fail = fn() {\n\
+           defer onerror(err) {\n\
+             println(\"handler\", middle(), spread(1, 2))\n\
+             println(\"after\")\n\
+             throw err\n\
+           }\n\
+           throw \"boom\"\n\
+         }\n\
+         val unwinding = fn() {\n\
+           defer { println(\"unwinding\", middle()) }\n\
+           throw \"again\"\n\
+         }\n\
+         val succeeding = fn() {\n\
+           defer { println(\"succeeding\", middle()) }\n\
+           1\n\
+         }\n\
+         val outer = fn(work) { defer onerror(err) { println(\"outer got\", err) }; work() }\n\
+         outer(fail)\n\
+         outer(unwinding)\n\
+         println(succeeding())\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "handler 7 8\nafter\nouter got boom\nunwinding 7\nouter got again\nsucceeding 7\n1\n"
+    );
+}
+
+#[test]
+fn deferred_work_completes_callees_that_leave_block_scopes() {
+    let output = run_cleanup_source(
+        "defer-callee-scopes",
+        "val shape = fn(flag) {\n\
+           defer { println(\"shape defer\") }\n\
+           if (flag) {\n\
+             val changed = 5\n\
+             changed\n\
+           } else {\n\
+             0\n\
+           }\n\
+         }\n\
+         val fail = fn() {\n\
+           defer onerror(err) {\n\
+             println(\"handler\", shape(true))\n\
+             println(\"after\")\n\
+             throw err\n\
+           }\n\
+           throw \"boom\"\n\
+         }\n\
+         val outer = fn() { defer onerror(err) { println(\"outer got\", err) }; fail() }\n\
+         outer()\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "shape defer\nhandler 5\nafter\nouter got boom\n"
+    );
+}

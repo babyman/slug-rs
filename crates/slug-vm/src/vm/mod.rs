@@ -2875,7 +2875,9 @@ impl Vm {
                 }
                 frame.scope_depth -= 1;
                 let actions = frame.scopes.pop().unwrap_or_default();
-                if self.frames.last().is_some_and(|frame| frame.cleanup_action) {
+                // Leaving a scope while cleanup is in progress resumes this
+                // frame once the scope's own actions have run.
+                if !self.cleanup.is_empty() {
                     self.cleanup.push(Cleanup::Resume);
                 }
                 self.cleanup.push(Cleanup::Actions {
