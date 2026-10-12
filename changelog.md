@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `keys(map)` is now a builtin, declared in `slug.builtin` beside `len` and
+  available in every module without an import, on desktop and embedded
+  hosts. Its order is the map's unspecified enumeration order, as the maps
+  documentation states. `slug.std` no longer exports `keys`: replace
+  `val {keys} = import("slug.std")` or `std.keys(map)` with `keys(map)`. The
+  `slug.core` prototype library no longer implements it.
+
 - Measured typed `slug.db.sqlite` against the prototype: about 4x slower to
   insert, and slower to read rows back as results grow, because rows are
   built in Slug with copying list appends. The causes and follow-ups are

@@ -14,7 +14,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | One-to-three-digit octal escapes | implemented | `crates/slug/tests/cli.rs` |
 | `$identifier` interpolated strings | implemented | `crates/slug/tests/cli.rs` |
 | Boolean and nil literals | implemented | `crates/slug/tests/cli.rs` |
-| Lists and maps, including persistent map merge/removal/copy and `slug.std.keys` | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Lists and maps, including persistent map merge/removal/copy and the `keys` builtin | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Arithmetic, string concatenation/repetition, and list/bytes concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Equality and comparisons | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Integer bitwise, shift, and prefix `~` operators | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
@@ -46,7 +46,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Whole-case type constraints, schema matching, and type narrowing | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | `schema` types and nominal `struct<S>` construction inference | implemented | `crates/slug/tests/cli.rs`, `crates/slug/tests/module_loader.rs`, and `crates/slug-vm/tests/vm.rs` |
 | Native function calls and `println` | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
-| `int`, `print`, and `len` builtins | implemented | `crates/slug/tests/cli.rs` |
+| `int`, `print`, `len`, and `keys` builtins | implemented | `crates/slug/tests/cli.rs` |
 | Implicit `slug.builtin` bindings and foundational Slug values | implemented | `crates/slug/tests/cli.rs` |
 | Positional call spreads and list-literal spreads | implemented | `crates/slug/tests/cli.rs` |
 | Named ordinary-function arguments | implemented | `crates/slug/tests/cli.rs` |

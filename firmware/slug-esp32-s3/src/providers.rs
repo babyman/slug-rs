@@ -59,6 +59,7 @@ pub fn register(
         builtins.function("print", NativeArity::Variadic { minimum: 0 }, print),
         builtins.function("println", NativeArity::Variadic { minimum: 0 }, println),
         builtins.function("len", NativeArity::Exact(1), native_len),
+        builtins.function("keys", NativeArity::Exact(1), native_keys),
     ]
     .into_iter()
     .collect::<Result<Vec<_>, _>>()
@@ -265,5 +266,29 @@ const fn level_for(level: bool) -> Level {
     match level {
         true => Level::High,
         false => Level::Low,
+    }
+}
+
+/// The `keys` builtin: a map's keys, in its enumeration order.
+fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
+    let result = (|| {
+        let map = call.argument(0)?;
+        if map.kind() != NativeValueKind::Map {
+            return Err(NativeError::new(
+                "native.type",
+                format!("`keys` expects map, got {:?}", map.kind()),
+            ));
+        }
+        let mut keys = Vec::new();
+        let mut index = 0;
+        while let Some((key, _)) = map.map_get(index)? {
+            keys.push(key.to_owned());
+            index += 1;
+        }
+        Ok(NativeOwnedValue::list(keys))
+    })();
+    match result {
+        Ok(keys) => call.return_value(keys),
+        Err(error) => call.raise(error),
     }
 }

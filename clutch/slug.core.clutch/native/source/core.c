@@ -12,23 +12,6 @@ typedef struct {
   slug_ffi_async_stream *input_stream;
 } core_state;
 
-static int32_t keys(const slug_ffi_host_api *host, slug_ffi_call *call, void *state) {
-  (void)state;
-  slug_ffi_value map, key, ignored;
-  uint64_t length, index;
-  slug_ffi_list *result;
-  if (!host->argument_value(call, 0, &map) || !host->value_map_length(call, map, &length)) return SLUG_FFI_ERROR;
-  result = host->list_create(call, length);
-  if (result == NULL) return SLUG_FFI_ERROR;
-  for (index = 0; index < length; index++) {
-    if (!host->value_map_entry(call, map, index, &key, &ignored) || !host->list_append_value(call, result, key)) {
-      host->list_destroy(result);
-      return SLUG_FFI_ERROR;
-    }
-  }
-  return host->set_list(call, result) ? SLUG_FFI_OK : SLUG_FFI_ERROR;
-}
-
 static void stdin_worker(slug_ffi_async_sender *out, void *context) {
   char *line = NULL;
   size_t length = 0;
@@ -117,10 +100,6 @@ static int32_t square_root(const slug_ffi_host_api *host, slug_ffi_call *call,
   return SLUG_FFI_OK;
 }
 
-static const slug_ffi_function_descriptor STD_FUNCTIONS[] = {
-    {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("keys"), SLUG_TEXT("std.keys/v1"), 1, 1, keys},
-};
-
 static const slug_ffi_function_descriptor STDIN_FUNCTIONS[] = {
     {sizeof(slug_ffi_function_descriptor), SLUG_TEXT("readLines"),
      SLUG_TEXT("stdin.read_lines/v1"), 0, 0, read_lines},
@@ -133,8 +112,6 @@ static const slug_ffi_function_descriptor MATH_FUNCTIONS[] = {
 };
 
 static const slug_ffi_module_descriptor MODULES[] = {
-    {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
-     sizeof(slug_ffi_module_descriptor), SLUG_TEXT("slug.std"), STD_FUNCTIONS, 1, NULL, 0},
     {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
      sizeof(slug_ffi_module_descriptor), SLUG_TEXT("slug.io.stdin"), STDIN_FUNCTIONS, 1, NULL, 0},
     {SLUG_FFI_PROTOTYPE_ABI_MAJOR, SLUG_FFI_PROTOTYPE_ABI_MINOR,
@@ -154,7 +131,7 @@ static const slug_ffi_library_descriptor LIBRARY = {
     sizeof(slug_ffi_library_descriptor),
     destroy_library,
     MODULES,
-    3,
+    2,
 };
 
 SLUG_FFI_PROTOTYPE_EXPORT const slug_ffi_library_descriptor *slug_ffi_library_init(

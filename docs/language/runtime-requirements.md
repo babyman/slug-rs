@@ -90,7 +90,8 @@ serialization.
 For the current source fixtures, a conformance environment MUST make these
 modules and builtins available with the behavior exercised by their source:
 
-- builtins including `import`, `int`, `len`, `print`, `println`, `chan`, and `close`;
+- builtins including `import`, `int`, `len`, `keys`, `print`, `println`, `chan`,
+  and `close`;
 - `slug.std`, `slug.io.stdin`, and `slug.math` from the installed `slug.core`
   Clutch, and `slug.test`, for assertions and core collection operations;
 - `slug.channel` for channel operations, `await`, `send`, and `recv`;

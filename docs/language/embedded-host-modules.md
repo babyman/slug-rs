@@ -36,9 +36,9 @@ descriptor.
 ## `slug.builtin`
 
 The initial embedded profile provides the ordinary implicit and explicitly
-importable `slug.builtin` module with `Error`, `print`, `println`, and `len`.
-`print` and `println` write to the host diagnostic stream. `len` has the same
-string, bytes, list, and map behavior as the desktop host.
+importable `slug.builtin` module with `Error`, `print`, `println`, `len`, and
+`keys`. `print` and `println` write to the host diagnostic stream. `len` and
+`keys` have the same behavior as on the desktop host.
 
 The profile deliberately omits `chan` and `close` while embedded concurrency is
 unavailable. VM-provided `cfg`, `int`, and `stacktrace` remain available; the

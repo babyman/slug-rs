@@ -112,3 +112,27 @@ fn native_write(call: &mut NativeCall<'_>, newline: bool) -> NativeStatus {
     }
     call.return_value(NativeOwnedValue::nil())
 }
+
+/// The `keys` builtin: a map's keys, in its enumeration order.
+pub(super) fn native_keys(call: &mut NativeCall<'_>) -> NativeStatus {
+    let result = (|| {
+        let map = call.argument(0)?;
+        if map.kind() != NativeValueKind::Map {
+            return Err(NativeError::new(
+                "native.type",
+                format!("`keys` expects map, got {:?}", map.kind()),
+            ));
+        }
+        let mut keys = Vec::new();
+        let mut index = 0;
+        while let Some((key, _)) = map.map_get(index)? {
+            keys.push(key.to_owned());
+            index += 1;
+        }
+        Ok(NativeOwnedValue::list(keys))
+    })();
+    match result {
+        Ok(keys) => call.return_value(keys),
+        Err(error) => call.raise(error),
+    }
+}

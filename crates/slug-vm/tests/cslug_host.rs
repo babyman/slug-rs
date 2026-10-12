@@ -113,6 +113,9 @@ fn register_embedded_builtins(host: &cslug::ArtifactHost) {
         builtins
             .function("len", NativeArity::Exact(1), embedded_len)
             .expect("valid len function"),
+        builtins
+            .function("keys", NativeArity::Exact(1), returns_nil)
+            .expect("valid keys function"),
     ] {
         host.register_builtin(function)
             .expect("register embedded builtin");

@@ -173,7 +173,7 @@ value tokens. An adapter may obtain an argument token, inspect a map's length
 and ordered entries, and append a token's value to a list builder. Tokens are
 validated by the host, cannot be retained after the callback, do not expose VM
 storage, and do not permit mutation. This supports generic collection adapters
-such as `slug.std.keys` without making individual collection operations ABI
+such as listing a map's keys without making individual collection operations ABI
 endpoints.
 
 Version 1 has no persistent arbitrary Slug-value root. Without native-to-Slug

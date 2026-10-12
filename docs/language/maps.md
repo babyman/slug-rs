@@ -71,11 +71,10 @@ val configured = withoutName copy { timeout: 5000, mode: "fast" }
 
 Maps are unordered. Map construction still evaluates entries in source order,
 but that order is not retained by the resulting value. `keys(map)` is a
-`slug.std` foreign function that returns the current keys in unspecified order.
+builtin that returns the current keys in unspecified order.
 Programs that require an order must order the returned list explicitly. Keys
 retain their language value types rather than being converted to strings.
 
 ```slug
-val {keys} = import("slug.std")
 len(keys(updated)) // 3
 ```

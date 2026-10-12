@@ -17,7 +17,7 @@ configured only on first write. The default program initializes every selected
 output low, chases one LED at a time, lights all LEDs, and clears them.
 
 The firmware also provides the non-concurrent `slug.builtin` surface:
-implicit and explicit `print`, `println`, and `len`, plus `Error`. Diagnostic
+implicit and explicit `print`, `println`, `len`, and `keys`, plus `Error`. Diagnostic
 output uses the ESP serial stream. `chan` and `close` remain unavailable until
 the embedded concurrency profile exists.
 

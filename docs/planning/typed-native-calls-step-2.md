@@ -91,7 +91,7 @@ map's keys is essential beyond this case. Recommendation for the mechanism: a
 VM builtin like `int`, implemented once and available on every host, including
 embedded targets, with no per-host registration. The alternative is a host
 function declared in `slug.builtin` beside `len`, which every host would have
-to register. `slug.std.keys` keeps working by re-exporting the builtin. The
+to register. The
 decision record for phase 6 settles the mechanism, the key order, and the
 `slug.std` compatibility before the work starts.
 
@@ -219,11 +219,19 @@ every tested path.
 
 ### 6. `keys` builtin
 
-- [ ] Record the `keys` builtin in a decision record: its mechanism, its key
+- [x] Record the `keys` builtin in a decision record: its mechanism, its key
   order (today's documentation says both "insertion order" and "unspecified
-  order"), and how `slug.std.keys` keeps working.
-- [ ] Implement it, document it in `lib/slug/builtin.slug` and the language
+  order"), and what happens to `slug.std.keys`.
+- [x] Implement it, document it in `lib/slug/builtin.slug` and the language
   specification, and remove `keys` from the core clutch's native library.
+
+[`keys` is a builtin](../decisions/2026-10-11-keys-builtin.md) settles the
+mechanism. A VM builtin could not be re-exported: a module that declares
+`keys` binds the name throughout itself before its initializer runs, so
+`export val keys = keys` fails. `keys` is therefore a host builtin declared in
+`slug.builtin` beside `len`, registered by the CLI, the interactive server,
+and the ESP32-S3 firmware. `slug.std` no longer exports `keys`, as decided on
+review. Its order is the map's unspecified enumeration order.
 
 ## Exit gate
 
@@ -231,4 +239,4 @@ every tested path.
   calls, and their tests pass on macOS and Linux.
 - The prototype loader keeps its list and map builder coverage.
 - Measurements against the prototype are recorded.
-- `keys` is a builtin, and `slug.std.keys` no longer needs the prototype.
+- `keys` is a builtin, and no longer needs the prototype.
