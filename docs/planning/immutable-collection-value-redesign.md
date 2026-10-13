@@ -204,8 +204,11 @@ gap and shifts later probes back, leaving no tombstones. A unique owner
 still updates in place.
 
 Building the index exposed a contract gap: literals kept duplicate keys. A
-repeated key now keeps its last value; see
+literal that repeats a key is now an error; see
 [the decision record](../decisions/2026-10-12-repeated-map-literal-keys.md).
+It also exposed that non-integral floats such as `1.5` were rejected as map
+keys, contrary to the key-equivalence contract. `MapKey::from_value` now
+accepts them.
 
 Candidates, timed with interleaved runs of 300,000 operations (100,000 for
 shared copies) on integer-keyed maps:

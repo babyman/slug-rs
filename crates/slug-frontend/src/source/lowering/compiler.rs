@@ -875,7 +875,17 @@ impl Compiler {
                 }
             }
             ExprKind::Map(entries) => {
+                let mut constant_keys = HashSet::new();
                 for (key, value) in entries {
+                    if let ExprKind::Value(constant) = &key.kind
+                        && let Some(canonical) = ConstantMapKey::new(constant)
+                        && !constant_keys.insert(canonical)
+                    {
+                        return Err(SourceError::semantic(
+                            format!("map literal repeats key `{constant}`"),
+                            key.span.clone(),
+                        ));
+                    }
                     self.expression(state, key)?;
                     self.expression(state, value)?;
                 }
@@ -1821,4 +1831,42 @@ fn entrypoint_candidate(expression: &Expr) -> Option<(EntrypointArguments, &Sour
         _ => return None,
     };
     Some((arguments, &value.span))
+}
+
+/// A constant map-literal key in canonical form, so that keys Slug considers
+/// equal, such as `1` and `1.0` or `0` and `-0.0`, compare equal here too.
+#[derive(Eq, Hash, PartialEq)]
+enum ConstantMapKey<'a> {
+    Bool(bool),
+    Int(i64),
+    Float(u64),
+    Str(&'a str),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> ConstantMapKey<'a> {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::float_cmp,
+        reason = "the range and integral-value checks make this conversion exact"
+    )]
+    fn new(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Bool(value) => Some(Self::Bool(*value)),
+            Value::Int(value) => Some(Self::Int(*value)),
+            Value::Float(value)
+                if value.is_finite()
+                    && *value >= i64::MIN as f64
+                    && *value < -(i64::MIN as f64)
+                    && (*value as i64) as f64 == *value =>
+            {
+                Some(Self::Int(*value as i64))
+            }
+            Value::Float(value) => Some(Self::Float(value.to_bits())),
+            Value::Str(value) => Some(Self::Str(value)),
+            Value::Bytes(value) => Some(Self::Bytes(value)),
+            _ => None,
+        }
+    }
 }

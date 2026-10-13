@@ -1067,28 +1067,46 @@ fn persistently_merges_removes_and_enumerates_maps() {
 }
 
 #[test]
-fn map_literals_keep_the_last_value_for_a_repeated_key() {
+fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
-    fs::write(
-        &path,
-        "val key = \"a\"\n\
-         val words = {a: 1, \"b\": 2, [key]: 3}\n\
-         val numbers = {[1]: \"int\", [1.0]: \"float\", [0]: \"zero\", [-0.0]: \"negative zero\"}\n\
-         println(len(words), words.a, len(keys(words)), words == {a: 3, b: 2})\n\
-         println(len(numbers), numbers[1], numbers[0], len(words + {a: 4}))\n",
-    )
-    .expect("write repeated-key source");
-    let output = slug().arg(&path).output().expect("run repeated-key source");
-    fs::remove_file(path).expect("remove repeated-key source");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "2 3 2 true\n2 float negative zero 2\n"
-    );
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write repeated-key source");
+        let output = slug().arg(&path).output().expect("run repeated-key source");
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+            String::from_utf8(output.stderr).expect("stderr is UTF-8"),
+        )
+    };
+
+    // Constant keys are checked at compile time, under key equivalence.
+    for (source, key) in [
+        ("println({a: 1, \"b\": 2, a: 3})\n", "a"),
+        ("println({[1]: \"int\", [1.0]: \"float\"})\n", "1"),
+    ] {
+        let (code, stdout, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert_eq!(stdout, "", "{source}");
+        assert!(
+            stderr.contains(&format!("map literal repeats key `{key}`")),
+            "{stderr}"
+        );
+    }
+
+    // A computed key can only be checked when the literal is built.
+    let (code, stdout, stderr) =
+        run("val key = \"a\"\nprintln(\"before\")\nprintln({[key]: 1, a: 2})\n");
+    assert_eq!(code, Some(1));
+    assert_eq!(stdout, "before\n");
+    assert!(stderr.contains("map literal repeats key \"a\""), "{stderr}");
+
+    // Distinct keys, and merge, are unaffected: merge still overwrites.
+    let (code, stdout, stderr) = run("val key = \"c\"\n\
+         val map = {a: 1, [key]: 2, [1]: 3, [1.5]: 4}\n\
+         println(len(map), map + {a: 9} == {a: 9, c: 2, [1.0]: 3, [1.5]: 4})\n");
+    fs::remove_file(&path).expect("remove repeated-key source");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "4 true\n");
 }
 
 #[test]

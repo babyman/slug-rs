@@ -39,10 +39,10 @@ impl MapKey {
             Value::Float(value)
                 if value.is_finite()
                     && *value >= i64::MIN as f64
-                    && *value < -(i64::MIN as f64) =>
+                    && *value < -(i64::MIN as f64)
+                    && (*value as i64) as f64 == *value =>
             {
-                let integer = *value as i64;
-                ((integer as f64) == *value).then_some(Self::Int(integer))
+                Some(Self::Int(*value as i64))
             }
             Value::Float(value) if value.is_finite() => Some(Self::Float(value.to_bits())),
             Value::Str(value) => Some(Self::Str(value.clone())),
@@ -278,10 +278,10 @@ const INDEX_THRESHOLD: usize = 32;
 
 /// An immutable, unordered Slug map.
 ///
-/// Keys are unique under Slug key equality (see `MapKey`); constructing a map
-/// from entries that repeat a key keeps the last value for it, as a literal or
-/// merge evaluated in source order would. Entry order is a storage detail and
-/// is never observable as map semantics.
+/// Keys are unique under Slug key equality (see `MapKey`). A map literal that
+/// repeats a key is an error; a host that builds a map from entries that
+/// repeat a key keeps the last value, as a merge in that order would. Entry
+/// order is a storage detail and is never observable as map semantics.
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct Map(Rc<MapStorage>);
@@ -315,8 +315,13 @@ impl MapStorage {
     fn insert(&mut self, key: Value, value: Value) {
         if let Some(position) = self.position(&key) {
             self.entries[position].1 = value;
-            return;
+        } else {
+            self.push_new(key, value);
         }
+    }
+
+    /// Adds an entry for a key that is not in the map.
+    fn push_new(&mut self, key: Value, value: Value) {
         self.entries.push((key, value));
         match &mut self.index {
             Some(index) => index.insert(&self.entries, self.entries.len() - 1),
@@ -497,14 +502,27 @@ impl From<Vec<(Value, Value)>> for Map {
 }
 
 impl Map {
-    /// Builds a map from entries in source order; a repeated key keeps its
-    /// last value.
+    /// Builds a map from host-supplied entries; a repeated key keeps its last
+    /// value.
     pub(crate) fn new(entries: Vec<(Value, Value)>) -> Self {
         let mut storage = MapStorage::with_capacity(entries.len());
         for (key, value) in entries {
             storage.insert(key, value);
         }
         Self(Rc::new(storage))
+    }
+
+    /// Builds a map literal's entries in source order, or returns the first
+    /// key that repeats an earlier one.
+    pub(crate) fn from_literal(entries: Vec<(Value, Value)>) -> Result<Self, Value> {
+        let mut storage = MapStorage::with_capacity(entries.len());
+        for (key, value) in entries {
+            if storage.position(&key).is_some() {
+                return Err(key);
+            }
+            storage.push_new(key, value);
+        }
+        Ok(Self(Rc::new(storage)))
     }
 
     /// Builds a map from entries whose keys are already distinct, such as a
@@ -628,6 +646,9 @@ mod map_tests {
         assert_eq!(map.get(&Value::Float(3.0)), Some(&Value::Int(30)));
         assert_eq!(map.get(&Value::Float(-0.0)), Some(&Value::Int(0)));
         assert_eq!(map.get(&Value::Float(3.5)), None);
+        let fractional = Map::new(vec![(Value::Float(1.5), Value::Int(15))]);
+        assert_eq!(fractional.get(&Value::Float(1.5)), Some(&Value::Int(15)));
+        assert_eq!(fractional.get(&Value::Int(1)), None);
         assert_eq!(map.get(&Value::list(vec![Value::Int(3)])), None);
     }
 
@@ -693,7 +714,8 @@ mod map_tests {
         let key = |n: u64| match n % 4 {
             0 => Value::Int(i64::try_from(n).unwrap()),
             // Integral floats must find the integer keys and vice versa.
-            1 => Value::Float(f64::from(u32::try_from(n - 1).unwrap())),
+            1 if n % 8 == 1 => Value::Float(f64::from(u32::try_from(n - 1).unwrap())),
+            1 => Value::Float(f64::from(u32::try_from(n).unwrap()) + 0.5),
             2 => Value::string(format!("key-{n}")),
             _ => Value::Bytes(std::rc::Rc::new(n.to_le_bytes().to_vec())),
         };

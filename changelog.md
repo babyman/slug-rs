@@ -6,9 +6,13 @@
   entries, so lookups and updates no longer scan every key. Counting words
   into a 509-key map runs 4.4x faster, and a breadth-first search over a
   3,000-node map 3.2x faster. Smaller maps are unchanged.
-- A map literal that repeats a key now keeps only the last value, as merge
-  does: `{a: 1, a: 2}` is `{a: 2}`. Previously both entries were stored, so
-  `len`, `keys`, printing, and equality counted the key twice.
+- A map literal that repeats a key is now an error: a semantic error for
+  constant keys such as `{a: 1, a: 2}` or `{[1]: x, [1.0]: y}`, and a checked
+  runtime error for computed keys that collide. Previously both entries were
+  stored, so `len`, `keys`, printing, and equality counted the key twice. Use
+  `+` to overwrite a key.
+- Non-integral numbers such as `1.5` can be map keys, as documented; they
+  were rejected with "num cannot be used as a map key".
 - `Value::Map` holds an opaque map type; build one with `Value::map(entries)`
   or `Value::Map(entries.into())`.
 

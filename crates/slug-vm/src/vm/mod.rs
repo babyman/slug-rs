@@ -2691,7 +2691,17 @@ impl Vm {
         }
         #[cfg(feature = "metrics")]
         self.record_collection_construction(entries.len());
-        self.stack.push(Value::Map(Map::new(entries)));
+        let map = Map::from_literal(entries).map_err(|key| {
+            let key = match key {
+                Value::Str(name) => format!("\"{name}\""),
+                key => key.to_string(),
+            };
+            self.error_at(
+                RuntimeErrorKind::Type,
+                format!("map literal repeats key {key}"),
+            )
+        })?;
+        self.stack.push(Value::Map(map));
         Ok(())
     }
 
