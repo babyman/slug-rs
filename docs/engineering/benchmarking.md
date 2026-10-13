@@ -41,6 +41,55 @@ is intentionally written in the idioms currently
 supported by Slug and Python; keep output checks and workload intent aligned
 when adding a pair.
 
+A second group widens the corpus beyond tight numeric `recur` loops, so that
+an optimization tuned on one shape cannot pass unnoticed when it slows
+another:
+
+- `shared-append` appends to a list while the previous version stays live,
+  so `:+` must copy rather than extend in place.
+- `higher-order` runs `slug.std` `map`, `filter`, and `reduce` with closures
+  that capture their caller's locals.
+- `fib` is naive non-tail recursion: ordinary calls and returns with no
+  `recur`.
+- `defer-errors` registers scoped cleanup on every call and recovers a thrown
+  error from one call in eight, so fast returns do not apply.
+- `word-frequency` counts string keys in a persistent map and reads them back.
+- `string-building` builds a report with interpolation and concatenation.
+- `expression-evaluator` tokenizes, parses, constant-folds, and repeatedly
+  evaluates arithmetic expressions over structs and maps: a small mixed
+  program rather than a single hot loop.
+
+The last three are a hold-out set, marked `held_out` in
+`crates/slug-frontend/benches/source.rs` and in both reports. Check them for
+regressions, but never use them to choose or tune an optimization: they stay
+useful only while nothing has been fitted to them. When a hold-out workload
+does drive a change, move it to the tuned group and add a fresh hold-out.
+
+## Interleaved A/B comparison
+
+`make bench-ab` compares two builds of `slug` over the source corpus and
+decides whether a change is worth keeping. Sequential runs drifted by up to 30% within
+one session on a laptop, which is larger than most single optimizations, so
+the runner alternates the two binaries inside every round and alternates
+which side goes first:
+
+```sh
+make bench-ab                                  # master vs. working tree
+make bench-ab BASE=6d48f4a                     # another base revision
+make bench-ab BASE=master CANDIDATE=feature/vm # two revisions
+make bench-ab BENCH_AB_ARGS="--rounds 15 --only fib,binary-trees"
+python3 -I scripts/bench-ab.py --bin old=/path/a --bin new=/path/b --json
+```
+
+Each revision is built once in a temporary detached worktree and cached under
+`target/bench-ab/`; the working tree is rebuilt on every run. Both builds
+must print identical output for every workload before timing starts. The
+report gives each side's median wall-clock time, the candidate/base ratio,
+each side's interquartile range relative to its median, and peak RSS, then
+the geometric-mean ratio of the tuned and hold-out groups separately. Treat a
+ratio inside the spread as noise, and read the hold-out geomean before
+accepting a change.
+
 The in-process suite also includes a nested task tree. Unlike the timer and
 large-`select` pressure cases, it measures structured task fanout, nested
 nursery settlement, and task-await resumption together. It is a scheduler

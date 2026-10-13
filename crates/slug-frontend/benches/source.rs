@@ -12,36 +12,81 @@ const DEFAULT_SAMPLES: usize = 15;
 const WORKLOADS: &[Workload] = &[
     Workload {
         name: "function-call",
+        held_out: false,
         expected_stdout: "100000\n",
     },
     Workload {
         name: "n-body",
+        held_out: false,
         expected_stdout: "ok\n",
     },
     Workload {
         name: "typed-n-body",
+        held_out: false,
         expected_stdout: "ok\n",
     },
     Workload {
         name: "spectral-norm",
+        held_out: false,
         expected_stdout: "ok\n",
     },
     Workload {
         name: "typed-spectral-norm",
+        held_out: false,
         expected_stdout: "ok\n",
     },
     Workload {
         name: "binary-trees",
+        held_out: false,
         expected_stdout: "65535\n",
     },
     Workload {
         name: "fannkuch-redux",
+        held_out: false,
         expected_stdout: "-488 16\n",
+    },
+    Workload {
+        name: "shared-append",
+        held_out: false,
+        expected_stdout: "32004000\n",
+    },
+    Workload {
+        name: "higher-order",
+        held_out: false,
+        expected_stdout: "15335944\n",
+    },
+    Workload {
+        name: "fib",
+        held_out: false,
+        expected_stdout: "196418\n",
+    },
+    Workload {
+        name: "defer-errors",
+        held_out: false,
+        expected_stdout: "187500\n",
+    },
+    Workload {
+        name: "word-frequency",
+        held_out: true,
+        expected_stdout: "509 50000 99\n",
+    },
+    Workload {
+        name: "string-building",
+        held_out: true,
+        expected_stdout: "378894 20000 item 20000 i\n",
+    },
+    Workload {
+        name: "expression-evaluator",
+        held_out: true,
+        expected_stdout: "900 1838462571\n",
     },
 ];
 
 struct Workload {
     name: &'static str,
+    /// Checked only for regressions; never used to choose or tune an
+    /// optimization.
+    held_out: bool,
     expected_stdout: &'static str,
 }
 
@@ -66,6 +111,7 @@ struct Runtime<'a> {
 #[derive(Serialize)]
 struct WorkloadReport<'a> {
     name: &'a str,
+    held_out: bool,
     slug_median_ns: u128,
     python_median_ns: u128,
     slug_over_python: f64,
@@ -90,7 +136,7 @@ fn main() {
         .map(|workload| benchmark_workload(&slug, &python, &source_root, workload, samples))
         .collect::<Vec<_>>();
     let report = BenchmarkReport {
-        schema_version: 1,
+        schema_version: 2,
         revision: git_revision(&root),
         worktree_dirty: git_worktree_dirty(&root),
         samples,
@@ -199,6 +245,7 @@ fn benchmark_workload<'a>(
     );
     WorkloadReport {
         name: workload.name,
+        held_out: workload.held_out,
         slug_median_ns: slug_median.as_nanos(),
         python_median_ns: python_median.as_nanos(),
         slug_over_python: slug_median.as_secs_f64() / python_median.as_secs_f64(),
@@ -262,11 +309,16 @@ fn print_report(report: &BenchmarkReport<'_>) {
     println!("\nworkload                 Slug median   Python median  Slug / Python");
     for workload in &report.workloads {
         println!(
-            "{:<24} {:>11} ms {:>11} ms {:>11.2}x",
+            "{:<24} {:>11} ms {:>11} ms {:>11.2}x{}",
             workload.name,
             format_millis(workload.slug_median_ns),
             format_millis(workload.python_median_ns),
             workload.slug_over_python,
+            if workload.held_out {
+                "  (hold-out)"
+            } else {
+                ""
+            },
         );
     }
 }

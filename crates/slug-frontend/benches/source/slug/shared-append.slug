@@ -1,0 +1,10 @@
+// Each step keeps the previous list alive, so `:+` must copy rather than
+// append in place.
+val build = fn(remaining, acc, previous, total) {
+    if (remaining == 0) {
+        total + len(acc) + len(previous)
+    } else {
+        recur(remaining - 1, acc :+ remaining, acc, total + len(previous))
+    }
+}
+val main = fn() { println(build(8_000, [], [], 0)) }

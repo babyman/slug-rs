@@ -1294,3 +1294,44 @@ were taken earlier the same day:
 
 `make check` passed. The release CLI binary is 32 bytes larger than before the
 sweep.
+
+#### Measurement record: wider source corpus (2026-10-12)
+
+Before the dispatch-loop rewrite, the source corpus gained seven workloads
+that the four landed commits were not tuned on (see
+`docs/engineering/benchmarking.md`), and the spike's interleaved harness
+became `make bench-ab`. Seven rounds, `master` (`a4ba29a`) against the four
+sweep commits (`6d48f4a`):
+
+| Workload | `master` | Sweep | Ratio |
+|---|---:|---:|---:|
+| function-call | 34.4 ms | 21.8 ms | 0.63x |
+| n-body | 15.0 ms | 10.0 ms | 0.67x |
+| typed-n-body | 14.8 ms | 9.7 ms | 0.66x |
+| spectral-norm | 7.3 ms | 6.0 ms | 0.82x |
+| typed-spectral-norm | 7.2 ms | 5.8 ms | 0.80x |
+| binary-trees | 36.0 ms | 27.2 ms | 0.75x |
+| fannkuch-redux | 115.9 ms | 81.4 ms | 0.70x |
+| shared-append | 114.8 ms | 95.9 ms | 0.84x |
+| higher-order | 335.7 ms | 60.2 ms | 0.18x |
+| fib | 141.7 ms | 104.7 ms | 0.74x |
+| defer-errors | 124.8 ms | 98.2 ms | 0.79x |
+| word-frequency (hold-out) | 345.6 ms | 169.8 ms | 0.49x |
+| string-building (hold-out) | 149.8 ms | 146.5 ms | 0.98x |
+| expression-evaluator (hold-out) | 273.5 ms | 213.0 ms | 0.78x |
+
+Geometric-mean ratio: tuned 0.65x, hold-out 0.72x. No workload regressed, so
+the sweep generalizes beyond the workloads it was measured on. `higher-order`
+gains most because `slug.std` `map` and `filter` build their results with
+`acc :+ h` in `recur`, which now appends in place. `shared-append`, where the
+move must not happen, still gains from the smaller `Value`. Only
+`string-building` is flat: string concatenation was outside the sweep.
+
+The same `make bench-source` run also shows how far the original corpus
+understated the CPython gap. The original workloads range from 0.27x to 2.68x
+CPython, but the new ones are 1.8x–6.0x: `string-building` 5.96x,
+`word-frequency` 5.16x, `defer-errors` 2.83x, `expression-evaluator` 2.59x,
+`higher-order` 2.21x, `fib` 1.96x, and `shared-append` 1.83x. `fib` against
+`function-call` (0.81x) isolates ordinary call/return cost, which `recur`
+loops bypass. Accept the dispatch-loop rewrite only on a `make bench-ab` run
+whose hold-out geomean does not regress.

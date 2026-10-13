@@ -1,0 +1,16 @@
+// Runs scoped cleanup on every call and recovers one in every eight calls
+// from a thrown error.
+val step = fn(value) {
+    defer onerror(err) { err.code }
+    if (value % 8 == 0) { throw {code: 1} }
+    value % 5
+}
+val tracked = fn(value, cleanups) {
+    var done = cleanups
+    defer { done = done + 1 }
+    step(value)
+}
+val run = fn(remaining, total) {
+    if (remaining == 0) { total } else { recur(remaining - 1, total + tracked(remaining, 0)) }
+}
+val main = fn() { println(run(100_000, 0)) }

@@ -1,0 +1,15 @@
+val {map, filter, reduce} = import("slug.std")
+
+val range = fn(remaining, acc) {
+    if (remaining == 0) { acc } else { recur(remaining - 1, remaining +: acc) }
+}
+val score = fn(values, scale, offset) {
+    values
+        /> map(fn(value) { value * scale + offset })
+        /> filter(fn(value) { value % 3 != 0 })
+        /> reduce(0, fn(total, value) { total + value % 1_000 })
+}
+val rounds = fn(remaining, values, total) {
+    if (remaining == 0) { total } else { recur(remaining - 1, values, total + score(values, remaining, 7)) }
+}
+val main = fn() { println(rounds(20, range(2_000, []), 0)) }

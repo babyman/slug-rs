@@ -1,0 +1,16 @@
+// Builds a report line by line with interpolation and concatenation.
+val line = fn(index) {
+    val label = if (index % 2 == 0) { "even" } else { "odd" }
+    "item $index is $label; "
+}
+val build = fn(remaining, text, lines) {
+    if (remaining == 0) {
+        [text, lines]
+    } else {
+        recur(remaining - 1, text + line(remaining), lines + 1)
+    }
+}
+val main = fn() {
+    val result = build(20_000, "", 0)
+    println(len(result[0]), result[1], result[0][0:12])
+}

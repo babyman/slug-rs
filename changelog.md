@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The source benchmark corpus gained seven workloads beyond tight numeric
+  loops: list appends to a shared list, `slug.std` higher-order functions,
+  naive recursion, `defer` and error recovery, map counting, string building,
+  and a small expression evaluator. Three are held out from tuning, so they
+  catch optimizations overfitted to the rest. `make bench-ab` times two builds
+  with interleaved runs, so host drift cannot pass as a speedup.
+
 - Global reads hash names with FNV-1a instead of SipHash, and runtime error
   construction is kept out of the hot dispatch path. Global-read loops run
   about 20% faster.
