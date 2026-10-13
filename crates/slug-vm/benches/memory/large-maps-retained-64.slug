@@ -1,0 +1,13 @@
+val fill = fn(key, map) {
+    if (key == 1024) { map } else { recur(key + 1, map + {[key]: key}) }
+}
+
+val build = fn(remaining, snapshots, value) {
+    if (remaining == 0) {
+        snapshots
+    } else {
+        recur(remaining - 1, snapshots :+ value, value + {[remaining]: -remaining})
+    }
+}
+
+build(64, [], fill(0, {}))

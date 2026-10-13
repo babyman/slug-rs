@@ -776,8 +776,10 @@ attributing them to the stack operand model.
 - [ ] Profile instructions per cycle, branch misses, L1 data misses, and
   last-level cache misses where supported. Keep portable allocation, size, and
   representation counters as the cross-platform baseline.
-- [ ] Measure collection access before replacing the cache-friendly small
+- [x] Measure collection access before replacing the cache-friendly small
   vector representation of maps or other values with a pointer-heavier index.
+  Maps larger than 32 entries now add a compact index; smaller ones keep the
+  vector. See stage 5 of the immutable collection plan.
 
 Each prototype must report dispatch time, allocations, peak memory, cache or
 portable locality proxies, `Value` clone/drop traffic, and changes in verifier

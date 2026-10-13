@@ -184,12 +184,58 @@ uses language equality directly.
 
 ### 5. Evaluate a measured persistent map representation
 
-- [ ] Prototype a persistent hash map, HAMT, or a measured hybrid representation
+- [x] Prototype a persistent hash map, HAMT, or a measured hybrid representation
   once Stage 4 provides a valid `MapKey` contract.
-- [ ] Prove that lookup, update, merge, removal, equality, formatting, and
+- [x] Prove that lookup, update, merge, removal, equality, formatting, and
   `keys(map)` preserve the Stage 1 contracts without exposing iteration order.
-- [ ] Compare candidates with vector-backed maps for small, medium, and large
+- [x] Compare candidates with vector-backed maps for small, medium, and large
   workloads, including allocation and retained-memory cost.
+
+#### Outcome: a hybrid indexed map (2026-10-12)
+
+`Value::Map` now holds an opaque `Map`, built with `Value::map(entries)`.
+Its entries stay in one contiguous vector. A map with more than 32 entries
+also keeps an open-addressing index of `u32` entry positions. The index
+hashes a key's canonical `MapKey` form on demand and compares candidates
+against the stored entry, so it never copies a key. Hosted builds hash with
+std's randomly keyed `SipHash`, because map keys can come from untrusted
+input; freestanding builds use FNV-1a. Removal swaps the last entry into the
+gap and shifts later probes back, leaving no tombstones. A unique owner
+still updates in place.
+
+Building the index exposed a contract gap: literals kept duplicate keys. A
+repeated key now keeps its last value; see
+[the decision record](../decisions/2026-10-12-repeated-map-literal-keys.md).
+
+Candidates, timed with interleaved runs of 300,000 operations (100,000 for
+shared copies) on integer-keyed maps:
+
+| Map size | Lookups: vector / index | Unique updates: vector / index | Shared copies: vector / index |
+|---:|---:|---:|---:|
+| 24 | 53.0 / 53.4 ms | 126.1 / 128.3 ms | 64.8 / 66.2 ms |
+| 32 | 54.1 / 54.8 ms | 130.7 / 132.6 ms | 69.4 / 70.6 ms |
+| 48 | 58.2 / 53.6 ms | 137.7 / 127.4 ms | 79.0 / 77.1 ms |
+| 128 | 76.3 / 53.8 ms | 174.9 / 128.1 ms | 128.2 / 109.9 ms |
+| 512 | 168.1 / 54.2 ms | 360.5 / 129.0 ms | 365.4 / 258.4 ms |
+
+The crossover sits at 24–48 entries, hence the 32-entry threshold; smaller
+maps, including most record-like maps, pay nothing for the index. A first
+candidate indexed with `HashMap<MapKey, u32>`. It was as fast for lookups
+and updates, but copying a shared map also cloned that table, which was
+6–15% slower than the plain vector. Its duplicated keys raised peak memory
+for 64 retained snapshots of a 1,024-entry map
+(`crates/slug-vm/benches/memory/large-maps-retained-64.slug`) from 7.3 MiB
+to 12.5 MiB. The open-addressing index peaks at 7.8 MiB and makes shared
+copies faster than the vector. One-entry retained maps are unchanged
+(4.2–4.3 MiB).
+
+Source benchmarks, seven interleaved rounds against `61bae64`:
+`word-frequency` runs at 0.23x (157.8 ms to 35.6 ms, now level with CPython)
+and the fresh hold-out `graph-search` at 0.32x (72.6 ms to 23.0 ms). Every
+other workload stays within its spread: tuned geomean 0.88x, hold-out 0.68x.
+Unit tests cover the threshold, numeric key equivalence under the index,
+repeated keys, removal, shared copies, and 20,000 random inserts and removals
+checked against a reference model.
 
 **Gate:** key behavior remains source-compatible, enumeration remains
 unspecified, and the chosen representation is justified by benchmark evidence.

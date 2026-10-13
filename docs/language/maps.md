@@ -20,7 +20,9 @@ val multiline = {
 A bare identifier or quoted string in a map literal is a string key. Therefore
 `{name: x}`, `{"name": x}`, and `{["name"]: x}` use the same key. Bracketing a
 key evaluates an expression, so `{[field]: x}` uses the value of `field` as its
-key. Map literal entries are evaluated in source order.
+key. Map literal entries are evaluated in source order. A literal that repeats
+a key, including through equal keys such as `1` and `1.0`, keeps the last
+value for it, so `{a: 1, a: 2}` is the one-entry map `{a: 2}`.
 Newlines immediately inside the braces or after an entry comma are whitespace;
 entries remain comma-delimited.
 

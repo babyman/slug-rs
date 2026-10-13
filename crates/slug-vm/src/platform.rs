@@ -20,17 +20,23 @@ pub(crate) type NameMap<V> =
 #[cfg(target_os = "none")]
 pub(crate) type NameMap<V> = HashMap<alloc::string::String, V>;
 
+/// Seeds the hash index of large maps. Map keys can come from untrusted
+/// input, so hosted builds keep std's randomly keyed `SipHash`; freestanding
+/// builds have no randomness source and use FNV-1a.
 #[cfg(not(target_os = "none"))]
+pub(crate) type MapHasher = std::collections::hash_map::RandomState;
+
+#[cfg(target_os = "none")]
+pub(crate) type MapHasher = core::hash::BuildHasherDefault<Fnv1a>;
+
 pub(crate) struct Fnv1a(u64);
 
-#[cfg(not(target_os = "none"))]
 impl Default for Fnv1a {
     fn default() -> Self {
         Self(0xcbf2_9ce4_8422_2325)
     }
 }
 
-#[cfg(not(target_os = "none"))]
 impl core::hash::Hasher for Fnv1a {
     fn finish(&self) -> u64 {
         self.0

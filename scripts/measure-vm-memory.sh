@@ -38,7 +38,8 @@ for fixture in \
     crates/slug-vm/benches/memory/closures-retained-128.slug \
     crates/slug-vm/benches/memory/closures-retained-1024.slug \
     crates/slug-vm/benches/memory/maps-retained-128.slug \
-    crates/slug-vm/benches/memory/maps-retained-1024.slug
+    crates/slug-vm/benches/memory/maps-retained-1024.slug \
+    crates/slug-vm/benches/memory/large-maps-retained-64.slug
 do
     rss=$(measure "$root_dir/$fixture")
     if [ -z "$rss" ]; then

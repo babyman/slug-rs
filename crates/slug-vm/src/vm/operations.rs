@@ -687,31 +687,13 @@ pub(super) fn index_value(
                 .ok_or_else(|| "string index is out of bounds".into())
         }
         Value::Map(entries) => {
-            let entries = entries;
-            #[cfg(feature = "metrics")]
-            let mut examined = 0usize;
-            for (key, value) in entries.iter().rev() {
-                #[cfg(feature = "metrics")]
-                {
-                    examined += 1;
-                }
-                if key == index {
-                    #[cfg(feature = "metrics")]
-                    {
-                        let mut metrics = metrics.borrow_mut();
-                        metrics.collection_lookups += 1;
-                        metrics.map_entries_examined += examined;
-                    }
-                    return Ok(value.clone());
-                }
-            }
             #[cfg(feature = "metrics")]
             {
                 let mut metrics = metrics.borrow_mut();
                 metrics.collection_lookups += 1;
-                metrics.map_entries_examined += examined;
+                metrics.map_entries_examined += entries.lookup_cost(index);
             }
-            Ok(Value::Nil)
+            Ok(entries.get(index).cloned().unwrap_or(Value::Nil))
         }
         Value::Struct(value) => {
             let Value::Str(name) = index else {

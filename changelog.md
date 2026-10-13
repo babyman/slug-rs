@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Maps with more than 32 entries keep a compact hash index beside their
+  entries, so lookups and updates no longer scan every key. Counting words
+  into a 509-key map runs 4.4x faster, and a breadth-first search over a
+  3,000-node map 3.2x faster. Smaller maps are unchanged.
+- A map literal that repeats a key now keeps only the last value, as merge
+  does: `{a: 1, a: 2}` is `{a: 2}`. Previously both entries were stored, so
+  `len`, `keys`, printing, and equality counted the key twice.
+- `Value::Map` holds an opaque map type; build one with `Value::map(entries)`
+  or `Value::Map(entries.into())`.
+
 - Reading a global, such as calling a top-level function, no longer hashes
   its name each time. Each closure caches the global's storage slot after
   the first read. Recursive and call-heavy code runs 7–11% faster.
