@@ -1129,10 +1129,10 @@ Recommended order:
   arguments straight into direct locals, with no temporary vector or closure
   clone. Keep the frame's `Rc<Program>` across instructions instead of cloning
   it for every dispatch.
-- [ ] **Cheap global hashing.** Global names are short identifiers, so an
+- [x] **Cheap global hashing.** Global names are short identifiers, so an
   in-tree FNV-1a hasher for the global environment replaces SipHash. This
   defers compiler-resolved global slots (item 7) until a profile needs them.
-- [ ] **Cold error construction.** Mark `error`/`error_at` `#[cold]` and
+- [x] **Cold error construction.** Mark `error`/`error_at` `#[cold]` and
   `#[inline(never)]`.
 - [ ] **One packed dispatch loop.** This is the largest simplicity and size
   win, but it must be a deliberate rewrite rather than a deletion. The
@@ -1263,3 +1263,34 @@ The existing defer, recovery, capture, and `recur` suites, together with
 `records_direct_local_vector_reuse_across_recur`, cover the fallback
 boundaries. `make check` passed. Item 10's per-instruction overhead remains
 open for the single-dispatch rewrite.
+
+#### Measurement record: global hashing and cold errors (2026-10-12)
+
+The global environment is now a `platform::NameMap`, which hashes with FNV-1a
+on hosted targets and stays a `BTreeMap` on freestanding ones. `Vm::error` and
+`error_at` are `#[cold]` and `#[inline(never)]`. Interleaved A/B harness,
+seven rounds, against the fast-exits commit:
+
+| Workload | Pre-sweep | Before | After |
+|---|---:|---:|---:|
+| fc | 1.50 s | 0.95 s | 0.88 s |
+| gg | 0.82 s | 0.51 s | 0.40 s |
+| bt | 0.52 s | 0.41 s | 0.37 s |
+| fk | 1.10 s | 0.79 s | 0.73 s |
+| ap | 0.67 s | <0.01 s | <0.01 s |
+| bt peak RSS | 68.7 MB | 52.6 MB | 52.5 MB |
+
+`make bench-source` after the four sweep commits, with 15 samples, gave these
+medians. CPython medians are from the same run; the pre-sweep Slug medians
+were taken earlier the same day:
+
+| Workload | Pre-sweep Slug | Slug | CPython | Slug / CPython |
+|---|---:|---:|---:|---:|
+| function-call | 34.312 ms | 20.376 ms | 27.221 ms | 0.75x |
+| n-body | 14.416 ms | 9.214 ms | 22.898 ms | 0.40x |
+| spectral-norm | 6.779 ms | 5.415 ms | 21.231 ms | 0.26x |
+| binary-trees | 35.450 ms | 26.617 ms | 30.011 ms | 0.89x |
+| fannkuch-redux | 117.653 ms | 80.314 ms | 31.917 ms | 2.52x |
+
+`make check` passed. The release CLI binary is 32 bytes larger than before the
+sweep.

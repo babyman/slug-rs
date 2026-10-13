@@ -9,3 +9,36 @@ pub(crate) use std::collections::{HashMap, HashSet};
 
 #[cfg(target_os = "none")]
 pub(crate) use alloc::collections::{BTreeMap as HashMap, BTreeSet as HashSet};
+
+/// A string-keyed map for global names. Names are short identifiers looked up
+/// on every global read, so FNV-1a is used instead of the default `SipHash`,
+/// whose flood resistance buys nothing for compiler-chosen keys.
+#[cfg(not(target_os = "none"))]
+pub(crate) type NameMap<V> =
+    HashMap<alloc::string::String, V, core::hash::BuildHasherDefault<Fnv1a>>;
+
+#[cfg(target_os = "none")]
+pub(crate) type NameMap<V> = HashMap<alloc::string::String, V>;
+
+#[cfg(not(target_os = "none"))]
+pub(crate) struct Fnv1a(u64);
+
+#[cfg(not(target_os = "none"))]
+impl Default for Fnv1a {
+    fn default() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+impl core::hash::Hasher for Fnv1a {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+}

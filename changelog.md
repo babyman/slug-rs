@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Global reads hash names with FNV-1a instead of SipHash, and runtime error
+  construction is kept out of the hot dispatch path. Global-read loops run
+  about 20% faster.
+
 - Function calls and `recur` loops run about 20% faster: a return with no
   pending `defer` skips the cleanup queue, an exact positional `recur` moves
   its arguments straight into the frame's locals, and the dispatch loop no

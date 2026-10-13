@@ -9,7 +9,7 @@ use core::{
     fmt::Write as _,
 };
 
-use crate::platform::HashMap;
+use crate::platform::NameMap;
 
 #[cfg(feature = "concurrency")]
 use alloc::rc::Weak;
@@ -558,10 +558,10 @@ impl Drop for Channel {
 
 /// Shared storage for a lexical binding captured by one or more closures.
 pub(crate) type BindingCell = Rc<RefCell<Value>>;
-pub(crate) type GlobalEnvironment = Rc<RefCell<HashMap<String, Value>>>;
+pub(crate) type GlobalEnvironment = Rc<RefCell<NameMap<Value>>>;
 
 pub(crate) fn global_environment() -> GlobalEnvironment {
-    Rc::new(RefCell::new(HashMap::new()))
+    Rc::new(RefCell::new(NameMap::default()))
 }
 
 pub(crate) fn binding_cell(value: Value) -> BindingCell {

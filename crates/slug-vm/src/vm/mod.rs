@@ -5560,6 +5560,8 @@ impl Vm {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn error_at(
         &self,
         kind: RuntimeErrorKind,

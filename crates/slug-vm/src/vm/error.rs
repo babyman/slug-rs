@@ -95,7 +95,11 @@ fn render_stacktrace_error(rendered: &mut String, error: &RuntimeError, indent: 
 }
 
 impl Vm {
+    // Errors leave the hot path; keeping their construction out of line
+    // stops it from bloating the dispatch code that calls it.
     #[allow(clippy::needless_pass_by_value)]
+    #[cold]
+    #[inline(never)]
     pub(super) fn error(
         &self,
         kind: RuntimeErrorKind,
