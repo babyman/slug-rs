@@ -80,6 +80,26 @@ impl Vm {
         self.drive_cleanup()
     }
 
+    /// Returns to the caller directly when no cleanup can observe the
+    /// return: no defer scope, no cleanup in progress, and not a cleanup
+    /// action. Hands the value back when the cleanup queue must settle it.
+    pub(super) fn return_without_cleanup(&mut self, value: Value) -> Result<(), Value> {
+        let plain = self.cleanup.is_empty()
+            && self.frames.len() > 1
+            && self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.scopes.is_empty() && !frame.cleanup_action);
+        if !plain {
+            return Err(value);
+        }
+        let frame = self.pop_frame().expect("caller frame was checked");
+        self.stack.truncate(frame.stack_base);
+        self.recycle_frame_locals(frame.locals);
+        self.stack.push(value);
+        Ok(())
+    }
+
     pub(super) fn recur_at(
         &mut self,
         program: &Program,
@@ -110,6 +130,9 @@ impl Vm {
         count: usize,
         span: Option<&SourceSpan>,
     ) -> VmResult<()> {
+        if self.restart_exact_recur_in_place(program, count) {
+            return Ok(());
+        }
         let values = self.pop_values_at(count, span)?;
         let closure = self
             .frames
@@ -136,6 +159,52 @@ impl Vm {
         let (arguments, provided) =
             self.bind_call_arguments_at(program, &closure, values, Vec::new(), span)?;
         self.restart_recur(arguments, Some(provided), program, span)
+    }
+
+    /// Restarts an exact positional `recur` by moving its stack arguments
+    /// straight into the frame's direct locals. Returns `false`, leaving all
+    /// state untouched, when a captured local, a nested defer scope, an
+    /// unresolved binding, or a malformed frame needs the general path.
+    fn restart_exact_recur_in_place(&mut self, program: &Program, count: usize) -> bool {
+        let Some(frame) = self.frames.last_mut() else {
+            return false;
+        };
+        let Some(chunk) = program.chunk(frame.closure.chunk) else {
+            return false;
+        };
+        let Some(base) = self.stack.len().checked_sub(count) else {
+            return false;
+        };
+        if chunk.arity != count
+            || !chunk.exact_positional_parameters
+            || frame.locals.len() != chunk.locals
+            || chunk.locals < count
+            || frame.scopes.len() > 1
+            || base < frame.stack_base
+            || frame
+                .locals
+                .iter()
+                .any(|local| matches!(local, LocalSlot::Captured(_)))
+            || self.stack[base..]
+                .iter()
+                .any(|value| matches!(value, Value::Binding { .. }))
+        {
+            return false;
+        }
+        let mut arguments = self.stack.drain(base..);
+        for local in &mut frame.locals {
+            *local = LocalSlot::Direct(arguments.next().unwrap_or(Value::Nil));
+        }
+        drop(arguments);
+        self.stack.truncate(frame.stack_base);
+        frame.scope_depth = 1;
+        frame.provided = ProvidedArguments::All;
+        frame.ip = 0;
+        #[cfg(feature = "metrics")]
+        self.record_exact_positional_recur_restart();
+        self.record_local_argument_writes(count);
+        self.record_recur_local_vector(true);
+        true
     }
 
     fn restart_recur(

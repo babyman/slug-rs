@@ -1123,7 +1123,7 @@ Recommended order:
   `Return`, and `Throw` end liveness, `SetLocal` kills a slot, and
   `MakeClosure` keeps every slot live. A promoted (captured) slot is still
   cloned. The pass must also run on `.cslug`-loaded chunks.
-- [ ] **Fast exits on the call path (most of item 10).** Return without going
+- [x] **Fast exits on the call path (most of item 10).** Return without going
   through the cleanup queue when no defer scope, cleanup action, or pending
   cleanup exists. Restart an exact positional `recur` by moving stack
   arguments straight into direct locals, with no temporary vector or closure
@@ -1238,3 +1238,28 @@ only inserts. Results are in nanoseconds per row:
 now flat. It remains about eight times the 0.13 prototype's 575 ns, mostly
 native calls per column value. A per-row C helper is the next step if a
 workload needs it. `make check` passed.
+
+#### Measurement record: call-path fast exits (2026-10-12)
+
+`Return` pops the frame directly when no defer scope, cleanup action, or
+pending cleanup could observe it; otherwise it goes through the cleanup queue
+as before. An exact positional `recur` moves its stack arguments straight into
+direct locals. It falls back unchanged for captured locals, nested defer
+scopes, unresolved bindings, or a malformed frame, and records the same
+restart, argument-write, and local-vector-reuse metrics. The dispatch loop
+keeps the active frame's `Rc<Program>` and refreshes it only when the top
+frame's program changes.
+
+Interleaved A/B harness, seven rounds, against the move-on-last-read commit:
+
+| Workload | Before | After |
+|---|---:|---:|
+| fc | 1.22 s | 0.95 s |
+| gg | 0.65 s | 0.50 s |
+| bt | 0.43 s | 0.42 s |
+| fk | 0.88 s | 0.79 s |
+
+The existing defer, recovery, capture, and `recur` suites, together with
+`records_direct_local_vector_reuse_across_recur`, cover the fallback
+boundaries. `make check` passed. Item 10's per-instruction overhead remains
+open for the single-dispatch rewrite.

@@ -1931,11 +1931,17 @@ impl Vm {
 
     #[allow(clippy::too_many_lines)]
     fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
+        // Calls and returns change the active program rarely; refreshing it
+        // only then avoids a reference-count round trip per instruction.
+        let mut frame_program = self.active_program()?;
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
             }
-            let frame_program = self.active_program()?;
+            match self.frames.last() {
+                Some(frame) if Rc::ptr_eq(&frame.program, &frame_program) => {}
+                _ => frame_program = self.active_program()?,
+            }
             let instruction = self.next_instruction(&frame_program)?;
             self.active_span = instruction.span;
             let outcome = if let Some(outcome) =
@@ -2153,7 +2159,9 @@ impl Vm {
             PackedOpcode::RecurPositional => self.recur_positional_at(program, operand, None)?,
             PackedOpcode::Return => {
                 let value = self.pop_at(None)?;
-                if let Some(value) = self.begin_return(value)? {
+                if let Err(value) = self.return_without_cleanup(value)
+                    && let Some(value) = self.begin_return(value)?
+                {
                     return Ok(Some(BorrowedSpanOpOutcome::Settled(value)));
                 }
             }

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Function calls and `recur` loops run about 20% faster: a return with no
+  pending `defer` skips the cleanup queue, an exact positional `recur` moves
+  its arguments straight into the frame's locals, and the dispatch loop no
+  longer clones the active program's reference on every instruction.
+
 - Appending to a list held only by a local, such as `acc :+ x` or
   `acc + [x]` in a `recur` loop, now extends it in place instead of copying
   it: the VM moves a local on its last read. Building a 20,000-element list
