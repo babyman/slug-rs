@@ -67,7 +67,7 @@ const WORKLOADS: &[Workload] = &[
     },
     Workload {
         name: "word-frequency",
-        held_out: true,
+        held_out: false,
         expected_stdout: "509 50000 99\n",
     },
     Workload {
@@ -79,6 +79,11 @@ const WORKLOADS: &[Workload] = &[
         name: "expression-evaluator",
         held_out: true,
         expected_stdout: "900 1838462571\n",
+    },
+    Workload {
+        name: "graph-search",
+        held_out: true,
+        expected_stdout: "3000 22328 10\n",
     },
 ];
 

@@ -267,16 +267,19 @@ impl Bytes {
     }
 }
 
+/// An immutable, unordered Slug map.
+///
+/// Keys are unique under Slug key equality (see `MapKey`); constructing a map
+/// from entries that repeat a key keeps the last value for it, as a literal or
+/// merge evaluated in source order would. Entry order is a storage detail and
+/// is never observable as map semantics.
+#[doc(hidden)]
 #[derive(Clone)]
-pub(crate) struct Map(Rc<Vec<(Value, Value)>>);
+pub struct Map(Rc<Vec<(Value, Value)>>);
 
 pub(crate) struct MapView<'a>(&'a [(Value, Value)]);
 
 impl<'a> MapView<'a> {
-    pub(crate) fn new(entries: &'a [(Value, Value)]) -> Self {
-        Self(entries)
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
@@ -290,31 +293,60 @@ impl<'a> MapView<'a> {
     }
 }
 
+impl From<Vec<(Value, Value)>> for Map {
+    fn from(entries: Vec<(Value, Value)>) -> Self {
+        Self::new(entries)
+    }
+}
+
 impl Map {
+    /// Builds a map from entries in source order; a repeated key keeps its
+    /// last value.
     pub(crate) fn new(entries: Vec<(Value, Value)>) -> Self {
+        let mut unique: Vec<(Value, Value)> = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            if let Some((_, existing)) = unique.iter_mut().find(|(candidate, _)| *candidate == key)
+            {
+                *existing = value;
+            } else {
+                unique.push((key, value));
+            }
+        }
+        Self(Rc::new(unique))
+    }
+
+    /// Builds a map from entries whose keys are already distinct, such as a
+    /// subset of another map's entries.
+    pub(crate) fn from_unique(entries: Vec<(Value, Value)>) -> Self {
         Self(Rc::new(entries))
     }
 
-    pub(crate) fn from_shared(entries: Rc<Vec<(Value, Value)>>) -> Self {
-        Self(entries)
-    }
-
-    pub(crate) fn into_shared(self) -> Rc<Vec<(Value, Value)>> {
-        self.0
-    }
-
-    pub(crate) fn len(&self) -> usize {
+    #[must_use]
+    pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &(Value, Value)> {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &(Value, Value)> {
         self.0.iter()
+    }
+
+    pub(crate) fn view(&self) -> MapView<'_> {
+        MapView(&self.0)
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(crate) fn is_uniquely_owned(&self) -> bool {
+        Rc::strong_count(&self.0) == 1
     }
 
     pub(crate) fn get(&self, key: &Value) -> Option<&Value> {
         self.0
             .iter()
-            .rev()
             .find(|(candidate, _)| candidate == key)
             .map(|(_, value)| value)
     }

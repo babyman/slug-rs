@@ -21,14 +21,14 @@ fn constructs_and_indexes_collections() {
 
 #[test]
 fn maps_compare_by_key_value_membership_not_entry_order() {
-    let first = Value::Map(std::rc::Rc::new(vec![
+    let first = Value::map(vec![
         (Value::string("name"), Value::string("Slug")),
         (Value::string("version"), Value::Int(1)),
-    ]));
-    let second = Value::Map(std::rc::Rc::new(vec![
+    ]);
+    let second = Value::map(vec![
         (Value::string("version"), Value::Int(1)),
         (Value::string("name"), Value::string("Slug")),
-    ]));
+    ]);
     assert_eq!(first, second);
 }
 
@@ -108,10 +108,7 @@ fn records_unique_map_copy_update_costs() {
     let mut vm = Vm::new();
     assert_eq!(
         vm.run(&program_with_main(main), 0).unwrap(),
-        Value::Map(std::rc::Rc::new(vec![(
-            Value::string("name"),
-            Value::string("VM"),
-        )]))
+        Value::map(vec![(Value::string("name"), Value::string("VM"),)])
     );
     let metrics = vm.metrics();
     assert_eq!(metrics.collection_updates, 1);
@@ -261,10 +258,10 @@ fn rejects_duplicate_fields_in_struct_schema_bytecode() {
 
 #[test]
 fn constant_key_indexing_matches_stack_key_indexing() {
-    let map = Value::Map(std::rc::Rc::new(vec![
+    let map = Value::map(vec![
         (Value::string("name"), Value::string("Slug")),
         (Value::string("name"), Value::string("shadowing")),
-    ]));
+    ]);
     let list = Value::list(vec![Value::Int(10), Value::Int(20)]);
     let cases = [
         (map.clone(), Value::string("name")),

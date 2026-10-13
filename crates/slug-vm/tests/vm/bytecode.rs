@@ -183,10 +183,10 @@ fn numeric_operator_bytecode_preserves_checked_failures() {
 fn concatenates_strings_with_values_through_private_add_bytecode() {
     let mut main = Chunk::new("main", 0);
     let prefix = main.constant(Value::string("list of two + "));
-    let data = main.constant(Value::Map(std::rc::Rc::new(vec![(
+    let data = main.constant(Value::map(vec![(
         Value::string("k"),
         Value::list(vec![Value::Int(1)]),
-    )])));
+    )]));
     main.emit(Op::Constant(prefix))
         .emit(Op::Constant(data))
         .emit(Op::Add)
@@ -201,14 +201,14 @@ fn concatenates_strings_with_values_through_private_add_bytecode() {
 #[test]
 fn persistently_merges_and_removes_maps_through_private_bytecode() {
     let mut main = Chunk::new("main", 0);
-    let left = main.constant(Value::Map(std::rc::Rc::new(vec![
+    let left = main.constant(Value::map(vec![
         (Value::string("first"), Value::Int(1)),
         (Value::string("second"), Value::Int(2)),
-    ])));
-    let right = main.constant(Value::Map(std::rc::Rc::new(vec![
+    ]));
+    let right = main.constant(Value::map(vec![
         (Value::string("second"), Value::Int(20)),
         (Value::string("third"), Value::Int(3)),
-    ])));
+    ]));
     let removed = main.constant(Value::string("second"));
     main.emit(Op::Constant(left))
         .emit(Op::Constant(right))
@@ -219,20 +219,20 @@ fn persistently_merges_and_removes_maps_through_private_bytecode() {
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::Map(std::rc::Rc::new(vec![
+        Value::map(vec![
             (Value::string("first"), Value::Int(1)),
             (Value::string("third"), Value::Int(3)),
-        ]))
+        ])
     );
 }
 
 #[test]
 fn persistently_copies_maps_through_private_bytecode() {
     let mut main = Chunk::new("main", 0);
-    let original = main.constant(Value::Map(std::rc::Rc::new(vec![
+    let original = main.constant(Value::map(vec![
         (Value::string("timeout"), Value::Int(1_000)),
         (Value::string("retries"), Value::Int(2)),
-    ])));
+    ]));
     let timeout = main.constant(Value::Int(5_000));
     let mode = main.constant(Value::string("fast"));
     main.emit(Op::Constant(original))
@@ -243,11 +243,11 @@ fn persistently_copies_maps_through_private_bytecode() {
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::Map(std::rc::Rc::new(vec![
+        Value::map(vec![
             (Value::string("timeout"), Value::Int(5_000)),
             (Value::string("retries"), Value::Int(2)),
             (Value::string("mode"), Value::string("fast")),
-        ]))
+        ])
     );
 }
 
@@ -742,10 +742,10 @@ fn pinned_patterns_compare_dynamic_operands() {
 #[test]
 fn computed_map_pattern_keys_use_dynamic_operands() {
     let mut main = Chunk::new("main", 0);
-    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+    let value = main.constant(Value::map(vec![
         (Value::Int(7), Value::string("seven")),
         (Value::string("extra"), Value::Bool(true)),
-    ])));
+    ]));
     let key = main.constant(Value::Int(7));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
@@ -770,7 +770,7 @@ fn computed_map_pattern_keys_use_dynamic_operands() {
 #[test]
 fn rejects_unhashable_computed_map_pattern_keys() {
     let mut main = Chunk::new("main", 0);
-    let value = main.constant(Value::Map(std::rc::Rc::new(Vec::new())));
+    let value = main.constant(Value::map(Vec::new()));
     let key = main.constant(Value::list(Vec::new()));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
@@ -812,10 +812,10 @@ fn rejects_missing_dynamic_pattern_operands() {
 #[test]
 fn matches_map_patterns_and_exposes_string_key_bindings() {
     let mut main = Chunk::new("main", 0);
-    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+    let value = main.constant(Value::map(vec![
         (Value::string("name"), Value::string("Slug")),
         (Value::string("extra"), Value::Bool(true)),
-    ])));
+    ]));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
         .emit(Op::TryMatch {
@@ -851,10 +851,10 @@ fn matches_map_patterns_and_exposes_string_key_bindings() {
 #[test]
 fn captures_unmatched_map_entries_in_a_rest_binding() {
     let mut main = Chunk::new("main", 0);
-    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+    let value = main.constant(Value::map(vec![
         (Value::string("name"), Value::string("Slug")),
         (Value::string("active"), Value::Bool(true)),
-    ])));
+    ]));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
         .emit(Op::TryMatch {
@@ -885,20 +885,17 @@ fn captures_unmatched_map_entries_in_a_rest_binding() {
 
     assert_eq!(
         Vm::new().run(&program_with_main(main), 0).unwrap(),
-        Value::Map(std::rc::Rc::new(vec![(
-            Value::string("active"),
-            Value::Bool(true),
-        )]))
+        Value::map(vec![(Value::string("active"), Value::Bool(true),)])
     );
 }
 
 #[test]
 fn exact_map_patterns_reject_extra_entries() {
     let mut main = Chunk::new("main", 0);
-    let value = main.constant(Value::Map(std::rc::Rc::new(vec![
+    let value = main.constant(Value::map(vec![
         (Value::string("name"), Value::string("Slug")),
         (Value::string("active"), Value::Bool(true)),
-    ])));
+    ]));
     main.emit(Op::Constant(value))
         .emit(Op::TryMatch {
             pattern: slug_vm::MatchPattern::Map {

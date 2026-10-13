@@ -1,0 +1,50 @@
+// Breadth-first search over an integer-keyed adjacency map, tracking visited
+// nodes and distances in maps that grow as the frontier expands.
+val nodes = 3_000
+
+val neighbours = fn(node) {
+    [(node * 7 + 1) % nodes, (node * 13 + 5) % nodes, (node + 1) % nodes]
+}
+
+val build = fn(node, graph) {
+    if (node == nodes) { graph } else { recur(node + 1, graph + {[node]: neighbours(node)}) }
+}
+
+val visit = fn(edges, distance, frontier, seen) {
+    match edges {
+        [] => [frontier, seen]
+        [next, ...rest] => {
+            if (seen[next] == nil) {
+                recur(rest, distance, frontier :+ next, seen + {[next]: distance})
+            } else {
+                recur(rest, distance, frontier, seen)
+            }
+        }
+    }
+}
+
+val search = fn(graph, queue, seen) {
+    match queue {
+        [] => seen
+        [node, ...rest] => {
+            val [queue, seen] = visit(graph[node], seen[node] + 1, rest, seen)
+            recur(graph, queue, seen)
+        }
+    }
+}
+
+val total = fn(node, seen, sum, farthest) {
+    if (node == nodes) {
+        [sum, farthest]
+    } else {
+        val distance = seen[node]
+        recur(node + 1, seen, sum + distance, if (distance > farthest) { distance } else { farthest })
+    }
+}
+
+val main = fn() {
+    val graph = build(0, {})
+    val seen = search(graph, [0], {[0]: 0})
+    val [sum, farthest] = total(0, seen, 0, 0)
+    println(len(seen), sum, farthest)
+}

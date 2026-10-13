@@ -1106,43 +1106,37 @@ impl Vm {
 
     #[must_use]
     pub fn exported_values(&self, program: &Program) -> Value {
-        Value::Map(
-            Map::new(
-                program
-                    .exports()
-                    .iter()
-                    .filter_map(|name| {
-                        self.globals
-                            .borrow()
-                            .get(name)
-                            .and_then(|value| value.resolve().ok())
-                            .map(|value| (Value::string(name.as_str()), value))
-                    })
-                    .collect(),
-            )
-            .into_shared(),
-        )
+        Value::Map(Map::new(
+            program
+                .exports()
+                .iter()
+                .filter_map(|name| {
+                    self.globals
+                        .borrow()
+                        .get(name)
+                        .and_then(|value| value.resolve().ok())
+                        .map(|value| (Value::string(name.as_str()), value))
+                })
+                .collect(),
+        ))
     }
 
     #[doc(hidden)]
     #[must_use]
     pub fn live_exported_values(&self, program: &Program) -> Value {
-        Value::Map(
-            Map::new(
-                program
-                    .exports()
-                    .iter()
-                    .filter_map(|name| {
-                        self.globals
-                            .borrow()
-                            .get(name)
-                            .cloned()
-                            .map(|value| (Value::string(name.as_str()), value))
-                    })
-                    .collect(),
-            )
-            .into_shared(),
-        )
+        Value::Map(Map::new(
+            program
+                .exports()
+                .iter()
+                .filter_map(|name| {
+                    self.globals
+                        .borrow()
+                        .get(name)
+                        .cloned()
+                        .map(|value| (Value::string(name.as_str()), value))
+                })
+                .collect(),
+        ))
     }
 
     /// Installs one validated native descriptor as a local VM global.
@@ -2105,22 +2099,7 @@ impl Vm {
                     })?;
                 self.list_spread(spreads)?;
             }
-            PackedOpcode::Map => {
-                let values = self.pop_values(operand.saturating_mul(2))?;
-                let mut entries = Vec::with_capacity(operand);
-                for pair in values.chunks_exact(2) {
-                    if !is_map_key(&pair[0]) {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::Type,
-                            format!("{} cannot be used as a map key", pair[0].type_name()),
-                        ));
-                    }
-                    entries.push((pair[0].clone(), pair[1].clone()));
-                }
-                #[cfg(feature = "metrics")]
-                self.record_collection_construction(entries.len());
-                self.stack.push(Value::Map(Map::new(entries).into_shared()));
-            }
+            PackedOpcode::Map => self.construct_map(operand)?,
             PackedOpcode::StructSchema => {
                 self.struct_schema(program, SchemaFieldsId::new(instruction.a))?;
             }
@@ -2162,7 +2141,7 @@ impl Vm {
                     (Value::Map(left), Value::Map(right)) => {
                         self.record_collection_update(
                             left.len() + right.len(),
-                            Rc::strong_count(left) == 1,
+                            left.is_uniquely_owned(),
                         );
                     }
                     (Value::Bytes(left), Value::Bytes(right)) => {
@@ -2188,7 +2167,7 @@ impl Vm {
                 let (left, right) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
                 if let Value::Map(entries) = &left {
-                    self.record_collection_update(entries.len(), Rc::strong_count(entries) == 1);
+                    self.record_collection_update(entries.len(), entries.is_uniquely_owned());
                 }
                 self.stack.push(
                     subtract(left, right)
@@ -2698,6 +2677,25 @@ impl Vm {
     }
 
     #[inline(never)]
+    fn construct_map(&mut self, count: usize) -> VmResult<()> {
+        let values = self.pop_values(count.saturating_mul(2))?;
+        let mut entries = Vec::with_capacity(count);
+        for pair in values.chunks_exact(2) {
+            if !is_map_key(&pair[0]) {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Type,
+                    format!("{} cannot be used as a map key", pair[0].type_name()),
+                ));
+            }
+            entries.push((pair[0].clone(), pair[1].clone()));
+        }
+        #[cfg(feature = "metrics")]
+        self.record_collection_construction(entries.len());
+        self.stack.push(Value::Map(Map::new(entries)));
+        Ok(())
+    }
+
+    #[inline(never)]
     fn construct_struct(&mut self, program: &Program, id: StructFieldsId) -> VmResult<()> {
         let fields = program
             .struct_fields(id)
@@ -2723,7 +2721,7 @@ impl Vm {
         #[cfg(feature = "metrics")]
         match &value {
             Value::Map(value) => {
-                self.record_collection_update(value.len(), Rc::strong_count(value) == 1);
+                self.record_collection_update(value.len(), value.is_uniquely_owned());
             }
             Value::Struct(value) => {
                 self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
@@ -3545,7 +3543,7 @@ impl Vm {
                 }
             }
         }
-        self.stack.push(Value::Map(Map::new(exports).into_shared()));
+        self.stack.push(Value::Map(Map::new(exports)));
         Ok(())
     }
 

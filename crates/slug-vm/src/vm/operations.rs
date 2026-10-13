@@ -11,7 +11,7 @@ use core::cell::RefCell;
 
 use crate::{
     MatchMapKey, MatchPattern, MatchRest, MatchType, StructValue, Value,
-    collections::{Bytes, Map, MapKey, MapView},
+    collections::{Bytes, Map, MapKey},
 };
 
 use super::RuntimeErrorKind;
@@ -52,11 +52,7 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
                 .concat(&Bytes::from_shared(b))
                 .into_shared(),
         )),
-        (Value::Map(left), Value::Map(right)) => Ok(Value::Map(
-            Map::from_shared(left)
-                .merge(&Map::from_shared(right))
-                .into_shared(),
-        )),
+        (Value::Map(left), Value::Map(right)) => Ok(Value::Map(left.merge(&right))),
         (a, b) => {
             let (a, b) = numbers(a, b).map_err(|message| (RuntimeErrorKind::Type, message))?;
             finite_float(a + b).map_err(|message| (RuntimeErrorKind::Type, message))
@@ -92,9 +88,7 @@ pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeError
                 format!("{} cannot be used as a map key", right.type_name()),
             ));
         }
-        return Ok(Value::Map(
-            Map::from_shared(entries).remove(&right).into_shared(),
-        ));
+        return Ok(Value::Map(entries.remove(&right)));
     }
     integer_or_float(left, right, i64::checked_sub, |a, b| a - b)
 }
@@ -435,13 +429,12 @@ pub(super) fn matches_pattern(
             let binding_start = bindings.len();
             match value {
                 Value::Map(entries) => {
-                    let entries = Map::from_shared(entries.clone());
+                    let entries = entries.clone();
                     if *exact && entries.len() != patterns.len() {
                         return Ok(false);
                     }
                     for ((_, pattern), key) in patterns.iter().zip(&keys) {
-                        let Some((_, value)) = entries.iter().rev().find(|(entry, _)| entry == key)
-                        else {
+                        let Some(value) = entries.get(key) else {
                             bindings.truncate(binding_start);
                             return Ok(false);
                         };
@@ -457,7 +450,7 @@ pub(super) fn matches_pattern(
                             .filter(|(key, _)| !keys.iter().any(|pattern_key| key == pattern_key))
                             .cloned()
                             .collect();
-                        bindings.push(Value::Map(Map::new(rest_entries).into_shared()));
+                        bindings.push(Value::Map(Map::from_unique(rest_entries)));
                     }
                     Ok(true)
                 }
@@ -503,7 +496,7 @@ pub(super) fn matches_pattern(
                             })
                             .map(|(field, value)| (Value::string(field.name.clone()), value.clone()))
                             .collect();
-                        bindings.push(Value::Map(Map::new(rest_entries).into_shared()));
+                        bindings.push(Value::Map(Map::from_unique(rest_entries)));
                     }
                     Ok(true)
                 }
@@ -556,7 +549,8 @@ fn matches_type(
                 return Ok(false);
             };
             entries.as_ref().map_or(Ok(true), |(key, value)| {
-                MapView::new(values)
+                values
+                    .view()
                     .iter()
                     .try_fold(true, |matches, (entry_key, entry_value)| {
                         Ok(matches
@@ -693,7 +687,7 @@ pub(super) fn index_value(
                 .ok_or_else(|| "string index is out of bounds".into())
         }
         Value::Map(entries) => {
-            let entries = Map::from_shared(entries);
+            let entries = entries;
             #[cfg(feature = "metrics")]
             let mut examined = 0usize;
             for (key, value) in entries.iter().rev() {
@@ -874,11 +868,7 @@ pub(super) fn copy_value(
 ) -> Result<Value, String> {
     match value {
         Value::Struct(value) => Ok(Value::Struct(value.copy_fields(names, replacements)?)),
-        Value::Map(value) => Ok(Value::Map(
-            Map::from_shared(value)
-                .copy_string_fields(names, replacements)?
-                .into_shared(),
-        )),
+        Value::Map(value) => Ok(Value::Map(value.copy_string_fields(names, replacements)?)),
         _ => Err("cannot copy non-struct or map value".into()),
     }
 }

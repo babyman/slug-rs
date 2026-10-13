@@ -1,4 +1,4 @@
-use alloc::{borrow::ToOwned, boxed::Box, rc::Rc, string::String, vec::Vec};
+use alloc::{borrow::ToOwned, boxed::Box, string::String, vec::Vec};
 use core::{fmt, fmt::Write as _};
 
 use crate::{SourceSpan, Value};
@@ -157,7 +157,7 @@ impl Vm {
             .native
             .as_ref()
             .map_or_else(|| fault_type(&error.kind), |native| native.code.as_str());
-        Value::Map(Rc::new(vec![
+        Value::map(vec![
             (Value::string("type"), Value::string(error_type)),
             (Value::string("msg"), Value::string(error.message)),
             (
@@ -167,7 +167,7 @@ impl Vm {
                     .and_then(|native| native.data)
                     .unwrap_or(Value::Nil),
             ),
-        ]))
+        ])
     }
 }
 

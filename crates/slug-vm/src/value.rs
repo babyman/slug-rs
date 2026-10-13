@@ -18,7 +18,7 @@ use core::cell::Cell;
 
 use crate::{
     CallableIdentity, ForeignResourceSignature,
-    collections::{BytesView, List, Map, MapView},
+    collections::{BytesView, List, Map},
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
 };
@@ -997,7 +997,7 @@ pub enum Value {
     Str(Rc<str>),
     Bytes(Rc<Vec<u8>>),
     List(List),
-    Map(Rc<Vec<(Value, Value)>>),
+    Map(Map),
     StructSchema(Rc<StructSchema>),
     Struct(Rc<StructValue>),
     Enum(Rc<EnumValue>),
@@ -1098,6 +1098,12 @@ impl Value {
         Self::List(List::from_values(values))
     }
 
+    /// Creates an immutable map value. A repeated key keeps its last value.
+    #[must_use]
+    pub fn map(entries: Vec<(Value, Value)>) -> Self {
+        Self::Map(Map::new(entries))
+    }
+
     #[must_use]
     pub fn is_truthy(&self) -> bool {
         !matches!(self, Self::Nil | Self::Bool(false))
@@ -1180,9 +1186,7 @@ impl PartialEq for Value {
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::List(a), Self::List(b)) => a == b,
             (Self::Overloads(a), Self::Overloads(b)) => a == b,
-            (Self::Map(a), Self::Map(b)) => {
-                Map::from_shared(a.clone()).equals(&Map::from_shared(b.clone()))
-            }
+            (Self::Map(a), Self::Map(b)) => a.clone().equals(&b.clone()),
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
             (Self::Struct(a), Self::Struct(b)) => {
                 Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
@@ -1219,11 +1223,7 @@ impl fmt::Debug for Value {
             Self::List(values) => f.debug_list().entries(values.iter()).finish(),
             Self::Map(entries) => f
                 .debug_map()
-                .entries(
-                    MapView::new(entries)
-                        .iter()
-                        .map(|(key, value)| (key, value)),
-                )
+                .entries(entries.view().iter().map(|(key, value)| (key, value)))
                 .finish(),
             Self::StructSchema(_) => write!(f, "<struct schema>"),
             Self::Struct(value) => {

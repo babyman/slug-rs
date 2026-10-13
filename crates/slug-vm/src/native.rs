@@ -21,7 +21,7 @@ use std::{
 
 use crate::{
     Value,
-    collections::{Bytes, BytesView, List, Map, MapView},
+    collections::{Bytes, BytesView, List, Map},
     platform::HashSet,
     scheduler_signal::ProgressSignal,
     value::Channel,
@@ -724,15 +724,12 @@ impl NativeOwnedValue {
 
     #[must_use]
     pub fn map(entries: Vec<(Self, Self)>) -> Self {
-        Self(Value::Map(
-            Map::new(
-                entries
-                    .into_iter()
-                    .map(|(key, value)| (key.0, value.0))
-                    .collect(),
-            )
-            .into_shared(),
-        ))
+        Self(Value::Map(Map::new(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.0, value.0))
+                .collect(),
+        )))
     }
 
     pub(crate) fn into_value(self) -> Value {
@@ -882,7 +879,7 @@ impl<'call> NativeValueRef<'call> {
     pub fn len(self) -> Option<usize> {
         match self.value {
             Value::List(values) => Some(values.len()),
-            Value::Map(entries) => Some(MapView::new(entries).len()),
+            Value::Map(entries) => Some(entries.view().len()),
             _ => None,
         }
     }
@@ -916,7 +913,8 @@ impl<'call> NativeValueRef<'call> {
         let Value::Map(entries) = self.value else {
             return Err(self.type_error("map"));
         };
-        Ok(MapView::new(entries)
+        Ok(entries
+            .view()
             .get(index)
             .map(|(key, value)| (NativeValueRef { value: key }, NativeValueRef { value })))
     }

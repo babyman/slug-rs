@@ -1067,6 +1067,31 @@ fn persistently_merges_removes_and_enumerates_maps() {
 }
 
 #[test]
+fn map_literals_keep_the_last_value_for_a_repeated_key() {
+    let path = fixture_path("map-literal-repeated-keys");
+    fs::write(
+        &path,
+        "val key = \"a\"\n\
+         val words = {a: 1, \"b\": 2, [key]: 3}\n\
+         val numbers = {[1]: \"int\", [1.0]: \"float\", [0]: \"zero\", [-0.0]: \"negative zero\"}\n\
+         println(len(words), words.a, len(keys(words)), words == {a: 3, b: 2})\n\
+         println(len(numbers), numbers[1], numbers[0], len(words + {a: 4}))\n",
+    )
+    .expect("write repeated-key source");
+    let output = slug().arg(&path).output().expect("run repeated-key source");
+    fs::remove_file(path).expect("remove repeated-key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "2 3 2 true\n2 float negative zero 2\n"
+    );
+}
+
+#[test]
 fn standard_clutch_preserves_non_string_map_keys() {
     let path = fixture_path("standard-clutch-map-keys");
     fs::write(
