@@ -236,7 +236,7 @@ def main():
             f"{'  (hold-out)' if row['held_out'] else ''}"
         )
     summary = ", ".join(
-        f"{group.replace('_', '-')} {ratio:.2f}x"
+        f"{'hold-out' if group == 'held_out' else group} {ratio:.2f}x"
         for group, ratio in report["geomean_ratio"].items()
         if ratio is not None
     )

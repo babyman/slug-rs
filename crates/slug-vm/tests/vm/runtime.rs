@@ -17,8 +17,6 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instruction_clones, 0);
-    assert_eq!(metrics.packed_direct_dispatches, 4);
-    assert_eq!(metrics.rich_op_fallback_dispatches, 0);
     assert_eq!(metrics.source_span_clones, 0);
     assert_eq!(metrics.source_span_lookups, 0);
     assert!(metrics.instructions_executed >= 4);
@@ -30,7 +28,7 @@ fn records_execution_metrics_for_the_current_dispatch_representation() {
 
 #[test]
 #[cfg(feature = "metrics")]
-fn records_rich_op_fallback_dispatches_separately_from_packed_dispatches() {
+fn dispatches_rare_instructions_through_the_packed_match() {
     let mut main = Chunk::new("main", 0);
     main.emit(Op::Nil)
         .emit(Op::DefineGlobal("answer".into()))
@@ -42,13 +40,11 @@ fn records_rich_op_fallback_dispatches_separately_from_packed_dispatches() {
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instructions_executed, 4);
-    assert_eq!(metrics.packed_direct_dispatches, 3);
-    assert_eq!(metrics.rich_op_fallback_dispatches, 1);
 }
 
 #[test]
 #[cfg(feature = "metrics")]
-fn dispatches_empty_scope_entry_and_exit_without_rich_op_unpacking() {
+fn dispatches_empty_scope_entry_and_exit() {
     let mut main = Chunk::new("main", 0);
     main.emit(Op::EnterScope)
         .emit(Op::Nil)
@@ -59,13 +55,11 @@ fn dispatches_empty_scope_entry_and_exit_without_rich_op_unpacking() {
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instructions_executed, 4);
-    assert_eq!(metrics.packed_direct_dispatches, 4);
-    assert_eq!(metrics.rich_op_fallback_dispatches, 0);
 }
 
 #[test]
 #[cfg(feature = "metrics")]
-fn dispatches_pooled_match_without_rich_op_unpacking() {
+fn dispatches_pooled_match() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));
     main.emit(Op::Constant(one))
@@ -82,8 +76,6 @@ fn dispatches_pooled_match_without_rich_op_unpacking() {
 
     let metrics = vm.metrics();
     assert_eq!(metrics.instructions_executed, 5);
-    assert_eq!(metrics.packed_direct_dispatches, 5);
-    assert_eq!(metrics.rich_op_fallback_dispatches, 0);
 }
 
 #[test]

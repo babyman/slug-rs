@@ -129,6 +129,7 @@ impl Vm {
                             .get(index.saturating_sub(1))
                             .and_then(|caller| caller.program.span(*span))
                             .cloned(),
+                        #[cfg(feature = "concurrency")]
                         Some(super::frames::CallSpan::Owned(span)) => Some((**span).clone()),
                         None => None,
                     },

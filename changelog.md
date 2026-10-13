@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The VM dispatches every instruction through one match on the packed
+  opcode, with no fallback that rebuilt the builder-facing `Op`. Stack
+  access is inlined, and the active code is looked up only when the frame
+  changes. Across the source benchmarks this runs about 13% faster (7% on
+  the hold-out set), and the release binary is 16 KB smaller. The
+  `packed_direct_dispatches` and `rich_op_fallback_dispatches` metrics are
+  removed.
+
 - The source benchmark corpus gained seven workloads beyond tight numeric
   loops: list appends to a shared list, `slug.std` higher-order functions,
   naive recursion, `defer` and error recovery, map counting, string building,

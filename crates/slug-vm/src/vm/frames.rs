@@ -3,10 +3,10 @@
 //! Frames retain the code owner, lexical locals, deferred scopes, and source
 //! location needed to preserve checked runtime errors across calls and cleanup.
 
-use alloc::{boxed::Box, rc::Rc, vec::Vec};
+use alloc::{rc::Rc, vec::Vec};
 
 use crate::{
-    Program, SourceSpan, SpanId, Value,
+    Program, SpanId, Value,
     value::{BindingCell, Closure, GlobalEnvironment},
 };
 
@@ -38,11 +38,12 @@ pub(super) struct Frame {
 ///
 /// Ordinary source calls refer to the caller's installed span table. The
 /// caller frame remains live while its callee runs, so the owned span only
-/// remains necessary for host-initiated and cross-execution calls.
+/// remains necessary for a closure started in another task's execution.
 #[derive(Clone)]
 pub(super) enum CallSpan {
     Instruction(SpanId),
-    Owned(Box<SourceSpan>),
+    #[cfg(feature = "concurrency")]
+    Owned(alloc::boxed::Box<crate::SourceSpan>),
 }
 
 #[derive(Clone)]

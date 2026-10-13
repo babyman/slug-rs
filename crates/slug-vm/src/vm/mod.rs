@@ -24,7 +24,11 @@ use crate::{
     CallArgumentKind, CallableIdentity, Capture, ForeignResourceSignature, MatchPatternId,
     ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceSpan, SpanId, Value,
     VmHost,
-    bytecode::{EntrypointArguments, MOVE_LOCAL, Op, PackedInstruction, PackedOpcode, SelectCase},
+    bytecode::{
+        CallArgumentsId, CaptureListId, DeferMode, EntrypointArguments, GlobalNameId,
+        InterpolationId, ListSpreadId, MOVE_LOCAL, PackedInstruction, PackedOpcode, SchemaFieldsId,
+        SelectCase, SelectCasesId, SelectedCallId, StructFieldsId,
+    },
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
@@ -126,10 +130,6 @@ pub struct VmLayoutMetrics {
 pub struct VmMetrics {
     /// Instructions fetched by the dispatch loop, including spawned tasks.
     pub instructions_executed: usize,
-    /// Instructions completed by the direct packed-bytecode dispatcher.
-    pub packed_direct_dispatches: usize,
-    /// Instructions completed through unpacking and the rich-op fallback.
-    pub rich_op_fallback_dispatches: usize,
     /// Whole instructions cloned while fetching them for dispatch.
     pub instruction_clones: usize,
     /// Source spans cloned because execution needs an owned diagnostic or state.
@@ -273,7 +273,7 @@ enum ExecutionOutcome {
     Suspended,
 }
 
-enum BorrowedSpanOpOutcome {
+enum InstructionOutcome {
     Continue,
     Settled(Value),
 }
@@ -389,6 +389,9 @@ pub struct Vm {
     wait_registration: Option<WaitSet>,
     host_execution: Option<HostExecution>,
     active_span: Option<SpanId>,
+    /// Changes whenever the active frame may have changed or execution was
+    /// suspended, so the dispatch loop knows to reload its cached code.
+    frame_epoch: u32,
     shutdown: bool,
     #[cfg(feature = "metrics")]
     metrics: Rc<RefCell<VmMetrics>>,
@@ -558,6 +561,7 @@ impl Default for Vm {
             wait_registration: None,
             host_execution: None,
             active_span: None,
+            frame_epoch: 0,
             shutdown: false,
             #[cfg(feature = "metrics")]
             metrics,
@@ -727,7 +731,10 @@ impl Vm {
         self.stack.push(entrypoint);
         self.stack.extend(arguments);
         let count = self.stack.len() - 1;
-        self.call(&program.program, count, None, None)?;
+        // The root call has no caller instruction; clear any span left by
+        // module initialization so `main` records no call site.
+        self.active_span = None;
+        self.call_at(&program.program, count, None)?;
         self.run_root_execution()
     }
 
@@ -827,6 +834,7 @@ impl Vm {
         self.module_metadata = mem::take(&mut execution.module_metadata);
         self.stack = mem::take(&mut execution.stack);
         self.frames = mem::take(&mut execution.frames);
+        self.frames_changed();
         self.cleanup = mem::take(&mut execution.cleanup);
         self.progress = mem::replace(&mut execution.progress, Rc::new(ProgressDriver::new()));
         self.current_waiter = execution.current_waiter.take();
@@ -855,7 +863,10 @@ impl Vm {
             imported_globals: execution_imported,
             module_metadata: mem::take(&mut self.module_metadata),
             stack: mem::take(&mut self.stack),
-            frames: mem::take(&mut self.frames),
+            frames: {
+                self.frames_changed();
+                mem::take(&mut self.frames)
+            },
             cleanup: mem::take(&mut self.cleanup),
             progress: mem::replace(&mut self.progress, Rc::new(ProgressDriver::new())),
             current_waiter: self.current_waiter.take(),
@@ -1422,15 +1433,10 @@ impl Vm {
     }
 
     #[cfg(not(feature = "concurrency"))]
-    fn runtime_capability_error(
-        &self,
-        capability: &str,
-        span: Option<&SourceSpan>,
-    ) -> RuntimeError {
+    fn runtime_capability_error(&self, capability: &str) -> RuntimeError {
         self.error_at(
             RuntimeErrorKind::InvalidCall,
             format!("runtime capability `{capability}` is unavailable"),
-            span,
         )
     }
 
@@ -1584,6 +1590,7 @@ impl Vm {
         }
         self.stack.clear();
         self.frames.clear();
+        self.frames_changed();
         self.cleanup.clear();
         #[cfg(feature = "concurrency")]
         self.nursery.clear();
@@ -1818,6 +1825,7 @@ impl Vm {
         self.current_waiter = None;
         self.stack.clear();
         self.frames.clear();
+        self.frames_changed();
         self.cleanup.clear();
         self.progress.clear();
         #[cfg(feature = "concurrency")]
@@ -1929,50 +1937,61 @@ impl Vm {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
-        // Calls and returns change the active program rarely; refreshing it
-        // only then avoids a reference-count round trip per instruction.
-        let mut frame_program = self.active_program()?;
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
             }
-            match self.frames.last() {
-                Some(frame) if Rc::ptr_eq(&frame.program, &frame_program) => {}
-                _ => frame_program = self.active_program()?,
-            }
-            let instruction = self.next_instruction(&frame_program)?;
-            self.active_span = instruction.span;
-            let outcome = if let Some(outcome) =
-                self.execute_packed_hot_op(&frame_program, &instruction)?
-            {
+            // Calls, returns, and suspension change the active frame rarely
+            // relative to instructions, so the active code is looked up only
+            // when `frame_epoch` says it may have changed.
+            let epoch = self.frame_epoch;
+            let program = self.active_program()?;
+            let chunk = self.current_chunk(&program)?;
+            loop {
+                let frame = self.frames.last_mut().expect("active frame was checked");
+                let ip = frame.ip;
+                let Some(instruction) = chunk.code.get(ip) else {
+                    return Err(self.missing_return(&chunk.name));
+                };
+                frame.ip = ip + 1;
                 #[cfg(feature = "metrics")]
-                self.record_packed_direct_dispatch();
-                outcome
-            } else {
-                #[cfg(feature = "metrics")]
-                self.record_rich_op_fallback_dispatch();
-                let instruction = Program::unpack_instruction(&instruction).map_err(|message| {
-                    self.error(RuntimeErrorKind::InvalidBytecode, message, None)
-                })?;
-                self.execute_borrowed_span_op(&frame_program, &instruction.op, None)?
-            };
-            if let BorrowedSpanOpOutcome::Settled(value) = outcome {
-                return Ok(ExecutionOutcome::Settled(Ok(value)));
+                {
+                    self.metrics.borrow_mut().instructions_executed += 1;
+                }
+                self.active_span = instruction.span;
+                if let InstructionOutcome::Settled(value) =
+                    self.execute_instruction(&program, instruction)?
+                {
+                    return Ok(ExecutionOutcome::Settled(Ok(value)));
+                }
+                if self.frame_epoch != epoch {
+                    break;
+                }
             }
         }
     }
 
-    /// Dispatches the common packed instructions without reconstructing a
-    /// builder-facing `Op`. Less frequent instructions retain the checked
-    /// fallback while this representation transition is measured.
+    #[cold]
+    #[inline(never)]
+    fn missing_return(&self, name: &str) -> RuntimeError {
+        self.error(
+            RuntimeErrorKind::InvalidBytecode,
+            format!("function `{name}` ended without Return"),
+            None,
+        )
+    }
+
+    /// Executes one installed instruction. Every opcode is matched here once;
+    /// operations too large or rare to share the hot loop's code layout live
+    /// in `#[inline(never)]` helpers, and the rarest are also `#[cold]`.
     #[allow(clippy::too_many_lines)]
-    fn execute_packed_hot_op(
+    #[inline]
+    fn execute_instruction(
         &mut self,
         program: &Program,
         instruction: &PackedInstruction,
-    ) -> VmResult<Option<BorrowedSpanOpOutcome>> {
+    ) -> VmResult<InstructionOutcome> {
         let operand = instruction.a as usize;
         match instruction.opcode {
             PackedOpcode::Constant => {
@@ -1991,31 +2010,61 @@ impl Vm {
                         return Err(self.error_at(
                             RuntimeErrorKind::InvalidBytecode,
                             format!("constant {operand} does not exist"),
-                            None,
                         ));
                     }
                 };
                 self.stack.push(value);
             }
+            PackedOpcode::Interpolate => {
+                self.interpolate(program, InterpolationId::new(instruction.a))?;
+            }
             PackedOpcode::Nil => self.stack.push(Value::Nil),
             PackedOpcode::True => self.stack.push(Value::Bool(true)),
             PackedOpcode::False => self.stack.push(Value::Bool(false)),
             PackedOpcode::Pop => {
-                self.pop_at(None)?;
+                self.pop_at()?;
             }
-            PackedOpcode::Duplicate => self.stack.push(self.peek_at(None)?.clone()),
+            PackedOpcode::Duplicate => self.stack.push(self.peek_at()?.clone()),
             PackedOpcode::GetLocal if instruction.b == MOVE_LOCAL => {
                 let value = self.take_local(operand)?;
                 self.stack.push(value);
             }
-            PackedOpcode::GetLocal => self.stack.push(self.local_value(operand, None)?),
+            PackedOpcode::GetLocal => self.stack.push(self.local_value(operand)?),
             PackedOpcode::SetLocal => {
-                let value = self.pop_at(None)?;
-                self.set_local_at(operand, value, None)?;
+                let value = self.pop_at()?;
+                self.set_local_at(operand, value)?;
+            }
+            PackedOpcode::GetCapture => {
+                let value = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.closure.captures.get(operand))
+                    .map(|cell| cell.borrow().clone())
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("capture {operand} does not exist"),
+                        )
+                    })?;
+                self.stack.push(value);
+            }
+            PackedOpcode::SetCapture => {
+                let value = self.pop_at()?;
+                let capture = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.closure.captures.get(operand))
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            format!("capture {operand} does not exist"),
+                        )
+                    })?;
+                *capture.borrow_mut() = value;
             }
             PackedOpcode::GetGlobal => {
                 let name = program
-                    .global_name(crate::GlobalNameId::new(instruction.a))
+                    .global_name(GlobalNameId::new(instruction.a))
                     .expect("validated global name metadata");
                 let value = self
                     .globals
@@ -2023,31 +2072,56 @@ impl Vm {
                     .get(name)
                     .cloned()
                     .ok_or_else(|| {
-                        self.error_at(
-                            RuntimeErrorKind::Name,
-                            format!("unknown name `{name}`"),
-                            None,
-                        )
+                        self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`"))
                     })?
                     .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, None))?;
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
                 self.stack.push(value);
             }
+            PackedOpcode::NotImplemented => {
+                return Err(
+                    self.error_at(RuntimeErrorKind::NotImplemented, "not implemented".into())
+                );
+            }
+            PackedOpcode::DefineGlobal => {
+                self.define_global(program, GlobalNameId::new(instruction.a))?;
+            }
+            PackedOpcode::CombineOverloads => self.combine_overloads()?,
+            PackedOpcode::DefineMapGlobals => self.define_map_globals()?,
+            PackedOpcode::RecordModuleTag => {
+                self.record_module_tag(operand, instruction.b as usize, instruction.c as usize)?;
+            }
+            PackedOpcode::SetGlobal => {
+                self.set_global(program, GlobalNameId::new(instruction.a))?;
+            }
+            PackedOpcode::MakeClosure => {
+                self.make_closure(program, operand, CaptureListId::new(instruction.b))?;
+            }
             PackedOpcode::List => {
-                let values = self.pop_values_at(operand, None)?;
+                let values = self.pop_values_at(operand)?;
                 #[cfg(feature = "metrics")]
                 self.record_collection_construction(values.len());
                 self.stack.push(Value::List(List::from_values(values)));
             }
+            PackedOpcode::ListSpread => {
+                let spreads = program
+                    .list_spread(ListSpreadId::new(instruction.a))
+                    .ok_or_else(|| {
+                        self.error_at(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "list spread metadata does not exist".into(),
+                        )
+                    })?;
+                self.list_spread_at(spreads)?;
+            }
             PackedOpcode::Map => {
-                let values = self.pop_values_at(operand.saturating_mul(2), None)?;
+                let values = self.pop_values_at(operand.saturating_mul(2))?;
                 let mut entries = Vec::with_capacity(operand);
                 for pair in values.chunks_exact(2) {
                     if !is_map_key(&pair[0]) {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
                             format!("{} cannot be used as a map key", pair[0].type_name()),
-                            None,
                         ));
                     }
                     entries.push((pair[0].clone(), pair[1].clone()));
@@ -2056,11 +2130,20 @@ impl Vm {
                 self.record_collection_construction(entries.len());
                 self.stack.push(Value::Map(Map::new(entries).into_shared()));
             }
+            PackedOpcode::StructSchema => {
+                self.struct_schema(program, SchemaFieldsId::new(instruction.a))?;
+            }
+            PackedOpcode::Struct => {
+                self.construct_struct(program, StructFieldsId::new(instruction.a))?;
+            }
+            PackedOpcode::StructCopy => {
+                self.copy_struct(program, StructFieldsId::new(instruction.a))?;
+            }
             PackedOpcode::GetIndexConstant => {
-                self.get_index_constant_at(program, operand, None)?;
+                self.get_index_constant_at(program, operand)?;
             }
             PackedOpcode::GetIndex => {
-                let (collection, index) = self.pop_pair_at(None)?;
+                let (collection, index) = self.pop_pair_at()?;
                 self.stack.push(
                     index_value(
                         collection,
@@ -2068,11 +2151,14 @@ impl Vm {
                         #[cfg(feature = "metrics")]
                         &self.metrics,
                     )
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, None))?,
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
+            PackedOpcode::GetSlice => {
+                self.get_slice(instruction.a != 0, instruction.b != 0, instruction.c != 0)?;
+            }
             PackedOpcode::Add => {
-                let (left, right) = self.pop_pair_at(None)?;
+                let (left, right) = self.pop_pair_at()?;
                 #[cfg(feature = "metrics")]
                 match (&left, &right) {
                     (Value::List(left), Value::List(right)) => {
@@ -2097,429 +2183,51 @@ impl Vm {
                     _ => {}
                 }
                 self.stack.push(
-                    add(left, right)
-                        .map_err(|(kind, message)| self.error_at(kind, message, None))?,
+                    add(left, right).map_err(|(kind, message)| self.error_at(kind, message))?,
                 );
             }
             PackedOpcode::AddNum => {
-                let (left, right) = self.pop_pair_at(None)?;
+                let (left, right) = self.pop_pair_at()?;
                 self.stack.push(
                     add_num(left, right)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, None))?,
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
             PackedOpcode::Subtract => {
-                let (left, right) = self.pop_pair_at(None)?;
+                let (left, right) = self.pop_pair_at()?;
                 #[cfg(feature = "metrics")]
                 if let Value::Map(entries) = &left {
                     self.record_collection_update(entries.len(), Rc::strong_count(entries) == 1);
                 }
                 self.stack.push(
                     subtract(left, right)
-                        .map_err(|(kind, message)| self.error_at(kind, message, None))?,
+                        .map_err(|(kind, message)| self.error_at(kind, message))?,
                 );
             }
-            PackedOpcode::SubtractNum => self.binary_at(None, subtract_num)?,
-            PackedOpcode::Multiply => self.binary_at(None, multiply)?,
-            PackedOpcode::MultiplyNum => self.binary_at(None, multiply_num)?,
-            PackedOpcode::Divide => self.binary_at(None, divide)?,
-            PackedOpcode::DivideNum => self.binary_at(None, divide_num)?,
-            PackedOpcode::Modulo => self.binary_at(None, modulo)?,
-            PackedOpcode::ModuloNum => self.binary_at(None, modulo_num)?,
-            PackedOpcode::Equal => {
-                let (left, right) = self.pop_pair_at(None)?;
-                self.stack.push(Value::Bool(left == right));
+            PackedOpcode::SubtractNum => self.binary_at(subtract_num)?,
+            PackedOpcode::Multiply => self.binary_at(multiply)?,
+            PackedOpcode::MultiplyNum => self.binary_at(multiply_num)?,
+            PackedOpcode::Divide => self.binary_at(divide)?,
+            PackedOpcode::DivideNum => self.binary_at(divide_num)?,
+            PackedOpcode::Modulo => self.binary_at(modulo)?,
+            PackedOpcode::ModuloNum => self.binary_at(modulo_num)?,
+            PackedOpcode::BitAnd => {
+                self.binary_at(|left, right| bitwise(left, right, |a, b| a & b))?;
             }
-            PackedOpcode::Greater => self.compare_at(None, cmp::Ordering::Greater)?,
-            PackedOpcode::GreaterNum => {
-                self.numeric_compare_at(None, cmp::Ordering::Greater)?;
+            PackedOpcode::BitOr => {
+                self.binary_at(|left, right| bitwise(left, right, |a, b| a | b))?;
             }
-            PackedOpcode::Less => self.compare_at(None, cmp::Ordering::Less)?,
-            PackedOpcode::LessNum => self.numeric_compare_at(None, cmp::Ordering::Less)?,
-            PackedOpcode::Jump => self.jump_at(operand, None)?,
-            PackedOpcode::JumpIfFalse => {
-                if !self.peek_at(None)?.is_truthy() {
-                    self.jump_at(operand, None)?;
-                }
+            PackedOpcode::BitXor => {
+                self.binary_at(|left, right| bitwise(left, right, |a, b| a ^ b))?;
             }
-            PackedOpcode::CallPositional => self.call_positional_at(program, operand, None)?,
-            PackedOpcode::EnterScope => self.enter_scope_at(None)?,
-            PackedOpcode::LeaveScope => {
-                if !self.leave_scope_without_cleanup_at(None)? {
-                    return Ok(None);
-                }
+            PackedOpcode::ShiftLeft => {
+                self.binary_at(|left, right| shift(left, right, i64::checked_shl))?;
             }
-            PackedOpcode::TryMatch => self.try_match_at(
-                program,
-                MatchPatternId::new(instruction.a),
-                instruction.b as usize,
-                instruction.c as usize,
-                None,
-            )?,
-            PackedOpcode::RecurPositional => self.recur_positional_at(program, operand, None)?,
-            PackedOpcode::Return => {
-                let value = self.pop_at(None)?;
-                if let Err(value) = self.return_without_cleanup(value)
-                    && let Some(value) = self.begin_return(value)?
-                {
-                    return Ok(Some(BorrowedSpanOpOutcome::Settled(value)));
-                }
+            PackedOpcode::ShiftRight => {
+                self.binary_at(|left, right| shift(left, right, i64::checked_shr))?;
             }
-            _ => return Ok(None),
-        }
-        Ok(Some(BorrowedSpanOpOutcome::Continue))
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn execute_borrowed_span_op(
-        &mut self,
-        program: &Program,
-        op: &Op,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<BorrowedSpanOpOutcome> {
-        match op {
-            Op::Constant(index) => {
-                let chunk = self.current_chunk(program)?;
-                let value = match chunk.constants.get(*index) {
-                    Some(crate::Constant::Value(value)) => value.clone(),
-                    Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
-                        chunk: *function,
-                        captures: Vec::new(),
-                        program: Some(self.active_program()?),
-                        globals: Some(self.globals.clone()),
-                        #[cfg(feature = "concurrency")]
-                        capture_sources: Vec::new(),
-                    })),
-                    None => {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::InvalidBytecode,
-                            format!("constant {index} does not exist"),
-                            span,
-                        ));
-                    }
-                };
-                self.stack.push(value);
-            }
-            Op::Interpolate(parts) => {
-                let values = self.pop_values_at(parts.len().saturating_sub(1), span)?;
-                let mut output = String::new();
-                for (index, text) in parts.iter().enumerate() {
-                    output.push_str(text);
-                    if let Some(value) = values.get(index) {
-                        output.push_str(&value.to_string());
-                    }
-                }
-                self.stack.push(Value::string(output));
-            }
-            Op::InterpolatePooled(id) => {
-                let parts = program.interpolation(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "interpolation metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                let values = self.pop_values_at(parts.len().saturating_sub(1), span)?;
-                let mut output = String::new();
-                for (index, text) in parts.iter().enumerate() {
-                    output.push_str(text);
-                    if let Some(value) = values.get(index) {
-                        output.push_str(&value.to_string());
-                    }
-                }
-                self.stack.push(Value::string(output));
-            }
-            Op::GetCapture(slot) => {
-                let value = self
-                    .frames
-                    .last()
-                    .and_then(|frame| frame.closure.captures.get(*slot))
-                    .map(|cell| cell.borrow().clone())
-                    .ok_or_else(|| {
-                        self.error_at(
-                            RuntimeErrorKind::InvalidBytecode,
-                            format!("capture {slot} does not exist"),
-                            span,
-                        )
-                    })?;
-                self.stack.push(value);
-            }
-            Op::SetCapture(slot) => {
-                let value = self.pop_at(span)?;
-                let capture = self
-                    .frames
-                    .last()
-                    .and_then(|frame| frame.closure.captures.get(*slot))
-                    .ok_or_else(|| {
-                        self.error_at(
-                            RuntimeErrorKind::InvalidBytecode,
-                            format!("capture {slot} does not exist"),
-                            span,
-                        )
-                    })?;
-                *capture.borrow_mut() = value;
-            }
-            Op::NotImplemented => {
-                return Err(self.error_at(
-                    RuntimeErrorKind::NotImplemented,
-                    "not implemented".into(),
-                    span,
-                ));
-            }
-            Op::Nil => self.stack.push(Value::Nil),
-            Op::True => self.stack.push(Value::Bool(true)),
-            Op::False => self.stack.push(Value::Bool(false)),
-            Op::Pop => {
-                self.pop_at(span)?;
-            }
-            Op::Duplicate => self.stack.push(self.peek_at(span)?.clone()),
-            Op::GetLocal(slot) => self.stack.push(self.local_value(*slot, span)?),
-            Op::SetLocal(slot) => {
-                let value = self.pop_at(span)?;
-                self.set_local_at(*slot, value, span)?;
-            }
-            Op::GetGlobal(name) => {
-                let value = self
-                    .globals
-                    .borrow()
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        self.error_at(
-                            RuntimeErrorKind::Name,
-                            format!("unknown name `{name}`"),
-                            span,
-                        )
-                    })?
-                    .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
-                self.stack.push(value);
-            }
-            Op::DefineGlobal(name) => {
-                let value = self.pop_unresolved_at(span)?;
-                if self.imported_globals.remove(name) {
-                    self.warning(format!(
-                        "local binding `{name}` shadows an imported binding"
-                    ));
-                }
-                if !self
-                    .globals
-                    .borrow()
-                    .get(name)
-                    .is_some_and(|binding| binding.replace_binding(value.clone()))
-                {
-                    self.globals.borrow_mut().insert(name.clone(), value);
-                }
-            }
-            Op::CombineOverloads => {
-                let existing = self.pop_unresolved_at(span)?;
-                let new = self.pop_unresolved_at(span)?;
-                let mut overloads = match existing {
-                    Value::Overloads(overloads) => overloads.as_ref().clone(),
-                    value if Self::callable_signature(&value).is_some() => vec![value],
-                    _ => {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::InvalidBytecode,
-                            "overload combination requires callable values".into(),
-                            span,
-                        ));
-                    }
-                };
-                match new {
-                    Value::Overloads(values) => overloads.extend(values.iter().cloned()),
-                    value if Self::callable_signature(&value).is_some() => overloads.push(value),
-                    _ => {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::InvalidBytecode,
-                            "overload combination requires callable values".into(),
-                            span,
-                        ));
-                    }
-                }
-                self.stack.push(Value::Overloads(Rc::new(overloads)));
-            }
-            Op::DefineMapGlobals => {
-                let value = self.pop_unresolved_at(span)?;
-                let Value::Map(entries) = value else {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::Type,
-                        format!("{{*}} binding expects a map, got {}", value.type_name()),
-                        span,
-                    ));
-                };
-                for (key, value) in entries.iter() {
-                    let Value::Str(name) = key else {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::Type,
-                            "{*} binding requires string map keys".into(),
-                            span,
-                        ));
-                    };
-                    let name = name.to_string();
-                    let existing = self.globals.borrow().get(&name).cloned();
-                    let Some(existing) = existing else {
-                        self.globals
-                            .borrow_mut()
-                            .insert(name.clone(), value.clone());
-                        self.imported_globals.insert(name);
-                        continue;
-                    };
-                    if existing.is_uninitialized_binding() {
-                        existing.replace_binding(value.clone());
-                        self.imported_globals.insert(name);
-                    } else {
-                        self.warning(format!(
-                            "imported binding `{name}` is shadowed by a local binding"
-                        ));
-                    }
-                }
-            }
-            Op::RecordModuleTag {
-                declaration,
-                tag,
-                arguments,
-            } => {
-                let arguments = self.pop_values_at(*arguments, span)?;
-                if self
-                    .module_metadata
-                    .get(*declaration)
-                    .is_none_or(|declaration| declaration.tags.get(*tag).is_none())
-                {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "module tag metadata does not exist".into(),
-                        span,
-                    ));
-                }
-                self.module_metadata[*declaration].tags[*tag].arguments = arguments;
-            }
-            Op::SetGlobal(name) => {
-                if !self.globals.borrow().contains_key(name) {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::Name,
-                        format!("unknown name `{name}`"),
-                        span,
-                    ));
-                }
-                let value = self.pop_at(span)?;
-                if !self
-                    .globals
-                    .borrow()
-                    .get(name)
-                    .is_some_and(|binding| binding.replace_binding(value.clone()))
-                {
-                    self.globals.borrow_mut().insert(name.clone(), value);
-                }
-            }
-            Op::MakeClosure { chunk, captures } => {
-                program.chunk(*chunk).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        format!("function chunk {chunk} does not exist"),
-                        span,
-                    )
-                })?;
-                #[cfg(feature = "concurrency")]
-                let capture_sources = captures.clone();
-                let captures = captures
-                    .iter()
-                    .map(|capture| match capture {
-                        Capture::Local(slot) => self.promote_local_at(*slot, span),
-                        Capture::Capture(slot) => self
-                            .frames
-                            .last()
-                            .and_then(|frame| frame.closure.captures.get(*slot))
-                            .cloned()
-                            .ok_or_else(|| {
-                                self.error_at(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    format!("capture {slot} does not exist"),
-                                    span,
-                                )
-                            }),
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                self.stack.push(Value::Closure(Rc::new(Closure {
-                    chunk: *chunk,
-                    captures,
-                    program: Some(self.active_program()?),
-                    globals: Some(self.globals.clone()),
-                    #[cfg(feature = "concurrency")]
-                    capture_sources,
-                })));
-            }
-            Op::Add => {
-                let (left, right) = self.pop_pair_at(span)?;
-                #[cfg(feature = "metrics")]
-                match (&left, &right) {
-                    (Value::List(left), Value::List(right)) => {
-                        self.record_list_view_materialization(left);
-                        self.record_collection_update(
-                            left.len() + right.len(),
-                            left.is_uniquely_owned(),
-                        );
-                    }
-                    (Value::Map(left), Value::Map(right)) => {
-                        self.record_collection_update(
-                            left.len() + right.len(),
-                            Rc::strong_count(left) == 1,
-                        );
-                    }
-                    (Value::Bytes(left), Value::Bytes(right)) => {
-                        self.record_collection_update(
-                            left.len() + right.len(),
-                            Rc::strong_count(left) == 1,
-                        );
-                    }
-                    _ => {}
-                }
-                self.stack.push(
-                    add(left, right)
-                        .map_err(|(kind, message)| self.error_at(kind, message, span))?,
-                );
-            }
-            Op::AddNum => {
-                let (left, right) = self.pop_pair_at(span)?;
-                self.stack.push(
-                    add_num(left, right)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
-                );
-            }
-            Op::Subtract => {
-                let (left, right) = self.pop_pair_at(span)?;
-                #[cfg(feature = "metrics")]
-                if let Value::Map(entries) = &left {
-                    self.record_collection_update(entries.len(), Rc::strong_count(entries) == 1);
-                }
-                self.stack.push(
-                    subtract(left, right)
-                        .map_err(|(kind, message)| self.error_at(kind, message, span))?,
-                );
-            }
-            Op::SubtractNum => self.binary_at(span, subtract_num)?,
-            Op::Multiply => self.binary_at(span, multiply)?,
-            Op::MultiplyNum => self.binary_at(span, multiply_num)?,
-            Op::Divide => self.binary_at(span, divide)?,
-            Op::DivideNum => self.binary_at(span, divide_num)?,
-            Op::Modulo => self.binary_at(span, modulo)?,
-            Op::ModuloNum => self.binary_at(span, modulo_num)?,
-            Op::BitAnd => {
-                self.binary_at(span, |left, right| bitwise(left, right, |a, b| a & b))?;
-            }
-            Op::BitOr => {
-                self.binary_at(span, |left, right| bitwise(left, right, |a, b| a | b))?;
-            }
-            Op::BitXor => {
-                self.binary_at(span, |left, right| bitwise(left, right, |a, b| a ^ b))?;
-            }
-            Op::ShiftLeft => {
-                self.binary_at(span, |left, right| shift(left, right, i64::checked_shl))?;
-            }
-            Op::ShiftRight => {
-                self.binary_at(span, |left, right| shift(left, right, i64::checked_shr))?;
-            }
-            Op::ListAppend => {
-                let (list, value) = self.pop_pair_at(span)?;
+            PackedOpcode::ListAppend => {
+                let (list, value) = self.pop_pair_at()?;
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
@@ -2533,11 +2241,11 @@ impl Vm {
                 }
                 self.stack.push(
                     list_append(list, value)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
-            Op::ListPrepend => {
-                let (value, list) = self.pop_pair_at(span)?;
+            PackedOpcode::ListPrepend => {
+                let (value, list) = self.pop_pair_at()?;
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
@@ -2551,635 +2259,566 @@ impl Vm {
                 }
                 self.stack.push(
                     list_prepend(value, list)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
-            Op::List(count) => {
-                let values = self.pop_values_at(*count, span)?;
-                #[cfg(feature = "metrics")]
-                self.record_collection_construction(values.len());
-                self.stack.push(Value::List(List::from_values(values)));
-            }
-            Op::ListSpread(spreads) => self.list_spread_at(spreads, span)?,
-            Op::ListSpreadPooled(id) => {
-                let spreads = program.list_spread(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "list spread metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.list_spread_at(spreads, span)?;
-            }
-            Op::Map(count) => {
-                let values = self.pop_values_at(count.saturating_mul(2), span)?;
-                let mut entries = Vec::with_capacity(*count);
-                for pair in values.chunks_exact(2) {
-                    if !is_map_key(&pair[0]) {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::Type,
-                            format!("{} cannot be used as a map key", pair[0].type_name()),
-                            span,
-                        ));
-                    }
-                    entries.push((pair[0].clone(), pair[1].clone()));
-                }
-                #[cfg(feature = "metrics")]
-                self.record_collection_construction(entries.len());
-                self.stack.push(Value::Map(Map::new(entries).into_shared()));
-            }
-            Op::StructSchema(fields) => {
-                let default_count = fields.iter().filter(|field| field.has_default).count();
-                let defaults = self.pop_values_at(default_count, span)?;
-                let mut defaults = defaults.into_iter();
-                let mut names = Vec::with_capacity(fields.len());
-                let mut schema_fields = Vec::with_capacity(fields.len());
-                for field in fields {
-                    if names.contains(&field.name) {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::InvalidBytecode,
-                            format!("duplicate struct schema field '{}'", field.name),
-                            span,
-                        ));
-                    }
-                    names.push(field.name.clone());
-                    schema_fields.push(crate::StructField {
-                        name: field.name.clone().into(),
-                        default: field.has_default.then(|| {
-                            defaults
-                                .next()
-                                .expect("default count was derived from field metadata")
-                        }),
-                    });
-                }
-                self.stack
-                    .push(Value::StructSchema(Rc::new(crate::StructSchema {
-                        fields: schema_fields,
-                    })));
-            }
-            Op::Struct(fields) => {
-                let values = self.pop_values_at(fields.len(), span)?;
-                let schema = self.pop_at(span)?;
-                #[cfg(feature = "metrics")]
-                self.record_collection_construction(values.len());
-                self.stack.push(
-                    construct_struct(schema, fields, &values)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
-                );
-            }
-            Op::StructCopy(fields) => {
-                let replacements = self.pop_values_at(fields.len(), span)?;
-                let value = self.pop_at(span)?;
-                #[cfg(feature = "metrics")]
-                match &value {
-                    Value::Map(value) => {
-                        self.record_collection_update(value.len(), Rc::strong_count(value) == 1);
-                    }
-                    Value::Struct(value) => {
-                        self.record_collection_update(
-                            value.values.len(),
-                            Rc::strong_count(value) == 1,
-                        );
-                    }
-                    _ => {}
-                }
-                self.stack.push(
-                    copy_value(value, fields, &replacements)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
-                );
-            }
-            Op::GetSlice {
-                has_start,
-                has_end,
-                has_step,
-            } => {
-                let count =
-                    usize::from(*has_start) + usize::from(*has_end) + usize::from(*has_step);
-                let mut values = self.pop_values_at(count + 1, span)?.into_iter();
-                let collection = values
-                    .next()
-                    .expect("slice operation includes a collection");
-                #[cfg(feature = "metrics")]
-                self.record_collection_slice();
-                let start = has_start.then(|| values.next().expect("slice start is present"));
-                let end = has_end.then(|| values.next().expect("slice end is present"));
-                let step = has_step.then(|| values.next().expect("slice step is present"));
-                self.stack.push(
-                    slice_value(collection, start.as_ref(), end.as_ref(), step.as_ref())
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
-                );
-            }
-            Op::GetIndexConstant(constant) => {
-                self.get_index_constant_at(program, *constant, span)?;
-            }
-            Op::GetIndex => {
-                let (collection, index) = self.pop_pair_at(span)?;
-                self.stack.push(
-                    index_value(
-                        collection,
-                        &index,
-                        #[cfg(feature = "metrics")]
-                        &self.metrics,
-                    )
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
-                );
-            }
-            Op::Negate => {
-                let value = self.pop_at(span)?;
+            PackedOpcode::Negate => {
+                let value = self.pop_at()?;
                 self.stack.push(
                     negate(value)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
-            Op::Not => {
-                let value = self.pop_at(span)?;
+            PackedOpcode::Not => {
+                let value = self.pop_at()?;
                 self.stack.push(Value::Bool(!value.is_truthy()));
             }
-            Op::BitNot => {
-                let value = self.pop_at(span)?;
+            PackedOpcode::BitNot => {
+                let value = self.pop_at()?;
                 self.stack.push(
                     bit_not(&value)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
+                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
-            Op::Equal => {
-                let (left, right) = self.pop_pair_at(span)?;
+            PackedOpcode::Equal => {
+                let (left, right) = self.pop_pair_at()?;
                 self.stack.push(Value::Bool(left == right));
             }
-            Op::Greater => self.compare_at(span, cmp::Ordering::Greater)?,
-            Op::GreaterNum => self.numeric_compare_at(span, cmp::Ordering::Greater)?,
-            Op::Less => self.compare_at(span, cmp::Ordering::Less)?,
-            Op::LessNum => self.numeric_compare_at(span, cmp::Ordering::Less)?,
-            Op::GuardGreater => self.guard_compare_at(span, cmp::Ordering::Greater)?,
-            Op::GuardLess => self.guard_compare_at(span, cmp::Ordering::Less)?,
-            Op::Jump(target) => self.jump_at(*target, span)?,
-            Op::JumpIfFalse(target) => {
-                if !self.peek_at(span)?.is_truthy() {
-                    self.jump_at(*target, span)?;
+            PackedOpcode::Greater => self.compare_at(cmp::Ordering::Greater)?,
+            PackedOpcode::GreaterNum => {
+                self.numeric_compare_at(cmp::Ordering::Greater)?;
+            }
+            PackedOpcode::Less => self.compare_at(cmp::Ordering::Less)?,
+            PackedOpcode::LessNum => self.numeric_compare_at(cmp::Ordering::Less)?,
+            PackedOpcode::GuardGreater => self.guard_compare_at(cmp::Ordering::Greater)?,
+            PackedOpcode::GuardLess => self.guard_compare_at(cmp::Ordering::Less)?,
+            PackedOpcode::Jump => self.jump_at(operand)?,
+            PackedOpcode::JumpIfFalse => {
+                if !self.peek_at()?.is_truthy() {
+                    self.jump_at(operand)?;
                 }
             }
-            Op::JumpIfProvided { slot, target } => {
+            PackedOpcode::JumpIfProvided => {
                 if self
                     .frames
                     .last()
-                    .is_some_and(|frame| frame.provided.is_provided(*slot))
+                    .is_some_and(|frame| frame.provided.is_provided(operand))
                 {
-                    self.jump_at(*target, span)?;
+                    self.jump_at(instruction.b as usize)?;
                 }
             }
-            Op::Recur(kinds) => self.recur_at(program, kinds, span)?,
-            Op::RecurPooled(id) => {
-                let kinds = program.call_arguments(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.recur_at(program, kinds, span)?;
+            PackedOpcode::Call => self.call_at(program, operand, None)?,
+            PackedOpcode::CallPositional => self.call_positional_at(program, operand)?,
+            PackedOpcode::CallSpread => {
+                let kinds =
+                    self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
+                self.call_spread_at(program, kinds, None)?;
             }
-            Op::RecurPositional(count) => self.recur_positional_at(program, *count, span)?,
-            Op::Call(count) => self.call_at(program, *count, None, span)?,
-            Op::CallPositional(count) => self.call_positional_at(program, *count, span)?,
-            Op::CallSpread(kinds) => self.call_spread_at(program, kinds, None, span)?,
-            Op::CallSpreadPooled(id) => {
-                let kinds = program.call_arguments(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.call_spread_at(program, kinds, None, span)?;
+            PackedOpcode::CallSelected => {
+                self.call_selected(program, SelectedCallId::new(instruction.a), false)?;
             }
-            Op::CallSelected { kinds, identity } => {
-                let identity = program.callable_identity(*identity).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "selected callable identity does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.call_spread_at(program, kinds, Some(identity), span)?;
+            PackedOpcode::PipelineCall => {
+                let kinds =
+                    self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
+                self.pipeline_call_at(program, kinds, None)?;
             }
-            Op::CallSelectedPooled(id) => {
-                let (kinds, identity) = program.selected_call(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "selected call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                let kinds = program.call_arguments(kinds).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                let identity = program.callable_identity(identity).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "selected callable identity does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.call_spread_at(program, kinds, Some(identity), span)?;
+            PackedOpcode::PipelineCallSelected => {
+                self.call_selected(program, SelectedCallId::new(instruction.a), true)?;
             }
-            Op::PipelineCall(kinds) => self.pipeline_call_at(program, kinds, None, span)?,
-            Op::PipelineCallPooled(id) => {
-                let kinds = program.call_arguments(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.pipeline_call_at(program, kinds, None, span)?;
-            }
-            Op::PipelineCallSelected { kinds, identity } => {
-                let identity = program.callable_identity(*identity).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "selected callable identity does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.pipeline_call_at(program, kinds, Some(identity), span)?;
-            }
-            Op::PipelineCallSelectedPooled(id) => {
-                let (kinds, identity) = program.selected_call(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "selected call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                let kinds = program.call_arguments(kinds).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                let identity = program.callable_identity(identity).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "selected callable identity does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.pipeline_call_at(program, kinds, Some(identity), span)?;
-            }
-            Op::Import(kinds) => self.import_at(kinds, span)?,
-            Op::ImportPooled(id) => {
-                let kinds = program.call_arguments(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "call metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.import_at(kinds, span)?;
-            }
-            Op::Select(cases) => {
-                self.select_at(cases, span)?;
-            }
-            Op::SelectPooled(id) => {
-                let cases = program.select_cases(*id).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "select metadata does not exist".into(),
-                        span,
-                    )
-                })?;
-                self.select_at(cases, span)?;
-            }
-            Op::SelectApply => self.select_apply_at(program, span)?,
-            Op::Spawn => {
-                #[cfg(feature = "concurrency")]
-                self.spawn_task_at(program, span)?;
-                #[cfg(not(feature = "concurrency"))]
-                return Err(self.runtime_capability_error("spawn", span));
-            }
-            Op::Nursery { has_limit } => {
-                #[cfg(feature = "concurrency")]
-                self.run_nursery_at(program, *has_limit, span)?;
-                #[cfg(not(feature = "concurrency"))]
-                {
-                    let _ = has_limit;
-                    return Err(self.runtime_capability_error("nursery", span));
-                }
-            }
-            Op::EnterScope => self.enter_scope_at(span)?,
-            Op::LeaveScope => {
-                if self.frames.is_empty() {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "no active call frame".into(),
-                        span,
-                    ));
-                }
-                let frame = self.frames.last_mut().expect("frame was checked");
-                if frame.scope_depth <= 1 {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "no active scope".into(),
-                        span,
-                    ));
-                }
-                frame.scope_depth -= 1;
-                let actions = frame.scopes.pop().unwrap_or_default();
-                // Leaving a scope while cleanup is in progress resumes this
-                // frame once the scope's own actions have run.
-                if !self.cleanup.is_empty() {
-                    self.cleanup.push(Cleanup::Resume);
-                }
-                self.cleanup.push(Cleanup::Actions {
-                    actions,
-                    success: true,
-                    frame_depth: self.frames.len() - 1,
-                });
-                if let Some(value) = self.drive_cleanup()? {
-                    return Ok(BorrowedSpanOpOutcome::Settled(value));
-                }
-            }
-            Op::Defer { mode } => {
-                let action = self.pop_at(span)?;
-                if !matches!(
-                    action,
-                    Value::Closure(_)
-                        | Value::Native(_)
-                        | Value::DeclaredNative { .. }
-                        | Value::Builtin(_)
-                ) {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::Type,
-                        "defer expects a callable action".into(),
-                        span,
-                    ));
-                }
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "no active call frame".into(),
-                        span,
-                    ));
-                };
-                if frame.scope_depth == 0 {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "no active scope".into(),
-                        span,
-                    ));
-                }
-                let materialized_depth = frame.scopes.is_empty().then_some(frame.scope_depth);
-                if let Some(depth) = materialized_depth {
-                    frame.scopes.resize_with(depth as usize, Vec::new);
-                }
-                let scope = frame.scopes.last_mut().expect("scope depth was checked");
-                scope.push(Deferred {
-                    action,
-                    mode: *mode,
-                });
-                if let Some(depth) = materialized_depth {
-                    self.record_defer_scope_stack(depth as usize);
-                }
-            }
-            Op::TryMatch {
-                pattern,
-                bindings,
-                operands,
-            } => {
-                let operands = self.pop_values_at(*operands, span)?;
-                let value = self.pop_at(span)?;
-                let mut values = Vec::new();
-                let mut list_views_created = 0;
-                let matched = matches_pattern(
-                    pattern,
-                    &value,
-                    &operands,
-                    &mut values,
-                    &mut list_views_created,
-                )
-                .map_err(|(kind, message)| self.error_at(kind, message, span))?;
-                #[cfg(feature = "metrics")]
-                {
-                    self.metrics.borrow_mut().list_views_created += list_views_created;
-                }
-                if matched && values.len() != *bindings {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "match pattern binding count is invalid".into(),
-                        span,
-                    ));
-                }
-                if matched {
-                    self.stack.extend(values);
-                } else {
-                    self.stack.extend((0..*bindings).map(|_| Value::Nil));
-                }
-                self.stack.push(Value::Bool(matched));
-            }
-            Op::MatchFailure => {
+            PackedOpcode::Import => self.import(program, CallArgumentsId::new(instruction.a))?,
+            PackedOpcode::Spawn => self.spawn(program)?,
+            PackedOpcode::Nursery => self.nursery(program, instruction.a != 0)?,
+            PackedOpcode::Select => self.select(program, SelectCasesId::new(instruction.a))?,
+            PackedOpcode::SelectApply => self.select_apply_at(program)?,
+            PackedOpcode::TryMatch => self.try_match_at(
+                program,
+                MatchPatternId::new(instruction.a),
+                instruction.b as usize,
+                instruction.c as usize,
+            )?,
+            PackedOpcode::MatchFailure => {
                 return Err(self.error_at(
                     RuntimeErrorKind::Match,
                     "destructuring pattern did not match".into(),
-                    span,
                 ));
             }
-            Op::Throw => {
-                let value = self.pop_at(span)?;
-                return Err(self.thrown(value, self.owned_span(span)));
+            PackedOpcode::Throw => {
+                let value = self.pop_at()?;
+                return Err(self.thrown(value, self.owned_span(None)));
             }
-            Op::Return => {
-                let value = self.pop_at(span)?;
-                if let Some(value) = self.begin_return(value)? {
-                    return Ok(BorrowedSpanOpOutcome::Settled(value));
+            PackedOpcode::EnterScope => self.enter_scope_at()?,
+            PackedOpcode::LeaveScope => {
+                if !self.leave_scope_without_cleanup_at()?
+                    && let Some(value) = self.leave_scope_with_cleanup()?
+                {
+                    return Ok(InstructionOutcome::Settled(value));
                 }
             }
-            Op::GetGlobalPooled(id) => {
-                let name = program
-                    .global_name(*id)
-                    .expect("validated global name metadata");
-                let value = self
-                    .globals
-                    .borrow()
-                    .get(name)
+            PackedOpcode::Defer => self.defer(instruction.a)?,
+            PackedOpcode::Recur => {
+                let kinds =
+                    self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
+                self.recur_at(program, kinds)?;
+            }
+            PackedOpcode::RecurPositional => self.recur_positional_at(program, operand)?,
+            PackedOpcode::Return => {
+                let value = self.pop_at()?;
+                if let Err(value) = self.return_without_cleanup(value)
+                    && let Some(value) = self.begin_return(value)?
+                {
+                    return Ok(InstructionOutcome::Settled(value));
+                }
+            }
+        }
+        Ok(InstructionOutcome::Continue)
+    }
+
+    fn pooled_call_arguments<'a>(
+        &self,
+        program: &'a Program,
+        id: CallArgumentsId,
+    ) -> VmResult<&'a [CallArgumentKind]> {
+        program.call_arguments(id).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "call metadata does not exist".into(),
+            )
+        })
+    }
+
+    #[inline(never)]
+    fn call_selected(
+        &mut self,
+        program: &Program,
+        id: SelectedCallId,
+        pipeline: bool,
+    ) -> VmResult<()> {
+        let (kinds, identity) = program.selected_call(id).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "selected call metadata does not exist".into(),
+            )
+        })?;
+        let kinds = self.pooled_call_arguments(program, kinds)?;
+        let identity = program.callable_identity(identity).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "selected callable identity does not exist".into(),
+            )
+        })?;
+        if pipeline {
+            self.pipeline_call_at(program, kinds, Some(identity))
+        } else {
+            self.call_spread_at(program, kinds, Some(identity))
+        }
+    }
+
+    #[inline(never)]
+    fn interpolate(&mut self, program: &Program, id: InterpolationId) -> VmResult<()> {
+        let parts = program.interpolation(id).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "interpolation metadata does not exist".into(),
+            )
+        })?;
+        let values = self.pop_values_at(parts.len().saturating_sub(1))?;
+        let mut output = String::new();
+        for (index, text) in parts.iter().enumerate() {
+            output.push_str(text);
+            if let Some(value) = values.get(index) {
+                output.push_str(&value.to_string());
+            }
+        }
+        self.stack.push(Value::string(output));
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn define_global(&mut self, program: &Program, id: GlobalNameId) -> VmResult<()> {
+        let name = program
+            .global_name(id)
+            .expect("validated global name metadata");
+        let value = self.pop_unresolved_at()?;
+        if self.imported_globals.remove(name) {
+            self.warning(format!(
+                "local binding `{name}` shadows an imported binding"
+            ));
+        }
+        if !self
+            .globals
+            .borrow()
+            .get(name)
+            .is_some_and(|binding| binding.replace_binding(value.clone()))
+        {
+            self.globals.borrow_mut().insert(name.into(), value);
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn set_global(&mut self, program: &Program, id: GlobalNameId) -> VmResult<()> {
+        let name = program
+            .global_name(id)
+            .expect("validated global name metadata");
+        if !self.globals.borrow().contains_key(name) {
+            return Err(self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`")));
+        }
+        let value = self.pop_at()?;
+        if !self
+            .globals
+            .borrow()
+            .get(name)
+            .is_some_and(|binding| binding.replace_binding(value.clone()))
+        {
+            self.globals.borrow_mut().insert(name.into(), value);
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn combine_overloads(&mut self) -> VmResult<()> {
+        let existing = self.pop_unresolved_at()?;
+        let new = self.pop_unresolved_at()?;
+        let mut overloads = match existing {
+            Value::Overloads(overloads) => overloads.as_ref().clone(),
+            value if Self::callable_signature(&value).is_some() => vec![value],
+            _ => {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "overload combination requires callable values".into(),
+                ));
+            }
+        };
+        match new {
+            Value::Overloads(values) => overloads.extend(values.iter().cloned()),
+            value if Self::callable_signature(&value).is_some() => overloads.push(value),
+            _ => {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "overload combination requires callable values".into(),
+                ));
+            }
+        }
+        self.stack.push(Value::Overloads(Rc::new(overloads)));
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn define_map_globals(&mut self) -> VmResult<()> {
+        let value = self.pop_unresolved_at()?;
+        let Value::Map(entries) = value else {
+            return Err(self.error_at(
+                RuntimeErrorKind::Type,
+                format!("{{*}} binding expects a map, got {}", value.type_name()),
+            ));
+        };
+        for (key, value) in entries.iter() {
+            let Value::Str(name) = key else {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Type,
+                    "{*} binding requires string map keys".into(),
+                ));
+            };
+            let name = name.to_string();
+            let existing = self.globals.borrow().get(&name).cloned();
+            let Some(existing) = existing else {
+                self.globals
+                    .borrow_mut()
+                    .insert(name.clone(), value.clone());
+                self.imported_globals.insert(name);
+                continue;
+            };
+            if existing.is_uninitialized_binding() {
+                existing.replace_binding(value.clone());
+                self.imported_globals.insert(name);
+            } else {
+                self.warning(format!(
+                    "imported binding `{name}` is shadowed by a local binding"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn record_module_tag(
+        &mut self,
+        declaration: usize,
+        tag: usize,
+        arguments: usize,
+    ) -> VmResult<()> {
+        let arguments = self.pop_values_at(arguments)?;
+        if self
+            .module_metadata
+            .get(declaration)
+            .is_none_or(|declaration| declaration.tags.get(tag).is_none())
+        {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "module tag metadata does not exist".into(),
+            ));
+        }
+        self.module_metadata[declaration].tags[tag].arguments = arguments;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn make_closure(
+        &mut self,
+        program: &Program,
+        chunk: usize,
+        captures: CaptureListId,
+    ) -> VmResult<()> {
+        program.chunk(chunk).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("function chunk {chunk} does not exist"),
+            )
+        })?;
+        let capture_sources = program
+            .capture_list(captures)
+            .expect("validated capture metadata");
+        let captures = capture_sources
+            .iter()
+            .map(|capture| match capture {
+                Capture::Local(slot) => self.promote_local_at(*slot),
+                Capture::Capture(slot) => self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.closure.captures.get(*slot))
                     .cloned()
                     .ok_or_else(|| {
                         self.error_at(
-                            RuntimeErrorKind::Name,
-                            format!("unknown name `{name}`"),
-                            span,
-                        )
-                    })?
-                    .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
-                self.stack.push(value);
-            }
-            Op::DefineGlobalPooled(id) => {
-                let name = program
-                    .global_name(*id)
-                    .expect("validated global name metadata");
-                let value = self.pop_unresolved_at(span)?;
-                if self.imported_globals.remove(name) {
-                    self.warning(format!(
-                        "local binding `{name}` shadows an imported binding"
-                    ));
-                }
-                if !self
-                    .globals
-                    .borrow()
-                    .get(name)
-                    .is_some_and(|binding| binding.replace_binding(value.clone()))
-                {
-                    self.globals.borrow_mut().insert(name.into(), value);
-                }
-            }
-            Op::SetGlobalPooled(id) => {
-                let name = program
-                    .global_name(*id)
-                    .expect("validated global name metadata");
-                if !self.globals.borrow().contains_key(name) {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::Name,
-                        format!("unknown name `{name}`"),
-                        span,
-                    ));
-                }
-                let value = self.pop_at(span)?;
-                if !self
-                    .globals
-                    .borrow()
-                    .get(name)
-                    .is_some_and(|binding| binding.replace_binding(value.clone()))
-                {
-                    self.globals.borrow_mut().insert(name.into(), value);
-                }
-            }
-            Op::MakeClosurePooled { chunk, captures } => {
-                program.chunk(*chunk).ok_or_else(|| {
-                    self.error_at(
-                        RuntimeErrorKind::InvalidBytecode,
-                        format!("function chunk {chunk} does not exist"),
-                        span,
-                    )
-                })?;
-                let capture_sources = program
-                    .capture_list(*captures)
-                    .expect("validated capture metadata");
-                let captures = capture_sources
-                    .iter()
-                    .map(|capture| match capture {
-                        Capture::Local(slot) => self.promote_local_at(*slot, span),
-                        Capture::Capture(slot) => self
-                            .frames
-                            .last()
-                            .and_then(|frame| frame.closure.captures.get(*slot))
-                            .cloned()
-                            .ok_or_else(|| {
-                                self.error_at(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    format!("capture {slot} does not exist"),
-                                    span,
-                                )
-                            }),
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                self.stack.push(Value::Closure(Rc::new(Closure {
-                    chunk: *chunk,
-                    captures,
-                    program: Some(self.active_program()?),
-                    globals: Some(self.globals.clone()),
-                    #[cfg(feature = "concurrency")]
-                    capture_sources: capture_sources.to_vec(),
-                })));
-            }
-            Op::StructSchemaPooled(id) => {
-                let fields = program
-                    .schema_fields(*id)
-                    .expect("validated schema field metadata");
-                let default_count = fields.iter().filter(|field| field.has_default).count();
-                let defaults = self.pop_values_at(default_count, span)?;
-                let mut defaults = defaults.into_iter();
-                let mut names = Vec::with_capacity(fields.len());
-                let mut schema_fields = Vec::with_capacity(fields.len());
-                for field in fields {
-                    if names.contains(&field.name) {
-                        return Err(self.error_at(
                             RuntimeErrorKind::InvalidBytecode,
-                            format!("duplicate struct schema field '{}'", field.name),
-                            span,
-                        ));
-                    }
-                    names.push(field.name.clone());
-                    schema_fields.push(crate::StructField {
-                        name: field.name.clone().into(),
-                        default: field.has_default.then(|| {
-                            defaults
-                                .next()
-                                .expect("default count was derived from field metadata")
-                        }),
-                    });
-                }
-                self.stack
-                    .push(Value::StructSchema(Rc::new(crate::StructSchema {
-                        fields: schema_fields,
-                    })));
-            }
-            Op::StructPooled(id) => {
-                let fields = program
-                    .struct_fields(*id)
-                    .expect("validated struct field metadata");
-                let values = self.pop_values_at(fields.len(), span)?;
-                let schema = self.pop_at(span)?;
-                #[cfg(feature = "metrics")]
-                self.record_collection_construction(values.len());
-                self.stack.push(
-                    construct_struct(schema, fields, &values)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
-                );
-            }
-            Op::StructCopyPooled(id) => {
-                let fields = program
-                    .struct_fields(*id)
-                    .expect("validated struct field metadata");
-                let replacements = self.pop_values_at(fields.len(), span)?;
-                let value = self.pop_at(span)?;
-                #[cfg(feature = "metrics")]
-                match &value {
-                    Value::Map(value) => {
-                        self.record_collection_update(value.len(), Rc::strong_count(value) == 1);
-                    }
-                    Value::Struct(value) => {
-                        self.record_collection_update(
-                            value.values.len(),
-                            Rc::strong_count(value) == 1,
-                        );
-                    }
-                    _ => {}
-                }
-                self.stack.push(
-                    copy_value(value, fields, &replacements)
-                        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?,
-                );
-            }
-            Op::TryMatchPooled {
-                pattern,
-                bindings,
-                operands,
-            } => self.try_match_at(program, *pattern, *bindings, *operands, span)?,
-        }
-        Ok(BorrowedSpanOpOutcome::Continue)
+                            format!("capture {slot} does not exist"),
+                        )
+                    }),
+            })
+            .collect::<VmResult<Vec<_>>>()?;
+        self.stack.push(Value::Closure(Rc::new(Closure {
+            chunk,
+            captures,
+            program: Some(self.active_program()?),
+            globals: Some(self.globals.clone()),
+            #[cfg(feature = "concurrency")]
+            capture_sources: capture_sources.to_vec(),
+        })));
+        Ok(())
     }
 
-    fn enter_scope_at(&mut self, span: Option<&SourceSpan>) -> VmResult<()> {
+    #[cold]
+    #[inline(never)]
+    fn struct_schema(&mut self, program: &Program, id: SchemaFieldsId) -> VmResult<()> {
+        let fields = program
+            .schema_fields(id)
+            .expect("validated schema field metadata");
+        let default_count = fields.iter().filter(|field| field.has_default).count();
+        let defaults = self.pop_values_at(default_count)?;
+        let mut defaults = defaults.into_iter();
+        let mut names = Vec::with_capacity(fields.len());
+        let mut schema_fields = Vec::with_capacity(fields.len());
+        for field in fields {
+            if names.contains(&field.name) {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    format!("duplicate struct schema field '{}'", field.name),
+                ));
+            }
+            names.push(field.name.clone());
+            schema_fields.push(crate::StructField {
+                name: field.name.clone().into(),
+                default: field.has_default.then(|| {
+                    defaults
+                        .next()
+                        .expect("default count was derived from field metadata")
+                }),
+            });
+        }
+        self.stack
+            .push(Value::StructSchema(Rc::new(crate::StructSchema {
+                fields: schema_fields,
+            })));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn construct_struct(&mut self, program: &Program, id: StructFieldsId) -> VmResult<()> {
+        let fields = program
+            .struct_fields(id)
+            .expect("validated struct field metadata");
+        let values = self.pop_values_at(fields.len())?;
+        let schema = self.pop_at()?;
+        #[cfg(feature = "metrics")]
+        self.record_collection_construction(values.len());
+        self.stack.push(
+            construct_struct(schema, fields, &values)
+                .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
+        );
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn copy_struct(&mut self, program: &Program, id: StructFieldsId) -> VmResult<()> {
+        let fields = program
+            .struct_fields(id)
+            .expect("validated struct field metadata");
+        let replacements = self.pop_values_at(fields.len())?;
+        let value = self.pop_at()?;
+        #[cfg(feature = "metrics")]
+        match &value {
+            Value::Map(value) => {
+                self.record_collection_update(value.len(), Rc::strong_count(value) == 1);
+            }
+            Value::Struct(value) => {
+                self.record_collection_update(value.values.len(), Rc::strong_count(value) == 1);
+            }
+            _ => {}
+        }
+        self.stack.push(
+            copy_value(value, fields, &replacements)
+                .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
+        );
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn get_slice(&mut self, has_start: bool, has_end: bool, has_step: bool) -> VmResult<()> {
+        let count = usize::from(has_start) + usize::from(has_end) + usize::from(has_step);
+        let mut values = self.pop_values_at(count + 1)?.into_iter();
+        let collection = values
+            .next()
+            .expect("slice operation includes a collection");
+        #[cfg(feature = "metrics")]
+        self.record_collection_slice();
+        let start = has_start.then(|| values.next().expect("slice start is present"));
+        let end = has_end.then(|| values.next().expect("slice end is present"));
+        let step = has_step.then(|| values.next().expect("slice step is present"));
+        self.stack.push(
+            slice_value(collection, start.as_ref(), end.as_ref(), step.as_ref())
+                .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
+        );
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn import(&mut self, program: &Program, id: CallArgumentsId) -> VmResult<()> {
+        let kinds = self.pooled_call_arguments(program, id)?;
+        self.import_at(kinds)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn spawn(&mut self, program: &Program) -> VmResult<()> {
+        #[cfg(feature = "concurrency")]
+        return self.spawn_task_at(program);
+        #[cfg(not(feature = "concurrency"))]
+        {
+            let _ = program;
+            Err(self.runtime_capability_error("spawn"))
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn nursery(&mut self, program: &Program, has_limit: bool) -> VmResult<()> {
+        #[cfg(feature = "concurrency")]
+        return self.run_nursery_at(program, has_limit);
+        #[cfg(not(feature = "concurrency"))]
+        {
+            let _ = (program, has_limit);
+            Err(self.runtime_capability_error("nursery"))
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn select(&mut self, program: &Program, id: SelectCasesId) -> VmResult<()> {
+        let cases = program.select_cases(id).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "select metadata does not exist".into(),
+            )
+        })?;
+        self.select_at(cases)
+    }
+
+    /// Leaves a scope whose deferred actions must run before execution
+    /// continues in this frame. `leave_scope_without_cleanup_at` has already
+    /// checked the frame and scope depth.
+    #[cold]
+    #[inline(never)]
+    fn leave_scope_with_cleanup(&mut self) -> VmResult<Option<Value>> {
+        let frame = self.frames.last_mut().expect("frame was checked");
+        frame.scope_depth -= 1;
+        let actions = frame.scopes.pop().unwrap_or_default();
+        // Leaving a scope while cleanup is in progress resumes this
+        // frame once the scope's own actions have run.
+        if !self.cleanup.is_empty() {
+            self.cleanup.push(Cleanup::Resume);
+        }
+        self.cleanup.push(Cleanup::Actions {
+            actions,
+            success: true,
+            frame_depth: self.frames.len() - 1,
+        });
+        self.drive_cleanup()
+    }
+
+    #[inline(never)]
+    fn defer(&mut self, mode: u32) -> VmResult<()> {
+        let mode = match mode {
+            0 => DeferMode::Always,
+            1 => DeferMode::Success,
+            2 => DeferMode::Error,
+            _ => {
+                return Err(self.error_at(
+                    RuntimeErrorKind::InvalidBytecode,
+                    "packed instruction references missing defer mode".into(),
+                ));
+            }
+        };
+        let action = self.pop_at()?;
+        if !matches!(
+            action,
+            Value::Closure(_) | Value::Native(_) | Value::DeclaredNative { .. } | Value::Builtin(_)
+        ) {
+            return Err(self.error_at(
+                RuntimeErrorKind::Type,
+                "defer expects a callable action".into(),
+            ));
+        }
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "no active call frame".into(),
+            ));
+        };
+        if frame.scope_depth == 0 {
+            return Err(self.error_at(RuntimeErrorKind::InvalidBytecode, "no active scope".into()));
+        }
+        let materialized_depth = frame.scopes.is_empty().then_some(frame.scope_depth);
+        if let Some(depth) = materialized_depth {
+            frame.scopes.resize_with(depth as usize, Vec::new);
+        }
+        let scope = frame.scopes.last_mut().expect("scope depth was checked");
+        scope.push(Deferred { action, mode });
+        if let Some(depth) = materialized_depth {
+            self.record_defer_scope_stack(depth as usize);
+        }
+        Ok(())
+    }
+
+    fn enter_scope_at(&mut self) -> VmResult<()> {
         if self.frames.is_empty() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "no active call frame".into(),
-                span,
             ));
         }
         if self
@@ -3190,7 +2829,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "scope nesting is too deep".into(),
-                span,
             ));
         }
         let frame = self.frames.last_mut().expect("frame was checked");
@@ -3203,20 +2841,15 @@ impl Vm {
 
     /// Exits a scope directly only when it has no deferred work and cannot
     /// resume a cleanup action. All other exits retain the cleanup dispatcher.
-    fn leave_scope_without_cleanup_at(&mut self, span: Option<&SourceSpan>) -> VmResult<bool> {
+    fn leave_scope_without_cleanup_at(&mut self) -> VmResult<bool> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "no active call frame".into(),
-                span,
             ));
         };
         if frame.scope_depth <= 1 {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "no active scope".into(),
-                span,
-            ));
+            return Err(self.error_at(RuntimeErrorKind::InvalidBytecode, "no active scope".into()));
         }
         if frame.cleanup_action || !frame.scopes.is_empty() {
             return Ok(false);
@@ -3231,13 +2864,12 @@ impl Vm {
         pattern: MatchPatternId,
         bindings: usize,
         operands: usize,
-        span: Option<&SourceSpan>,
     ) -> VmResult<()> {
         let pattern = program
             .match_pattern(pattern)
             .expect("validated match pattern metadata");
-        let operands = self.pop_values_at(operands, span)?;
-        let value = self.pop_at(span)?;
+        let operands = self.pop_values_at(operands)?;
+        let value = self.pop_at()?;
         let mut values = Vec::new();
         let mut list_views_created = 0;
         let matched = matches_pattern(
@@ -3247,7 +2879,7 @@ impl Vm {
             &mut values,
             &mut list_views_created,
         )
-        .map_err(|(kind, message)| self.error_at(kind, message, span))?;
+        .map_err(|(kind, message)| self.error_at(kind, message))?;
         #[cfg(feature = "metrics")]
         {
             self.metrics.borrow_mut().list_views_created += list_views_created;
@@ -3256,7 +2888,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "match pattern binding count is invalid".into(),
-                span,
             ));
         }
         if matched {
@@ -3271,14 +2902,22 @@ impl Vm {
     pub(in crate::vm) fn push_frame(&mut self, frame: Frame) {
         self.globals = frame.globals.clone();
         self.frames.push(frame);
+        self.frames_changed();
     }
 
     pub(in crate::vm) fn pop_frame(&mut self) -> Option<Frame> {
         let frame = self.frames.pop();
+        self.frames_changed();
         if let Some(active) = self.frames.last() {
             self.globals = active.globals.clone();
         }
         frame
+    }
+
+    /// Invalidates the dispatch loop's cached frame code.
+    #[inline]
+    pub(in crate::vm) fn frames_changed(&mut self) {
+        self.frame_epoch = self.frame_epoch.wrapping_add(1);
     }
 
     fn take_frame_locals(
@@ -3299,55 +2938,14 @@ impl Vm {
         self.local_slot_pool.push(locals);
     }
 
-    fn next_instruction(&mut self, program: &Program) -> VmResult<PackedInstruction> {
-        let (chunk_index, ip) = self
-            .frames
-            .last()
-            .map(|frame| (frame.closure.chunk, frame.ip))
-            .ok_or_else(|| {
-                self.error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    "no active call frame".into(),
-                    None,
-                )
-            })?;
-        let chunk = program.chunk(chunk_index).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "active chunk does not exist".into(),
-                None,
-            )
-        })?;
-        let instruction = chunk.code.get(ip).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                format!("function `{}` ended without Return", chunk.name),
-                None,
-            )
-        })?;
-        #[cfg(feature = "metrics")]
-        {
-            let mut metrics = self.metrics.borrow_mut();
-            metrics.instructions_executed += 1;
-        }
-        self.frames.last_mut().expect("active frame was checked").ip += 1;
-        Ok(*instruction)
-    }
-
-    fn get_index_constant_at(
-        &mut self,
-        program: &Program,
-        constant: usize,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<()> {
-        let collection = self.pop_at(span)?;
+    fn get_index_constant_at(&mut self, program: &Program, constant: usize) -> VmResult<()> {
+        let collection = self.pop_at()?;
         let Some(crate::Constant::Value(key)) =
             self.current_chunk(program)?.constants.get(constant)
         else {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 format!("index constant {constant} does not exist"),
-                span,
             ));
         };
         let value = index_value(
@@ -3356,7 +2954,7 @@ impl Vm {
             #[cfg(feature = "metrics")]
             &self.metrics,
         )
-        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?;
+        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
         self.stack.push(value);
         Ok(())
     }
@@ -3399,203 +2997,27 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn call(
-        &mut self,
-        program: &Program,
-        count: usize,
-        provided: Option<Vec<bool>>,
-        span: Option<SourceSpan>,
-    ) -> VmResult<()> {
-        let required = count.checked_add(1).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "call argument count is too large".into(),
-                span.clone(),
-            )
-        })?;
-        let base = self.stack.len().checked_sub(required).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "call has too few stack values".into(),
-                span.clone(),
-            )
-        })?;
-        let callee = self.stack[base]
-            .resolve()
-            .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
-        match callee {
-            Value::Closure(closure) => {
-                let frame_program = closure
-                    .program
-                    .clone()
-                    .or_else(|| self.module_program.clone())
-                    .unwrap_or_else(|| Rc::new(program.clone()));
-                let chunk = frame_program.chunk(closure.chunk).ok_or_else(|| {
-                    self.error(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "closure references missing chunk".into(),
-                        span.clone(),
-                    )
-                })?;
-                if chunk.arity != count {
-                    return Err(self.error(
-                        RuntimeErrorKind::Arity,
-                        format!(
-                            "`{}` expects {} arguments, got {count}",
-                            chunk.name, chunk.arity
-                        ),
-                        span,
-                    ));
-                }
-                if chunk.locals < chunk.arity {
-                    return Err(self.error(
-                        RuntimeErrorKind::InvalidBytecode,
-                        format!(
-                            "function `{}` has {} local slots for {} parameters",
-                            chunk.name, chunk.locals, chunk.arity
-                        ),
-                        span,
-                    ));
-                }
-                self.record_closure_argument_vector();
-                let locals = self.stack[base + 1..]
-                    .iter()
-                    .map(|value| {
-                        value.resolve().map_err(|message| {
-                            self.error(RuntimeErrorKind::Name, message, span.clone())
-                        })
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                let argument_count = locals.len();
-                let (locals, reused) = self.take_frame_locals(locals, chunk.locals);
-                self.record_frame_locals(locals.capacity(), argument_count, reused);
-                #[cfg(feature = "metrics")]
-                self.record_frame(chunk.locals);
-                self.push_frame(Frame {
-                    program: frame_program.clone(),
-                    globals: closure
-                        .globals
-                        .clone()
-                        .unwrap_or_else(|| self.globals.clone()),
-                    closure,
-                    call_span: span.map(|span| CallSpan::Owned(Box::new(span))),
-                    ip: 0,
-                    stack_base: base,
-                    locals,
-                    provided: self.frame_provided(provided),
-                    scope_depth: 1,
-                    scopes: Vec::new(),
-                    cleanup_action: false,
-                    cleanup_recovers: false,
-                    cleanup_owner_depth: None,
-                });
-            }
-            Value::Native(function) => {
-                let arguments = self.stack[base + 1..]
-                    .iter()
-                    .map(|value| {
-                        value.resolve().map_err(|message| {
-                            self.error(RuntimeErrorKind::Name, message, span.clone())
-                        })
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                let result = self.invoke_native(&function, &arguments, None, span.as_ref())?;
-                self.stack.truncate(base);
-                self.stack.push(result);
-            }
-            Value::DeclaredNative {
-                function,
-                declaration,
-                ..
-            } => {
-                let arguments = self.stack[base + 1..]
-                    .iter()
-                    .map(|value| {
-                        value.resolve().map_err(|message| {
-                            self.error(RuntimeErrorKind::Name, message, span.clone())
-                        })
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                let result = self.invoke_native(
-                    &function,
-                    &arguments,
-                    Some(&declaration.resources),
-                    span.as_ref(),
-                )?;
-                self.stack.truncate(base);
-                self.stack.push(result);
-            }
-            Value::Builtin(builtin) => {
-                let arguments = self.stack[base + 1..]
-                    .iter()
-                    .map(|value| {
-                        value.resolve().map_err(|message| {
-                            self.error(RuntimeErrorKind::Name, message, span.clone())
-                        })
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                let result = self.call_builtin(builtin, program, &arguments, span.clone())?;
-                self.stack.truncate(base);
-                self.stack.push(result);
-            }
-            Value::Overloads(overloads) => {
-                let positional = self.stack[base + 1..]
-                    .iter()
-                    .map(|value| {
-                        value.resolve().map_err(|message| {
-                            self.error(RuntimeErrorKind::Name, message, span.clone())
-                        })
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                let (callee, arguments, provided) = self.bind_overload_arguments(
-                    program,
-                    &overloads,
-                    &positional,
-                    &[],
-                    span.clone(),
-                )?;
-                self.stack.truncate(base);
-                self.stack.push(callee);
-                self.stack.extend(arguments);
-                let count = self.stack.len() - base - 1;
-                return self.call(program, count, Some(provided), span);
-            }
-            value => {
-                return Err(self.error(
-                    RuntimeErrorKind::InvalidCall,
-                    format!("cannot call {}", value.type_name()),
-                    span,
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_lines)]
     fn call_at(
         &mut self,
         program: &Program,
         count: usize,
         provided: Option<Vec<bool>>,
-        span: Option<&SourceSpan>,
     ) -> VmResult<()> {
         let required = count.checked_add(1).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call argument count is too large".into(),
-                span,
             )
         })?;
         let base = self.stack.len().checked_sub(required).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call has too few stack values".into(),
-                span,
             )
         })?;
         let callee = self.stack[base]
             .resolve()
-            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         match callee {
             Value::Closure(closure) => {
                 let frame_program = closure
@@ -3607,7 +3029,6 @@ impl Vm {
                     self.error_at(
                         RuntimeErrorKind::InvalidBytecode,
                         "closure references missing chunk".into(),
-                        span,
                     )
                 })?;
                 if chunk.arity != count {
@@ -3617,7 +3038,6 @@ impl Vm {
                             "`{}` expects {} arguments, got {count}",
                             chunk.name, chunk.arity
                         ),
-                        span,
                     ));
                 }
                 if chunk.locals < chunk.arity {
@@ -3627,7 +3047,6 @@ impl Vm {
                             "function `{}` has {} local slots for {} parameters",
                             chunk.name, chunk.locals, chunk.arity
                         ),
-                        span,
                     ));
                 }
                 self.record_closure_argument_vector();
@@ -3636,7 +3055,7 @@ impl Vm {
                     .map(|value| {
                         value
                             .resolve()
-                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let argument_count = locals.len();
@@ -3651,7 +3070,7 @@ impl Vm {
                         .clone()
                         .unwrap_or_else(|| self.globals.clone()),
                     closure,
-                    call_span: self.frame_call_span(span),
+                    call_span: self.frame_call_span(),
                     ip: 0,
                     stack_base: base,
                     locals,
@@ -3669,10 +3088,10 @@ impl Vm {
                     .map(|value| {
                         value
                             .resolve()
-                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
-                let result = self.invoke_native(&function, &arguments, None, span)?;
+                let result = self.invoke_native(&function, &arguments, None, None)?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -3686,11 +3105,11 @@ impl Vm {
                     .map(|value| {
                         value
                             .resolve()
-                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let result =
-                    self.invoke_native(&function, &arguments, Some(&declaration.resources), span)?;
+                    self.invoke_native(&function, &arguments, Some(&declaration.resources), None)?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -3700,11 +3119,11 @@ impl Vm {
                     .map(|value| {
                         value
                             .resolve()
-                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let result =
-                    self.call_builtin(builtin, program, &arguments, self.owned_span(span))?;
+                    self.call_builtin(builtin, program, &arguments, self.owned_span(None))?;
                 self.stack.truncate(base);
                 self.stack.push(result);
             }
@@ -3714,22 +3133,21 @@ impl Vm {
                     .map(|value| {
                         value
                             .resolve()
-                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let (callee, arguments, provided) =
-                    self.bind_overload_arguments_at(program, &overloads, &positional, &[], span)?;
+                    self.bind_overload_arguments_at(program, &overloads, &positional, &[])?;
                 self.stack.truncate(base);
                 self.stack.push(callee);
                 self.stack.extend(arguments);
                 let count = self.stack.len() - base - 1;
-                return self.call_at(program, count, Some(provided), span);
+                return self.call_at(program, count, Some(provided));
             }
             value => {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidCall,
                     format!("cannot call {}", value.type_name()),
-                    span,
                 ));
             }
         }
@@ -3793,6 +3211,7 @@ impl Vm {
             wait_registration: None,
             host_execution: None,
             active_span: None,
+            frame_epoch: 0,
             shutdown: false,
             #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
@@ -3821,13 +3240,12 @@ impl Vm {
     }
 
     #[cfg(feature = "concurrency")]
-    fn spawn_task_at(&mut self, _program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
-        let closure = self.pop_at(span)?;
+    fn spawn_task_at(&mut self, _program: &Program) -> VmResult<()> {
+        let closure = self.pop_at()?;
         let Value::Closure(closure) = closure else {
             return Err(self.error_at(
                 RuntimeErrorKind::Type,
                 "spawn expects a function or block".into(),
-                span,
             ));
         };
         let admission = if let Some(limit) = self.direct_task_limit {
@@ -3835,7 +3253,6 @@ impl Vm {
                 self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
                     "limited nursery is missing its task counter".into(),
-                    span,
                 )
             })?;
             Some(TaskAdmission {
@@ -3867,7 +3284,7 @@ impl Vm {
             closure,
             Vec::new(),
             None,
-            self.owned_span(span),
+            self.owned_span(None),
             ClosureCallOptions {
                 direct_task_limit: None,
                 direct_task_count: None,
@@ -3928,42 +3345,30 @@ impl Vm {
     }
 
     #[cfg(feature = "concurrency")]
-    fn run_nursery_at(
-        &mut self,
-        _program: &Program,
-        has_limit: bool,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<()> {
-        let closure = self.pop_at(span)?;
-        let limit = has_limit.then(|| self.pop_at(span)).transpose()?;
+    fn run_nursery_at(&mut self, _program: &Program, has_limit: bool) -> VmResult<()> {
+        let closure = self.pop_at()?;
+        let limit = has_limit.then(|| self.pop_at()).transpose()?;
         let limit = if let Some(limit) = limit {
             let Value::Int(limit) = limit else {
                 return Err(self.error_at(
                     RuntimeErrorKind::Type,
                     "nursery limit expects an integer".into(),
-                    span,
                 ));
             };
             if limit < 0 {
                 return Err(self.error_at(
                     RuntimeErrorKind::Type,
                     "nursery limit must not be negative".into(),
-                    span,
                 ));
             }
             if limit == 0 {
                 return Err(self.error_at(
                     RuntimeErrorKind::Type,
                     "nursery limit must be positive".into(),
-                    span,
                 ));
             }
             Some(usize::try_from(limit).map_err(|_| {
-                self.error_at(
-                    RuntimeErrorKind::Type,
-                    "nursery limit is too large".into(),
-                    span,
-                )
+                self.error_at(RuntimeErrorKind::Type, "nursery limit is too large".into())
             })?)
         } else {
             None
@@ -3972,7 +3377,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::Type,
                 "nursery expects a function or block".into(),
-                span,
             ));
         };
         let nursery = Rc::new(Nursery::explicit(
@@ -3986,7 +3390,7 @@ impl Vm {
             closure,
             Vec::new(),
             None,
-            self.owned_span(span),
+            self.owned_span(None),
             ClosureCallOptions {
                 direct_task_limit: limit,
                 direct_task_count: limit.map(|_| Rc::new(Cell::new(0))),
@@ -4005,7 +3409,6 @@ impl Vm {
             let blocked = self.error_at(
                 RuntimeErrorKind::InvalidCall,
                 "task remains blocked with no runnable work".into(),
-                span,
             );
             nursery.cancel_all(&blocked);
             body.cancel(&blocked);
@@ -4015,7 +3418,6 @@ impl Vm {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "nursery body settled without an outcome".into(),
-                span,
             )
         })??;
         self.stack.push(value);
@@ -4028,28 +3430,25 @@ impl Vm {
         }
     }
 
-    fn import_at(&mut self, kinds: &[CallArgumentKind], span: Option<&SourceSpan>) -> VmResult<()> {
-        let values = self.pop_values_at(kinds.len(), span)?;
-        let (names, named_arguments) = self.expand_call_arguments_at(values, kinds, span)?;
+    fn import_at(&mut self, kinds: &[CallArgumentKind]) -> VmResult<()> {
+        let values = self.pop_values_at(kinds.len())?;
+        let (names, named_arguments) = self.expand_call_arguments_at(values, kinds)?;
         if !named_arguments.is_empty() {
             return Err(self.error_at(
                 RuntimeErrorKind::Arity,
                 "import does not accept named arguments".into(),
-                span,
             ));
         }
         if names.is_empty() {
             return Err(self.error_at(
                 RuntimeErrorKind::Arity,
                 "import expects at least one module name".into(),
-                span,
             ));
         }
         let host = self.host.clone().ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::Module,
                 "module loader is not configured".into(),
-                span,
             )
         })?;
         let importer = self
@@ -4065,17 +3464,15 @@ impl Vm {
                         "import expects string module names, got {}",
                         name.type_name()
                     ),
-                    span,
                 ));
             };
-            let instance = host.import_module(importer, &name).map_err(|error| {
-                self.error_at(RuntimeErrorKind::Module, error.to_string(), span)
-            })?;
+            let instance = host
+                .import_module(importer, &name)
+                .map_err(|error| self.error_at(RuntimeErrorKind::Module, error.to_string()))?;
             let Value::Map(module_exports) = instance.exports else {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
                     "module exports are not a map".into(),
-                    span,
                 ));
             };
             for (key, value) in module_exports.iter() {
@@ -4184,17 +3581,15 @@ impl Vm {
         }
     }
 
-    fn list_spread_at(&mut self, spreads: &[bool], span: Option<&SourceSpan>) -> VmResult<()> {
-        let values = self.pop_values_at(spreads.len(), span)?;
+    fn list_spread_at(&mut self, spreads: &[bool]) -> VmResult<()> {
+        let values = self.pop_values_at(spreads.len())?;
         let mut result = Vec::new();
         for (value, spread) in values.into_iter().zip(spreads) {
             if *spread {
                 let Value::List(values) = value else {
-                    return Err(self.error_at(
-                        RuntimeErrorKind::Type,
-                        "list spread expects a list".into(),
-                        span,
-                    ));
+                    return Err(
+                        self.error_at(RuntimeErrorKind::Type, "list spread expects a list".into())
+                    );
                 };
                 result.extend(values.iter().cloned());
             } else {
@@ -4210,12 +3605,11 @@ impl Vm {
         program: &Program,
         kinds: &[CallArgumentKind],
         selected: Option<&CallableIdentity>,
-        span: Option<&SourceSpan>,
     ) -> VmResult<()> {
         if kinds
             .iter()
             .all(|kind| matches!(kind, CallArgumentKind::Positional))
-            && self.call_positional_closure_at(program, kinds.len(), selected, span)?
+            && self.call_positional_closure_at(program, kinds.len(), selected)?
         {
             #[cfg(feature = "metrics")]
             self.record_exact_positional_closure_call();
@@ -4227,22 +3621,20 @@ impl Vm {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call argument count is too large".into(),
-                span,
             )
         })?;
         let base = self.stack.len().checked_sub(required).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call has too few stack values".into(),
-                span,
             )
         })?;
         let callee = self.stack[base]
             .resolve()
-            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         let values = self.stack.split_off(base + 1);
         self.stack.truncate(base);
-        let (positional, named) = self.expand_call_arguments_at(values, kinds, span)?;
+        let (positional, named) = self.expand_call_arguments_at(values, kinds)?;
         let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
             if let Some(selected) = selected {
                 self.bind_selected_overload_arguments_at(
@@ -4251,10 +3643,9 @@ impl Vm {
                     selected,
                     &positional,
                     &named,
-                    span,
                 )?
             } else {
-                self.bind_overload_arguments_at(program, overloads, &positional, &named, span)?
+                self.bind_overload_arguments_at(program, overloads, &positional, &named)?
             }
         } else {
             if let Some(selected) = selected
@@ -4266,31 +3657,25 @@ impl Vm {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidCall,
                     "selected callable signature is no longer present in the live binding".into(),
-                    span,
                 ));
             }
             let (arguments, provided) =
-                self.bind_call_arguments_at(program, &callee, positional, named, span)?;
+                self.bind_call_arguments_at(program, &callee, positional, named)?;
             (callee, arguments, provided)
         };
         self.stack.push(callee);
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
-        self.call_at(program, count, Some(provided), span)
+        self.call_at(program, count, Some(provided))
     }
 
     /// Handles a source call whose compiler-provided argument shape is exactly
     /// positional, retaining the generic binder only for closures that need it.
-    fn call_positional_at(
-        &mut self,
-        program: &Program,
-        count: usize,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<()> {
+    fn call_positional_at(&mut self, program: &Program, count: usize) -> VmResult<()> {
         if self.positional_callee_is_native(count) {
-            return self.call_at(program, count, None, span);
+            return self.call_at(program, count, None);
         }
-        if self.call_positional_closure_at(program, count, None, span)? {
+        if self.call_positional_closure_at(program, count, None)? {
             #[cfg(feature = "metrics")]
             self.record_exact_positional_closure_call();
             return Ok(());
@@ -4301,19 +3686,17 @@ impl Vm {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call argument count is too large".into(),
-                span,
             )
         })?;
         let base = self.stack.len().checked_sub(required).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call has too few stack values".into(),
-                span,
             )
         })?;
         let callee = self.stack[base]
             .resolve()
-            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         let positional = self.stack.split_off(base + 1);
         self.stack.truncate(base);
         let positional = positional
@@ -4321,20 +3704,20 @@ impl Vm {
             .map(|value| {
                 value
                     .into_resolved()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
             })
             .collect::<VmResult<Vec<_>>>()?;
         let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
-            self.bind_overload_arguments_at(program, overloads, &positional, &[], span)?
+            self.bind_overload_arguments_at(program, overloads, &positional, &[])?
         } else {
             let (arguments, provided) =
-                self.bind_call_arguments_at(program, &callee, positional, Vec::new(), span)?;
+                self.bind_call_arguments_at(program, &callee, positional, Vec::new())?;
             (callee, arguments, provided)
         };
         self.stack.push(callee);
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
-        self.call_at(program, count, Some(provided), span)
+        self.call_at(program, count, Some(provided))
     }
 
     /// Reports whether a positional call's callee is a native function, looking
@@ -4370,25 +3753,22 @@ impl Vm {
         program: &Program,
         count: usize,
         selected: Option<&CallableIdentity>,
-        span: Option<&SourceSpan>,
     ) -> VmResult<bool> {
         let required = count.checked_add(1).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call argument count is too large".into(),
-                span,
             )
         })?;
         let base = self.stack.len().checked_sub(required).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "call has too few stack values".into(),
-                span,
             )
         })?;
         let callee = self.stack[base]
             .resolve()
-            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         let callee = match callee {
             Value::Overloads(overloads) => selected.and_then(|selected| {
                 overloads.iter().find_map(|candidate| {
@@ -4422,7 +3802,6 @@ impl Vm {
                 self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
                     "closure references missing chunk".into(),
-                    span,
                 )
             })?;
             if chunk.arity != count || !chunk.exact_positional_parameters {
@@ -4435,7 +3814,6 @@ impl Vm {
                         "function `{}` has {} local slots for {} parameters",
                         chunk.name, chunk.locals, chunk.arity
                     ),
-                    span,
                 ));
             }
             chunk.locals
@@ -4445,7 +3823,7 @@ impl Vm {
             *local = LocalSlot::Direct(
                 value
                     .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?,
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?,
             );
         }
         self.record_frame_locals(locals.capacity(), count, reused);
@@ -4459,7 +3837,7 @@ impl Vm {
                 .clone()
                 .unwrap_or_else(|| self.globals.clone()),
             closure,
-            call_span: self.frame_call_span(span),
+            call_span: self.frame_call_span(),
             ip: 0,
             stack_base: base,
             locals,
@@ -4478,20 +3856,17 @@ impl Vm {
         program: &Program,
         kinds: &[CallArgumentKind],
         selected: Option<&CallableIdentity>,
-        span: Option<&SourceSpan>,
     ) -> VmResult<()> {
         let required = kinds.len().checked_add(2).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "pipeline argument count is too large".into(),
-                span,
             )
         })?;
         let base = self.stack.len().checked_sub(required).ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "pipeline has too few stack values".into(),
-                span,
             )
         })?;
         let arguments = self.stack.split_off(base + 2);
@@ -4499,14 +3874,12 @@ impl Vm {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "pipeline has too few stack values".into(),
-                span,
             )
         })?;
         let value = self.stack.pop().ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "pipeline has too few stack values".into(),
-                span,
             )
         })?;
         self.stack.push(callee);
@@ -4515,21 +3888,20 @@ impl Vm {
         let mut all_kinds = Vec::with_capacity(kinds.len() + 1);
         all_kinds.push(CallArgumentKind::Positional);
         all_kinds.extend_from_slice(kinds);
-        self.call_spread_at(program, &all_kinds, selected, span)
+        self.call_spread_at(program, &all_kinds, selected)
     }
 
     fn expand_call_arguments_at(
         &self,
         values: Vec<Value>,
         kinds: &[CallArgumentKind],
-        span: Option<&SourceSpan>,
     ) -> VmResult<ExpandedCallArguments> {
         let mut positional = Vec::new();
         let mut named = Vec::new();
         for (value, kind) in values.into_iter().zip(kinds) {
             let value = value
                 .into_resolved()
-                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
             match kind {
                 CallArgumentKind::Positional => positional.push(value),
                 CallArgumentKind::Spread => {
@@ -4537,7 +3909,6 @@ impl Vm {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
                             "call spread expects a list".into(),
-                            span,
                         ));
                     };
                     positional.extend(values.iter().cloned());
@@ -4657,19 +4028,18 @@ impl Vm {
 
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::too_many_lines)]
-    fn select_at(&mut self, cases: &[SelectCase], span: Option<&SourceSpan>) -> VmResult<()> {
+    fn select_at(&mut self, cases: &[SelectCase]) -> VmResult<()> {
         #[cfg(not(feature = "concurrency"))]
         if cases
             .iter()
             .any(|case| matches!(case, SelectCase::After { .. } | SelectCase::Await { .. }))
         {
-            return Err(self.runtime_capability_error("select timer or task-await", span));
+            return Err(self.runtime_capability_error("select timer or task-await"));
         }
         if cases.is_empty() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidCall,
                 "select requires at least one case".into(),
-                span,
             ));
         }
         let mut values = Vec::with_capacity(cases.len());
@@ -4681,35 +4051,31 @@ impl Vm {
                 | SelectCase::Await { has_handler }
                 | SelectCase::Default { has_handler } => *has_handler,
             };
-            let handler = has_handler.then(|| self.pop_at(span)).transpose()?;
+            let handler = has_handler.then(|| self.pop_at()).transpose()?;
             let value = match case {
                 SelectCase::Receive { .. } => {
-                    let value = self.pop_at(span)?;
+                    let value = self.pop_at()?;
                     let Value::Channel(channel) = value else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
                             format!("select recv expects chan, got {}", value.type_name()),
-                            span,
                         ));
                     };
                     RuntimeSelectCase::Receive { channel, handler }
                 }
                 SelectCase::Send { .. } => {
-                    let value = self.pop_at(span)?;
-                    let channel = self.pop_at(span)?;
+                    let value = self.pop_at()?;
+                    let channel = self.pop_at()?;
                     let Value::Channel(channel) = channel else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
                             format!("select send expects chan, got {}", channel.type_name()),
-                            span,
                         ));
                     };
                     if matches!(value, Value::Nil) {
-                        return Err(self.error_at(
-                            RuntimeErrorKind::Type,
-                            "send cannot send nil".into(),
-                            span,
-                        ));
+                        return Err(
+                            self.error_at(RuntimeErrorKind::Type, "send cannot send nil".into())
+                        );
                     }
                     RuntimeSelectCase::Send {
                         channel,
@@ -4719,19 +4085,17 @@ impl Vm {
                 }
                 #[cfg(feature = "concurrency")]
                 SelectCase::After { .. } => {
-                    let duration = self.pop_at(span)?;
+                    let duration = self.pop_at()?;
                     let Value::Int(milliseconds) = duration else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
                             format!("select after expects num, got {}", duration.type_name()),
-                            span,
                         ));
                     };
                     let milliseconds = u64::try_from(milliseconds).map_err(|_| {
                         self.error_at(
                             RuntimeErrorKind::Type,
                             "select after must not be negative or too large".into(),
-                            span,
                         )
                     })?;
                     RuntimeSelectCase::After {
@@ -4741,7 +4105,6 @@ impl Vm {
                                 self.error_at(
                                     RuntimeErrorKind::Type,
                                     "select after is too large".into(),
-                                    span,
                                 )
                             })?,
                         handler,
@@ -4749,23 +4112,22 @@ impl Vm {
                 }
                 #[cfg(not(feature = "concurrency"))]
                 SelectCase::After { .. } => {
-                    return Err(self.runtime_capability_error("select timer", span));
+                    return Err(self.runtime_capability_error("select timer"));
                 }
                 #[cfg(feature = "concurrency")]
                 SelectCase::Await { .. } => {
-                    let value = self.pop_at(span)?;
+                    let value = self.pop_at()?;
                     let Value::Task(task) = value else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
                             format!("select await expects task, got {}", value.type_name()),
-                            span,
                         ));
                     };
                     RuntimeSelectCase::Await { task, handler }
                 }
                 #[cfg(not(feature = "concurrency"))]
                 SelectCase::Await { .. } => {
-                    return Err(self.runtime_capability_error("select task-await", span));
+                    return Err(self.runtime_capability_error("select task-await"));
                 }
                 SelectCase::Default { .. } => RuntimeSelectCase::Default { handler },
             };
@@ -4797,7 +4159,6 @@ impl Vm {
                             return Err(self.error_at(
                                 RuntimeErrorKind::InvalidCall,
                                 "send on a closed channel".into(),
-                                span,
                             ));
                         }
                         ChannelSend::Pending => {}
@@ -4809,7 +4170,6 @@ impl Vm {
                         return Err(self.error_at(
                             RuntimeErrorKind::InvalidCall,
                             "task cannot await itself while it is running".into(),
-                            span,
                         ));
                     }
                     if let Some(outcome) = task.outcome() {
@@ -4832,7 +4192,7 @@ impl Vm {
             self.push_select_result(Value::Nil, handler);
             return Ok(());
         }
-        let base = self.current_waiter_at(span)?;
+        let base = self.current_waiter_at()?;
         let select_state = WaitSet::select_state(base.clone());
         let mut registrations = Vec::new();
         for case in values {
@@ -4854,7 +4214,6 @@ impl Vm {
                     waiter.set_closed_send_error(self.error_at(
                         RuntimeErrorKind::InvalidCall,
                         "send on a closed channel".into(),
-                        span,
                     ));
                     channel.park_sender(waiter, value);
                     registrations.push(WaitRegistration::ChannelSend(channel));
@@ -4895,9 +4254,10 @@ impl Vm {
         WaitSet::set_select_registrations(&select_state, registrations.clone());
         self.wait_registration = Some(registrations);
         self.stack.push(Value::Nil);
+        self.frames_changed();
         self.suspension = Some(Suspension::Select {
             #[cfg(feature = "concurrency")]
-            span: self.owned_span(span),
+            span: self.owned_span(None),
         });
         Ok(())
     }
@@ -4907,20 +4267,18 @@ impl Vm {
             .push(Value::list(vec![value, handler.unwrap_or(Value::Nil)]));
     }
 
-    fn select_apply_at(&mut self, program: &Program, span: Option<&SourceSpan>) -> VmResult<()> {
-        let selected = self.pop_at(span)?;
+    fn select_apply_at(&mut self, program: &Program) -> VmResult<()> {
+        let selected = self.pop_at()?;
         let Value::List(values) = selected else {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "select result is invalid".into(),
-                span,
             ));
         };
         if values.len() != 2 {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "select result has invalid arity".into(),
-                span,
             ));
         }
         let value = values
@@ -4936,17 +4294,16 @@ impl Vm {
         } else {
             self.stack.push(handler);
             self.stack.push(value);
-            self.call_at(program, 1, None, span)?;
+            self.call_at(program, 1, None)?;
         }
         Ok(())
     }
 
-    fn current_waiter_at(&self, span: Option<&SourceSpan>) -> VmResult<Waiter> {
+    fn current_waiter_at(&self) -> VmResult<Waiter> {
         self.current_waiter.clone().ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidCall,
                 "blocking operations require scheduler-owned execution".into(),
-                span,
             )
         })
     }
@@ -4975,13 +4332,13 @@ impl Vm {
             NativeInvocation::Result(value, resources) => {
                 self.native_resources.register(resources);
                 if value.contains_non_finite_number() {
-                    return Err(self.error_at(
+                    return Err(self.error(
                         RuntimeErrorKind::NativeContract,
                         format!(
                             "native `{}` returned a non-finite number",
                             function.qualified_name()
                         ),
-                        span,
+                        self.owned_span(span),
                     ));
                 }
                 if let Some(signature) = resource_signature {
@@ -4997,17 +4354,19 @@ impl Vm {
             NativeInvocation::Error(error, resources) => {
                 self.native_resources.register(resources);
                 let (code, message, data) = error.into_parts();
-                let mut error = self.error_at(
+                let mut error = self.error(
                     RuntimeErrorKind::Native,
                     format!("native `{}`: {message}", function.qualified_name()),
-                    span,
+                    self.owned_span(span),
                 );
                 error.native = Some(Box::new(NativeErrorDetails { code, data }));
                 Err(error)
             }
-            NativeInvocation::ContractViolation(message) => {
-                Err(self.error_at(RuntimeErrorKind::NativeContract, message, span))
-            }
+            NativeInvocation::ContractViolation(message) => Err(self.error(
+                RuntimeErrorKind::NativeContract,
+                message,
+                self.owned_span(span),
+            )),
         }
     }
 
@@ -5050,7 +4409,7 @@ impl Vm {
     ) -> VmResult<()> {
         let expected_module = expected.0.unwrap_or_else(|| function.module_name());
         let Value::NativeResource(resource) = value else {
-            return Err(self.error_at(
+            return Err(self.error(
                 RuntimeErrorKind::NativeContract,
                 format!(
                     "native `{}` returned a non-resource {position} where `{}.{}` is declared",
@@ -5058,13 +4417,13 @@ impl Vm {
                     expected_module,
                     expected.1
                 ),
-                span,
+                self.owned_span(span),
             ));
         };
         if resource.has_type_in_scope(function.resource_scope_id(), expected_module, expected.1) {
             return Ok(());
         }
-        Err(self.error_at(
+        Err(self.error(
             RuntimeErrorKind::NativeContract,
             format!(
                 "native `{}` returned the wrong resource type for its {position}; expected `{}.{}`",
@@ -5072,115 +4431,8 @@ impl Vm {
                 expected_module,
                 expected.1
             ),
-            span,
+            self.owned_span(span),
         ))
-    }
-
-    fn bind_call_arguments(
-        &self,
-        program: &Program,
-        callee: &Value,
-        mut positional: Vec<Value>,
-        named: Vec<(String, Value)>,
-        span: Option<SourceSpan>,
-    ) -> VmResult<(Vec<Value>, Vec<bool>)> {
-        let Value::Closure(closure) = callee else {
-            if named.is_empty() {
-                return Ok((positional.clone(), vec![true; positional.len()]));
-            }
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                "native functions do not accept named arguments".into(),
-                span,
-            ));
-        };
-        let closure_program = closure.program.as_deref().unwrap_or(program);
-        let chunk = closure_program.chunk(closure.chunk).ok_or_else(|| {
-            self.error(
-                RuntimeErrorKind::InvalidBytecode,
-                "closure references missing chunk".into(),
-                span.clone(),
-            )
-        })?;
-        if chunk.parameters.is_empty() {
-            if chunk.arity != 0 {
-                return Ok((positional.clone(), vec![true; positional.len()]));
-            }
-            if positional.is_empty() && named.is_empty() {
-                return Ok((Vec::new(), Vec::new()));
-            }
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                format!("`{}` expects no arguments", chunk.name),
-                span,
-            ));
-        }
-        let variadic = chunk
-            .parameters
-            .last()
-            .filter(|parameter| parameter.variadic);
-        let fixed = chunk.parameters.len() - usize::from(variadic.is_some());
-        if positional.len() > chunk.parameters.len() && variadic.is_none() {
-            return Err(self.error(
-                RuntimeErrorKind::Arity,
-                format!("`{}` received too many positional arguments", chunk.name),
-                span,
-            ));
-        }
-        let rest = positional.split_off(fixed.min(positional.len()));
-        let mut bound = positional.into_iter().map(Some).collect::<Vec<_>>();
-        bound.resize_with(chunk.parameters.len(), || None);
-        for (name, value) in named {
-            let slot = chunk
-                .parameters
-                .iter()
-                .position(|parameter| parameter.name == name)
-                .ok_or_else(|| {
-                    self.error(
-                        RuntimeErrorKind::Name,
-                        format!("unknown parameter `{name}`"),
-                        span.clone(),
-                    )
-                })?;
-            if bound[slot].is_some() {
-                return Err(self.error(
-                    RuntimeErrorKind::Arity,
-                    format!("parameter `{name}` was assigned more than once"),
-                    span,
-                ));
-            }
-            if chunk.parameters[slot].variadic && !matches!(value, Value::List(_)) {
-                return Err(self.error(
-                    RuntimeErrorKind::Type,
-                    format!("variadic parameter `{name}` expects a list"),
-                    span,
-                ));
-            }
-            bound[slot] = Some(value);
-        }
-        if variadic.is_some() && bound[fixed].is_none() {
-            bound[fixed] = Some(Value::List(List::from_values(rest)));
-        }
-        let provided = bound.iter().map(Option::is_some).collect::<Vec<_>>();
-        let values = bound
-            .into_iter()
-            .enumerate()
-            .map(|(slot, value)| {
-                value
-                    .or_else(|| chunk.parameters[slot].has_default.then_some(Value::Nil))
-                    .ok_or_else(|| {
-                        self.error(
-                            RuntimeErrorKind::Arity,
-                            format!(
-                                "missing required parameter `{}`",
-                                chunk.parameters[slot].name
-                            ),
-                            span.clone(),
-                        )
-                    })
-            })
-            .collect::<VmResult<Vec<_>>>()?;
-        Ok((values, provided))
     }
 
     fn bind_call_arguments_at(
@@ -5189,7 +4441,6 @@ impl Vm {
         callee: &Value,
         mut positional: Vec<Value>,
         named: Vec<(String, Value)>,
-        span: Option<&SourceSpan>,
     ) -> VmResult<(Vec<Value>, Vec<bool>)> {
         let Value::Closure(closure) = callee else {
             if named.is_empty() {
@@ -5198,7 +4449,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::Arity,
                 "native functions do not accept named arguments".into(),
-                span,
             ));
         };
         let closure_program = closure.program.as_deref().unwrap_or(program);
@@ -5206,7 +4456,6 @@ impl Vm {
             self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "closure references missing chunk".into(),
-                span,
             )
         })?;
         if chunk.parameters.is_empty() {
@@ -5219,7 +4468,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::Arity,
                 format!("`{}` expects no arguments", chunk.name),
-                span,
             ));
         }
         let variadic = chunk
@@ -5231,7 +4479,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::Arity,
                 format!("`{}` received too many positional arguments", chunk.name),
-                span,
             ));
         }
         let rest = positional.split_off(fixed.min(positional.len()));
@@ -5246,21 +4493,18 @@ impl Vm {
                     self.error_at(
                         RuntimeErrorKind::Name,
                         format!("unknown parameter `{name}`"),
-                        span,
                     )
                 })?;
             if bound[slot].is_some() {
                 return Err(self.error_at(
                     RuntimeErrorKind::Arity,
                     format!("parameter `{name}` was assigned more than once"),
-                    span,
                 ));
             }
             if chunk.parameters[slot].variadic && !matches!(value, Value::List(_)) {
                 return Err(self.error_at(
                     RuntimeErrorKind::Type,
                     format!("variadic parameter `{name}` expects a list"),
-                    span,
                 ));
             }
             bound[slot] = Some(value);
@@ -5282,45 +4526,11 @@ impl Vm {
                                 "missing required parameter `{}`",
                                 chunk.parameters[slot].name
                             ),
-                            span,
                         )
                     })
             })
             .collect::<VmResult<Vec<_>>>()?;
         Ok((values, provided))
-    }
-
-    fn bind_overload_arguments(
-        &self,
-        program: &Program,
-        overloads: &[Value],
-        positional: &[Value],
-        named: &[NamedArgument],
-        span: Option<SourceSpan>,
-    ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
-        let mut error = None;
-        for callee in overloads {
-            let callee = callee
-                .resolve()
-                .map_err(|message| self.error(RuntimeErrorKind::Name, message, span.clone()))?;
-            match self.bind_call_arguments(
-                program,
-                &callee,
-                positional.to_vec(),
-                named.to_vec(),
-                span.clone(),
-            ) {
-                Ok((arguments, provided)) => return Ok((callee, arguments, provided)),
-                Err(next) => error = Some(next),
-            }
-        }
-        Err(error.unwrap_or_else(|| {
-            self.error(
-                RuntimeErrorKind::InvalidCall,
-                "overload set is empty".into(),
-                span,
-            )
-        }))
     }
 
     fn bind_overload_arguments_at(
@@ -5329,20 +4539,14 @@ impl Vm {
         overloads: &[Value],
         positional: &[Value],
         named: &[NamedArgument],
-        span: Option<&SourceSpan>,
     ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
         let mut error = None;
         for callee in overloads {
             let callee = callee
                 .resolve()
-                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
-            match self.bind_call_arguments_at(
-                program,
-                &callee,
-                positional.to_vec(),
-                named.to_vec(),
-                span,
-            ) {
+                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
+            match self.bind_call_arguments_at(program, &callee, positional.to_vec(), named.to_vec())
+            {
                 Ok((arguments, provided)) => return Ok((callee, arguments, provided)),
                 Err(next) => error = Some(next),
             }
@@ -5351,7 +4555,6 @@ impl Vm {
             self.error_at(
                 RuntimeErrorKind::InvalidCall,
                 "overload set is empty".into(),
-                span,
             )
         }))
     }
@@ -5363,30 +4566,23 @@ impl Vm {
         selected: &CallableIdentity,
         positional: &[Value],
         named: &[NamedArgument],
-        span: Option<&SourceSpan>,
     ) -> VmResult<(Value, Vec<Value>, Vec<bool>)> {
         for callee in overloads {
             let callee = callee
                 .resolve()
-                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))?;
+                .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
             let identity =
                 Self::callable_signature(&callee).and_then(|signature| signature.identity);
             if identity.as_ref() != Some(selected) {
                 continue;
             }
-            let (arguments, provided) = self.bind_call_arguments_at(
-                program,
-                &callee,
-                positional.to_vec(),
-                named.to_vec(),
-                span,
-            )?;
+            let (arguments, provided) =
+                self.bind_call_arguments_at(program, &callee, positional.to_vec(), named.to_vec())?;
             return Ok((callee, arguments, provided));
         }
         Err(self.error_at(
             RuntimeErrorKind::InvalidCall,
             "selected callable signature is no longer present in the live binding".into(),
-            span,
         ))
     }
 
@@ -5513,16 +4709,6 @@ impl Vm {
     }
 
     #[cfg(feature = "metrics")]
-    fn record_packed_direct_dispatch(&self) {
-        self.metrics.borrow_mut().packed_direct_dispatches += 1;
-    }
-
-    #[cfg(feature = "metrics")]
-    fn record_rich_op_fallback_dispatch(&self) {
-        self.metrics.borrow_mut().rich_op_fallback_dispatches += 1;
-    }
-
-    #[cfg(feature = "metrics")]
     fn record_generic_call_argument_binding(&self) {
         self.metrics.borrow_mut().generic_call_argument_bindings += 1;
     }
@@ -5562,13 +4748,8 @@ impl Vm {
 
     #[cold]
     #[inline(never)]
-    fn error_at(
-        &self,
-        kind: RuntimeErrorKind,
-        message: String,
-        span: Option<&SourceSpan>,
-    ) -> RuntimeError {
-        self.error(kind, message, self.owned_span(span))
+    fn error_at(&self, kind: RuntimeErrorKind, message: String) -> RuntimeError {
+        self.error(kind, message, self.owned_span(None))
     }
 
     fn owned_span(&self, span: Option<&SourceSpan>) -> Option<SourceSpan> {
@@ -5584,11 +4765,8 @@ impl Vm {
     /// Retains a compact caller instruction reference whenever this call is
     /// entered by the dispatch loop. The caller frame owns the corresponding
     /// program until this frame returns, so diagnostics can resolve it lazily.
-    fn frame_call_span(&self, span: Option<&SourceSpan>) -> Option<CallSpan> {
-        match span {
-            Some(span) => Some(CallSpan::Owned(Box::new(span.clone()))),
-            None => self.active_span.map(CallSpan::Instruction),
-        }
+    fn frame_call_span(&self) -> Option<CallSpan> {
+        self.active_span.map(CallSpan::Instruction)
     }
 
     fn active_span(&self) -> Option<&SourceSpan> {
@@ -5602,12 +4780,11 @@ impl Vm {
         span
     }
 
-    fn jump_at(&mut self, target: usize, span: Option<&SourceSpan>) -> VmResult<()> {
+    fn jump_at(&mut self, target: usize) -> VmResult<()> {
         if self.frames.last().is_none() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "no active call frame".into(),
-                span,
             ));
         }
         self.frames.last_mut().expect("active frame was checked").ip = target;

@@ -1134,7 +1134,7 @@ Recommended order:
   defers compiler-resolved global slots (item 7) until a profile needs them.
 - [x] **Cold error construction.** Mark `error`/`error_at` `#[cold]` and
   `#[inline(never)]`.
-- [ ] **One packed dispatch loop.** This is the largest simplicity and size
+- [x] **One packed dispatch loop.** This is the largest simplicity and size
   win, but it must be a deliberate rewrite rather than a deletion. The
   rich-`Op` fallback reconstructs an `Op` from the packed instruction, and 397
   of its lines are unreachable or duplicate the packed hot path: un-pooled
@@ -1335,3 +1335,67 @@ CPython, but the new ones are 1.8x–6.0x: `string-building` 5.96x,
 `function-call` (0.81x) isolates ordinary call/return cost, which `recur`
 loops bypass. Accept the dispatch-loop rewrite only on a `make bench-ab` run
 whose hold-out geomean does not regress.
+
+#### Measurement record: one packed dispatch loop (2026-10-12)
+
+The rewrite landed in four steps, each accepted on its own `make bench-ab`
+run against the previous step:
+
+1. **One `PackedOpcode` match.** `execute_instruction` matches every opcode
+   once and reads pooled metadata directly. The rich-`Op` fallback
+   (`unpack_instruction` plus `execute_borrowed_span_op`, including every
+   un-pooled arm that installation never emits) is gone, along with the
+   `packed_direct_dispatches` and `rich_op_fallback_dispatches` metrics it
+   needed. Large or rare operations live in `#[inline(never)]` helpers, and
+   the rarest (global definition, overload combination, imports, struct
+   schemas, tasks, `select`, scope cleanup) are also `#[cold]`. Tuned 0.95x,
+   hold-out 0.98x, release binary 16.5 KB smaller. Unlike the spike's
+   arm deletion, nothing regressed.
+2. **No `span` parameters.** The 40 helpers whose `span: Option<&SourceSpan>`
+   was always `None` lost it, about 600 call-site arguments in all. Only the
+   native-call path, which can carry a host-supplied span, keeps one.
+   Execution was unchanged (1.00x), as LLVM had already folded the constant.
+3. **Inlined stack fast paths and a cached code slice.** A time profile of
+   `fib` showed `pop_at` as a separate non-inlined call costing 13–17% of
+   samples. `pop_at`, `pop_pair_at`, `peek_at`, `local_value`, and
+   `take_local` are now `#[inline]`, with binding resolution and underflow in
+   `#[cold]` helpers (tuned 0.95x, `fib` 0.86x). The dispatch loop then keeps
+   the active chunk in a local, reloading it only when `frame_epoch` changes.
+   `push_frame`, `pop_frame`, frame truncation and clearing, execution swaps,
+   and `select` suspension bump the epoch. `next_instruction` is gone (tuned
+   0.98x, hold-out 1.00x). The instruction pointer stays in the frame, since
+   only jumps, `recur`, and cleanup write it.
+4. **No owned `call`.** The root entrypoint call now goes through `call_at`
+   after clearing `active_span`, so `main` still records no call site. The
+   owned `call`, `bind_overload_arguments`, and `bind_call_arguments` twins
+   are removed. Execution was unchanged.
+
+Seven rounds, `5694f30` against the finished rewrite:
+
+| Workload | Before | After | Ratio |
+|---|---:|---:|---:|
+| function-call | 22.9 ms | 19.6 ms | 0.85x |
+| n-body | 10.7 ms | 9.6 ms | 0.90x |
+| typed-n-body | 10.6 ms | 9.1 ms | 0.86x |
+| spectral-norm | 6.3 ms | 5.8 ms | 0.91x |
+| typed-spectral-norm | 6.4 ms | 5.8 ms | 0.90x |
+| binary-trees | 27.8 ms | 25.6 ms | 0.92x |
+| fannkuch-redux | 83.5 ms | 68.3 ms | 0.82x |
+| shared-append | 98.6 ms | 96.1 ms | 0.98x |
+| higher-order | 62.4 ms | 50.9 ms | 0.82x |
+| fib | 109.4 ms | 91.2 ms | 0.83x |
+| defer-errors | 101.6 ms | 81.7 ms | 0.80x |
+| word-frequency (hold-out) | 187.1 ms | 170.2 ms | 0.91x |
+| string-building (hold-out) | 151.2 ms | 152.4 ms | 1.01x |
+| expression-evaluator (hold-out) | 223.2 ms | 193.0 ms | 0.86x |
+
+Geometric-mean ratio: tuned 0.87x, hold-out 0.93x. `string-building` is
+inside its spread; it is dominated by string concatenation, not dispatch. The
+release binary fell from 1,859,200 to 1,842,608 bytes. `mod.rs` lost about
+800 lines net. `make check` passed.
+
+The same `fib` profile points at the next costs, all outside dispatch:
+`Value` clone and drop are out-of-line calls; every call to a global function
+hashes and compares its name (FNV plus `memcmp`, about 6–8% of `fib`), which
+is the evidence item 7's compiler-resolved global slots was waiting for; and
+`push_frame`/`pop_frame` swap the VM's `globals` `Rc` on every call.

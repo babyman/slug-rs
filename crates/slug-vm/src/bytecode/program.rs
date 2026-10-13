@@ -819,9 +819,7 @@ impl Program {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn unpack_instruction(
-        instruction: &PackedInstruction,
-    ) -> Result<Instruction, String> {
+    fn unpack_instruction(instruction: &PackedInstruction) -> Result<Instruction, String> {
         let n = |value: u32| value as usize;
         let missing = |name: &str| Err(format!("packed instruction references missing {name}"));
         let op = match instruction.opcode {
