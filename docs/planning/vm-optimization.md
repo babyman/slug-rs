@@ -764,9 +764,11 @@ attributing them to the stack operand model.
 - [ ] Prototype one VM-owned contiguous local-slot arena. Frames retain a
   local-range base and length; calls append slots, returns truncate them, and
   `recur` replaces the active range without changing captured-cell identity.
-- [ ] Compare compiler-resolved global-slot IDs backed by contiguous module
+- [x] Compare compiler-resolved global-slot IDs backed by contiguous module
   storage with the current pooled-name plus string-`HashMap` lookup. Retain the
   name map for linking, imports, host access, conflicts, and diagnostics.
+  Implemented as runtime-resolved slots cached per closure rather than
+  compiler-assigned IDs; see the 2026-10-12 global-slots record.
 - [ ] After full executable accounting, prototype a fixed-width typed
   instruction with an opcode tag and 32-bit operands or metadata IDs. Measure
   a practical 16--24-byte target against the current 64-byte Rust enum; do not
@@ -1406,3 +1408,35 @@ is `pop`, and so on. `current_waiter_at` became `blocking_waiter`, and the
 pooled `import` and `select` wrappers were merged into the functions they
 called. `error_at` keeps its name: it builds an error at the active span,
 unlike `error`, which takes one explicitly.
+
+#### Measurement record: cached global slots (2026-10-12)
+
+A global environment is now a `GlobalTable`: values in definition order
+behind a name→slot index. Nothing ever removes a global, and redefinition
+replaces a value in place, so a slot stays valid for the table's lifetime.
+
+Slots are resolved at run time, not assigned by the compiler. One
+environment holds names from several sources: host builtins, native
+modules, `slug.builtin`, imports, and every REPL submission. A program can
+also run against more than one environment (interactive overlays, a
+spawned task's copy). So a slot is only meaningful for one (program,
+environment) pair, and compile-time IDs would need a link step at every
+install, import, and overlay. Instead each `Closure` carries `global_slots`,
+one `Cell<u32>` per global name of its program, filled on the name's first
+read. `MakeClosure` and function constants share the creating closure's
+table, since they have the same program and environment. A closure rebound
+to another environment gets a fresh one, and the host-built root closure has
+none and reads by name. `GetGlobal` reaches the table through the active
+frame's closure, so calls pay nothing extra. A cached read is one bounds
+check and one indexed clone, and an initialized module binding cell is read
+through directly.
+
+Seven rounds against `e0b7a1f`: tuned 0.97x, hold-out 0.97x. Calls through
+globals gain most: `function-call` 0.89x, `fib` 0.93x, `binary-trees`
+0.93x, and the hold-out `expression-evaluator` 0.91x. Numeric loops that
+read no globals are unchanged. `word-frequency` measured 1.01x–1.03x over
+three runs, inside its 5–9% spread. Its time profile is the same for both
+builds: about 73% is `Value::eq` and `memcmp` from linear key scans in its
+509-entry map. So the residual is layout or noise, not global reads, and
+that linear scan is the real reason it runs 5x slower than CPython. It
+belongs to item 7's last bullet on map representation. `make check` passed.

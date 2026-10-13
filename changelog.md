@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reading a global, such as calling a top-level function, no longer hashes
+  its name each time. Each closure caches the global's storage slot after
+  the first read. Recursive and call-heavy code runs 7–11% faster.
+
 - The VM dispatches every instruction through one match on the packed
   opcode, with no fallback that rebuilt the builder-facing `Op`. Stack
   access is inlined, and the active code is looked up only when the frame

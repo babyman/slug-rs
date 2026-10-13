@@ -32,9 +32,9 @@ use crate::{
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
     value::{
-        Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment, RootWaiter,
-        SelectWake, WaitRegistration, WaitSet, Waiter, binding_cell, global_environment,
-        module_binding,
+        Builtin, Channel, ChannelReceive, ChannelSend, Closure, GlobalEnvironment, GlobalSlots,
+        RootWaiter, SelectWake, UNRESOLVED_GLOBAL, WaitRegistration, WaitSet, Waiter, binding_cell,
+        global_environment, global_slots, module_binding,
     },
 };
 
@@ -510,6 +510,7 @@ impl InteractiveTask {
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
                     globals: Some(session_globals.clone()),
+                    global_slots: closure.program.as_deref().map(global_slots),
                     #[cfg(feature = "concurrency")]
                     capture_sources: closure.capture_sources.clone(),
                 }))
@@ -901,6 +902,7 @@ impl Vm {
             captures: Vec::new(),
             program: Some(program.clone()),
             globals: Some(task_environment.globals.clone()),
+            global_slots: Some(global_slots(&program)),
             capture_sources: Vec::new(),
         });
         let imported_globals = Rc::new(RefCell::new(task_environment.imported_globals));
@@ -1081,6 +1083,7 @@ impl Vm {
                     captures: closure.captures.clone(),
                     program: closure.program.clone(),
                     globals: Some(destination.clone()),
+                    global_slots: closure.program.as_deref().map(global_slots),
                 }))
             }
             Value::Overloads(values) => Value::Overloads(Rc::new(
@@ -1392,7 +1395,7 @@ impl Vm {
         };
         let mut globals = self.globals.borrow_mut();
         for (name, value) in host.builtin_globals() {
-            globals.entry(name).or_insert(value);
+            globals.insert_if_absent(name, || value);
         }
         drop(globals);
         let instance = match host.import_module(None, "slug.builtin") {
@@ -1418,9 +1421,7 @@ impl Vm {
                     None,
                 ));
             };
-            globals
-                .entry(name.to_string())
-                .or_insert_with(|| value.clone());
+            globals.insert_if_absent(name.to_string(), || value.clone());
         }
         Ok(())
     }
@@ -1608,6 +1609,7 @@ impl Vm {
                 captures: Vec::new(),
                 program: None,
                 globals: None,
+                global_slots: None,
                 #[cfg(feature = "concurrency")]
                 capture_sources: Vec::new(),
             }),
@@ -2003,6 +2005,7 @@ impl Vm {
                         captures: Vec::new(),
                         program: Some(self.active_program()?),
                         globals: Some(self.globals.clone()),
+                        global_slots: Some(self.shared_global_slots(program)),
                         #[cfg(feature = "concurrency")]
                         capture_sources: Vec::new(),
                     })),
@@ -2063,19 +2066,7 @@ impl Vm {
                 *capture.borrow_mut() = value;
             }
             PackedOpcode::GetGlobal => {
-                let name = program
-                    .global_name(GlobalNameId::new(instruction.a))
-                    .expect("validated global name metadata");
-                let value = self
-                    .globals
-                    .borrow()
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`"))
-                    })?
-                    .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
+                let value = self.global_value(program, GlobalNameId::new(instruction.a))?;
                 self.stack.push(value);
             }
             PackedOpcode::NotImplemented => {
@@ -2373,6 +2364,65 @@ impl Vm {
         Ok(InstructionOutcome::Continue)
     }
 
+    /// Reads a global through the active closure's cached slot, resolving
+    /// and caching the slot by name on its first read.
+    #[inline]
+    fn global_value(&self, program: &Program, id: GlobalNameId) -> VmResult<Value> {
+        let slot = self
+            .frames
+            .last()
+            .and_then(|frame| frame.closure.global_slots.as_ref())
+            .and_then(|slots| slots.get(id.index()))
+            .map_or(UNRESOLVED_GLOBAL, core::cell::Cell::get);
+        if slot != UNRESOLVED_GLOBAL {
+            // A module's top-level names are binding cells; read through an
+            // initialized one and leave an uninitialized one to report.
+            match self.globals.borrow().value(slot) {
+                Value::Binding { cell, .. } => {
+                    let value = cell.borrow();
+                    if !matches!(*value, Value::Uninitialized) {
+                        return Ok(value.clone());
+                    }
+                }
+                value => return Ok(value.clone()),
+            }
+        }
+        self.global_value_by_name(program, id)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn global_value_by_name(&self, program: &Program, id: GlobalNameId) -> VmResult<Value> {
+        let name = program
+            .global_name(id)
+            .expect("validated global name metadata");
+        let globals = self.globals.borrow();
+        let slot = globals.slot(name).ok_or_else(|| {
+            self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`"))
+        })?;
+        if let Some(cached) = self
+            .frames
+            .last()
+            .and_then(|frame| frame.closure.global_slots.as_ref())
+            .and_then(|slots| slots.get(id.index()))
+        {
+            cached.set(slot);
+        }
+        globals
+            .value(slot)
+            .resolve()
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
+    }
+
+    /// The slot cache for a closure created by the active frame, which shares
+    /// that frame's program and global environment.
+    fn shared_global_slots(&self, program: &Program) -> GlobalSlots {
+        self.frames
+            .last()
+            .and_then(|frame| frame.closure.global_slots.clone())
+            .unwrap_or_else(|| global_slots(program))
+    }
+
     fn pooled_call_arguments<'a>(
         &self,
         program: &'a Program,
@@ -2605,6 +2655,7 @@ impl Vm {
             captures,
             program: Some(self.active_program()?),
             globals: Some(self.globals.clone()),
+            global_slots: Some(self.shared_global_slots(program)),
             #[cfg(feature = "concurrency")]
             capture_sources: capture_sources.to_vec(),
         })));
@@ -3257,6 +3308,7 @@ impl Vm {
             captures,
             program: closure.program.clone(),
             globals: closure.globals.clone(),
+            global_slots: closure.global_slots.clone(),
             capture_sources: closure.capture_sources.clone(),
         });
         let task_program = closure.program.clone().unwrap_or(self.active_program()?);

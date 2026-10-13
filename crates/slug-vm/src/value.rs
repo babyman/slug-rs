@@ -558,10 +558,85 @@ impl Drop for Channel {
 
 /// Shared storage for a lexical binding captured by one or more closures.
 pub(crate) type BindingCell = Rc<RefCell<Value>>;
-pub(crate) type GlobalEnvironment = Rc<RefCell<NameMap<Value>>>;
+pub(crate) type GlobalEnvironment = Rc<RefCell<GlobalTable>>;
 
 pub(crate) fn global_environment() -> GlobalEnvironment {
-    Rc::new(RefCell::new(NameMap::default()))
+    Rc::new(RefCell::new(GlobalTable::default()))
+}
+
+/// Global bindings stored in definition order behind a name index.
+///
+/// Bindings are never removed, so a slot stays valid for the table's lifetime
+/// once a name resolves to it; redefining a name replaces its value in place.
+/// This lets compiled code cache a slot per global name instead of hashing
+/// the name on every read.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GlobalTable {
+    slots: NameMap<u32>,
+    entries: Vec<(String, Value)>,
+}
+
+impl GlobalTable {
+    pub(crate) fn slot(&self, name: &str) -> Option<u32> {
+        self.slots.get(name).copied()
+    }
+
+    /// The value in a slot that `slot` returned for this table.
+    #[inline]
+    pub(crate) fn value(&self, slot: u32) -> &Value {
+        &self.entries[slot as usize].1
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<&Value> {
+        self.slot(name).map(|slot| self.value(slot))
+    }
+
+    pub(crate) fn contains_key(&self, name: &str) -> bool {
+        self.slots.contains_key(name)
+    }
+
+    /// Binds `name`, replacing the value of an existing binding in place.
+    pub(crate) fn insert(&mut self, name: String, value: Value) {
+        if let Some(slot) = self.slot(&name) {
+            self.entries[slot as usize].1 = value;
+        } else {
+            let slot = u32::try_from(self.entries.len()).expect("too many global bindings");
+            self.slots.insert(name.clone(), slot);
+            self.entries.push((name, value));
+        }
+    }
+
+    /// Binds `name` only if it is not already bound.
+    pub(crate) fn insert_if_absent(&mut self, name: String, value: impl FnOnce() -> Value) {
+        if !self.contains_key(&name) {
+            self.insert(name, value());
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.entries.iter().map(|(name, value)| (name, value))
+    }
+}
+
+impl Extend<(String, Value)> for GlobalTable {
+    fn extend<I: IntoIterator<Item = (String, Value)>>(&mut self, entries: I) {
+        for (name, value) in entries {
+            self.insert(name, value);
+        }
+    }
+}
+
+/// One cached `GlobalTable` slot per global name of a program, filled on the
+/// first read of each name. Valid only for one program and one environment.
+pub(crate) type GlobalSlots = Rc<[core::cell::Cell<u32>]>;
+
+/// A `GlobalSlots` entry whose name has not been resolved yet.
+pub(crate) const UNRESOLVED_GLOBAL: u32 = u32::MAX;
+
+pub(crate) fn global_slots(program: &crate::Program) -> GlobalSlots {
+    (0..program.global_name_count())
+        .map(|_| core::cell::Cell::new(UNRESOLVED_GLOBAL))
+        .collect()
 }
 
 pub(crate) fn binding_cell(value: Value) -> BindingCell {
@@ -582,6 +657,10 @@ pub struct Closure {
     pub(crate) captures: Vec<BindingCell>,
     pub(crate) program: Option<Rc<crate::Program>>,
     pub(crate) globals: Option<GlobalEnvironment>,
+    /// Slots in `globals` already resolved for `program`'s global names.
+    /// Present only when both are, and shared by closures created with the
+    /// same program and environment.
+    pub(crate) global_slots: Option<GlobalSlots>,
     #[cfg(feature = "concurrency")]
     pub(crate) capture_sources: Vec<crate::Capture>,
 }

@@ -489,6 +489,10 @@ impl Program {
         self.spans.get(id.index())
     }
 
+    pub(crate) fn global_name_count(&self) -> usize {
+        self.global_names.len()
+    }
+
     pub(crate) fn global_name(&self, id: GlobalNameId) -> Option<&str> {
         self.global_names.get(id.index()).map(String::as_str)
     }

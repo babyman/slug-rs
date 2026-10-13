@@ -108,6 +108,47 @@ fn closures_share_mutable_captures() {
 }
 
 #[test]
+fn cached_global_reads_observe_reassignment_and_redefinition() {
+    // `read` caches the slot for `x` on its first call; later writes replace
+    // the value in that slot, so every call must see the current value.
+    let mut read = Chunk::new("read", 0);
+    read.emit(Op::GetGlobal("x".into())).emit(Op::Return);
+
+    let mut main = Chunk::new("main", 0);
+    let one = main.constant(Value::Int(1));
+    let ten = main.constant(Value::Int(10));
+    let hundred = main.constant(Value::Int(100));
+    main.emit(Op::Constant(one))
+        .emit(Op::DefineGlobal("x".into()))
+        .emit(Op::MakeClosure {
+            chunk: 0,
+            captures: vec![],
+        })
+        .emit(Op::DefineGlobal("read".into()))
+        .emit(Op::GetGlobal("read".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Constant(ten))
+        .emit(Op::SetGlobal("x".into()))
+        .emit(Op::GetGlobal("read".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Add)
+        .emit(Op::Constant(hundred))
+        .emit(Op::DefineGlobal("x".into()))
+        .emit(Op::GetGlobal("read".into()))
+        .emit(Op::Call(0))
+        .emit(Op::Add)
+        .emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(read);
+    program.add_chunk(main);
+    assert_eq!(
+        Vm::new().run_named(&program, "main").unwrap(),
+        Value::Int(111)
+    );
+}
+
+#[test]
 fn keeps_globals_across_runs_and_calls_explicit_native_functions() {
     fn double(call: &mut NativeCall<'_>) -> NativeStatus {
         let value = match call.argument(0).and_then(slug_vm::NativeValueRef::as_i64) {
