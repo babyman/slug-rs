@@ -1399,3 +1399,10 @@ The same `fib` profile points at the next costs, all outside dispatch:
 hashes and compares its name (FNV plus `memcmp`, about 6–8% of `fib`), which
 is the evidence item 7's compiler-resolved global slots was waiting for; and
 `push_frame`/`pop_frame` swap the VM's `globals` `Rc` on every call.
+
+With the span parameter gone, the `_at` suffix on VM helpers no longer meant
+anything, so they were renamed without it: `call_at` is now `call`, `pop_at`
+is `pop`, and so on. `current_waiter_at` became `blocking_waiter`, and the
+pooled `import` and `select` wrappers were merged into the functions they
+called. `error_at` keeps its name: it builds an error at the active span,
+unlike `error`, which takes one explicitly.

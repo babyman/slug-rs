@@ -734,7 +734,7 @@ impl Vm {
         // The root call has no caller instruction; clear any span left by
         // module initialization so `main` records no call site.
         self.active_span = None;
-        self.call_at(&program.program, count, None)?;
+        self.call(&program.program, count, None)?;
         self.run_root_execution()
     }
 
@@ -2022,17 +2022,17 @@ impl Vm {
             PackedOpcode::True => self.stack.push(Value::Bool(true)),
             PackedOpcode::False => self.stack.push(Value::Bool(false)),
             PackedOpcode::Pop => {
-                self.pop_at()?;
+                self.pop()?;
             }
-            PackedOpcode::Duplicate => self.stack.push(self.peek_at()?.clone()),
+            PackedOpcode::Duplicate => self.stack.push(self.peek()?.clone()),
             PackedOpcode::GetLocal if instruction.b == MOVE_LOCAL => {
                 let value = self.take_local(operand)?;
                 self.stack.push(value);
             }
             PackedOpcode::GetLocal => self.stack.push(self.local_value(operand)?),
             PackedOpcode::SetLocal => {
-                let value = self.pop_at()?;
-                self.set_local_at(operand, value)?;
+                let value = self.pop()?;
+                self.set_local(operand, value)?;
             }
             PackedOpcode::GetCapture => {
                 let value = self
@@ -2049,7 +2049,7 @@ impl Vm {
                 self.stack.push(value);
             }
             PackedOpcode::SetCapture => {
-                let value = self.pop_at()?;
+                let value = self.pop()?;
                 let capture = self
                     .frames
                     .last()
@@ -2098,7 +2098,7 @@ impl Vm {
                 self.make_closure(program, operand, CaptureListId::new(instruction.b))?;
             }
             PackedOpcode::List => {
-                let values = self.pop_values_at(operand)?;
+                let values = self.pop_values(operand)?;
                 #[cfg(feature = "metrics")]
                 self.record_collection_construction(values.len());
                 self.stack.push(Value::List(List::from_values(values)));
@@ -2112,10 +2112,10 @@ impl Vm {
                             "list spread metadata does not exist".into(),
                         )
                     })?;
-                self.list_spread_at(spreads)?;
+                self.list_spread(spreads)?;
             }
             PackedOpcode::Map => {
-                let values = self.pop_values_at(operand.saturating_mul(2))?;
+                let values = self.pop_values(operand.saturating_mul(2))?;
                 let mut entries = Vec::with_capacity(operand);
                 for pair in values.chunks_exact(2) {
                     if !is_map_key(&pair[0]) {
@@ -2140,10 +2140,10 @@ impl Vm {
                 self.copy_struct(program, StructFieldsId::new(instruction.a))?;
             }
             PackedOpcode::GetIndexConstant => {
-                self.get_index_constant_at(program, operand)?;
+                self.get_index_constant(program, operand)?;
             }
             PackedOpcode::GetIndex => {
-                let (collection, index) = self.pop_pair_at()?;
+                let (collection, index) = self.pop_pair()?;
                 self.stack.push(
                     index_value(
                         collection,
@@ -2158,7 +2158,7 @@ impl Vm {
                 self.get_slice(instruction.a != 0, instruction.b != 0, instruction.c != 0)?;
             }
             PackedOpcode::Add => {
-                let (left, right) = self.pop_pair_at()?;
+                let (left, right) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
                 match (&left, &right) {
                     (Value::List(left), Value::List(right)) => {
@@ -2187,14 +2187,14 @@ impl Vm {
                 );
             }
             PackedOpcode::AddNum => {
-                let (left, right) = self.pop_pair_at()?;
+                let (left, right) = self.pop_pair()?;
                 self.stack.push(
                     add_num(left, right)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
             PackedOpcode::Subtract => {
-                let (left, right) = self.pop_pair_at()?;
+                let (left, right) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
                 if let Value::Map(entries) = &left {
                     self.record_collection_update(entries.len(), Rc::strong_count(entries) == 1);
@@ -2204,30 +2204,30 @@ impl Vm {
                         .map_err(|(kind, message)| self.error_at(kind, message))?,
                 );
             }
-            PackedOpcode::SubtractNum => self.binary_at(subtract_num)?,
-            PackedOpcode::Multiply => self.binary_at(multiply)?,
-            PackedOpcode::MultiplyNum => self.binary_at(multiply_num)?,
-            PackedOpcode::Divide => self.binary_at(divide)?,
-            PackedOpcode::DivideNum => self.binary_at(divide_num)?,
-            PackedOpcode::Modulo => self.binary_at(modulo)?,
-            PackedOpcode::ModuloNum => self.binary_at(modulo_num)?,
+            PackedOpcode::SubtractNum => self.binary(subtract_num)?,
+            PackedOpcode::Multiply => self.binary(multiply)?,
+            PackedOpcode::MultiplyNum => self.binary(multiply_num)?,
+            PackedOpcode::Divide => self.binary(divide)?,
+            PackedOpcode::DivideNum => self.binary(divide_num)?,
+            PackedOpcode::Modulo => self.binary(modulo)?,
+            PackedOpcode::ModuloNum => self.binary(modulo_num)?,
             PackedOpcode::BitAnd => {
-                self.binary_at(|left, right| bitwise(left, right, |a, b| a & b))?;
+                self.binary(|left, right| bitwise(left, right, |a, b| a & b))?;
             }
             PackedOpcode::BitOr => {
-                self.binary_at(|left, right| bitwise(left, right, |a, b| a | b))?;
+                self.binary(|left, right| bitwise(left, right, |a, b| a | b))?;
             }
             PackedOpcode::BitXor => {
-                self.binary_at(|left, right| bitwise(left, right, |a, b| a ^ b))?;
+                self.binary(|left, right| bitwise(left, right, |a, b| a ^ b))?;
             }
             PackedOpcode::ShiftLeft => {
-                self.binary_at(|left, right| shift(left, right, i64::checked_shl))?;
+                self.binary(|left, right| shift(left, right, i64::checked_shl))?;
             }
             PackedOpcode::ShiftRight => {
-                self.binary_at(|left, right| shift(left, right, i64::checked_shr))?;
+                self.binary(|left, right| shift(left, right, i64::checked_shr))?;
             }
             PackedOpcode::ListAppend => {
-                let (list, value) = self.pop_pair_at()?;
+                let (list, value) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
@@ -2245,7 +2245,7 @@ impl Vm {
                 );
             }
             PackedOpcode::ListPrepend => {
-                let (value, list) = self.pop_pair_at()?;
+                let (value, list) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
                 match &list {
                     Value::List(values) => {
@@ -2263,39 +2263,39 @@ impl Vm {
                 );
             }
             PackedOpcode::Negate => {
-                let value = self.pop_at()?;
+                let value = self.pop()?;
                 self.stack.push(
                     negate(value)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
             PackedOpcode::Not => {
-                let value = self.pop_at()?;
+                let value = self.pop()?;
                 self.stack.push(Value::Bool(!value.is_truthy()));
             }
             PackedOpcode::BitNot => {
-                let value = self.pop_at()?;
+                let value = self.pop()?;
                 self.stack.push(
                     bit_not(&value)
                         .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
                 );
             }
             PackedOpcode::Equal => {
-                let (left, right) = self.pop_pair_at()?;
+                let (left, right) = self.pop_pair()?;
                 self.stack.push(Value::Bool(left == right));
             }
-            PackedOpcode::Greater => self.compare_at(cmp::Ordering::Greater)?,
+            PackedOpcode::Greater => self.compare(cmp::Ordering::Greater)?,
             PackedOpcode::GreaterNum => {
-                self.numeric_compare_at(cmp::Ordering::Greater)?;
+                self.numeric_compare(cmp::Ordering::Greater)?;
             }
-            PackedOpcode::Less => self.compare_at(cmp::Ordering::Less)?,
-            PackedOpcode::LessNum => self.numeric_compare_at(cmp::Ordering::Less)?,
-            PackedOpcode::GuardGreater => self.guard_compare_at(cmp::Ordering::Greater)?,
-            PackedOpcode::GuardLess => self.guard_compare_at(cmp::Ordering::Less)?,
-            PackedOpcode::Jump => self.jump_at(operand)?,
+            PackedOpcode::Less => self.compare(cmp::Ordering::Less)?,
+            PackedOpcode::LessNum => self.numeric_compare(cmp::Ordering::Less)?,
+            PackedOpcode::GuardGreater => self.guard_compare(cmp::Ordering::Greater)?,
+            PackedOpcode::GuardLess => self.guard_compare(cmp::Ordering::Less)?,
+            PackedOpcode::Jump => self.jump(operand)?,
             PackedOpcode::JumpIfFalse => {
-                if !self.peek_at()?.is_truthy() {
-                    self.jump_at(operand)?;
+                if !self.peek()?.is_truthy() {
+                    self.jump(operand)?;
                 }
             }
             PackedOpcode::JumpIfProvided => {
@@ -2304,15 +2304,15 @@ impl Vm {
                     .last()
                     .is_some_and(|frame| frame.provided.is_provided(operand))
                 {
-                    self.jump_at(instruction.b as usize)?;
+                    self.jump(instruction.b as usize)?;
                 }
             }
-            PackedOpcode::Call => self.call_at(program, operand, None)?,
-            PackedOpcode::CallPositional => self.call_positional_at(program, operand)?,
+            PackedOpcode::Call => self.call(program, operand, None)?,
+            PackedOpcode::CallPositional => self.call_positional(program, operand)?,
             PackedOpcode::CallSpread => {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
-                self.call_spread_at(program, kinds, None)?;
+                self.call_spread(program, kinds, None)?;
             }
             PackedOpcode::CallSelected => {
                 self.call_selected(program, SelectedCallId::new(instruction.a), false)?;
@@ -2320,7 +2320,7 @@ impl Vm {
             PackedOpcode::PipelineCall => {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
-                self.pipeline_call_at(program, kinds, None)?;
+                self.pipeline_call(program, kinds, None)?;
             }
             PackedOpcode::PipelineCallSelected => {
                 self.call_selected(program, SelectedCallId::new(instruction.a), true)?;
@@ -2329,8 +2329,8 @@ impl Vm {
             PackedOpcode::Spawn => self.spawn(program)?,
             PackedOpcode::Nursery => self.nursery(program, instruction.a != 0)?,
             PackedOpcode::Select => self.select(program, SelectCasesId::new(instruction.a))?,
-            PackedOpcode::SelectApply => self.select_apply_at(program)?,
-            PackedOpcode::TryMatch => self.try_match_at(
+            PackedOpcode::SelectApply => self.select_apply(program)?,
+            PackedOpcode::TryMatch => self.try_match(
                 program,
                 MatchPatternId::new(instruction.a),
                 instruction.b as usize,
@@ -2343,12 +2343,12 @@ impl Vm {
                 ));
             }
             PackedOpcode::Throw => {
-                let value = self.pop_at()?;
+                let value = self.pop()?;
                 return Err(self.thrown(value, self.owned_span(None)));
             }
-            PackedOpcode::EnterScope => self.enter_scope_at()?,
+            PackedOpcode::EnterScope => self.enter_scope()?,
             PackedOpcode::LeaveScope => {
-                if !self.leave_scope_without_cleanup_at()?
+                if !self.leave_scope_without_cleanup()?
                     && let Some(value) = self.leave_scope_with_cleanup()?
                 {
                     return Ok(InstructionOutcome::Settled(value));
@@ -2358,11 +2358,11 @@ impl Vm {
             PackedOpcode::Recur => {
                 let kinds =
                     self.pooled_call_arguments(program, CallArgumentsId::new(instruction.a))?;
-                self.recur_at(program, kinds)?;
+                self.recur(program, kinds)?;
             }
-            PackedOpcode::RecurPositional => self.recur_positional_at(program, operand)?,
+            PackedOpcode::RecurPositional => self.recur_positional(program, operand)?,
             PackedOpcode::Return => {
-                let value = self.pop_at()?;
+                let value = self.pop()?;
                 if let Err(value) = self.return_without_cleanup(value)
                     && let Some(value) = self.begin_return(value)?
                 {
@@ -2407,9 +2407,9 @@ impl Vm {
             )
         })?;
         if pipeline {
-            self.pipeline_call_at(program, kinds, Some(identity))
+            self.pipeline_call(program, kinds, Some(identity))
         } else {
-            self.call_spread_at(program, kinds, Some(identity))
+            self.call_spread(program, kinds, Some(identity))
         }
     }
 
@@ -2421,7 +2421,7 @@ impl Vm {
                 "interpolation metadata does not exist".into(),
             )
         })?;
-        let values = self.pop_values_at(parts.len().saturating_sub(1))?;
+        let values = self.pop_values(parts.len().saturating_sub(1))?;
         let mut output = String::new();
         for (index, text) in parts.iter().enumerate() {
             output.push_str(text);
@@ -2439,7 +2439,7 @@ impl Vm {
         let name = program
             .global_name(id)
             .expect("validated global name metadata");
-        let value = self.pop_unresolved_at()?;
+        let value = self.pop_unresolved()?;
         if self.imported_globals.remove(name) {
             self.warning(format!(
                 "local binding `{name}` shadows an imported binding"
@@ -2465,7 +2465,7 @@ impl Vm {
         if !self.globals.borrow().contains_key(name) {
             return Err(self.error_at(RuntimeErrorKind::Name, format!("unknown name `{name}`")));
         }
-        let value = self.pop_at()?;
+        let value = self.pop()?;
         if !self
             .globals
             .borrow()
@@ -2480,8 +2480,8 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn combine_overloads(&mut self) -> VmResult<()> {
-        let existing = self.pop_unresolved_at()?;
-        let new = self.pop_unresolved_at()?;
+        let existing = self.pop_unresolved()?;
+        let new = self.pop_unresolved()?;
         let mut overloads = match existing {
             Value::Overloads(overloads) => overloads.as_ref().clone(),
             value if Self::callable_signature(&value).is_some() => vec![value],
@@ -2509,7 +2509,7 @@ impl Vm {
     #[cold]
     #[inline(never)]
     fn define_map_globals(&mut self) -> VmResult<()> {
-        let value = self.pop_unresolved_at()?;
+        let value = self.pop_unresolved()?;
         let Value::Map(entries) = value else {
             return Err(self.error_at(
                 RuntimeErrorKind::Type,
@@ -2552,7 +2552,7 @@ impl Vm {
         tag: usize,
         arguments: usize,
     ) -> VmResult<()> {
-        let arguments = self.pop_values_at(arguments)?;
+        let arguments = self.pop_values(arguments)?;
         if self
             .module_metadata
             .get(declaration)
@@ -2586,7 +2586,7 @@ impl Vm {
         let captures = capture_sources
             .iter()
             .map(|capture| match capture {
-                Capture::Local(slot) => self.promote_local_at(*slot),
+                Capture::Local(slot) => self.promote_local(*slot),
                 Capture::Capture(slot) => self
                     .frames
                     .last()
@@ -2618,7 +2618,7 @@ impl Vm {
             .schema_fields(id)
             .expect("validated schema field metadata");
         let default_count = fields.iter().filter(|field| field.has_default).count();
-        let defaults = self.pop_values_at(default_count)?;
+        let defaults = self.pop_values(default_count)?;
         let mut defaults = defaults.into_iter();
         let mut names = Vec::with_capacity(fields.len());
         let mut schema_fields = Vec::with_capacity(fields.len());
@@ -2651,8 +2651,8 @@ impl Vm {
         let fields = program
             .struct_fields(id)
             .expect("validated struct field metadata");
-        let values = self.pop_values_at(fields.len())?;
-        let schema = self.pop_at()?;
+        let values = self.pop_values(fields.len())?;
+        let schema = self.pop()?;
         #[cfg(feature = "metrics")]
         self.record_collection_construction(values.len());
         self.stack.push(
@@ -2667,8 +2667,8 @@ impl Vm {
         let fields = program
             .struct_fields(id)
             .expect("validated struct field metadata");
-        let replacements = self.pop_values_at(fields.len())?;
-        let value = self.pop_at()?;
+        let replacements = self.pop_values(fields.len())?;
+        let value = self.pop()?;
         #[cfg(feature = "metrics")]
         match &value {
             Value::Map(value) => {
@@ -2689,7 +2689,7 @@ impl Vm {
     #[inline(never)]
     fn get_slice(&mut self, has_start: bool, has_end: bool, has_step: bool) -> VmResult<()> {
         let count = usize::from(has_start) + usize::from(has_end) + usize::from(has_step);
-        let mut values = self.pop_values_at(count + 1)?.into_iter();
+        let mut values = self.pop_values(count + 1)?.into_iter();
         let collection = values
             .next()
             .expect("slice operation includes a collection");
@@ -2707,16 +2707,9 @@ impl Vm {
 
     #[cold]
     #[inline(never)]
-    fn import(&mut self, program: &Program, id: CallArgumentsId) -> VmResult<()> {
-        let kinds = self.pooled_call_arguments(program, id)?;
-        self.import_at(kinds)
-    }
-
-    #[cold]
-    #[inline(never)]
     fn spawn(&mut self, program: &Program) -> VmResult<()> {
         #[cfg(feature = "concurrency")]
-        return self.spawn_task_at(program);
+        return self.spawn_task(program);
         #[cfg(not(feature = "concurrency"))]
         {
             let _ = program;
@@ -2728,7 +2721,7 @@ impl Vm {
     #[inline(never)]
     fn nursery(&mut self, program: &Program, has_limit: bool) -> VmResult<()> {
         #[cfg(feature = "concurrency")]
-        return self.run_nursery_at(program, has_limit);
+        return self.run_nursery(program, has_limit);
         #[cfg(not(feature = "concurrency"))]
         {
             let _ = (program, has_limit);
@@ -2736,20 +2729,8 @@ impl Vm {
         }
     }
 
-    #[cold]
-    #[inline(never)]
-    fn select(&mut self, program: &Program, id: SelectCasesId) -> VmResult<()> {
-        let cases = program.select_cases(id).ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "select metadata does not exist".into(),
-            )
-        })?;
-        self.select_at(cases)
-    }
-
     /// Leaves a scope whose deferred actions must run before execution
-    /// continues in this frame. `leave_scope_without_cleanup_at` has already
+    /// continues in this frame. `leave_scope_without_cleanup` has already
     /// checked the frame and scope depth.
     #[cold]
     #[inline(never)]
@@ -2783,7 +2764,7 @@ impl Vm {
                 ));
             }
         };
-        let action = self.pop_at()?;
+        let action = self.pop()?;
         if !matches!(
             action,
             Value::Closure(_) | Value::Native(_) | Value::DeclaredNative { .. } | Value::Builtin(_)
@@ -2814,7 +2795,7 @@ impl Vm {
         Ok(())
     }
 
-    fn enter_scope_at(&mut self) -> VmResult<()> {
+    fn enter_scope(&mut self) -> VmResult<()> {
         if self.frames.is_empty() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
@@ -2841,7 +2822,7 @@ impl Vm {
 
     /// Exits a scope directly only when it has no deferred work and cannot
     /// resume a cleanup action. All other exits retain the cleanup dispatcher.
-    fn leave_scope_without_cleanup_at(&mut self) -> VmResult<bool> {
+    fn leave_scope_without_cleanup(&mut self) -> VmResult<bool> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
@@ -2858,7 +2839,7 @@ impl Vm {
         Ok(true)
     }
 
-    fn try_match_at(
+    fn try_match(
         &mut self,
         program: &Program,
         pattern: MatchPatternId,
@@ -2868,8 +2849,8 @@ impl Vm {
         let pattern = program
             .match_pattern(pattern)
             .expect("validated match pattern metadata");
-        let operands = self.pop_values_at(operands)?;
-        let value = self.pop_at()?;
+        let operands = self.pop_values(operands)?;
+        let value = self.pop()?;
         let mut values = Vec::new();
         let mut list_views_created = 0;
         let matched = matches_pattern(
@@ -2938,8 +2919,8 @@ impl Vm {
         self.local_slot_pool.push(locals);
     }
 
-    fn get_index_constant_at(&mut self, program: &Program, constant: usize) -> VmResult<()> {
-        let collection = self.pop_at()?;
+    fn get_index_constant(&mut self, program: &Program, constant: usize) -> VmResult<()> {
+        let collection = self.pop()?;
         let Some(crate::Constant::Value(key)) =
             self.current_chunk(program)?.constants.get(constant)
         else {
@@ -2997,7 +2978,7 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn call_at(
+    fn call(
         &mut self,
         program: &Program,
         count: usize,
@@ -3137,12 +3118,12 @@ impl Vm {
                     })
                     .collect::<VmResult<Vec<_>>>()?;
                 let (callee, arguments, provided) =
-                    self.bind_overload_arguments_at(program, &overloads, &positional, &[])?;
+                    self.bind_overload_arguments(program, &overloads, &positional, &[])?;
                 self.stack.truncate(base);
                 self.stack.push(callee);
                 self.stack.extend(arguments);
                 let count = self.stack.len() - base - 1;
-                return self.call_at(program, count, Some(provided));
+                return self.call(program, count, Some(provided));
             }
             value => {
                 return Err(self.error_at(
@@ -3240,8 +3221,8 @@ impl Vm {
     }
 
     #[cfg(feature = "concurrency")]
-    fn spawn_task_at(&mut self, _program: &Program) -> VmResult<()> {
-        let closure = self.pop_at()?;
+    fn spawn_task(&mut self, _program: &Program) -> VmResult<()> {
+        let closure = self.pop()?;
         let Value::Closure(closure) = closure else {
             return Err(self.error_at(
                 RuntimeErrorKind::Type,
@@ -3345,9 +3326,9 @@ impl Vm {
     }
 
     #[cfg(feature = "concurrency")]
-    fn run_nursery_at(&mut self, _program: &Program, has_limit: bool) -> VmResult<()> {
-        let closure = self.pop_at()?;
-        let limit = has_limit.then(|| self.pop_at()).transpose()?;
+    fn run_nursery(&mut self, _program: &Program, has_limit: bool) -> VmResult<()> {
+        let closure = self.pop()?;
+        let limit = has_limit.then(|| self.pop()).transpose()?;
         let limit = if let Some(limit) = limit {
             let Value::Int(limit) = limit else {
                 return Err(self.error_at(
@@ -3430,9 +3411,12 @@ impl Vm {
         }
     }
 
-    fn import_at(&mut self, kinds: &[CallArgumentKind]) -> VmResult<()> {
-        let values = self.pop_values_at(kinds.len())?;
-        let (names, named_arguments) = self.expand_call_arguments_at(values, kinds)?;
+    #[cold]
+    #[inline(never)]
+    fn import(&mut self, program: &Program, id: CallArgumentsId) -> VmResult<()> {
+        let kinds = self.pooled_call_arguments(program, id)?;
+        let values = self.pop_values(kinds.len())?;
+        let (names, named_arguments) = self.expand_call_arguments(values, kinds)?;
         if !named_arguments.is_empty() {
             return Err(self.error_at(
                 RuntimeErrorKind::Arity,
@@ -3581,8 +3565,8 @@ impl Vm {
         }
     }
 
-    fn list_spread_at(&mut self, spreads: &[bool]) -> VmResult<()> {
-        let values = self.pop_values_at(spreads.len())?;
+    fn list_spread(&mut self, spreads: &[bool]) -> VmResult<()> {
+        let values = self.pop_values(spreads.len())?;
         let mut result = Vec::new();
         for (value, spread) in values.into_iter().zip(spreads) {
             if *spread {
@@ -3600,7 +3584,7 @@ impl Vm {
         Ok(())
     }
 
-    fn call_spread_at(
+    fn call_spread(
         &mut self,
         program: &Program,
         kinds: &[CallArgumentKind],
@@ -3609,7 +3593,7 @@ impl Vm {
         if kinds
             .iter()
             .all(|kind| matches!(kind, CallArgumentKind::Positional))
-            && self.call_positional_closure_at(program, kinds.len(), selected)?
+            && self.call_positional_closure(program, kinds.len(), selected)?
         {
             #[cfg(feature = "metrics")]
             self.record_exact_positional_closure_call();
@@ -3634,10 +3618,10 @@ impl Vm {
             .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
         let values = self.stack.split_off(base + 1);
         self.stack.truncate(base);
-        let (positional, named) = self.expand_call_arguments_at(values, kinds)?;
+        let (positional, named) = self.expand_call_arguments(values, kinds)?;
         let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
             if let Some(selected) = selected {
-                self.bind_selected_overload_arguments_at(
+                self.bind_selected_overload_arguments(
                     program,
                     overloads,
                     selected,
@@ -3645,7 +3629,7 @@ impl Vm {
                     &named,
                 )?
             } else {
-                self.bind_overload_arguments_at(program, overloads, &positional, &named)?
+                self.bind_overload_arguments(program, overloads, &positional, &named)?
             }
         } else {
             if let Some(selected) = selected
@@ -3660,22 +3644,22 @@ impl Vm {
                 ));
             }
             let (arguments, provided) =
-                self.bind_call_arguments_at(program, &callee, positional, named)?;
+                self.bind_call_arguments(program, &callee, positional, named)?;
             (callee, arguments, provided)
         };
         self.stack.push(callee);
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
-        self.call_at(program, count, Some(provided))
+        self.call(program, count, Some(provided))
     }
 
     /// Handles a source call whose compiler-provided argument shape is exactly
     /// positional, retaining the generic binder only for closures that need it.
-    fn call_positional_at(&mut self, program: &Program, count: usize) -> VmResult<()> {
+    fn call_positional(&mut self, program: &Program, count: usize) -> VmResult<()> {
         if self.positional_callee_is_native(count) {
-            return self.call_at(program, count, None);
+            return self.call(program, count, None);
         }
-        if self.call_positional_closure_at(program, count, None)? {
+        if self.call_positional_closure(program, count, None)? {
             #[cfg(feature = "metrics")]
             self.record_exact_positional_closure_call();
             return Ok(());
@@ -3708,16 +3692,16 @@ impl Vm {
             })
             .collect::<VmResult<Vec<_>>>()?;
         let (callee, arguments, provided) = if let Value::Overloads(overloads) = &callee {
-            self.bind_overload_arguments_at(program, overloads, &positional, &[])?
+            self.bind_overload_arguments(program, overloads, &positional, &[])?
         } else {
             let (arguments, provided) =
-                self.bind_call_arguments_at(program, &callee, positional, Vec::new())?;
+                self.bind_call_arguments(program, &callee, positional, Vec::new())?;
             (callee, arguments, provided)
         };
         self.stack.push(callee);
         self.stack.extend(arguments);
         let count = self.stack.len() - base - 1;
-        self.call_at(program, count, Some(provided))
+        self.call(program, count, Some(provided))
     }
 
     /// Reports whether a positional call's callee is a native function, looking
@@ -3748,7 +3732,7 @@ impl Vm {
     ///
     /// A selected call still verifies the identity against the current live
     /// callee value before this path can run.
-    fn call_positional_closure_at(
+    fn call_positional_closure(
         &mut self,
         program: &Program,
         count: usize,
@@ -3851,7 +3835,7 @@ impl Vm {
         Ok(true)
     }
 
-    fn pipeline_call_at(
+    fn pipeline_call(
         &mut self,
         program: &Program,
         kinds: &[CallArgumentKind],
@@ -3888,10 +3872,10 @@ impl Vm {
         let mut all_kinds = Vec::with_capacity(kinds.len() + 1);
         all_kinds.push(CallArgumentKind::Positional);
         all_kinds.extend_from_slice(kinds);
-        self.call_spread_at(program, &all_kinds, selected)
+        self.call_spread(program, &all_kinds, selected)
     }
 
-    fn expand_call_arguments_at(
+    fn expand_call_arguments(
         &self,
         values: Vec<Value>,
         kinds: &[CallArgumentKind],
@@ -4027,8 +4011,15 @@ impl Vm {
     }
 
     #[allow(clippy::too_many_lines)]
-    #[allow(clippy::too_many_lines)]
-    fn select_at(&mut self, cases: &[SelectCase]) -> VmResult<()> {
+    #[cold]
+    #[inline(never)]
+    fn select(&mut self, program: &Program, id: SelectCasesId) -> VmResult<()> {
+        let cases = program.select_cases(id).ok_or_else(|| {
+            self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                "select metadata does not exist".into(),
+            )
+        })?;
         #[cfg(not(feature = "concurrency"))]
         if cases
             .iter()
@@ -4051,10 +4042,10 @@ impl Vm {
                 | SelectCase::Await { has_handler }
                 | SelectCase::Default { has_handler } => *has_handler,
             };
-            let handler = has_handler.then(|| self.pop_at()).transpose()?;
+            let handler = has_handler.then(|| self.pop()).transpose()?;
             let value = match case {
                 SelectCase::Receive { .. } => {
-                    let value = self.pop_at()?;
+                    let value = self.pop()?;
                     let Value::Channel(channel) = value else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
@@ -4064,8 +4055,8 @@ impl Vm {
                     RuntimeSelectCase::Receive { channel, handler }
                 }
                 SelectCase::Send { .. } => {
-                    let value = self.pop_at()?;
-                    let channel = self.pop_at()?;
+                    let value = self.pop()?;
+                    let channel = self.pop()?;
                     let Value::Channel(channel) = channel else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
@@ -4085,7 +4076,7 @@ impl Vm {
                 }
                 #[cfg(feature = "concurrency")]
                 SelectCase::After { .. } => {
-                    let duration = self.pop_at()?;
+                    let duration = self.pop()?;
                     let Value::Int(milliseconds) = duration else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
@@ -4116,7 +4107,7 @@ impl Vm {
                 }
                 #[cfg(feature = "concurrency")]
                 SelectCase::Await { .. } => {
-                    let value = self.pop_at()?;
+                    let value = self.pop()?;
                     let Value::Task(task) = value else {
                         return Err(self.error_at(
                             RuntimeErrorKind::Type,
@@ -4192,7 +4183,7 @@ impl Vm {
             self.push_select_result(Value::Nil, handler);
             return Ok(());
         }
-        let base = self.current_waiter_at()?;
+        let base = self.blocking_waiter()?;
         let select_state = WaitSet::select_state(base.clone());
         let mut registrations = Vec::new();
         for case in values {
@@ -4267,8 +4258,8 @@ impl Vm {
             .push(Value::list(vec![value, handler.unwrap_or(Value::Nil)]));
     }
 
-    fn select_apply_at(&mut self, program: &Program) -> VmResult<()> {
-        let selected = self.pop_at()?;
+    fn select_apply(&mut self, program: &Program) -> VmResult<()> {
+        let selected = self.pop()?;
         let Value::List(values) = selected else {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
@@ -4294,12 +4285,12 @@ impl Vm {
         } else {
             self.stack.push(handler);
             self.stack.push(value);
-            self.call_at(program, 1, None)?;
+            self.call(program, 1, None)?;
         }
         Ok(())
     }
 
-    fn current_waiter_at(&self) -> VmResult<Waiter> {
+    fn blocking_waiter(&self) -> VmResult<Waiter> {
         self.current_waiter.clone().ok_or_else(|| {
             self.error_at(
                 RuntimeErrorKind::InvalidCall,
@@ -4435,7 +4426,7 @@ impl Vm {
         ))
     }
 
-    fn bind_call_arguments_at(
+    fn bind_call_arguments(
         &self,
         program: &Program,
         callee: &Value,
@@ -4533,7 +4524,7 @@ impl Vm {
         Ok((values, provided))
     }
 
-    fn bind_overload_arguments_at(
+    fn bind_overload_arguments(
         &self,
         program: &Program,
         overloads: &[Value],
@@ -4545,8 +4536,7 @@ impl Vm {
             let callee = callee
                 .resolve()
                 .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
-            match self.bind_call_arguments_at(program, &callee, positional.to_vec(), named.to_vec())
-            {
+            match self.bind_call_arguments(program, &callee, positional.to_vec(), named.to_vec()) {
                 Ok((arguments, provided)) => return Ok((callee, arguments, provided)),
                 Err(next) => error = Some(next),
             }
@@ -4559,7 +4549,7 @@ impl Vm {
         }))
     }
 
-    fn bind_selected_overload_arguments_at(
+    fn bind_selected_overload_arguments(
         &self,
         program: &Program,
         overloads: &[Value],
@@ -4577,7 +4567,7 @@ impl Vm {
                 continue;
             }
             let (arguments, provided) =
-                self.bind_call_arguments_at(program, &callee, positional.to_vec(), named.to_vec())?;
+                self.bind_call_arguments(program, &callee, positional.to_vec(), named.to_vec())?;
             return Ok((callee, arguments, provided));
         }
         Err(self.error_at(
@@ -4780,7 +4770,7 @@ impl Vm {
         span
     }
 
-    fn jump_at(&mut self, target: usize) -> VmResult<()> {
+    fn jump(&mut self, target: usize) -> VmResult<()> {
         if self.frames.last().is_none() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,

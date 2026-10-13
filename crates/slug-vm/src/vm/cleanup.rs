@@ -100,13 +100,13 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn recur_at(
+    pub(super) fn recur(
         &mut self,
         program: &Program,
         kinds: &[crate::CallArgumentKind],
     ) -> VmResult<()> {
-        let values = self.pop_values_at(kinds.len())?;
-        let (positional, named) = self.expand_call_arguments_at(values, kinds)?;
+        let values = self.pop_values(kinds.len())?;
+        let (positional, named) = self.expand_call_arguments(values, kinds)?;
         let closure = self
             .frames
             .last()
@@ -118,15 +118,15 @@ impl Vm {
                 )
             })?;
         let (arguments, provided) =
-            self.bind_call_arguments_at(program, &closure, positional, named)?;
+            self.bind_call_arguments(program, &closure, positional, named)?;
         self.restart_recur(arguments, Some(provided), program)
     }
 
-    pub(super) fn recur_positional_at(&mut self, program: &Program, count: usize) -> VmResult<()> {
+    pub(super) fn recur_positional(&mut self, program: &Program, count: usize) -> VmResult<()> {
         if self.restart_exact_recur_in_place(program, count) {
             return Ok(());
         }
-        let values = self.pop_values_at(count)?;
+        let values = self.pop_values(count)?;
         let closure = self
             .frames
             .last()
@@ -149,7 +149,7 @@ impl Vm {
         #[cfg(feature = "metrics")]
         self.record_generic_recur_argument_binding();
         let (arguments, provided) =
-            self.bind_call_arguments_at(program, &closure, values, Vec::new())?;
+            self.bind_call_arguments(program, &closure, values, Vec::new())?;
         self.restart_recur(arguments, Some(provided), program)
     }
 

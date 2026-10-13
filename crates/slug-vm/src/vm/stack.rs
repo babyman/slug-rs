@@ -15,7 +15,7 @@ use super::{RuntimeErrorKind, Vm, VmResult, frames::LocalSlot, numbers, operatio
 
 impl Vm {
     #[inline]
-    pub(super) fn pop_at(&mut self) -> VmResult<Value> {
+    pub(super) fn pop(&mut self) -> VmResult<Value> {
         match self.stack.pop() {
             Some(value) if !matches!(value, Value::Binding { .. }) => Ok(value),
             value => self.pop_slow(value),
@@ -35,7 +35,7 @@ impl Vm {
     }
 
     #[inline]
-    pub(super) fn pop_unresolved_at(&mut self) -> VmResult<Value> {
+    pub(super) fn pop_unresolved(&mut self) -> VmResult<Value> {
         self.stack.pop().ok_or_else(|| self.stack_underflow())
     }
 
@@ -45,7 +45,7 @@ impl Vm {
         self.error_at(RuntimeErrorKind::InvalidBytecode, "stack underflow".into())
     }
 
-    pub(super) fn pop_values_at(&mut self, count: usize) -> VmResult<Vec<Value>> {
+    pub(super) fn pop_values(&mut self, count: usize) -> VmResult<Vec<Value>> {
         if self.stack.len() < count {
             return Err(self.error_at(RuntimeErrorKind::InvalidBytecode, "stack underflow".into()));
         }
@@ -61,7 +61,7 @@ impl Vm {
     }
 
     #[inline]
-    pub(super) fn peek_at(&self) -> VmResult<&Value> {
+    pub(super) fn peek(&self) -> VmResult<&Value> {
         self.stack.last().ok_or_else(|| self.stack_underflow())
     }
 
@@ -95,7 +95,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn promote_local_at(&mut self, slot: usize) -> VmResult<BindingCell> {
+    pub(super) fn promote_local(&mut self, slot: usize) -> VmResult<BindingCell> {
         if self
             .frames
             .last()
@@ -123,7 +123,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn set_local_at(&mut self, slot: usize, value: Value) -> VmResult<()> {
+    pub(super) fn set_local(&mut self, slot: usize, value: Value) -> VmResult<()> {
         if self.frames.last().is_none() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
@@ -153,24 +153,24 @@ impl Vm {
     }
 
     #[inline]
-    pub(super) fn pop_pair_at(&mut self) -> VmResult<(Value, Value)> {
-        let right = self.pop_at()?;
-        let left = self.pop_at()?;
+    pub(super) fn pop_pair(&mut self) -> VmResult<(Value, Value)> {
+        let right = self.pop()?;
+        let left = self.pop()?;
         Ok((left, right))
     }
 
-    pub(super) fn binary_at(
+    pub(super) fn binary(
         &mut self,
         operation: fn(Value, Value) -> Result<Value, (RuntimeErrorKind, String)>,
     ) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at()?;
+        let (left, right) = self.pop_pair()?;
         self.stack
             .push(operation(left, right).map_err(|(kind, message)| self.error_at(kind, message))?);
         Ok(())
     }
 
-    pub(super) fn compare_at(&mut self, expected: Ordering) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at()?;
+    pub(super) fn compare(&mut self, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair()?;
         let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
             left.cmp(right) == expected
         } else {
@@ -183,8 +183,8 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn numeric_compare_at(&mut self, expected: Ordering) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at()?;
+    pub(super) fn numeric_compare(&mut self, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair()?;
         self.stack
             .push(Value::Bool(compare_num(left, right, expected).map_err(
                 |message| self.error_at(RuntimeErrorKind::Type, message),
@@ -192,8 +192,8 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn guard_compare_at(&mut self, expected: Ordering) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at()?;
+    pub(super) fn guard_compare(&mut self, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair()?;
         let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
             left.cmp(right) == expected
         } else {
