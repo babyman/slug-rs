@@ -94,6 +94,8 @@ pub enum PackedOpcode {
     Return,
     // Append new opcodes here: a `.cslug` artifact stores the ordinal as its tag.
     GetIndexConstant,
+    JumpIfFalsePop,
+    LocalConstantBinary,
 }
 
 impl PackedOpcode {
@@ -177,6 +179,8 @@ impl PackedOpcode {
             PackedOpcode::RecurPositional,
             PackedOpcode::Return,
             PackedOpcode::GetIndexConstant,
+            PackedOpcode::JumpIfFalsePop,
+            PackedOpcode::LocalConstantBinary,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }

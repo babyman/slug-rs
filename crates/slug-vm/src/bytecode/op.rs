@@ -113,6 +113,15 @@ pub enum Op {
     GuardLess,
     Jump(usize),
     JumpIfFalse(usize),
+    /// Pops the condition, then jumps when it is falsy.
+    JumpIfFalsePop(usize),
+    /// Pushes `operator` applied to a local and a value constant: the fused
+    /// form of `GetLocal(slot)`, `Constant(constant)`, `operator`.
+    LocalConstantBinary {
+        slot: usize,
+        constant: usize,
+        operator: BinaryOperator,
+    },
     JumpIfProvided {
         slot: usize,
         target: usize,
@@ -181,4 +190,80 @@ pub enum DeferMode {
     Always,
     Success,
     Error,
+}
+
+/// An operator a fused `LocalConstantBinary` instruction can apply. Each one
+/// behaves exactly like its standalone instruction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BinaryOperator {
+    Add,
+    AddNum,
+    Subtract,
+    SubtractNum,
+    Multiply,
+    MultiplyNum,
+    Divide,
+    DivideNum,
+    Modulo,
+    ModuloNum,
+    Equal,
+    Greater,
+    GreaterNum,
+    Less,
+    LessNum,
+}
+
+impl BinaryOperator {
+    const ALL: [Self; 15] = [
+        Self::Add,
+        Self::AddNum,
+        Self::Subtract,
+        Self::SubtractNum,
+        Self::Multiply,
+        Self::MultiplyNum,
+        Self::Divide,
+        Self::DivideNum,
+        Self::Modulo,
+        Self::ModuloNum,
+        Self::Equal,
+        Self::Greater,
+        Self::GreaterNum,
+        Self::Less,
+        Self::LessNum,
+    ];
+
+    /// The fusable operator a standalone instruction performs, if any.
+    #[must_use]
+    pub fn of(op: &Op) -> Option<Self> {
+        Some(match op {
+            Op::Add => Self::Add,
+            Op::AddNum => Self::AddNum,
+            Op::Subtract => Self::Subtract,
+            Op::SubtractNum => Self::SubtractNum,
+            Op::Multiply => Self::Multiply,
+            Op::MultiplyNum => Self::MultiplyNum,
+            Op::Divide => Self::Divide,
+            Op::DivideNum => Self::DivideNum,
+            Op::Modulo => Self::Modulo,
+            Op::ModuloNum => Self::ModuloNum,
+            Op::Equal => Self::Equal,
+            Op::Greater => Self::Greater,
+            Op::GreaterNum => Self::GreaterNum,
+            Op::Less => Self::Less,
+            Op::LessNum => Self::LessNum,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn code(self) -> u32 {
+        Self::ALL
+            .iter()
+            .position(|operator| *operator == self)
+            .and_then(|index| u32::try_from(index).ok())
+            .expect("operator is listed")
+    }
+
+    pub(crate) fn from_code(code: u32) -> Option<Self> {
+        Self::ALL.get(usize::try_from(code).ok()?).copied()
+    }
 }

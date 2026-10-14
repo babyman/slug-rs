@@ -171,25 +171,42 @@ impl Vm {
 
     pub(super) fn compare(&mut self, expected: Ordering) -> VmResult<()> {
         let (left, right) = self.pop_pair()?;
-        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-            left.cmp(right) == expected
-        } else {
-            let (left, right) = numbers(left, right)
-                .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
-            left.partial_cmp(&right)
-                .is_some_and(|ordering| ordering == expected)
-        };
+        let result = self.compare_values(left, right, expected)?;
         self.stack.push(Value::Bool(result));
         Ok(())
     }
 
+    pub(super) fn compare_values(
+        &self,
+        left: Value,
+        right: Value,
+        expected: Ordering,
+    ) -> VmResult<bool> {
+        if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+            return Ok(left.cmp(right) == expected);
+        }
+        let (left, right) = numbers(left, right)
+            .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
+        Ok(left
+            .partial_cmp(&right)
+            .is_some_and(|ordering| ordering == expected))
+    }
+
     pub(super) fn numeric_compare(&mut self, expected: Ordering) -> VmResult<()> {
         let (left, right) = self.pop_pair()?;
-        self.stack
-            .push(Value::Bool(compare_num(left, right, expected).map_err(
-                |message| self.error_at(RuntimeErrorKind::Type, message),
-            )?));
+        let result = self.numeric_compare_values(left, right, expected)?;
+        self.stack.push(Value::Bool(result));
         Ok(())
+    }
+
+    pub(super) fn numeric_compare_values(
+        &self,
+        left: Value,
+        right: Value,
+        expected: Ordering,
+    ) -> VmResult<bool> {
+        compare_num(left, right, expected)
+            .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))
     }
 
     pub(super) fn guard_compare(&mut self, expected: Ordering) -> VmResult<()> {

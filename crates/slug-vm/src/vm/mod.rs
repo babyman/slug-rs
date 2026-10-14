@@ -25,9 +25,10 @@ use crate::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, Program, SourceSpan, SpanId, Value,
     VmHost,
     bytecode::{
-        CallArgumentsId, CaptureListId, DeferMode, EntrypointArguments, GlobalNameId,
-        InterpolationId, ListSpreadId, MOVE_LOCAL, PackedInstruction, PackedOpcode, SchemaFieldsId,
-        SelectCase, SelectCasesId, SelectedCallId, StructFieldsId,
+        BinaryOperator, CallArgumentsId, CaptureListId, DeferMode, EntrypointArguments,
+        GlobalNameId, InterpolationId, ListSpreadId, MOVE_LOCAL, MOVE_LOCAL_OPERAND,
+        PackedInstruction, PackedOpcode, SchemaFieldsId, SelectCase, SelectCasesId, SelectedCallId,
+        StructFieldsId,
     },
     collections::{List, Map},
     native::{NativeInvocation, NativeResourceRegistry, native_resource_registry},
@@ -1964,7 +1965,7 @@ impl Vm {
                 }
                 self.active_span = instruction.span;
                 if let InstructionOutcome::Settled(value) =
-                    self.execute_instruction(program, instruction)?
+                    self.execute_instruction(program, chunk, instruction)?
                 {
                     return Ok(ExecutionOutcome::Settled(Ok(value)));
                 }
@@ -1993,12 +1994,12 @@ impl Vm {
     fn execute_instruction(
         &mut self,
         program: &Program,
+        chunk: &crate::bytecode::CompiledChunk,
         instruction: &PackedInstruction,
     ) -> VmResult<InstructionOutcome> {
         let operand = instruction.a as usize;
         match instruction.opcode {
             PackedOpcode::Constant => {
-                let chunk = self.current_chunk(program)?;
                 let value = match chunk.constants.get(operand) {
                     Some(crate::Constant::Value(value)) => value.clone(),
                     Some(crate::Constant::Function(function)) => Value::Closure(Rc::new(Closure {
@@ -2137,31 +2138,7 @@ impl Vm {
             PackedOpcode::Add => {
                 let (left, right) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
-                match (&left, &right) {
-                    (Value::List(left), Value::List(right)) => {
-                        self.record_list_view_materialization(left);
-                        self.record_collection_update(
-                            left.len() + right.len(),
-                            left.is_uniquely_owned(),
-                        );
-                    }
-                    (Value::Map(left), Value::Map(right)) => {
-                        self.record_collection_update(
-                            left.len() + right.len(),
-                            left.is_uniquely_owned(),
-                        );
-                    }
-                    (Value::Bytes(left), Value::Bytes(right)) => {
-                        self.record_collection_update(
-                            left.len() + right.len(),
-                            Rc::strong_count(left) == 1,
-                        );
-                    }
-                    (Value::Str(left), _) => {
-                        self.record_collection_update(left.len(), left.is_uniquely_owned());
-                    }
-                    _ => {}
-                }
+                self.record_add(&left, &right);
                 self.stack.push(
                     add(left, right).map_err(|(kind, message)| self.error_at(kind, message))?,
                 );
@@ -2176,9 +2153,7 @@ impl Vm {
             PackedOpcode::Subtract => {
                 let (left, right) = self.pop_pair()?;
                 #[cfg(feature = "metrics")]
-                if let Value::Map(entries) = &left {
-                    self.record_collection_update(entries.len(), entries.is_uniquely_owned());
-                }
+                self.record_subtract(&left);
                 self.stack.push(
                     subtract(left, right)
                         .map_err(|(kind, message)| self.error_at(kind, message))?,
@@ -2275,6 +2250,31 @@ impl Vm {
             PackedOpcode::Jump => self.jump(operand)?,
             PackedOpcode::JumpIfFalse => {
                 if !self.peek()?.is_truthy() {
+                    self.jump(operand)?;
+                }
+            }
+            PackedOpcode::LocalConstantBinary => {
+                let Some(crate::Constant::Value(right)) =
+                    chunk.constants.get(instruction.b as usize)
+                else {
+                    return Err(self.error_at(
+                        RuntimeErrorKind::InvalidBytecode,
+                        format!("operand constant {} does not exist", instruction.b),
+                    ));
+                };
+                let right = right.clone();
+                let left = if instruction.c & MOVE_LOCAL_OPERAND == 0 {
+                    self.local_value(operand)?
+                } else {
+                    self.take_local(operand)?
+                };
+                let operator = BinaryOperator::from_code(instruction.c & !MOVE_LOCAL_OPERAND)
+                    .expect("validated binary operator");
+                let value = self.binary_values(operator, left, right)?;
+                self.stack.push(value);
+            }
+            PackedOpcode::JumpIfFalsePop => {
+                if !self.pop()?.is_truthy() {
                     self.jump(operand)?;
                 }
             }
@@ -2410,6 +2410,81 @@ impl Vm {
             .last()
             .and_then(|frame| frame.closure.global_slots.clone())
             .unwrap_or_else(|| global_slots(program))
+    }
+
+    /// Applies a fused operator exactly as its standalone instruction would.
+    #[inline]
+    fn binary_values(
+        &self,
+        operator: BinaryOperator,
+        left: Value,
+        right: Value,
+    ) -> VmResult<Value> {
+        let fault = |(kind, message)| self.error_at(kind, message);
+        let type_fault = |message| self.error_at(RuntimeErrorKind::Type, message);
+        Ok(match operator {
+            BinaryOperator::Add => {
+                #[cfg(feature = "metrics")]
+                self.record_add(&left, &right);
+                add(left, right).map_err(fault)?
+            }
+            BinaryOperator::AddNum => add_num(left, right).map_err(type_fault)?,
+            BinaryOperator::Subtract => {
+                #[cfg(feature = "metrics")]
+                self.record_subtract(&left);
+                subtract(left, right).map_err(fault)?
+            }
+            BinaryOperator::SubtractNum => subtract_num(left, right).map_err(fault)?,
+            BinaryOperator::Multiply => multiply(left, right).map_err(fault)?,
+            BinaryOperator::MultiplyNum => multiply_num(left, right).map_err(fault)?,
+            BinaryOperator::Divide => divide(left, right).map_err(fault)?,
+            BinaryOperator::DivideNum => divide_num(left, right).map_err(fault)?,
+            BinaryOperator::Modulo => modulo(left, right).map_err(fault)?,
+            BinaryOperator::ModuloNum => modulo_num(left, right).map_err(fault)?,
+            BinaryOperator::Equal => Value::Bool(left == right),
+            BinaryOperator::Greater => {
+                Value::Bool(self.compare_values(left, right, cmp::Ordering::Greater)?)
+            }
+            BinaryOperator::GreaterNum => {
+                Value::Bool(self.numeric_compare_values(left, right, cmp::Ordering::Greater)?)
+            }
+            BinaryOperator::Less => {
+                Value::Bool(self.compare_values(left, right, cmp::Ordering::Less)?)
+            }
+            BinaryOperator::LessNum => {
+                Value::Bool(self.numeric_compare_values(left, right, cmp::Ordering::Less)?)
+            }
+        })
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_add(&self, left: &Value, right: &Value) {
+        match (left, right) {
+            (Value::List(left), Value::List(right)) => {
+                self.record_list_view_materialization(left);
+                self.record_collection_update(left.len() + right.len(), left.is_uniquely_owned());
+            }
+            (Value::Map(left), Value::Map(right)) => {
+                self.record_collection_update(left.len() + right.len(), left.is_uniquely_owned());
+            }
+            (Value::Bytes(left), Value::Bytes(right)) => {
+                self.record_collection_update(
+                    left.len() + right.len(),
+                    Rc::strong_count(left) == 1,
+                );
+            }
+            (Value::Str(left), _) => {
+                self.record_collection_update(left.len(), left.is_uniquely_owned());
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_subtract(&self, left: &Value) {
+        if let Value::Map(entries) = left {
+            self.record_collection_update(entries.len(), entries.is_uniquely_owned());
+        }
     }
 
     fn pooled_call_arguments<'a>(

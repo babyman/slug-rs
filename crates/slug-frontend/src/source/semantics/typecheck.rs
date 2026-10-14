@@ -4621,7 +4621,9 @@ mod tests {
     fn solved_parameter_facts_select_numeric_lowering_opcodes() {
         let program = super::super::compile(
             "test.slug",
-            "val divide = fn(value) { value / 10 }\nval before = fn(value) { value < 10 }",
+            // A constant on the left keeps each operator a standalone
+            // instruction; `value / 10` would fuse into `LocalConstantBinary`.
+            "val divide = fn(value) { 10 / value }\nval before = fn(value) { 10 < value }",
         )
         .expect("numeric body constraints compile");
         let opcodes = (0..program.chunk_count())
@@ -4637,6 +4639,28 @@ mod tests {
 
         assert!(opcodes.contains(&slug_vm::PackedOpcode::DivideNum));
         assert!(opcodes.contains(&slug_vm::PackedOpcode::LessNum));
+    }
+
+    #[test]
+    fn local_constant_operations_fuse_unless_a_jump_lands_inside() {
+        let opcodes = |source: &str| {
+            let program = super::super::compile("test.slug", source).expect("source compiles");
+            program
+                .chunk(0)
+                .expect("function chunk")
+                .code
+                .iter()
+                .map(|instruction| instruction.opcode)
+                .collect::<Vec<_>>()
+        };
+        let fused = opcodes("val f = fn(x) { x - 1 }\nf(2)");
+        assert!(fused.contains(&slug_vm::PackedOpcode::LocalConstantBinary));
+        assert!(!fused.contains(&slug_vm::PackedOpcode::GetLocal));
+
+        // The `else` branch's jump lands on `1`, so its `x` must stay a
+        // separate instruction.
+        let branched = opcodes("val f = fn(c, x) { (if (c) { 0 } else { x }) - 1 }\nf(true, 2)");
+        assert!(!branched.contains(&slug_vm::PackedOpcode::LocalConstantBinary));
     }
 
     #[test]

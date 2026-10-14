@@ -1504,3 +1504,47 @@ out-of-line `Value` clones and drops, each a few percent. Further gains
 need fewer instructions per operation, such as a jump that pops its
 condition, or cheaper ones, such as the contiguous local-slot arena from item
 7.
+
+#### Measurement record: fewer instructions per operation (2026-10-13)
+
+A temporary opcode counter over the tuned corpus, with every workload
+weighted equally, showed where dispatches go. `GetLocal` + `Constant` started
+12.8% of all instruction pairs, mostly ahead of `Equal`, `Subtract`, `Add`,
+and their `num` forms. That is the shape of every `recur` loop's test and
+step. `JumpIfFalse` + `Pop` was another 7%: every conditional left its test
+on the stack, and both branches popped it. Two compiler changes remove those
+dispatches:
+
+- `JumpIfFalsePop` consumes its condition. `if`, match cases and guards, and
+  destructuring declarations use it, so neither branch pops. The match-guard
+  failure path also loses its separate cleanup jump.
+- The compiler fuses `GetLocal(slot)`, a value `Constant`, and one of fifteen
+  operators into `LocalConstantBinary { slot, constant, operator }`. The
+  operators are `+ - * / %` in generic and `num` forms, `==`, and `<`/`>` in
+  generic and `num` forms. It evaluates the same operator functions and
+  reports errors at the same span. The liveness pass treats it as a local
+  read and sets a move bit in its operand when that read is the last, so
+  `text + "ab"` in a `recur` loop still appends in place. The compiler fuses
+  only when no patched jump lands on the constant or operator.
+
+The compiler already knows types: when both operands are `num` it emits the
+`num` operator, and a fused instruction carries it. The counter also showed
+that generic `Add`, `Subtract`, and `Equal` run about twice as often as their
+`num` forms, because inference rarely proves an unannotated `recur`
+parameter is a number. Better inference is the next type-driven
+opportunity.
+
+Seven interleaved rounds against `4ca5d1d`:
+
+| Workload | Before | After | Ratio |
+|---|---:|---:|---:|
+| fib | 77.3 ms | 55.8 ms | 0.72x |
+| function-call | 17.0 ms | 13.4 ms | 0.79x |
+| typed-n-body | 9.0 ms | 7.3 ms | 0.81x |
+| n-body | 9.6 ms | 8.1 ms | 0.84x |
+| binary-trees | 23.7 ms | 21.6 ms | 0.91x |
+| text-wrap (hold-out) | 88.1 ms | 81.0 ms | 0.92x |
+
+Tuned geomean 0.90x, hold-out 0.96x. No workload regressed beyond its
+spread. `spectral-norm` read 1.03x with an 8-14% spread. `JumpIfFalsePop`
+alone measured 0.98x; fusion accounts for the rest. `make check` passed.

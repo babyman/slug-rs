@@ -998,12 +998,10 @@ impl Compiler {
                 else_branch,
             } => {
                 self.expression(state, condition)?;
-                let otherwise = state.jump_if_false(&expression.span);
-                state.emit(Op::Pop, &expression.span);
+                let otherwise = state.jump_if_false_pop(&expression.span);
                 self.expression(state, then_branch)?;
                 let end = state.jump(&expression.span);
                 state.patch(otherwise);
-                state.emit(Op::Pop, &expression.span);
                 if let Some(otherwise) = else_branch {
                     self.expression(state, otherwise)?;
                 } else {
@@ -1124,20 +1122,16 @@ impl Compiler {
                 .into_iter()
                 .map(|name| state.declare(name, false, false))
                 .collect::<Vec<_>>();
-            let next = state.jump_if_false(&case.span);
-            state.emit(Op::Pop, &case.span);
+            let next = state.jump_if_false_pop(&case.span);
             for slot in slots.iter().rev() {
                 state.emit(Op::SetLocal(*slot), &case.span);
             }
             let guard_next = if let Some(guard) = &case.guard {
                 self.guard_expression(state, guard)?;
-                Some(state.jump_if_false(&case.span))
+                Some(state.jump_if_false_pop(&case.span))
             } else {
                 None
             };
-            if guard_next.is_some() {
-                state.emit(Op::Pop, &case.span);
-            }
             state.emit(Op::Pop, &case.span);
             if tail {
                 self.tail_expression(state, &case.value)?;
@@ -1147,15 +1141,11 @@ impl Compiler {
             state.leave_scope();
             ends.push(state.jump(&case.span));
             state.patch(next);
-            state.emit(Op::Pop, &case.span);
             for _ in slots {
                 state.emit(Op::Pop, &case.span);
             }
             if let Some(guard_next) = guard_next {
-                let skip_guard_cleanup = state.jump(&case.span);
                 state.patch(guard_next);
-                state.emit(Op::Pop, &case.span);
-                state.patch(skip_guard_cleanup);
             }
         }
         state.emit(Op::Pop, &subject.span);
@@ -1337,8 +1327,7 @@ impl Compiler {
             },
             span,
         );
-        let failed = state.jump_if_false(span);
-        state.emit(Op::Pop, span);
+        let failed = state.jump_if_false_pop(span);
         let bindings = names
             .into_iter()
             .map(|name| {
@@ -1363,7 +1352,6 @@ impl Compiler {
         }
         let end = state.jump(span);
         state.patch(failed);
-        state.emit(Op::Pop, span);
         for _ in &bindings {
             state.emit(Op::Pop, span);
         }
@@ -1446,12 +1434,10 @@ impl Compiler {
                 else_branch,
             } => {
                 self.expression(state, condition)?;
-                let otherwise = state.jump_if_false(&expression.span);
-                state.emit(Op::Pop, &expression.span);
+                let otherwise = state.jump_if_false_pop(&expression.span);
                 self.tail_expression(state, then_branch)?;
                 let end = state.jump(&expression.span);
                 state.patch(otherwise);
-                state.emit(Op::Pop, &expression.span);
                 if let Some(otherwise) = else_branch {
                     self.tail_expression(state, otherwise)?;
                 } else {

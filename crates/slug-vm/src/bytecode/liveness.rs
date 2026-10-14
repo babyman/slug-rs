@@ -5,7 +5,8 @@
 //! by that local uniquely owned, so `acc :+ x` appends in place instead of
 //! copying.
 //!
-//! Only `GetLocal`, `SetLocal`, and `MakeClosure` touch local values. A
+//! Only `GetLocal`, `LocalConstantBinary`, `SetLocal`, and `MakeClosure`
+//! touch local values. A
 //! closure keeps every slot live because its capture list is pooled
 //! metadata; a captured slot is a shared cell, which the VM clones rather
 //! than moves anyway. `Recur` assigns every local before it restarts, and
@@ -18,6 +19,10 @@ use super::chunk::{PackedInstruction, PackedOpcode};
 
 /// Operand `b` of a `GetLocal` that moves its value out of the slot.
 pub(crate) const MOVE_LOCAL: u32 = 1;
+
+/// Bit of operand `c` of a `LocalConstantBinary` that moves its local out of
+/// the slot. The low bits hold the operator.
+pub(crate) const MOVE_LOCAL_OPERAND: u32 = 1 << 31;
 
 /// Sets `b` to [`MOVE_LOCAL`] on each final `GetLocal` read and clears it on
 /// every other `GetLocal`, so the flag never comes from untrusted input.
@@ -40,10 +45,17 @@ pub(crate) fn mark_last_local_reads(code: &mut [PackedInstruction], locals: usiz
         }
     }
     for index in 0..code.len() {
-        if code[index].opcode == PackedOpcode::GetLocal {
-            let slot = code[index].a as usize;
-            let moves = slot < locals && !contains(&live_in[index + 1], slot);
-            code[index].b = if moves { MOVE_LOCAL } else { 0 };
+        let slot = code[index].a as usize;
+        let moves = slot < locals && !contains(&live_in[index + 1], slot);
+        match code[index].opcode {
+            PackedOpcode::GetLocal => code[index].b = if moves { MOVE_LOCAL } else { 0 },
+            PackedOpcode::LocalConstantBinary => {
+                code[index].c &= !MOVE_LOCAL_OPERAND;
+                if moves {
+                    code[index].c |= MOVE_LOCAL_OPERAND;
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -69,7 +81,7 @@ fn live_before(
         | PackedOpcode::Recur
         | PackedOpcode::RecurPositional => {}
         PackedOpcode::Jump => join(instruction.a as usize),
-        PackedOpcode::JumpIfFalse => {
+        PackedOpcode::JumpIfFalse | PackedOpcode::JumpIfFalsePop => {
             join(instruction.a as usize);
             join(index + 1);
         }
@@ -82,7 +94,9 @@ fn live_before(
     let slot = instruction.a as usize;
     match instruction.opcode {
         PackedOpcode::SetLocal if slot < locals => live[slot / 64] &= !(1 << (slot % 64)),
-        PackedOpcode::GetLocal if slot < locals => live[slot / 64] |= 1 << (slot % 64),
+        PackedOpcode::GetLocal | PackedOpcode::LocalConstantBinary if slot < locals => {
+            live[slot / 64] |= 1 << (slot % 64);
+        }
         PackedOpcode::MakeClosure => live.fill(u64::MAX),
         _ => {}
     }

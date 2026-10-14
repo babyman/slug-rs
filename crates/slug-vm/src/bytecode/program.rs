@@ -5,14 +5,14 @@ use crate::{CallableIdentity, platform::HashMap};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
-    liveness,
+    liveness::{self, MOVE_LOCAL_OPERAND},
     metadata::{
         CallArgumentsId, Capture, CaptureListId, Constant, GlobalNameId, InterpolationId,
         ListSpreadId, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
         ModuleDeclaration, ParameterSignature, SchemaField, SchemaFieldsId, SelectCase,
         SelectCasesId, SelectedCallId, SourceId, SourceSpan, SpanId, StructFieldsId,
     },
-    op::{CallArgumentKind, DeferMode, Instruction, Op},
+    op::{BinaryOperator, CallArgumentKind, DeferMode, Instruction, Op},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -767,6 +767,17 @@ impl Program {
             Op::GuardLess => (PackedOpcode::GuardLess, 0, 0, 0),
             Op::Jump(v) => (PackedOpcode::Jump, operand(*v), 0, 0),
             Op::JumpIfFalse(v) => (PackedOpcode::JumpIfFalse, operand(*v), 0, 0),
+            Op::JumpIfFalsePop(v) => (PackedOpcode::JumpIfFalsePop, operand(*v), 0, 0),
+            Op::LocalConstantBinary {
+                slot,
+                constant,
+                operator,
+            } => (
+                PackedOpcode::LocalConstantBinary,
+                operand(*slot),
+                operand(*constant),
+                operator.code(),
+            ),
             Op::JumpIfProvided { slot, target } => (
                 PackedOpcode::JumpIfProvided,
                 operand(*slot),
@@ -895,6 +906,15 @@ impl Program {
             PackedOpcode::GuardLess => Op::GuardLess,
             PackedOpcode::Jump => Op::Jump(n(instruction.a)),
             PackedOpcode::JumpIfFalse => Op::JumpIfFalse(n(instruction.a)),
+            PackedOpcode::JumpIfFalsePop => Op::JumpIfFalsePop(n(instruction.a)),
+            PackedOpcode::LocalConstantBinary => Op::LocalConstantBinary {
+                slot: n(instruction.a),
+                constant: n(instruction.b),
+                operator: BinaryOperator::from_code(instruction.c & !MOVE_LOCAL_OPERAND)
+                    .ok_or_else(|| {
+                        String::from("packed instruction references missing binary operator")
+                    })?,
+            },
             PackedOpcode::JumpIfProvided => Op::JumpIfProvided {
                 slot: n(instruction.a),
                 target: n(instruction.b),
@@ -1159,12 +1179,26 @@ impl Program {
                     location()
                 ))
             }
-            Op::GetLocal(slot) | Op::SetLocal(slot) | Op::JumpIfProvided { slot, .. }
+            Op::LocalConstantBinary { constant, .. }
+                if !matches!(chunk.constants.get(*constant), Some(Constant::Value(_))) =>
+            {
+                Err(format!(
+                    "{} references missing operand constant {constant}",
+                    location()
+                ))
+            }
+            Op::GetLocal(slot)
+            | Op::SetLocal(slot)
+            | Op::JumpIfProvided { slot, .. }
+            | Op::LocalConstantBinary { slot, .. }
                 if *slot >= chunk.locals =>
             {
                 Err(format!("{} references missing local {slot}", location()))
             }
-            Op::Jump(target) | Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. }
+            Op::Jump(target)
+            | Op::JumpIfFalse(target)
+            | Op::JumpIfFalsePop(target)
+            | Op::JumpIfProvided { target, .. }
                 if *target >= chunk.code.len() =>
             {
                 Err(format!(
@@ -1444,7 +1478,9 @@ impl Program {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
                 Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => vec![0],
                 Op::Jump(target) => vec![*target],
-                Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. } => [
+                Op::JumpIfFalse(target)
+                | Op::JumpIfFalsePop(target)
+                | Op::JumpIfProvided { target, .. } => [
                     Some(*target),
                     (index + 1 < chunk.code.len()).then_some(index + 1),
                 ]
@@ -1541,6 +1577,7 @@ impl Program {
             | Op::True
             | Op::False
             | Op::GetLocal(_)
+            | Op::LocalConstantBinary { .. }
             | Op::GetCapture(_)
             | Op::GetGlobal(_)
             | Op::GetGlobalPooled(_)
@@ -1563,6 +1600,7 @@ impl Program {
             | Op::SetGlobalPooled(_)
             | Op::DefineMapGlobals
             | Op::Defer { .. }
+            | Op::JumpIfFalsePop(_)
             | Op::Throw
             | Op::Return => (1, 0),
             Op::Duplicate => (1, 2),

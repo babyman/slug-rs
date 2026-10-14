@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The compiler emits fewer instructions for common shapes: a conditional
+  jump consumes its test, and an operation between a local and a constant,
+  such as `n - 1` or `remaining == 0`, runs as one fused instruction.
+  Recursive code runs about 28% faster and numeric loops about 15-20%
+  faster. Compiled `.cslug` artifacts that use the new instructions need
+  this VM.
+
 - Calls move their arguments into the callee instead of copying them, skip
   redundant environment bookkeeping, and blocks without `defer` no longer
   open a runtime scope. Recursive code runs about 7% faster. A collection

@@ -1095,6 +1095,47 @@ fn string_concatenation_never_changes_a_retained_string() {
 }
 
 #[test]
+fn fused_local_constant_operations_match_their_standalone_forms() {
+    let path = fixture_path("fused-local-constant");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write fused operation source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run fused operation source");
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+            String::from_utf8(output.stderr).expect("stderr is UTF-8"),
+        )
+    };
+    let (code, stdout, stderr) = run(
+        "val numbers = fn(x) { [x + 1, x - 1, x * 2, x / 2, x % 3, x == 4, x > 1, x < 1] }\n\
+         val generic = fn(x) { [x + \"!\", x == \"a\"] }\n\
+         val drop = fn(m: map) { m - \"a\" }\n\
+         val build = fn(n, text) { if (n == 0) { text } else { recur(n - 1, text + \"ab\") } }\n\
+         println(numbers(4), numbers(4.5))\n\
+         println(generic(\"a\"), drop({a: 1, b: 2}), len(build(1000, \"\")))\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "[5, 3, 8, 2, 1, true, true, false] [5.5, 3.5, 9, 2.25, 1.5, false, true, false]\n\
+         [\"a!\", true] {\"b\": 2} 2000\n"
+    );
+
+    // A fused operation fails exactly where its operator is.
+    let (code, _, stderr) = run("val generic = fn(x) { x + \"!\" }\nprintln(generic(1))\n");
+    fs::remove_file(&path).expect("remove fused operation source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("runtime error: expected numbers, got num and str"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(":1:25"), "{stderr}");
+}
+
+#[test]
 fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
     let run = |source: &str| {
