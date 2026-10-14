@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Pipeline calls such as `x /> f()` and calls that supply every parameter of
+  a function with defaults take the fast call path, and pattern matches no
+  longer allocate for their bindings. `slug.std` `map`/`filter`/`reduce`
+  pipelines run about 18% faster, and list-pattern-heavy code about 12%.
+
 - The compiler emits fewer instructions for common shapes: a conditional
   jump consumes its test, and an operation between a local and a constant,
   such as `n - 1` or `remaining == 0`, runs as one fused instruction.

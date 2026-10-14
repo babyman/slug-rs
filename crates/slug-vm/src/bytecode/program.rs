@@ -266,10 +266,10 @@ impl Program {
             name: chunk.name.clone(),
             arity: chunk.arity,
             parameters: chunk.parameters.clone(),
-            exact_positional_parameters: !chunk
+            binds_full_positional_calls: !chunk
                 .parameters
                 .iter()
-                .any(|parameter| parameter.has_default || parameter.variadic),
+                .any(|parameter| parameter.variadic),
             callable_identity: chunk.callable_identity,
             locals: chunk.locals,
             constants: chunk.constants.clone(),

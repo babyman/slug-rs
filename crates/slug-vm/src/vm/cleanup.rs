@@ -139,7 +139,7 @@ impl Vm {
             })?;
         let exact = {
             let chunk = self.current_chunk(program)?;
-            chunk.arity == count && chunk.exact_positional_parameters
+            chunk.arity == count && chunk.binds_full_positional_calls
         };
         if exact {
             #[cfg(feature = "metrics")]
@@ -168,7 +168,7 @@ impl Vm {
             return false;
         };
         if chunk.arity != count
-            || !chunk.exact_positional_parameters
+            || !chunk.binds_full_positional_calls
             || frame.locals.len() != chunk.locals
             || chunk.locals < count
             || frame.scopes.len() > 1

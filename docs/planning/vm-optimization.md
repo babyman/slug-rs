@@ -1548,3 +1548,41 @@ Seven interleaved rounds against `4ca5d1d`:
 Tuned geomean 0.90x, hold-out 0.96x. No workload regressed beyond its
 spread. `spectral-norm` read 1.03x with an 8-14% spread. `JumpIfFalsePop`
 alone measured 0.98x; fusion accounts for the rest. `make check` passed.
+
+#### Measurement record: higher-order calls and pattern bindings (2026-10-13)
+
+Before working on `recur`-parameter inference, an upper bound was taken by
+annotating every parameter as `num` in scaled copies of four workloads, with
+the same binary. `function-call` and `word-frequency` were unchanged within
+noise. `n-body` and `spectral-norm` improved about 5%. A `num` operator still
+distinguishes integers from floats at run time, and a generic operator tests
+the integer case first, so a proven `num` saves almost nothing per
+operation. Inference was deferred until the VM can exploit known types.
+
+Higher-order code had larger costs:
+
+- A pipeline call `value /> callee(arguments)` with only positional
+  arguments swaps `value` and `callee` in place and takes the positional call
+  path, instead of rebuilding the stack with two temporary vectors and binding
+  generically. Over 2,000,000 calls, `n /> f()` went from 0.25 s to 0.22 s;
+  `f(n)` takes 0.21 s. The pipeline path calls `call_positional`'s parts
+  rather than `call_positional` itself. A second caller of that function made
+  `fib` 2% slower on repeated interleaved runs; calling the parts measured
+  1.00x.
+- The positional-call and in-place `recur` fast paths now accept a function
+  with defaults when a call supplies every parameter positionally. Only a
+  variadic parameter still needs generic binding. `slug.std`'s `map` and
+  `filter` declare `acc = []`, so every iteration took the generic path,
+  which allocated argument vectors and a provided-argument bitmap.
+- `try_match` lets the pattern matcher push bindings straight onto the
+  operand stack rather than into a fresh vector that was then copied there.
+
+A profile of `apply(fn(x) { x + 1 }, n)` showed creating the closure itself
+is cheap (under 5%); the cost is the second call per iteration. Closures
+compare by identity, so a capture-free function literal cannot be shared
+between evaluations.
+
+Seven interleaved rounds against `905f718`: `higher-order` 0.82x,
+`fannkuch-redux` 0.88x, `word-frequency` 0.93x, `binary-trees` 0.95x, and
+the hold-out `expression-evaluator` 0.96x. Tuned geomean 0.96x, hold-out
+0.98x, and no workload slower. `make check` passed.

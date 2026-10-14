@@ -1136,6 +1136,35 @@ fn fused_local_constant_operations_match_their_standalone_forms() {
 }
 
 #[test]
+fn full_positional_calls_skip_defaults_and_pipelines_prepend_their_value() {
+    let path = fixture_path("positional-defaults");
+    fs::write(
+        &path,
+        "val f = fn(a, b = 10, c = a + b) { [a, b, c] }\n\
+         val loop = fn(n, acc = []) { if (n == 0) { acc } else { recur(n - 1, acc :+ n) } }\n\
+         val v = fn(a, ...rest) { [a, rest] }\n\
+         println(f(1), f(1, 2), f(1, 2, 3), loop(3), loop(2, [9]))\n\
+         println(v(1), v(1, 2), 5 /> f(), 5 /> f(6, 7), 1 /> v(2, 3))\n",
+    )
+    .expect("write positional defaults source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run positional defaults source");
+    fs::remove_file(path).expect("remove positional defaults source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[1, 10, 11] [1, 2, 3] [1, 2, 3] [3, 2, 1] [9, 2, 1]\n\
+         [1, []] [1, [2]] [5, 10, 15] [5, 6, 7] [1, [2, 3]]\n"
+    );
+}
+
+#[test]
 fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
     let run = |source: &str| {

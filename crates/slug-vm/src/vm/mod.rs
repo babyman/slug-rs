@@ -2995,13 +2995,14 @@ impl Vm {
             .expect("validated match pattern metadata");
         let operands = self.pop_values(operands)?;
         let value = self.pop()?;
-        let mut values = Vec::new();
+        // Bindings go straight onto the operand stack, where they belong.
+        let start = self.stack.len();
         let mut list_views_created = 0;
         let matched = matches_pattern(
             pattern,
             &value,
             &operands,
-            &mut values,
+            &mut self.stack,
             &mut list_views_created,
         )
         .map_err(|(kind, message)| self.error_at(kind, message))?;
@@ -3009,15 +3010,14 @@ impl Vm {
         {
             self.metrics.borrow_mut().list_views_created += list_views_created;
         }
-        if matched && values.len() != bindings {
+        if matched && self.stack.len() - start != bindings {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "match pattern binding count is invalid".into(),
             ));
         }
-        if matched {
-            self.stack.extend(values);
-        } else {
+        if !matched {
+            self.stack.truncate(start);
             self.stack.extend((0..bindings).map(|_| Value::Nil));
         }
         self.stack.push(Value::Bool(matched));
@@ -3947,7 +3947,7 @@ impl Vm {
                     "closure references missing chunk".into(),
                 )
             })?;
-            if chunk.arity != count || !chunk.exact_positional_parameters {
+            if chunk.arity != count || !chunk.binds_full_positional_calls {
                 return Ok(false);
             }
             if chunk.locals < chunk.arity {
@@ -4008,22 +4008,24 @@ impl Vm {
                 "pipeline has too few stack values".into(),
             )
         })?;
-        let arguments = self.stack.split_off(base + 2);
-        let callee = self.stack.pop().ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "pipeline has too few stack values".into(),
-            )
-        })?;
-        let value = self.stack.pop().ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "pipeline has too few stack values".into(),
-            )
-        })?;
-        self.stack.push(callee);
-        self.stack.push(value);
-        self.stack.extend(arguments);
+        // `value /> callee(arguments)` calls `callee(value, arguments)`: put
+        // the callee first and the piped value becomes its first argument.
+        self.stack.swap(base, base + 1);
+        let count = kinds.len() + 1;
+        if kinds
+            .iter()
+            .all(|kind| matches!(kind, CallArgumentKind::Positional))
+        {
+            // Calls `call_positional`'s parts directly: a second caller of
+            // the dispatch loop's own call path changed its code layout and
+            // slowed ordinary calls.
+            if selected.is_none() && self.positional_callee_is_native(count) {
+                return self.call(program, count, None);
+            }
+            if self.call_positional_closure(program, count, selected)? {
+                return Ok(());
+            }
+        }
         let mut all_kinds = Vec::with_capacity(kinds.len() + 1);
         all_kinds.push(CallArgumentKind::Positional);
         all_kinds.extend_from_slice(kinds);
