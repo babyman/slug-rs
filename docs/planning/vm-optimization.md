@@ -764,9 +764,11 @@ attributing them to the stack operand model.
 - [ ] Prototype one VM-owned contiguous local-slot arena. Frames retain a
   local-range base and length; calls append slots, returns truncate them, and
   `recur` replaces the active range without changing captured-cell identity.
-- [ ] Compare compiler-resolved global-slot IDs backed by contiguous module
+- [x] Compare compiler-resolved global-slot IDs backed by contiguous module
   storage with the current pooled-name plus string-`HashMap` lookup. Retain the
   name map for linking, imports, host access, conflicts, and diagnostics.
+  Implemented as runtime-resolved slots cached per closure rather than
+  compiler-assigned IDs; see the 2026-10-12 global-slots record.
 - [ ] After full executable accounting, prototype a fixed-width typed
   instruction with an opcode tag and 32-bit operands or metadata IDs. Measure
   a practical 16--24-byte target against the current 64-byte Rust enum; do not
@@ -774,8 +776,10 @@ attributing them to the stack operand model.
 - [ ] Profile instructions per cycle, branch misses, L1 data misses, and
   last-level cache misses where supported. Keep portable allocation, size, and
   representation counters as the cross-platform baseline.
-- [ ] Measure collection access before replacing the cache-friendly small
+- [x] Measure collection access before replacing the cache-friendly small
   vector representation of maps or other values with a pointer-heavier index.
+  Maps larger than 32 entries now add a compact index; smaller ones keep the
+  vector. See stage 5 of the immutable collection plan.
 
 Each prototype must report dispatch time, allocations, peak memory, cache or
 portable locality proxies, `Value` clone/drop traffic, and changes in verifier
@@ -1091,7 +1095,494 @@ showed the per-row query cost growing with the result size, and building an
 8,000-element list with `acc + [x]` in a `recur` loop took 0.11 s against
 0.04 s for 4,000, so each list append copies the whole list.
 
-- [ ] Append to a list in place when the left operand is the only reference,
+- [x] Append to a list in place when the left operand is the only reference,
   as unique-owner map updates already do, and measure `+` on lists in a loop.
-- [ ] Re-measure typed SQLite queries, and decide whether a per-row C helper
-  that reads all of a row's columns in one call is still worth adding.
+  Done by moving locals on their last read; see item 12.
+- [x] Re-measure typed SQLite queries, and decide whether a per-row C helper
+  that reads all of a row's columns in one call is still worth adding. Query
+  cost no longer grows with result size; the helper stays undecided until a
+  workload needs the remaining per-value native-call cost cut (item 12).
+
+### 12. Value, ownership, and hot-path sweep (proposed)
+
+The 2026-10-12 sweep revisited items 10 and 11 alongside a wider VM review.
+Each candidate was judged on execution time, runtime footprint, and
+implementation simplicity; the largest wins improve all three. The spikes are
+measurement-only commits on local branch `spike/vm-sweep` (workloads and the
+interleaved A/B harness are in its `spike/` directory). They are not merge
+candidates.
+
+Recommended order:
+
+- [x] **24-byte `Value`.** Store list-view bounds as `u32`, make
+  `CallableIdentity` a thin `Rc`, and keep a declared native's identity and
+  resource signature behind one `Rc`. `Value` falls from 40 to 24 bytes, which
+  shrinks the operand stack, locals, list elements, and map entries. About 25
+  changed lines.
+- [x] **Move locals on their last read (closes item 11).** An installation
+  pass marks each `GetLocal` after which the slot is dead, and the VM moves
+  the value out instead of cloning it. A sole-owner list then appends in
+  place: a 20,000-element `acc :+ x` loop drops from 0.57 s to under 10 ms.
+  Liveness is a single fixed-point pass over the packed code. `Recur`,
+  `Return`, and `Throw` end liveness, `SetLocal` kills a slot, and
+  `MakeClosure` keeps every slot live. A promoted (captured) slot is still
+  cloned. The pass must also run on `.cslug`-loaded chunks.
+- [x] **Fast exits on the call path (most of item 10).** Return without going
+  through the cleanup queue when no defer scope, cleanup action, or pending
+  cleanup exists. Restart an exact positional `recur` by moving stack
+  arguments straight into direct locals, with no temporary vector or closure
+  clone. Keep the frame's `Rc<Program>` across instructions instead of cloning
+  it for every dispatch.
+- [x] **Cheap global hashing.** Global names are short identifiers, so an
+  in-tree FNV-1a hasher for the global environment replaces SipHash. This
+  defers compiler-resolved global slots (item 7) until a profile needs them.
+- [x] **Cold error construction.** Mark `error`/`error_at` `#[cold]` and
+  `#[inline(never)]`.
+- [x] **One packed dispatch loop.** This is the largest simplicity and size
+  win, but it must be a deliberate rewrite rather than a deletion. The
+  rich-`Op` fallback reconstructs an `Op` from the packed instruction, and 397
+  of its lines are unreachable or duplicate the packed hot path: un-pooled
+  variants that `pack_instruction` rejects, plus re-implementations of packed
+  ops. The `span: Option<&SourceSpan>` parameter on 45 helpers is always
+  `None` since diagnostics resolve the active `SpanId` lazily, and the owned
+  `call` path duplicates `call_at` for the root call alone. Deleting only
+  the dead arms made dispatch about 25–30% slower: LLVM merged the loop
+  differently (measured with interleaved runs, so not host drift). The rewrite
+  should therefore match once on `PackedOpcode`, keep the instruction pointer
+  and chunk in loop locals that are refreshed on frame changes, and put
+  explicit `#[inline]`/`#[cold]` boundaries on rare operations. Accept it only
+  on an interleaved A/B run.
+
+Measured but not recommended now: returning `Box<RuntimeError>` from
+`VmResult` (104-byte to pointer-sized error) showed no execution change
+within noise and saved 16 KB, while changing the public error API. A module
+namespace value (item 10, second bullet) remains immaterial at nine exports.
+
+#### Measurement record: sweep spikes (2026-10-12)
+
+Command: `python3 -I spike/ladder.py` on branch `spike/vm-sweep`. It runs
+seven interleaved rounds of every binary per workload and reports the median
+wall-clock seconds. Release profile, base `e9b740c`. Workloads: 5,000,000
+`function-call` iterations (fc), 5,000,000 discarded global reads (gg),
+binary trees at depth 19 (bt), fannkuch-redux over eight values (fk), and a
+20,000-element list append (ap).
+
+| Step (cumulative) | fc | gg | bt | fk | ap | bt peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| Base | 1.49 | 0.82 | 0.52 | 1.10 | 0.67 | 68.7 MB |
+| 24-byte `Value` | 1.24 | 0.66 | 0.43 | 0.96 | 0.57 | 52.5 MB |
+| + return/recur fast paths | 1.02 | 0.54 | 0.44 | 0.92 | 0.57 | 52.5 MB |
+| + cached frame program | 0.95 | 0.50 | 0.41 | 0.87 | 0.58 | 52.5 MB |
+| + move on last read | 0.94 | 0.49 | 0.41 | 0.79 | <0.01 | 52.6 MB |
+| + FNV globals, cold errors | 0.88 | 0.40 | 0.38 | 0.75 | <0.01 | 52.5 MB |
+
+Running sequential, non-interleaved runs drifted by up to 30% within one
+session on the measuring laptop, so future comparisons should use interleaved
+A/B runs. With `make bench-source`, `function-call` went from 34.3 to 20.8 ms
+(1.34x to 0.80x CPython), `binary-trees` from 35.5 to 27.1 ms (1.25x to
+0.93x), and `fannkuch-redux` from 117.7 to 81.7 ms (3.87x to 2.66x). The base
+and spike runs were taken hours apart, so these are directional only. The full
+workspace suite passed on the combined spike except
+`records_direct_local_vector_reuse_across_recur`. The fast `recur` path does
+not yet record that metric. Fannkuch's remaining gap comes from `+:` prepend
+and from appends to list views, which always copy. That belongs to the
+collection-representation work rather than to dispatch.
+
+#### Measurement record: 24-byte `Value` (2026-10-12)
+
+Command: the interleaved A/B harness from `spike/vm-sweep`, seven rounds,
+release profile, comparing the pre-sweep binary with this change. `Value` falls
+from 40 to 24 bytes on 64-bit hosts. `keeps_values_at_three_words` now asserts
+that size. List views store `u32` bounds, `CallableIdentity` is a thin `Rc`,
+module-binding names are thin `Rc`s, and a declared native shares its identity
+and resource signature behind one `Rc<ForeignDeclaration>`.
+
+| Workload | Before | After |
+|---|---:|---:|
+| fc (5M calls) | 1.50 s | 1.24 s |
+| gg (5M global reads) | 0.82 s | 0.65 s |
+| bt (trees, depth 19) | 0.52 s | 0.44 s |
+| fk (fannkuch 8) | 1.09 s | 0.96 s |
+| ap (20k appends) | 0.66 s | 0.57 s |
+| bt peak RSS | 68.7 MB | 52.5 MB |
+
+`make check` passed. No diagnostic, call-frame, or scheduler behavior changed;
+the CLI binary size is unchanged within 16 bytes.
+
+#### Measurement record: move locals on last read (2026-10-12)
+
+`liveness::mark_last_local_reads` runs when a chunk is installed, from either
+`Program::add_chunk` or a decoded `.cslug` record, and sets packed operand `b`
+on each final `GetLocal`. It recomputes the flag every time, so the flag never
+comes from untrusted input. The VM moves a direct local out, leaving `nil`, and
+still clones a captured cell. Focused tests cover an in-place append, an
+earlier read that must clone, a read on only one branch, and a captured slot.
+
+Interleaved A/B harness, seven rounds, against the 24-byte `Value` commit:
+
+| Workload | Before | After |
+|---|---:|---:|
+| fc | 1.25 s | 1.22 s |
+| gg | 0.65 s | 0.65 s |
+| bt | 0.44 s | 0.43 s |
+| fk | 0.96 s | 0.88 s |
+| ap (20k appends) | 0.57 s | <0.01 s |
+
+Typed `slug.db.sqlite` query cost was timed as the median of eleven runs: a
+program that inserts N three-column rows and queries them, minus one that
+only inserts. Results are in nanoseconds per row:
+
+| Rows | Pre-sweep | 24-byte `Value` | Move on last read |
+|---:|---:|---:|---:|
+| 1,000 | 7,512 | 6,611 | 4,793 |
+| 4,000 | 13,196 | 11,279 | 4,612 |
+| 8,000 | 20,881 | 17,179 | 4,516 |
+
+`collected + [row]` no longer copies the result list, so the per-row cost is
+now flat. It remains about eight times the 0.13 prototype's 575 ns, mostly
+native calls per column value. A per-row C helper is the next step if a
+workload needs it. `make check` passed.
+
+#### Measurement record: call-path fast exits (2026-10-12)
+
+`Return` pops the frame directly when no defer scope, cleanup action, or
+pending cleanup could observe it; otherwise it goes through the cleanup queue
+as before. An exact positional `recur` moves its stack arguments straight into
+direct locals. It falls back unchanged for captured locals, nested defer
+scopes, unresolved bindings, or a malformed frame, and records the same
+restart, argument-write, and local-vector-reuse metrics. The dispatch loop
+keeps the active frame's `Rc<Program>` and refreshes it only when the top
+frame's program changes.
+
+Interleaved A/B harness, seven rounds, against the move-on-last-read commit:
+
+| Workload | Before | After |
+|---|---:|---:|
+| fc | 1.22 s | 0.95 s |
+| gg | 0.65 s | 0.50 s |
+| bt | 0.43 s | 0.42 s |
+| fk | 0.88 s | 0.79 s |
+
+The existing defer, recovery, capture, and `recur` suites, together with
+`records_direct_local_vector_reuse_across_recur`, cover the fallback
+boundaries. `make check` passed. Item 10's per-instruction overhead remains
+open for the single-dispatch rewrite.
+
+#### Measurement record: global hashing and cold errors (2026-10-12)
+
+The global environment is now a `platform::NameMap`, which hashes with FNV-1a
+on hosted targets and stays a `BTreeMap` on freestanding ones. `Vm::error` and
+`error_at` are `#[cold]` and `#[inline(never)]`. Interleaved A/B harness,
+seven rounds, against the fast-exits commit:
+
+| Workload | Pre-sweep | Before | After |
+|---|---:|---:|---:|
+| fc | 1.50 s | 0.95 s | 0.88 s |
+| gg | 0.82 s | 0.51 s | 0.40 s |
+| bt | 0.52 s | 0.41 s | 0.37 s |
+| fk | 1.10 s | 0.79 s | 0.73 s |
+| ap | 0.67 s | <0.01 s | <0.01 s |
+| bt peak RSS | 68.7 MB | 52.6 MB | 52.5 MB |
+
+`make bench-source` after the four sweep commits, with 15 samples, gave these
+medians. CPython medians are from the same run; the pre-sweep Slug medians
+were taken earlier the same day:
+
+| Workload | Pre-sweep Slug | Slug | CPython | Slug / CPython |
+|---|---:|---:|---:|---:|
+| function-call | 34.312 ms | 20.376 ms | 27.221 ms | 0.75x |
+| n-body | 14.416 ms | 9.214 ms | 22.898 ms | 0.40x |
+| spectral-norm | 6.779 ms | 5.415 ms | 21.231 ms | 0.26x |
+| binary-trees | 35.450 ms | 26.617 ms | 30.011 ms | 0.89x |
+| fannkuch-redux | 117.653 ms | 80.314 ms | 31.917 ms | 2.52x |
+
+`make check` passed. The release CLI binary is 32 bytes larger than before the
+sweep.
+
+#### Measurement record: wider source corpus (2026-10-12)
+
+Before the dispatch-loop rewrite, the source corpus gained seven workloads
+that the four landed commits were not tuned on (see
+`docs/engineering/benchmarking.md`), and the spike's interleaved harness
+became `make bench-ab`. Seven rounds, `master` (`a4ba29a`) against the four
+sweep commits (`6d48f4a`):
+
+| Workload | `master` | Sweep | Ratio |
+|---|---:|---:|---:|
+| function-call | 34.4 ms | 21.8 ms | 0.63x |
+| n-body | 15.0 ms | 10.0 ms | 0.67x |
+| typed-n-body | 14.8 ms | 9.7 ms | 0.66x |
+| spectral-norm | 7.3 ms | 6.0 ms | 0.82x |
+| typed-spectral-norm | 7.2 ms | 5.8 ms | 0.80x |
+| binary-trees | 36.0 ms | 27.2 ms | 0.75x |
+| fannkuch-redux | 115.9 ms | 81.4 ms | 0.70x |
+| shared-append | 114.8 ms | 95.9 ms | 0.84x |
+| higher-order | 335.7 ms | 60.2 ms | 0.18x |
+| fib | 141.7 ms | 104.7 ms | 0.74x |
+| defer-errors | 124.8 ms | 98.2 ms | 0.79x |
+| word-frequency (hold-out) | 345.6 ms | 169.8 ms | 0.49x |
+| string-building (hold-out) | 149.8 ms | 146.5 ms | 0.98x |
+| expression-evaluator (hold-out) | 273.5 ms | 213.0 ms | 0.78x |
+
+Geometric-mean ratio: tuned 0.65x, hold-out 0.72x. No workload regressed, so
+the sweep generalizes beyond the workloads it was measured on. `higher-order`
+gains most because `slug.std` `map` and `filter` build their results with
+`acc :+ h` in `recur`, which now appends in place. `shared-append`, where the
+move must not happen, still gains from the smaller `Value`. Only
+`string-building` is flat: string concatenation was outside the sweep.
+
+The same `make bench-source` run also shows how far the original corpus
+understated the CPython gap. The original workloads range from 0.27x to 2.68x
+CPython, but the new ones are 1.8x–6.0x: `string-building` 5.96x,
+`word-frequency` 5.16x, `defer-errors` 2.83x, `expression-evaluator` 2.59x,
+`higher-order` 2.21x, `fib` 1.96x, and `shared-append` 1.83x. `fib` against
+`function-call` (0.81x) isolates ordinary call/return cost, which `recur`
+loops bypass. Accept the dispatch-loop rewrite only on a `make bench-ab` run
+whose hold-out geomean does not regress.
+
+#### Measurement record: one packed dispatch loop (2026-10-12)
+
+The rewrite landed in four steps, each accepted on its own `make bench-ab`
+run against the previous step:
+
+1. **One `PackedOpcode` match.** `execute_instruction` matches every opcode
+   once and reads pooled metadata directly. The rich-`Op` fallback
+   (`unpack_instruction` plus `execute_borrowed_span_op`, including every
+   un-pooled arm that installation never emits) is gone, along with the
+   `packed_direct_dispatches` and `rich_op_fallback_dispatches` metrics it
+   needed. Large or rare operations live in `#[inline(never)]` helpers, and
+   the rarest (global definition, overload combination, imports, struct
+   schemas, tasks, `select`, scope cleanup) are also `#[cold]`. Tuned 0.95x,
+   hold-out 0.98x, release binary 16.5 KB smaller. Unlike the spike's
+   arm deletion, nothing regressed.
+2. **No `span` parameters.** The 40 helpers whose `span: Option<&SourceSpan>`
+   was always `None` lost it, about 600 call-site arguments in all. Only the
+   native-call path, which can carry a host-supplied span, keeps one.
+   Execution was unchanged (1.00x), as LLVM had already folded the constant.
+3. **Inlined stack fast paths and a cached code slice.** A time profile of
+   `fib` showed `pop_at` as a separate non-inlined call costing 13–17% of
+   samples. `pop_at`, `pop_pair_at`, `peek_at`, `local_value`, and
+   `take_local` are now `#[inline]`, with binding resolution and underflow in
+   `#[cold]` helpers (tuned 0.95x, `fib` 0.86x). The dispatch loop then keeps
+   the active chunk in a local, reloading it only when `frame_epoch` changes.
+   `push_frame`, `pop_frame`, frame truncation and clearing, execution swaps,
+   and `select` suspension bump the epoch. `next_instruction` is gone (tuned
+   0.98x, hold-out 1.00x). The instruction pointer stays in the frame, since
+   only jumps, `recur`, and cleanup write it.
+4. **No owned `call`.** The root entrypoint call now goes through `call_at`
+   after clearing `active_span`, so `main` still records no call site. The
+   owned `call`, `bind_overload_arguments`, and `bind_call_arguments` twins
+   are removed. Execution was unchanged.
+
+Seven rounds, `5694f30` against the finished rewrite:
+
+| Workload | Before | After | Ratio |
+|---|---:|---:|---:|
+| function-call | 22.9 ms | 19.6 ms | 0.85x |
+| n-body | 10.7 ms | 9.6 ms | 0.90x |
+| typed-n-body | 10.6 ms | 9.1 ms | 0.86x |
+| spectral-norm | 6.3 ms | 5.8 ms | 0.91x |
+| typed-spectral-norm | 6.4 ms | 5.8 ms | 0.90x |
+| binary-trees | 27.8 ms | 25.6 ms | 0.92x |
+| fannkuch-redux | 83.5 ms | 68.3 ms | 0.82x |
+| shared-append | 98.6 ms | 96.1 ms | 0.98x |
+| higher-order | 62.4 ms | 50.9 ms | 0.82x |
+| fib | 109.4 ms | 91.2 ms | 0.83x |
+| defer-errors | 101.6 ms | 81.7 ms | 0.80x |
+| word-frequency (hold-out) | 187.1 ms | 170.2 ms | 0.91x |
+| string-building (hold-out) | 151.2 ms | 152.4 ms | 1.01x |
+| expression-evaluator (hold-out) | 223.2 ms | 193.0 ms | 0.86x |
+
+Geometric-mean ratio: tuned 0.87x, hold-out 0.93x. `string-building` is
+inside its spread; it is dominated by string concatenation, not dispatch. The
+release binary fell from 1,859,200 to 1,842,608 bytes. `mod.rs` lost about
+800 lines net. `make check` passed.
+
+The same `fib` profile points at the next costs, all outside dispatch:
+`Value` clone and drop are out-of-line calls; every call to a global function
+hashes and compares its name (FNV plus `memcmp`, about 6–8% of `fib`), which
+is the evidence item 7's compiler-resolved global slots was waiting for; and
+`push_frame`/`pop_frame` swap the VM's `globals` `Rc` on every call.
+
+With the span parameter gone, the `_at` suffix on VM helpers no longer meant
+anything, so they were renamed without it: `call_at` is now `call`, `pop_at`
+is `pop`, and so on. `current_waiter_at` became `blocking_waiter`, and the
+pooled `import` and `select` wrappers were merged into the functions they
+called. `error_at` keeps its name: it builds an error at the active span,
+unlike `error`, which takes one explicitly.
+
+#### Measurement record: cached global slots (2026-10-12)
+
+A global environment is now a `GlobalTable`: values in definition order
+behind a name→slot index. Nothing ever removes a global, and redefinition
+replaces a value in place, so a slot stays valid for the table's lifetime.
+
+Slots are resolved at run time, not assigned by the compiler. One
+environment holds names from several sources: host builtins, native
+modules, `slug.builtin`, imports, and every REPL submission. A program can
+also run against more than one environment (interactive overlays, a
+spawned task's copy). So a slot is only meaningful for one (program,
+environment) pair, and compile-time IDs would need a link step at every
+install, import, and overlay. Instead each `Closure` carries `global_slots`,
+one `Cell<u32>` per global name of its program, filled on the name's first
+read. `MakeClosure` and function constants share the creating closure's
+table, since they have the same program and environment. A closure rebound
+to another environment gets a fresh one, and the host-built root closure has
+none and reads by name. `GetGlobal` reaches the table through the active
+frame's closure, so calls pay nothing extra. A cached read is one bounds
+check and one indexed clone, and an initialized module binding cell is read
+through directly.
+
+Seven rounds against `e0b7a1f`: tuned 0.97x, hold-out 0.97x. Calls through
+globals gain most: `function-call` 0.89x, `fib` 0.93x, `binary-trees`
+0.93x, and the hold-out `expression-evaluator` 0.91x. Numeric loops that
+read no globals are unchanged. `word-frequency` measured 1.01x–1.03x over
+three runs, inside its 5–9% spread. Its time profile is the same for both
+builds: about 73% is `Value::eq` and `memcmp` from linear key scans in its
+509-entry map. So the residual is layout or noise, not global reads, and
+that linear scan is the real reason it runs 5x slower than CPython. It
+belongs to item 7's last bullet on map representation. `make check` passed.
+
+#### Measurement record: in-place string append (2026-10-13)
+
+`string-building` ran at 5.5x CPython, and its time quadrupled when its
+iteration count doubled. `text + line` copied the whole accumulated string
+twice: `+` formatted into a `String`, then copied that into a new `Rc<str>`,
+because a `str` cannot grow. A string is now an opaque `Str` behind
+`Value::Str`, holding an `Rc<String>`, so `+` appends to a sole owner's
+buffer in place. Move-on-last-read already makes an accumulator a sole
+owner. A shared string is copied once into a buffer with room for the
+appended text. `Rc<String>` costs a second allocation per string. That cost
+did not register, even in the string-heavy `word-frequency`, because the
+old path had a copy of its own. `string-building` moved to the tuned group
+for this change, and `text-wrap`, which wraps a paragraph with indexing,
+interpolation, and concatenation, replaced it as a hold-out.
+
+Seven interleaved rounds against `b669666`:
+
+| Workload | Before | After | Ratio |
+|---|---:|---:|---:|
+| string-building | 143.2 ms | 15.0 ms | 0.11x |
+| word-frequency | 35.2 ms | 34.7 ms | 0.99x |
+| text-wrap (hold-out) | 113.6 ms | 87.0 ms | 0.77x |
+| expression-evaluator (hold-out) | 170.4 ms | 168.1 ms | 0.99x |
+
+Every other workload is within its spread: tuned geomean 0.84x, hold-out
+0.91x. Encapsulating `Str` alone took `string-building` to 0.50x by removing
+the second copy, and the in-place append took it the rest of the way.
+`string-building` is now 0.57x CPython, and 20,000 to 160,000 appends scale
+linearly.
+
+#### Measurement record: call path and scope elision (2026-10-13)
+
+A time profile of `fib` put about 29% of its samples in call and return
+bookkeeping. Four changes address it:
+
+- An exact positional call moves its arguments from the operand stack into
+  the callee's locals instead of cloning them. Live module bindings are the
+  exception: they still need resolution, so those calls take the general
+  path. Besides saving a clone and a drop per argument, a collection passed
+  as an argument is now the callee's sole copy, so the callee can update it
+  in place.
+- `push_frame` and `pop_frame` replace the VM's global-environment
+  reference only when the environment changes.
+- The dispatch loop keeps the active program's reference across calls and
+  returns within one program instead of cloning it on every frame change.
+- The compiler emits `EnterScope`/`LeaveScope` only for a block that
+  directly contains a `defer`. A block's runtime scope exists only to collect
+  deferred work, and a `defer` belongs to its innermost enclosing block.
+  `fib`'s recursive path falls from 19 instructions to 17.
+
+Seven interleaved rounds against `ced94d3`: `fib` 0.93x, `function-call`
+0.95x, `defer-errors` 0.97x, and the hold-out `graph-search` 0.66x.
+`graph-search` passes its visited map to a helper that extends it, which
+previously copied the map. Every other workload is within its spread: tuned
+geomean 0.98x, hold-out 0.87x. `make check` passed.
+
+What remains in `fib` is spread across dispatch, operand-stack pops, and
+out-of-line `Value` clones and drops, each a few percent. Further gains
+need fewer instructions per operation, such as a jump that pops its
+condition, or cheaper ones, such as the contiguous local-slot arena from item
+7.
+
+#### Measurement record: fewer instructions per operation (2026-10-13)
+
+A temporary opcode counter over the tuned corpus, with every workload
+weighted equally, showed where dispatches go. `GetLocal` + `Constant` started
+12.8% of all instruction pairs, mostly ahead of `Equal`, `Subtract`, `Add`,
+and their `num` forms. That is the shape of every `recur` loop's test and
+step. `JumpIfFalse` + `Pop` was another 7%: every conditional left its test
+on the stack, and both branches popped it. Two compiler changes remove those
+dispatches:
+
+- `JumpIfFalsePop` consumes its condition. `if`, match cases and guards, and
+  destructuring declarations use it, so neither branch pops. The match-guard
+  failure path also loses its separate cleanup jump.
+- The compiler fuses `GetLocal(slot)`, a value `Constant`, and one of fifteen
+  operators into `LocalConstantBinary { slot, constant, operator }`. The
+  operators are `+ - * / %` in generic and `num` forms, `==`, and `<`/`>` in
+  generic and `num` forms. It evaluates the same operator functions and
+  reports errors at the same span. The liveness pass treats it as a local
+  read and sets a move bit in its operand when that read is the last, so
+  `text + "ab"` in a `recur` loop still appends in place. The compiler fuses
+  only when no patched jump lands on the constant or operator.
+
+The compiler already knows types: when both operands are `num` it emits the
+`num` operator, and a fused instruction carries it. The counter also showed
+that generic `Add`, `Subtract`, and `Equal` run about twice as often as their
+`num` forms, because inference rarely proves an unannotated `recur`
+parameter is a number. Better inference is the next type-driven
+opportunity.
+
+Seven interleaved rounds against `4ca5d1d`:
+
+| Workload | Before | After | Ratio |
+|---|---:|---:|---:|
+| fib | 77.3 ms | 55.8 ms | 0.72x |
+| function-call | 17.0 ms | 13.4 ms | 0.79x |
+| typed-n-body | 9.0 ms | 7.3 ms | 0.81x |
+| n-body | 9.6 ms | 8.1 ms | 0.84x |
+| binary-trees | 23.7 ms | 21.6 ms | 0.91x |
+| text-wrap (hold-out) | 88.1 ms | 81.0 ms | 0.92x |
+
+Tuned geomean 0.90x, hold-out 0.96x. No workload regressed beyond its
+spread. `spectral-norm` read 1.03x with an 8-14% spread. `JumpIfFalsePop`
+alone measured 0.98x; fusion accounts for the rest. `make check` passed.
+
+#### Measurement record: higher-order calls and pattern bindings (2026-10-13)
+
+Before working on `recur`-parameter inference, an upper bound was taken by
+annotating every parameter as `num` in scaled copies of four workloads, with
+the same binary. `function-call` and `word-frequency` were unchanged within
+noise. `n-body` and `spectral-norm` improved about 5%. A `num` operator still
+distinguishes integers from floats at run time, and a generic operator tests
+the integer case first, so a proven `num` saves almost nothing per
+operation. Inference was deferred until the VM can exploit known types.
+
+Higher-order code had larger costs:
+
+- A pipeline call `value /> callee(arguments)` with only positional
+  arguments swaps `value` and `callee` in place and takes the positional call
+  path, instead of rebuilding the stack with two temporary vectors and binding
+  generically. Over 2,000,000 calls, `n /> f()` went from 0.25 s to 0.22 s;
+  `f(n)` takes 0.21 s. The pipeline path calls `call_positional`'s parts
+  rather than `call_positional` itself. A second caller of that function made
+  `fib` 2% slower on repeated interleaved runs; calling the parts measured
+  1.00x.
+- The positional-call and in-place `recur` fast paths now accept a function
+  with defaults when a call supplies every parameter positionally. Only a
+  variadic parameter still needs generic binding. `slug.std`'s `map` and
+  `filter` declare `acc = []`, so every iteration took the generic path,
+  which allocated argument vectors and a provided-argument bitmap.
+- `try_match` lets the pattern matcher push bindings straight onto the
+  operand stack rather than into a fresh vector that was then copied there.
+
+A profile of `apply(fn(x) { x + 1 }, n)` showed creating the closure itself
+is cheap (under 5%); the cost is the second call per iteration. Closures
+compare by identity, so a capture-free function literal cannot be shared
+between evaluations.
+
+Seven interleaved rounds against `905f718`: `higher-order` 0.82x,
+`fannkuch-redux` 0.88x, `word-frequency` 0.93x, `binary-trees` 0.95x, and
+the hold-out `expression-evaluator` 0.96x. Tuned geomean 0.96x, hold-out
+0.98x, and no workload slower. `make check` passed.

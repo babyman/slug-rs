@@ -1,4 +1,4 @@
-use alloc::{borrow::ToOwned, boxed::Box, rc::Rc, string::String, vec::Vec};
+use alloc::{borrow::ToOwned, boxed::Box, string::String, vec::Vec};
 use core::{fmt, fmt::Write as _};
 
 use crate::{SourceSpan, Value};
@@ -95,7 +95,11 @@ fn render_stacktrace_error(rendered: &mut String, error: &RuntimeError, indent: 
 }
 
 impl Vm {
+    // Errors leave the hot path; keeping their construction out of line
+    // stops it from bloating the dispatch code that calls it.
     #[allow(clippy::needless_pass_by_value)]
+    #[cold]
+    #[inline(never)]
     pub(super) fn error(
         &self,
         kind: RuntimeErrorKind,
@@ -125,6 +129,7 @@ impl Vm {
                             .get(index.saturating_sub(1))
                             .and_then(|caller| caller.program.span(*span))
                             .cloned(),
+                        #[cfg(feature = "concurrency")]
                         Some(super::frames::CallSpan::Owned(span)) => Some((**span).clone()),
                         None => None,
                     },
@@ -152,7 +157,7 @@ impl Vm {
             .native
             .as_ref()
             .map_or_else(|| fault_type(&error.kind), |native| native.code.as_str());
-        Value::Map(Rc::new(vec![
+        Value::map(vec![
             (Value::string("type"), Value::string(error_type)),
             (Value::string("msg"), Value::string(error.message)),
             (
@@ -162,7 +167,7 @@ impl Vm {
                     .and_then(|native| native.data)
                     .unwrap_or(Value::Nil),
             ),
-        ]))
+        ])
     }
 }
 

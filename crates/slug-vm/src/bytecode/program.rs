@@ -5,13 +5,14 @@ use crate::{CallableIdentity, platform::HashMap};
 
 use super::{
     chunk::{Chunk, CompiledChunk, PackedInstruction, PackedOpcode},
+    liveness::{self, MOVE_LOCAL_OPERAND},
     metadata::{
         CallArgumentsId, Capture, CaptureListId, Constant, GlobalNameId, InterpolationId,
         ListSpreadId, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
         ModuleDeclaration, ParameterSignature, SchemaField, SchemaFieldsId, SelectCase,
         SelectCasesId, SelectedCallId, SourceId, SourceSpan, SpanId, StructFieldsId,
     },
-    op::{CallArgumentKind, DeferMode, Instruction, Op},
+    op::{BinaryOperator, CallArgumentKind, DeferMode, Instruction, Op},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,7 +176,10 @@ impl Program {
     }
 
     /// Installs chunks decoded from a `.cslug` program record.
-    pub(crate) fn set_cslug_chunks(&mut self, chunks: Vec<CompiledChunk>) {
+    pub(crate) fn set_cslug_chunks(&mut self, mut chunks: Vec<CompiledChunk>) {
+        for chunk in &mut chunks {
+            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals);
+        }
         self.names = chunks
             .iter()
             .enumerate()
@@ -256,18 +260,20 @@ impl Program {
             }
             self.pool_instruction_metadata(&mut instruction.op);
         }
+        let mut code: Vec<_> = chunk.code.iter().map(Self::pack_instruction).collect();
+        liveness::mark_last_local_reads(&mut code, chunk.locals);
         let compiled = CompiledChunk {
             name: chunk.name.clone(),
             arity: chunk.arity,
             parameters: chunk.parameters.clone(),
-            exact_positional_parameters: !chunk
+            binds_full_positional_calls: !chunk
                 .parameters
                 .iter()
-                .any(|parameter| parameter.has_default || parameter.variadic),
+                .any(|parameter| parameter.variadic),
             callable_identity: chunk.callable_identity,
             locals: chunk.locals,
             constants: chunk.constants.clone(),
-            code: chunk.code.iter().map(Self::pack_instruction).collect(),
+            code,
             invalid_instructions,
         };
         let index = self.chunks.len();
@@ -481,6 +487,10 @@ impl Program {
 
     pub(crate) fn span(&self, id: SpanId) -> Option<&SourceSpan> {
         self.spans.get(id.index())
+    }
+
+    pub(crate) fn global_name_count(&self) -> usize {
+        self.global_names.len()
     }
 
     pub(crate) fn global_name(&self, id: GlobalNameId) -> Option<&str> {
@@ -757,6 +767,17 @@ impl Program {
             Op::GuardLess => (PackedOpcode::GuardLess, 0, 0, 0),
             Op::Jump(v) => (PackedOpcode::Jump, operand(*v), 0, 0),
             Op::JumpIfFalse(v) => (PackedOpcode::JumpIfFalse, operand(*v), 0, 0),
+            Op::JumpIfFalsePop(v) => (PackedOpcode::JumpIfFalsePop, operand(*v), 0, 0),
+            Op::LocalConstantBinary {
+                slot,
+                constant,
+                operator,
+            } => (
+                PackedOpcode::LocalConstantBinary,
+                operand(*slot),
+                operand(*constant),
+                operator.code(),
+            ),
             Op::JumpIfProvided { slot, target } => (
                 PackedOpcode::JumpIfProvided,
                 operand(*slot),
@@ -813,9 +834,7 @@ impl Program {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn unpack_instruction(
-        instruction: &PackedInstruction,
-    ) -> Result<Instruction, String> {
+    fn unpack_instruction(instruction: &PackedInstruction) -> Result<Instruction, String> {
         let n = |value: u32| value as usize;
         let missing = |name: &str| Err(format!("packed instruction references missing {name}"));
         let op = match instruction.opcode {
@@ -887,6 +906,15 @@ impl Program {
             PackedOpcode::GuardLess => Op::GuardLess,
             PackedOpcode::Jump => Op::Jump(n(instruction.a)),
             PackedOpcode::JumpIfFalse => Op::JumpIfFalse(n(instruction.a)),
+            PackedOpcode::JumpIfFalsePop => Op::JumpIfFalsePop(n(instruction.a)),
+            PackedOpcode::LocalConstantBinary => Op::LocalConstantBinary {
+                slot: n(instruction.a),
+                constant: n(instruction.b),
+                operator: BinaryOperator::from_code(instruction.c & !MOVE_LOCAL_OPERAND)
+                    .ok_or_else(|| {
+                        String::from("packed instruction references missing binary operator")
+                    })?,
+            },
             PackedOpcode::JumpIfProvided => Op::JumpIfProvided {
                 slot: n(instruction.a),
                 target: n(instruction.b),
@@ -1151,12 +1179,26 @@ impl Program {
                     location()
                 ))
             }
-            Op::GetLocal(slot) | Op::SetLocal(slot) | Op::JumpIfProvided { slot, .. }
+            Op::LocalConstantBinary { constant, .. }
+                if !matches!(chunk.constants.get(*constant), Some(Constant::Value(_))) =>
+            {
+                Err(format!(
+                    "{} references missing operand constant {constant}",
+                    location()
+                ))
+            }
+            Op::GetLocal(slot)
+            | Op::SetLocal(slot)
+            | Op::JumpIfProvided { slot, .. }
+            | Op::LocalConstantBinary { slot, .. }
                 if *slot >= chunk.locals =>
             {
                 Err(format!("{} references missing local {slot}", location()))
             }
-            Op::Jump(target) | Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. }
+            Op::Jump(target)
+            | Op::JumpIfFalse(target)
+            | Op::JumpIfFalsePop(target)
+            | Op::JumpIfProvided { target, .. }
                 if *target >= chunk.code.len() =>
             {
                 Err(format!(
@@ -1436,7 +1478,9 @@ impl Program {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
                 Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => vec![0],
                 Op::Jump(target) => vec![*target],
-                Op::JumpIfFalse(target) | Op::JumpIfProvided { target, .. } => [
+                Op::JumpIfFalse(target)
+                | Op::JumpIfFalsePop(target)
+                | Op::JumpIfProvided { target, .. } => [
                     Some(*target),
                     (index + 1 < chunk.code.len()).then_some(index + 1),
                 ]
@@ -1533,6 +1577,7 @@ impl Program {
             | Op::True
             | Op::False
             | Op::GetLocal(_)
+            | Op::LocalConstantBinary { .. }
             | Op::GetCapture(_)
             | Op::GetGlobal(_)
             | Op::GetGlobalPooled(_)
@@ -1555,6 +1600,7 @@ impl Program {
             | Op::SetGlobalPooled(_)
             | Op::DefineMapGlobals
             | Op::Defer { .. }
+            | Op::JumpIfFalsePop(_)
             | Op::Throw
             | Op::Return => (1, 0),
             Op::Duplicate => (1, 2),

@@ -1,0 +1,25 @@
+// Counts string keys in a map, then reads every count back.
+val word = fn(index) { "w" + (index * 7_919) % 509 }
+val count = fn(remaining, counts) {
+    if (remaining == 0) {
+        counts
+    } else {
+        val key = word(remaining)
+        val seen = counts[key]
+        recur(remaining - 1, counts + {[key]: if (seen == nil) { 1 } else { seen + 1 }})
+    }
+}
+val sum = fn(remaining, counts, total, largest) {
+    match remaining {
+        [] => [total, largest]
+        [key, ...rest] => {
+            val value = counts[key]
+            recur(rest, counts, total + value, if (value > largest) { value } else { largest })
+        }
+    }
+}
+val main = fn() {
+    val counts = count(50_000, {})
+    val result = sum(keys(counts), counts, 0, 0)
+    println(len(counts), result[0], result[1])
+}

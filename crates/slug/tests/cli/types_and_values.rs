@@ -1067,6 +1067,147 @@ fn persistently_merges_removes_and_enumerates_maps() {
 }
 
 #[test]
+fn string_concatenation_never_changes_a_retained_string() {
+    let path = fixture_path("string-append-aliasing");
+    fs::write(
+        &path,
+        "val base = \"a\"\n\
+         val build = fn(n, text, kept) { if (n == 0) { [text, kept] } else { recur(n - 1, text + \"b\", text) } }\n\
+         val [text, kept] = build(3, base, \"\")\n\
+         val number = 1\n\
+         println(base, text, kept, base + number + true, base)\n",
+    )
+    .expect("write string aliasing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run string aliasing source");
+    fs::remove_file(path).expect("remove string aliasing source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "a abbb abb a1true a\n"
+    );
+}
+
+#[test]
+fn fused_local_constant_operations_match_their_standalone_forms() {
+    let path = fixture_path("fused-local-constant");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write fused operation source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run fused operation source");
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+            String::from_utf8(output.stderr).expect("stderr is UTF-8"),
+        )
+    };
+    let (code, stdout, stderr) = run(
+        "val numbers = fn(x) { [x + 1, x - 1, x * 2, x / 2, x % 3, x == 4, x > 1, x < 1] }\n\
+         val generic = fn(x) { [x + \"!\", x == \"a\"] }\n\
+         val drop = fn(m: map) { m - \"a\" }\n\
+         val build = fn(n, text) { if (n == 0) { text } else { recur(n - 1, text + \"ab\") } }\n\
+         println(numbers(4), numbers(4.5))\n\
+         println(generic(\"a\"), drop({a: 1, b: 2}), len(build(1000, \"\")))\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "[5, 3, 8, 2, 1, true, true, false] [5.5, 3.5, 9, 2.25, 1.5, false, true, false]\n\
+         [\"a!\", true] {\"b\": 2} 2000\n"
+    );
+
+    // A fused operation fails exactly where its operator is.
+    let (code, _, stderr) = run("val generic = fn(x) { x + \"!\" }\nprintln(generic(1))\n");
+    fs::remove_file(&path).expect("remove fused operation source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("runtime error: expected numbers, got num and str"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(":1:25"), "{stderr}");
+}
+
+#[test]
+fn full_positional_calls_skip_defaults_and_pipelines_prepend_their_value() {
+    let path = fixture_path("positional-defaults");
+    fs::write(
+        &path,
+        "val f = fn(a, b = 10, c = a + b) { [a, b, c] }\n\
+         val loop = fn(n, acc = []) { if (n == 0) { acc } else { recur(n - 1, acc :+ n) } }\n\
+         val v = fn(a, ...rest) { [a, rest] }\n\
+         println(f(1), f(1, 2), f(1, 2, 3), loop(3), loop(2, [9]))\n\
+         println(v(1), v(1, 2), 5 /> f(), 5 /> f(6, 7), 1 /> v(2, 3))\n",
+    )
+    .expect("write positional defaults source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run positional defaults source");
+    fs::remove_file(path).expect("remove positional defaults source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[1, 10, 11] [1, 2, 3] [1, 2, 3] [3, 2, 1] [9, 2, 1]\n\
+         [1, []] [1, [2]] [5, 10, 15] [5, 6, 7] [1, [2, 3]]\n"
+    );
+}
+
+#[test]
+fn map_literals_reject_a_repeated_key() {
+    let path = fixture_path("map-literal-repeated-keys");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write repeated-key source");
+        let output = slug().arg(&path).output().expect("run repeated-key source");
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+            String::from_utf8(output.stderr).expect("stderr is UTF-8"),
+        )
+    };
+
+    // Constant keys are checked at compile time, under key equivalence.
+    for (source, key) in [
+        ("println({a: 1, \"b\": 2, a: 3})\n", "a"),
+        ("println({[1]: \"int\", [1.0]: \"float\"})\n", "1"),
+    ] {
+        let (code, stdout, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert_eq!(stdout, "", "{source}");
+        assert!(
+            stderr.contains(&format!("map literal repeats key `{key}`")),
+            "{stderr}"
+        );
+    }
+
+    // A computed key can only be checked when the literal is built.
+    let (code, stdout, stderr) =
+        run("val key = \"a\"\nprintln(\"before\")\nprintln({[key]: 1, a: 2})\n");
+    assert_eq!(code, Some(1));
+    assert_eq!(stdout, "before\n");
+    assert!(stderr.contains("map literal repeats key \"a\""), "{stderr}");
+
+    // Distinct keys, and merge, are unaffected: merge still overwrites.
+    let (code, stdout, stderr) = run("val key = \"c\"\n\
+         val map = {a: 1, [key]: 2, [1]: 3, [1.5]: 4}\n\
+         println(len(map), map + {a: 9} == {a: 9, c: 2, [1.0]: 3, [1.5]: 4})\n");
+    fs::remove_file(&path).expect("remove repeated-key source");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "4 true\n");
+}
+
+#[test]
 fn standard_clutch_preserves_non_string_map_keys() {
     let path = fixture_path("standard-clutch-map-keys");
     fs::write(

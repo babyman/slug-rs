@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::mem;
 
-use crate::{DeferMode, Program, SourceSpan, Value};
+use crate::{DeferMode, Program, Value};
 
 use super::frames::{Frame, LocalSlot, ProvidedArguments};
 use super::{RuntimeError, RuntimeErrorKind, Vm, VmResult};
@@ -80,14 +80,33 @@ impl Vm {
         self.drive_cleanup()
     }
 
-    pub(super) fn recur_at(
+    /// Returns to the caller directly when no cleanup can observe the
+    /// return: no defer scope, no cleanup in progress, and not a cleanup
+    /// action. Hands the value back when the cleanup queue must settle it.
+    pub(super) fn return_without_cleanup(&mut self, value: Value) -> Result<(), Value> {
+        let plain = self.cleanup.is_empty()
+            && self.frames.len() > 1
+            && self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.scopes.is_empty() && !frame.cleanup_action);
+        if !plain {
+            return Err(value);
+        }
+        let frame = self.pop_frame().expect("caller frame was checked");
+        self.stack.truncate(frame.stack_base);
+        self.recycle_frame_locals(frame.locals);
+        self.stack.push(value);
+        Ok(())
+    }
+
+    pub(super) fn recur(
         &mut self,
         program: &Program,
         kinds: &[crate::CallArgumentKind],
-        span: Option<&SourceSpan>,
     ) -> VmResult<()> {
-        let values = self.pop_values_at(kinds.len(), span)?;
-        let (positional, named) = self.expand_call_arguments_at(values, kinds, span)?;
+        let values = self.pop_values(kinds.len())?;
+        let (positional, named) = self.expand_call_arguments(values, kinds)?;
         let closure = self
             .frames
             .last()
@@ -96,21 +115,18 @@ impl Vm {
                 self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
                     "no active call frame".into(),
-                    span,
                 )
             })?;
         let (arguments, provided) =
-            self.bind_call_arguments_at(program, &closure, positional, named, span)?;
-        self.restart_recur(arguments, Some(provided), program, span)
+            self.bind_call_arguments(program, &closure, positional, named)?;
+        self.restart_recur(arguments, Some(provided), program)
     }
 
-    pub(super) fn recur_positional_at(
-        &mut self,
-        program: &Program,
-        count: usize,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<()> {
-        let values = self.pop_values_at(count, span)?;
+    pub(super) fn recur_positional(&mut self, program: &Program, count: usize) -> VmResult<()> {
+        if self.restart_exact_recur_in_place(program, count) {
+            return Ok(());
+        }
+        let values = self.pop_values(count)?;
         let closure = self
             .frames
             .last()
@@ -119,23 +135,68 @@ impl Vm {
                 self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
                     "no active call frame".into(),
-                    span,
                 )
             })?;
         let exact = {
             let chunk = self.current_chunk(program)?;
-            chunk.arity == count && chunk.exact_positional_parameters
+            chunk.arity == count && chunk.binds_full_positional_calls
         };
         if exact {
             #[cfg(feature = "metrics")]
             self.record_exact_positional_recur_restart();
-            return self.restart_recur(values, None, program, span);
+            return self.restart_recur(values, None, program);
         }
         #[cfg(feature = "metrics")]
         self.record_generic_recur_argument_binding();
         let (arguments, provided) =
-            self.bind_call_arguments_at(program, &closure, values, Vec::new(), span)?;
-        self.restart_recur(arguments, Some(provided), program, span)
+            self.bind_call_arguments(program, &closure, values, Vec::new())?;
+        self.restart_recur(arguments, Some(provided), program)
+    }
+
+    /// Restarts an exact positional `recur` by moving its stack arguments
+    /// straight into the frame's direct locals. Returns `false`, leaving all
+    /// state untouched, when a captured local, a nested defer scope, an
+    /// unresolved binding, or a malformed frame needs the general path.
+    fn restart_exact_recur_in_place(&mut self, program: &Program, count: usize) -> bool {
+        let Some(frame) = self.frames.last_mut() else {
+            return false;
+        };
+        let Some(chunk) = program.chunk(frame.closure.chunk) else {
+            return false;
+        };
+        let Some(base) = self.stack.len().checked_sub(count) else {
+            return false;
+        };
+        if chunk.arity != count
+            || !chunk.binds_full_positional_calls
+            || frame.locals.len() != chunk.locals
+            || chunk.locals < count
+            || frame.scopes.len() > 1
+            || base < frame.stack_base
+            || frame
+                .locals
+                .iter()
+                .any(|local| matches!(local, LocalSlot::Captured(_)))
+            || self.stack[base..]
+                .iter()
+                .any(|value| matches!(value, Value::Binding { .. }))
+        {
+            return false;
+        }
+        let mut arguments = self.stack.drain(base..);
+        for local in &mut frame.locals {
+            *local = LocalSlot::Direct(arguments.next().unwrap_or(Value::Nil));
+        }
+        drop(arguments);
+        self.stack.truncate(frame.stack_base);
+        frame.scope_depth = 1;
+        frame.provided = ProvidedArguments::All;
+        frame.ip = 0;
+        #[cfg(feature = "metrics")]
+        self.record_exact_positional_recur_restart();
+        self.record_local_argument_writes(count);
+        self.record_recur_local_vector(true);
+        true
     }
 
     fn restart_recur(
@@ -143,7 +204,6 @@ impl Vm {
         arguments: Vec<Value>,
         provided: Option<Vec<bool>>,
         program: &Program,
-        span: Option<&SourceSpan>,
     ) -> VmResult<()> {
         let arity = self.current_chunk(program)?.arity;
         let (_, local_count, stack_base) = self
@@ -154,14 +214,12 @@ impl Vm {
                 self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
                     "no active call frame".into(),
-                    span,
                 )
             })?;
         if local_count < arity {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 format!("active function has {local_count} local slots for {arity} parameters"),
-                span,
             ));
         }
         let nested_scopes = {
@@ -315,6 +373,7 @@ impl Vm {
             }
         }
         self.frames.truncate(frame_depth + 1);
+        self.frames_changed();
         let stack_base = self.frames[frame_depth].stack_base;
         self.stack.truncate(stack_base);
         self.cleanup = recovered;
@@ -416,6 +475,7 @@ impl Vm {
                         unreachable!();
                     };
                     self.frames.clear();
+                    self.frames_changed();
                     self.stack.clear();
                     return Err(error);
                 }
@@ -500,7 +560,7 @@ impl Vm {
             }
             Value::DeclaredNative {
                 function,
-                resource_signature,
+                declaration,
                 ..
             } => {
                 let arguments = if recovers_error {
@@ -512,7 +572,7 @@ impl Vm {
                     Vec::new()
                 };
                 let value =
-                    self.invoke_native(&function, &arguments, Some(&resource_signature), None)?;
+                    self.invoke_native(&function, &arguments, Some(&declaration.resources), None)?;
                 if recovers_error {
                     self.recover_from_error(value, frame_depth)
                 } else {

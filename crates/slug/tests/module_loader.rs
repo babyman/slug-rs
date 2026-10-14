@@ -1356,7 +1356,7 @@ fn in_memory_resolver_serves_static_and_runtime_imports() {
     );
     assert_eq!(
         vm.exported_values(&program),
-        Value::Map(Rc::new(vec![(Value::string("result"), Value::Int(42))]))
+        Value::map(vec![(Value::string("result"), Value::Int(42))])
     );
 }
 
@@ -1498,11 +1498,11 @@ fn source_imports_return_cached_export_maps_in_module_order() {
     assert_eq!(loader.initialized_module_count(), 3);
     assert_eq!(
         vm.global("modules"),
-        Some(Value::Map(std::rc::Rc::new(vec![
+        Some(Value::map(vec![
             (Value::string("answer"), Value::Int(42)),
             (Value::string("shared"), Value::string("outer")),
             (Value::string("extra"), Value::Int(7)),
-        ])))
+        ]))
     );
     fs::remove_dir_all(root).expect("remove module test directory");
 }

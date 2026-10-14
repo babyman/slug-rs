@@ -34,11 +34,12 @@ pub use bytecode::PackedOpcode;
 /// semantics may change in any pre-release version; do not serialize them or
 /// treat them as a stable Rust API. `.cslug` is the future portable contract.
 pub use bytecode::{
-    BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture, CaptureListId, Chunk,
-    Constant, DeferMode, Entrypoint, EntrypointArguments, ForeignResourceSignature, GlobalNameId,
-    Instruction, MatchMapKey, MatchPattern, MatchPatternId, MatchRest, MatchType,
-    ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program, ProgramBuilder, SchemaField,
-    SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId, StructFieldsId,
+    BinaryOperator, BytecodeLayoutMetrics, CallArgumentKind, CallableIdentity, Capture,
+    CaptureListId, Chunk, Constant, DeferMode, Entrypoint, EntrypointArguments,
+    ForeignResourceSignature, GlobalNameId, Instruction, MatchMapKey, MatchPattern, MatchPatternId,
+    MatchRest, MatchType, ModuleDeclaration, ModuleTag, Op, ParameterSignature, Program,
+    ProgramBuilder, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
+    StructFieldsId,
 };
 #[doc(hidden)]
 pub use native::native_resource_registry;

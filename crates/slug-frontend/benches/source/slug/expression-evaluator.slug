@@ -1,0 +1,161 @@
+// Tokenizes, parses, simplifies, and repeatedly evaluates arithmetic
+// expressions: a small mixed program rather than a single hot loop.
+val Num = struct { value }
+val Var = struct { name }
+val Binary = struct { op, left, right }
+
+val digits = {"0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9}
+val letters = {a: true, b: true, c: true, x: true, y: true}
+val operators = {"+": true, "-": true, "*": true, "/": true, "(": true, ")": true}
+
+val readNumber = fn(source, index, value) {
+    if (index < len(source) && digits[source[index]] != nil) {
+        recur(source, index + 1, value * 10 + digits[source[index]])
+    } else {
+        [value, index]
+    }
+}
+
+val tokenize = fn(source, index, tokens) {
+    if (index >= len(source)) {
+        tokens
+    } else {
+        val ch = source[index]
+        if (ch == " ") {
+            recur(source, index + 1, tokens)
+        } else if (digits[ch] != nil) {
+            val [value, next] = readNumber(source, index, 0)
+            recur(source, next, tokens :+ {kind: "num", value: value})
+        } else if (letters[ch] != nil) {
+            recur(source, index + 1, tokens :+ {kind: "var", value: ch})
+        } else if (operators[ch] != nil) {
+            recur(source, index + 1, tokens :+ {kind: "op", value: ch})
+        } else {
+            throw {code: "unexpected character", data: ch}
+        }
+    }
+}
+
+val peek = fn(tokens, position) {
+    if (position < len(tokens)) { tokens[position] } else { {kind: "end", value: nil} }
+}
+
+val parsePrimary = fn(tokens, position) {
+    val token = peek(tokens, position)
+    match token.kind {
+        "num" => [Num {value: token.value}, position + 1]
+        "var" => [Var {name: token.value}, position + 1]
+        "op" => {
+            if (token.value != "(") { throw {code: "unexpected operator", data: token.value} }
+            val [inner, next] = parseSum(tokens, position + 1)
+            [inner, next + 1]
+        }
+    }
+}
+
+val parseProductRest = fn(tokens, left, position) {
+    val token = peek(tokens, position)
+    if (token.kind == "op" && (token.value == "*" || token.value == "/")) {
+        val [right, next] = parsePrimary(tokens, position + 1)
+        recur(tokens, Binary {op: token.value, left: left, right: right}, next)
+    } else {
+        [left, position]
+    }
+}
+
+val parseProduct = fn(tokens, position) {
+    val [first, next] = parsePrimary(tokens, position)
+    parseProductRest(tokens, first, next)
+}
+
+val parseSumRest = fn(tokens, left, position) {
+    val token = peek(tokens, position)
+    if (token.kind == "op" && (token.value == "+" || token.value == "-")) {
+        val [right, next] = parseProduct(tokens, position + 1)
+        recur(tokens, Binary {op: token.value, left: left, right: right}, next)
+    } else {
+        [left, position]
+    }
+}
+
+val parseSum = fn(tokens, position) {
+    val [first, next] = parseProduct(tokens, position)
+    parseSumRest(tokens, first, next)
+}
+
+val parse = fn(source) {
+    val [tree, _] = parseSum(tokenize(source, 0, []), 0)
+    simplify(tree)
+}
+
+val apply = fn(op, left, right) {
+    match op {
+        "+" => left + right
+        "-" => left - right
+        "*" => left * right
+        "/" => left / right
+    }
+}
+
+val simplify = fn(node) {
+    match node {
+        {op, left, right}: struct<Binary> => {
+            val l = simplify(left)
+            val r = simplify(right)
+            match l {
+                {value: a}: struct<Num> => match r {
+                    {value: b}: struct<Num> => Num {value: apply(op, a, b)}
+                    _ => Binary {op: op, left: l, right: r}
+                }
+                _ => Binary {op: op, left: l, right: r}
+            }
+        }
+        _ => node
+    }
+}
+
+val evaluate = fn(node, env) {
+    match node {
+        {value}: struct<Num> => value
+        {name}: struct<Var> => env[name]
+        {op, left, right}: struct<Binary> => apply(op, evaluate(left, env), evaluate(right, env))
+    }
+}
+
+val sources = [
+    "(a + b * 3) - (c / 2 + a * (b - 1))",
+    "x * x + 2 * x * y + y * y - (4 * 5 + 6) / 2",
+    "((a + 1) * (b + 2) * (c + 3)) / (1 + 2 * 3) + x - y",
+]
+
+val compile = fn(remaining, programs) {
+    match remaining {
+        [] => programs
+        [source, ...rest] => recur(rest, programs :+ parse(source))
+    }
+}
+
+val evaluateAll = fn(programs, env, total) {
+    match programs {
+        [] => total
+        [program, ...rest] => recur(rest, env, total + evaluate(program, env))
+    }
+}
+
+val run = fn(remaining, programs, total) {
+    if (remaining == 0) {
+        total
+    } else {
+        val env = {a: remaining % 7, b: remaining % 11, c: remaining % 13, x: remaining % 17, y: remaining % 19}
+        recur(remaining - 1, programs, total + evaluateAll(programs, env, 0))
+    }
+}
+
+val parseRounds = fn(remaining, count) {
+    if (remaining == 0) { count } else { recur(remaining - 1, count + len(compile(sources, []))) }
+}
+
+val main = fn() {
+    val programs = compile(sources, [])
+    println(parseRounds(300, 0), int(run(5_000, programs, 0) * 1_000))
+}

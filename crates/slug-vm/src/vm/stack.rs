@@ -7,40 +7,47 @@ use alloc::{string::String, vec::Vec};
 use core::cmp::Ordering;
 
 use crate::{
-    SourceSpan, Value,
+    Value,
     value::{BindingCell, binding_cell},
 };
 
 use super::{RuntimeErrorKind, Vm, VmResult, frames::LocalSlot, numbers, operations::compare_num};
 
 impl Vm {
-    pub(super) fn pop_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
-        self.pop_unresolved_at(span)?
+    #[inline]
+    pub(super) fn pop(&mut self) -> VmResult<Value> {
+        match self.stack.pop() {
+            Some(value) if !matches!(value, Value::Binding { .. }) => Ok(value),
+            value => self.pop_slow(value),
+        }
+    }
+
+    /// Resolves a popped module binding, or reports an empty stack.
+    #[cold]
+    #[inline(never)]
+    fn pop_slow(&self, value: Option<Value>) -> VmResult<Value> {
+        value
+            .ok_or_else(|| {
+                self.error_at(RuntimeErrorKind::InvalidBytecode, "stack underflow".into())
+            })?
             .into_resolved()
-            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
     }
 
-    pub(super) fn pop_unresolved_at(&mut self, span: Option<&SourceSpan>) -> VmResult<Value> {
-        self.stack.pop().ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "stack underflow".into(),
-                span,
-            )
-        })
+    #[inline]
+    pub(super) fn pop_unresolved(&mut self) -> VmResult<Value> {
+        self.stack.pop().ok_or_else(|| self.stack_underflow())
     }
 
-    pub(super) fn pop_values_at(
-        &mut self,
-        count: usize,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<Vec<Value>> {
+    #[cold]
+    #[inline(never)]
+    fn stack_underflow(&self) -> super::RuntimeError {
+        self.error_at(RuntimeErrorKind::InvalidBytecode, "stack underflow".into())
+    }
+
+    pub(super) fn pop_values(&mut self, count: usize) -> VmResult<Vec<Value>> {
         if self.stack.len() < count {
-            return Err(self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "stack underflow".into(),
-                span,
-            ));
+            return Err(self.error_at(RuntimeErrorKind::InvalidBytecode, "stack underflow".into()));
         }
         self.stack
             .split_off(self.stack.len() - count)
@@ -48,38 +55,47 @@ impl Vm {
             .map(|value| {
                 value
                     .into_resolved()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message, span))
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
             })
             .collect()
     }
 
-    pub(super) fn peek_at(&self, span: Option<&SourceSpan>) -> VmResult<&Value> {
-        self.stack.last().ok_or_else(|| {
-            self.error_at(
-                RuntimeErrorKind::InvalidBytecode,
-                "stack underflow".into(),
-                span,
-            )
-        })
+    #[inline]
+    pub(super) fn peek(&self) -> VmResult<&Value> {
+        self.stack.last().ok_or_else(|| self.stack_underflow())
     }
 
-    pub(super) fn local_value(&self, slot: usize, span: Option<&SourceSpan>) -> VmResult<Value> {
+    #[inline]
+    pub(super) fn local_value(&self, slot: usize) -> VmResult<Value> {
         match self.frames.last().and_then(|frame| frame.locals.get(slot)) {
             Some(LocalSlot::Direct(value)) => Ok(value.clone()),
             Some(LocalSlot::Captured(cell)) => Ok(cell.borrow().clone()),
             None => Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 format!("local {slot} does not exist"),
-                span,
             )),
         }
     }
 
-    pub(super) fn promote_local_at(
-        &mut self,
-        slot: usize,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<BindingCell> {
+    /// Moves a direct local out after its last read, leaving `nil` behind.
+    /// A captured slot is a cell shared with closures, so it is cloned.
+    #[inline]
+    pub(super) fn take_local(&mut self, slot: usize) -> VmResult<Value> {
+        match self
+            .frames
+            .last_mut()
+            .and_then(|frame| frame.locals.get_mut(slot))
+        {
+            Some(LocalSlot::Direct(value)) => Ok(core::mem::replace(value, Value::Nil)),
+            Some(LocalSlot::Captured(cell)) => Ok(cell.borrow().clone()),
+            None => Err(self.error_at(
+                RuntimeErrorKind::InvalidBytecode,
+                format!("local {slot} does not exist"),
+            )),
+        }
+    }
+
+    pub(super) fn promote_local(&mut self, slot: usize) -> VmResult<BindingCell> {
         if self
             .frames
             .last()
@@ -88,7 +104,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 format!("local {slot} does not exist"),
-                span,
             ));
         }
         let local = self
@@ -108,17 +123,11 @@ impl Vm {
         }
     }
 
-    pub(super) fn set_local_at(
-        &mut self,
-        slot: usize,
-        value: Value,
-        span: Option<&SourceSpan>,
-    ) -> VmResult<()> {
+    pub(super) fn set_local(&mut self, slot: usize, value: Value) -> VmResult<()> {
         if self.frames.last().is_none() {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 "no active call frame".into(),
-                span,
             ));
         }
         if self
@@ -129,7 +138,6 @@ impl Vm {
             return Err(self.error_at(
                 RuntimeErrorKind::InvalidBytecode,
                 format!("local {slot} does not exist"),
-                span,
             ));
         }
         match &mut self
@@ -144,61 +152,65 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn pop_pair_at(&mut self, span: Option<&SourceSpan>) -> VmResult<(Value, Value)> {
-        let right = self.pop_at(span)?;
-        let left = self.pop_at(span)?;
+    #[inline]
+    pub(super) fn pop_pair(&mut self) -> VmResult<(Value, Value)> {
+        let right = self.pop()?;
+        let left = self.pop()?;
         Ok((left, right))
     }
 
-    pub(super) fn binary_at(
+    pub(super) fn binary(
         &mut self,
-        span: Option<&SourceSpan>,
         operation: fn(Value, Value) -> Result<Value, (RuntimeErrorKind, String)>,
     ) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at(span)?;
-        self.stack.push(
-            operation(left, right).map_err(|(kind, message)| self.error_at(kind, message, span))?,
-        );
+        let (left, right) = self.pop_pair()?;
+        self.stack
+            .push(operation(left, right).map_err(|(kind, message)| self.error_at(kind, message))?);
         Ok(())
     }
 
-    pub(super) fn compare_at(
-        &mut self,
-        span: Option<&SourceSpan>,
-        expected: Ordering,
-    ) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at(span)?;
-        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-            left.cmp(right) == expected
-        } else {
-            let (left, right) = numbers(left, right)
-                .map_err(|message| self.error_at(RuntimeErrorKind::Type, message, span))?;
-            left.partial_cmp(&right)
-                .is_some_and(|ordering| ordering == expected)
-        };
+    pub(super) fn compare(&mut self, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair()?;
+        let result = self.compare_values(left, right, expected)?;
         self.stack.push(Value::Bool(result));
         Ok(())
     }
 
-    pub(super) fn numeric_compare_at(
-        &mut self,
-        span: Option<&SourceSpan>,
+    pub(super) fn compare_values(
+        &self,
+        left: Value,
+        right: Value,
         expected: Ordering,
-    ) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at(span)?;
-        self.stack
-            .push(Value::Bool(compare_num(left, right, expected).map_err(
-                |message| self.error_at(RuntimeErrorKind::Type, message, span),
-            )?));
+    ) -> VmResult<bool> {
+        if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
+            return Ok(left.cmp(right) == expected);
+        }
+        let (left, right) = numbers(left, right)
+            .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
+        Ok(left
+            .partial_cmp(&right)
+            .is_some_and(|ordering| ordering == expected))
+    }
+
+    pub(super) fn numeric_compare(&mut self, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair()?;
+        let result = self.numeric_compare_values(left, right, expected)?;
+        self.stack.push(Value::Bool(result));
         Ok(())
     }
 
-    pub(super) fn guard_compare_at(
-        &mut self,
-        span: Option<&SourceSpan>,
+    pub(super) fn numeric_compare_values(
+        &self,
+        left: Value,
+        right: Value,
         expected: Ordering,
-    ) -> VmResult<()> {
-        let (left, right) = self.pop_pair_at(span)?;
+    ) -> VmResult<bool> {
+        compare_num(left, right, expected)
+            .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))
+    }
+
+    pub(super) fn guard_compare(&mut self, expected: Ordering) -> VmResult<()> {
+        let (left, right) = self.pop_pair()?;
         let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
             left.cmp(right) == expected
         } else {

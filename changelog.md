@@ -2,6 +2,86 @@
 
 ## Unreleased
 
+- Pipeline calls such as `x /> f()` and calls that supply every parameter of
+  a function with defaults take the fast call path, and pattern matches no
+  longer allocate for their bindings. `slug.std` `map`/`filter`/`reduce`
+  pipelines run about 18% faster, and list-pattern-heavy code about 12%.
+
+- The compiler emits fewer instructions for common shapes: a conditional
+  jump consumes its test, and an operation between a local and a constant,
+  such as `n - 1` or `remaining == 0`, runs as one fused instruction.
+  Recursive code runs about 28% faster and numeric loops about 15-20%
+  faster. Compiled `.cslug` artifacts that use the new instructions need
+  this VM.
+
+- Calls move their arguments into the callee instead of copying them, skip
+  redundant environment bookkeeping, and blocks without `defer` no longer
+  open a runtime scope. Recursive code runs about 7% faster. A collection
+  passed to a function that extends it is no longer copied: a breadth-first
+  search that grows its visited map in a helper runs 1.5x faster.
+
+- Building a string with `+` in a loop is no longer quadratic: when nothing
+  else holds the left-hand string, `+` appends to it in place. A
+  20,000-line report builds 9.5x faster. `Value::Str` holds an opaque string
+  type that dereferences to `str`; `Value::string` accepts `&str`, `String`,
+  `Rc<str>`, and similar.
+
+- Maps with more than 32 entries keep a compact hash index beside their
+  entries, so lookups and updates no longer scan every key. Counting words
+  into a 509-key map runs 4.4x faster, and a breadth-first search over a
+  3,000-node map 3.2x faster. Smaller maps are unchanged.
+- A map literal that repeats a key is now an error: a semantic error for
+  constant keys such as `{a: 1, a: 2}` or `{[1]: x, [1.0]: y}`, and a checked
+  runtime error for computed keys that collide. Previously both entries were
+  stored, so `len`, `keys`, printing, and equality counted the key twice. Use
+  `+` to overwrite a key.
+- Non-integral numbers such as `1.5` can be map keys, as documented; they
+  were rejected with "num cannot be used as a map key".
+- `Value::Map` holds an opaque map type; build one with `Value::map(entries)`
+  or `Value::Map(entries.into())`.
+
+- Reading a global, such as calling a top-level function, no longer hashes
+  its name each time. Each closure caches the global's storage slot after
+  the first read. Recursive and call-heavy code runs 7–11% faster.
+
+- The VM dispatches every instruction through one match on the packed
+  opcode, with no fallback that rebuilt the builder-facing `Op`. Stack
+  access is inlined, and the active code is looked up only when the frame
+  changes. Across the source benchmarks this runs about 13% faster (7% on
+  the hold-out set), and the release binary is 16 KB smaller. The
+  `packed_direct_dispatches` and `rich_op_fallback_dispatches` metrics are
+  removed.
+
+- The source benchmark corpus gained seven workloads beyond tight numeric
+  loops: list appends to a shared list, `slug.std` higher-order functions,
+  naive recursion, `defer` and error recovery, map counting, string building,
+  and a small expression evaluator. Three are held out from tuning, so they
+  catch optimizations overfitted to the rest. `make bench-ab` times two builds
+  with interleaved runs, so host drift cannot pass as a speedup.
+
+- Global reads hash names with FNV-1a instead of SipHash, and runtime error
+  construction is kept out of the hot dispatch path. Global-read loops run
+  about 20% faster.
+
+- Function calls and `recur` loops run about 20% faster: a return with no
+  pending `defer` skips the cleanup queue, an exact positional `recur` moves
+  its arguments straight into the frame's locals, and the dispatch loop no
+  longer clones the active program's reference on every instruction.
+
+- Appending to a list held only by a local, such as `acc :+ x` or
+  `acc + [x]` in a `recur` loop, now extends it in place instead of copying
+  it: the VM moves a local on its last read. Building a 20,000-element list
+  this way drops from 0.57 s to under 10 ms, and typed SQLite query cost no
+  longer grows with the number of rows returned.
+
+- Runtime values shrank from 40 to 24 bytes on 64-bit hosts, which cuts
+  the memory used by stacks, locals, lists, and maps. Binary trees at depth
+  19 peak at 52.5 MB instead of 68.7 MB and run about 15% faster.
+
+- Reorganized the README around an introduction to the Slug language and the
+  slug-rs implementation, with concise paths for trying the CLI, REPL, compiled
+  artifacts, native modules, development, and deeper documentation.
+
 - Completed step 4, and with it the typed native-call replacement: CI passed
   its exit gate, and its plan moved to `docs/planning/completed/`.
 

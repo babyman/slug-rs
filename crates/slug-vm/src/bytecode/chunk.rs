@@ -94,6 +94,8 @@ pub enum PackedOpcode {
     Return,
     // Append new opcodes here: a `.cslug` artifact stores the ordinal as its tag.
     GetIndexConstant,
+    JumpIfFalsePop,
+    LocalConstantBinary,
 }
 
 impl PackedOpcode {
@@ -177,6 +179,8 @@ impl PackedOpcode {
             PackedOpcode::RecurPositional,
             PackedOpcode::Return,
             PackedOpcode::GetIndexConstant,
+            PackedOpcode::JumpIfFalsePop,
+            PackedOpcode::LocalConstantBinary,
         ];
         OPCODES.get(usize::from(tag)).copied()
     }
@@ -224,8 +228,10 @@ pub struct CompiledChunk {
     pub(crate) name: String,
     pub(crate) arity: usize,
     pub(crate) parameters: Vec<ParameterSignature>,
-    /// Whether all parameters are required positional values.
-    pub(crate) exact_positional_parameters: bool,
+    /// Whether a call that supplies all `arity` arguments positionally binds
+    /// them straight into their slots: true unless a parameter is variadic.
+    /// Defaults do not matter, since every parameter is supplied.
+    pub(crate) binds_full_positional_calls: bool,
     pub(crate) callable_identity: Option<usize>,
     pub(crate) locals: usize,
     pub(crate) constants: Vec<Constant>,
@@ -247,9 +253,7 @@ impl CompiledChunk {
         Self {
             name,
             arity,
-            exact_positional_parameters: !parameters
-                .iter()
-                .any(|parameter| parameter.has_default || parameter.variadic),
+            binds_full_positional_calls: !parameters.iter().any(|parameter| parameter.variadic),
             parameters,
             callable_identity,
             locals,

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use slug_vm::{Capture, Chunk, Op, SourceSpan, Value};
+use slug_vm::{BinaryOperator, Capture, Chunk, Constant, Op, SourceSpan, Value};
 
 #[derive(Clone, Debug)]
 pub(super) enum Binding {
@@ -24,6 +24,9 @@ pub(super) struct State {
     captures: Vec<CaptureRequest>,
     root: bool,
     next_local: usize,
+    /// The latest instruction index a patched jump lands on; fusion must not
+    /// remove an instruction at or after it.
+    last_jump_target: usize,
 }
 impl State {
     pub(super) fn root() -> Self {
@@ -35,6 +38,7 @@ impl State {
             captures: Vec::new(),
             root: true,
             next_local: 0,
+            last_jump_target: 0,
         }
     }
     pub(super) fn function(parameters: &[String], outer: HashMap<String, Binding>) -> Self {
@@ -56,6 +60,7 @@ impl State {
             captures: Vec::new(),
             root: false,
             next_local: parameters.len(),
+            last_jump_target: 0,
         }
     }
     pub(super) fn finish(mut self, name: &str, arity: usize) -> Chunk {
@@ -68,7 +73,43 @@ impl State {
         self.root && self.scopes.len() == 1
     }
     pub(super) fn emit(&mut self, op: Op, span: &SourceSpan) {
+        if let Some(operator) = BinaryOperator::of(&op)
+            && self.fuse_local_constant(operator, span)
+        {
+            return;
+        }
         self.chunk.emit_at(op, span.clone());
+    }
+    /// Replaces a trailing `GetLocal`, `Constant` pair with one
+    /// `LocalConstantBinary` applying `operator`, the shape of `x - 1` or
+    /// `n == 0`. It skips the operand stack and two dispatches. No jump may
+    /// land on the constant or the operator, or it would skip the local.
+    fn fuse_local_constant(&mut self, operator: BinaryOperator, span: &SourceSpan) -> bool {
+        let Some(start) = self.chunk.code.len().checked_sub(2) else {
+            return false;
+        };
+        if self.last_jump_target > start {
+            return false;
+        }
+        let (Op::GetLocal(slot), Op::Constant(constant)) =
+            (&self.chunk.code[start].op, &self.chunk.code[start + 1].op)
+        else {
+            return false;
+        };
+        if !matches!(
+            self.chunk.constants.get(*constant),
+            Some(Constant::Value(_))
+        ) {
+            return false;
+        }
+        let fused = Op::LocalConstantBinary {
+            slot: *slot,
+            constant: *constant,
+            operator,
+        };
+        self.chunk.code.truncate(start);
+        self.chunk.emit_at(fused, span.clone());
+        true
     }
     pub(super) fn constant(&mut self, value: Value) -> usize {
         self.chunk.constant(value)
@@ -76,6 +117,12 @@ impl State {
     pub(super) fn jump_if_false(&mut self, span: &SourceSpan) -> usize {
         let index = self.chunk.code.len();
         self.emit(Op::JumpIfFalse(usize::MAX), span);
+        index
+    }
+    /// Emits a jump that consumes its condition, so neither branch pops it.
+    pub(super) fn jump_if_false_pop(&mut self, span: &SourceSpan) -> usize {
+        let index = self.chunk.code.len();
+        self.emit(Op::JumpIfFalsePop(usize::MAX), span);
         index
     }
     pub(super) fn jump_if_provided(&mut self, slot: usize, span: &SourceSpan) -> usize {
@@ -96,8 +143,12 @@ impl State {
     }
     pub(super) fn patch(&mut self, instruction: usize) {
         let target = self.chunk.code.len();
+        self.last_jump_target = self.last_jump_target.max(target);
         match &mut self.chunk.code[instruction].op {
-            Op::Jump(value) | Op::JumpIfFalse(value) | Op::JumpIfProvided { target: value, .. } => {
+            Op::Jump(value)
+            | Op::JumpIfFalse(value)
+            | Op::JumpIfFalsePop(value)
+            | Op::JumpIfProvided { target: value, .. } => {
                 *value = target;
             }
             _ => unreachable!("only jump instructions are patched"),

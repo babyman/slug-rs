@@ -1,0 +1,34 @@
+// Wraps a generated paragraph to a fixed width, counting vowels by indexing
+// each word's characters along the way.
+val vocabulary = ["slug", "virtual", "machine", "bytecode", "a", "map", "of", "closures", "the", "frame", "dispatch", "loop", "persistent", "value"]
+val vowels = {a: true, e: true, i: true, o: true, u: true}
+val width = 60
+
+val countVowels = fn(word, index, total) {
+    if (index == len(word)) {
+        total
+    } else {
+        recur(word, index + 1, if (vowels[word[index]] == nil) { total } else { total + 1 })
+    }
+}
+
+val wrap = fn(remaining, line, text, lines, vowelCount) {
+    if (remaining == 0) {
+        [text + line + "\n", lines + 1, vowelCount]
+    } else {
+        val word = vocabulary[(remaining * 7) % len(vocabulary)]
+        val counted = vowelCount + countVowels(word, 0, 0)
+        if (len(line) == 0) {
+            recur(remaining - 1, word, text, lines, counted)
+        } else if (len(line) + 1 + len(word) > width) {
+            recur(remaining - 1, word, text + line + "\n", lines + 1, counted)
+        } else {
+            recur(remaining - 1, "$line $word", text, lines, counted)
+        }
+    }
+}
+
+val main = fn() {
+    val [text, lines, vowelCount] = wrap(30_000, "", "", 0, 0)
+    println(len(text), lines, vowelCount)
+}

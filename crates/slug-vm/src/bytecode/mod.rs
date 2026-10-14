@@ -5,6 +5,7 @@
 //! the portable .cslug contract remains distinct.
 
 mod chunk;
+mod liveness;
 mod metadata;
 mod op;
 mod program;
@@ -16,10 +17,13 @@ pub use metadata::{
     ParameterSignature, SchemaField, SchemaFieldsId, SelectCase, SourceId, SourceSpan, SpanId,
     StructFieldsId,
 };
-pub use op::{CallArgumentKind, DeferMode, Instruction, Op};
+pub use op::{BinaryOperator, CallArgumentKind, DeferMode, Instruction, Op};
 pub use program::{BytecodeLayoutMetrics, Program, ProgramBuilder};
 
 #[doc(hidden)]
 pub use chunk::{CompiledChunk, PackedInstruction, PackedOpcode};
-pub(crate) use metadata::CallArgumentsId;
+pub(crate) use liveness::{MOVE_LOCAL, MOVE_LOCAL_OPERAND};
+pub(crate) use metadata::{
+    CallArgumentsId, InterpolationId, ListSpreadId, SelectCasesId, SelectedCallId,
+};
 pub use program::{Entrypoint, EntrypointArguments};

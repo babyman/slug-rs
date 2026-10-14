@@ -9,7 +9,7 @@ use core::{
     fmt::Write as _,
 };
 
-use crate::platform::HashMap;
+use crate::platform::NameMap;
 
 #[cfg(feature = "concurrency")]
 use alloc::rc::Weak;
@@ -18,7 +18,7 @@ use core::cell::Cell;
 
 use crate::{
     CallableIdentity, ForeignResourceSignature,
-    collections::{BytesView, List, Map, MapView},
+    collections::{BytesView, List, Map, Str},
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
 };
@@ -558,18 +558,93 @@ impl Drop for Channel {
 
 /// Shared storage for a lexical binding captured by one or more closures.
 pub(crate) type BindingCell = Rc<RefCell<Value>>;
-pub(crate) type GlobalEnvironment = Rc<RefCell<HashMap<String, Value>>>;
+pub(crate) type GlobalEnvironment = Rc<RefCell<GlobalTable>>;
 
 pub(crate) fn global_environment() -> GlobalEnvironment {
-    Rc::new(RefCell::new(HashMap::new()))
+    Rc::new(RefCell::new(GlobalTable::default()))
+}
+
+/// Global bindings stored in definition order behind a name index.
+///
+/// Bindings are never removed, so a slot stays valid for the table's lifetime
+/// once a name resolves to it; redefining a name replaces its value in place.
+/// This lets compiled code cache a slot per global name instead of hashing
+/// the name on every read.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GlobalTable {
+    slots: NameMap<u32>,
+    entries: Vec<(String, Value)>,
+}
+
+impl GlobalTable {
+    pub(crate) fn slot(&self, name: &str) -> Option<u32> {
+        self.slots.get(name).copied()
+    }
+
+    /// The value in a slot that `slot` returned for this table.
+    #[inline]
+    pub(crate) fn value(&self, slot: u32) -> &Value {
+        &self.entries[slot as usize].1
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<&Value> {
+        self.slot(name).map(|slot| self.value(slot))
+    }
+
+    pub(crate) fn contains_key(&self, name: &str) -> bool {
+        self.slots.contains_key(name)
+    }
+
+    /// Binds `name`, replacing the value of an existing binding in place.
+    pub(crate) fn insert(&mut self, name: String, value: Value) {
+        if let Some(slot) = self.slot(&name) {
+            self.entries[slot as usize].1 = value;
+        } else {
+            let slot = u32::try_from(self.entries.len()).expect("too many global bindings");
+            self.slots.insert(name.clone(), slot);
+            self.entries.push((name, value));
+        }
+    }
+
+    /// Binds `name` only if it is not already bound.
+    pub(crate) fn insert_if_absent(&mut self, name: String, value: impl FnOnce() -> Value) {
+        if !self.contains_key(&name) {
+            self.insert(name, value());
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.entries.iter().map(|(name, value)| (name, value))
+    }
+}
+
+impl Extend<(String, Value)> for GlobalTable {
+    fn extend<I: IntoIterator<Item = (String, Value)>>(&mut self, entries: I) {
+        for (name, value) in entries {
+            self.insert(name, value);
+        }
+    }
+}
+
+/// One cached `GlobalTable` slot per global name of a program, filled on the
+/// first read of each name. Valid only for one program and one environment.
+pub(crate) type GlobalSlots = Rc<[core::cell::Cell<u32>]>;
+
+/// A `GlobalSlots` entry whose name has not been resolved yet.
+pub(crate) const UNRESOLVED_GLOBAL: u32 = u32::MAX;
+
+pub(crate) fn global_slots(program: &crate::Program) -> GlobalSlots {
+    (0..program.global_name_count())
+        .map(|_| core::cell::Cell::new(UNRESOLVED_GLOBAL))
+        .collect()
 }
 
 pub(crate) fn binding_cell(value: Value) -> BindingCell {
     Rc::new(RefCell::new(value))
 }
 
-pub(crate) fn module_binding(name: impl Into<Rc<str>>) -> Value {
-    let name = name.into();
+pub(crate) fn module_binding(name: impl Into<String>) -> Value {
+    let name = Rc::new(name.into());
     Value::Binding {
         name,
         cell: binding_cell(Value::Uninitialized),
@@ -582,6 +657,10 @@ pub struct Closure {
     pub(crate) captures: Vec<BindingCell>,
     pub(crate) program: Option<Rc<crate::Program>>,
     pub(crate) globals: Option<GlobalEnvironment>,
+    /// Slots in `globals` already resolved for `program`'s global names.
+    /// Present only when both are, and shared by closures created with the
+    /// same program and environment.
+    pub(crate) global_slots: Option<GlobalSlots>,
     #[cfg(feature = "concurrency")]
     pub(crate) capture_sources: Vec<crate::Capture>,
 }
@@ -894,6 +973,15 @@ pub struct EnumValue {
     pub case: Rc<str>,
 }
 
+/// A foreign declaration's private identity and resource positions, shared
+/// behind one `Rc` so a declared native stays within the 24-byte `Value`.
+#[derive(Debug)]
+#[doc(hidden)]
+pub struct ForeignDeclaration {
+    pub(crate) identity: CallableIdentity,
+    pub(crate) resources: ForeignResourceSignature,
+}
+
 /// The dynamic values used by the initial Slug VM core.
 ///
 /// Collections are reference-counted so closures and later concurrency support
@@ -906,10 +994,10 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Str(Rc<str>),
+    Str(Str),
     Bytes(Rc<Vec<u8>>),
     List(List),
-    Map(Rc<Vec<(Value, Value)>>),
+    Map(Map),
     StructSchema(Rc<StructSchema>),
     Struct(Rc<StructValue>),
     Enum(Rc<EnumValue>),
@@ -921,8 +1009,7 @@ pub enum Value {
     /// A host callable paired with the source declaration's private identity.
     DeclaredNative {
         function: NativeFunction,
-        callable_identity: CallableIdentity,
-        resource_signature: Rc<ForeignResourceSignature>,
+        declaration: Rc<ForeignDeclaration>,
     },
     NativeResource(Rc<NativeResource>),
     Builtin(Builtin),
@@ -930,7 +1017,7 @@ pub enum Value {
     Overloads(Rc<Vec<Value>>),
     /// A live module binding exposed through an import map.
     Binding {
-        name: Rc<str>,
+        name: Rc<String>,
         cell: BindingCell,
     },
 }
@@ -1001,7 +1088,7 @@ impl Value {
         }
     }
     #[must_use]
-    pub fn string(value: impl Into<Rc<str>>) -> Self {
+    pub fn string(value: impl Into<Str>) -> Self {
         Self::Str(value.into())
     }
 
@@ -1009,6 +1096,12 @@ impl Value {
     #[must_use]
     pub fn list(values: Vec<Value>) -> Self {
         Self::List(List::from_values(values))
+    }
+
+    /// Creates an immutable map value. A repeated key keeps its last value.
+    #[must_use]
+    pub fn map(entries: Vec<(Value, Value)>) -> Self {
+        Self::Map(Map::new(entries))
     }
 
     #[must_use]
@@ -1093,9 +1186,7 @@ impl PartialEq for Value {
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::List(a), Self::List(b)) => a == b,
             (Self::Overloads(a), Self::Overloads(b)) => a == b,
-            (Self::Map(a), Self::Map(b)) => {
-                Map::from_shared(a.clone()).equals(&Map::from_shared(b.clone()))
-            }
+            (Self::Map(a), Self::Map(b)) => a.clone().equals(&b.clone()),
             (Self::StructSchema(a), Self::StructSchema(b)) => Rc::ptr_eq(a, b),
             (Self::Struct(a), Self::Struct(b)) => {
                 Rc::ptr_eq(&a.schema, &b.schema) && a.values == b.values
@@ -1132,11 +1223,7 @@ impl fmt::Debug for Value {
             Self::List(values) => f.debug_list().entries(values.iter()).finish(),
             Self::Map(entries) => f
                 .debug_map()
-                .entries(
-                    MapView::new(entries)
-                        .iter()
-                        .map(|(key, value)| (key, value)),
-                )
+                .entries(entries.view().iter().map(|(key, value)| (key, value)))
                 .finish(),
             Self::StructSchema(_) => write!(f, "<struct schema>"),
             Self::Struct(value) => {

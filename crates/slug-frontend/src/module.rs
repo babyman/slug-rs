@@ -436,7 +436,7 @@ impl ModuleGraph {
             key: source.key.clone(),
             diagnostic_name: source.diagnostic_name.clone(),
             program: program.program().clone(),
-            exports: Value::Map(Rc::new(Vec::new())),
+            exports: Value::map(Vec::new()),
             metadata: vm.module_metadata().to_vec(),
             live_exports: vm.live_exported_values(program.program()),
         };
@@ -529,12 +529,12 @@ impl ModuleGraph {
         if let Some(instance) = self.state.instances.borrow().get(&key) {
             return instance.clone();
         }
-        let exports = Value::Map(Rc::new(
+        let exports = Value::map(
             host.builtin_globals()
                 .into_iter()
                 .map(|(name, value)| (Value::string(name), value))
                 .collect(),
-        ));
+        );
         let mut program = Program::new();
         program.set_module_name("slug.builtin");
         let instance = ModuleInstance {

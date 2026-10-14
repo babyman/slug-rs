@@ -1,153 +1,24 @@
-# Slug VM in Rust
+# Slug
 
-This repository is a clean-room Rust workspace implementing the Slug language.
-It starts with the execution boundary recommended by the language package: a
-small, checked VM with Slug-specific bytecode. The bytecode types are a public
-but unstable in-process Rust embedding and testing surface: they are not a file
-format or a compatibility commitment. The portable whole-program artifact
-contract is documented separately as `.cslug`.
+Slug is a small, expressive language for writing programs with values,
+functions, pattern matching, modules, checked errors, and structured
+concurrency. This repository, **slug-rs**, is a clean-room Rust implementation
+of that language. It is deliberately building the language foundation before
+adding compatibility layers or speculative abstractions.
 
-## Current milestone
+The project is useful in two related ways:
 
-- Dynamic Slug values: `nil`, booleans, finite numbers, strings, bytes,
-  lists, maps, struct schemas and values, closures, and explicitly registered
-  native functions.
-- Chunks, constants, lexical captures, locals, globals, calls, branches, and
-  arithmetic/comparison operations.
-- Checked errors with Slug source spans and call frames instead of host panics.
-- Source execution for a core subset: lexical `val`/`var` bindings, including
-  list and map destructuring, assignment, integer, floating-point, hexadecimal,
-  byte, boolean, nil, string, list, and map literals, arithmetic/comparisons/logic
-  (including persistent list, bytes, and map updates), functions and captures, blocks, `if`,
-  literal/list/map and type-constrained `match` (including byte-sequence list
-  patterns) with computed map keys and non-binding case alternatives,
-  pinned `^name` comparisons, `name @ pattern` bindings, and named or
-  anonymous final rests, struct schemas with optional field annotations, construction and field access,
-  function match bodies, `return`,
-  `throw`, `defer` including `onsuccess` and `onerror` recovery, contextual
-  `stacktrace(error)` rendering during active error handling, tail-position `recur(...)`,
-  lists/maps/indexing, list and bytes slices, directional list/bytes append and
-  prepend (with right-associative `+:`), pipeline calls and matches,
-  positional/named/defaulted/variadic calls,
-  positional call and list-literal spreads (except static overload-set calls),
-  declaration and parameter tags with evaluated arguments, declaration-attached
-  documentation blocks with retained module metadata (but without metadata
-  introspection), comments, automatic invocation of a local `main()` or typed
-  `main(args:list)` / `main(args:map)` entrypoint, cooperative `spawn` task
-  handles with `slug.channel.await`, explicit
-  nurseries, builtin `chan` construction and `close`, plus bounded FIFO channel operations
-  through the `slug.channel` library,
-  `select` receive/send/timer/task-await/default cases, and implicitly
-  imported `slug.builtin.print`, `slug.builtin.println`, `slug.builtin.len`,
-  `slug.builtin.chan`, and `slug.builtin.close`, plus a shared process-standard-input line stream through
-  `slug.io.stdin`, and opaque explicit-lifecycle file streams through
-  `slug.io.fs`, represented in source by the nominal `fs.File` handle type
-  and checked whole-case match constraints, plus fieldless nominal enum
-  declarations with qualified values, match patterns, exhaustive coverage, and
-  transparent compile-time `type Name = Annotation` aliases.
-- The default `concurrency` Cargo feature supplies tasks, nurseries, timers,
-  and task-aware `select`. Builds with `--no-default-features` retain channels,
-  native ingress, `Vm::poll`, and `Vm::run_until_stalled`; source programs stay
-  valid, while executing a concurrency-only operation returns a checked
-  unavailable-runtime-capability error.
-- Source-level `import(name, ...)` with checked string module names,
-  importer-relative and project-root resolution, `$SLUG_HOME/lib` library
-  fallback, then `$SLUG_HOME/clutch` experimental clutch providers, cached
-  isolated module initialization, and string-keyed exported-value maps.
-- Experimental exploded clutches named by `$SLUG_HOME/clutch/manifest.toml`
-  may provide additional source modules after existing providers. The bundled
-  `slug.core.clutch` provides the explicit `slug.std`, `slug.io.stdin`, and
-  `slug.math` standard modules. A host may
-  configure a clutch-scoped Rust plugin or a manifest-selected experimental
-  native library that supports any subset of the clutch's modules. The
-  `slug.io.fs` clutch binds plain C functions through typed native bindings:
-  its manifest declares each C signature, and `make stage-native-clutches`
-  generates a header-checked shim and builds the library on macOS, Linux, or
-  Windows. Other platforms report a checked unavailable-platform error. The
-  `slug.db.sqlite` clutch binds SQLite's C API the same way, with Slug code
-  over the raw calls providing variadic SQL binding, `list<map>` query rows,
-  prepared statements, and transactions. `slug.core` binds its math functions
-  the same way, and its standard-input reader is a C thread that sends lines
-  into a Slug channel through a typed producer.
-  This checkout is a development clutch repository: run
-  `make stage-native-clutches` before executing a program that imports one of
-  its native modules. Staged platform libraries are local build outputs, not
-  release artifacts.
-- Canonical source-annotation resolution in every compiler mode, including
-  checked built-in type names and constructor arity, including distinct
-  `schema` values and nominal `struct<S>` construction. Semantic validation
-  distinguishes non-nil `any` from universal `any|nil`, normalizes
-  unions, compares structured annotations reflexively, checks statically known
-  operator and collection-access operands, narrows direct nil checks in
-  control-flow paths, diagnoses closed typed-match coverage, preserves precise
-  collection results, checks fields through known schemas, and retains inferred
-  function-value input and result types for higher-order positional calls,
-  including body-derived `num` parameter types from division, modulo, unary
-  negation, ordering comparisons, uniquely known direct callees, and direct
-  `nil` guards, plus finite body-derived `+`, `-`, and `*` overload alternatives for
-  numeric, string, list, bytes, map merge, and map-key removal relationships.
-  Private alternative metadata is capped at 16 canonical schemes per callable;
-  excess schemes widen only that metadata to checked dynamic behavior.
-  Independently selected alternatives also propagate through direct known
-  calls during body-derived inference; dynamic and ambiguous calls remain
-  checked at runtime.
-- Lexically scoped semantic bindings retain ordered callable signatures through
-  local declarations, aliases, parameters, and nested blocks. Calls to locally
-  known callables undergo mandatory shape, generic, and parameter-type
-  resolution in every compiler mode. Loader-backed compilation caches exported
-  callable snapshots and preserves them through module members, explicit map
-  destructuring, and `{*}` selection. Statically selected overloads lower their
-  canonical input identity into private call bytecode; the VM invokes that
-  exact member of the current live binding without runtime type validation.
-- Immutable configuration collection from library and project TOML, `SLUG__`
-  environment variables, and program options; source access through `cfg`.
-- Command-line entry-program lookup for explicit paths and installed bare
-  names through `$SLUG_HOME/lib/<name>.slug`.
-- The standard library, full type inference, and the remaining language forms are progressive
-  milestones beyond this subset.
-- Portable `.cslug` whole-program artifacts can be compiled with `slug compile`
-  and run with `slug run`; they are closed graphs and never fall back to source
-  resolution at load time.
-- Statically registered native functions use an opaque, call-scoped version 0
-  Rust facade with structured errors and typed resources. It remains unstable;
-  no public C ABI or dynamic native loader exists yet.
-- Top-level `foreign` declarations resolve through a module-qualified,
-  host-registered native-function registry. The bundled `slug.channel` module
-  uses this boundary for channel creation and closing.
-- A metadata-backed, syntax-focused conformance suite derived from the legacy
-  Slug corpus runs with the integration tests.
+- **As a language implementation:** it runs a growing, well-specified subset
+  of Slug source code from the command line and an interactive REPL.
+- **As an embeddable runtime:** it provides a checked in-process bytecode VM,
+  a source frontend, and host boundaries for desktop, restricted, and static
+  embedded environments.
 
-## Bytecode design
+Slug source programs are the contract. The Rust VM and bytecode are internal
+implementation surfaces: they are available for embedding and testing, but
+remain unstable during pre-release development.
 
-`Program` owns indexed `Chunk`s. A `Chunk` owns its `Constant` pool and a list
-of `Instruction`s. Each instruction uses a typed `Op` enum, not numeric opcode
-bytes. Rust hosts and integration tests may construct these types and execute
-them through `Vm`; malformed programs must fail through checked runtime errors.
-Their layouts, variants, constructors, and semantics remain unstable and may
-change during pre-release development. A compiler can attach a `SourceSpan` to
-any instruction, and the VM keeps the active call frames on failures.
-
-The VM uses an operand stack. Function calls use separate frame-local slots,
-with closures copying only the declared captured slots. The current model
-intentionally favors clear semantics and diagnostics over compact bytecode or
-performance.
-
-## Portable compiled artifacts
-
-`.cslug` is a versioned, validated serialized form of a complete VM
-`CompiledProgram`. It is portable across machines supporting the same declared
-format and VM/bytecode compatibility version. Normal source execution remains
-directly in memory; the format is only for persistence and transport. See
-[compiled artifacts](docs/reference/compiled-artifacts.md) for the adopted
-contract and requirements.
-
-## Quick start
-
-Install [Rustup](https://rustup.rs/) if it is not already available, then clone
-this repository and enter it. The pinned Rust toolchain is selected
-automatically.
-
-Create `hello.slug`:
+## A first Slug program
 
 ```slug
 val greeting = fn(name) { "Hello, " + name + "!" }
@@ -157,88 +28,122 @@ val main = fn() {
 }
 ```
 
-Run it from the repository root:
+Save it as `hello.slug`, then run it from this repository:
 
 ```sh
 cargo run -p slug -- hello.slug
 ```
 
-Persist a closed compiled artifact, then run it without consulting source
-resolvers:
+The CLI evaluates the program and invokes a local `main()` entrypoint. Pass
+program arguments after the source path; run `cargo run -p slug -- --help` for
+the full interface.
+
+## What Slug supports today
+
+The implemented subset already covers the core of day-to-day source programs:
+
+- immutable `val` and mutable `var` bindings; functions, closures, captures,
+  returns, and positional/named/defaulted/variadic calls;
+- numbers, strings, bytes, booleans, `nil`, lists, maps, structs, fieldless
+  enums, type aliases, indexing, slicing, and persistent collection updates;
+- `if`, `match`, destructuring, pinned patterns, checked match coverage, and
+  source annotations with progressively stronger static checking;
+- imports, isolated cached modules, configuration through `cfg`, and the
+  built-in `print`, `println`, `len`, `chan`, and `close` functions;
+- channels, tasks, nurseries, `select`, timers, `defer`, `throw`, error
+  recovery, and contextual stack traces; and
+- compilation of closed whole-program `.cslug` artifacts for portable
+  execution on compatible Slug VMs.
+
+This is not yet complete Slug conformance. The [language support
+matrix](docs/generated/language-support.md) is the authoritative list of what
+slug-rs implements; the [language documents](docs/language/README.md) define
+the target language semantics.
+
+## Using slug-rs
+
+### Compile and run a closed artifact
+
+`.cslug` stores a complete, validated compiled program. It runs without
+consulting source resolvers:
 
 ```sh
 cargo run -p slug -- compile hello.slug hello.cslug
 cargo run -p slug -- run hello.cslug
 ```
 
-For a persistent interactive session, run the minimal terminal client:
+See [compiled artifacts](docs/reference/compiled-artifacts.md) for its format
+and compatibility contract.
+
+### Work interactively
+
+Build the workspace binaries once, then start the terminal REPL:
 
 ```sh
 cargo build --workspace --bins
 cargo run -p slug-repl
-# or seed the session from a source file
-cargo run -p slug-repl -- session.slug
 ```
 
-It launches the sibling `slug --server` mode, presents a `>` prompt, and
-sends each complete source unit through its structured session protocol. In a
-terminal, the prompt supports cursor-based line editing and Up/Down command
-history for the current REPL session; piped input remains plain line-oriented.
-An
-optional source path seeds the newly opened session before the first prompt, so
-its bindings remain available interactively.
-If a later top-level form in that source waits on a channel, the REPL reports
-`[stalled]` but keeps the form alive; later binding-free input can send to a
-previously declared channel and resume it in both runtime configurations.
-Incomplete syntax such as a function body uses a `.` continuation prompt. Type
-`:quit` or `:exit`, or send end-of-file, to close the session. Set
-`SLUG_SERVER` to use a different local server executable. Distributions must
-install `slug-repl` and `slug` together.
+Pass a source path to seed a session: `cargo run -p slug-repl -- session.slug`.
+The REPL runs alongside `slug --server`, supports multiline input and in-session
+history, and retains successful bindings between submissions. Use `:quit`,
+`:exit`, or end-of-file to close it. Set `SLUG_SERVER` to select a different
+local server executable.
 
-Interactive submissions run as session-owned cells: scheduler tasks in the
-default runtime and detached host-driven executions in the slim runtime. A
-function imported from a Slug module, or retained from an earlier prompt, can
-suspend and later resume in its owning cell. New top-level bindings are
-committed only when their cell settles successfully; while a binding-producing
-cell waits, later input may use already committed bindings but may not declare
-new ones. The REPL prints the outcome of the source just entered: a completed
-expression still prints its value even if unrelated retained work remains in
-the session, while `[stalled]` means that entered cell itself suspended.
+### Use optional native modules
 
-The CLI executes the source file and automatically invokes a local `main()`.
-Pass additional arguments after the source path. Prefix the source path with
-`--diagnostic-format=json` to receive runner-generated fatal diagnostics as one
-JSON document on standard error, which is intended for editor and agent integrations; use
-`cargo run -p slug -- --help` to see the current command interface. Start with the
-[language support matrix](docs/generated/language-support.md) for the
-implemented subset, and use the [language documents](docs/language/README.md)
-as the source-language reference.
+The desktop loader can activate experimental local *clutches*: module providers
+such as `slug.core`, `slug.io.stdin`, `slug.io.fs`, and `slug.db.sqlite`.
+Their native calls are generated from typed manifests and remain experimental.
+This checkout is also their development repository, so stage them before a
+program imports one:
+
+```sh
+make stage-native-clutches
+```
+
+Staged platform libraries are local build outputs, not release artifacts. See
+[experimental clutches](docs/reference/experimental-clutches.md) for the
+provider model and [native ABI](docs/reference/native-abi.md) for the host
+boundary.
+
+## Inside the project
+
+slug-rs is a Rust workspace with deliberately narrow boundaries:
+
+| Area | Responsibility |
+| --- | --- |
+| `crates/slug-vm` | Dynamic values, bytecode, runtime, and checked VM failures. |
+| `crates/slug-frontend` | Parsing, semantics, lowering, and module graph construction. |
+| `crates/slug` | Command-line interface, configuration, fixtures, and server mode. |
+| `crates/slug-repl` | Terminal client for `slug --server`. |
+| `crates/slug-*-loader` | Desktop, nil, and other host-specific import resolution. |
+| `crates/slug-native-*` | Typed native manifests and the adapter that is exclusively responsible for shim calls. |
+
+The VM executes `Program`s made of chunks, constants, and typed instruction
+variants—not serialized opcode bytes. Malformed bytecode, invalid source, and
+runtime faults must produce checked Slug errors with source spans and call
+frames, never host panics. The [architecture guide](docs/engineering/architecture.md)
+explains these ownership and compatibility boundaries in detail.
 
 ## Development
 
+Rust 1.96.1 (including `rustfmt` and Clippy) is pinned in
+[`rust-toolchain.toml`](rust-toolchain.toml); Rustup selects it automatically.
+
 ```sh
 make check
-cargo run -p slug -- --help
-make bench-vm
-make bench-source
 ```
 
-`make check` runs formatting validation, strict Clippy, full tests, and the
-supported slim-runtime feature matrix. Use `make test-vm`, `make test-cli`, or
-`make slim` for focused runtime validation. Agent-specific development rules and language-change
-workflow guidance are in [AGENTS.md](AGENTS.md).
+`make check` validates formatting, strict Clippy, the full test suite, and the
+supported slim-runtime feature matrix. While iterating, use focused commands
+such as `make test-vm`, `make test-cli`, or `make slim`. See the
+[testing guide](docs/engineering/testing.md) for test routing and
+[AGENTS.md](AGENTS.md) for repository working rules.
 
-The repository pins Rust 1.96.1, including `rustfmt` and Clippy, in
-[`rust-toolchain.toml`](rust-toolchain.toml). Rustup selects it automatically
-from the repository directory.
+## Learn more
 
-The integration tests construct small programs directly, covering arithmetic,
-branching, closures, globals, native calls, and source-located runtime errors.
-
-## Documentation
-
-The [documentation index](docs/README.md) defines the authority of language
-specifications, architecture notes, development process, and compatibility
-promises. The [language support matrix](docs/generated/language-support.md)
-separates the target language specification from the currently implemented
-Rust subset.
+- [Documentation index](docs/README.md) — authority, reference contracts, engineering, and plans.
+- [Language documentation](docs/language/README.md) — normative grammar and semantics.
+- [Language support matrix](docs/generated/language-support.md) — implemented subset versus target surface.
+- [Compatibility policy](docs/reference/compatibility.md) — what slug-rs promises today.

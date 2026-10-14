@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -72,6 +72,10 @@ bench-vm:
 bench-source:
 	cargo build --release -p slug --bin slug
 	cargo bench -p slug-frontend --bench source
+
+# Interleaved A/B timing; BASE defaults to master, CANDIDATE to the working tree.
+bench-ab:
+	python3 -I scripts/bench-ab.py $(or $(BASE),master) $(CANDIDATE) $(BENCH_AB_ARGS)
 
 measure-vm-memory:
 	sh scripts/measure-vm-memory.sh

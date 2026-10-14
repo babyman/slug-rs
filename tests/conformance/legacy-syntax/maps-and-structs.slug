@@ -1,5 +1,5 @@
 // Derived from the legacy maps.slug and structs.slug samples.
-val key = "name"
+val key = "nickname"
 val user = {name: "Slug", age: 42, [key]: "Slug"}
 
 val User = struct {

@@ -21,14 +21,14 @@ fn constructs_and_indexes_collections() {
 
 #[test]
 fn maps_compare_by_key_value_membership_not_entry_order() {
-    let first = Value::Map(std::rc::Rc::new(vec![
+    let first = Value::map(vec![
         (Value::string("name"), Value::string("Slug")),
         (Value::string("version"), Value::Int(1)),
-    ]));
-    let second = Value::Map(std::rc::Rc::new(vec![
+    ]);
+    let second = Value::map(vec![
         (Value::string("version"), Value::Int(1)),
         (Value::string("name"), Value::string("Slug")),
-    ]));
+    ]);
     assert_eq!(first, second);
 }
 
@@ -108,10 +108,7 @@ fn records_unique_map_copy_update_costs() {
     let mut vm = Vm::new();
     assert_eq!(
         vm.run(&program_with_main(main), 0).unwrap(),
-        Value::Map(std::rc::Rc::new(vec![(
-            Value::string("name"),
-            Value::string("VM"),
-        )]))
+        Value::map(vec![(Value::string("name"), Value::string("VM"),)])
     );
     let metrics = vm.metrics();
     assert_eq!(metrics.collection_updates, 1);
@@ -261,10 +258,10 @@ fn rejects_duplicate_fields_in_struct_schema_bytecode() {
 
 #[test]
 fn constant_key_indexing_matches_stack_key_indexing() {
-    let map = Value::Map(std::rc::Rc::new(vec![
+    let map = Value::map(vec![
         (Value::string("name"), Value::string("Slug")),
         (Value::string("name"), Value::string("shadowing")),
-    ]));
+    ]);
     let list = Value::list(vec![Value::Int(10), Value::Int(20)]);
     let cases = [
         (map.clone(), Value::string("name")),
@@ -311,4 +308,106 @@ fn rejects_constant_key_indexing_without_a_value_constant() {
         "{}",
         error.message
     );
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn last_local_read_moves_a_list_for_in_place_append() {
+    let mut main = Chunk::new("main", 0);
+    main.locals = 1;
+    let one = main.constant(Value::Int(1));
+    main.emit(Op::List(0))
+        .emit(Op::SetLocal(0))
+        .emit(Op::GetLocal(0))
+        .emit(Op::Constant(one))
+        .emit(Op::ListAppend)
+        .emit(Op::Return);
+
+    let mut vm = Vm::new();
+    assert_eq!(
+        vm.run(&program_with_main(main), 0).unwrap(),
+        Value::list(vec![Value::Int(1)])
+    );
+    let metrics = vm.metrics();
+    assert_eq!(metrics.collection_unique_owner_updates, 1);
+    assert_eq!(metrics.collection_shared_owner_updates, 0);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn local_read_before_a_later_read_still_clones() {
+    let mut main = Chunk::new("main", 0);
+    main.locals = 1;
+    let one = main.constant(Value::Int(1));
+    main.emit(Op::List(0))
+        .emit(Op::SetLocal(0))
+        .emit(Op::GetLocal(0))
+        .emit(Op::Constant(one))
+        .emit(Op::ListAppend)
+        .emit(Op::Pop)
+        .emit(Op::GetLocal(0))
+        .emit(Op::Return);
+
+    let mut vm = Vm::new();
+    assert_eq!(
+        vm.run(&program_with_main(main), 0).unwrap(),
+        Value::list(Vec::new())
+    );
+    assert_eq!(vm.metrics().collection_shared_owner_updates, 1);
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn local_read_on_one_branch_keeps_the_slot_live() {
+    let mut main = Chunk::new("main", 0);
+    main.locals = 1;
+    let one = main.constant(Value::Int(1));
+    main.emit(Op::List(0))
+        .emit(Op::SetLocal(0))
+        .emit(Op::GetLocal(0))
+        .emit(Op::Constant(one))
+        .emit(Op::ListAppend)
+        .emit(Op::False)
+        .emit(Op::JumpIfFalse(9))
+        .emit(Op::Pop)
+        .emit(Op::Return)
+        .emit(Op::Pop)
+        .emit(Op::Pop)
+        .emit(Op::GetLocal(0))
+        .emit(Op::Return);
+
+    let mut vm = Vm::new();
+    assert_eq!(
+        vm.run(&program_with_main(main), 0).unwrap(),
+        Value::list(Vec::new())
+    );
+    assert_eq!(vm.metrics().collection_shared_owner_updates, 1);
+}
+
+#[test]
+fn last_read_of_a_captured_local_preserves_the_closure_binding() {
+    let mut main = Chunk::new("main", 0);
+    main.locals = 2;
+    let one = main.constant(Value::Int(1));
+    main.emit(Op::List(0))
+        .emit(Op::SetLocal(0))
+        .emit(Op::MakeClosure {
+            chunk: 1,
+            captures: vec![Capture::Local(0)],
+        })
+        .emit(Op::SetLocal(1))
+        .emit(Op::GetLocal(0))
+        .emit(Op::Constant(one))
+        .emit(Op::ListAppend)
+        .emit(Op::Pop)
+        .emit(Op::GetLocal(1))
+        .emit(Op::Call(0))
+        .emit(Op::Return);
+    let mut captured = Chunk::new("captured", 0);
+    captured.emit(Op::GetCapture(0)).emit(Op::Return);
+
+    let mut program = Program::new();
+    program.add_chunk(main);
+    program.add_chunk(captured);
+    assert_eq!(Vm::new().run(&program, 0).unwrap(), Value::list(Vec::new()));
 }

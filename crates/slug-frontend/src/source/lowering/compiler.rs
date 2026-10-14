@@ -875,7 +875,17 @@ impl Compiler {
                 }
             }
             ExprKind::Map(entries) => {
+                let mut constant_keys = HashSet::new();
                 for (key, value) in entries {
+                    if let ExprKind::Value(constant) = &key.kind
+                        && let Some(canonical) = ConstantMapKey::new(constant)
+                        && !constant_keys.insert(canonical)
+                    {
+                        return Err(SourceError::semantic(
+                            format!("map literal repeats key `{constant}`"),
+                            key.span.clone(),
+                        ));
+                    }
                     self.expression(state, key)?;
                     self.expression(state, value)?;
                 }
@@ -964,7 +974,10 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
-                state.emit(Op::EnterScope, &expression.span);
+                let runtime_scope = values.iter().any(contains_scoped_defer);
+                if runtime_scope {
+                    state.emit(Op::EnterScope, &expression.span);
+                }
                 for (index, value) in values.iter().enumerate() {
                     self.expression(state, value)?;
                     if index + 1 < values.len() {
@@ -974,7 +987,9 @@ impl Compiler {
                 if values.is_empty() {
                     state.emit(Op::Nil, &expression.span);
                 }
-                state.emit(Op::LeaveScope, &expression.span);
+                if runtime_scope {
+                    state.emit(Op::LeaveScope, &expression.span);
+                }
                 state.leave_scope();
             }
             ExprKind::If {
@@ -983,12 +998,10 @@ impl Compiler {
                 else_branch,
             } => {
                 self.expression(state, condition)?;
-                let otherwise = state.jump_if_false(&expression.span);
-                state.emit(Op::Pop, &expression.span);
+                let otherwise = state.jump_if_false_pop(&expression.span);
                 self.expression(state, then_branch)?;
                 let end = state.jump(&expression.span);
                 state.patch(otherwise);
-                state.emit(Op::Pop, &expression.span);
                 if let Some(otherwise) = else_branch {
                     self.expression(state, otherwise)?;
                 } else {
@@ -1109,20 +1122,16 @@ impl Compiler {
                 .into_iter()
                 .map(|name| state.declare(name, false, false))
                 .collect::<Vec<_>>();
-            let next = state.jump_if_false(&case.span);
-            state.emit(Op::Pop, &case.span);
+            let next = state.jump_if_false_pop(&case.span);
             for slot in slots.iter().rev() {
                 state.emit(Op::SetLocal(*slot), &case.span);
             }
             let guard_next = if let Some(guard) = &case.guard {
                 self.guard_expression(state, guard)?;
-                Some(state.jump_if_false(&case.span))
+                Some(state.jump_if_false_pop(&case.span))
             } else {
                 None
             };
-            if guard_next.is_some() {
-                state.emit(Op::Pop, &case.span);
-            }
             state.emit(Op::Pop, &case.span);
             if tail {
                 self.tail_expression(state, &case.value)?;
@@ -1132,15 +1141,11 @@ impl Compiler {
             state.leave_scope();
             ends.push(state.jump(&case.span));
             state.patch(next);
-            state.emit(Op::Pop, &case.span);
             for _ in slots {
                 state.emit(Op::Pop, &case.span);
             }
             if let Some(guard_next) = guard_next {
-                let skip_guard_cleanup = state.jump(&case.span);
                 state.patch(guard_next);
-                state.emit(Op::Pop, &case.span);
-                state.patch(skip_guard_cleanup);
             }
         }
         state.emit(Op::Pop, &subject.span);
@@ -1322,8 +1327,7 @@ impl Compiler {
             },
             span,
         );
-        let failed = state.jump_if_false(span);
-        state.emit(Op::Pop, span);
+        let failed = state.jump_if_false_pop(span);
         let bindings = names
             .into_iter()
             .map(|name| {
@@ -1348,7 +1352,6 @@ impl Compiler {
         }
         let end = state.jump(span);
         state.patch(failed);
-        state.emit(Op::Pop, span);
         for _ in &bindings {
             state.emit(Op::Pop, span);
         }
@@ -1405,7 +1408,10 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
-                state.emit(Op::EnterScope, &expression.span);
+                let runtime_scope = values.iter().any(contains_scoped_defer);
+                if runtime_scope {
+                    state.emit(Op::EnterScope, &expression.span);
+                }
                 for (index, value) in values.iter().enumerate() {
                     if index + 1 == values.len() {
                         self.tail_expression(state, value)?;
@@ -1417,7 +1423,9 @@ impl Compiler {
                 if values.is_empty() {
                     state.emit(Op::Nil, &expression.span);
                 }
-                state.emit(Op::LeaveScope, &expression.span);
+                if runtime_scope {
+                    state.emit(Op::LeaveScope, &expression.span);
+                }
                 state.leave_scope();
             }
             ExprKind::If {
@@ -1426,12 +1434,10 @@ impl Compiler {
                 else_branch,
             } => {
                 self.expression(state, condition)?;
-                let otherwise = state.jump_if_false(&expression.span);
-                state.emit(Op::Pop, &expression.span);
+                let otherwise = state.jump_if_false_pop(&expression.span);
                 self.tail_expression(state, then_branch)?;
                 let end = state.jump(&expression.span);
                 state.patch(otherwise);
-                state.emit(Op::Pop, &expression.span);
                 if let Some(otherwise) = else_branch {
                     self.tail_expression(state, otherwise)?;
                 } else {
@@ -1821,4 +1827,185 @@ fn entrypoint_candidate(expression: &Expr) -> Option<(EntrypointArguments, &Sour
         _ => return None,
     };
     Some((arguments, &value.span))
+}
+
+/// A constant map-literal key in canonical form, so that keys Slug considers
+/// equal, such as `1` and `1.0` or `0` and `-0.0`, compare equal here too.
+#[derive(Eq, Hash, PartialEq)]
+enum ConstantMapKey<'a> {
+    Bool(bool),
+    Int(i64),
+    Float(u64),
+    Str(&'a str),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> ConstantMapKey<'a> {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::float_cmp,
+        reason = "the range and integral-value checks make this conversion exact"
+    )]
+    fn new(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Bool(value) => Some(Self::Bool(*value)),
+            Value::Int(value) => Some(Self::Int(*value)),
+            Value::Float(value)
+                if value.is_finite()
+                    && *value >= i64::MIN as f64
+                    && *value < -(i64::MIN as f64)
+                    && (*value as i64) as f64 == *value =>
+            {
+                Some(Self::Int(*value as i64))
+            }
+            Value::Float(value) => Some(Self::Float(value.to_bits())),
+            Value::Str(value) => Some(Self::Str(value)),
+            Value::Bytes(value) => Some(Self::Bytes(value)),
+            _ => None,
+        }
+    }
+}
+
+/// Whether `expression` registers a `defer` in the block that encloses it.
+///
+/// A block's runtime scope exists only to collect deferred work, and a
+/// `defer` belongs to its innermost enclosing block, so a block without one
+/// needs no `EnterScope`/`LeaveScope`. Nested blocks decide for themselves
+/// and functions run in their own frames; every other expression is searched.
+#[allow(clippy::too_many_lines, reason = "one arm per expression kind")]
+fn contains_scoped_defer(expression: &Expr) -> bool {
+    let arguments = |arguments: &[CallArgument]| {
+        arguments.iter().any(|argument| match argument {
+            CallArgument::Positional(value)
+            | CallArgument::Named { value, .. }
+            | CallArgument::Spread(value) => contains_scoped_defer(value),
+        })
+    };
+    match &expression.kind {
+        ExprKind::Defer { .. } => true,
+        // A nested block decides for itself; a function runs in its own frame.
+        ExprKind::Block(_)
+        | ExprKind::Function { .. }
+        | ExprKind::Value(_)
+        | ExprKind::Interpolate(_)
+        | ExprKind::Documentation(_)
+        | ExprKind::NotImplemented
+        | ExprKind::Name(_)
+        | ExprKind::Foreign { .. }
+        | ExprKind::Resource { .. }
+        | ExprKind::Enum { .. }
+        | ExprKind::TypeAlias { .. } => false,
+        ExprKind::Declare {
+            pattern,
+            tags,
+            value,
+            ..
+        } => {
+            pattern_contains_scoped_defer(pattern)
+                || tags
+                    .iter()
+                    .any(|tag| tag.arguments.iter().any(contains_scoped_defer))
+                || contains_scoped_defer(value)
+        }
+        ExprKind::Assign { value, .. }
+        | ExprKind::Return { value }
+        | ExprKind::Throw { value }
+        | ExprKind::Spawn(value)
+        | ExprKind::Prefix { value, .. } => contains_scoped_defer(value),
+        ExprKind::Recur(values) => arguments(values),
+        ExprKind::Nursery { limit, body } => {
+            limit.as_deref().is_some_and(contains_scoped_defer) || contains_scoped_defer(body)
+        }
+        ExprKind::Select(cases) => cases.iter().any(|case| {
+            let operand = match &case.kind {
+                SelectCaseKind::Receive(value)
+                | SelectCaseKind::After(value)
+                | SelectCaseKind::Await(value) => contains_scoped_defer(value),
+                SelectCaseKind::Send { channel, value } => {
+                    contains_scoped_defer(channel) || contains_scoped_defer(value)
+                }
+                SelectCaseKind::Default => false,
+            };
+            operand || case.handler.as_ref().is_some_and(contains_scoped_defer)
+        }),
+        ExprKind::Match { subject, cases } => {
+            subject.as_deref().is_some_and(contains_scoped_defer)
+                || cases.iter().any(|case| {
+                    case.patterns
+                        .iter()
+                        .any(|pattern| pattern_contains_scoped_defer(&pattern.pattern))
+                        || case.guard.as_ref().is_some_and(contains_scoped_defer)
+                        || contains_scoped_defer(&case.value)
+                })
+        }
+        ExprKind::Binary { left, right, .. } => {
+            contains_scoped_defer(left) || contains_scoped_defer(right)
+        }
+        ExprKind::Call {
+            callee,
+            arguments: values,
+        } => contains_scoped_defer(callee) || arguments(values),
+        ExprKind::TypeApply { callee, .. } => contains_scoped_defer(callee),
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            contains_scoped_defer(condition)
+                || contains_scoped_defer(then_branch)
+                || else_branch.as_deref().is_some_and(contains_scoped_defer)
+        }
+        ExprKind::List(values) => values.iter().any(|value| match value {
+            ListElement::Value(value) | ListElement::Spread(value) => contains_scoped_defer(value),
+        }),
+        ExprKind::Map(entries) => entries
+            .iter()
+            .any(|(key, value)| contains_scoped_defer(key) || contains_scoped_defer(value)),
+        ExprKind::StructSchema(fields) => fields
+            .iter()
+            .filter_map(|field| field.default.as_ref())
+            .any(contains_scoped_defer),
+        ExprKind::StructInit { schema, fields } => {
+            contains_scoped_defer(schema)
+                || fields.iter().any(|(_, value)| contains_scoped_defer(value))
+        }
+        ExprKind::StructCopy { value, fields } => {
+            contains_scoped_defer(value)
+                || fields
+                    .iter()
+                    .any(|(_, replacement)| contains_scoped_defer(replacement))
+        }
+        ExprKind::Index { collection, index } => {
+            contains_scoped_defer(collection) || contains_scoped_defer(index)
+        }
+        ExprKind::Slice {
+            collection,
+            start,
+            end,
+            step,
+        } => {
+            contains_scoped_defer(collection)
+                || [start, end, step]
+                    .into_iter()
+                    .any(|bound| bound.as_deref().is_some_and(contains_scoped_defer))
+        }
+    }
+}
+
+fn pattern_contains_scoped_defer(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Literal(_)
+        | Pattern::Wildcard
+        | Pattern::Binding(_)
+        | Pattern::Pinned(_)
+        | Pattern::MapAll
+        | Pattern::EnumCase { .. } => false,
+        Pattern::At { pattern, .. } => pattern_contains_scoped_defer(pattern),
+        Pattern::List { items, .. } => items.iter().any(pattern_contains_scoped_defer),
+        Pattern::Map { entries, .. } => entries.iter().any(|(key, pattern)| {
+            matches!(key, MapPatternKey::Computed(key) if contains_scoped_defer(key))
+                || pattern_contains_scoped_defer(pattern)
+        }),
+    }
 }
