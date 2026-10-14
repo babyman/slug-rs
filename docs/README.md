@@ -64,6 +64,7 @@ a specified feature is implemented.
 | [immutable-collection-value-redesign.md](planning/immutable-collection-value-redesign.md) | Staged collection and `Value` representation work that preserves immutable semantics. |
 | [interactive-slim-retained-cells.md](planning/interactive-slim-retained-cells.md) | Retained interactive cells with one execution model across runtime configurations. |
 | [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |
+| [agent-facing-direction.md](planning/agent-facing-direction.md) | Product direction for agent-written, human-reviewed code, with ordered work and measures. |
 | [completed/](planning/completed/) | Retained plans for completed or superseded implementation work, including: |
 | [cslug-whole-program-artifacts.md](planning/completed/cslug-whole-program-artifacts.md) | Completed `.cslug` codec, verifier, host persistence, and firmware artifact path. |
 | [esp32-s3-static-clutch-gpio.md](planning/completed/esp32-s3-static-clutch-gpio.md) | Completed ESP32-S3 static-provider GPIO plan and on-device verification record. |
