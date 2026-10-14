@@ -1442,3 +1442,33 @@ builds: about 73% is `Value::eq` and `memcmp` from linear key scans in its
 509-entry map. So the residual is layout or noise, not global reads, and
 that linear scan is the real reason it runs 5x slower than CPython. It
 belongs to item 7's last bullet on map representation. `make check` passed.
+
+#### Measurement record: in-place string append (2026-10-13)
+
+`string-building` ran at 5.5x CPython, and its time quadrupled when its
+iteration count doubled. `text + line` copied the whole accumulated string
+twice: `+` formatted into a `String`, then copied that into a new `Rc<str>`,
+because a `str` cannot grow. A string is now an opaque `Str` behind
+`Value::Str`, holding an `Rc<String>`, so `+` appends to a sole owner's
+buffer in place. Move-on-last-read already makes an accumulator a sole
+owner. A shared string is copied once into a buffer with room for the
+appended text. `Rc<String>` costs a second allocation per string. That cost
+did not register, even in the string-heavy `word-frequency`, because the
+old path had a copy of its own. `string-building` moved to the tuned group
+for this change, and `text-wrap`, which wraps a paragraph with indexing,
+interpolation, and concatenation, replaced it as a hold-out.
+
+Seven interleaved rounds against `b669666`:
+
+| Workload | Before | After | Ratio |
+|---|---:|---:|---:|
+| string-building | 143.2 ms | 15.0 ms | 0.11x |
+| word-frequency | 35.2 ms | 34.7 ms | 0.99x |
+| text-wrap (hold-out) | 113.6 ms | 87.0 ms | 0.77x |
+| expression-evaluator (hold-out) | 170.4 ms | 168.1 ms | 0.99x |
+
+Every other workload is within its spread: tuned geomean 0.84x, hold-out
+0.91x. Encapsulating `Str` alone took `string-building` to 0.50x by removing
+the second copy, and the in-place append took it the rest of the way.
+`string-building` is now 0.57x CPython, and 20,000 to 160,000 appends scale
+linearly.

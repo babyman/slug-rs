@@ -45,7 +45,7 @@ pub(super) fn add(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind,
             .checked_add(b)
             .map(Value::Int)
             .ok_or_else(|| (RuntimeErrorKind::Type, "integer overflow".into())),
-        (Value::Str(a), b) => Ok(Value::string(format!("{a}{b}"))),
+        (Value::Str(a), b) => Ok(Value::Str(a.append(b))),
         (Value::List(a), Value::List(b)) => Ok(Value::List(a.concat(&b))),
         (Value::Bytes(a), Value::Bytes(b)) => Ok(Value::Bytes(
             Bytes::from_shared(a)

@@ -18,7 +18,7 @@ use core::cell::Cell;
 
 use crate::{
     CallableIdentity, ForeignResourceSignature,
-    collections::{BytesView, List, Map},
+    collections::{BytesView, List, Map, Str},
     native::{NativeChannelProducer, NativeFunction, NativeResource},
     scheduler_signal::ProgressSignal,
 };
@@ -994,7 +994,7 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Str(Rc<str>),
+    Str(Str),
     Bytes(Rc<Vec<u8>>),
     List(List),
     Map(Map),
@@ -1088,7 +1088,7 @@ impl Value {
         }
     }
     #[must_use]
-    pub fn string(value: impl Into<Rc<str>>) -> Self {
+    pub fn string(value: impl Into<Str>) -> Self {
         Self::Str(value.into())
     }
 

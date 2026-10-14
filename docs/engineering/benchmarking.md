@@ -60,15 +60,18 @@ another:
   program rather than a single hot loop.
 - `graph-search` runs a breadth-first search over an integer-keyed adjacency
   map, growing visited and distance maps as it goes.
+- `text-wrap` wraps a generated paragraph to a fixed width with indexing,
+  interpolation, and concatenation.
 
-`string-building`, `expression-evaluator`, and `graph-search` are a hold-out
-set, marked `held_out` in
+`expression-evaluator`, `graph-search`, and `text-wrap` are a hold-out set, marked `held_out` in
 `crates/slug-frontend/benches/source.rs` and in both reports. Check them for
 regressions, but never use them to choose or tune an optimization: they stay
 useful only while nothing has been fitted to them. When a hold-out workload
 does drive a change, move it to the tuned group and add a fresh hold-out.
 `word-frequency` started as a hold-out. It moved to the tuned group when its
 profile motivated the indexed-map work, and `graph-search` replaced it.
+`string-building` likewise moved when it motivated in-place string append,
+and `text-wrap` replaced it.
 
 ## Interleaved A/B comparison
 

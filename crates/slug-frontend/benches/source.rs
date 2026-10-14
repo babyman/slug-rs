@@ -72,7 +72,7 @@ const WORKLOADS: &[Workload] = &[
     },
     Workload {
         name: "string-building",
-        held_out: true,
+        held_out: false,
         expected_stdout: "378894 20000 item 20000 i\n",
     },
     Workload {
@@ -84,6 +84,11 @@ const WORKLOADS: &[Workload] = &[
         name: "graph-search",
         held_out: true,
         expected_stdout: "3000 22328 10\n",
+    },
+    Workload {
+        name: "text-wrap",
+        held_out: true,
+        expected_stdout: "210000 3750 60000\n",
     },
 ];
 

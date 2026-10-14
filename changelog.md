@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Building a string with `+` in a loop is no longer quadratic: when nothing
+  else holds the left-hand string, `+` appends to it in place. A
+  20,000-line report builds 9.5x faster. `Value::Str` holds an opaque string
+  type that dereferences to `str`; `Value::string` accepts `&str`, `String`,
+  `Rc<str>`, and similar.
+
 - Maps with more than 32 entries keep a compact hash index beside their
   entries, so lookups and updates no longer scan every key. Counting words
   into a 509-key map runs 4.4x faster, and a breadth-first search over a

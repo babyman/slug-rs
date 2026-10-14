@@ -4,7 +4,8 @@
 //! collection redesign. This module is the only place that needs to know the
 //! concrete backing containers for ordinary collection transformations.
 
-use alloc::{rc::Rc, string::String, vec, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, rc::Rc, string::String, vec, vec::Vec};
+use core::fmt;
 use core::hash::{BuildHasher, Hash, Hasher};
 
 use crate::platform::MapHasher;
@@ -21,7 +22,7 @@ pub(crate) enum MapKey {
     Bool(bool),
     Int(i64),
     Float(u64),
-    Str(Rc<str>),
+    Str(Str),
     Bytes(Rc<Vec<u8>>),
 }
 
@@ -49,6 +50,123 @@ impl MapKey {
             Value::Bytes(value) => Some(Self::Bytes(value.clone())),
             _ => None,
         }
+    }
+}
+
+/// An immutable Slug string.
+///
+/// The text lives in a growable buffer behind an `Rc`, so `+` can append to a
+/// string that nothing else references instead of copying it. Every other
+/// operation treats it as an immutable `str`.
+#[doc(hidden)]
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Str(Rc<String>);
+
+impl Str {
+    /// Appends `text`, copying this string first only if it is shared.
+    pub(crate) fn append(mut self, text: impl fmt::Display) -> Self {
+        use core::fmt::Write;
+        if let Some(buffer) = Rc::get_mut(&mut self.0) {
+            write!(buffer, "{text}").expect("writing to a String cannot fail");
+            return self;
+        }
+        // A shared string is copied once into a buffer with room for the
+        // appended text, rather than cloned at its exact length and grown.
+        let mut buffer = String::with_capacity(self.0.len() + 16);
+        buffer.push_str(&self.0);
+        write!(buffer, "{text}").expect("writing to a String cannot fail");
+        Self(Rc::new(buffer))
+    }
+
+    #[cfg(any(feature = "metrics", test))]
+    pub(crate) fn is_uniquely_owned(&self) -> bool {
+        Rc::strong_count(&self.0) == 1
+    }
+}
+
+impl Deref for Str {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for Str {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl core::borrow::Borrow<str> for Str {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Str {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.0.as_str(), formatter)
+    }
+}
+
+impl fmt::Debug for Str {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.0.as_str(), formatter)
+    }
+}
+
+impl From<String> for Str {
+    fn from(value: String) -> Self {
+        Self(Rc::new(value))
+    }
+}
+
+impl From<&str> for Str {
+    fn from(value: &str) -> Self {
+        Self(Rc::new(value.into()))
+    }
+}
+
+impl From<&String> for Str {
+    fn from(value: &String) -> Self {
+        Self(Rc::new(value.clone()))
+    }
+}
+
+impl From<Box<str>> for Str {
+    fn from(value: Box<str>) -> Self {
+        Self(Rc::new(value.into()))
+    }
+}
+
+impl From<Rc<str>> for Str {
+    fn from(value: Rc<str>) -> Self {
+        Self(Rc::new(value.as_ref().into()))
+    }
+}
+
+impl From<Cow<'_, str>> for Str {
+    fn from(value: Cow<'_, str>) -> Self {
+        Self(Rc::new(value.into_owned()))
+    }
+}
+
+impl From<char> for Str {
+    fn from(value: char) -> Self {
+        Self(Rc::new(value.into()))
+    }
+}
+
+impl PartialEq<str> for Str {
+    fn eq(&self, other: &str) -> bool {
+        self.0.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for Str {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_str() == *other
     }
 }
 
@@ -757,5 +875,27 @@ mod map_tests {
             .merge(&Map::new(vec![(Value::Int(0), Value::Nil)]));
         assert_eq!(original.get(&Value::Int(0)), Some(&Value::Int(0)));
         assert_eq!(updated.get(&Value::Int(0)), Some(&Value::Nil));
+    }
+}
+
+#[cfg(test)]
+mod str_tests {
+    use super::Str;
+
+    #[test]
+    fn appending_to_a_shared_string_leaves_the_original_unchanged() {
+        let original = Str::from("slug");
+        let extended = original.clone().append(" vm");
+        assert_eq!(original, "slug");
+        assert_eq!(extended, "slug vm");
+    }
+
+    #[test]
+    fn appending_to_a_sole_owner_keeps_it_unique() {
+        let text = Str::from(String::from("slug"));
+        assert!(text.is_uniquely_owned());
+        let text = text.append(1).append('!');
+        assert!(text.is_uniquely_owned());
+        assert_eq!(text, "slug1!");
     }
 }

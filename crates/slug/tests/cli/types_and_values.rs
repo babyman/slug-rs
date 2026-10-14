@@ -1067,6 +1067,34 @@ fn persistently_merges_removes_and_enumerates_maps() {
 }
 
 #[test]
+fn string_concatenation_never_changes_a_retained_string() {
+    let path = fixture_path("string-append-aliasing");
+    fs::write(
+        &path,
+        "val base = \"a\"\n\
+         val build = fn(n, text, kept) { if (n == 0) { [text, kept] } else { recur(n - 1, text + \"b\", text) } }\n\
+         val [text, kept] = build(3, base, \"\")\n\
+         val number = 1\n\
+         println(base, text, kept, base + number + true, base)\n",
+    )
+    .expect("write string aliasing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run string aliasing source");
+    fs::remove_file(path).expect("remove string aliasing source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "a abbb abb a1true a\n"
+    );
+}
+
+#[test]
 fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
     let run = |source: &str| {

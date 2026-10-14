@@ -2150,6 +2150,9 @@ impl Vm {
                             Rc::strong_count(left) == 1,
                         );
                     }
+                    (Value::Str(left), _) => {
+                        self.record_collection_update(left.len(), left.is_uniquely_owned());
+                    }
                     _ => {}
                 }
                 self.stack.push(

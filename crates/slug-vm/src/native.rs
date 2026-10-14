@@ -704,7 +704,7 @@ impl NativeOwnedValue {
     }
 
     #[must_use]
-    pub fn string(value: impl Into<Rc<str>>) -> Self {
+    pub fn string(value: impl Into<crate::collections::Str>) -> Self {
         Self(Value::Str(value.into()))
     }
 
