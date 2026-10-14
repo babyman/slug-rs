@@ -491,7 +491,7 @@ fn failed_slim_retained_cells_do_not_commit_their_bindings() {
     assert_eq!(
         submit(&mut server, 7, &session, "queue").result,
         completed(
-            serde_json::json!({ "kind": "chan", "display": "<chan>" }),
+            serde_json::json!({ "$opaque": "chan", "display": "<chan>" }),
             "idle",
         )
     );
@@ -1077,13 +1077,37 @@ fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let runtime = Diagnostic::from_runtime(&runtime);
     assert_eq!(runtime.category, DiagnosticCategory::Runtime);
     assert_eq!(runtime.kind.as_deref(), Some("thrown"));
-    assert_eq!(runtime.thrown.expect("thrown value").display, "42");
+    assert_eq!(runtime.thrown.expect("thrown value"), serde_json::json!(42));
 
     let host = Diagnostic::host("io_failure", "cannot write output");
     assert_eq!(host.category, DiagnosticCategory::Host);
     assert_eq!(
         serde_json::to_value(host).expect("host diagnostic is serializable")["code"],
         "io_failure"
+    );
+}
+
+#[test]
+fn submitted_values_use_the_value_json_form() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let value = submit(
+        &mut server,
+        3,
+        &session,
+        "val Point = struct { y, x }\n[{b: 2.0, a: 0x\"0a\"}, Point {y: 1, x: 2}, fn() { nil }]",
+    );
+    assert_eq!(
+        value.result,
+        completed(
+            serde_json::json!([
+                { "$map": [["a", { "$bytes": "0a" }], ["b", 2]] },
+                { "$struct": { "y": 1, "x": 2 } },
+                { "$opaque": "fn", "display": "<fn>" },
+            ]),
+            "idle"
+        )
     );
 }
 

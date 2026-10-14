@@ -7,6 +7,8 @@ mod diagnostics;
 mod protocol;
 mod server;
 
-pub use diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation};
+pub use diagnostics::{
+    Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation, value_json,
+};
 pub use protocol::{Event, EventOrigin, IncomingMessage, PROTOCOL_VERSION, Request, Response};
 pub use server::{OutputError, OutputStream, Server};

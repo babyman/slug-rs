@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Slug values have one JSON form, defined in `docs/reference/value-json.md`
+  and available to Rust hosts as `Value::to_json`. Scalars and lists are plain
+  JSON; maps, bytes, structs, enum cases, and opaque values such as functions
+  are tagged objects. Map entries are sorted, so equal values encode
+  identically. `--diagnostic-format=json` documents for thrown errors now
+  carry the payload in a `thrown` member, and the interactive server uses this
+  form for submitted values and diagnostic payloads.
+
 - Pipeline calls such as `x /> f()` and calls that supply every parameter of
   a function with defaults take the fast call path, and pattern matches no
   longer allocate for their bindings. `slug.std` `map`/`filter`/`reduce`

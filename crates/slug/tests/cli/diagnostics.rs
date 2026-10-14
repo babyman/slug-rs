@@ -448,6 +448,36 @@ fn narrowing_diagnostics_report_the_actual_surviving_type() {
 }
 
 #[test]
+fn json_mode_encodes_thrown_payloads_only_for_thrown_errors() {
+    for (name, source, thrown) in [
+        (
+            "json-thrown-map",
+            "throw {code: 7, tags: [\"a\"]}\n",
+            Some(serde_json::json!({ "$map": [["code", 7], ["tags", ["a"]]] })),
+        ),
+        (
+            "json-thrown-nil",
+            "throw nil\n",
+            Some(serde_json::Value::Null),
+        ),
+        ("json-not-thrown", "val zero = 0\nprintln(1 / zero)\n", None),
+    ] {
+        let path = fixture_path(name);
+        fs::write(&path, source).expect("write thrown source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run JSON thrown source");
+        fs::remove_file(&path).expect("remove thrown source");
+
+        assert_eq!(output.status.code(), Some(1));
+        let diagnostic = json_diagnostic(&output.stderr);
+        assert_eq!(diagnostic.get("thrown").cloned(), thrown, "{name}");
+    }
+}
+
+#[test]
 fn json_mode_reports_runtime_frames_and_module_failures() {
     let runtime_path = fixture_path("json-runtime");
     fs::write(

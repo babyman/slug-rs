@@ -294,6 +294,8 @@ mod collections;
 mod concurrency;
 #[path = "vm/host_contract.rs"]
 mod host_contract;
+#[path = "vm/json.rs"]
+mod json;
 #[path = "vm/lifecycle.rs"]
 mod lifecycle;
 #[path = "vm/runtime.rs"]

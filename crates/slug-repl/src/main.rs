@@ -535,12 +535,12 @@ fn render_diagnostic_indented(
         )?;
     }
     if let Some(thrown) = &diagnostic.thrown {
-        writeln!(errors, "{indent}  thrown: {}", thrown.display)?;
+        writeln!(errors, "{indent}  thrown: {thrown}")?;
     }
     if let Some(native) = &diagnostic.native {
         write!(errors, "{indent}  native: {}", native.code)?;
         if let Some(data) = &native.data {
-            write!(errors, " ({}: {})", data.kind, data.display)?;
+            write!(errors, " ({data})")?;
         }
         writeln!(errors)?;
     }

@@ -23,15 +23,16 @@ Assessed on 2026-10-13 against the repository.
 | Metering | `.cslug` decode limits only. | The VM has no instruction or memory budget. Map enumeration order is unspecified (Runtime Requirements), which blocks exact replay. |
 | Sessions | The interactive server provides `initialize`, `session.open`, `session.close`, `submit`, and `session.poll`. | No snapshot, rollback, fork, or structured state inspection. Shared mutable captures and native resource handles make a full fork hard. |
 | Spec size | The language specification and runtime requirements total about 12.5k words, roughly 17k tokens. | No `describe` query for a binding. |
-| Value interchange | None. Errors deliberately omit thrown payloads because Slug has no stable value serialization. | Required by error payloads, session inspection, replay records, and cross-VM transfer. |
+| Value interchange | Encoding only, as of 2026-10-13: [Value JSON Form](../reference/value-json.md). | Decoding, needed for replay records and cross-VM transfer. |
 
 ## Work, in dependency order
 
 ### 1. Value JSON form
 
-- [ ] Define a JSON form for every value type, including how native and
-  resource values appear when they cannot be serialized.
-- [ ] Use it for thrown payloads in JSON diagnostics.
+- [x] Define a JSON form for every value type, including how native and
+  resource values appear when they cannot be serialized. See
+  [Value JSON Form](../reference/value-json.md).
+- [x] Use it for thrown payloads in JSON diagnostics and interactive results.
 
 This comes first because items 3–5 all need it.
 

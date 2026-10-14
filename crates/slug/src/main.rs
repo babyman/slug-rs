@@ -8,7 +8,7 @@ use std::{
 };
 
 use serde::Serialize;
-use slug::{DesktopLoader, build_default_host_vm, default_library_root};
+use slug::{DesktopLoader, build_default_host_vm, default_library_root, interactive::value_json};
 use slug_frontend::{ArtifactHost, SourceError, SourceErrorKind};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
@@ -459,6 +459,9 @@ struct JsonDiagnostic {
     message: String,
     location: Option<JsonLocation>,
     frames: Vec<JsonFrame>,
+    /// Present only for `thrown` runtime errors, so `throw nil` stays visible.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thrown: Option<serde_json::Value>,
     cause: Option<Box<JsonDiagnostic>>,
 }
 
@@ -484,6 +487,7 @@ fn eprint_startup_error(category: &str, kind: &str, message: String, json: bool)
             message,
             location: None,
             frames: Vec::new(),
+            thrown: None,
             cause: None,
         });
     } else {
@@ -545,6 +549,7 @@ fn source_diagnostic(category: &str, error: &SourceError) -> JsonDiagnostic {
         message: error.message.clone(),
         location: error.span.as_ref().map(json_location),
         frames: Vec::new(),
+        thrown: None,
         cause: None,
     }
 }
@@ -569,6 +574,7 @@ fn runtime_diagnostic(error: &RuntimeError) -> JsonDiagnostic {
                 location: frame.span.as_ref().map(json_location),
             })
             .collect(),
+        thrown: error.thrown.as_deref().map(value_json),
         cause: error
             .cause
             .as_deref()

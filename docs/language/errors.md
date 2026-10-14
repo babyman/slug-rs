@@ -78,6 +78,7 @@ Version 1 documents use this shape:
 `kind` is null for source errors and identifies runtime or startup subtypes
 when available. `location` is null when no source position is available.
 Runtime `frames` identify Slug call sites; `cause` recursively carries a
-replacement error retained during unwinding. The JSON schema deliberately does
-not serialize arbitrary thrown values or native data because Slug has no stable
-value serialization yet.
+replacement error retained during unwinding. A document whose `kind` is
+`thrown` also has a `thrown` member holding the thrown payload in the
+[value JSON form](../reference/value-json.md); other documents omit it, so
+`throw nil` is reported as `"thrown": null`.

@@ -41,6 +41,7 @@ a specified feature is implemented.
 | [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
+| [value-json.md](reference/value-json.md) | The one JSON encoding of every Slug value. |
 
 ### Engineering
 

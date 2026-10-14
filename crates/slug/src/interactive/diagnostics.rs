@@ -16,7 +16,7 @@ pub struct Diagnostic {
     pub location: Option<DiagnosticLocation>,
     pub frames: Vec<DiagnosticFrame>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thrown: Option<ValueSummary>,
+    pub thrown: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,19 +49,12 @@ pub struct DiagnosticFrame {
     pub location: Option<DiagnosticLocation>,
 }
 
-/// A lossless-for-display summary for values that cannot yet be protocol values.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ValueSummary {
-    pub kind: String,
-    pub display: String,
-}
-
 /// Structured native error details retained by runtime diagnostics.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct NativeDiagnostic {
     pub code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<ValueSummary>,
+    pub data: Option<serde_json::Value>,
 }
 
 impl Diagnostic {
@@ -135,10 +128,10 @@ impl Diagnostic {
                     location: frame.span.as_ref().map(location),
                 })
                 .collect(),
-            thrown: error.thrown.as_deref().map(value_summary),
+            thrown: error.thrown.as_deref().map(value_json),
             native: error.native.as_deref().map(|native| NativeDiagnostic {
                 code: native.code.clone(),
-                data: native.data.as_ref().map(value_summary),
+                data: native.data.as_ref().map(value_json),
             }),
             cause: error
                 .cause
@@ -153,37 +146,6 @@ fn location(span: &SourceSpan) -> DiagnosticLocation {
         path: span.path.to_string(),
         line: span.line,
         column: span.column,
-    }
-}
-
-fn value_summary(value: &Value) -> ValueSummary {
-    ValueSummary {
-        kind: value_kind(value).into(),
-        display: value.to_string(),
-    }
-}
-
-fn value_kind(value: &Value) -> &'static str {
-    match value {
-        Value::Uninitialized | Value::Binding { .. } => "binding",
-        Value::Nil => "nil",
-        Value::Bool(_) => "bool",
-        Value::Int(_) | Value::Float(_) => "num",
-        Value::Str(_) => "str",
-        Value::Bytes(_) => "bytes",
-        Value::List(_) => "list",
-        Value::Map(_) => "map",
-        Value::StructSchema(_) => "struct_schema",
-        Value::Struct(_) => "struct",
-        Value::Enum(_) => "enum",
-        Value::Channel(_) => "chan",
-        Value::Closure(_) | Value::Native(_) | Value::DeclaredNative { .. } | Value::Builtin(_) => {
-            "fn"
-        }
-        #[cfg(feature = "concurrency")]
-        Value::Task(_) => "task",
-        Value::NativeResource(_) => "native_resource",
-        Value::Overloads(_) => "overloads",
     }
 }
 
@@ -202,4 +164,14 @@ fn runtime_kind(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
     }
+}
+
+/// Projects a value into the value JSON form (`docs/reference/value-json.md`).
+///
+/// # Panics
+///
+/// Never in practice: the encoder emits valid JSON within serde's nesting limit.
+#[must_use]
+pub fn value_json(value: &Value) -> serde_json::Value {
+    serde_json::from_str(&value.to_json()).expect("the value JSON form is valid JSON")
 }
