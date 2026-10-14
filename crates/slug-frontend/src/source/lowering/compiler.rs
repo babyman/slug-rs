@@ -974,7 +974,10 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
-                state.emit(Op::EnterScope, &expression.span);
+                let runtime_scope = values.iter().any(contains_scoped_defer);
+                if runtime_scope {
+                    state.emit(Op::EnterScope, &expression.span);
+                }
                 for (index, value) in values.iter().enumerate() {
                     self.expression(state, value)?;
                     if index + 1 < values.len() {
@@ -984,7 +987,9 @@ impl Compiler {
                 if values.is_empty() {
                     state.emit(Op::Nil, &expression.span);
                 }
-                state.emit(Op::LeaveScope, &expression.span);
+                if runtime_scope {
+                    state.emit(Op::LeaveScope, &expression.span);
+                }
                 state.leave_scope();
             }
             ExprKind::If {
@@ -1415,7 +1420,10 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
-                state.emit(Op::EnterScope, &expression.span);
+                let runtime_scope = values.iter().any(contains_scoped_defer);
+                if runtime_scope {
+                    state.emit(Op::EnterScope, &expression.span);
+                }
                 for (index, value) in values.iter().enumerate() {
                     if index + 1 == values.len() {
                         self.tail_expression(state, value)?;
@@ -1427,7 +1435,9 @@ impl Compiler {
                 if values.is_empty() {
                     state.emit(Op::Nil, &expression.span);
                 }
-                state.emit(Op::LeaveScope, &expression.span);
+                if runtime_scope {
+                    state.emit(Op::LeaveScope, &expression.span);
+                }
                 state.leave_scope();
             }
             ExprKind::If {
@@ -1868,5 +1878,148 @@ impl<'a> ConstantMapKey<'a> {
             Value::Bytes(value) => Some(Self::Bytes(value)),
             _ => None,
         }
+    }
+}
+
+/// Whether `expression` registers a `defer` in the block that encloses it.
+///
+/// A block's runtime scope exists only to collect deferred work, and a
+/// `defer` belongs to its innermost enclosing block, so a block without one
+/// needs no `EnterScope`/`LeaveScope`. Nested blocks decide for themselves
+/// and functions run in their own frames; every other expression is searched.
+#[allow(clippy::too_many_lines, reason = "one arm per expression kind")]
+fn contains_scoped_defer(expression: &Expr) -> bool {
+    let arguments = |arguments: &[CallArgument]| {
+        arguments.iter().any(|argument| match argument {
+            CallArgument::Positional(value)
+            | CallArgument::Named { value, .. }
+            | CallArgument::Spread(value) => contains_scoped_defer(value),
+        })
+    };
+    match &expression.kind {
+        ExprKind::Defer { .. } => true,
+        // A nested block decides for itself; a function runs in its own frame.
+        ExprKind::Block(_)
+        | ExprKind::Function { .. }
+        | ExprKind::Value(_)
+        | ExprKind::Interpolate(_)
+        | ExprKind::Documentation(_)
+        | ExprKind::NotImplemented
+        | ExprKind::Name(_)
+        | ExprKind::Foreign { .. }
+        | ExprKind::Resource { .. }
+        | ExprKind::Enum { .. }
+        | ExprKind::TypeAlias { .. } => false,
+        ExprKind::Declare {
+            pattern,
+            tags,
+            value,
+            ..
+        } => {
+            pattern_contains_scoped_defer(pattern)
+                || tags
+                    .iter()
+                    .any(|tag| tag.arguments.iter().any(contains_scoped_defer))
+                || contains_scoped_defer(value)
+        }
+        ExprKind::Assign { value, .. }
+        | ExprKind::Return { value }
+        | ExprKind::Throw { value }
+        | ExprKind::Spawn(value)
+        | ExprKind::Prefix { value, .. } => contains_scoped_defer(value),
+        ExprKind::Recur(values) => arguments(values),
+        ExprKind::Nursery { limit, body } => {
+            limit.as_deref().is_some_and(contains_scoped_defer) || contains_scoped_defer(body)
+        }
+        ExprKind::Select(cases) => cases.iter().any(|case| {
+            let operand = match &case.kind {
+                SelectCaseKind::Receive(value)
+                | SelectCaseKind::After(value)
+                | SelectCaseKind::Await(value) => contains_scoped_defer(value),
+                SelectCaseKind::Send { channel, value } => {
+                    contains_scoped_defer(channel) || contains_scoped_defer(value)
+                }
+                SelectCaseKind::Default => false,
+            };
+            operand || case.handler.as_ref().is_some_and(contains_scoped_defer)
+        }),
+        ExprKind::Match { subject, cases } => {
+            subject.as_deref().is_some_and(contains_scoped_defer)
+                || cases.iter().any(|case| {
+                    case.patterns
+                        .iter()
+                        .any(|pattern| pattern_contains_scoped_defer(&pattern.pattern))
+                        || case.guard.as_ref().is_some_and(contains_scoped_defer)
+                        || contains_scoped_defer(&case.value)
+                })
+        }
+        ExprKind::Binary { left, right, .. } => {
+            contains_scoped_defer(left) || contains_scoped_defer(right)
+        }
+        ExprKind::Call {
+            callee,
+            arguments: values,
+        } => contains_scoped_defer(callee) || arguments(values),
+        ExprKind::TypeApply { callee, .. } => contains_scoped_defer(callee),
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            contains_scoped_defer(condition)
+                || contains_scoped_defer(then_branch)
+                || else_branch.as_deref().is_some_and(contains_scoped_defer)
+        }
+        ExprKind::List(values) => values.iter().any(|value| match value {
+            ListElement::Value(value) | ListElement::Spread(value) => contains_scoped_defer(value),
+        }),
+        ExprKind::Map(entries) => entries
+            .iter()
+            .any(|(key, value)| contains_scoped_defer(key) || contains_scoped_defer(value)),
+        ExprKind::StructSchema(fields) => fields
+            .iter()
+            .filter_map(|field| field.default.as_ref())
+            .any(contains_scoped_defer),
+        ExprKind::StructInit { schema, fields } => {
+            contains_scoped_defer(schema)
+                || fields.iter().any(|(_, value)| contains_scoped_defer(value))
+        }
+        ExprKind::StructCopy { value, fields } => {
+            contains_scoped_defer(value)
+                || fields
+                    .iter()
+                    .any(|(_, replacement)| contains_scoped_defer(replacement))
+        }
+        ExprKind::Index { collection, index } => {
+            contains_scoped_defer(collection) || contains_scoped_defer(index)
+        }
+        ExprKind::Slice {
+            collection,
+            start,
+            end,
+            step,
+        } => {
+            contains_scoped_defer(collection)
+                || [start, end, step]
+                    .into_iter()
+                    .any(|bound| bound.as_deref().is_some_and(contains_scoped_defer))
+        }
+    }
+}
+
+fn pattern_contains_scoped_defer(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Literal(_)
+        | Pattern::Wildcard
+        | Pattern::Binding(_)
+        | Pattern::Pinned(_)
+        | Pattern::MapAll
+        | Pattern::EnumCase { .. } => false,
+        Pattern::At { pattern, .. } => pattern_contains_scoped_defer(pattern),
+        Pattern::List { items, .. } => items.iter().any(pattern_contains_scoped_defer),
+        Pattern::Map { entries, .. } => entries.iter().any(|(key, pattern)| {
+            matches!(key, MapPatternKey::Computed(key) if contains_scoped_defer(key))
+                || pattern_contains_scoped_defer(pattern)
+        }),
     }
 }

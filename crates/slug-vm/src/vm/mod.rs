@@ -1934,6 +1934,7 @@ impl Vm {
     }
 
     fn execute_raw(&mut self) -> VmResult<ExecutionOutcome> {
+        let mut program: Option<Rc<Program>> = None;
         loop {
             if self.suspension.is_some() {
                 return Ok(ExecutionOutcome::Suspended);
@@ -1942,8 +1943,14 @@ impl Vm {
             // relative to instructions, so the active code is looked up only
             // when `frame_epoch` says it may have changed.
             let epoch = self.frame_epoch;
-            let program = self.active_program()?;
-            let chunk = self.current_chunk(&program)?;
+            // Most calls and returns stay within one program, so keep its
+            // reference rather than cloning it again.
+            match (&program, self.frames.last()) {
+                (Some(current), Some(frame)) if Rc::ptr_eq(current, &frame.program) => {}
+                _ => program = Some(self.active_program()?),
+            }
+            let program = program.as_ref().expect("active program was loaded");
+            let chunk = self.current_chunk(program)?;
             loop {
                 let frame = self.frames.last_mut().expect("active frame was checked");
                 let ip = frame.ip;
@@ -1957,7 +1964,7 @@ impl Vm {
                 }
                 self.active_span = instruction.span;
                 if let InstructionOutcome::Settled(value) =
-                    self.execute_instruction(&program, instruction)?
+                    self.execute_instruction(program, instruction)?
                 {
                     return Ok(ExecutionOutcome::Settled(Ok(value)));
                 }
@@ -2943,7 +2950,11 @@ impl Vm {
     }
 
     pub(in crate::vm) fn push_frame(&mut self, frame: Frame) {
-        self.globals = frame.globals.clone();
+        // Calls rarely cross global environments; skip the reference-count
+        // round trip when they do not.
+        if !Rc::ptr_eq(&self.globals, &frame.globals) {
+            self.globals = frame.globals.clone();
+        }
         self.frames.push(frame);
         self.frames_changed();
     }
@@ -2951,7 +2962,9 @@ impl Vm {
     pub(in crate::vm) fn pop_frame(&mut self) -> Option<Frame> {
         let frame = self.frames.pop();
         self.frames_changed();
-        if let Some(active) = self.frames.last() {
+        if let Some(active) = self.frames.last()
+            && !Rc::ptr_eq(&self.globals, &active.globals)
+        {
             self.globals = active.globals.clone();
         }
         frame
@@ -3839,6 +3852,14 @@ impl Vm {
         let Some(Value::Closure(closure)) = callee else {
             return Ok(false);
         };
+        // Arguments move from the stack into the callee's locals. A live
+        // module binding must be resolved first, which the general path does.
+        if self.stack[base + 1..]
+            .iter()
+            .any(|value| matches!(value, Value::Binding { .. }))
+        {
+            return Ok(false);
+        }
         let frame_program = closure
             .program
             .clone()
@@ -3866,12 +3887,8 @@ impl Vm {
             chunk.locals
         };
         let (mut locals, reused) = self.take_frame_locals(Vec::new(), local_count);
-        for (local, value) in locals.iter_mut().take(count).zip(&self.stack[base + 1..]) {
-            *local = LocalSlot::Direct(
-                value
-                    .resolve()
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?,
-            );
+        for (local, value) in locals.iter_mut().zip(self.stack.drain(base + 1..)) {
+            *local = LocalSlot::Direct(value);
         }
         self.record_frame_locals(locals.capacity(), count, reused);
         self.record_exact_positional_stack_local_initialization(count);

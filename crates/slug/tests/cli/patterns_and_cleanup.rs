@@ -28,6 +28,41 @@ fn returns_early_from_nested_function_control_flow() {
 }
 
 #[test]
+fn defers_run_when_their_innermost_block_exits() {
+    // Blocks without a `defer` open no runtime scope. Each `defer` must still
+    // run when its own block exits, not when an enclosing one does.
+    let path = fixture_path("defer-block-scopes");
+    fs::write(
+        &path,
+        "val run = fn(flag) {\n\
+           defer { println(\"function\") }\n\
+           if (flag) { println(\"no defer here\") }\n\
+           val inner = {\n\
+             if (flag) { defer { println(\"if block\") }; println(\"in if\") }\n\
+             match flag { true => { defer { println(\"arm block\") }; println(\"in arm\") } }\n\
+             println(\"end of inner\")\n\
+             1\n\
+           }\n\
+           println(\"end of function\", inner)\n\
+         }\n\
+         run(true)\n",
+    )
+    .expect("write defer scope source");
+    let output = slug().arg(&path).output().expect("run defer scope source");
+    fs::remove_file(path).expect("remove defer scope source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "no defer here\nin if\nif block\nin arm\narm block\nend of inner\nend of function 1\nfunction\n"
+    );
+}
+
+#[test]
 fn reuses_function_frames_for_tail_recursion() {
     let path = fixture_path("recur");
     fs::write(

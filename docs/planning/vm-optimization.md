@@ -1472,3 +1472,35 @@ Every other workload is within its spread: tuned geomean 0.84x, hold-out
 the second copy, and the in-place append took it the rest of the way.
 `string-building` is now 0.57x CPython, and 20,000 to 160,000 appends scale
 linearly.
+
+#### Measurement record: call path and scope elision (2026-10-13)
+
+A time profile of `fib` put about 29% of its samples in call and return
+bookkeeping. Four changes address it:
+
+- An exact positional call moves its arguments from the operand stack into
+  the callee's locals instead of cloning them. Live module bindings are the
+  exception: they still need resolution, so those calls take the general
+  path. Besides saving a clone and a drop per argument, a collection passed
+  as an argument is now the callee's sole copy, so the callee can update it
+  in place.
+- `push_frame` and `pop_frame` replace the VM's global-environment
+  reference only when the environment changes.
+- The dispatch loop keeps the active program's reference across calls and
+  returns within one program instead of cloning it on every frame change.
+- The compiler emits `EnterScope`/`LeaveScope` only for a block that
+  directly contains a `defer`. A block's runtime scope exists only to collect
+  deferred work, and a `defer` belongs to its innermost enclosing block.
+  `fib`'s recursive path falls from 19 instructions to 17.
+
+Seven interleaved rounds against `ced94d3`: `fib` 0.93x, `function-call`
+0.95x, `defer-errors` 0.97x, and the hold-out `graph-search` 0.66x.
+`graph-search` passes its visited map to a helper that extends it, which
+previously copied the map. Every other workload is within its spread: tuned
+geomean 0.98x, hold-out 0.87x. `make check` passed.
+
+What remains in `fib` is spread across dispatch, operand-stack pops, and
+out-of-line `Value` clones and drops, each a few percent. Further gains
+need fewer instructions per operation, such as a jump that pops its
+condition, or cheaper ones, such as the contiguous local-slot arena from item
+7.

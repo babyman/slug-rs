@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Calls move their arguments into the callee instead of copying them, skip
+  redundant environment bookkeeping, and blocks without `defer` no longer
+  open a runtime scope. Recursive code runs about 7% faster. A collection
+  passed to a function that extends it is no longer copied: a breadth-first
+  search that grows its visited map in a helper runs 1.5x faster.
+
 - Building a string with `+` in a loop is no longer quadratic: when nothing
   else holds the left-hand string, `+` appends to it in place. A
   20,000-line report builds 9.5x faster. `Value::Str` holds an opaque string
