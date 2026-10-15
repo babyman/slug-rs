@@ -57,7 +57,10 @@ distinctive one for reviewers.
 - [x] Assign stable codes to parse, semantic, runtime, and startup errors. See
   [Diagnostic Codes](../reference/diagnostic-codes.md).
 - [ ] Split the shared `module` code into module resolution failure classes.
-- [ ] Replace point locations with start and end spans.
+- [x] Give parse and semantic errors start and end ranges.
+- [ ] Give runtime errors and stack frames ranges; this changes `.cslug` span
+  tables.
+- [ ] Report an unknown type annotation at the annotation, not the value.
 - [ ] Add expected-versus-actual fields where the checker knows both.
 - [ ] Add machine-applicable edits where a fix is unambiguous.
 

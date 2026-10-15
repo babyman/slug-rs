@@ -11,7 +11,7 @@ use slug_vm::{
 };
 
 use super::{
-    SourceError, SourceErrorCode,
+    SourceError, SourceErrorCode, SourcePosition,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ForeignSignature, ListElement,
         MapPatternKey, MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind,
@@ -293,8 +293,17 @@ impl Compiler {
         Ok(entrypoint)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
+        self.expression_inner(state, expression)
+            .map_err(|error| error.claimed_by(expression))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn expression_inner(
+        &mut self,
+        state: &mut State,
+        expression: &Expr,
+    ) -> Result<(), SourceError> {
         match &expression.kind {
             ExprKind::Value(value) => {
                 let constant = state.constant(value.clone());
@@ -312,6 +321,7 @@ impl Compiler {
                             self.expression(
                                 state,
                                 &Expr {
+                                    end: expression.end,
                                     kind: ExprKind::Name(name.clone()),
                                     span: expression.span.clone(),
                                 },
@@ -459,6 +469,7 @@ impl Compiler {
                             format!("unknown name `{name}`"),
                             expression.span.clone(),
                         )
+                        .with_extent(expression)
                     })?;
                 let mutable = match binding {
                     Binding::Global { mutable }
@@ -471,7 +482,8 @@ impl Compiler {
                         SourceErrorCode::ImmutableAssignment,
                         format!("cannot assign to immutable binding `{name}`"),
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 self.expression(state, value)?;
                 // Stores consume their operand, while assignment expressions evaluate to it.
@@ -495,7 +507,8 @@ impl Compiler {
                         SourceErrorCode::InvalidControlFlow,
                         "return is only valid inside a function",
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 self.tail_expression(state, value)?;
                 state.emit(Op::Return, &expression.span);
@@ -510,6 +523,7 @@ impl Compiler {
                 error_name,
             } => {
                 let deferred = Expr {
+                    end: expression.end,
                     kind: ExprKind::Function {
                         type_parameters: Vec::new(),
                         parameters: error_name
@@ -539,16 +553,19 @@ impl Compiler {
                         SourceErrorCode::InvalidControlFlow,
                         "recur is only valid inside a function",
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 return Err(SourceError::semantic(
                     SourceErrorCode::InvalidControlFlow,
                     "recur is only valid in tail position",
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             ExprKind::Spawn(body) => {
                 let function = Expr {
+                    end: expression.end,
                     kind: ExprKind::Function {
                         type_parameters: Vec::new(),
                         parameters: Vec::new(),
@@ -612,6 +629,7 @@ impl Compiler {
                     body.as_ref().clone()
                 } else {
                     Expr {
+                        end: expression.end,
                         kind: ExprKind::Function {
                             type_parameters: Vec::new(),
                             parameters: Vec::new(),
@@ -636,6 +654,7 @@ impl Compiler {
                         "match requires a subject or pipeline input",
                         expression.span.clone(),
                     )
+                    .with_extent(expression)
                 })?;
                 self.compile_match(state, subject, cases, false)?;
             }
@@ -660,7 +679,8 @@ impl Compiler {
                                 SourceErrorCode::InvalidMatch,
                                 "pipeline match must omit its subject",
                                 right.span.clone(),
-                            ));
+                            )
+                            .with_extent(right));
                         } else {
                             self.expression(state, left)?;
                             self.compile_pipeline_call(state, right)?;
@@ -897,7 +917,8 @@ impl Compiler {
                             SourceErrorCode::RepeatedMapKey,
                             format!("map literal repeats key `{constant}`"),
                             key.span.clone(),
-                        ));
+                        )
+                        .with_extent(key));
                     }
                     self.expression(state, key)?;
                     self.expression(state, value)?;
@@ -912,7 +933,8 @@ impl Compiler {
                             SourceErrorCode::DuplicateName,
                             format!("duplicate struct field '{}'", field.name),
                             expression.span.clone(),
-                        ));
+                        )
+                        .with_extent(expression));
                     }
                     if let Some(default) = &field.default {
                         self.expression(state, default)?;
@@ -1120,6 +1142,7 @@ impl Compiler {
                     "missing resolved match constraints",
                     case.span.clone(),
                 )
+                .with_end(case.end)
             })?;
             let (pattern, names, operands) =
                 lower_case_patterns(&case.patterns, constraints, &case.span)?;
@@ -1382,6 +1405,7 @@ impl Compiler {
         state.patch(end);
         Ok(())
     }
+    #[allow(clippy::too_many_lines)]
     fn tail_expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
             ExprKind::Recur(arguments) => {
@@ -1390,7 +1414,8 @@ impl Compiler {
                         SourceErrorCode::InvalidControlFlow,
                         "recur is only valid inside a function",
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 let positional = arguments
                     .iter()
@@ -1476,6 +1501,7 @@ impl Compiler {
                         "match requires a subject or pipeline input",
                         expression.span.clone(),
                     )
+                    .with_extent(expression)
                 })?;
                 self.compile_match(state, subject, cases, true)?;
             }
@@ -1593,6 +1619,7 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
         Pattern::MapAll => unreachable!("{{*}} declarations do not lower to match bytecode"),
         Pattern::EnumCase { path, case } => {
             let mut value = Expr {
+                end: SourcePosition { line: 1, column: 1 },
                 kind: ExprKind::Name(path.split('.').next().expect("enum path has a name").into()),
                 span: SourceSpan::new("<internal>", 1, 1),
             };
@@ -1602,9 +1629,11 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
                 .chain(std::iter::once(case.as_str()))
             {
                 value = Expr {
+                    end: SourcePosition { line: 1, column: 1 },
                     kind: ExprKind::Index {
                         collection: Box::new(value),
                         index: Box::new(Expr {
+                            end: SourcePosition { line: 1, column: 1 },
                             kind: ExprKind::Value(Value::string(member)),
                             span: SourceSpan::new("<internal>", 1, 1),
                         }),

@@ -1,9 +1,209 @@
 use slug_vm::{DeferMode, SourceSpan, Value};
 
+use super::SourcePosition;
+
 #[derive(Clone, Debug)]
 pub(super) struct Expr {
     pub(super) kind: ExprKind,
     pub(super) span: SourceSpan,
+    /// Exclusive end of the expression's source.
+    pub(super) end: SourcePosition,
+}
+
+impl Expr {
+    /// The leftmost source position covered by this expression, including
+    /// nested expressions that begin before its own focus span, such as the
+    /// left operand of a binary operator.
+    pub(super) fn extent_start(&self) -> SourcePosition {
+        let mut start = SourcePosition {
+            line: self.span.line,
+            column: self.span.column,
+        };
+        self.for_each_child(|child| {
+            let child = child.extent_start();
+            if (child.line, child.column) < (start.line, start.column) {
+                start = child;
+            }
+        });
+        start
+    }
+
+    /// Calls `visit` with each expression directly nested in this one.
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn for_each_child<'a>(&'a self, mut visit: impl FnMut(&'a Expr)) {
+        match &self.kind {
+            ExprKind::Call { callee, arguments } => {
+                visit(callee);
+                for argument in arguments {
+                    let value = match argument {
+                        CallArgument::Positional(value)
+                        | CallArgument::Named { value, .. }
+                        | CallArgument::Spread(value) => value,
+                    };
+                    visit(value);
+                }
+            }
+            ExprKind::Declare { value, tags, .. } => {
+                for tag in tags {
+                    for argument in &tag.arguments {
+                        visit(argument);
+                    }
+                }
+                visit(value);
+            }
+            ExprKind::Foreign {
+                signature, tags, ..
+            } => {
+                for tag in tags {
+                    for argument in &tag.arguments {
+                        visit(argument);
+                    }
+                }
+                for parameter in &signature.parameters {
+                    if let Some(default) = &parameter.default {
+                        visit(default);
+                    }
+                }
+            }
+            ExprKind::Function {
+                parameters, body, ..
+            } => {
+                for parameter in parameters {
+                    if let Some(default) = &parameter.default {
+                        visit(default);
+                    }
+                }
+                visit(body);
+            }
+            ExprKind::Assign { value, .. }
+            | ExprKind::Return { value }
+            | ExprKind::Throw { value }
+            | ExprKind::Defer { value, .. }
+            | ExprKind::Spawn(value)
+            | ExprKind::Prefix { value, .. }
+            | ExprKind::TypeApply { callee: value, .. } => visit(value),
+            ExprKind::Recur(arguments) => {
+                for argument in arguments {
+                    let value = match argument {
+                        CallArgument::Positional(value)
+                        | CallArgument::Named { value, .. }
+                        | CallArgument::Spread(value) => value,
+                    };
+                    visit(value);
+                }
+            }
+            ExprKind::Nursery { limit, body } => {
+                if let Some(limit) = limit {
+                    visit(limit);
+                }
+                visit(body);
+            }
+            ExprKind::Select(cases) => {
+                for case in cases {
+                    match &case.kind {
+                        SelectCaseKind::Receive(value)
+                        | SelectCaseKind::After(value)
+                        | SelectCaseKind::Await(value) => visit(value),
+                        SelectCaseKind::Send { channel, value } => {
+                            visit(channel);
+                            visit(value);
+                        }
+                        SelectCaseKind::Default => {}
+                    }
+                    if let Some(handler) = &case.handler {
+                        visit(handler);
+                    }
+                }
+            }
+            ExprKind::Match { subject, cases } => {
+                if let Some(subject) = subject {
+                    visit(subject);
+                }
+                for case in cases {
+                    if let Some(guard) = &case.guard {
+                        visit(guard);
+                    }
+                    visit(&case.value);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                visit(left);
+                visit(right);
+            }
+            ExprKind::Block(values) => {
+                for value in values {
+                    visit(value);
+                }
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                visit(condition);
+                visit(then_branch);
+                if let Some(else_branch) = else_branch {
+                    visit(else_branch);
+                }
+            }
+            ExprKind::List(values) => {
+                for value in values {
+                    let value = match value {
+                        ListElement::Value(value) | ListElement::Spread(value) => value,
+                    };
+                    visit(value);
+                }
+            }
+            ExprKind::Map(entries) => {
+                for (key, value) in entries {
+                    visit(key);
+                    visit(value);
+                }
+            }
+            ExprKind::StructSchema(fields) => {
+                for field in fields {
+                    if let Some(default) = &field.default {
+                        visit(default);
+                    }
+                }
+            }
+            ExprKind::StructInit { schema, fields } => {
+                visit(schema);
+                for (_, value) in fields {
+                    visit(value);
+                }
+            }
+            ExprKind::StructCopy { value, fields } => {
+                visit(value);
+                for (_, replacement) in fields {
+                    visit(replacement);
+                }
+            }
+            ExprKind::Index { collection, index } => {
+                visit(collection);
+                visit(index);
+            }
+            ExprKind::Slice {
+                collection,
+                start,
+                end,
+                step,
+            } => {
+                visit(collection);
+                for bound in [start, end, step].into_iter().flatten() {
+                    visit(bound);
+                }
+            }
+            ExprKind::Resource { .. }
+            | ExprKind::Enum { .. }
+            | ExprKind::TypeAlias { .. }
+            | ExprKind::Value(_)
+            | ExprKind::Interpolate(_)
+            | ExprKind::Documentation(_)
+            | ExprKind::NotImplemented
+            | ExprKind::Name(_) => {}
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub(super) enum ExprKind {
@@ -194,6 +394,8 @@ pub(super) struct MatchCase {
     pub(super) guard: Option<Expr>,
     pub(super) value: Expr,
     pub(super) span: SourceSpan,
+    /// Exclusive end of the case body.
+    pub(super) end: SourcePosition,
 }
 #[derive(Clone, Debug)]
 pub(super) struct CasePattern {
@@ -270,6 +472,8 @@ pub(super) enum Prefix {
 pub(super) struct Token {
     pub(super) kind: TokenKind,
     pub(super) span: SourceSpan,
+    /// Exclusive end of the token's source.
+    pub(super) end: SourcePosition,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum TokenKind {

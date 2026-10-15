@@ -8,7 +8,8 @@ mod protocol;
 mod server;
 
 pub use diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation, value_json,
+    Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation, DiagnosticPosition,
+    DiagnosticRange, value_json,
 };
 pub use protocol::{Event, EventOrigin, IncomingMessage, PROTOCOL_VERSION, Request, Response};
 pub use server::{OutputError, OutputStream, Server};

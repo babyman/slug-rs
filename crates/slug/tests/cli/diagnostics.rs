@@ -495,6 +495,14 @@ fn json_mode_reports_stable_codes_for_every_category() {
         let diagnostic = json_diagnostic(&output.stderr);
         assert_eq!(diagnostic["category"], category, "{name}: {diagnostic}");
         assert_eq!(diagnostic["code"], code, "{name}: {diagnostic}");
+        if category == "runtime" {
+            assert!(diagnostic["range"].is_null(), "{name}: {diagnostic}");
+        } else {
+            assert!(
+                diagnostic["range"]["end"]["column"].is_u64(),
+                "{name}: {diagnostic}"
+            );
+        }
     }
 
     let output = slug()
@@ -505,6 +513,28 @@ fn json_mode_reports_stable_codes_for_every_category() {
     let diagnostic = json_diagnostic(&output.stderr);
     assert_eq!(diagnostic["category"], "io");
     assert_eq!(diagnostic["code"], "entry_read");
+}
+
+#[test]
+fn json_mode_reports_the_range_of_the_offending_expression() {
+    let path = fixture_path("json-range");
+    fs::write(&path, "val x = 1 + \"a\"\n").expect("write range source");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&path)
+        .output()
+        .expect("run range source");
+    fs::remove_file(&path).expect("remove range source");
+
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(diagnostic["location"]["column"], 11);
+    assert_eq!(
+        diagnostic["range"],
+        serde_json::json!({
+            "start": { "line": 1, "column": 9 },
+            "end": { "line": 1, "column": 16 },
+        })
+    );
 }
 
 #[test]

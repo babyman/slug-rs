@@ -172,7 +172,8 @@ impl ParameterConstraints {
                 requirement.value_type, value_type
             ),
             expression.span.clone(),
-        ))
+        )
+        .with_extent(expression))
     }
 
     fn include_nil_partition(&mut self, name: &str) {
@@ -1298,195 +1299,26 @@ impl CheckedExpression {
 
 #[allow(clippy::too_many_lines)]
 fn collect_imports(expression: &Expr, scan: &mut ImportScan) {
-    match &expression.kind {
-        ExprKind::Call { callee, arguments } => {
-            if matches!(&callee.kind, ExprKind::Name(name) if name == "import") {
-                let mut dynamic = false;
-                for argument in arguments {
-                    if let CallArgument::Positional(Expr {
-                        kind: ExprKind::Value(Value::Str(name)),
-                        ..
-                    }) = argument
-                    {
-                        scan.names.push(name.to_string());
-                    } else {
-                        dynamic = true;
-                    }
-                }
-                if dynamic {
-                    scan.dynamic.push(expression.span.clone());
-                }
-            }
-            collect_imports(callee, scan);
-            for argument in arguments {
-                let value = match argument {
-                    CallArgument::Positional(value)
-                    | CallArgument::Named { value, .. }
-                    | CallArgument::Spread(value) => value,
-                };
-                collect_imports(value, scan);
+    if let ExprKind::Call { callee, arguments } = &expression.kind
+        && matches!(&callee.kind, ExprKind::Name(name) if name == "import")
+    {
+        let mut dynamic = false;
+        for argument in arguments {
+            if let CallArgument::Positional(Expr {
+                kind: ExprKind::Value(Value::Str(name)),
+                ..
+            }) = argument
+            {
+                scan.names.push(name.to_string());
+            } else {
+                dynamic = true;
             }
         }
-        ExprKind::Declare { value, tags, .. } => {
-            for tag in tags {
-                for argument in &tag.arguments {
-                    collect_imports(argument, scan);
-                }
-            }
-            collect_imports(value, scan);
+        if dynamic {
+            scan.dynamic.push(expression.span.clone());
         }
-        ExprKind::Foreign {
-            signature, tags, ..
-        } => {
-            for tag in tags {
-                for argument in &tag.arguments {
-                    collect_imports(argument, scan);
-                }
-            }
-            for parameter in &signature.parameters {
-                if let Some(default) = &parameter.default {
-                    collect_imports(default, scan);
-                }
-            }
-        }
-        ExprKind::Function {
-            parameters, body, ..
-        } => {
-            for parameter in parameters {
-                if let Some(default) = &parameter.default {
-                    collect_imports(default, scan);
-                }
-            }
-            collect_imports(body, scan);
-        }
-        ExprKind::Assign { value, .. }
-        | ExprKind::Return { value }
-        | ExprKind::Throw { value }
-        | ExprKind::Defer { value, .. }
-        | ExprKind::Spawn(value)
-        | ExprKind::Prefix { value, .. }
-        | ExprKind::TypeApply { callee: value, .. } => collect_imports(value, scan),
-        ExprKind::Recur(arguments) => {
-            for argument in arguments {
-                let value = match argument {
-                    CallArgument::Positional(value)
-                    | CallArgument::Named { value, .. }
-                    | CallArgument::Spread(value) => value,
-                };
-                collect_imports(value, scan);
-            }
-        }
-        ExprKind::Nursery { limit, body } => {
-            if let Some(limit) = limit {
-                collect_imports(limit, scan);
-            }
-            collect_imports(body, scan);
-        }
-        ExprKind::Select(cases) => {
-            for case in cases {
-                match &case.kind {
-                    SelectCaseKind::Receive(value)
-                    | SelectCaseKind::After(value)
-                    | SelectCaseKind::Await(value) => collect_imports(value, scan),
-                    SelectCaseKind::Send { channel, value } => {
-                        collect_imports(channel, scan);
-                        collect_imports(value, scan);
-                    }
-                    SelectCaseKind::Default => {}
-                }
-                if let Some(handler) = &case.handler {
-                    collect_imports(handler, scan);
-                }
-            }
-        }
-        ExprKind::Match { subject, cases } => {
-            if let Some(subject) = subject {
-                collect_imports(subject, scan);
-            }
-            for case in cases {
-                if let Some(guard) = &case.guard {
-                    collect_imports(guard, scan);
-                }
-                collect_imports(&case.value, scan);
-            }
-        }
-        ExprKind::Binary { left, right, .. } => {
-            collect_imports(left, scan);
-            collect_imports(right, scan);
-        }
-        ExprKind::Block(values) => {
-            for value in values {
-                collect_imports(value, scan);
-            }
-        }
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_imports(condition, scan);
-            collect_imports(then_branch, scan);
-            if let Some(else_branch) = else_branch {
-                collect_imports(else_branch, scan);
-            }
-        }
-        ExprKind::List(values) => {
-            for value in values {
-                let value = match value {
-                    ListElement::Value(value) | ListElement::Spread(value) => value,
-                };
-                collect_imports(value, scan);
-            }
-        }
-        ExprKind::Map(entries) => {
-            for (key, value) in entries {
-                collect_imports(key, scan);
-                collect_imports(value, scan);
-            }
-        }
-        ExprKind::StructSchema(fields) => {
-            for field in fields {
-                if let Some(default) = &field.default {
-                    collect_imports(default, scan);
-                }
-            }
-        }
-        ExprKind::StructInit { schema, fields } => {
-            collect_imports(schema, scan);
-            for (_, value) in fields {
-                collect_imports(value, scan);
-            }
-        }
-        ExprKind::StructCopy { value, fields } => {
-            collect_imports(value, scan);
-            for (_, replacement) in fields {
-                collect_imports(replacement, scan);
-            }
-        }
-        ExprKind::Index { collection, index } => {
-            collect_imports(collection, scan);
-            collect_imports(index, scan);
-        }
-        ExprKind::Slice {
-            collection,
-            start,
-            end,
-            step,
-        } => {
-            collect_imports(collection, scan);
-            for bound in [start, end, step].into_iter().flatten() {
-                collect_imports(bound, scan);
-            }
-        }
-        ExprKind::Resource { .. }
-        | ExprKind::Enum { .. }
-        | ExprKind::TypeAlias { .. }
-        | ExprKind::Value(_)
-        | ExprKind::Interpolate(_)
-        | ExprKind::Documentation(_)
-        | ExprKind::NotImplemented
-        | ExprKind::Name(_) => {}
     }
+    expression.for_each_child(|child| collect_imports(child, scan));
 }
 
 fn analyze_expressions(
@@ -1510,7 +1342,8 @@ fn analyze_expressions(
                     SourceErrorCode::DuplicateName,
                     format!("duplicate resource type `{name}`"),
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             let identity = ResourceIdentity::declared(expression.span.path.as_ref(), name.clone());
             environment.declare_type(
@@ -1527,7 +1360,8 @@ fn analyze_expressions(
                     SourceErrorCode::DuplicateName,
                     format!("duplicate type `{name}`"),
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             let identity = super::semantic::EnumIdentity::declared(
                 expression.span.path.as_ref(),
@@ -1567,7 +1401,8 @@ fn analyze_expressions(
                 SourceErrorCode::DuplicateName,
                 format!("enum type `{name}` conflicts with a value declaration"),
                 expression.span.clone(),
-            ));
+            )
+            .with_extent(expression));
         }
     }
     for expression in expressions {
@@ -1599,7 +1434,8 @@ fn resolve_type_aliases(
                 SourceErrorCode::DuplicateName,
                 format!("duplicate type `{name}`"),
                 expression.span.clone(),
-            ));
+            )
+            .with_extent(expression));
         }
     }
     for (name, (_, span)) in &aliases {
@@ -1916,7 +1752,8 @@ fn check_expression(
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<Type, SourceError> {
-    let value_type = check_expression_inner(expression, environment, type_parameters)?;
+    let value_type = check_expression_inner(expression, environment, type_parameters)
+        .map_err(|error| error.claimed_by(expression))?;
     environment.record_expression_type(expression.span.clone(), value_type.clone());
     Ok(value_type)
 }
@@ -2339,7 +2176,8 @@ fn check_expression_inner(
                             SourceErrorCode::UnreachableMatchCase,
                             "match case is unreachable",
                             case.span.clone(),
-                        ));
+                        )
+                        .with_end(case.end));
                     }
                     let mut covered = Vec::new();
                     for (pattern, constraint) in case.patterns.iter().zip(&constraints) {
@@ -2370,7 +2208,8 @@ fn check_expression_inner(
                             SourceErrorCode::UnreachableMatchCase,
                             "match case cannot match remaining enum cases",
                             case.span.clone(),
-                        ));
+                        )
+                        .with_end(case.end));
                     }
                     if case.guard.is_none() {
                         remaining_cases.retain(|candidate| !matching.contains(candidate));
@@ -2381,7 +2220,8 @@ fn check_expression_inner(
                         SourceErrorCode::UnreachableMatchCase,
                         "match case is unreachable",
                         case.span.clone(),
-                    ));
+                    )
+                    .with_end(case.end));
                 }
                 if let Some(current) = &remaining {
                     if constraints.iter().all(Option::is_some)
@@ -2394,7 +2234,8 @@ fn check_expression_inner(
                             SourceErrorCode::UnreachableMatchCase,
                             format!("match case cannot match remaining type {current}"),
                             case.span.clone(),
-                        ));
+                        )
+                        .with_end(case.end));
                     }
                     if case.guard.is_none() && !irrefutable_constraints.is_empty() {
                         let coverage = if irrefutable_constraints.iter().any(Option::is_none) {
@@ -2407,7 +2248,8 @@ fn check_expression_inner(
                                 SourceErrorCode::UnreachableMatchCase,
                                 "match case is unreachable",
                                 case.span.clone(),
-                            ));
+                            )
+                            .with_end(case.end));
                         }
                         remaining = type_subtract(current, &coverage);
                     }
@@ -2434,7 +2276,8 @@ fn check_expression_inner(
                     SourceErrorCode::NonExhaustiveMatch,
                     format!("non-exhaustive match; missing {remaining}"),
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             if let Some(remaining) = enum_remaining
                 && !remaining.is_empty()
@@ -2448,7 +2291,8 @@ fn check_expression_inner(
                     SourceErrorCode::NonExhaustiveMatch,
                     format!("non-exhaustive match; missing {missing}"),
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             if let Some(Expr {
                 kind: ExprKind::Name(name),
@@ -2484,7 +2328,8 @@ fn check_expression_inner(
                         SourceErrorCode::DuplicateName,
                         format!("duplicate struct field `{name}`"),
                         value.span.clone(),
-                    ));
+                    )
+                    .with_extent(value));
                 }
                 let actual = check_expression(value, environment, type_parameters)?;
                 if let Some(schema) = &schema_binding {
@@ -2494,6 +2339,7 @@ fn check_expression_inner(
                             format!("struct schema has no field `{name}`"),
                             value.span.clone(),
                         )
+                        .with_extent(value)
                     })?;
                     require(&expected.value_type, &actual, &value.span)?;
                 }
@@ -2508,7 +2354,8 @@ fn check_expression_inner(
                     SourceErrorCode::MissingField,
                     format!("missing required struct field `{name}`"),
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             Ok(known_schema_identity(schema, environment)
                 .map_or(Type::Struct(None), |identity| Type::Struct(Some(identity))))
@@ -2524,7 +2371,8 @@ fn check_expression_inner(
                         SourceErrorCode::DuplicateName,
                         format!("duplicate struct field `{name}`"),
                         replacement.span.clone(),
-                    ));
+                    )
+                    .with_extent(replacement));
                 }
                 let actual = check_expression(replacement, environment, type_parameters)?;
                 map_replacements.push(actual.clone());
@@ -2535,6 +2383,7 @@ fn check_expression_inner(
                             format!("struct has no field `{name}`"),
                             replacement.span.clone(),
                         )
+                        .with_extent(replacement)
                     })?;
                     require(&expected.value_type, &actual, &replacement.span)?;
                 }
@@ -2562,7 +2411,8 @@ fn check_expression_inner(
                     SourceErrorCode::UnknownMember,
                     format!("struct has no field `{name}`"),
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             Ok(expression_binding(expression, environment)
                 .map(|binding| binding.value_type)
@@ -3442,7 +3292,8 @@ fn check_call(
             SourceErrorCode::NoMatchingOverload,
             format!("cannot resolve overload `{name}` with spread arguments"),
             expression.span.clone(),
-        ));
+        )
+        .with_extent(expression));
     }
     let mut applicable = Vec::new();
     for signature in &callables {
@@ -3474,7 +3325,8 @@ fn check_call(
             SourceErrorCode::NoMatchingOverload,
             format!("no matching overload for `{name}`"),
             expression.span.clone(),
-        ));
+        )
+        .with_extent(expression));
     }
     let most_specific = applicable
         .iter()
@@ -3491,7 +3343,8 @@ fn check_call(
             SourceErrorCode::AmbiguousOverload,
             format!("ambiguous overload for `{name}`"),
             expression.span.clone(),
-        ));
+        )
+        .with_extent(expression));
     }
     if callables.len() > 1 {
         environment
@@ -4058,8 +3911,16 @@ fn require(expected: &Type, actual: &Type, span: &SourceSpan) -> Result<(), Sour
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<(), SourceError> {
+    validate_expression_inner(expression, type_parameters)
+        .map_err(|error| error.claimed_by(expression))
+}
+
+#[allow(clippy::too_many_lines)]
+fn validate_expression_inner(
+    expression: &Expr,
+    type_parameters: &[String],
+) -> Result<(), SourceError> {
     match &expression.kind {
         ExprKind::Declare {
             annotation,
@@ -4340,8 +4201,13 @@ mod tests {
         SourceSpan::new("test.slug", 1, 1)
     }
 
+    fn test_end() -> crate::source::SourcePosition {
+        crate::source::SourcePosition { line: 1, column: 2 }
+    }
+
     fn name(name: &str) -> Expr {
         Expr {
+            end: test_end(),
             kind: ExprKind::Name(name.into()),
             span: span(),
         }
@@ -4431,6 +4297,7 @@ mod tests {
 
     fn binary(left: Expr, operator: Binary, right: Expr) -> Expr {
         Expr {
+            end: test_end(),
             kind: ExprKind::Binary {
                 left: Box::new(left),
                 operator,
@@ -4460,8 +4327,10 @@ mod tests {
     #[test]
     fn parameter_constraints_collect_direct_numeric_operands_through_control_flow() {
         let body = Expr {
+            end: test_end(),
             kind: ExprKind::If {
                 condition: Box::new(Expr {
+                    end: test_end(),
                     kind: ExprKind::Binary {
                         left: Box::new(name("value")),
                         operator: Binary::Less,
@@ -4470,6 +4339,7 @@ mod tests {
                     span: span(),
                 }),
                 then_branch: Box::new(Expr {
+                    end: test_end(),
                     kind: ExprKind::Prefix {
                         operators: vec![(Prefix::Negate, span())],
                         value: Box::new(name("value")),
@@ -4522,6 +4392,7 @@ mod tests {
     #[test]
     fn inferred_plus_alternatives_intersect_numeric_body_facts() {
         let body = Expr {
+            end: test_end(),
             kind: ExprKind::Block(vec![
                 binary(name("left"), Binary::Add, name("right")),
                 binary(name("left"), Binary::Divide, name("right")),
@@ -4584,6 +4455,7 @@ mod tests {
     fn parameter_constraints_include_defaults_and_recur_arguments() {
         let mut value = parameter("value");
         value.default = Some(Expr {
+            end: test_end(),
             kind: ExprKind::Binary {
                 left: Box::new(name("value")),
                 operator: Binary::Divide,
@@ -4592,7 +4464,9 @@ mod tests {
             span: span(),
         });
         let body = Expr {
+            end: test_end(),
             kind: ExprKind::Recur(vec![CallArgument::Positional(Expr {
+                end: test_end(),
                 kind: ExprKind::Binary {
                     left: Box::new(name("other")),
                     operator: Binary::Modulo,
@@ -4619,8 +4493,10 @@ mod tests {
         let mut discard = parameter("_");
         discard.discard = true;
         let body = Expr {
+            end: test_end(),
             kind: ExprKind::Block(vec![
                 Expr {
+                    end: test_end(),
                     kind: ExprKind::Binary {
                         left: Box::new(name("explicit")),
                         operator: Binary::Divide,
@@ -4629,11 +4505,13 @@ mod tests {
                     span: span(),
                 },
                 Expr {
+                    end: test_end(),
                     kind: ExprKind::Function {
                         type_parameters: Vec::new(),
                         parameters: vec![parameter("outer")],
                         return_annotation: None,
                         body: Box::new(Expr {
+                            end: test_end(),
                             kind: ExprKind::Binary {
                                 left: Box::new(name("outer")),
                                 operator: Binary::Divide,

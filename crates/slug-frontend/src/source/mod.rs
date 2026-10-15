@@ -41,6 +41,24 @@ pub struct SourceError {
     pub code: SourceErrorCode,
     pub message: String,
     pub span: Option<SourceSpan>,
+    /// The extent of the offending source in `span`'s file, when known. It
+    /// contains `span`, which may be a focus point inside it such as an
+    /// operator.
+    pub range: Option<SourceRange>,
+}
+
+/// A source extent from `start` up to `end`, exclusive.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourceRange {
+    pub start: SourcePosition,
+    pub end: SourcePosition,
+}
+
+/// A 1-based line and column; columns count Unicode scalar values.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SourcePosition {
+    pub line: u32,
+    pub column: u32,
 }
 
 /// The stable failure class of a [`SourceError`], listed in
@@ -169,7 +187,44 @@ impl SourceError {
             code,
             message: message.into(),
             span: Some(span),
+            range: None,
         }
+    }
+
+    fn at_token(code: SourceErrorCode, message: impl Into<String>, token: &ast::Token) -> Self {
+        Self::at(code, message, token.span.clone()).with_end(token.end)
+    }
+
+    /// Extends this error from its span to `end`.
+    fn with_end(mut self, end: SourcePosition) -> Self {
+        if let Some(span) = &self.span {
+            let start = SourcePosition {
+                line: span.line,
+                column: span.column,
+            };
+            self.range = Some(SourceRange { start, end });
+        }
+        self
+    }
+
+    /// Gives a range-less error raised at `expression`'s span that
+    /// expression's extent. Applied as errors leave each expression, so the
+    /// innermost expression at the error's span claims it.
+    fn claimed_by(self, expression: &ast::Expr) -> Self {
+        if self.range.is_none() && self.span.as_ref() == Some(&expression.span) {
+            self.with_extent(expression)
+        } else {
+            self
+        }
+    }
+
+    /// Covers all of `expression`, including operands left of its span.
+    fn with_extent(mut self, expression: &ast::Expr) -> Self {
+        self.range = Some(SourceRange {
+            start: expression.extent_start(),
+            end: expression.end,
+        });
+        self
     }
 
     fn semantic(code: SourceErrorCode, message: impl Into<String>, span: SourceSpan) -> Self {
@@ -178,6 +233,7 @@ impl SourceError {
             code,
             message: message.into(),
             span: Some(span),
+            range: None,
         }
     }
 }

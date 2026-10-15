@@ -33,3 +33,31 @@ fn source_errors_carry_their_failure_class() {
         assert_eq!(error.code, code, "{source}: {}", error.message);
     }
 }
+
+#[test]
+fn source_errors_cover_the_offending_source() {
+    for (source, (start, end)) in [
+        ("val x = 1 + \"a\"", ((1, 9), (1, 16))),
+        ("val x = 1\nx = 2", ((2, 1), (2, 6))),
+        ("val = 1", ((1, 5), (1, 6))),
+        ("val n = 1__0", ((1, 9), (1, 13))),
+        ("val p = struct { x }\np.y", ((2, 1), (2, 4))),
+    ] {
+        let error = compile("ranges.slug", source).expect_err(source);
+        let range = error.range.unwrap_or_else(|| panic!("{source}: no range"));
+        assert_eq!(
+            (
+                (range.start.line, range.start.column),
+                (range.end.line, range.end.column)
+            ),
+            (start, end),
+            "{source}: {}",
+            error.message
+        );
+        let span = error.span.expect("span");
+        assert!(
+            (range.start.line, range.start.column) <= (span.line, span.column),
+            "{source}: range starts after its span"
+        );
+    }
+}

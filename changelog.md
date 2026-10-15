@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Parse and semantic diagnostics carry a `range`: the start and exclusive end
+  of the offending source. A type error in `1 + "a"` covers the whole
+  expression, and a parse error covers the offending token. `location` is
+  unchanged. Runtime diagnostics keep point locations. Rust hosts read
+  `SourceError::range`.
+
 - Every diagnostic now has a stable `code`, such as `expected_syntax`,
   `type_mismatch`, or `divide_by_zero`, in `--diagnostic-format=json`
   documents and interactive server diagnostics. Codes name failure classes and

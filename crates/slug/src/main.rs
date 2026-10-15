@@ -533,6 +533,8 @@ struct JsonDiagnostic {
     code: String,
     message: String,
     location: Option<JsonLocation>,
+    /// Source errors only; null when the extent is unknown.
+    range: Option<JsonRange>,
     frames: Vec<JsonFrame>,
     /// Present only for `thrown` runtime errors, so `throw nil` stays visible.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -543,6 +545,19 @@ struct JsonDiagnostic {
 #[derive(Serialize)]
 struct JsonLocation {
     path: String,
+    line: u32,
+    column: u32,
+}
+
+/// The extent of the offending source; `end` is exclusive.
+#[derive(Serialize)]
+struct JsonRange {
+    start: JsonPosition,
+    end: JsonPosition,
+}
+
+#[derive(Serialize)]
+struct JsonPosition {
     line: u32,
     column: u32,
 }
@@ -563,6 +578,7 @@ fn eprint_startup_error(category: &str, kind: &str, message: String, json: bool)
             code: if category == "usage" { "usage" } else { kind }.into(),
             message,
             location: None,
+            range: None,
             frames: Vec::new(),
             thrown: None,
             cause: None,
@@ -626,6 +642,16 @@ fn source_diagnostic(category: &str, error: &SourceError) -> JsonDiagnostic {
         code: error.code.as_str().into(),
         message: error.message.clone(),
         location: error.span.as_ref().map(json_location),
+        range: error.range.map(|range| JsonRange {
+            start: JsonPosition {
+                line: range.start.line,
+                column: range.start.column,
+            },
+            end: JsonPosition {
+                line: range.end.line,
+                column: range.end.column,
+            },
+        }),
         frames: Vec::new(),
         thrown: None,
         cause: None,
@@ -645,6 +671,7 @@ fn runtime_diagnostic(error: &RuntimeError) -> JsonDiagnostic {
         code: runtime_kind(&error.kind).into(),
         message: error.message.clone(),
         location: error.span.as_ref().map(json_location),
+        range: None,
         frames: error
             .frames
             .iter()
@@ -794,6 +821,7 @@ mod tests {
             code: SourceErrorCode::ExpectedSyntax,
             message: "expected expression".into(),
             span: Some(SourceSpan::new("missing.slug", 4, 2)),
+            range: None,
         };
 
         assert_eq!(

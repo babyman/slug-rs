@@ -14,6 +14,8 @@ pub struct Diagnostic {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<DiagnosticLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<DiagnosticRange>,
     pub frames: Vec<DiagnosticFrame>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thrown: Option<serde_json::Value>,
@@ -37,6 +39,20 @@ pub enum DiagnosticCategory {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticLocation {
     pub path: String,
+    pub line: u32,
+    pub column: u32,
+}
+
+/// The extent of the offending source; `end` is exclusive.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DiagnosticRange {
+    pub start: DiagnosticPosition,
+    pub end: DiagnosticPosition,
+}
+
+/// A 1-based line and column counting Unicode scalar values.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DiagnosticPosition {
     pub line: u32,
     pub column: u32,
 }
@@ -66,6 +82,7 @@ impl Diagnostic {
             code: code.into(),
             message: message.into(),
             location: None,
+            range: None,
             frames: Vec::new(),
             thrown: None,
             native: None,
@@ -82,6 +99,7 @@ impl Diagnostic {
             code: code.into(),
             message: message.into(),
             location: None,
+            range: None,
             frames: Vec::new(),
             thrown: None,
             native: None,
@@ -104,6 +122,16 @@ impl Diagnostic {
             code: error.code.as_str().into(),
             message: error.message.clone(),
             location: error.span.as_ref().map(location),
+            range: error.range.map(|range| DiagnosticRange {
+                start: DiagnosticPosition {
+                    line: range.start.line,
+                    column: range.start.column,
+                },
+                end: DiagnosticPosition {
+                    line: range.end.line,
+                    column: range.end.column,
+                },
+            }),
             frames: Vec::new(),
             thrown: None,
             native: None,
@@ -120,6 +148,7 @@ impl Diagnostic {
             code: runtime_kind(&error.kind).into(),
             message: error.message.clone(),
             location: error.span.as_ref().map(location),
+            range: None,
             frames: error
                 .frames
                 .iter()

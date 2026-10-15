@@ -1100,6 +1100,12 @@ fn submitted_diagnostics_carry_stable_codes() {
         let response = submit(&mut server, id, &session, source);
         assert_eq!(response.error.expect("diagnostic").code, code, "{source}");
     }
+
+    let parse = submit(&mut server, 6, &session, "val =")
+        .error
+        .expect("parse diagnostic");
+    let range = parse.range.expect("parse range");
+    assert_eq!((range.start.column, range.end.column), (5, 6));
 }
 
 #[test]

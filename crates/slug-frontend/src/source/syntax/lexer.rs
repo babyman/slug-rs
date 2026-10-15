@@ -2,7 +2,7 @@
 use slug_vm::SourceSpan;
 
 use super::{
-    SourceError, SourceErrorCode,
+    SourceError, SourceErrorCode, SourcePosition,
     ast::{StringPart, Token, TokenKind},
 };
 
@@ -44,6 +44,7 @@ impl Lexer {
                     "unterminated documentation block",
                     span.clone(),
                 )
+                .with_end(self.position())
             })?;
             if value == '*' && self.peek() == Some('/') {
                 self.next();
@@ -59,7 +60,8 @@ impl Lexer {
                 SourceErrorCode::InvalidDocumentation,
                 "every non-empty documentation line must begin with *",
                 span,
-            ));
+            )
+            .with_end(self.position()));
         }
         Ok(content)
     }
@@ -98,6 +100,7 @@ impl Lexer {
                     "unterminated string",
                     span.clone(),
                 )
+                .with_end(self.position())
             })?;
             if !raw
                 && value == '$'
@@ -147,7 +150,8 @@ impl Lexer {
                             SourceErrorCode::UnterminatedLiteral,
                             "unterminated string",
                             span,
-                        ));
+                        )
+                        .with_end(self.position()));
                     }
                 }
             } else {
@@ -176,6 +180,13 @@ impl Lexer {
             line: 1,
             column: 1,
             brace_depth: 0,
+        }
+    }
+
+    fn position(&self) -> SourcePosition {
+        SourcePosition {
+            line: self.line,
+            column: self.column,
         }
     }
 
@@ -276,8 +287,13 @@ impl Lexer {
             (Some('='), Some('>'))
         )
     }
-    fn push(tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {
-        tokens.push(Token { kind, span });
+    /// Pushes a token that ends at the current position.
+    fn push(&self, tokens: &mut Vec<Token>, kind: TokenKind, span: SourceSpan) {
+        tokens.push(Token {
+            kind,
+            span,
+            end: self.position(),
+        });
     }
     #[allow(clippy::too_many_lines)]
     pub(super) fn tokens(mut self) -> Result<Vec<Token>, SourceError> {
@@ -291,7 +307,7 @@ impl Lexer {
                 }
                 ';' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Sep, span);
+                    self.push(&mut result, TokenKind::Sep, span);
                 }
                 '\n' => {
                     let blank = self.current_line_is_blank();
@@ -300,7 +316,7 @@ impl Lexer {
                     // lines, but their callback blocks still need statement separators.
                     if (delimiters == 0 || self.brace_depth > 0) && !self.newline_continues(&result)
                     {
-                        Self::push(
+                        self.push(
                             &mut result,
                             if blank {
                                 TokenKind::BlankSep
@@ -325,19 +341,19 @@ impl Lexer {
                     } else {
                         TokenKind::Plus
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '-' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Minus, span);
+                    self.push(&mut result, TokenKind::Minus, span);
                 }
                 '*' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Star, span);
+                    self.push(&mut result, TokenKind::Star, span);
                 }
                 '%' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Percent, span);
+                    self.push(&mut result, TokenKind::Percent, span);
                 }
                 '/' => {
                     self.next();
@@ -353,7 +369,7 @@ impl Lexer {
                             if self.peek() == Some('*') {
                                 self.next();
                                 let documentation = self.documentation(span.clone())?;
-                                Self::push(
+                                self.push(
                                     &mut result,
                                     TokenKind::Documentation(documentation),
                                     span,
@@ -372,15 +388,16 @@ impl Lexer {
                                         SourceErrorCode::UnterminatedLiteral,
                                         "unterminated block comment",
                                         span,
-                                    ));
+                                    )
+                                    .with_end(self.position()));
                                 }
                             }
                         }
                         Some('>') => {
                             self.next();
-                            Self::push(&mut result, TokenKind::Pipeline, span);
+                            self.push(&mut result, TokenKind::Pipeline, span);
                         }
-                        _ => Self::push(&mut result, TokenKind::Slash, span),
+                        _ => self.push(&mut result, TokenKind::Slash, span),
                     }
                 }
                 '&' => {
@@ -391,7 +408,7 @@ impl Lexer {
                     } else {
                         TokenKind::Ampersand
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '|' => {
                     self.next();
@@ -404,17 +421,17 @@ impl Lexer {
                     } else {
                         TokenKind::Pipe
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '(' => {
                     self.next();
                     delimiters += 1;
-                    Self::push(&mut result, TokenKind::LParen, span);
+                    self.push(&mut result, TokenKind::LParen, span);
                 }
                 ')' => {
                     self.next();
                     delimiters = delimiters.saturating_sub(1);
-                    Self::push(&mut result, TokenKind::RParen, span);
+                    self.push(&mut result, TokenKind::RParen, span);
                 }
                 '{' => {
                     self.next();
@@ -425,26 +442,26 @@ impl Lexer {
                     } else {
                         TokenKind::LBrace
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '}' => {
                     self.next();
                     self.brace_depth = self.brace_depth.saturating_sub(1);
-                    Self::push(&mut result, TokenKind::RBrace, span);
+                    self.push(&mut result, TokenKind::RBrace, span);
                 }
                 '[' => {
                     self.next();
                     delimiters += 1;
-                    Self::push(&mut result, TokenKind::LBracket, span);
+                    self.push(&mut result, TokenKind::LBracket, span);
                 }
                 ']' => {
                     self.next();
                     delimiters = delimiters.saturating_sub(1);
-                    Self::push(&mut result, TokenKind::RBracket, span);
+                    self.push(&mut result, TokenKind::RBracket, span);
                 }
                 ',' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Comma, span);
+                    self.push(&mut result, TokenKind::Comma, span);
                 }
                 ':' => {
                     self.next();
@@ -454,33 +471,34 @@ impl Lexer {
                     } else {
                         TokenKind::Colon
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '@' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::At, span);
+                    self.push(&mut result, TokenKind::At, span);
                 }
                 '?' => {
                     self.next();
                     if self.peek() == Some('?') && self.input.get(self.index + 1) == Some(&'?') {
                         self.next();
                         self.next();
-                        Self::push(&mut result, TokenKind::NotImplemented, span);
+                        self.push(&mut result, TokenKind::NotImplemented, span);
                     } else {
                         return Err(SourceError::at(
                             SourceErrorCode::ExpectedSyntax,
                             "expected ???",
                             span,
-                        ));
+                        )
+                        .with_end(self.position()));
                     }
                 }
                 '^' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Caret, span);
+                    self.push(&mut result, TokenKind::Caret, span);
                 }
                 '~' => {
                     self.next();
-                    Self::push(&mut result, TokenKind::Tilde, span);
+                    self.push(&mut result, TokenKind::Tilde, span);
                 }
                 '.' => {
                     self.next();
@@ -491,14 +509,15 @@ impl Lexer {
                                 SourceErrorCode::ExpectedSyntax,
                                 "expected . after ..",
                                 span,
-                            ));
+                            )
+                            .with_end(self.position()));
                         }
                         self.next();
                         TokenKind::Ellipsis
                     } else {
                         TokenKind::Dot
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '=' => {
                     self.next();
@@ -511,7 +530,7 @@ impl Lexer {
                     } else {
                         TokenKind::Eq
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '!' => {
                     self.next();
@@ -521,7 +540,7 @@ impl Lexer {
                     } else {
                         TokenKind::Bang
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '<' => {
                     self.next();
@@ -534,7 +553,7 @@ impl Lexer {
                     } else {
                         TokenKind::Less
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '>' => {
                     self.next();
@@ -547,7 +566,7 @@ impl Lexer {
                     } else {
                         TokenKind::Greater
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 '0'..='9' => {
                     let mut text = String::new();
@@ -562,7 +581,8 @@ impl Lexer {
                             SourceErrorCode::InvalidNumber,
                             "invalid number separator",
                             span,
-                        ));
+                        )
+                        .with_end(self.position()));
                     }
                     if text == "0" && self.peek() == Some('x') {
                         self.next();
@@ -578,14 +598,16 @@ impl Lexer {
                                             SourceErrorCode::InvalidByteLiteral,
                                             "invalid hexadecimal digit in byte literal",
                                             span,
-                                        ));
+                                        )
+                                        .with_end(self.position()));
                                     }
                                     None => {
                                         return Err(SourceError::at(
                                             SourceErrorCode::UnterminatedLiteral,
                                             "unterminated byte literal",
                                             span,
-                                        ));
+                                        )
+                                        .with_end(self.position()));
                                     }
                                 }
                             }
@@ -594,7 +616,8 @@ impl Lexer {
                                     SourceErrorCode::InvalidByteLiteral,
                                     "byte literal must contain complete hexadecimal byte pairs",
                                     span,
-                                ));
+                                )
+                                .with_end(self.position()));
                             }
                             let bytes = (0..digits.len())
                                 .step_by(2)
@@ -606,8 +629,9 @@ impl Lexer {
                                         "invalid byte literal",
                                         span.clone(),
                                     )
+                                    .with_end(self.position())
                                 })?;
-                            Self::push(&mut result, TokenKind::Bytes(bytes), span);
+                            self.push(&mut result, TokenKind::Bytes(bytes), span);
                             continue;
                         }
 
@@ -618,7 +642,8 @@ impl Lexer {
                                     SourceErrorCode::InvalidNumber,
                                     "expected hexadecimal digit",
                                     span,
-                                ));
+                                )
+                                .with_end(self.position()));
                             }
                         }
                         let mut digits = String::new();
@@ -634,14 +659,16 @@ impl Lexer {
                                 SourceErrorCode::InvalidNumber,
                                 "expected hexadecimal digit",
                                 span,
-                            ));
+                            )
+                            .with_end(self.position()));
                         }
                         if !Self::has_valid_separators(&digits, |value| value.is_ascii_hexdigit()) {
                             return Err(SourceError::at(
                                 SourceErrorCode::InvalidNumber,
                                 "invalid hexadecimal number separator",
                                 span,
-                            ));
+                            )
+                            .with_end(self.position()));
                         }
                         digits.retain(|value| value != '_');
                         let value = i64::from_str_radix(&digits, 16).map_err(|_| {
@@ -650,8 +677,9 @@ impl Lexer {
                                 "invalid hexadecimal number",
                                 span.clone(),
                             )
+                            .with_end(self.position())
                         })?;
-                        Self::push(&mut result, TokenKind::Int(value), span);
+                        self.push(&mut result, TokenKind::Int(value), span);
                         continue;
                     }
 
@@ -676,7 +704,8 @@ impl Lexer {
                                 SourceErrorCode::InvalidNumber,
                                 "invalid number separator",
                                 span,
-                            ));
+                            )
+                            .with_end(self.position()));
                         }
                     }
                     if matches!(self.peek(), Some('e' | 'E')) {
@@ -690,7 +719,8 @@ impl Lexer {
                                 SourceErrorCode::InvalidNumber,
                                 "expected exponent digit",
                                 span,
-                            ));
+                            )
+                            .with_end(self.position()));
                         }
                         while self.peek().is_some_and(|value| value.is_ascii_digit()) {
                             text.push(self.next().expect("peeked character exists"));
@@ -704,15 +734,17 @@ impl Lexer {
                                 "invalid number",
                                 span.clone(),
                             )
+                            .with_end(self.position())
                         })?;
                         if !value.is_finite() {
                             return Err(SourceError::at(
                                 SourceErrorCode::InvalidNumber,
                                 "non-finite number",
                                 span,
-                            ));
+                            )
+                            .with_end(self.position()));
                         }
-                        Self::push(&mut result, TokenKind::Float(value), span);
+                        self.push(&mut result, TokenKind::Float(value), span);
                     } else {
                         let value = text.parse().map_err(|_| {
                             SourceError::at(
@@ -720,20 +752,19 @@ impl Lexer {
                                 "invalid number",
                                 span.clone(),
                             )
+                            .with_end(self.position())
                         })?;
-                        Self::push(&mut result, TokenKind::Int(value), span);
+                        self.push(&mut result, TokenKind::Int(value), span);
                     }
                 }
-                '"' => Self::push(
-                    &mut result,
-                    TokenKind::Interpolated(self.string('"', false, span.clone())?),
-                    span,
-                ),
-                '\'' => Self::push(
-                    &mut result,
-                    TokenKind::Interpolated(self.string('\'', true, span.clone())?),
-                    span,
-                ),
+                '"' => {
+                    let kind = TokenKind::Interpolated(self.string('"', false, span.clone())?);
+                    self.push(&mut result, kind, span);
+                }
+                '\'' => {
+                    let kind = TokenKind::Interpolated(self.string('\'', true, span.clone())?);
+                    self.push(&mut result, kind, span);
+                }
                 value if value == '_' || value.is_alphabetic() => {
                     let mut text = String::new();
                     while self
@@ -770,18 +801,19 @@ impl Lexer {
                         "nil" => TokenKind::Nil,
                         _ => TokenKind::Name(text),
                     };
-                    Self::push(&mut result, kind, span);
+                    self.push(&mut result, kind, span);
                 }
                 _ => {
                     return Err(SourceError::at(
                         SourceErrorCode::UnexpectedCharacter,
                         format!("unexpected character `{character}`"),
                         span,
-                    ));
+                    )
+                    .with_end(self.position()));
                 }
             }
         }
-        Self::push(&mut result, TokenKind::End, self.span());
+        self.push(&mut result, TokenKind::End, self.span());
         Ok(result)
     }
 }
