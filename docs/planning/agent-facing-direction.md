@@ -19,7 +19,7 @@ Assessed on 2026-10-13 against the repository.
 | Area | Exists | Gap |
 | --- | --- | --- |
 | Structured errors | `--diagnostic-format=json` version 1 (see [Errors](../language/errors.md)): `category`, `kind`, `message`, point `location`, `frames`, `cause`. | `kind` is null for source errors, so there are no stable codes. Locations are points, not spans. No expected-versus-actual fields or edits. The interactive server emits a separate protocol diagnostic shape (`unknown_method`, `malformed_json`). |
-| Capability surface | Typed native bindings in `slug-native-manifest`, `foreign` declarations, the deny-all `NilLoader` used by `slug-restricted-host`, and a module model that retains doc blocks and evaluated tags. | `slug.meta` introspection is not implemented, and no tool reports what a program can touch. |
+| Capability surface | Typed native bindings in `slug-native-manifest`, `foreign` declarations, the deny-all `NilLoader` used by `slug-restricted-host`, and a module model that retains doc blocks and evaluated tags. | As of 2026-10-14, `slug report` lists modules, imports, dynamic import sites, builtins, foreign declarations, and resources. `slug.meta` introspection, native provider identity, `cfg` keys, and limits are not reported. |
 | Metering | `.cslug` decode limits only. | The VM has no instruction or memory budget. Map enumeration order is unspecified (Runtime Requirements), which blocks exact replay. |
 | Sessions | The interactive server provides `initialize`, `session.open`, `session.close`, `submit`, and `session.poll`. | No snapshot, rollback, fork, or structured state inspection. Shared mutable captures and native resource handles make a full fork hard. |
 | Spec size | The language specification and runtime requirements total about 12.5k words, roughly 17k tokens. | No `describe` query for a binding. |
@@ -38,11 +38,15 @@ This comes first because items 3–5 all need it.
 
 ### 2. Capability report
 
-- [ ] Produce a structured report for a program: imported modules, `foreign`
-  declarations with native signatures, resources, and configured limits.
-- [ ] Implement `slug.meta` introspection or an equivalent host query over the
-  retained module model.
-- [ ] Provide a report diff between two program versions for review.
+- [x] Produce a structured report for a program: imported modules, dynamic
+  import sites, host builtins, `foreign` declarations with signatures, and
+  resources. See [Capability Report](../reference/capability-report.md).
+- [x] Provide an equivalent host query over the retained module model:
+  `ModuleGraph::capability_report` and `slug_frontend::capability_report`.
+- [ ] Report native provider identity, `cfg` keys, tag arguments, and limits.
+- [ ] Implement `slug.meta` introspection.
+- [ ] Provide a report diff between two program versions for review. Plain
+  `diff` of two reports works today.
 
 This is the cheapest item, because the data already exists. It is also the most
 distinctive one for reviewers.

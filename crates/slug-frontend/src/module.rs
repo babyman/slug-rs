@@ -47,6 +47,12 @@ struct ModuleRuntimeServices {
     shutdown_errors: RefCell<Vec<String>>,
 }
 
+/// Source text retained for one module of a compiled artifact.
+pub(crate) struct ArtifactSource {
+    pub(crate) diagnostic_name: String,
+    pub(crate) text: String,
+}
+
 /// The storage-independent state shared by all requests for one module graph.
 ///
 /// Resolver and host services remain on `ModuleHost` while this type is
@@ -223,9 +229,22 @@ impl ModuleGraph {
         path: &str,
         source: &str,
     ) -> Result<Artifact, ModuleLoadError> {
+        self.compile_artifact_with_sources(resolver, path, source)
+            .map(|(artifact, _)| artifact)
+    }
+
+    /// Like [`Self::compile_artifact`], also returning each module's source
+    /// text at its module index.
+    pub(crate) fn compile_artifact_with_sources(
+        &self,
+        resolver: &dyn ModuleResolver,
+        path: &str,
+        source: &str,
+    ) -> Result<(Artifact, Vec<ArtifactSource>), ModuleLoadError> {
         let mut modules = Vec::new();
         let mut indexes = HashMap::new();
         let mut imports = Vec::new();
+        let mut sources = Vec::new();
         let key = ModuleKey::new(path);
         let root = self.collect_artifact_module(
             resolver,
@@ -236,12 +255,14 @@ impl ModuleGraph {
             &mut modules,
             &mut indexes,
             &mut imports,
+            &mut sources,
         )?;
-        Ok(Artifact {
+        let artifact = Artifact {
             root,
             modules,
             imports,
-        })
+        };
+        Ok((artifact, sources))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -255,6 +276,7 @@ impl ModuleGraph {
         modules: &mut Vec<ArtifactModule>,
         indexes: &mut HashMap<ModuleKey, usize>,
         imports: &mut Vec<ImportEdge>,
+        sources: &mut Vec<ArtifactSource>,
     ) -> Result<usize, ModuleLoadError> {
         if let Some(index) = indexes.get(key) {
             return Ok(*index);
@@ -289,6 +311,10 @@ impl ModuleGraph {
             name: name.into(),
             program: compilation.program,
         });
+        sources.push(ArtifactSource {
+            diagnostic_name: diagnostic_name.into(),
+            text: source.into(),
+        });
         for import_name in
             crate::source::static_import_names(diagnostic_name, source).map_err(|error| {
                 ModuleLoadError::Source {
@@ -307,6 +333,7 @@ impl ModuleGraph {
                 modules,
                 indexes,
                 imports,
+                sources,
             )?;
             imports.push(ImportEdge {
                 importer: index,
@@ -666,6 +693,20 @@ impl ModuleHost {
     /// Returns checked loader or source errors when a static dependency is unavailable.
     pub fn compile_artifact(&self, path: &str, source: &str) -> Result<Artifact, ModuleLoadError> {
         self.state.graph.compile_artifact(self, path, source)
+    }
+
+    /// Compiles entry source and its static imports and reports their capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when a static dependency is
+    /// unavailable or invalid.
+    pub fn capability_report(
+        &self,
+        path: &str,
+        source: &str,
+    ) -> Result<crate::CapabilityReport, ModuleLoadError> {
+        self.state.graph.capability_report(self, path, source)
     }
 
     #[doc(hidden)]

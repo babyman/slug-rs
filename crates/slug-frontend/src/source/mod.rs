@@ -33,6 +33,7 @@ pub(crate) use interactive::compile_interactive_forms_with_resolver;
 pub use interactive::{
     InteractiveCompilation, InteractiveCompilerState, SourceReadiness, source_readiness,
 };
+pub(crate) use typecheck::ImportScan;
 
 #[derive(Clone, Debug)]
 pub struct SourceError {
@@ -117,6 +118,12 @@ pub(crate) fn static_import_names(path: &str, source: &str) -> Result<Vec<String
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
     Ok(typecheck::static_import_names(&expressions))
+}
+
+pub(crate) fn import_scan(path: &str, source: &str) -> Result<ImportScan, SourceError> {
+    let tokens = Lexer::new(path, source).tokens()?;
+    let expressions = Parser::new(tokens).parse()?;
+    Ok(typecheck::import_scan(&expressions))
 }
 
 /// Returns the top-level `foreign` declarations of `source` with their type

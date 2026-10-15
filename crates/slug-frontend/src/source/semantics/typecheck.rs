@@ -47,13 +47,25 @@ pub(super) fn analyze_with_imports_and_session(
 }
 
 pub(super) fn static_import_names(expressions: &[Expr]) -> Vec<String> {
-    let mut names = Vec::new();
+    import_scan(expressions).names
+}
+
+/// Literal module names passed to `import`, and the calls that pass anything
+/// else. A dynamic call can reach modules the literal names do not list.
+#[derive(Debug, Default)]
+pub(crate) struct ImportScan {
+    pub(crate) names: Vec<String>,
+    pub(crate) dynamic: Vec<SourceSpan>,
+}
+
+pub(super) fn import_scan(expressions: &[Expr]) -> ImportScan {
+    let mut scan = ImportScan::default();
     for expression in expressions {
-        collect_import_names(expression, &mut names);
+        collect_imports(expression, &mut scan);
     }
-    names.sort();
-    names.dedup();
-    names
+    scan.names.sort();
+    scan.names.dedup();
+    scan
 }
 
 /// Whether evaluating an expression can leave control at the following source
@@ -1281,49 +1293,55 @@ impl CheckedExpression {
 }
 
 #[allow(clippy::too_many_lines)]
-fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
+fn collect_imports(expression: &Expr, scan: &mut ImportScan) {
     match &expression.kind {
         ExprKind::Call { callee, arguments } => {
             if matches!(&callee.kind, ExprKind::Name(name) if name == "import") {
+                let mut dynamic = false;
                 for argument in arguments {
                     if let CallArgument::Positional(Expr {
                         kind: ExprKind::Value(Value::Str(name)),
                         ..
                     }) = argument
                     {
-                        names.push(name.to_string());
+                        scan.names.push(name.to_string());
+                    } else {
+                        dynamic = true;
                     }
                 }
+                if dynamic {
+                    scan.dynamic.push(expression.span.clone());
+                }
             }
-            collect_import_names(callee, names);
+            collect_imports(callee, scan);
             for argument in arguments {
                 let value = match argument {
                     CallArgument::Positional(value)
                     | CallArgument::Named { value, .. }
                     | CallArgument::Spread(value) => value,
                 };
-                collect_import_names(value, names);
+                collect_imports(value, scan);
             }
         }
         ExprKind::Declare { value, tags, .. } => {
             for tag in tags {
                 for argument in &tag.arguments {
-                    collect_import_names(argument, names);
+                    collect_imports(argument, scan);
                 }
             }
-            collect_import_names(value, names);
+            collect_imports(value, scan);
         }
         ExprKind::Foreign {
             signature, tags, ..
         } => {
             for tag in tags {
                 for argument in &tag.arguments {
-                    collect_import_names(argument, names);
+                    collect_imports(argument, scan);
                 }
             }
             for parameter in &signature.parameters {
                 if let Some(default) = &parameter.default {
-                    collect_import_names(default, names);
+                    collect_imports(default, scan);
                 }
             }
         }
@@ -1332,10 +1350,10 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
         } => {
             for parameter in parameters {
                 if let Some(default) = &parameter.default {
-                    collect_import_names(default, names);
+                    collect_imports(default, scan);
                 }
             }
-            collect_import_names(body, names);
+            collect_imports(body, scan);
         }
         ExprKind::Assign { value, .. }
         | ExprKind::Return { value }
@@ -1343,7 +1361,7 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
         | ExprKind::Defer { value, .. }
         | ExprKind::Spawn(value)
         | ExprKind::Prefix { value, .. }
-        | ExprKind::TypeApply { callee: value, .. } => collect_import_names(value, names),
+        | ExprKind::TypeApply { callee: value, .. } => collect_imports(value, scan),
         ExprKind::Recur(arguments) => {
             for argument in arguments {
                 let value = match argument {
@@ -1351,50 +1369,50 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
                     | CallArgument::Named { value, .. }
                     | CallArgument::Spread(value) => value,
                 };
-                collect_import_names(value, names);
+                collect_imports(value, scan);
             }
         }
         ExprKind::Nursery { limit, body } => {
             if let Some(limit) = limit {
-                collect_import_names(limit, names);
+                collect_imports(limit, scan);
             }
-            collect_import_names(body, names);
+            collect_imports(body, scan);
         }
         ExprKind::Select(cases) => {
             for case in cases {
                 match &case.kind {
                     SelectCaseKind::Receive(value)
                     | SelectCaseKind::After(value)
-                    | SelectCaseKind::Await(value) => collect_import_names(value, names),
+                    | SelectCaseKind::Await(value) => collect_imports(value, scan),
                     SelectCaseKind::Send { channel, value } => {
-                        collect_import_names(channel, names);
-                        collect_import_names(value, names);
+                        collect_imports(channel, scan);
+                        collect_imports(value, scan);
                     }
                     SelectCaseKind::Default => {}
                 }
                 if let Some(handler) = &case.handler {
-                    collect_import_names(handler, names);
+                    collect_imports(handler, scan);
                 }
             }
         }
         ExprKind::Match { subject, cases } => {
             if let Some(subject) = subject {
-                collect_import_names(subject, names);
+                collect_imports(subject, scan);
             }
             for case in cases {
                 if let Some(guard) = &case.guard {
-                    collect_import_names(guard, names);
+                    collect_imports(guard, scan);
                 }
-                collect_import_names(&case.value, names);
+                collect_imports(&case.value, scan);
             }
         }
         ExprKind::Binary { left, right, .. } => {
-            collect_import_names(left, names);
-            collect_import_names(right, names);
+            collect_imports(left, scan);
+            collect_imports(right, scan);
         }
         ExprKind::Block(values) => {
             for value in values {
-                collect_import_names(value, names);
+                collect_imports(value, scan);
             }
         }
         ExprKind::If {
@@ -1402,10 +1420,10 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
             then_branch,
             else_branch,
         } => {
-            collect_import_names(condition, names);
-            collect_import_names(then_branch, names);
+            collect_imports(condition, scan);
+            collect_imports(then_branch, scan);
             if let Some(else_branch) = else_branch {
-                collect_import_names(else_branch, names);
+                collect_imports(else_branch, scan);
             }
         }
         ExprKind::List(values) => {
@@ -1413,37 +1431,37 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
                 let value = match value {
                     ListElement::Value(value) | ListElement::Spread(value) => value,
                 };
-                collect_import_names(value, names);
+                collect_imports(value, scan);
             }
         }
         ExprKind::Map(entries) => {
             for (key, value) in entries {
-                collect_import_names(key, names);
-                collect_import_names(value, names);
+                collect_imports(key, scan);
+                collect_imports(value, scan);
             }
         }
         ExprKind::StructSchema(fields) => {
             for field in fields {
                 if let Some(default) = &field.default {
-                    collect_import_names(default, names);
+                    collect_imports(default, scan);
                 }
             }
         }
         ExprKind::StructInit { schema, fields } => {
-            collect_import_names(schema, names);
+            collect_imports(schema, scan);
             for (_, value) in fields {
-                collect_import_names(value, names);
+                collect_imports(value, scan);
             }
         }
         ExprKind::StructCopy { value, fields } => {
-            collect_import_names(value, names);
+            collect_imports(value, scan);
             for (_, replacement) in fields {
-                collect_import_names(replacement, names);
+                collect_imports(replacement, scan);
             }
         }
         ExprKind::Index { collection, index } => {
-            collect_import_names(collection, names);
-            collect_import_names(index, names);
+            collect_imports(collection, scan);
+            collect_imports(index, scan);
         }
         ExprKind::Slice {
             collection,
@@ -1451,9 +1469,9 @@ fn collect_import_names(expression: &Expr, names: &mut Vec<String>) {
             end,
             step,
         } => {
-            collect_import_names(collection, names);
+            collect_imports(collection, scan);
             for bound in [start, end, step].into_iter().flatten() {
-                collect_import_names(bound, names);
+                collect_imports(bound, scan);
             }
         }
         ExprKind::Resource { .. }

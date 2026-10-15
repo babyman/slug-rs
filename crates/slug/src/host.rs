@@ -174,6 +174,20 @@ impl DesktopLoader {
         self.state.graph.compile_artifact(self, path, source)
     }
 
+    /// Compiles entry source and its static imports and reports their capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when a static dependency is
+    /// unavailable or invalid.
+    pub fn capability_report(
+        &self,
+        path: &str,
+        source: &str,
+    ) -> Result<slug_frontend::CapabilityReport, ModuleLoadError> {
+        self.state.graph.capability_report(self, path, source)
+    }
+
     /// Resolves one import without initializing it.
     ///
     /// # Errors

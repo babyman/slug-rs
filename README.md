@@ -75,6 +75,17 @@ cargo run -p slug -- run hello.cslug
 See [compiled artifacts](docs/reference/compiled-artifacts.md) for its format
 and compatibility contract.
 
+### Report what a program can touch
+
+`slug report` lists a program's modules, imports, host-supplied builtins, and
+`foreign` and `resource` declarations as JSON, without running it:
+
+```sh
+cargo run -p slug --bin slug -- report hello.slug
+```
+
+See [capability report](docs/reference/capability-report.md) for the format.
+
 ### Work interactively
 
 Build the workspace binaries once, then start the terminal REPL:

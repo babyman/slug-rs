@@ -8,7 +8,10 @@ use std::{
 };
 
 use serde::Serialize;
-use slug::{DesktopLoader, build_default_host_vm, default_library_root, interactive::value_json};
+use slug::{
+    DesktopLoader, build_default_host_vm, capability_report_json, default_library_root,
+    interactive::value_json,
+};
 use slug_frontend::{ArtifactHost, SourceError, SourceErrorKind};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
@@ -211,7 +214,7 @@ fn main() -> ExitCode {
                 "slim build"
             };
             println!(
-                "slug-vm {} ({build})\n\nUsage:\n  {executable} [--diagnostic-format=json] program.slug [arguments...]\n  {executable} [--diagnostic-format=json] compile program.slug output.cslug\n  {executable} [--diagnostic-format=json] run program.cslug [arguments...]\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len. Compiled .cslug artifacts are closed programs and run without source resolution.",
+                "slug-vm {} ({build})\n\nUsage:\n  {executable} [--diagnostic-format=json] program.slug [arguments...]\n  {executable} [--diagnostic-format=json] compile program.slug output.cslug\n  {executable} [--diagnostic-format=json] run program.cslug [arguments...]\n  {executable} [--diagnostic-format=json] report program.slug|program.cslug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len. Compiled .cslug artifacts are closed programs and run without source resolution.",
                 env!("CARGO_PKG_VERSION"),
             );
             ExitCode::SUCCESS
@@ -246,6 +249,18 @@ fn main() -> ExitCode {
             }
             compile(&source_path, &output_path, json)
         }
+        Some("report") => {
+            let (Some(path), None) = (remaining.next(), remaining.next()) else {
+                eprint_startup_error(
+                    "usage",
+                    "report",
+                    "report requires exactly one .slug or .cslug path".into(),
+                    json,
+                );
+                return ExitCode::from(1);
+            };
+            report(&path, json)
+        }
         Some("run") => {
             let Some(artifact_path) = remaining.next() else {
                 eprint_startup_error("usage", "run", "run requires a .cslug path".into(), json);
@@ -260,7 +275,8 @@ fn main() -> ExitCode {
     }
 }
 
-fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
+/// Reads an entry source and builds the desktop loader that resolves its imports.
+fn load_entry_source(path: &str, json: bool) -> Result<(String, String, DesktopLoader), ExitCode> {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let library_root = default_library_root(slug_home.as_deref());
@@ -277,7 +293,7 @@ fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
                 format!("cannot read {}: {error}", path.display()),
                 json,
             );
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
     let source_root = configured_source_root.unwrap_or_else(|| {
@@ -295,10 +311,17 @@ fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
             Ok(host) => host,
             Err(error) => {
                 eprint_startup_error("host", "clutch", error.to_string(), json);
-                return ExitCode::from(1);
+                return Err(ExitCode::from(1));
             }
         };
-    let resolved_path = resolved_path.to_string_lossy();
+    Ok((resolved_path.to_string_lossy().into_owned(), source, loader))
+}
+
+fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
+    let (resolved_path, source, loader) = match load_entry_source(path, json) {
+        Ok(entry) => entry,
+        Err(code) => return code,
+    };
     let artifact = match loader.compile_artifact(&resolved_path, &source) {
         Ok(artifact) => artifact,
         Err(error) => {
@@ -322,6 +345,56 @@ fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
         );
         return ExitCode::from(1);
     }
+    ExitCode::SUCCESS
+}
+
+fn report(path: &str, json: bool) -> ExitCode {
+    let report = if Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension == "cslug")
+    {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprint_startup_error(
+                    "io",
+                    "artifact_read",
+                    format!("cannot read {path}: {error}"),
+                    json,
+                );
+                return ExitCode::from(1);
+            }
+        };
+        match slug_vm::cslug::decode(&bytes, slug_vm::cslug::Limits::default()) {
+            Ok(artifact) => slug_frontend::capability_report(&artifact),
+            Err(error) => {
+                eprint_startup_error("artifact", "decode", error.to_string(), json);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        let (resolved_path, source, loader) = match load_entry_source(path, json) {
+            Ok(entry) => entry,
+            Err(code) => return code,
+        };
+        match loader.capability_report(&resolved_path, &source) {
+            Ok(report) => report,
+            Err(error) => {
+                eprint_startup_error("artifact", "compile", error.to_string(), json);
+                return ExitCode::from(1);
+            }
+        }
+    };
+    // Name the entry as given, not by its resolved absolute path, so reports
+    // of the same program agree across machines.
+    let mut report = report;
+    report.entry = path.into();
+    report.modules[0].name = path.into();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&capability_report_json(&report))
+            .expect("report JSON is serializable")
+    );
     ExitCode::SUCCESS
 }
 

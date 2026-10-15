@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `slug report program.slug` (or `program.cslug`) prints a JSON capability
+  report without running the program: every module, the modules each one
+  imports, `import` calls with computed names, the host-supplied builtins it
+  references such as `println` and `cfg`, and its `foreign` and `resource`
+  declarations. Reports name modules by import name, so the same program
+  reports identically on any machine and two versions can be compared in
+  review. See `docs/reference/capability-report.md`.
+
 - Slug values have one JSON form, defined in `docs/reference/value-json.md`
   and available to Rust hosts as `Value::to_json`. Scalars and lists are plain
   JSON; maps, bytes, structs, enum cases, and opaque values such as functions
