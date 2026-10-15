@@ -3,13 +3,12 @@
 //! The server owns protocol lifecycle, persistent session state, and output
 //! events without exposing raw program bytes on the NDJSON transport.
 
-mod diagnostics;
 mod protocol;
 mod server;
 
-pub use diagnostics::{
+pub use crate::diagnostic::{
     Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation, DiagnosticPosition,
-    DiagnosticRange, value_json,
+    DiagnosticRange, NativeDiagnostic, value_json,
 };
 pub use protocol::{Event, EventOrigin, IncomingMessage, PROTOCOL_VERSION, Request, Response};
 pub use server::{OutputError, OutputStream, Server};

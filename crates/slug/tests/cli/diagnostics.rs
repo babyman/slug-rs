@@ -400,9 +400,10 @@ fn json_mode_reports_parse_and_semantic_errors_structurally() {
         assert_eq!(output.status.code(), Some(1));
         assert!(output.stdout.is_empty());
         let diagnostic = json_diagnostic(&output.stderr);
-        assert_eq!(diagnostic["version"], 1);
+        assert_eq!(diagnostic["version"], 2);
         assert_eq!(diagnostic["category"], category);
-        assert!(diagnostic["kind"].is_null());
+        assert!(diagnostic.get("kind").is_none());
+        assert!(diagnostic["native"].is_null());
         assert_eq!(diagnostic["message"], message);
         assert_eq!(
             diagnostic["location"]["path"],
@@ -586,7 +587,7 @@ fn json_mode_reports_runtime_frames_and_module_failures() {
     assert!(output.stdout.is_empty());
     let diagnostic = json_diagnostic(&output.stderr);
     assert_eq!(diagnostic["category"], "runtime");
-    assert_eq!(diagnostic["kind"], "divide_by_zero");
+    assert_eq!(diagnostic["code"], "divide_by_zero");
     assert_eq!(diagnostic["message"], "division by zero");
     assert_eq!(diagnostic["location"]["line"], 2);
     assert_eq!(diagnostic["location"]["column"], 11);
@@ -606,7 +607,7 @@ fn json_mode_reports_runtime_frames_and_module_failures() {
     assert!(output.stdout.is_empty());
     let diagnostic = json_diagnostic(&output.stderr);
     assert_eq!(diagnostic["category"], "module");
-    assert_eq!(diagnostic["kind"], "module");
+    assert_eq!(diagnostic["code"], "module");
     assert!(
         diagnostic["message"]
             .as_str()
@@ -629,7 +630,7 @@ fn json_mode_reports_entry_read_failures() {
     assert!(output.stdout.is_empty());
     let diagnostic = json_diagnostic(&output.stderr);
     assert_eq!(diagnostic["category"], "io");
-    assert_eq!(diagnostic["kind"], "entry_read");
+    assert_eq!(diagnostic["code"], "entry_read");
     assert!(
         diagnostic["message"]
             .as_str()

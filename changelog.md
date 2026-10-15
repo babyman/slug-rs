@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `--diagnostic-format=json` and the interactive server now emit the same
+  version 2 diagnostic document, defined in `docs/reference/diagnostics.md`.
+  `kind` is removed in favour of `code`; every member is always present; the
+  command line also reports native error details; and interactive source
+  errors use the categories `parse` and `semantic` instead of `source`. The
+  REPL shows errors as `semantic error (type_mismatch): ...`.
+
 - Parse and semantic diagnostics carry a `range`: the start and exclusive end
   of the offending source. A type error in `1 + "a"` covers the whole
   expression, and a parse error covers the offending token. `location` is

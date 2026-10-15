@@ -7,15 +7,14 @@ use std::{
     process::ExitCode,
 };
 
-use serde::Serialize;
 use slug::{
     DesktopLoader, build_default_host_vm, capability_report_json, default_library_root,
-    interactive::value_json,
+    diagnostic::{Diagnostic, DiagnosticCategory},
 };
 use slug_frontend::{ArtifactHost, SourceError, SourceErrorKind};
 use slug_vm::{
     NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
-    RuntimeErrorKind, SourceSpan, Vm,
+    SourceSpan, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -524,65 +523,21 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
     }
 }
 
-#[derive(Serialize)]
-struct JsonDiagnostic {
-    version: u8,
-    category: String,
-    kind: Option<String>,
-    /// The stable failure class (`docs/reference/diagnostic-codes.md`).
-    code: String,
-    message: String,
-    location: Option<JsonLocation>,
-    /// Source errors only; null when the extent is unknown.
-    range: Option<JsonRange>,
-    frames: Vec<JsonFrame>,
-    /// Present only for `thrown` runtime errors, so `throw nil` stays visible.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thrown: Option<serde_json::Value>,
-    cause: Option<Box<JsonDiagnostic>>,
-}
-
-#[derive(Serialize)]
-struct JsonLocation {
-    path: String,
-    line: u32,
-    column: u32,
-}
-
-/// The extent of the offending source; `end` is exclusive.
-#[derive(Serialize)]
-struct JsonRange {
-    start: JsonPosition,
-    end: JsonPosition,
-}
-
-#[derive(Serialize)]
-struct JsonPosition {
-    line: u32,
-    column: u32,
-}
-
-#[derive(Serialize)]
-struct JsonFrame {
-    function: String,
-    location: Option<JsonLocation>,
-}
-
 fn eprint_startup_error(category: &str, kind: &str, message: String, json: bool) {
     if json {
-        eprint_json_diagnostic(&JsonDiagnostic {
-            version: 1,
-            category: category.into(),
-            kind: Some(kind.into()),
-            // A usage kind names the subcommand, so it is not a unique code.
-            code: if category == "usage" { "usage" } else { kind }.into(),
-            message,
-            location: None,
-            range: None,
-            frames: Vec::new(),
-            thrown: None,
-            cause: None,
-        });
+        let category = match category {
+            "usage" => DiagnosticCategory::Usage,
+            "io" => DiagnosticCategory::Io,
+            "host" => DiagnosticCategory::Host,
+            _ => DiagnosticCategory::Artifact,
+        };
+        // A usage kind names the subcommand, so it is not a unique code.
+        let code = if category == DiagnosticCategory::Usage {
+            "usage"
+        } else {
+            kind
+        };
+        eprint_json_diagnostic(&Diagnostic::new(category, code, message));
     } else {
         eprintln!("slug: {message}");
     }
@@ -596,7 +551,7 @@ fn eprint_source_error(
     json: bool,
 ) {
     if json {
-        eprint_json_diagnostic(&source_diagnostic(category, error));
+        eprint_json_diagnostic(&Diagnostic::from_source(error));
         return;
     }
     eprintln!(
@@ -618,13 +573,13 @@ fn render_source_error(
 
 fn eprint_runtime_error(error: &RuntimeError, input_path: &str, input: &str, json: bool) {
     if json {
-        eprint_json_diagnostic(&runtime_diagnostic(error));
+        eprint_json_diagnostic(&Diagnostic::from_runtime(error));
         return;
     }
     eprintln!("{}", render_runtime_error(error, input_path, input));
 }
 
-fn eprint_json_diagnostic(diagnostic: &JsonDiagnostic) {
+fn eprint_json_diagnostic(diagnostic: &Diagnostic) {
     println_to_stderr(
         &serde_json::to_string(&diagnostic).expect("diagnostic JSON is serializable"),
     );
@@ -632,85 +587,6 @@ fn eprint_json_diagnostic(diagnostic: &JsonDiagnostic) {
 
 fn println_to_stderr(text: &str) {
     eprintln!("{text}");
-}
-
-fn source_diagnostic(category: &str, error: &SourceError) -> JsonDiagnostic {
-    JsonDiagnostic {
-        version: 1,
-        category: category.into(),
-        kind: None,
-        code: error.code.as_str().into(),
-        message: error.message.clone(),
-        location: error.span.as_ref().map(json_location),
-        range: error.range.map(|range| JsonRange {
-            start: JsonPosition {
-                line: range.start.line,
-                column: range.start.column,
-            },
-            end: JsonPosition {
-                line: range.end.line,
-                column: range.end.column,
-            },
-        }),
-        frames: Vec::new(),
-        thrown: None,
-        cause: None,
-    }
-}
-
-fn runtime_diagnostic(error: &RuntimeError) -> JsonDiagnostic {
-    let category = if error.kind == RuntimeErrorKind::Module {
-        "module"
-    } else {
-        "runtime"
-    };
-    JsonDiagnostic {
-        version: 1,
-        category: category.into(),
-        kind: Some(runtime_kind(&error.kind).into()),
-        code: runtime_kind(&error.kind).into(),
-        message: error.message.clone(),
-        location: error.span.as_ref().map(json_location),
-        range: None,
-        frames: error
-            .frames
-            .iter()
-            .map(|frame| JsonFrame {
-                function: frame.function.clone(),
-                location: frame.span.as_ref().map(json_location),
-            })
-            .collect(),
-        thrown: error.thrown.as_deref().map(value_json),
-        cause: error
-            .cause
-            .as_deref()
-            .map(|cause| Box::new(runtime_diagnostic(cause))),
-    }
-}
-
-fn json_location(span: &SourceSpan) -> JsonLocation {
-    JsonLocation {
-        path: span.path.to_string(),
-        line: span.line,
-        column: span.column,
-    }
-}
-
-fn runtime_kind(kind: &RuntimeErrorKind) -> &'static str {
-    match kind {
-        RuntimeErrorKind::InvalidBytecode => "invalid_bytecode",
-        RuntimeErrorKind::Type => "type",
-        RuntimeErrorKind::Name => "name",
-        RuntimeErrorKind::Arity => "arity",
-        RuntimeErrorKind::DivideByZero => "divide_by_zero",
-        RuntimeErrorKind::InvalidCall => "invalid_call",
-        RuntimeErrorKind::Native => "native",
-        RuntimeErrorKind::NativeContract => "native_contract",
-        RuntimeErrorKind::Module => "module",
-        RuntimeErrorKind::NotImplemented => "not_implemented",
-        RuntimeErrorKind::Match => "match",
-        RuntimeErrorKind::Thrown => "thrown",
-    }
 }
 
 fn render_runtime_error(error: &RuntimeError, input_path: &str, input: &str) -> String {

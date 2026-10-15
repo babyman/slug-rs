@@ -5,6 +5,7 @@
 
 mod configuration;
 mod conformance;
+pub mod diagnostic;
 mod fixture;
 mod host;
 mod report;

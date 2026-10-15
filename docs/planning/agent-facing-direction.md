@@ -18,7 +18,7 @@ Assessed on 2026-10-13 against the repository.
 
 | Area | Exists | Gap |
 | --- | --- | --- |
-| Structured errors | `--diagnostic-format=json` version 1 (see [Errors](../language/errors.md)): `category`, `kind`, `message`, point `location`, `frames`, `cause`. | `kind` is null for source errors, so there are no stable codes. Locations are points, not spans. No expected-versus-actual fields or edits. The interactive server emits a separate protocol diagnostic shape (`unknown_method`, `malformed_json`). |
+| Structured errors | As of 2026-10-14, one version 2 [diagnostic document](../reference/diagnostics.md) for the CLI and the server, with stable codes and source ranges. | No expected-versus-actual fields or edits. Runtime errors have point locations only. |
 | Capability surface | Typed native bindings in `slug-native-manifest`, `foreign` declarations, the deny-all `NilLoader` used by `slug-restricted-host`, and a module model that retains doc blocks and evaluated tags. | As of 2026-10-14, `slug report` lists modules, imports, dynamic import sites, builtins, foreign declarations, and resources. `slug.meta` introspection, native provider identity, `cfg` keys, and limits are not reported. |
 | Metering | `.cslug` decode limits only. | The VM has no instruction or memory budget. Map enumeration order is unspecified (Runtime Requirements), which blocks exact replay. |
 | Sessions | The interactive server provides `initialize`, `session.open`, `session.close`, `submit`, and `session.poll`. | No snapshot, rollback, fork, or structured state inspection. Shared mutable captures and native resource handles make a full fork hard. |
@@ -53,7 +53,8 @@ distinctive one for reviewers.
 
 ### 3. Errors that carry a fix
 
-- [ ] Unify CLI and interactive-server diagnostics under one versioned schema.
+- [x] Unify CLI and interactive-server diagnostics under one versioned schema.
+  See [Diagnostic Documents](../reference/diagnostics.md).
 - [x] Assign stable codes to parse, semantic, runtime, and startup errors. See
   [Diagnostic Codes](../reference/diagnostic-codes.md).
 - [ ] Split the shared `module` code into module resolution failure classes.
@@ -61,11 +62,6 @@ distinctive one for reviewers.
 - [ ] Give runtime errors and stack frames ranges; this changes `.cslug` span
   tables.
 - [ ] Report an unknown type annotation at the annotation, not the value.
-- [ ] Reject a name that no scope, import, or implicit builtin declares at
-  compile time with `unknown_name`. Today `println(missing)` compiles and fails
-  at runtime with `name`. Host builtins registered outside `slug.builtin`, and
-  top-level bindings used before they initialize, must still fail only at
-  runtime.
 - [ ] Add expected-versus-actual fields where the checker knows both.
 - [ ] Add machine-applicable edits where a fix is unambiguous.
 

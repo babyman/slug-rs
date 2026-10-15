@@ -60,37 +60,7 @@ program path; an argument of the same spelling after the path remains a program
 argument. Standard output and program-authored standard-error output retain
 their usual behavior.
 
-Version 1 documents use this shape:
-
-```json
-{
-  "version": 1,
-  "category": "parse",
-  "kind": null,
-  "code": "expected_syntax",
-  "message": "expected binding name",
-  "location": { "path": "example.slug", "line": 1, "column": 5 },
-  "range": { "start": { "line": 1, "column": 5 }, "end": { "line": 1, "column": 6 } },
-  "frames": [],
-  "cause": null
-}
-```
-
-`category` is `parse`, `semantic`, `module`, `runtime`, `usage`, `io`,
-`host`, or `artifact`. `kind` is null for source errors and identifies runtime
-or startup subtypes when available. `code` is the stable failure class listed
-in [Diagnostic Codes](../reference/diagnostic-codes.md); match on `code`, not
-on `message`. `location` is null when no source position is available. It is a single
-point: for an operator error it is the operator, not the start of the
-expression. `range` is the extent of the offending source in the same file,
-from `start` up to `end`, exclusive, and starts at or before `location`. A parse
-error's range covers the offending token or malformed literal; a semantic
-error's range covers the offending expression, such as all of `1 + "a"`.
-`range` is null for runtime and startup errors and for source errors whose
-extent is not tracked. Lines and columns are 1-based and columns count Unicode
-scalar values.
-Runtime `frames` identify Slug call sites; `cause` recursively carries a
-replacement error retained during unwinding. A document whose `kind` is
-`thrown` also has a `thrown` member holding the thrown payload in the
-[value JSON form](../reference/value-json.md); other documents omit it, so
-`throw nil` is reported as `"thrown": null`.
+Each document is a version 2 [diagnostic document](../reference/diagnostics.md),
+the same document the interactive server reports for the same failure. Match on
+its `code`, listed in [Diagnostic Codes](../reference/diagnostic-codes.md),
+never on its `message`.

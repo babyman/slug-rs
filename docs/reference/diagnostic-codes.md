@@ -5,9 +5,9 @@ a failure class; it is the stable key for tools and agents. Diagnostic message
 text is not stable and may change while its code stays the same. A code is
 never reused for a different failure class.
 
-Codes appear as the `code` member of `--diagnostic-format=json` documents (see
-[Errors](../language/errors.md#command-line-json-diagnostics)) and of
-interactive server diagnostics. They are unique across categories.
+Codes appear as the `code` member of every [diagnostic document](diagnostics.md),
+from `--diagnostic-format=json` and from the interactive server. They are
+unique across categories.
 
 ## Source codes
 
@@ -50,7 +50,7 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 
 ## Runtime codes
 
-A runtime diagnostic's code equals its `kind`: `invalid_bytecode`, `type`,
+Runtime and module diagnostics use these codes: `invalid_bytecode`, `type`,
 `name`, `arity`, `divide_by_zero`, `invalid_call`, `native`,
 `native_contract`, `module`, `not_implemented`, `match`, or `thrown`. Module
 resolution failures currently share the `module` code.
@@ -58,8 +58,8 @@ resolution failures currently share the `module` code.
 ## Command-line startup codes
 
 A command-line failure before a program runs has category `usage`, `io`,
-`host`, or `artifact`. Every `usage` failure has code `usage`, and its `kind`
-names the subcommand. Other startup codes equal their `kind`:
+`host`, or `artifact`. Every `usage` failure has code `usage`; its message
+names the subcommand. Other startup failures use these codes:
 
 | Code | Category | Failure |
 |---|---|---|
