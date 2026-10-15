@@ -61,6 +61,11 @@ distinctive one for reviewers.
 - [ ] Give runtime errors and stack frames ranges; this changes `.cslug` span
   tables.
 - [ ] Report an unknown type annotation at the annotation, not the value.
+- [ ] Reject a name that no scope, import, or implicit builtin declares at
+  compile time with `unknown_name`. Today `println(missing)` compiles and fails
+  at runtime with `name`. Host builtins registered outside `slug.builtin`, and
+  top-level bindings used before they initialize, must still fail only at
+  runtime.
 - [ ] Add expected-versus-actual fields where the checker knows both.
 - [ ] Add machine-applicable edits where a fix is unambiguous.
 
