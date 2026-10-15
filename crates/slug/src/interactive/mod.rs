@@ -7,8 +7,8 @@ mod protocol;
 mod server;
 
 pub use crate::diagnostic::{
-    Diagnostic, DiagnosticCategory, DiagnosticFrame, DiagnosticLocation, DiagnosticPosition,
-    DiagnosticRange, NativeDiagnostic, value_json,
+    Diagnostic, DiagnosticCategory, DiagnosticEdit, DiagnosticFix, DiagnosticFrame,
+    DiagnosticLocation, DiagnosticPosition, DiagnosticRange, NativeDiagnostic, value_json,
 };
 pub use protocol::{Event, EventOrigin, IncomingMessage, PROTOCOL_VERSION, Request, Response};
 pub use server::{OutputError, OutputStream, Server};

@@ -558,6 +558,37 @@ fn json_mode_reports_expected_and_actual() {
 }
 
 #[test]
+fn json_mode_reports_machine_applicable_fixes() {
+    for (name, source, fixes) in [
+        (
+            "json-fix-insert",
+            "val x = [1",
+            serde_json::json!([{
+                "message": "insert `]`",
+                "edits": [{
+                    "range": {
+                        "start": { "line": 1, "column": 11 },
+                        "end": { "line": 1, "column": 11 },
+                    },
+                    "text": "]",
+                }],
+            }]),
+        ),
+        ("json-fix-none", "val x = [1 2]", serde_json::json!([])),
+    ] {
+        let path = fixture_path(name);
+        fs::write(&path, source).expect("write fix source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run fix source");
+        fs::remove_file(&path).expect("remove fix source");
+        assert_eq!(json_diagnostic(&output.stderr)["fixes"], fixes, "{name}");
+    }
+}
+
+#[test]
 fn json_mode_encodes_thrown_payloads_only_for_thrown_errors() {
     for (name, source, thrown) in [
         (

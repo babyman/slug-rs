@@ -1,5 +1,5 @@
 use super::{
-    SourceError, SourceErrorCode, SourcePosition,
+    SourceEdit, SourceError, SourceErrorCode, SourcePosition, SourceRange,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, MatchCase,
         Parameter, Pattern, Prefix, RestPattern, SelectCase, SelectCaseKind, StringPart,
@@ -42,6 +42,14 @@ impl Parser {
     }
     /// The exclusive end of the last consumed token, which ends any
     /// expression completed by that token.
+    /// Where the next token begins.
+    fn position(&self) -> SourcePosition {
+        let span = &self.peek().span;
+        SourcePosition {
+            line: span.line,
+            column: span.column,
+        }
+    }
     fn previous_end(&self) -> SourcePosition {
         self.tokens[self.index.saturating_sub(1)].end
     }
@@ -57,11 +65,28 @@ impl Parser {
         if self.matches(kind) {
             Ok(self.next())
         } else {
-            let mut error =
-                SourceError::at_token(SourceErrorCode::ExpectedSyntax, message, self.peek());
-            error.expected = Some(kind.describe());
-            Err(error)
+            Err(self.expected_token(kind, message))
         }
+    }
+    /// An error requiring `kind` at the next token. At the end of input the
+    /// parser has already read everything as inside the open construct, so
+    /// inserting its closing delimiter after the last token completes the
+    /// program as parsed; that is the one fix offered.
+    fn expected_token(&self, kind: &TokenKind, message: &str) -> SourceError {
+        let mut error =
+            SourceError::at_token(SourceErrorCode::ExpectedSyntax, message, self.peek());
+        error.expected = Some(kind.describe().into());
+        if let (TokenKind::End, Some(text)) = (self.kind(), kind.closing_text()) {
+            let at = self.previous_end();
+            error = error.with_fix(
+                format!("insert `{text}`"),
+                SourceEdit {
+                    range: SourceRange { start: at, end: at },
+                    text: text.into(),
+                },
+            );
+        }
+        error
     }
     fn separators(&mut self) {
         while self.is_separator() {
@@ -1352,13 +1377,12 @@ impl Parser {
         self.separators();
         while !self.matches(&TokenKind::RBrace) {
             if self.matches(&TokenKind::End) {
-                return Err(SourceError::at(
-                    SourceErrorCode::ExpectedSyntax,
-                    "expected }",
-                    self.peek().span.clone(),
-                ));
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
             }
             values.push(self.statement()?);
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
                 return Err(SourceError::at_token(
                     SourceErrorCode::ExpectedSyntax,
@@ -1569,12 +1593,9 @@ impl Parser {
         self.separators();
         while !self.matches(&TokenKind::RBrace) {
             if self.matches(&TokenKind::End) {
-                return Err(SourceError::at(
-                    SourceErrorCode::ExpectedSyntax,
-                    "expected }",
-                    self.peek().span.clone(),
-                ));
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
             }
+            let start = self.position();
             let mut patterns = vec![self.case_pattern()?];
             while self.matches(&TokenKind::Comma) {
                 self.next();
@@ -1593,10 +1614,14 @@ impl Parser {
             cases.push(MatchCase {
                 patterns,
                 guard,
+                start,
                 end: value.end,
                 value,
                 span: case_span,
             });
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
                 return Err(SourceError::at_token(
                     SourceErrorCode::ExpectedSyntax,

@@ -394,6 +394,8 @@ pub(super) struct MatchCase {
     pub(super) guard: Option<Expr>,
     pub(super) value: Expr,
     pub(super) span: SourceSpan,
+    /// Where the case's first pattern begins.
+    pub(super) start: SourcePosition,
     /// Exclusive end of the case body.
     pub(super) end: SourcePosition,
 }
@@ -552,7 +554,39 @@ pub(super) enum TokenKind {
     End,
 }
 
+impl Pattern {
+    /// Whether testing this pattern evaluates nothing: no pinned binding
+    /// loads and no computed map keys.
+    pub(super) fn is_static(&self) -> bool {
+        match self {
+            Self::Literal(_)
+            | Self::Wildcard
+            | Self::Binding(_)
+            | Self::MapAll
+            | Self::EnumCase { .. } => true,
+            Self::Pinned(_) => false,
+            Self::At { pattern, .. } => pattern.is_static(),
+            Self::List { items, .. } => items.iter().all(Self::is_static),
+            Self::Map { entries, .. } => entries
+                .iter()
+                .all(|(key, value)| matches!(key, MapPatternKey::String(_)) && value.is_static()),
+        }
+    }
+}
+
 impl TokenKind {
+    /// The source text of a closing delimiter, which is the only token a fix
+    /// may insert.
+    pub(super) const fn closing_text(&self) -> Option<&'static str> {
+        match self {
+            Self::RParen => Some(")"),
+            Self::RBracket => Some("]"),
+            Self::RBrace => Some("}"),
+            Self::RExactMap => Some("|}"),
+            _ => None,
+        }
+    }
+
     /// A short description of this token for diagnostics, such as `` `}` ``
     /// or ``name `x` ``.
     pub(super) fn describe(&self) -> String {

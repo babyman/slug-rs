@@ -2177,7 +2177,7 @@ fn check_expression_inner(
                             "match case is unreachable",
                             case.span.clone(),
                         )
-                        .with_end(case.end));
+                        .unreachable_case(case));
                     }
                     let mut covered = Vec::new();
                     for (pattern, constraint) in case.patterns.iter().zip(&constraints) {
@@ -2209,7 +2209,7 @@ fn check_expression_inner(
                             "match case cannot match remaining enum cases",
                             case.span.clone(),
                         )
-                        .with_end(case.end));
+                        .unreachable_case(case));
                     }
                     if case.guard.is_none() {
                         remaining_cases.retain(|candidate| !matching.contains(candidate));
@@ -2221,7 +2221,7 @@ fn check_expression_inner(
                         "match case is unreachable",
                         case.span.clone(),
                     )
-                    .with_end(case.end));
+                    .unreachable_case(case));
                 }
                 if let Some(current) = &remaining {
                     if constraints.iter().all(Option::is_some)
@@ -2235,7 +2235,7 @@ fn check_expression_inner(
                             format!("match case cannot match remaining type {current}"),
                             case.span.clone(),
                         )
-                        .with_end(case.end));
+                        .unreachable_case(case));
                     }
                     if case.guard.is_none() && !irrefutable_constraints.is_empty() {
                         let coverage = if irrefutable_constraints.iter().any(Option::is_none) {
@@ -2249,7 +2249,7 @@ fn check_expression_inner(
                                 "match case is unreachable",
                                 case.span.clone(),
                             )
-                            .with_end(case.end));
+                            .unreachable_case(case));
                         }
                         remaining = type_subtract(current, &coverage);
                     }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Diagnostics offer machine-applicable `fixes` when a fix cannot change the
+  rest of the program: inserting a closing `)`, `]`, `}`, or `|}` missing at
+  the end of a file, and deleting an unreachable match case whose patterns
+  evaluate nothing. A block or match missing its `}` at the end of a file now
+  reports `expected }` instead of a missing statement separator. Rust hosts
+  apply fixes with `slug_frontend::apply_fix`; `SourcePosition` and
+  `SourceRange` are now exported.
+
 - Diagnostics report `expected` and `actual` when known: `val x:num = "a"`
   reports `num` and `str`, and `[1` at the end of a file reports `` `]` `` and
   `end of input`. Rust hosts read `SourceError::expected` and `::actual`.

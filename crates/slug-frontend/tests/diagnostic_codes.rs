@@ -79,3 +79,69 @@ fn source_errors_report_what_was_expected_and_found() {
         );
     }
 }
+
+fn only_fix(source: &str) -> Option<String> {
+    let error = compile("fixes.slug", source).expect_err(source);
+    assert!(error.fixes.len() <= 1, "{source}: {:?}", error.fixes);
+    error
+        .fixes
+        .first()
+        .map(|fix| fix.apply(source).expect("fix applies to its source"))
+}
+
+fn run(source: &str) -> slug_vm::Value {
+    let program = compile("fixed.slug", source).unwrap_or_else(|error| panic!("{source}: {error}"));
+    slug_vm::Vm::new()
+        .run_named(&program, "main")
+        .unwrap_or_else(|error| panic!("{source}: {error:?}"))
+}
+
+#[test]
+fn closing_delimiters_missing_at_end_of_input_are_inserted() {
+    for (source, fixed) in [
+        ("val x = [1", "val x = [1]"),
+        ("val f = fn() {\n  [1, (2", "val f = fn() {\n  [1, (2)]}"),
+        ("val m = {a: 1", "val m = {a: 1}"),
+    ] {
+        let mut current = source.to_string();
+        for _ in 0..4 {
+            match only_fix(&current) {
+                Some(next) => current = next,
+                None => break,
+            }
+            if compile("fixes.slug", &current).is_ok() {
+                break;
+            }
+        }
+        assert_eq!(current, fixed, "{source}");
+        compile("fixes.slug", &current).unwrap_or_else(|error| panic!("{current}: {error}"));
+    }
+}
+
+#[test]
+fn deleting_an_unreachable_case_preserves_the_result() {
+    for source in [
+        "match 1 {\n  _ => 1\n  2 => 2\n}",
+        "enum Color { Red, Green }\nmatch Color.Red {\n  Color.Red => 1\n  Color.Green => 2\n  Color.Red => 3\n}",
+    ] {
+        let fixed = only_fix(source).unwrap_or_else(|| panic!("{source}: no fix"));
+        assert!(
+            !fixed.contains("=> 3") && !fixed.contains("2 => 2"),
+            "{fixed}"
+        );
+        assert_eq!(run(&fixed), slug_vm::Value::Int(1), "{fixed}");
+    }
+}
+
+#[test]
+fn uncertain_repairs_offer_no_fix() {
+    for source in [
+        "val x = [1 2]",
+        "val s = \"open",
+        "val x = 1\nx = 2",
+        "val pin = 2\nmatch 1 {\n  _ => 1\n  ^pin => 2\n}",
+        "match 1 { 1 2 }",
+    ] {
+        assert_eq!(only_fix(source), None, "{source}");
+    }
+}

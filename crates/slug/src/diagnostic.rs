@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use slug_frontend::{SourceError, SourceErrorKind};
+use slug_frontend::{SourceError, SourceErrorKind, SourcePosition, SourceRange};
 use slug_vm::{RuntimeError, RuntimeErrorKind, SourceSpan, Value};
 
 /// The diagnostic document version.
@@ -31,6 +31,9 @@ pub struct Diagnostic {
     /// What was found instead, when known.
     #[serde(default)]
     pub actual: Option<String>,
+    /// Machine-applicable fixes, each a set of edits in `location`'s file.
+    #[serde(default)]
+    pub fixes: Vec<DiagnosticFix>,
     #[serde(default)]
     pub frames: Vec<DiagnosticFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,6 +100,20 @@ pub struct DiagnosticPosition {
     pub column: u32,
 }
 
+/// One machine-applicable fix. Apply all of its edits together.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DiagnosticFix {
+    pub message: String,
+    pub edits: Vec<DiagnosticEdit>,
+}
+
+/// Replace `range` with `text`; an empty range inserts and empty text deletes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DiagnosticEdit {
+    pub range: DiagnosticRange,
+    pub text: String,
+}
+
 /// One Slug call frame in a runtime diagnostic.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticFrame {
@@ -127,6 +144,7 @@ impl Diagnostic {
             range: None,
             expected: None,
             actual: None,
+            fixes: Vec::new(),
             frames: Vec::new(),
             thrown: None,
             native: None,
@@ -151,18 +169,24 @@ impl Diagnostic {
         };
         Self {
             location: error.span.as_ref().map(location),
-            range: error.range.map(|range| DiagnosticRange {
-                start: DiagnosticPosition {
-                    line: range.start.line,
-                    column: range.start.column,
-                },
-                end: DiagnosticPosition {
-                    line: range.end.line,
-                    column: range.end.column,
-                },
-            }),
-            expected: error.expected.clone(),
-            actual: error.actual.clone(),
+            range: error.range.map(range),
+            fixes: error
+                .fixes
+                .iter()
+                .map(|fix| DiagnosticFix {
+                    message: fix.message.clone(),
+                    edits: fix
+                        .edits
+                        .iter()
+                        .map(|edit| DiagnosticEdit {
+                            range: range(edit.range),
+                            text: edit.text.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            expected: error.expected.as_deref().map(str::to_owned),
+            actual: error.actual.as_deref().map(str::to_owned),
             ..Self::new(category, error.code.as_str(), error.message.clone())
         }
     }
@@ -195,6 +219,17 @@ impl Diagnostic {
                 .map(|cause| Box::new(Self::from_runtime(cause))),
             ..Self::new(category, runtime_code(&error.kind), error.message.clone())
         }
+    }
+}
+
+fn range(range: SourceRange) -> DiagnosticRange {
+    let position = |position: SourcePosition| DiagnosticPosition {
+        line: position.line,
+        column: position.column,
+    };
+    DiagnosticRange {
+        start: position(range.start),
+        end: position(range.end),
     }
 }
 

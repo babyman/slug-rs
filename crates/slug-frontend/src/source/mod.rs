@@ -47,9 +47,85 @@ pub struct SourceError {
     pub range: Option<SourceRange>,
     /// What the checker or parser required here, such as a type (`num`) or
     /// a token (`` `}` ``), when it is known.
-    pub expected: Option<String>,
+    pub expected: Option<Box<str>>,
     /// What it found instead, when it is known.
-    pub actual: Option<String>,
+    pub actual: Option<Box<str>>,
+    /// Edits that resolve this error without changing what the rest of the
+    /// program means. Empty unless a fix is certain.
+    pub fixes: Box<[SourceFix]>,
+}
+
+/// One machine-applicable fix: apply all of its edits together.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceFix {
+    pub message: String,
+    pub edits: Vec<SourceEdit>,
+}
+
+impl SourceFix {
+    /// Applies this fix to `source`, the text its error was reported against.
+    /// Returns `None` when an edit lies outside `source` or edits overlap.
+    #[must_use]
+    pub fn apply(&self, source: &str) -> Option<String> {
+        apply_fix(source, self)
+    }
+}
+
+/// Applies `fix` to `source`, the text its error was reported against.
+/// Returns `None` when an edit lies outside `source` or edits overlap.
+#[must_use]
+pub fn apply_fix(source: &str, fix: &SourceFix) -> Option<String> {
+    let mut edits = fix
+        .edits
+        .iter()
+        .map(|edit| {
+            let start = char_offset(source, edit.range.start)?;
+            let end = char_offset(source, edit.range.end)?;
+            (start <= end).then_some((start, end, edit.text.as_str()))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    edits.sort_by_key(|(start, _, _)| *start);
+    if edits.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return None;
+    }
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    for (start, end, text) in edits {
+        output.push_str(&source[cursor..start]);
+        output.push_str(text);
+        cursor = end;
+    }
+    output.push_str(&source[cursor..]);
+    Some(output)
+}
+
+/// The byte offset of a 1-based line and scalar-value column, allowing the
+/// position just past the end of a line or of the text.
+fn char_offset(source: &str, position: SourcePosition) -> Option<usize> {
+    let mut line = 1;
+    let mut column = 1;
+    for (offset, character) in source.char_indices() {
+        if (line, column) == (position.line, position.column) {
+            return Some(offset);
+        }
+        if character == '\n' {
+            if line == position.line {
+                return None;
+            }
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    ((line, column) == (position.line, position.column)).then_some(source.len())
+}
+
+/// Replace `range` with `text`. An empty range inserts; empty text deletes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceEdit {
+    pub range: SourceRange,
+    pub text: String,
 }
 
 /// A source extent from `start` up to `end`, exclusive.
@@ -195,18 +271,55 @@ impl SourceError {
             range: None,
             expected: None,
             actual: None,
+            fixes: Box::default(),
         }
     }
 
     fn at_token(code: SourceErrorCode, message: impl Into<String>, token: &ast::Token) -> Self {
         let mut error = Self::at(code, message, token.span.clone()).with_end(token.end);
-        error.actual = Some(token.kind.describe());
+        error.actual = Some(token.kind.describe().into());
         error
     }
 
+    fn with_fix(mut self, message: impl Into<String>, edit: SourceEdit) -> Self {
+        let mut fixes = std::mem::take(&mut self.fixes).into_vec();
+        fixes.push(SourceFix {
+            message: message.into(),
+            edits: vec![edit],
+        });
+        self.fixes = fixes.into_boxed_slice();
+        self
+    }
+
+    /// Covers a whole match case and, when deleting it cannot change
+    /// behavior, offers to delete it. A case never selected is never run,
+    /// but its pattern operands are still evaluated when it is tested, so
+    /// cases with pinned names or computed keys get no fix.
+    fn unreachable_case(mut self, case: &ast::MatchCase) -> Self {
+        let range = SourceRange {
+            start: case.start,
+            end: case.end,
+        };
+        self.range = Some(range);
+        if case
+            .patterns
+            .iter()
+            .all(|pattern| pattern.pattern.is_static())
+        {
+            self = self.with_fix(
+                "remove the unreachable case",
+                SourceEdit {
+                    range,
+                    text: String::new(),
+                },
+            );
+        }
+        self
+    }
+
     fn with_expected_actual(mut self, expected: String, actual: String) -> Self {
-        self.expected = Some(expected);
-        self.actual = Some(actual);
+        self.expected = Some(expected.into());
+        self.actual = Some(actual.into());
         self
     }
 
@@ -251,6 +364,7 @@ impl SourceError {
             range: None,
             expected: None,
             actual: None,
+            fixes: Box::default(),
         }
     }
 }

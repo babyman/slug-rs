@@ -18,6 +18,7 @@ same failure. See the [decision record](../decisions/2026-10-14-one-diagnostic-d
   "range": { "start": { "line": 1, "column": 1 }, "end": { "line": 1, "column": 9 } },
   "expected": null,
   "actual": null,
+  "fixes": [],
   "frames": [],
   "native": null,
   "cause": null
@@ -37,6 +38,7 @@ Every member is always present, `null` when it does not apply, except
 | `range` | `{start, end}`, each `{line, column}`: the extent of the offending source in `location`'s file, with `end` exclusive. It starts at or before `location`. A parse error's range covers the offending token or malformed literal; a semantic error's range covers the offending expression. `null` for runtime and startup failures and for source errors whose extent is not tracked. |
 | `expected` | What the parser or checker required at `location`, when known: a type such as `num`, or a token description such as `` `]` ``. Otherwise `null`. |
 | `actual` | What it found instead, when known: a type such as `str`, or a token description such as ``name `x` `` or `end of input`. Otherwise `null`. |
+| `fixes` | Machine-applicable fixes, each `{message, edits}`; see [Fixes](#fixes). Empty when no fix is certain. |
 | `frames` | Runtime call frames, innermost first, each `{function, location}`. Empty for other failures. Frames that only run deferred work are omitted. |
 | `thrown` | Present only when `code` is `thrown`: the thrown payload in the [value JSON form](value-json.md). `throw nil` is reported as `"thrown": null`. |
 | `native` | `{code, data}` when a native function failed: the native error code and its data in the value JSON form, or `null` data. Otherwise `null`. |
@@ -49,6 +51,25 @@ display, and tokens use a backquoted spelling or a kind such as `number`.
 Their wording may change; `code` remains the stable key. Currently a parse
 error at a token reports `actual`, a missing delimiter or keyword also reports
 `expected`, and a type mismatch against a single required type reports both.
+
+## Fixes
+
+Each fix has a human-readable `message` and a list of `edits`. Each edit is
+`{range, text}`: replace the source in `range`, which uses the same positions
+as the document's `range`, with `text`. An empty range inserts and an empty
+`text` deletes. Edits apply to `location`'s file, against the text the
+diagnostic was reported for, and all edits of one fix apply together.
+
+A fix is offered only when applying it cannot change what the rest of the
+program means. It may expose a further error, which can carry its own fix.
+Currently two fixes exist:
+
+| Code | Fix |
+|---|---|
+| `expected_syntax` | At the end of input, insert the missing closing delimiter `)`, `]`, `}`, or `\|}` after the last token. The parser has already read everything after the opening delimiter as inside it, so closing it there completes the program as parsed. |
+| `unreachable_match_case` | Delete the unreachable case, from its first pattern to the end of its body. Offered only when its patterns evaluate nothing when tested: no pinned names and no computed map keys. |
+
+Rust hosts apply a fix with `slug_frontend::apply_fix`.
 
 ## Interactive server
 

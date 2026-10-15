@@ -700,6 +700,7 @@ mod tests {
             range: None,
             expected: None,
             actual: None,
+            fixes: Box::default(),
         };
 
         assert_eq!(

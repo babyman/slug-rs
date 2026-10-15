@@ -18,7 +18,7 @@ Assessed on 2026-10-13 against the repository.
 
 | Area | Exists | Gap |
 | --- | --- | --- |
-| Structured errors | As of 2026-10-14, one version 2 [diagnostic document](../reference/diagnostics.md) for the CLI and the server, with stable codes and source ranges. | No machine-applicable edits. Operator errors lack expected and actual types. Runtime errors have point locations only. |
+| Structured errors | As of 2026-10-14, one version 2 [diagnostic document](../reference/diagnostics.md) for the CLI and the server, with stable codes and source ranges. | Two machine-applicable fixes so far. Operator errors lack expected and actual types. Runtime errors have point locations only. |
 | Capability surface | Typed native bindings in `slug-native-manifest`, `foreign` declarations, the deny-all `NilLoader` used by `slug-restricted-host`, and a module model that retains doc blocks and evaluated tags. | As of 2026-10-14, `slug report` lists modules, imports, dynamic import sites, builtins, foreign declarations, and resources. `slug.meta` introspection, native provider identity, `cfg` keys, and limits are not reported. |
 | Metering | `.cslug` decode limits only. | The VM has no instruction or memory budget. Map enumeration order is unspecified (Runtime Requirements), which blocks exact replay. |
 | Sessions | The interactive server provides `initialize`, `session.open`, `session.close`, `submit`, and `session.poll`. | No snapshot, rollback, fork, or structured state inspection. Shared mutable captures and native resource handles make a full fork hard. |
@@ -64,7 +64,9 @@ distinctive one for reviewers.
 - [ ] Report an unknown type annotation at the annotation, not the value.
 - [x] Add expected-versus-actual fields where the checker knows both.
 - [ ] Report expected and actual operand types for operator errors.
-- [ ] Add machine-applicable edits where a fix is unambiguous.
+- [x] Add machine-applicable edits where a fix is unambiguous: missing closing
+  delimiters at end of input and unreachable match cases.
+- [ ] Consider further fixes only where they cannot change program meaning.
 
 ### 4. Deterministic metering and replay
 
