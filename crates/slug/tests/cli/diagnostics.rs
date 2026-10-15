@@ -528,6 +528,8 @@ fn json_mode_reports_the_range_of_the_offending_expression() {
     fs::remove_file(&path).expect("remove range source");
 
     let diagnostic = json_diagnostic(&output.stderr);
+    assert!(diagnostic["expected"].is_null());
+    assert!(diagnostic["actual"].is_null());
     assert_eq!(diagnostic["location"]["column"], 11);
     assert_eq!(
         diagnostic["range"],
@@ -536,6 +538,23 @@ fn json_mode_reports_the_range_of_the_offending_expression() {
             "end": { "line": 1, "column": 16 },
         })
     );
+}
+
+#[test]
+fn json_mode_reports_expected_and_actual() {
+    let path = fixture_path("json-expected");
+    fs::write(&path, "val x:num = \"a\"\n").expect("write expected source");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&path)
+        .output()
+        .expect("run expected source");
+    fs::remove_file(&path).expect("remove expected source");
+
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(diagnostic["code"], "type_mismatch");
+    assert_eq!(diagnostic["expected"], "num");
+    assert_eq!(diagnostic["actual"], "str");
 }
 
 #[test]

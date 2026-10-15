@@ -25,6 +25,12 @@ pub struct Diagnostic {
     pub location: Option<DiagnosticLocation>,
     #[serde(default)]
     pub range: Option<DiagnosticRange>,
+    /// What was required at the location, such as a type or token, when known.
+    #[serde(default)]
+    pub expected: Option<String>,
+    /// What was found instead, when known.
+    #[serde(default)]
+    pub actual: Option<String>,
     #[serde(default)]
     pub frames: Vec<DiagnosticFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -119,6 +125,8 @@ impl Diagnostic {
             message: message.into(),
             location: None,
             range: None,
+            expected: None,
+            actual: None,
             frames: Vec::new(),
             thrown: None,
             native: None,
@@ -153,6 +161,8 @@ impl Diagnostic {
                     column: range.end.column,
                 },
             }),
+            expected: error.expected.clone(),
+            actual: error.actual.clone(),
             ..Self::new(category, error.code.as_str(), error.message.clone())
         }
     }

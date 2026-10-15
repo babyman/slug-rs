@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Diagnostics report `expected` and `actual` when known: `val x:num = "a"`
+  reports `num` and `str`, and `[1` at the end of a file reports `` `]` `` and
+  `end of input`. Rust hosts read `SourceError::expected` and `::actual`.
+
 - `--diagnostic-format=json` and the interactive server now emit the same
   version 2 diagnostic document, defined in `docs/reference/diagnostics.md`.
   `kind` is removed in favour of `code`; every member is always present; the

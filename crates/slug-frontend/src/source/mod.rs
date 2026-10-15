@@ -45,6 +45,11 @@ pub struct SourceError {
     /// contains `span`, which may be a focus point inside it such as an
     /// operator.
     pub range: Option<SourceRange>,
+    /// What the checker or parser required here, such as a type (`num`) or
+    /// a token (`` `}` ``), when it is known.
+    pub expected: Option<String>,
+    /// What it found instead, when it is known.
+    pub actual: Option<String>,
 }
 
 /// A source extent from `start` up to `end`, exclusive.
@@ -188,11 +193,21 @@ impl SourceError {
             message: message.into(),
             span: Some(span),
             range: None,
+            expected: None,
+            actual: None,
         }
     }
 
     fn at_token(code: SourceErrorCode, message: impl Into<String>, token: &ast::Token) -> Self {
-        Self::at(code, message, token.span.clone()).with_end(token.end)
+        let mut error = Self::at(code, message, token.span.clone()).with_end(token.end);
+        error.actual = Some(token.kind.describe());
+        error
+    }
+
+    fn with_expected_actual(mut self, expected: String, actual: String) -> Self {
+        self.expected = Some(expected);
+        self.actual = Some(actual);
+        self
     }
 
     /// Extends this error from its span to `end`.
@@ -234,6 +249,8 @@ impl SourceError {
             message: message.into(),
             span: Some(span),
             range: None,
+            expected: None,
+            actual: None,
         }
     }
 }

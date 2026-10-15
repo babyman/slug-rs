@@ -16,6 +16,8 @@ same failure. See the [decision record](../decisions/2026-10-14-one-diagnostic-d
   "message": "operator `+` does not accept num and bool",
   "location": { "path": "example.slug", "line": 1, "column": 3 },
   "range": { "start": { "line": 1, "column": 1 }, "end": { "line": 1, "column": 9 } },
+  "expected": null,
+  "actual": null,
   "frames": [],
   "native": null,
   "cause": null
@@ -33,12 +35,20 @@ Every member is always present, `null` when it does not apply, except
 | `message` | Human-readable text. Not stable. |
 | `location` | `{path, line, column}`: one point, or `null` when no source position is known. For an operator error it is the operator. |
 | `range` | `{start, end}`, each `{line, column}`: the extent of the offending source in `location`'s file, with `end` exclusive. It starts at or before `location`. A parse error's range covers the offending token or malformed literal; a semantic error's range covers the offending expression. `null` for runtime and startup failures and for source errors whose extent is not tracked. |
+| `expected` | What the parser or checker required at `location`, when known: a type such as `num`, or a token description such as `` `]` ``. Otherwise `null`. |
+| `actual` | What it found instead, when known: a type such as `str`, or a token description such as ``name `x` `` or `end of input`. Otherwise `null`. |
 | `frames` | Runtime call frames, innermost first, each `{function, location}`. Empty for other failures. Frames that only run deferred work are omitted. |
 | `thrown` | Present only when `code` is `thrown`: the thrown payload in the [value JSON form](value-json.md). `throw nil` is reported as `"thrown": null`. |
 | `native` | `{code, data}` when a native function failed: the native error code and its data in the value JSON form, or `null` data. Otherwise `null`. |
 | `cause` | A nested diagnostic for an error that was replaced while unwinding, or `null`. |
 
 Lines and columns are 1-based. Columns count Unicode scalar values.
+
+`expected` and `actual` are descriptive text. Types use the checker's type
+display, and tokens use a backquoted spelling or a kind such as `number`.
+Their wording may change; `code` remains the stable key. Currently a parse
+error at a token reports `actual`, a missing delimiter or keyword also reports
+`expected`, and a type mismatch against a single required type reports both.
 
 ## Interactive server
 

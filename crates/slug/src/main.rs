@@ -698,6 +698,8 @@ mod tests {
             message: "expected expression".into(),
             span: Some(SourceSpan::new("missing.slug", 4, 2)),
             range: None,
+            expected: None,
+            actual: None,
         };
 
         assert_eq!(

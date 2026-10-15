@@ -57,11 +57,10 @@ impl Parser {
         if self.matches(kind) {
             Ok(self.next())
         } else {
-            Err(SourceError::at_token(
-                SourceErrorCode::ExpectedSyntax,
-                message,
-                self.peek(),
-            ))
+            let mut error =
+                SourceError::at_token(SourceErrorCode::ExpectedSyntax, message, self.peek());
+            error.expected = Some(kind.describe());
+            Err(error)
         }
     }
     fn separators(&mut self) {

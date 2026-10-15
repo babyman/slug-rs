@@ -2725,7 +2725,8 @@ fn slice_result(collection: &Type, span: &SourceSpan) -> Result<Type, SourceErro
             SourceErrorCode::TypeMismatch,
             format!("expected list, got {other}"),
             span.clone(),
-        )),
+        )
+        .with_expected_actual("list".into(), other.to_string())),
     }
 }
 
@@ -3514,15 +3515,16 @@ fn instantiate_candidate(
                 if let Some(index) = first_generic_parameter(&parameter.value_type)
                     && let Some(inferred) = substitutions.get(&index)
                 {
-                    return Err(SourceError::semantic(
-                        error.code,
-                        format!(
-                            "{} (generic T{index} was inferred as {})",
-                            error.message,
-                            inferred.diagnostic_display()
-                        ),
-                        span.clone(),
-                    ));
+                    let message = format!(
+                        "{} (generic T{index} was inferred as {})",
+                        error.message,
+                        inferred.diagnostic_display()
+                    );
+                    return Err(SourceError {
+                        expected: error.expected,
+                        actual: error.actual,
+                        ..SourceError::semantic(error.code, message, span.clone())
+                    });
                 }
                 return Err(error);
             }
@@ -3907,7 +3909,8 @@ fn require(expected: &Type, actual: &Type, span: &SourceSpan) -> Result<(), Sour
             SourceErrorCode::TypeMismatch,
             format!("expected {expected_display}, got {actual_display}"),
             span.clone(),
-        ))
+        )
+        .with_expected_actual(expected_display, actual_display))
     }
 }
 

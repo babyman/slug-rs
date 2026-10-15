@@ -61,3 +61,21 @@ fn source_errors_cover_the_offending_source() {
         );
     }
 }
+
+#[test]
+fn source_errors_report_what_was_expected_and_found() {
+    for (source, expected, actual) in [
+        ("val x:num = \"a\"", Some("num"), Some("str")),
+        ("val x = [1", Some("`]`"), Some("end of input")),
+        ("match 1 { 1 2 }", Some("`=>`"), Some("number")),
+        ("val = 1", None, Some("`=`")),
+    ] {
+        let error = compile("expected.slug", source).expect_err(source);
+        assert_eq!(
+            (error.expected.as_deref(), error.actual.as_deref()),
+            (expected, actual),
+            "{source}: {}",
+            error.message
+        );
+    }
+}
