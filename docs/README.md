@@ -42,6 +42,7 @@ a specified feature is implemented.
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
 | [value-json.md](reference/value-json.md) | The one JSON encoding of every Slug value. |
+| [diagnostic-codes.md](reference/diagnostic-codes.md) | Stable codes for parse, semantic, runtime, and startup diagnostics. |
 | [capability-report.md](reference/capability-report.md) | `slug report`: what a program can touch outside its own Slug code. |
 
 ### Engineering

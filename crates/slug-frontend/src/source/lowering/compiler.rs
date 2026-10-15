@@ -11,7 +11,7 @@ use slug_vm::{
 };
 
 use super::{
-    SourceError,
+    SourceError, SourceErrorCode,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ForeignSignature, ListElement,
         MapPatternKey, MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind,
@@ -269,6 +269,7 @@ impl Compiler {
         for (arguments, span) in candidates {
             if entrypoint.is_some() {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidEntrypoint,
                     "program has more than one eligible `main` entrypoint",
                     span,
                 ));
@@ -278,7 +279,11 @@ impl Compiler {
                 .get(&span)
                 .cloned()
                 .ok_or_else(|| {
-                    SourceError::semantic("cannot identify program entrypoint", span.clone())
+                    SourceError::semantic(
+                        SourceErrorCode::InvalidEntrypoint,
+                        "cannot identify program entrypoint",
+                        span.clone(),
+                    )
                 })?;
             entrypoint = Some(Entrypoint::new(
                 arguments,
@@ -450,6 +455,7 @@ impl Compiler {
                     })
                     .ok_or_else(|| {
                         SourceError::semantic(
+                            SourceErrorCode::UnknownName,
                             format!("unknown name `{name}`"),
                             expression.span.clone(),
                         )
@@ -462,6 +468,7 @@ impl Compiler {
                 };
                 if !mutable {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::ImmutableAssignment,
                         format!("cannot assign to immutable binding `{name}`"),
                         expression.span.clone(),
                     ));
@@ -485,6 +492,7 @@ impl Compiler {
             ExprKind::Return { value } => {
                 if !state.allows_return() {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidControlFlow,
                         "return is only valid inside a function",
                         expression.span.clone(),
                     ));
@@ -528,11 +536,13 @@ impl Compiler {
             ExprKind::Recur(_) => {
                 if !state.allows_return() {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidControlFlow,
                         "recur is only valid inside a function",
                         expression.span.clone(),
                     ));
                 }
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidControlFlow,
                     "recur is only valid in tail position",
                     expression.span.clone(),
                 ));
@@ -622,6 +632,7 @@ impl Compiler {
             ExprKind::Match { subject, cases } => {
                 let subject = subject.as_deref().ok_or_else(|| {
                     SourceError::semantic(
+                        SourceErrorCode::InvalidMatch,
                         "match requires a subject or pipeline input",
                         expression.span.clone(),
                     )
@@ -646,6 +657,7 @@ impl Compiler {
                             self.compile_match(state, left, cases, false)?;
                         } else if matches!(&right.kind, ExprKind::Match { .. }) {
                             return Err(SourceError::semantic(
+                                SourceErrorCode::InvalidMatch,
                                 "pipeline match must omit its subject",
                                 right.span.clone(),
                             ));
@@ -882,6 +894,7 @@ impl Compiler {
                         && !constant_keys.insert(canonical)
                     {
                         return Err(SourceError::semantic(
+                            SourceErrorCode::RepeatedMapKey,
                             format!("map literal repeats key `{constant}`"),
                             key.span.clone(),
                         ));
@@ -896,6 +909,7 @@ impl Compiler {
                 for field in fields {
                     if !seen.insert(field.name.as_str()) {
                         return Err(SourceError::semantic(
+                            SourceErrorCode::DuplicateName,
                             format!("duplicate struct field '{}'", field.name),
                             expression.span.clone(),
                         ));
@@ -1101,7 +1115,11 @@ impl Compiler {
         let mut ends = Vec::new();
         for case in cases {
             let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
-                SourceError::semantic("missing resolved match constraints", case.span.clone())
+                SourceError::semantic(
+                    SourceErrorCode::Internal,
+                    "missing resolved match constraints",
+                    case.span.clone(),
+                )
             })?;
             let (pattern, names, operands) =
                 lower_case_patterns(&case.patterns, constraints, &case.span)?;
@@ -1285,7 +1303,11 @@ impl Compiler {
                     .map(|mutable| Binding::Global { mutable: *mutable })
             })
             .ok_or_else(|| {
-                SourceError::semantic(format!("unknown pinned binding `{name}`"), span.clone())
+                SourceError::semantic(
+                    SourceErrorCode::UnknownName,
+                    format!("unknown pinned binding `{name}`"),
+                    span.clone(),
+                )
             })?;
         match binding {
             Binding::Global { .. } => state.emit(Op::GetGlobal(name.into()), span),
@@ -1306,6 +1328,7 @@ impl Compiler {
         if matches!(pattern, Pattern::MapAll) {
             if !state.is_root() {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::TopLevelOnly,
                     "{*} declarations are only valid at top level",
                     span.clone(),
                 ));
@@ -1364,6 +1387,7 @@ impl Compiler {
             ExprKind::Recur(arguments) => {
                 if !state.allows_return() {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidControlFlow,
                         "recur is only valid inside a function",
                         expression.span.clone(),
                     ));
@@ -1448,6 +1472,7 @@ impl Compiler {
             ExprKind::Match { subject, cases } => {
                 let subject = subject.as_deref().ok_or_else(|| {
                     SourceError::semantic(
+                        SourceErrorCode::InvalidMatch,
                         "match requires a subject or pipeline input",
                         expression.span.clone(),
                     )
@@ -1508,6 +1533,7 @@ fn plain_parameters(
     for parameter in parameters {
         if !parameter.discard && !names.insert(&parameter.name) {
             return Err(SourceError::semantic(
+                SourceErrorCode::DuplicateName,
                 format!("duplicate parameter '{}'", parameter.name),
                 span.clone(),
             ));
@@ -1600,6 +1626,7 @@ fn lower_case_patterns(
 ) -> Result<(MatchPattern, Vec<String>, Vec<PatternOperand>), SourceError> {
     if patterns.len() != constraints.len() {
         return Err(SourceError::semantic(
+            SourceErrorCode::Internal,
             "missing resolved match constraint",
             span.clone(),
         ));
@@ -1609,6 +1636,7 @@ fn lower_case_patterns(
         .any(|pattern| matches!(pattern.pattern, Pattern::MapAll))
     {
         return Err(SourceError::semantic(
+            SourceErrorCode::TopLevelOnly,
             "{*} is only valid in a top-level declaration",
             span.clone(),
         ));
@@ -1625,6 +1653,7 @@ fn lower_case_patterns(
     for pattern in patterns {
         if !pattern_bindings(&pattern.pattern, span)?.is_empty() {
             return Err(SourceError::semantic(
+                SourceErrorCode::InvalidPattern,
                 "match alternatives cannot introduce bindings",
                 span.clone(),
             ));
@@ -1718,6 +1747,7 @@ fn lower_match_type(
         | Type::Channel(Some(_))
         | Type::Tuple(_)
         | Type::Generic(_) => Err(SourceError::semantic(
+            SourceErrorCode::InvalidMatch,
             "match type constraint is not runtime-checkable",
             SourceSpan::new("<internal>", 1, 1),
         )),
@@ -1761,6 +1791,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
     let mut seen = HashSet::new();
     if let Some(name) = names.iter().find(|name| !seen.insert(name.as_str())) {
         return Err(SourceError::semantic(
+            SourceErrorCode::DuplicateName,
             format!("duplicate match binding `{name}`"),
             span.clone(),
         ));

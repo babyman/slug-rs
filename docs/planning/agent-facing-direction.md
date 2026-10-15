@@ -54,7 +54,9 @@ distinctive one for reviewers.
 ### 3. Errors that carry a fix
 
 - [ ] Unify CLI and interactive-server diagnostics under one versioned schema.
-- [ ] Assign stable codes to parse, semantic, and module errors.
+- [x] Assign stable codes to parse, semantic, runtime, and startup errors. See
+  [Diagnostic Codes](../reference/diagnostic-codes.md).
+- [ ] Split the shared `module` code into module resolution failure classes.
 - [ ] Replace point locations with start and end spans.
 - [ ] Add expected-versus-actual fields where the checker knows both.
 - [ ] Add machine-applicable edits where a fix is unambiguous.

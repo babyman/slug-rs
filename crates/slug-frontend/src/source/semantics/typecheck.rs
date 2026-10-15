@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use slug_vm::{CallableIdentity, SourceSpan, Value, ValueKind};
 
 use super::{
-    SourceError,
+    SourceError, SourceErrorCode,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, Parameter,
         Pattern, Prefix, SelectCaseKind, Tag, TypeAnnotation,
@@ -166,6 +166,7 @@ impl ParameterConstraints {
             return Ok(());
         }
         Err(SourceError::semantic(
+            SourceErrorCode::TypeMismatch,
             format!(
                 "parameter `{name}` has incompatible body requirements: {} and {}",
                 requirement.value_type, value_type
@@ -1035,6 +1036,7 @@ fn inferred_plus_alternatives(
             .collect::<Vec<_>>();
         if compatible.is_empty() {
             return Err(SourceError::semantic(
+                SourceErrorCode::NoMatchingOverload,
                 "no inferred `+` alternative satisfies the function body requirements",
                 operands.span.clone(),
             ));
@@ -1137,6 +1139,7 @@ fn inferred_subtract_alternatives(
             .collect::<Vec<_>>();
         if compatible.is_empty() {
             return Err(SourceError::semantic(
+                SourceErrorCode::NoMatchingOverload,
                 "no inferred `-` alternative satisfies the function body requirements",
                 operands.span.clone(),
             ));
@@ -1218,6 +1221,7 @@ fn inferred_multiply_alternatives(
             .collect::<Vec<_>>();
         if compatible.is_empty() {
             return Err(SourceError::semantic(
+                SourceErrorCode::NoMatchingOverload,
                 "no inferred `*` alternative satisfies the function body requirements",
                 operands.span.clone(),
             ));
@@ -1503,6 +1507,7 @@ fn analyze_expressions(
         if let ExprKind::Resource { exported, name, .. } = &expression.kind {
             if !resource_names.insert(name.clone()) {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::DuplicateName,
                     format!("duplicate resource type `{name}`"),
                     expression.span.clone(),
                 ));
@@ -1519,6 +1524,7 @@ fn analyze_expressions(
         if let ExprKind::Enum { name, cases, .. } = &expression.kind {
             if !enum_names.insert(name.clone()) || resource_names.contains(name) {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::DuplicateName,
                     format!("duplicate type `{name}`"),
                     expression.span.clone(),
                 ));
@@ -1558,6 +1564,7 @@ fn analyze_expressions(
             && (enum_names.contains(name) || resource_names.contains(name))
         {
             return Err(SourceError::semantic(
+                SourceErrorCode::DuplicateName,
                 format!("enum type `{name}` conflicts with a value declaration"),
                 expression.span.clone(),
             ));
@@ -1589,6 +1596,7 @@ fn resolve_type_aliases(
             .is_some()
         {
             return Err(SourceError::semantic(
+                SourceErrorCode::DuplicateName,
                 format!("duplicate type `{name}`"),
                 expression.span.clone(),
             ));
@@ -1597,6 +1605,7 @@ fn resolve_type_aliases(
     for (name, (_, span)) in &aliases {
         if resource_names.contains(name) || enum_names.contains(name) {
             return Err(SourceError::semantic(
+                SourceErrorCode::DuplicateName,
                 format!("duplicate type `{name}`"),
                 span.clone(),
             ));
@@ -1630,6 +1639,7 @@ fn resolve_type_alias(
         let mut chain = visiting[start..].to_vec();
         chain.push(name.into());
         return Err(SourceError::semantic(
+            SourceErrorCode::RecursiveTypeAlias,
             format!("recursive type alias: {}", chain.join(" -> ")),
             span.clone(),
         ));
@@ -1672,6 +1682,7 @@ fn alias_dependencies(
         TypeAnnotation::Apply { name, arguments } => {
             if aliases.contains_key(name) {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
                     format!("type alias `{name}` cannot accept type arguments"),
                     aliases[name].1.clone(),
                 ));
@@ -2325,6 +2336,7 @@ fn check_expression_inner(
                 if let Some(remaining_cases) = &mut enum_remaining {
                     if remaining_cases.is_empty() {
                         return Err(SourceError::semantic(
+                            SourceErrorCode::UnreachableMatchCase,
                             "match case is unreachable",
                             case.span.clone(),
                         ));
@@ -2355,6 +2367,7 @@ fn check_expression_inner(
                         .collect::<Vec<_>>();
                     if matching.is_empty() {
                         return Err(SourceError::semantic(
+                            SourceErrorCode::UnreachableMatchCase,
                             "match case cannot match remaining enum cases",
                             case.span.clone(),
                         ));
@@ -2365,6 +2378,7 @@ fn check_expression_inner(
                 }
                 if enum_remaining.is_none() && coverage_enabled && remaining.is_none() {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::UnreachableMatchCase,
                         "match case is unreachable",
                         case.span.clone(),
                     ));
@@ -2377,6 +2391,7 @@ fn check_expression_inner(
                         })
                     {
                         return Err(SourceError::semantic(
+                            SourceErrorCode::UnreachableMatchCase,
                             format!("match case cannot match remaining type {current}"),
                             case.span.clone(),
                         ));
@@ -2389,6 +2404,7 @@ fn check_expression_inner(
                         };
                         if type_intersection(current, &coverage).is_none() {
                             return Err(SourceError::semantic(
+                                SourceErrorCode::UnreachableMatchCase,
                                 "match case is unreachable",
                                 case.span.clone(),
                             ));
@@ -2415,6 +2431,7 @@ fn check_expression_inner(
             }
             if coverage_enabled && let Some(remaining) = remaining {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::NonExhaustiveMatch,
                     format!("non-exhaustive match; missing {remaining}"),
                     expression.span.clone(),
                 ));
@@ -2428,6 +2445,7 @@ fn check_expression_inner(
                     .collect::<Vec<_>>()
                     .join(", ");
                 return Err(SourceError::semantic(
+                    SourceErrorCode::NonExhaustiveMatch,
                     format!("non-exhaustive match; missing {missing}"),
                     expression.span.clone(),
                 ));
@@ -2463,6 +2481,7 @@ fn check_expression_inner(
             for (name, value) in fields {
                 if !provided.insert(name) {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::DuplicateName,
                         format!("duplicate struct field `{name}`"),
                         value.span.clone(),
                     ));
@@ -2471,6 +2490,7 @@ fn check_expression_inner(
                 if let Some(schema) = &schema_binding {
                     let expected = schema.members.get(name).ok_or_else(|| {
                         SourceError::semantic(
+                            SourceErrorCode::UnknownMember,
                             format!("struct schema has no field `{name}`"),
                             value.span.clone(),
                         )
@@ -2485,6 +2505,7 @@ fn check_expression_inner(
                     .find(|name| !provided.contains(*name))
             {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::MissingField,
                     format!("missing required struct field `{name}`"),
                     expression.span.clone(),
                 ));
@@ -2500,6 +2521,7 @@ fn check_expression_inner(
             for (name, replacement) in fields {
                 if !replaced.insert(name) {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::DuplicateName,
                         format!("duplicate struct field `{name}`"),
                         replacement.span.clone(),
                     ));
@@ -2509,6 +2531,7 @@ fn check_expression_inner(
                 if let Some(schema) = &schema {
                     let expected = schema.members.get(name).ok_or_else(|| {
                         SourceError::semantic(
+                            SourceErrorCode::UnknownMember,
                             format!("struct has no field `{name}`"),
                             replacement.span.clone(),
                         )
@@ -2536,6 +2559,7 @@ fn check_expression_inner(
                 && !schema.members.contains_key(name.as_ref())
             {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::UnknownMember,
                     format!("struct has no field `{name}`"),
                     expression.span.clone(),
                 ));
@@ -2719,6 +2743,7 @@ fn bit_not_result(value: &Type, span: &SourceSpan) -> Result<Type, SourceError> 
         Type::Num => Ok(Type::Num),
         Type::Bytes => Ok(Type::Bytes),
         _ => Err(SourceError::semantic(
+            SourceErrorCode::TypeMismatch,
             format!("operator `~` does not accept {value}"),
             span.clone(),
         )),
@@ -2847,6 +2872,7 @@ fn slice_result(collection: &Type, span: &SourceSpan) -> Result<Type, SourceErro
         Type::Bytes => Ok(Type::Bytes),
         Type::Str => Ok(Type::Str),
         other => Err(SourceError::semantic(
+            SourceErrorCode::TypeMismatch,
             format!("expected list, got {other}"),
             span.clone(),
         )),
@@ -2871,6 +2897,7 @@ fn invalid_operation(
     span: &SourceSpan,
 ) -> Result<Type, SourceError> {
     Err(SourceError::semantic(
+        SourceErrorCode::TypeMismatch,
         format!("operator `{operator}` does not accept {left} and {right}"),
         span.clone(),
     ))
@@ -2934,12 +2961,14 @@ fn enum_case(
         environment.type_member(path)
     else {
         return Err(SourceError::semantic(
+            SourceErrorCode::UnknownType,
             format!("unknown enum `{path}`"),
             span.clone(),
         ));
     };
     if !cases.iter().any(|candidate| candidate == case) {
         return Err(SourceError::semantic(
+            SourceErrorCode::UnknownMember,
             format!("enum `{path}` has no case `{case}`"),
             span.clone(),
         ));
@@ -3285,6 +3314,7 @@ fn check_case_pattern(
         let constraint = resolve_static_annotation(constraint, type_parameters, span, environment)?;
         if !constraint.is_reifiable_match_constraint() {
             return Err(SourceError::semantic(
+                SourceErrorCode::InvalidMatch,
                 "match type constraint is not runtime-checkable",
                 span.clone(),
             ));
@@ -3409,6 +3439,7 @@ fn check_call(
             .any(|shape| matches!(shape, ArgumentShape::Spread))
     {
         return Err(SourceError::semantic(
+            SourceErrorCode::NoMatchingOverload,
             format!("cannot resolve overload `{name}` with spread arguments"),
             expression.span.clone(),
         ));
@@ -3440,6 +3471,7 @@ fn check_call(
             return Ok(Type::Unknown);
         }
         return Err(SourceError::semantic(
+            SourceErrorCode::NoMatchingOverload,
             format!("no matching overload for `{name}`"),
             expression.span.clone(),
         ));
@@ -3456,6 +3488,7 @@ fn check_call(
         .collect::<Vec<_>>();
     if most_specific.len() != 1 {
         return Err(SourceError::semantic(
+            SourceErrorCode::AmbiguousOverload,
             format!("ambiguous overload for `{name}`"),
             expression.span.clone(),
         ));
@@ -3553,6 +3586,7 @@ fn instantiate_candidate(
         if explicit.len() != signature.generic_arity {
             if report_mismatch {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
                     "wrong number of type arguments",
                     span.clone(),
                 ));
@@ -3563,6 +3597,7 @@ fn instantiate_candidate(
             let value = resolve_static_annotation(value, type_parameters, span, environment)?;
             if value.includes_nil() {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
                     "generic type argument cannot include nil",
                     span.clone(),
                 ));
@@ -3592,6 +3627,7 @@ fn instantiate_candidate(
         if alternatives.len() != 1 {
             if report_mismatch {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::NoMatchingOverload,
                     if alternatives.is_empty() {
                         "no inferred overload alternative matches the call"
                     } else {
@@ -3626,6 +3662,7 @@ fn instantiate_candidate(
                     && let Some(inferred) = substitutions.get(&index)
                 {
                     return Err(SourceError::semantic(
+                        error.code,
                         format!(
                             "{} (generic T{index} was inferred as {})",
                             error.message,
@@ -3802,6 +3839,7 @@ fn infer(
         }
         if actual.includes_nil() {
             return Err(SourceError::semantic(
+                SourceErrorCode::InvalidTypeArguments,
                 "generic type argument cannot include nil",
                 span.clone(),
             ));
@@ -4013,6 +4051,7 @@ fn require(expected: &Type, actual: &Type, span: &SourceSpan) -> Result<(), Sour
             (expected_display, actual_display)
         };
         Err(SourceError::semantic(
+            SourceErrorCode::TypeMismatch,
             format!("expected {expected_display}, got {actual_display}"),
             span.clone(),
         ))
@@ -4257,6 +4296,7 @@ fn validate_case_pattern(
         let constraint = resolve_annotation(constraint, type_parameters, span)?;
         if !constraint.is_reifiable_match_constraint() {
             return Err(SourceError::semantic(
+                SourceErrorCode::InvalidMatch,
                 "match type constraint is not runtime-checkable",
                 span.clone(),
             ));

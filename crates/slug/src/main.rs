@@ -529,6 +529,8 @@ struct JsonDiagnostic {
     version: u8,
     category: String,
     kind: Option<String>,
+    /// The stable failure class (`docs/reference/diagnostic-codes.md`).
+    code: String,
     message: String,
     location: Option<JsonLocation>,
     frames: Vec<JsonFrame>,
@@ -557,6 +559,8 @@ fn eprint_startup_error(category: &str, kind: &str, message: String, json: bool)
             version: 1,
             category: category.into(),
             kind: Some(kind.into()),
+            // A usage kind names the subcommand, so it is not a unique code.
+            code: if category == "usage" { "usage" } else { kind }.into(),
             message,
             location: None,
             frames: Vec::new(),
@@ -619,6 +623,7 @@ fn source_diagnostic(category: &str, error: &SourceError) -> JsonDiagnostic {
         version: 1,
         category: category.into(),
         kind: None,
+        code: error.code.as_str().into(),
         message: error.message.clone(),
         location: error.span.as_ref().map(json_location),
         frames: Vec::new(),
@@ -637,6 +642,7 @@ fn runtime_diagnostic(error: &RuntimeError) -> JsonDiagnostic {
         version: 1,
         category: category.into(),
         kind: Some(runtime_kind(&error.kind).into()),
+        code: runtime_kind(&error.kind).into(),
         message: error.message.clone(),
         location: error.span.as_ref().map(json_location),
         frames: error
@@ -776,7 +782,7 @@ fn display_column(text: &str, source_column: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use slug_frontend::{SourceError, SourceErrorKind};
+    use slug_frontend::{SourceError, SourceErrorCode, SourceErrorKind};
     use slug_vm::SourceSpan;
 
     use super::render_source_error;
@@ -785,6 +791,7 @@ mod tests {
     fn falls_back_when_diagnostic_source_is_unavailable() {
         let error = SourceError {
             kind: SourceErrorKind::Parse,
+            code: SourceErrorCode::ExpectedSyntax,
             message: "expected expression".into(),
             span: Some(SourceSpan::new("missing.slug", 4, 2)),
         };

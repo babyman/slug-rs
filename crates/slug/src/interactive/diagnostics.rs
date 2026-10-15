@@ -101,7 +101,7 @@ impl Diagnostic {
                 }
                 .into(),
             ),
-            code: "source_error".into(),
+            code: error.code.as_str().into(),
             message: error.message.clone(),
             location: error.span.as_ref().map(location),
             frames: Vec::new(),
@@ -117,7 +117,7 @@ impl Diagnostic {
             version: 1,
             category: DiagnosticCategory::Runtime,
             kind: Some(runtime_kind(&error.kind).into()),
-            code: "runtime_error".into(),
+            code: runtime_kind(&error.kind).into(),
             message: error.message.clone(),
             location: error.span.as_ref().map(location),
             frames: error

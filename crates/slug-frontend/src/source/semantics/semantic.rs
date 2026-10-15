@@ -6,7 +6,7 @@ use std::{
 
 use slug_vm::SourceSpan;
 
-use super::{SourceError, ast::TypeAnnotation, environment::Environment};
+use super::{SourceError, SourceErrorCode, ast::TypeAnnotation, environment::Environment};
 
 /// Private identity shared by nominal source declarations.
 ///
@@ -768,6 +768,7 @@ fn reject_alias_applications(
                 Some(super::environment::TypeMember::Alias(_))
             ) {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
                     format!("type alias `{name}` cannot accept type arguments"),
                     span.clone(),
                 ));
@@ -853,6 +854,7 @@ fn resolve_schema_references(
             let name = identity.name;
             let binding = environment.lookup(&name).ok_or_else(|| {
                 SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
                     format!("struct type argument `{name}` must resolve to a schema binding"),
                     span.clone(),
                 )
@@ -860,6 +862,7 @@ fn resolve_schema_references(
             binding.schema_identity.clone().map_or_else(
                 || {
                     Err(SourceError::semantic(
+                        SourceErrorCode::InvalidTypeArguments,
                         format!("struct type argument `{name}` must resolve to a schema binding"),
                         span.clone(),
                     ))
@@ -951,6 +954,7 @@ fn resolve_application(
         }
         let TypeAnnotation::Name(name) = &arguments[0] else {
             return Err(SourceError::semantic(
+                SourceErrorCode::InvalidTypeArguments,
                 "struct type argument must be a schema name",
                 span.clone(),
             ));
@@ -975,6 +979,7 @@ fn resolve_application(
         ("fn", _) => Err(wrong_type_arity(name, "at least 1", span)),
         ("schema", _) => Err(wrong_type_arity(name, "0", span)),
         _ => Err(SourceError::semantic(
+            SourceErrorCode::UnknownType,
             format!("unknown type constructor `{name}`"),
             span.clone(),
         )),
@@ -983,6 +988,7 @@ fn resolve_application(
 
 fn wrong_type_arity(name: &str, expected: &str, span: &SourceSpan) -> SourceError {
     SourceError::semantic(
+        SourceErrorCode::InvalidTypeArguments,
         format!("type `{name}` expects {expected} argument(s)"),
         span.clone(),
     )

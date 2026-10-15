@@ -1088,6 +1088,21 @@ fn diagnostic_projection_preserves_source_and_runtime_structure() {
 }
 
 #[test]
+fn submitted_diagnostics_carry_stable_codes() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    for (id, source, code) in [
+        (3, "val =", "expected_syntax"),
+        (4, "missing_name", "name"),
+        (5, "val zero = 0\n1 / zero", "divide_by_zero"),
+    ] {
+        let response = submit(&mut server, id, &session, source);
+        assert_eq!(response.error.expect("diagnostic").code, code, "{source}");
+    }
+}
+
+#[test]
 fn submitted_values_use_the_value_json_form() {
     let mut server = initialized_server();
     let session = open_session(&mut server);

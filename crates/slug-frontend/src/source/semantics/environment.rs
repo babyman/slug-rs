@@ -304,6 +304,7 @@ impl Environment {
             .any(|candidate| candidate.has_same_input(&signature))
         {
             return Err(super::SourceError::semantic(
+                super::SourceErrorCode::DuplicateSignature,
                 format!("duplicate callable signature for `{name}`"),
                 span.clone(),
             ));
@@ -413,12 +414,14 @@ impl Environment {
         if let Some((module, type_name)) = name.split_once('.') {
             let binding = self.lookup(module).ok_or_else(|| {
                 super::SourceError::semantic(
+                    super::SourceErrorCode::UnknownName,
                     format!("unknown module binding `{module}`"),
                     span.clone(),
                 )
             })?;
             if !binding.module_binding {
                 return Err(super::SourceError::semantic(
+                    super::SourceErrorCode::UnknownType,
                     format!("type prefix `{module}` is not a module binding"),
                     span.clone(),
                 ));
@@ -431,11 +434,19 @@ impl Environment {
                     TypeMember::Enum { .. } | TypeMember::Alias(_) => None,
                 })
                 .ok_or_else(|| {
-                    super::SourceError::semantic(format!("unknown type `{name}`"), span.clone())
+                    super::SourceError::semantic(
+                        super::SourceErrorCode::UnknownType,
+                        format!("unknown type `{name}`"),
+                        span.clone(),
+                    )
                 });
         }
         self.resource_type(name).ok_or_else(|| {
-            super::SourceError::semantic(format!("unknown type `{name}`"), span.clone())
+            super::SourceError::semantic(
+                super::SourceErrorCode::UnknownType,
+                format!("unknown type `{name}`"),
+                span.clone(),
+            )
         })
     }
 

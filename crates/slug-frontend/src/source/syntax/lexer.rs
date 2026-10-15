@@ -2,7 +2,7 @@
 use slug_vm::SourceSpan;
 
 use super::{
-    SourceError,
+    SourceError, SourceErrorCode,
     ast::{StringPart, Token, TokenKind},
 };
 
@@ -38,9 +38,13 @@ impl Lexer {
     fn documentation(&mut self, span: SourceSpan) -> Result<String, SourceError> {
         let mut content = String::new();
         loop {
-            let value = self
-                .next()
-                .ok_or_else(|| SourceError::at("unterminated documentation block", span.clone()))?;
+            let value = self.next().ok_or_else(|| {
+                SourceError::at(
+                    SourceErrorCode::UnterminatedLiteral,
+                    "unterminated documentation block",
+                    span.clone(),
+                )
+            })?;
             if value == '*' && self.peek() == Some('/') {
                 self.next();
                 break;
@@ -52,6 +56,7 @@ impl Lexer {
             .any(|line| !line.trim().is_empty() && !line.trim_start().starts_with('*'))
         {
             return Err(SourceError::at(
+                SourceErrorCode::InvalidDocumentation,
                 "every non-empty documentation line must begin with *",
                 span,
             ));
@@ -87,9 +92,13 @@ impl Lexer {
                 }
                 break;
             }
-            let value = self
-                .next()
-                .ok_or_else(|| SourceError::at("unterminated string", span.clone()))?;
+            let value = self.next().ok_or_else(|| {
+                SourceError::at(
+                    SourceErrorCode::UnterminatedLiteral,
+                    "unterminated string",
+                    span.clone(),
+                )
+            })?;
             if !raw
                 && value == '$'
                 && self
@@ -133,7 +142,13 @@ impl Lexer {
                         text.push('\\');
                         text.push(value);
                     }
-                    None => return Err(SourceError::at("unterminated string", span)),
+                    None => {
+                        return Err(SourceError::at(
+                            SourceErrorCode::UnterminatedLiteral,
+                            "unterminated string",
+                            span,
+                        ));
+                    }
                 }
             } else {
                 text.push(value);
@@ -354,6 +369,7 @@ impl Lexer {
                                 }
                                 if !closed {
                                     return Err(SourceError::at(
+                                        SourceErrorCode::UnterminatedLiteral,
                                         "unterminated block comment",
                                         span,
                                     ));
@@ -451,7 +467,11 @@ impl Lexer {
                         self.next();
                         Self::push(&mut result, TokenKind::NotImplemented, span);
                     } else {
-                        return Err(SourceError::at("expected ???", span));
+                        return Err(SourceError::at(
+                            SourceErrorCode::ExpectedSyntax,
+                            "expected ???",
+                            span,
+                        ));
                     }
                 }
                 '^' => {
@@ -467,7 +487,11 @@ impl Lexer {
                     let kind = if self.peek() == Some('.') {
                         self.next();
                         if self.peek() != Some('.') {
-                            return Err(SourceError::at("expected . after ..", span));
+                            return Err(SourceError::at(
+                                SourceErrorCode::ExpectedSyntax,
+                                "expected . after ..",
+                                span,
+                            ));
                         }
                         self.next();
                         TokenKind::Ellipsis
@@ -534,7 +558,11 @@ impl Lexer {
                         text.push(self.next().expect("peeked character exists"));
                     }
                     if !Self::has_valid_separators(&text, |value| value.is_ascii_digit()) {
-                        return Err(SourceError::at("invalid number separator", span));
+                        return Err(SourceError::at(
+                            SourceErrorCode::InvalidNumber,
+                            "invalid number separator",
+                            span,
+                        ));
                     }
                     if text == "0" && self.peek() == Some('x') {
                         self.next();
@@ -547,12 +575,14 @@ impl Lexer {
                                     Some(value) if value.is_ascii_hexdigit() => digits.push(value),
                                     Some(_) => {
                                         return Err(SourceError::at(
+                                            SourceErrorCode::InvalidByteLiteral,
                                             "invalid hexadecimal digit in byte literal",
                                             span,
                                         ));
                                     }
                                     None => {
                                         return Err(SourceError::at(
+                                            SourceErrorCode::UnterminatedLiteral,
                                             "unterminated byte literal",
                                             span,
                                         ));
@@ -561,6 +591,7 @@ impl Lexer {
                             }
                             if !digits.len().is_multiple_of(2) {
                                 return Err(SourceError::at(
+                                    SourceErrorCode::InvalidByteLiteral,
                                     "byte literal must contain complete hexadecimal byte pairs",
                                     span,
                                 ));
@@ -570,7 +601,11 @@ impl Lexer {
                                 .map(|index| u8::from_str_radix(&digits[index..index + 2], 16))
                                 .collect::<Result<Vec<_>, _>>()
                                 .map_err(|_| {
-                                    SourceError::at("invalid byte literal", span.clone())
+                                    SourceError::at(
+                                        SourceErrorCode::InvalidByteLiteral,
+                                        "invalid byte literal",
+                                        span.clone(),
+                                    )
                                 })?;
                             Self::push(&mut result, TokenKind::Bytes(bytes), span);
                             continue;
@@ -579,7 +614,11 @@ impl Lexer {
                         if self.peek() == Some('_') {
                             self.next();
                             if !self.peek().is_some_and(|value| value.is_ascii_hexdigit()) {
-                                return Err(SourceError::at("expected hexadecimal digit", span));
+                                return Err(SourceError::at(
+                                    SourceErrorCode::InvalidNumber,
+                                    "expected hexadecimal digit",
+                                    span,
+                                ));
                             }
                         }
                         let mut digits = String::new();
@@ -591,17 +630,26 @@ impl Lexer {
                             digits.push(value);
                         }
                         if digits.is_empty() {
-                            return Err(SourceError::at("expected hexadecimal digit", span));
+                            return Err(SourceError::at(
+                                SourceErrorCode::InvalidNumber,
+                                "expected hexadecimal digit",
+                                span,
+                            ));
                         }
                         if !Self::has_valid_separators(&digits, |value| value.is_ascii_hexdigit()) {
                             return Err(SourceError::at(
+                                SourceErrorCode::InvalidNumber,
                                 "invalid hexadecimal number separator",
                                 span,
                             ));
                         }
                         digits.retain(|value| value != '_');
                         let value = i64::from_str_radix(&digits, 16).map_err(|_| {
-                            SourceError::at("invalid hexadecimal number", span.clone())
+                            SourceError::at(
+                                SourceErrorCode::InvalidNumber,
+                                "invalid hexadecimal number",
+                                span.clone(),
+                            )
                         })?;
                         Self::push(&mut result, TokenKind::Int(value), span);
                         continue;
@@ -624,7 +672,11 @@ impl Lexer {
                         }
                         let fraction = text.rsplit_once('.').map_or("", |(_, fraction)| fraction);
                         if !Self::has_valid_separators(fraction, |value| value.is_ascii_digit()) {
-                            return Err(SourceError::at("invalid number separator", span));
+                            return Err(SourceError::at(
+                                SourceErrorCode::InvalidNumber,
+                                "invalid number separator",
+                                span,
+                            ));
                         }
                     }
                     if matches!(self.peek(), Some('e' | 'E')) {
@@ -634,7 +686,11 @@ impl Lexer {
                             text.push(self.next().expect("exponent sign exists"));
                         }
                         if !self.peek().is_some_and(|value| value.is_ascii_digit()) {
-                            return Err(SourceError::at("expected exponent digit", span));
+                            return Err(SourceError::at(
+                                SourceErrorCode::InvalidNumber,
+                                "expected exponent digit",
+                                span,
+                            ));
                         }
                         while self.peek().is_some_and(|value| value.is_ascii_digit()) {
                             text.push(self.next().expect("peeked character exists"));
@@ -642,17 +698,29 @@ impl Lexer {
                     }
                     let text = text.replace('_', "");
                     if float {
-                        let value: f64 = text
-                            .parse()
-                            .map_err(|_| SourceError::at("invalid number", span.clone()))?;
+                        let value: f64 = text.parse().map_err(|_| {
+                            SourceError::at(
+                                SourceErrorCode::InvalidNumber,
+                                "invalid number",
+                                span.clone(),
+                            )
+                        })?;
                         if !value.is_finite() {
-                            return Err(SourceError::at("non-finite number", span));
+                            return Err(SourceError::at(
+                                SourceErrorCode::InvalidNumber,
+                                "non-finite number",
+                                span,
+                            ));
                         }
                         Self::push(&mut result, TokenKind::Float(value), span);
                     } else {
-                        let value = text
-                            .parse()
-                            .map_err(|_| SourceError::at("invalid number", span.clone()))?;
+                        let value = text.parse().map_err(|_| {
+                            SourceError::at(
+                                SourceErrorCode::InvalidNumber,
+                                "invalid number",
+                                span.clone(),
+                            )
+                        })?;
                         Self::push(&mut result, TokenKind::Int(value), span);
                     }
                 }
@@ -706,6 +774,7 @@ impl Lexer {
                 }
                 _ => {
                     return Err(SourceError::at(
+                        SourceErrorCode::UnexpectedCharacter,
                         format!("unexpected character `{character}`"),
                         span,
                     ));

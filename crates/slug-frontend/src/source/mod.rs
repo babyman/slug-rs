@@ -38,8 +38,122 @@ pub(crate) use typecheck::ImportScan;
 #[derive(Clone, Debug)]
 pub struct SourceError {
     pub kind: SourceErrorKind,
+    pub code: SourceErrorCode,
     pub message: String,
     pub span: Option<SourceSpan>,
+}
+
+/// The stable failure class of a [`SourceError`], listed in
+/// `docs/reference/diagnostic-codes.md`. Messages may change; codes do not.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum SourceErrorCode {
+    UnexpectedCharacter,
+    UnterminatedLiteral,
+    InvalidNumber,
+    InvalidByteLiteral,
+    ExpectedSyntax,
+    InvalidDocumentation,
+    TopLevelOnly,
+    InvalidParameters,
+    InvalidArgumentOrder,
+    InvalidPattern,
+    EmptyEnum,
+    NestingLimitExceeded,
+    DuplicateName,
+    DuplicateSignature,
+    UnknownName,
+    UnknownType,
+    UnknownMember,
+    MissingField,
+    TypeMismatch,
+    InvalidTypeArguments,
+    RecursiveTypeAlias,
+    ImmutableAssignment,
+    InvalidControlFlow,
+    InvalidMatch,
+    NonExhaustiveMatch,
+    UnreachableMatchCase,
+    NoMatchingOverload,
+    AmbiguousOverload,
+    RepeatedMapKey,
+    InvalidEntrypoint,
+    Internal,
+}
+
+impl SourceErrorCode {
+    /// Every code, in registry order.
+    pub const ALL: &[Self] = &[
+        Self::UnexpectedCharacter,
+        Self::UnterminatedLiteral,
+        Self::InvalidNumber,
+        Self::InvalidByteLiteral,
+        Self::ExpectedSyntax,
+        Self::InvalidDocumentation,
+        Self::TopLevelOnly,
+        Self::InvalidParameters,
+        Self::InvalidArgumentOrder,
+        Self::InvalidPattern,
+        Self::EmptyEnum,
+        Self::NestingLimitExceeded,
+        Self::DuplicateName,
+        Self::DuplicateSignature,
+        Self::UnknownName,
+        Self::UnknownType,
+        Self::UnknownMember,
+        Self::MissingField,
+        Self::TypeMismatch,
+        Self::InvalidTypeArguments,
+        Self::RecursiveTypeAlias,
+        Self::ImmutableAssignment,
+        Self::InvalidControlFlow,
+        Self::InvalidMatch,
+        Self::NonExhaustiveMatch,
+        Self::UnreachableMatchCase,
+        Self::NoMatchingOverload,
+        Self::AmbiguousOverload,
+        Self::RepeatedMapKey,
+        Self::InvalidEntrypoint,
+        Self::Internal,
+    ];
+
+    /// The code's stable `snake_case` name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UnexpectedCharacter => "unexpected_character",
+            Self::UnterminatedLiteral => "unterminated_literal",
+            Self::InvalidNumber => "invalid_number",
+            Self::InvalidByteLiteral => "invalid_byte_literal",
+            Self::ExpectedSyntax => "expected_syntax",
+            Self::InvalidDocumentation => "invalid_documentation",
+            Self::TopLevelOnly => "top_level_only",
+            Self::InvalidParameters => "invalid_parameters",
+            Self::InvalidArgumentOrder => "invalid_argument_order",
+            Self::InvalidPattern => "invalid_pattern",
+            Self::EmptyEnum => "empty_enum",
+            Self::NestingLimitExceeded => "nesting_limit_exceeded",
+            Self::DuplicateName => "duplicate_name",
+            Self::DuplicateSignature => "duplicate_signature",
+            Self::UnknownName => "unknown_name",
+            Self::UnknownType => "unknown_type",
+            Self::UnknownMember => "unknown_member",
+            Self::MissingField => "missing_field",
+            Self::TypeMismatch => "type_mismatch",
+            Self::InvalidTypeArguments => "invalid_type_arguments",
+            Self::RecursiveTypeAlias => "recursive_type_alias",
+            Self::ImmutableAssignment => "immutable_assignment",
+            Self::InvalidControlFlow => "invalid_control_flow",
+            Self::InvalidMatch => "invalid_match",
+            Self::NonExhaustiveMatch => "non_exhaustive_match",
+            Self::UnreachableMatchCase => "unreachable_match_case",
+            Self::NoMatchingOverload => "no_matching_overload",
+            Self::AmbiguousOverload => "ambiguous_overload",
+            Self::RepeatedMapKey => "repeated_map_key",
+            Self::InvalidEntrypoint => "invalid_entrypoint",
+            Self::Internal => "internal",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,17 +163,19 @@ pub enum SourceErrorKind {
 }
 
 impl SourceError {
-    fn at(message: impl Into<String>, span: SourceSpan) -> Self {
+    fn at(code: SourceErrorCode, message: impl Into<String>, span: SourceSpan) -> Self {
         Self {
             kind: SourceErrorKind::Parse,
+            code,
             message: message.into(),
             span: Some(span),
         }
     }
 
-    fn semantic(message: impl Into<String>, span: SourceSpan) -> Self {
+    fn semantic(code: SourceErrorCode, message: impl Into<String>, span: SourceSpan) -> Self {
         Self {
             kind: SourceErrorKind::Semantic,
+            code,
             message: message.into(),
             span: Some(span),
         }

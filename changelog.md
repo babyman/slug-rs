@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Every diagnostic now has a stable `code`, such as `expected_syntax`,
+  `type_mismatch`, or `divide_by_zero`, in `--diagnostic-format=json`
+  documents and interactive server diagnostics. Codes name failure classes and
+  stay fixed when message wording changes; `docs/reference/diagnostic-codes.md`
+  lists them. Rust hosts read source codes as `SourceError::code`.
+
 - `slug report program.slug` (or `program.cslug`) prints a JSON capability
   report without running the program: every module, the modules each one
   imports, `import` calls with computed names, the host-supplied builtins it

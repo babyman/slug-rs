@@ -67,6 +67,7 @@ Version 1 documents use this shape:
   "version": 1,
   "category": "parse",
   "kind": null,
+  "code": "expected_syntax",
   "message": "expected binding name",
   "location": { "path": "example.slug", "line": 1, "column": 5 },
   "frames": [],
@@ -74,9 +75,11 @@ Version 1 documents use this shape:
 }
 ```
 
-`category` is `parse`, `semantic`, `module`, `runtime`, `io`, or `host`.
-`kind` is null for source errors and identifies runtime or startup subtypes
-when available. `location` is null when no source position is available.
+`category` is `parse`, `semantic`, `module`, `runtime`, `usage`, `io`,
+`host`, or `artifact`. `kind` is null for source errors and identifies runtime
+or startup subtypes when available. `code` is the stable failure class listed
+in [Diagnostic Codes](../reference/diagnostic-codes.md); match on `code`, not
+on `message`. `location` is null when no source position is available.
 Runtime `frames` identify Slug call sites; `cause` recursively carries a
 replacement error retained during unwinding. A document whose `kind` is
 `thrown` also has a `thrown` member holding the thrown payload in the

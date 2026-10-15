@@ -448,6 +448,66 @@ fn narrowing_diagnostics_report_the_actual_surviving_type() {
 }
 
 #[test]
+fn json_mode_reports_stable_codes_for_every_category() {
+    for (name, source, category, code) in [
+        ("json-code-parse", "val =\n", "parse", "expected_syntax"),
+        (
+            "json-code-number",
+            "val x = 1__0\n",
+            "parse",
+            "invalid_number",
+        ),
+        (
+            "json-code-immutable",
+            "val x = 1\nx = 2\n",
+            "semantic",
+            "immutable_assignment",
+        ),
+        (
+            "json-code-type",
+            "val x = 1 + \"a\"\n",
+            "semantic",
+            "type_mismatch",
+        ),
+        (
+            "json-code-unknown",
+            "val x:Missing = 1\n",
+            "semantic",
+            "unknown_type",
+        ),
+        (
+            "json-code-runtime",
+            "val zero = 0\nprintln(1 / zero)\n",
+            "runtime",
+            "divide_by_zero",
+        ),
+    ] {
+        let path = fixture_path(name);
+        fs::write(&path, source).expect("write coded source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run coded source");
+        fs::remove_file(&path).expect("remove coded source");
+
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        let diagnostic = json_diagnostic(&output.stderr);
+        assert_eq!(diagnostic["category"], category, "{name}: {diagnostic}");
+        assert_eq!(diagnostic["code"], code, "{name}: {diagnostic}");
+    }
+
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(fixture_path("json-code-missing-entry"))
+        .output()
+        .expect("run missing entry");
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(diagnostic["category"], "io");
+    assert_eq!(diagnostic["code"], "entry_read");
+}
+
+#[test]
 fn json_mode_encodes_thrown_payloads_only_for_thrown_errors() {
     for (name, source, thrown) in [
         (
