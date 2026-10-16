@@ -1,0 +1,8 @@
+val below = cfg("below", 30)
+val isPrime = fn(n:num, d:num) {
+  if (n < 2) { false } else if (d * d > n) { true } else if (n % d == 0) { false } else { recur(n, d + 1) }
+}
+val collect = fn(n:num, out) {
+  if (n >= below) { out } else if (isPrime(n, 2)) { recur(n + 1, if (out == "") { "$n" } else { out + " $n" }) } else { recur(n + 1, out) }
+}
+println(collect(2, ""))

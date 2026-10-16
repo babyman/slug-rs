@@ -1,0 +1,9 @@
+val numbers = cfg("numbers", [1, 3, 5, 7, 9, 11])
+val target = cfg("target", 7)
+val search = fn(low, high) {
+  if (low > high) { -1 } else {
+    val mid = int((low + high) / 2)
+    if (numbers[mid] == target) { mid } else if (numbers[mid] < target) { recur(mid + 1, high) } else { recur(low, mid - 1) }
+  }
+}
+println(search(0, len(numbers) - 1))

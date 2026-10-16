@@ -1,0 +1,19 @@
+enum Light { Red, Green, Yellow }
+val steps = cfg("steps", 5)
+val next = fn(light) match {
+  Light.Red => Light.Green
+  Light.Green => Light.Yellow
+  Light.Yellow => Light.Red
+}
+val name = fn(light) match {
+  Light.Red => "Red"
+  Light.Green => "Green"
+  Light.Yellow => "Yellow"
+}
+val run = fn(light, i) {
+  if (i < steps) {
+    println(name(light))
+    recur(next(light), i + 1)
+  }
+}
+run(Light.Red, 0)

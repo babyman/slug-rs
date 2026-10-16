@@ -1,0 +1,17 @@
+val matrix = cfg("matrix", [[1, 2, 3], [4, 5, 6]])
+val column = fn(c:num, r:num, out) {
+  if (r == len(matrix)) { out } else { recur(c, r + 1, out :+ matrix[r][c]) }
+}
+val show = fn(values, i, out) {
+  if (i == len(values)) { out } else {
+    val value = values[i]
+    recur(values, i + 1, if (i == 0) { "$value" } else { out + " $value" })
+  }
+}
+val rows = fn(c:num) {
+  if (len(matrix) > 0 && c < len(matrix[0])) {
+    println(show(column(c, 0, []), 0, ""))
+    recur(c + 1)
+  }
+}
+rows(0)

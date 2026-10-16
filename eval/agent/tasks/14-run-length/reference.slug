@@ -1,0 +1,13 @@
+val text = cfg("text", "aaabccdddd")
+val encode = fn(i, current, count, out) {
+  if (i == len(text)) {
+    if (count == 0) { out } else { out + current + "$count" }
+  } else if (text[i] == current) {
+    recur(i + 1, current, count + 1, out)
+  } else if (count == 0) {
+    recur(i + 1, text[i], 1, out)
+  } else {
+    recur(i + 1, text[i], 1, out + current + "$count")
+  }
+}
+println(encode(0, "", 0, ""))

@@ -1,0 +1,6 @@
+val fs = import("slug.io.fs")
+
+val file = fs.openWrite("out.txt")
+fs.write(file, "hello\n")
+fs.close(file)
+println("written")

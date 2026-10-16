@@ -1,0 +1,11 @@
+{
+  "cases": [
+    {},
+    {
+      "text": "  hello   world  "
+    },
+    {
+      "text": "single"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+val {await} = import("slug.channel")
+val numbers = cfg("numbers", [3, 1, 4, 1, 5])
+val start = fn(i, tasks) {
+  if (i == len(numbers)) { tasks } else {
+    val n = numbers[i]
+    recur(i + 1, tasks :+ spawn { n * n })
+  }
+}
+val collect = fn(tasks, i, out) {
+  if (i == len(tasks)) { out } else { recur(tasks, i + 1, out :+ await(tasks[i])) }
+}
+val squares = collect(start(0, []), 0, [])
+val total = fn(i, sum) { if (i == len(squares)) { sum } else { recur(i + 1, sum + squares[i]) } }
+println(squares)
+println(total(0, 0))

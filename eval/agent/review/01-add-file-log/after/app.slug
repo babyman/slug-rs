@@ -1,0 +1,15 @@
+val {reduce} = import("slug.std")
+val fs = import("slug.io.fs")
+
+val total = fn(values) { reduce(values, 0, fn(sum, value) { sum + value }) }
+
+val report = fn(name, values) {
+  val line = "$name: " + "${total(values)}"
+  println(line)
+}
+
+val log = fs.openAppend("totals.log")
+report("north", [3, 4, 5])
+report("south", [10, 2])
+fs.write(log, "done\n")
+fs.close(log)

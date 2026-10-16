@@ -1,0 +1,12 @@
+val {reduce, map} = import("slug.std")
+
+val sum = fn(values) { reduce(values, 0, fn(acc, value) { acc + value }) }
+val doubled = fn(values) { map(values, fn(value) { value * 2 }) }
+
+val report = fn(name, values) {
+  val result = sum(values)
+  println("$name:", result)
+}
+
+report("north", [3, 4, 5])
+report("south", doubled([5, 1]))

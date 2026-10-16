@@ -1,0 +1,30 @@
+val words = cfg("words", ["pear", "apple", "pear", "fig", "apple", "pear"])
+val count = fn(i, counts) {
+  if (i == len(words)) { counts } else {
+    val word = words[i]
+    val seen = counts[word]
+    recur(i + 1, counts + {[word]: if (seen == nil) { 1 } else { seen + 1 }})
+  }
+}
+val alphabet = "abcdefghijklmnopqrstuvwxyz"
+val rank = fn(c, i) {
+  if (i == len(alphabet)) { i } else if (alphabet[i] == c) { i } else { recur(c, i + 1) }
+}
+val before = fn(a, b, i) {
+  if (i == len(a)) { i < len(b) } else if (i == len(b)) { false } else if (a[i] == b[i]) { recur(a, b, i + 1) } else { rank(a[i], 0) < rank(b[i], 0) }
+}
+val insert = fn(sorted, item, i) {
+  if (i == len(sorted)) { sorted :+ item } else if (before(item, sorted[i], 0)) { sorted[0:i] + [item] + sorted[i:] } else { recur(sorted, item, i + 1) }
+}
+val sort = fn(items, i, sorted) {
+  if (i == len(items)) { sorted } else { recur(items, i + 1, insert(sorted, items[i], 0)) }
+}
+val counts = count(0, {})
+val show = fn(names, i) {
+  if (i < len(names)) {
+    val name = names[i]
+    println(name, counts[name])
+    recur(names, i + 1)
+  }
+}
+show(sort(keys(counts), 0, []), 0)
