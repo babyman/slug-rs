@@ -387,11 +387,20 @@ impl ModuleResolver for DesktopResolver {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         let relative = module_path(request.name)?;
         let mut candidates = Vec::new();
+        // A bare importer file name has the empty path as its parent, which
+        // names no directory; it means the current directory.
         if let Some(importer) = request
             .importer
             .map(ModuleKey::as_str)
             .map(Path::new)
             .and_then(Path::parent)
+            .map(|parent| {
+                if parent.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    parent
+                }
+            })
         {
             candidates.push((importer, importer.join(&relative)));
         }

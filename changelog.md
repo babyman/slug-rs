@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `slug app.slug`, with a bare file name, now imports modules beside the
+  program. It previously failed with `cannot read :` because the program's
+  directory was taken to be the empty path; `slug ./app.slug` was unaffected.
+
 - Diagnostics offer machine-applicable `fixes` when a fix cannot change the
   rest of the program: inserting a closing `)`, `]`, `}`, or `|}` missing at
   the end of a file, and deleting an unreachable match case whose patterns

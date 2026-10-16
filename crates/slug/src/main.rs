@@ -295,12 +295,8 @@ fn load_entry_source(path: &str, json: bool) -> Result<(String, String, DesktopL
             return Err(ExitCode::from(1));
         }
     };
-    let source_root = configured_source_root.unwrap_or_else(|| {
-        resolved_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .into()
-    });
+    let source_root =
+        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -314,6 +310,14 @@ fn load_entry_source(path: &str, json: bool) -> Result<(String, String, DesktopL
             }
         };
     Ok((resolved_path.to_string_lossy().into_owned(), source, loader))
+}
+
+/// The directory holding a program file. A bare file name's parent is the
+/// empty path, which names no directory, so it means the current directory.
+fn program_directory(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
@@ -418,7 +422,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         }
     };
     let artifact_path = Path::new(path);
-    let source_root = artifact_path.parent().unwrap_or_else(|| Path::new("."));
+    let source_root = program_directory(artifact_path);
     let entry_module = artifact_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -473,12 +477,8 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let source_root = configured_source_root.unwrap_or_else(|| {
-        resolved_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .into()
-    });
+    let source_root =
+        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())

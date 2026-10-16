@@ -426,3 +426,28 @@ fn repeats_strings_with_non_negative_integer_counts() {
             .starts_with("slug: runtime error: string repetition count must be non-negative")
     );
 }
+
+#[test]
+fn a_bare_program_name_imports_sibling_modules() {
+    let directory =
+        std::env::temp_dir().join(format!("slug-cli-bare-entry-{}", std::process::id()));
+    fs::create_dir_all(&directory).expect("create bare entry directory");
+    fs::write(directory.join("helper.slug"), "export val answer = 42\n").expect("write helper");
+    fs::write(
+        directory.join("app.slug"),
+        "val helper = import(\"helper\")\nprintln(helper.answer)\n",
+    )
+    .expect("write entry");
+    let output = slug()
+        .current_dir(&directory)
+        .arg("app.slug")
+        .output()
+        .expect("run bare entry");
+    fs::remove_dir_all(&directory).expect("remove bare entry directory");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+}
