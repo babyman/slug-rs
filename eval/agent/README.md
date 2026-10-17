@@ -21,7 +21,8 @@ tasks, once per feature arm and several times each, and records what happened.
   including access gained indirectly or by dynamic import.
 
 - `projects/` holds larger exercises that produce something useful. `json/`
-  asks for a JSON library, `json.slug`, specified in its `task.md`. Its hidden
+  asks for a JSON library, `json.slug`, specified in its `task.md`, which the
+  agent receives as `spec.md` in its workspace. Its hidden
   suite, `cases.json`, has 91 cases covering parsing, parse errors and their
   offsets, canonical serialization, serialization errors, and round trips.
   Each case runs as its own program beside the agent's module, so a crash or
@@ -37,12 +38,12 @@ hold-outs, and replace a hold-out once it has driven a change.
 
 ## Arms
 
-| Arm | Diagnostics | Fixes | `slug report` | Tasks |
-|---|---|---|---|---|
-| `baseline` | text | - | blocked | coding, review |
-| `json` | JSON | removed | blocked | coding |
-| `fixes` | JSON | kept | blocked | coding |
-| `report` | text | - | available | review |
+| Arm        | Diagnostics | Fixes   | `slug report` | Tasks          |
+|------------|-------------|---------|---------------|----------------|
+| `baseline` | text        | -       | blocked       | coding, review |
+| `json`     | JSON        | removed | blocked       | coding         |
+| `fixes`    | JSON        | kept    | blocked       | coding         |
+| `report`   | text        | -       | available     | review         |
 
 The agent's `slug` is a wrapper (`harness/slug_wrapper.py`) that applies the
 arm: it forces or strips `--diagnostic-format=json`, empties `fixes`, and

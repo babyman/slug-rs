@@ -111,7 +111,7 @@ documentation is in ./slug-docs: start with slug-docs/language-specification.md.
 Library module sources are in ./slug-docs/library. Run a program with
 `slug <file>`.
 
-{task}
+The library's specification is in ./spec.md. Implement it exactly.
 {arm_notes}
 Stop when the library is complete and you have tested it.
 """
@@ -215,6 +215,8 @@ def prepare_workspace(run, run_temp):
         shutil.copyfile(REPO / path, docs / Path(path).name)
     for source, target in LIBRARY_SOURCES:
         shutil.copytree(REPO / source, docs / target, ignore=shutil.ignore_patterns(".DS_Store"))
+    if run["kind"] == "project":
+        shutil.copyfile(PROJECTS / run["task"] / "task.md", workspace / "spec.md")
     if run["kind"] == "review":
         for side in ("before", "after"):
             shutil.copytree(REVIEWS / run["task"] / side, workspace / side)
@@ -232,8 +234,7 @@ def minutes(run, arguments):
 def prompt(run):
     notes = ARM_NOTES.get(run["arm"], "")
     if run["kind"] == "project":
-        task = (PROJECTS / run["task"] / "task.md").read_text().strip()
-        return PROJECT_PROMPT.format(task=task, arm_notes=notes)
+        return PROJECT_PROMPT.format(arm_notes=notes)
     if run["kind"] == "coding":
         task = (TASKS / run["task"] / "task.md").read_text().strip()
         return CODING_PROMPT.format(task=task, arm_notes=notes)

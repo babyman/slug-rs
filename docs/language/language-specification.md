@@ -986,7 +986,11 @@ val divideOrZero = fn(value) {
 This direct-comparison rule does not extend to aliases, arbitrary predicates,
 or mutation-sensitive facts. If the body supplies no unique type, the parameter
 widens to `any|nil`; `fn(value)` and `fn(value:any|nil)` therefore have
-identical input signatures only in that fallback case. An unannotated binding
+identical input signatures only in that fallback case. Inside the body, such a
+parameter is dynamic rather than `any|nil`: its value, and a result derived
+from it, are checked at runtime, so `fn(out) { out }` or a recursive helper
+returning its accumulator can be used where a `str` is required. An explicit
+`any|nil` annotation keeps its static meaning. An unannotated binding
 is inferred from its initializer, and an unannotated function result is inferred
 from all reachable result expressions. An explicit annotation remains the
 declaration's public type even when its value is inferred more narrowly:

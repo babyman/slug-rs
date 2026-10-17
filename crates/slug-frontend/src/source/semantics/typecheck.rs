@@ -1640,10 +1640,22 @@ fn check_function_body(
     for (parameter, signature_parameter) in parameters.iter().zip(&signature.parameters) {
         let parameter_type = &signature_parameter.value_type;
         if !parameter.discard {
-            let binding_type = if parameter.variadic {
-                Type::List(Some(Box::new(parameter_type.clone())))
+            // An unannotated parameter whose body supplies no type accepts
+            // `any|nil`, but inside the body that is the checker's uncertainty,
+            // not a declared type: it stays dynamic, so a result derived from
+            // it, such as an accumulator returned by a recursive helper, does
+            // not fail a caller's annotation.
+            let inferred_nothing =
+                parameter.annotation.is_none() && *parameter_type == Type::universal();
+            let element_type = if inferred_nothing {
+                Type::Unknown
             } else {
                 parameter_type.clone()
+            };
+            let binding_type = if parameter.variadic {
+                Type::List(Some(Box::new(element_type)))
+            } else {
+                element_type
             };
             scoped.declare(parameter.name.clone(), SemanticBinding::value(binding_type));
         }

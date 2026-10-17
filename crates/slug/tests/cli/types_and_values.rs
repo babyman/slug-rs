@@ -1592,3 +1592,42 @@ fn double_quoted_strings_escape_backspace_and_form_feed() {
         "true true 5 true\n"
     );
 }
+
+#[test]
+fn unconstrained_parameters_are_dynamic_inside_their_body() {
+    let path = fixture_path("unconstrained-parameters");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write unconstrained parameter source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run unconstrained parameter source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run("val identity = fn(value) { value }\n\
+         val text:str = identity(\"ok\")\n\
+         val repeat = fn():str {\n\
+         \x20 val go = fn(i, out) { if (i == 0) { out } else { recur(i - 1, out + \"x\") } }\n\
+         \x20 go(3, \"\")\n\
+         }\n\
+         val collect = fn(i, out) { if (i == 0) { out } else { recur(i - 1, out :+ i) } }\n\
+         val items:list = collect(2, [])\n\
+         println(text, repeat(), items)\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "ok xxx [2, 1]\n");
+
+    // An explicit any|nil annotation keeps its static meaning.
+    let (code, _, stderr) =
+        run("val pass = fn(value:any|nil) { value }\nval text:str = pass(\"a\")\n");
+    fs::remove_file(&path).expect("remove unconstrained parameter source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("semantic error: expected str, got any|nil"),
+        "{stderr}"
+    );
+}

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An unannotated parameter that its body gives no type is now dynamic inside
+  the function, so a result returned through it no longer fails static
+  checking. `val s:str = go(2, "")` with a recursive helper
+  `fn(i, out) { ... recur(i - 1, out + "x") }` previously reported
+  `expected str, got any|nil`; it now compiles, and a mismatch is a runtime
+  error as for other dynamic values.
+
 - Double-quoted strings support `\b` (backspace) and `\f` (form feed)
   escapes. Previously `"\b"` was an unknown escape and kept its backslash.
 
