@@ -544,6 +544,124 @@
    "kind": "roundtrip",
    "input": "\"\\/\"",
    "expect": "\"/\""
+  },
+  {
+   "id": "number-many-digits",
+   "kind": "parse",
+   "input": "3.141592653589793238462643383279",
+   "expect": "3.141592653589793",
+   "reference_fails": true
+  },
+  {
+   "id": "number-exact-expansion",
+   "kind": "parse",
+   "input": "0.1000000000000000055511151231257827",
+   "expect": "0.1"
+  },
+  {
+   "id": "number-largest",
+   "kind": "parse",
+   "input": "1.7976931348623157e308",
+   "expect": "1.7976931348623157e308",
+   "reference_fails": true
+  },
+  {
+   "id": "number-smallest-normal",
+   "kind": "parse",
+   "input": "2.2250738585072014e-308",
+   "expect": "2.2250738585072014e-308",
+   "reference_fails": true
+  },
+  {
+   "id": "number-smallest-subnormal",
+   "kind": "parse",
+   "input": "4.9406564584124654e-324",
+   "expect": "5e-324"
+  },
+  {
+   "id": "number-subnormal-rounding",
+   "kind": "parse",
+   "input": "2.4703282292062328e-324",
+   "expect": "5e-324",
+   "reference_fails": true
+  },
+  {
+   "id": "number-huge-integer",
+   "kind": "parse",
+   "input": "123456789012345678901234567890",
+   "expect": "1.2345678901234568e+29",
+   "reference_fails": true
+  },
+  {
+   "id": "number-small-many-digits",
+   "kind": "parse",
+   "input": "0.000001234567890123456789",
+   "expect": "1.2345678901234567e-06",
+   "reference_fails": true
+  },
+  {
+   "id": "number-tie-to-even",
+   "kind": "parse",
+   "input": "1.00000000000000011102230246251565404236316680908203125",
+   "expect": "1.0"
+  },
+  {
+   "id": "number-just-above-tie",
+   "kind": "parse",
+   "input": "1.00000000000000011102230246251565404236316680908203126",
+   "expect": "1.0000000000000002",
+   "reference_fails": true
+  },
+  {
+   "id": "number-exact-large-integer",
+   "kind": "parse",
+   "input": "9007199254740993",
+   "expect": "9007199254740993",
+   "reference_fails": true
+  },
+  {
+   "id": "number-smallest-integer",
+   "kind": "parse",
+   "input": "-9223372036854775808",
+   "expect": "-9223372036854775807 - 1",
+   "reference_fails": true
+  },
+  {
+   "id": "number-beyond-integer",
+   "kind": "parse",
+   "input": "9223372036854775808",
+   "expect": "9.223372036854776e+18",
+   "reference_fails": true
+  },
+  {
+   "id": "number-underflow",
+   "kind": "parse",
+   "input": "1e-400",
+   "expect": "0"
+  },
+  {
+   "id": "error-number-just-too-large",
+   "kind": "parse_error",
+   "input": "17976931348623159e292",
+   "reference_fails": true
+  },
+  {
+   "id": "size-large-document",
+   "kind": "roundtrip",
+   "generate": {
+    "shape": "records",
+    "count": 4000
+   },
+   "seconds": 5
+  },
+  {
+   "id": "size-deep-nesting",
+   "kind": "roundtrip",
+   "generate": {
+    "shape": "nesting",
+    "depth": 1000
+   },
+   "seconds": 5
   }
  ]
 }

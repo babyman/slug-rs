@@ -78,7 +78,36 @@ check()
 
 
 def load_cases(project_dir):
-    return json.loads((Path(project_dir) / "cases.json").read_text())["cases"]
+    return [expand(case) for case in json.loads((Path(project_dir) / "cases.json").read_text())["cases"]]
+
+
+def expand(case):
+    """Fills in a case's input and expected text from its `generate` recipe,
+    so large documents need not be stored."""
+    recipe = case.get("generate")
+    if recipe is None:
+        return case
+    if recipe["shape"] == "records":
+        records = [
+            {
+                "id": index,
+                "name": f"record {index} caf\u00e9",
+                "note": "line\nbreak\t\"quoted\"" if index % 7 == 0 else None,
+                "tags": ["a", "b", str(index % 13)],
+                "active": index % 2 == 0,
+                "nested": {"depth": [index, [index + 1, {"leaf": index % 5}]]},
+            }
+            for index in range(recipe["count"])
+        ]
+        text = json.dumps(records, indent=1, ensure_ascii=False)
+        expect = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    elif recipe["shape"] == "nesting":
+        depth = recipe["depth"]
+        text = "[" * depth + "]" * depth
+        expect = text
+    else:
+        raise ValueError(f"unknown generate shape {recipe['shape']!r}")
+    return {**case, "input": text, "expect": expect}
 
 
 def case_program(case, module):
@@ -104,7 +133,8 @@ def case_toml(case):
 
 
 def run_case(slug, slug_home, module_path, module, case):
-    """Returns (passed, detail) for one case."""
+    """Returns (passed, detail) for one case. A case's `seconds` bounds its
+    run time, including Slug startup."""
     with tempfile.TemporaryDirectory(prefix="slug-eval-project-") as directory:
         shutil.copyfile(module_path, os.path.join(directory, f"{module}.slug"))
         Path(directory, "case.slug").write_text(case_program(case, module))
@@ -115,11 +145,11 @@ def run_case(slug, slug_home, module_path, module, case):
                 cwd=directory,
                 capture_output=True,
                 text=True,
-                timeout=CASE_TIMEOUT_SECONDS,
+                timeout=case.get("seconds", CASE_TIMEOUT_SECONDS),
                 env={**os.environ, "SLUG_HOME": str(slug_home)},
             )
         except subprocess.TimeoutExpired:
-            return False, "timed out"
+            return False, f"timed out after {case.get('seconds', CASE_TIMEOUT_SECONDS)} s"
         passed = completed.returncode == 0 and completed.stdout.strip() == "PASS"
         detail = (completed.stdout.strip() or completed.stderr.strip())[:300]
         return passed, detail

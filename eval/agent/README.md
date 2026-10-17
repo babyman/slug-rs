@@ -23,11 +23,15 @@ tasks, once per feature arm and several times each, and records what happened.
 - `projects/` holds larger exercises that produce something useful. `json/`
   asks for a JSON library, `json.slug`, specified in its `task.md`, which the
   agent receives as `spec.md` in its workspace. Its hidden
-  suite, `cases.json`, has 91 cases covering parsing, parse errors and their
-  offsets, canonical serialization, serialization errors, and round trips.
+  suite, `cases.json`, has 108 cases covering parsing, correctly rounded
+  numbers, parse errors and their offsets, canonical serialization,
+  serialization errors, round trips, and large and deeply nested documents.
   Each case runs as its own program beside the agent's module, so a crash or
   hang fails only that case, and a run scores the fraction of cases passed.
-  `reference/json.slug` passes them all. Project runs default to a $5 budget
+  Cases may set a `generate` recipe, for documents too large to store, and a
+  `seconds` time limit. `reference/json.slug` is a naive baseline for agents
+  to beat: it fails the cases marked `reference_fails`, such as correctly
+  rounded numbers, and passes the rest. Project runs default to a $5 budget
   and a 45-minute timeout and use the coding arms.
 
 The small coding tasks are a quick smoke check after language changes; the

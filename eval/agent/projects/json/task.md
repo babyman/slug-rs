@@ -25,9 +25,14 @@ Returns the Slug value for the JSON document `text`:
 - Numbers follow JSON grammar: an optional `-`, then `0` or a digit sequence
   not starting with `0`, an optional fraction (`.` and at least one digit),
   and an optional exponent (`e` or `E`, optional `+` or `-`, at least one
-  digit). `+1`, `01`, `.5`, `1.`, and `1e` are invalid. The result must equal
-  the number the text denotes, so `2.5E-3` is `0.0025` and `1.0 == 1`. A
-  number too large for binary64 is an error.
+  digit). `+1`, `01`, `.5`, `1.`, and `1e` are invalid. A number whose value is
+  an integer that fits in a signed 64-bit integer parses to exactly that
+  integer, so `9007199254740993` is exact. Any other number parses to the
+  binary64 value nearest to the exact decimal value, rounding a tie to even,
+  however many digits it has: `2.5E-3` is `0.0025`, `1.0 == 1`, and
+  `3.141592653589793238462643383279` is `3.141592653589793`. A number that
+  underflows parses to `0`. A number whose magnitude is too large for binary64
+  is an error.
 - Strings support the escapes `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`,
   and `\uXXXX` with upper- or lowercase hex digits. A `\u` escape that is a
   UTF-16 high surrogate followed immediately by a `\u` low surrogate forms one
@@ -79,4 +84,5 @@ or a map with a non-string key, anywhere inside `value`, throws an `Error` with
   `sort` and `join` for lists of strings; see
   slug-docs/library/core/string.slug.
 - Write your own test programs beside `json.slug` to check your work. The
-  graded suite covers every rule above, including edge cases.
+  graded suite covers every rule above, including edge cases, and includes
+  large and deeply nested documents that must be handled in a few seconds.

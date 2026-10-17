@@ -566,10 +566,16 @@ def command_check_references(arguments):
             continue
         module = directory.name
         outcomes = projects.grade(str(slug), REPO, directory, directory / "reference" / f"{module}.slug", module)
-        failed = [outcome["id"] for outcome in outcomes if not outcome["passed"]]
-        if failed:
-            raise SystemExit(f"project {module} reference fails: {', '.join(failed)}")
-        print(f"project {module} reference passes {len(outcomes)} cases")
+        # The reference is a naive baseline: cases marked `reference_fails`,
+        # such as correctly rounded numbers, are ones it is known to miss.
+        # Any other difference means the suite or the reference changed.
+        expected = {case["id"] for case in projects.load_cases(directory) if case.get("reference_fails")}
+        failed = {outcome["id"] for outcome in outcomes if not outcome["passed"]}
+        if failed != expected:
+            unexpected = ", ".join(sorted(failed - expected)) or "none"
+            fixed = ", ".join(sorted(expected - failed)) or "none"
+            raise SystemExit(f"project {module} reference: unexpected failures {unexpected}; now passing {fixed}")
+        print(f"project {module} reference passes {len(outcomes) - len(failed)} of {len(outcomes)} cases, failing only its {len(expected)} known cases")
 
 
 def main():
