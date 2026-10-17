@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Double-quoted strings support `\b` (backspace) and `\f` (form feed)
+  escapes. Previously `"\b"` was an unknown escape and kept its backslash.
+
+- `slug.string` adds `sort`, a stable ascending sort of a list of strings in
+  the order of `<`, and `join`, which concatenates a list of strings with an
+  optional separator. Both throw `string.type` errors for a non-string element.
+
 - The core clutch adds `slug.string`, the start of a string library. `ord`
   returns a one-character string's Unicode scalar value and `chr` returns the
   character for a scalar value: `ord("é")` is 233 and `chr(8364)` is `"€"`.

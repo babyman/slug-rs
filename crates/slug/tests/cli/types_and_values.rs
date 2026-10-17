@@ -1571,3 +1571,24 @@ fn enum_cases_and_struct_fields_separate_with_commas_or_newlines() {
     }
     fs::remove_file(&path).expect("remove separator source");
 }
+
+#[test]
+fn double_quoted_strings_escape_backspace_and_form_feed() {
+    let path = fixture_path("backspace-form-feed");
+    fs::write(
+        &path,
+        "println(\"\\b\" == \"\\10\", \"\\f\" == \"\\14\", len(\"a\\bb\\fc\"), '\\b' == \"\\\\b\")\n",
+    )
+    .expect("write escape source");
+    let output = slug().arg(&path).output().expect("run escape source");
+    fs::remove_file(&path).expect("remove escape source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "true true 5 true\n"
+    );
+}

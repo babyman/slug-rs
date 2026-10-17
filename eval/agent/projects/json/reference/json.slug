@@ -7,7 +7,7 @@
  * form throw `json.type` errors.
  */
 
-val {ord, chr} = import("slug.string")
+val {ord, chr, sort, join} = import("slug.string")
 
 val HEX = {"0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
   "a": 10, "b": 11, "c": 12, "d": 13, "e": 14, "f": 15,
@@ -55,8 +55,7 @@ val hex4 = fn(text, i) {
   go(0, 0)
 }
 
-// Slug strings have no \b or \f escape; octal \10 and \14 are those characters.
-val escapes = {"\"": "\"", "\\": "\\", "/": "/", "b": "\10", "f": "\14", "n": "\n", "r": "\r", "t": "\t"}
+val escapes = {"\"": "\"", "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
 
 val parseString = fn(text, start) {
   val go = fn(i, out) {
@@ -246,7 +245,7 @@ val quote = fn(text) {
     } else {
       val c = text[i]
       val code = ord(c)
-      val piece = if (c == "\"") { "\\\"" } else if (c == "\\") { "\\\\" } else if (c == "\n") { "\\n" } else if (c == "\r") { "\\r" } else if (c == "\t") { "\\t" } else if (c == "\10") { "\\b" } else if (c == "\14") { "\\f" } else if (code < 32) {
+      val piece = if (c == "\"") { "\\\"" } else if (c == "\\") { "\\\\" } else if (c == "\n") { "\\n" } else if (c == "\r") { "\\r" } else if (c == "\t") { "\\t" } else if (c == "\b") { "\\b" } else if (c == "\f") { "\\f" } else if (code < 32) {
         "\\u00" + DIGITS[code >> 4] + DIGITS[code & 15]
       } else {
         c
@@ -259,14 +258,6 @@ val quote = fn(text) {
 
 val typeError = fn(message) { throw Error {type: "json.type", msg: message} }
 
-val insert = fn(sorted, item, i) {
-  if (i == len(sorted)) { sorted :+ item } else if (item < sorted[i]) { sorted[0:i] + [item] + sorted[i:] } else { recur(sorted, item, i + 1) }
-}
-
-val sortKeys = fn(items, i, sorted) {
-  if (i == len(items)) { sorted } else { recur(items, i + 1, insert(sorted, items[i], 0)) }
-}
-
 val write = fn(value) {
   match value {
     nil => "null"
@@ -275,10 +266,8 @@ val write = fn(value) {
     n:num => "$n"
     s:str => quote(s)
     items:list => {
-      val go = fn(i, out) {
-        if (i == len(items)) { out + "]" } else { recur(i + 1, out + (if (i == 0) { "" } else { "," }) + write(items[i])) }
-      }
-      go(0, "[")
+      val parts = fn(i, out) { if (i == len(items)) { out } else { recur(i + 1, out :+ write(items[i])) } }
+      "[" + join(parts(0, []), ",") + "]"
     }
     entries:map => {
       val names = keys(entries)
@@ -291,16 +280,11 @@ val write = fn(value) {
         }
       }
       check(0)
-      val sorted = sortKeys(names, 0, [])
-      val go = fn(i, out) {
-        if (i == len(sorted)) {
-          out + "}"
-        } else {
-          val name = sorted[i]
-          recur(i + 1, out + (if (i == 0) { "" } else { "," }) + quote(name) + ":" + write(entries[name]))
-        }
+      val sorted = sort(names)
+      val parts = fn(i, out) {
+        if (i == len(sorted)) { out } else { recur(i + 1, out :+ (quote(sorted[i]) + ":" + write(entries[sorted[i]]))) }
       }
-      go(0, "{")
+      "{" + join(parts(0, []), ",") + "}"
     }
     _ => typeError("value has no JSON form")
   }

@@ -1,8 +1,10 @@
 /**
- * String operations, starting with conversion between characters and their
- * Unicode scalar values.
+ * String operations: conversion between characters and their Unicode scalar
+ * values, sorting, and joining.
  *
- * Invalid arguments throw `Error` values whose `type` is `string.range`.
+ * Out-of-range arguments throw `Error` values whose `type` is `string.range`;
+ * a list element that is not a string throws one whose `type` is
+ * `string.type`.
  */
 
 // Typed native bindings, declared in this clutch's manifest.
@@ -37,4 +39,70 @@ export val chr = fn(code:num):str {
         [true, character] => character
         _ => throw Error {type: "string.range", msg: "chr requires a Unicode scalar value"}
     }
+}
+
+val requireStrings = fn(values, operation) {
+    val check = fn(i) {
+        if (i < len(values)) {
+            match values[i] {
+                _:str => recur(i + 1)
+                _ => throw Error {type: "string.type", msg: "$operation requires a list of strings"}
+            }
+        }
+    }
+    check(0)
+}
+
+val merge = fn(left, right, i, j, out) {
+    if (i == len(left)) {
+        out + right[j:]
+    } else if (j == len(right)) {
+        out + left[i:]
+    } else if (right[j] < left[i]) {
+        recur(left, right, i, j + 1, out :+ right[j])
+    } else {
+        recur(left, right, i + 1, j, out :+ left[i])
+    }
+}
+
+val mergeSort = fn(values) {
+    if (len(values) <= 1) {
+        values
+    } else {
+        val middle = int(len(values) / 2)
+        merge(mergeSort(values[0:middle]), mergeSort(values[middle:]), 0, 0, [])
+    }
+}
+
+/**
+ * Returns `strings` in ascending order by Slug's string ordering, the order of
+ * `<`: lexicographic by UTF-8 bytes, so `"B"` sorts before `"a"`. Equal
+ * strings keep their original order. `strings` is unchanged.
+ *
+ * Throws a `string.type` error when an element is not a string.
+ */
+export val sort = fn(strings:list<str>):list<str> {
+    requireStrings(strings, "sort")
+    mergeSort(strings)
+}
+
+/**
+ * Returns the elements of `strings` concatenated, with `separator` between
+ * each adjacent pair: `join(["a", "b", "c"], ", ")` is `"a, b, c"`. An empty
+ * list joins to `""`.
+ *
+ * Throws a `string.type` error when an element is not a string.
+ */
+export val join = fn(strings:list<str>, separator:str = ""):str {
+    requireStrings(strings, "join")
+    val go = fn(i:num, out:str):str {
+        if (i == len(strings)) {
+            out
+        } else if (i == 0) {
+            recur(1, strings[0])
+        } else {
+            recur(i + 1, out + separator + strings[i])
+        }
+    }
+    go(0, "")
 }

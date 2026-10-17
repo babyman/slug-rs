@@ -75,6 +75,7 @@ or a map with a non-string key, anywhere inside `value`, throws an `Error` with
 ## Notes
 
 - `slug.string` provides `ord` and `chr` for converting between characters and
-  Unicode scalar values; see slug-docs/library/core/string.slug.
+  Unicode scalar values, and `sort` and `join` for lists of strings; see
+  slug-docs/library/core/string.slug.
 - Write your own test programs beside `json.slug` to check your work. The
   graded suite covers every rule above, including edge cases.

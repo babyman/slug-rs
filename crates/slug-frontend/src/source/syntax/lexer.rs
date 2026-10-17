@@ -124,6 +124,8 @@ impl Lexer {
                     Some('n') => text.push('\n'),
                     Some('r') => text.push('\r'),
                     Some('t') => text.push('\t'),
+                    Some('b') => text.push('\u{8}'),
+                    Some('f') => text.push('\u{c}'),
                     Some('"') => text.push('"'),
                     Some('\\') => text.push('\\'),
                     Some('$') => text.push('$'),

@@ -230,3 +230,28 @@ fn throws_typed_string_errors() {
          string.range: chr requires an integer code\n"
     );
 }
+
+#[test]
+fn sorts_and_joins_strings() {
+    let output = run_cli(
+        "val {sort, join} = import(\"slug.string\")\n\
+         val words = [\"pear\", \"Apple\", \"fig\", \"apple\", \"\u{e9}\", \"b\", \"a\"]\n\
+         println(sort(words), words)\n\
+         println(sort([]), sort([\"x\"]), join(sort([\"c\", \"a\", \"b\"]), \", \"))\n\
+         println(join([]) == \"\", join([\"solo\"]), join([\"x\", \"y\"]))\n\
+         val failure = fn(work) { defer onerror(err) { err.type + \": \" + err.msg }; work() }\n\
+         val mixed = keys({a: 1, [2]: 2})\n\
+         println(failure(fn() { sort(mixed) }))\n\
+         println(failure(fn() { join(mixed, \"-\") }))\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "[\"Apple\", \"a\", \"apple\", \"b\", \"fig\", \"pear\", \"\u{e9}\"] \
+         [\"pear\", \"Apple\", \"fig\", \"apple\", \"\u{e9}\", \"b\", \"a\"]\n\
+         [] [\"x\"] a, b, c\n\
+         true solo xy\n\
+         string.type: sort requires a list of strings\n\
+         string.type: join requires a list of strings\n"
+    );
+}
