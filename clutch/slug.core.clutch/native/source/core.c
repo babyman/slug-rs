@@ -117,3 +117,42 @@ bool slug_core_add(int64_t left, int64_t right, int64_t *sum) {
 }
 
 double slug_core_sqrt(double value) { return sqrt(value); }
+
+int64_t slug_core_ord(const char *text, size_t length) {
+  if (length == 0) return -1;
+  const unsigned char *bytes = (const unsigned char *)text;
+  /* Slug strings are valid UTF-8, so the lead byte gives the sequence length
+   * and every continuation byte is present. */
+  if (bytes[0] < 0x80) return bytes[0];
+  if (bytes[0] < 0xE0) return ((int64_t)(bytes[0] & 0x1F) << 6) | (bytes[1] & 0x3F);
+  if (bytes[0] < 0xF0) {
+    return ((int64_t)(bytes[0] & 0x0F) << 12) | ((int64_t)(bytes[1] & 0x3F) << 6) |
+           (bytes[2] & 0x3F);
+  }
+  return ((int64_t)(bytes[0] & 0x07) << 18) | ((int64_t)(bytes[1] & 0x3F) << 12) |
+         ((int64_t)(bytes[2] & 0x3F) << 6) | (bytes[3] & 0x3F);
+}
+
+bool slug_core_chr(int64_t code, const char **text, size_t *length) {
+  static _Thread_local char buffer[4];
+  if (code < 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return false;
+  size_t size = 0;
+  if (code < 0x80) {
+    buffer[size++] = (char)code;
+  } else if (code < 0x800) {
+    buffer[size++] = (char)(0xC0 | (code >> 6));
+    buffer[size++] = (char)(0x80 | (code & 0x3F));
+  } else if (code < 0x10000) {
+    buffer[size++] = (char)(0xE0 | (code >> 12));
+    buffer[size++] = (char)(0x80 | ((code >> 6) & 0x3F));
+    buffer[size++] = (char)(0x80 | (code & 0x3F));
+  } else {
+    buffer[size++] = (char)(0xF0 | (code >> 18));
+    buffer[size++] = (char)(0x80 | ((code >> 12) & 0x3F));
+    buffer[size++] = (char)(0x80 | ((code >> 6) & 0x3F));
+    buffer[size++] = (char)(0x80 | (code & 0x3F));
+  }
+  *text = buffer;
+  *length = size;
+  return true;
+}

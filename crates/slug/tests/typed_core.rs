@@ -1,4 +1,4 @@
-//! `slug.io.stdin` and `slug.math` on typed native bindings, built from the
+//! `slug.io.stdin`, `slug.math`, and `slug.string` on typed native bindings, built from the
 //! `slug.core` clutch as clutch staging builds it.
 
 use std::{
@@ -65,6 +65,7 @@ fn slug_home(directory: &TemporaryDirectory) {
         "modules/std.slug",
         "modules/stdin.slug",
         "modules/math.slug",
+        "modules/string.slug",
         "native/source/core.c",
         "native/source/slug_core.h",
     ] {
@@ -78,7 +79,8 @@ fn slug_home(directory: &TemporaryDirectory) {
         "[modules]\n\
          \"slug.std\" = \"slug.core.clutch\"\n\
          \"slug.io.stdin\" = \"slug.core.clutch\"\n\
-         \"slug.math\" = \"slug.core.clutch\"\n",
+         \"slug.math\" = \"slug.core.clutch\"\n\
+         \"slug.string\" = \"slug.core.clutch\"\n",
     )
     .expect("write repository manifest");
     let manifest = NativeManifest::from_clutch_source(
@@ -188,5 +190,43 @@ fn throws_typed_math_errors() {
         "math.range: integer addition overflowed\n\
          math.range: integer addition overflowed\n\
          math.domain: sqrt requires a non-negative number\n"
+    );
+}
+
+#[test]
+fn converts_characters_and_unicode_scalar_values() {
+    let output = run_cli(
+        "val {ord, chr} = import(\"slug.string\")\n\
+         println(ord(\"A\"), ord(\"\u{e9}\"), ord(\"\u{20ac}\"), ord(\"\u{1f600}\"), ord(chr(1114111)))\n\
+         println(chr(65), chr(233), chr(8364), chr(128512), chr(0) == \"\\0\")\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "65 233 8364 128512 1114111\nA \u{e9} \u{20ac} \u{1f600} true\n"
+    );
+}
+
+#[test]
+fn throws_typed_string_errors() {
+    let output = run_cli(
+        "val {ord, chr} = import(\"slug.string\")\n\
+         val failure = fn(work) { defer onerror(err) { err.type + \": \" + err.msg }; work() }\n\
+         println(failure(fn() { ord(\"\") }))\n\
+         println(failure(fn() { ord(\"ab\") }))\n\
+         println(failure(fn() { chr(55296) }))\n\
+         println(failure(fn() { chr(1114112) }))\n\
+         println(failure(fn() { chr(-1) }))\n\
+         println(failure(fn() { chr(65.5) }))\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "string.range: ord requires a string of exactly one character\n\
+         string.range: ord requires a string of exactly one character\n\
+         string.range: chr requires a Unicode scalar value\n\
+         string.range: chr requires a Unicode scalar value\n\
+         string.range: chr requires a Unicode scalar value\n\
+         string.range: chr requires an integer code\n"
     );
 }

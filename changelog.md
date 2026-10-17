@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The core clutch adds `slug.string`, the start of a string library. `ord`
+  returns a one-character string's Unicode scalar value and `chr` returns the
+  character for a scalar value: `ord("é")` is 233 and `chr(8364)` is `"€"`.
+  Both throw `string.range` errors for invalid arguments. They are typed
+  foreign functions in the core clutch's native library.
+
 - Strings support `<`, `<=`, `>`, and `>=`, comparing lexicographically by
   UTF-8 bytes, so `"Z" < "a"` and `"ab" < "abc"`. Ordering a string against a
   number remains a type error. An unannotated parameter compared with a number

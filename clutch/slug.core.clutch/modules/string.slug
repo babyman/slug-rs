@@ -1,0 +1,40 @@
+/**
+ * String operations, starting with conversion between characters and their
+ * Unicode scalar values.
+ *
+ * Invalid arguments throw `Error` values whose `type` is `string.range`.
+ */
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign ordRaw = fn(character:str):num
+foreign chrRaw = fn(code:num):list
+
+/**
+ * Returns the Unicode scalar value of `character`, which must be a string of
+ * exactly one character: `ord("A")` is 65 and `ord("é")` is 233.
+ *
+ * Throws a `string.range` error when `character` is not one character long.
+ */
+export val ord = fn(character:str):num {
+    if (len(character) != 1) {
+        throw Error {type: "string.range", msg: "ord requires a string of exactly one character"}
+    }
+    ordRaw(character)
+}
+
+/**
+ * Returns the one-character string whose Unicode scalar value is `code`:
+ * `chr(65)` is "A" and `chr(233)` is "é".
+ *
+ * Throws a `string.range` error when `code` is not an integer from 0 through
+ * 0x10FFFF, or is a surrogate from 0xD800 through 0xDFFF.
+ */
+export val chr = fn(code:num):str {
+    if (int(code) != code) {
+        throw Error {type: "string.range", msg: "chr requires an integer code"}
+    }
+    match chrRaw(code) {
+        [true, character] => character
+        _ => throw Error {type: "string.range", msg: "chr requires a Unicode scalar value"}
+    }
+}

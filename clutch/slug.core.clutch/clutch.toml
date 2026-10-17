@@ -2,6 +2,7 @@
 "slug.std" = { source = "modules/std.slug" }
 "slug.io.stdin" = { source = "modules/stdin.slug" }
 "slug.math" = { source = "modules/math.slug" }
+"slug.string" = { source = "modules/string.slug" }
 
 [native]
 profile = "events"
@@ -20,3 +21,7 @@ startReaderRaw = { symbol = "slug_core_start_reader", signature = "(producer lin
 [native.functions."slug.math"]
 addRaw = { symbol = "slug_core_add", signature = "(i64 left, i64 right, out i64 sum) -> bool" }
 sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64" }
+
+[native.functions."slug.string"]
+ordRaw = { symbol = "slug_core_ord", signature = "(str character) -> i64" }
+chrRaw = { symbol = "slug_core_chr", signature = "(i64 code, out str character) -> bool" }

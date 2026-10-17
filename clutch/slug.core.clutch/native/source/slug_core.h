@@ -2,6 +2,7 @@
 #define SLUG_CORE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "slug_producer.h"
@@ -23,5 +24,15 @@ bool slug_core_add(int64_t left, int64_t right, int64_t *sum);
 
 /* Returns the square root of `value`. */
 double slug_core_sqrt(double value);
+
+/* Returns the Unicode scalar value of the first character of `text`, which is
+ * valid UTF-8, or -1 when `length` is 0. */
+int64_t slug_core_ord(const char *text, size_t length);
+
+/* Encodes the Unicode scalar value `code` as UTF-8 into a per-thread buffer,
+ * points `text` and `length` at it, and returns true. The buffer stays valid
+ * until the thread's next call. Returns false, writing nothing, when `code` is
+ * negative, a surrogate, or above U+10FFFF. */
+bool slug_core_chr(int64_t code, const char **text, size_t *length);
 
 #endif

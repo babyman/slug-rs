@@ -92,8 +92,8 @@ modules and builtins available with the behavior exercised by their source:
 
 - builtins including `import`, `int`, `len`, `keys`, `print`, `println`, `chan`,
   and `close`;
-- `slug.std`, `slug.io.stdin`, and `slug.math` from the installed `slug.core`
-  Clutch, and `slug.test`, for assertions and core collection operations;
+- `slug.std`, `slug.io.stdin`, `slug.math`, and `slug.string` from the
+  installed `slug.core` Clutch, and `slug.test`, for assertions and core collection operations;
 - `slug.channel` for channel operations, `await`, `send`, and `recv`;
 - `slug.io.fs` for explicit-lifecycle file resources when a fixture or library
   program imports it and the host installs the experimental filesystem clutch;
