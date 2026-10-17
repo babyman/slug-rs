@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Strings support `<`, `<=`, `>`, and `>=`, comparing lexicographically by
+  UTF-8 bytes, so `"Z" < "a"` and `"ab" < "abc"`. Ordering a string against a
+  number remains a type error. An unannotated parameter compared with a number
+  literal is still inferred as `num`, one compared with a string literal is
+  inferred as `str`, and comparing two unannotated parameters no longer forces
+  them to be numbers, so `fn(a, b) { a < b }` works for strings.
+
+- Enum cases and struct fields can be separated by commas, newlines, or any
+  mix of both, with an optional trailing separator. One case or field per line
+  no longer needs commas. Two members with no separator between them report
+  `expected comma or newline between enum cases` or `... between struct
+  fields`. An enum or struct left open at the end of a file reports
+  `expected }` with its safe fix.
+
 - `slug app.slug`, with a bare file name, now imports modules beside the
   program. It previously failed with `cannot read :` because the program's
   directory was taken to be the empty path; `slug ./app.slug` was unaffected.

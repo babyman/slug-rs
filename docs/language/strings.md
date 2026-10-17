@@ -31,6 +31,21 @@ including indentation, is preserved.
 Unterminated string literals are lexical errors. The language does not support
 Handlebars-style `#if`, `#each`, or `#with` blocks in strings.
 
+## Comparison
+
+`==` and `!=` compare strings by content. `<`, `<=`, `>`, and `>=` compare two
+strings lexicographically by their UTF-8 bytes, which matches Unicode scalar
+value order. Comparison is case-sensitive and does not depend on locale, so
+every uppercase ASCII letter orders before every lowercase one.
+
+```slug
+"apple" < "banana"   // true
+"Z" < "a"            // true
+"ab" < "abc"         // true: a prefix orders first
+```
+
+Ordering a string against a number is a type error.
+
 ## Indexing and slicing
 
 Strings support integer indexing and list-style slices. Positions count Unicode

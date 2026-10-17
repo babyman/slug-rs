@@ -185,6 +185,13 @@ must be an integer from `0` through `63`; invalid operand or shift-count
 combinations are checked runtime type errors. Right shifts are arithmetic: they
 preserve the sign of a negative integer.
 
+Ordering comparisons (`<`, `<=`, `>`, `>=`) accept two numbers or two strings.
+Strings compare lexicographically by their UTF-8 bytes, which is also their
+Unicode scalar value order: `"Z" < "a"`, `"ab" < "abc"`, and `"é" > "z"`.
+Comparing a number with a string, or ordering any other value, is a checked
+runtime type error, and a statically known incompatible pair is a semantic
+error. `==` and `!=` compare strings by content.
+
 ```slug
 0x"ff00" & 0x"0ff0" == 0x"0f00"
 0x"ff" ^ 0x"0000" == 0x"ffff"
@@ -851,7 +858,8 @@ struct-field annotations. Its semantic analysis rejects directly provable
 annotation mismatches in declarations, parameter defaults, function returns,
 struct defaults, and calls to statically known annotated functions. It infers
 body-derived `num` parameter types from division, modulo, unary negation, and
-ordinary ordering comparisons. Function expressions infer structural
+ordering comparisons with a number literal, and `str` from ordering
+comparisons with a string literal. Function expressions infer structural
 `fn<R, P...>` value types from their parameter annotations or solved body facts,
 and declared or inferred results. That precision is retained through ordinary
 bindings and collection inference. It infers generic arguments from
@@ -957,9 +965,12 @@ resolved callee signature to constrain a parameter passed to one of its bound
 argument positions. This is still body-derived inference: the call does not
 derive or alter the callee's signature. Dynamic or structural calls, spreads,
 ambiguous alternatives, and unsupported recursive inference cycles do not add
-such a constraint and retain dynamic behavior. Division, modulo, unary
-negation, and ordinary ordering comparisons infer `num` when they require an
-unannotated parameter to be numeric.
+such a constraint and retain dynamic behavior. Division, modulo, and unary
+negation infer `num` when they require an unannotated parameter to be numeric.
+An ordering comparison infers `num` for an unannotated parameter compared with
+a number literal and `str` for one compared with a string literal. Comparing
+two unannotated parameters adds no constraint, because they may be two
+numbers or two strings.
 
 A direct `value == nil` or `value != nil` test for an unannotated parameter
 partitions its body requirements by reachable branch. The nil branch contributes

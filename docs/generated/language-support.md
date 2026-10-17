@@ -17,6 +17,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Lists and maps, including persistent map merge/removal/copy and the `keys` builtin | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Arithmetic, string concatenation/repetition, and list/bytes concatenation (`+`, `-`, `*`, `/`, `%`) | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Equality and comparisons | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
+| Lexicographic string ordering comparisons | implemented | `crates/slug/tests/cli.rs`, `crates/slug-vm/tests/vm.rs`, and `language/strings.md` |
 | Integer bitwise, shift, and prefix `~` operators | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Directional list and bytes append/prepend (`:+`, `+:`) | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
 | Pipeline operator (`/>`) | implemented | `crates/slug/tests/cli.rs` and `crates/slug-vm/tests/vm.rs` |
@@ -79,6 +80,7 @@ Generated from `docs/language-support.tsv`; do not edit directly.
 | Broad `resource` source type | removed | `language/nominal-types.md` |
 | Nominal `resource Name` declarations, separate exported type paths, strongly typed source signatures, and whole-case match constraints | partial | `crates/slug/tests/cli.rs`, `crates/slug/tests/module_loader.rs`, and `language/nominal-types.md` |
 | Fieldless nominal enums with required qualified cases | implemented | `crates/slug/tests/cli.rs`, `crates/slug/tests/module_loader.rs`, and `language/nominal-types.md` |
+| Comma or newline separators between enum cases and struct fields | implemented | `crates/slug/tests/cli.rs` and `language/slug.ebnf` |
 | Transparent `type Name = Annotation` aliases | implemented | `language/nominal-types.md` |
 | Nursery ownership and `select` receive/send/timer/task-await/default cases | partial | `crates/slug/tests/cli.rs` |
 | Foreign declaration syntax, metadata retention, and module-qualified host resolution | implemented | `crates/slug/tests/cli.rs` and `crates/slug/tests/module_loader.rs` |

@@ -70,6 +70,12 @@ export enum SeekFrom {
 val from:SeekFrom = SeekFrom.Start
 ```
 
+Cases are separated by commas, newlines, or any mix of both, and a trailing
+separator is allowed, so `enum Colour { red, green, blue }` and one case per
+line are equivalent. Two cases with no separator between them, such as
+`enum Colour { red green }`, are a parse error: `expected comma or newline
+between enum cases`.
+
 Cases are always qualified. `SeekFrom.Start` is a valid enum-value expression;
 bare `Start` is an unknown name. The same rule applies to match patterns:
 

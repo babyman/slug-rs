@@ -217,17 +217,27 @@ impl ParameterConstraints {
             }
             ExprKind::Binary {
                 left,
-                operator:
-                    Binary::Divide
-                    | Binary::Modulo
-                    | Binary::Greater
-                    | Binary::GreaterEqual
-                    | Binary::Less
-                    | Binary::LessEqual,
+                operator: Binary::Divide | Binary::Modulo,
                 right,
             } => {
                 self.require(left, Type::Num)?;
                 self.require(right, Type::Num)?;
+                self.collect(left)?;
+                self.collect(right)
+            }
+            ExprKind::Binary {
+                left,
+                operator: Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual,
+                right,
+            } => {
+                // Ordering accepts two numbers or two strings, so only a
+                // literal on the other side decides which one a parameter is.
+                if let Some(family) = literal_family(right) {
+                    self.require(left, family)?;
+                }
+                if let Some(family) = literal_family(left) {
+                    self.require(right, family)?;
+                }
                 self.collect(left)?;
                 self.collect(right)
             }
@@ -2543,7 +2553,7 @@ fn binary_result(
     match operator {
         Binary::Or | Binary::And | Binary::Equal | Binary::NotEqual => Ok(Type::Bool),
         Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual => {
-            numeric_operands(left, right, span)?;
+            ordering_operands(operator, left, right, span)?;
             Ok(Type::Bool)
         }
         Binary::BitOr | Binary::BitXor | Binary::BitAnd => bitwise_result(left, right, span),
@@ -2598,6 +2608,47 @@ fn bit_not_result(value: &Type, span: &SourceSpan) -> Result<Type, SourceError> 
             span.clone(),
         )),
     }
+}
+
+/// Ordering compares two numbers or two strings.
+/// The operand family of a number or string literal, including a negated
+/// number.
+fn literal_family(expression: &Expr) -> Option<Type> {
+    match &expression.kind {
+        ExprKind::Value(Value::Int(_) | Value::Float(_)) => Some(Type::Num),
+        ExprKind::Value(Value::Str(_)) | ExprKind::Interpolate(_) => Some(Type::Str),
+        ExprKind::Prefix { operators, value }
+            if operators
+                .iter()
+                .all(|(operator, _)| matches!(operator, Prefix::Negate)) =>
+        {
+            literal_family(value).filter(|family| *family == Type::Num)
+        }
+        _ => None,
+    }
+}
+
+/// Ordering compares two numbers or two strings.
+fn ordering_operands(
+    operator: Binary,
+    left: &Type,
+    right: &Type,
+    span: &SourceSpan,
+) -> Result<(), SourceError> {
+    if is_dynamic_operation_type(left) || is_dynamic_operation_type(right) {
+        return Ok(());
+    }
+    let both = |family: &Type| left.is_assignable_to(family) && right.is_assignable_to(family);
+    if both(&Type::Num) || both(&Type::Str) {
+        return Ok(());
+    }
+    let symbol = match operator {
+        Binary::Greater => ">",
+        Binary::GreaterEqual => ">=",
+        Binary::Less => "<",
+        _ => "<=",
+    };
+    invalid_operation(symbol, left, right, span).map(|_| ())
 }
 
 fn numeric_operands(left: &Type, right: &Type, span: &SourceSpan) -> Result<(), SourceError> {
@@ -4361,7 +4412,9 @@ mod tests {
         .expect("numeric body requirements collect");
 
         assert_eq!(constraints.requirements["value"].value_type, Type::Num);
-        assert_eq!(constraints.requirements["limit"].value_type, Type::Num);
+        // Ordering two parameters may compare numbers or strings, so only the
+        // negation constrains `value`, and `limit` stays unconstrained.
+        assert_eq!(constraints.requirements["limit"].value_type, Type::Unknown);
     }
 
     #[test]

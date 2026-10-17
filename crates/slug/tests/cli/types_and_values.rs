@@ -1444,3 +1444,109 @@ fn keys_rejects_a_value_that_is_not_a_map() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn strings_order_lexicographically_by_utf8_bytes() {
+    let path = fixture_path("string-ordering");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write string ordering source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run string ordering source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run(
+        "println(\"apple\" < \"banana\", \"b\" > \"a\", \"a\" <= \"a\", \"a\" >= \"b\", \"Z\" < \"a\", \"ab\" < \"abc\", \"é\" > \"z\")\n\
+         val before = fn(a, b) { a < b }\n\
+         println(before(1, 2), before(\"pear\", \"fig\"))\n\
+         val small = fn(n) { n < 10 }\n\
+         val early = fn(word) { word < \"m\" }\n\
+         println(small(3), early(\"kiwi\"))\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "true true true false true true true\ntrue false\ntrue true\n"
+    );
+
+    // A literal on the other side still decides an unannotated parameter's type.
+    let (code, _, stderr) = run("val small = fn(n) { n < 10 }\nprintln(small(\"a\"))\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("semantic error: expected num, got str"),
+        "{stderr}"
+    );
+
+    let (code, _, stderr) = run("println(1 < \"a\")\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("semantic error: operator `<` does not accept num and str"),
+        "{stderr}"
+    );
+
+    let (code, _, stderr) = run("val before = fn(a, b) { a < b }\nprintln(before(1, \"a\"))\n");
+    fs::remove_file(&path).expect("remove string ordering source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("runtime error: expected two numbers or two strings, got num and str"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn enum_cases_and_struct_fields_separate_with_commas_or_newlines() {
+    let path = fixture_path("member-separators");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write separator source");
+        let output = slug().arg(&path).output().expect("run separator source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run("enum Lines {\n    red\n    green\n}\n\
+         enum Commas { red, green, blue }\n\
+         enum Mixed {\n    red,\n    green\n    blue,\n}\n\
+         val Point = struct {\n    x: num\n    y: num = 2\n}\n\
+         val Pair = struct { left: num, right: num }\n\
+         val S:schema = struct{\n    name:str,\n    age:num = 1,\n}\n\
+         println(Lines.green, Commas.blue, Mixed.blue)\n\
+         println(Point {\n  x: 1\n}, Pair { left: 1, right: 2 }, S { name: \"s\" })\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "Lines.green Commas.blue Mixed.blue\n\
+         struct {\"x\": 1, \"y\": 2} struct {\"left\": 1, \"right\": 2} struct {\"name\": \"s\", \"age\": 1}\n"
+    );
+
+    for (source, message) in [
+        (
+            "val Point = struct {\n    x: num y: num\n}\n",
+            "expected comma or newline between struct fields",
+        ),
+        (
+            "val Point = struct { x: num }\nprintln(Point { x: 1 y: 2 })\n",
+            "expected comma or newline between struct fields",
+        ),
+        (
+            "enum Colour { red green }\n",
+            "expected comma or newline between enum cases",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains(&format!("parse error: {message}")),
+            "{source}: {stderr}"
+        );
+    }
+    fs::remove_file(&path).expect("remove separator source");
+}

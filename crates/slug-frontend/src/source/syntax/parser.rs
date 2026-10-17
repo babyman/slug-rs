@@ -9,6 +9,8 @@ use super::{
 use slug_vm::{DeferMode, SourceSpan, Value};
 
 /// Stateful parser for the source front end.
+const STRUCT_FIELD_SEPARATOR: &str = "expected comma or newline between struct fields";
+
 pub(super) struct Parser {
     tokens: Vec<Token>,
     index: usize,
@@ -327,6 +329,9 @@ impl Parser {
             self.separators();
             let mut cases = Vec::new();
             while !self.matches(&TokenKind::RBrace) {
+                if self.matches(&TokenKind::End) {
+                    return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+                }
                 let token = self.next();
                 let TokenKind::Name(case) = token.kind else {
                     return Err(SourceError::at(
@@ -345,16 +350,9 @@ impl Parser {
                     .with_end(token.end));
                 }
                 cases.push(case);
-                if !self.matches(&TokenKind::Comma) {
-                    break;
-                }
-                self.next();
-                self.separators();
-                if self.matches(&TokenKind::RBrace) {
-                    break;
-                }
+                self.member_separator("expected comma or newline between enum cases")?;
             }
-            self.consume(&TokenKind::RBrace, "expected } after enum cases")?;
+            self.next();
             if cases.is_empty() {
                 return Err(SourceError::at(
                     SourceErrorCode::EmptyEnum,
@@ -1130,6 +1128,9 @@ impl Parser {
         let mut fields = Vec::new();
         self.separators();
         while !self.matches(&TokenKind::RBrace) {
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             let token = self.next();
             let TokenKind::Name(name) = token.kind else {
                 return Err(SourceError::at(
@@ -1156,7 +1157,7 @@ impl Parser {
                 annotation,
                 default,
             });
-            self.struct_field_separator()?;
+            self.member_separator(STRUCT_FIELD_SEPARATOR)?;
         }
         self.next();
         self.leave_nesting();
@@ -1193,6 +1194,9 @@ impl Parser {
         let mut fields = Vec::new();
         self.separators();
         while !self.matches(&TokenKind::RBrace) {
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             let token = self.next();
             let TokenKind::Name(name) = token.kind else {
                 return Err(SourceError::at(
@@ -1204,33 +1208,29 @@ impl Parser {
             };
             self.consume(&TokenKind::Colon, "expected : after struct field name")?;
             fields.push((name, self.expression()?));
-            self.struct_field_separator()?;
+            self.member_separator(STRUCT_FIELD_SEPARATOR)?;
         }
         self.next();
         self.leave_nesting();
         Ok(fields)
     }
-    fn struct_field_separator(&mut self) -> Result<(), SourceError> {
-        if self.matches(&TokenKind::Comma) {
+    /// Consumes the separator after an enum case or struct field: any run of
+    /// commas and newlines. Without one, the next token must close the braces.
+    fn member_separator(&mut self, message: &str) -> Result<(), SourceError> {
+        let mut separated = false;
+        while self.matches(&TokenKind::Comma) || self.is_separator() {
             self.next();
-            self.separators();
-        } else if self.is_separator() {
-            self.separators();
-            if !self.matches(&TokenKind::RBrace) {
-                return Err(SourceError::at_token(
-                    SourceErrorCode::ExpectedSyntax,
-                    "expected , between struct fields",
-                    self.peek(),
-                ));
-            }
-        } else if !self.matches(&TokenKind::RBrace) {
-            return Err(SourceError::at_token(
-                SourceErrorCode::ExpectedSyntax,
-                "expected , between struct fields",
-                self.peek(),
-            ));
+            separated = true;
         }
-        Ok(())
+        if separated || self.matches(&TokenKind::RBrace) || self.matches(&TokenKind::End) {
+            Ok(())
+        } else {
+            Err(SourceError::at_token(
+                SourceErrorCode::ExpectedSyntax,
+                message,
+                self.peek(),
+            ))
+        }
     }
     fn list(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.enter_nesting(span.clone())?;

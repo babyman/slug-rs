@@ -1158,3 +1158,44 @@ fn generated_malformed_private_bytecode_returns_checked_errors() {
         assert!(result.is_err());
     }
 }
+
+#[test]
+fn orders_strings_by_utf8_bytes_and_rejects_mixed_operands() {
+    let compare = |left: &str, op: Op, right: Value| {
+        let mut main = Chunk::new("main", 0);
+        let left = main.constant(Value::string(left));
+        let right = main.constant(right);
+        main.emit(Op::Constant(left))
+            .emit(Op::Constant(right))
+            .emit(op)
+            .emit(Op::Return);
+        Vm::new().run(&program_with_main(main), 0)
+    };
+    for (left, op, right, expected) in [
+        ("apple", Op::Less, "banana", true),
+        ("b", Op::Greater, "a", true),
+        ("Z", Op::Less, "a", true),
+        ("ab", Op::Less, "abc", true),
+        ("é", Op::Greater, "z", true),
+        ("same", Op::Less, "same", false),
+        ("b", Op::GuardLess, "a", false),
+        ("a", Op::GuardGreater, "", true),
+    ] {
+        assert_eq!(
+            compare(left, op.clone(), Value::string(right)).unwrap(),
+            Value::Bool(expected),
+            "{left:?} {op:?} {right:?}"
+        );
+    }
+
+    let error = compare("Slug", Op::Less, Value::Int(1)).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(
+        error.message,
+        "expected two numbers or two strings, got str and num"
+    );
+    assert_eq!(
+        compare("Slug", Op::GuardLess, Value::Int(1)).unwrap(),
+        Value::Bool(false)
+    );
+}
