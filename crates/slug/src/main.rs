@@ -587,17 +587,30 @@ fn println_to_stderr(text: &str) {
 
 fn render_runtime_error(error: &RuntimeError, input_path: &str, input: &str) -> String {
     let headline = format!("slug: runtime error: {}", error.message);
-    let Some(mut rendered) =
+    let mut rendered = if let Some(mut rendered) =
         render_source_context(&headline, error.span.as_ref(), input_path, input)
-    else {
-        return format!("slug: {error}");
-    };
-    for frame in &error.frames {
-        write!(rendered, "\n  in {}", frame.function).expect("writing to a string cannot fail");
-        if let Some(span) = &frame.span {
-            write!(rendered, " at {}:{}:{}", span.path, span.line, span.column)
-                .expect("writing to a string cannot fail");
+    {
+        for frame in &error.frames {
+            write!(rendered, "\n  in {}", frame.function).expect("writing to a string cannot fail");
+            if let Some(span) = &frame.span {
+                write!(rendered, " at {}:{}:{}", span.path, span.line, span.column)
+                    .expect("writing to a string cannot fail");
+            }
         }
+        rendered
+    } else {
+        format!("slug: {error}")
+    };
+    if let Some(compile_error) = &error.compile_error {
+        let category = match compile_error.kind {
+            SourceErrorKind::Parse => "parse",
+            SourceErrorKind::Semantic => "semantic",
+        };
+        let headline = format!("caused by: {category} error: {}", compile_error.message);
+        let cause =
+            render_source_context(&headline, compile_error.span.as_ref(), input_path, input)
+                .unwrap_or_else(|| format!("caused by: {category} error: {compile_error}"));
+        write!(rendered, "\n\n{cause}").expect("writing to a string cannot fail");
     }
     rendered
 }
@@ -615,7 +628,10 @@ fn render_source_context(
         fs::read_to_string(span.path.as_ref()).ok()
     };
     let source = source?;
-    let line = source.lines().nth(span.line.saturating_sub(1) as usize)?;
+    // An error at the end of input may sit on the empty line after the last
+    // newline.
+    let lines = || source.lines().chain(std::iter::once(""));
+    let line = lines().nth(span.line.saturating_sub(1) as usize)?;
 
     let mut rendered = format!(
         "{headline}\n    --> {}:{}:{}\n",
@@ -623,8 +639,7 @@ fn render_source_context(
     );
     let first_line = span.line.saturating_sub(2).max(1);
     let line_width = span.line.to_string().len();
-    for (index, source_line) in source
-        .lines()
+    for (index, source_line) in lines()
         .enumerate()
         .skip(first_line as usize - 1)
         .take((span.line - first_line + 1) as usize)

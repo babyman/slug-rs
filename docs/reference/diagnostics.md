@@ -42,7 +42,7 @@ Every member is always present, `null` when it does not apply, except
 | `frames` | Runtime call frames, innermost first, each `{function, location}`. Empty for other failures. Frames that only run deferred work are omitted. |
 | `thrown` | Present only when `code` is `thrown`: the thrown payload in the [value JSON form](value-json.md). `throw nil` is reported as `"thrown": null`. |
 | `native` | `{code, data}` when a native function failed: the native error code and its data in the value JSON form, or `null` data. Otherwise `null`. |
-| `cause` | A nested diagnostic for an error that was replaced while unwinding, or `null`. |
+| `cause` | A nested diagnostic, or `null`: for an import of a module whose source does not compile, that module's `parse` or `semantic` diagnostic, with its own location, range, and fixes; otherwise an error that was replaced while unwinding. |
 
 Lines and columns are 1-based. Columns count Unicode scalar values.
 

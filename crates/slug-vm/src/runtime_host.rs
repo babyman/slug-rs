@@ -4,11 +4,12 @@
 //! bytecode without knowing how modules, configuration, or native descriptors
 //! are assembled. It is not a general embedding API.
 
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::fmt;
 
 use crate::{
-    NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value, platform::HashMap,
+    NativeDescriptorError, NativeFunction, NativeResourceRegistry, SourceDiagnostic, Value,
+    platform::HashMap,
 };
 
 /// Checked failure returned by a VM host callback.
@@ -16,6 +17,7 @@ use crate::{
 pub struct VmHostError {
     message: String,
     not_found: bool,
+    compile_error: Option<Box<SourceDiagnostic>>,
 }
 
 impl VmHostError {
@@ -24,6 +26,7 @@ impl VmHostError {
         Self {
             message: message.into(),
             not_found: false,
+            compile_error: None,
         }
     }
 
@@ -32,12 +35,30 @@ impl VmHostError {
         Self {
             message: message.into(),
             not_found: true,
+            compile_error: None,
+        }
+    }
+
+    /// A failure because a module's source does not compile; `error` keeps
+    /// its code, range, and fixes.
+    #[must_use]
+    pub fn compile(message: impl Into<String>, error: SourceDiagnostic) -> Self {
+        Self {
+            message: message.into(),
+            not_found: false,
+            compile_error: Some(Box::new(error)),
         }
     }
 
     #[must_use]
     pub fn is_not_found(&self) -> bool {
         self.not_found
+    }
+
+    /// The source error of a module that failed to compile.
+    #[must_use]
+    pub fn compile_error(&self) -> Option<&SourceDiagnostic> {
+        self.compile_error.as_deref()
     }
 }
 

@@ -279,10 +279,7 @@ impl VmHost for StaticHost {
             .state
             .graph
             .initialize(self, ModuleRequest::new(importer.as_ref(), name))
-            .map_err(|error| match error {
-                ModuleLoadError::NotFound { .. } => VmHostError::not_found(error.to_string()),
-                error => VmHostError::new(error.to_string()),
-            })?;
+            .map_err(VmHostError::from)?;
         Ok(VmModuleExports {
             exports: instance.live_exports(),
         })

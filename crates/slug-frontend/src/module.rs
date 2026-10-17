@@ -165,9 +165,9 @@ impl ModuleGraph {
                 &source.text,
                 request.name != "slug.builtin",
             )
-            .map_err(|error| ModuleLoadError::Source {
+            .map_err(|error| ModuleLoadError::Compile {
                 location: source.diagnostic_name.clone(),
-                message: error.to_string(),
+                error: Box::new((&error).into()),
             })?;
         compilation.program.set_module_name(request.name);
         // The resolver key, rather than the diagnostic label, is the stable
@@ -289,9 +289,9 @@ impl ModuleGraph {
                 source,
                 name != "slug.builtin",
             )
-            .map_err(|error| ModuleLoadError::Source {
+            .map_err(|error| ModuleLoadError::Compile {
                 location: diagnostic_name.into(),
-                message: error.to_string(),
+                error: Box::new((&error).into()),
             })?;
         compilation.program.set_module_name(name);
         compilation.program.set_module_key(key.as_str());
@@ -317,9 +317,9 @@ impl ModuleGraph {
         });
         for import_name in
             crate::source::static_import_names(diagnostic_name, source).map_err(|error| {
-                ModuleLoadError::Source {
+                ModuleLoadError::Compile {
                     location: diagnostic_name.into(),
-                    message: error.to_string(),
+                    error: Box::new((&error).into()),
                 }
             })?
         {
@@ -479,9 +479,20 @@ impl ModuleGraph {
             if let Some(activation) = activation.as_mut() {
                 activation.cleanup();
             }
-            return Err(ModuleLoadError::Source {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
+            // A module whose own import failed to compile reports that
+            // source error, which is what needs fixing.
+            return Err(match error.compile_error {
+                Some(compile_error) => ModuleLoadError::Compile {
+                    location: compile_error.span.as_ref().map_or_else(
+                        || source.diagnostic_name.clone(),
+                        |span| span.path.to_string(),
+                    ),
+                    error: compile_error,
+                },
+                None => ModuleLoadError::Source {
+                    location: source.diagnostic_name.clone(),
+                    message: error.to_string(),
+                },
             });
         }
         let instance = ModuleInstance {
@@ -509,9 +520,9 @@ impl ModuleGraph {
         }
         let declarations =
             foreign_declarations(&source.diagnostic_name, &source.text).map_err(|error| {
-                ModuleLoadError::Source {
+                ModuleLoadError::Compile {
                     location: source.diagnostic_name.clone(),
-                    message: error.to_string(),
+                    error: Box::new((&error).into()),
                 }
             })?;
         host.check_foreign_declarations(source, module_name, &declarations)
@@ -534,9 +545,9 @@ impl ModuleGraph {
                 &source.text,
                 module_name != "slug.builtin",
             )
-            .map_err(|error| ModuleLoadError::Source {
+            .map_err(|error| ModuleLoadError::Compile {
                 location: source.diagnostic_name.clone(),
-                message: error.to_string(),
+                error: Box::new((&error).into()),
             })?;
         compilation.program.set_module_name(module_name);
         compilation.program.set_module_key(source.key.as_str());
@@ -865,10 +876,7 @@ impl VmHost for ModuleHost {
         let importer = importer.map(ModuleKey::new);
         let instance = self
             .initialize_request(ModuleRequest::new(importer.as_ref(), name))
-            .map_err(|error| match error {
-                ModuleLoadError::NotFound { .. } => VmHostError::not_found(error.to_string()),
-                error => VmHostError::new(error.to_string()),
-            })?;
+            .map_err(VmHostError::from)?;
         Ok(VmModuleExports {
             exports: instance.live_exports,
         })

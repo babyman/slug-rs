@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Importing a module whose source does not compile now reports that module's
+  own error. With `--diagnostic-format=json`, the `module` diagnostic's `cause`
+  is the module's `parse` or `semantic` diagnostic, with its code, location,
+  range, expected and actual values, and fixes; previously they were flattened
+  into the message. Text output shows the module's error and source line under
+  `caused by:`. A module whose own import fails to compile reports the
+  innermost failing module. Errors at the end of input now show their source
+  line.
+
 - String `len`, indexing, and slicing no longer scan the whole string. Each
   string keeps its character count, ASCII strings index in constant time, and
   others look positions up in a table built on first use, so loops over a

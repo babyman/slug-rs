@@ -11,3 +11,4 @@ repository = "https://github.com/babyman/slug-rs"
 workspace = true
 
 [dependencies]
+slug-vm = { path = "../slug-vm", default-features = false }

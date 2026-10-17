@@ -13,7 +13,7 @@ pub use report::{
     ReportParameter, ResourceCapability, capability_report,
 };
 pub use source::{
-    InteractiveCompilation, InteractiveCompilerState, SourceEdit, SourceError, SourceErrorCode,
-    SourceErrorKind, SourceFix, SourcePosition, SourceRange, SourceReadiness, apply_fix, compile,
-    compile_interactive_forms, foreign_declarations, source_readiness,
+    InteractiveCompilation, InteractiveCompilerState, SourceDiagnostic, SourceEdit, SourceError,
+    SourceErrorCode, SourceErrorKind, SourceFix, SourcePosition, SourceRange, SourceReadiness,
+    apply_fix, compile, compile_interactive_forms, foreign_declarations, source_readiness,
 };

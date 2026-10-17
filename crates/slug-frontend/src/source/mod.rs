@@ -5,6 +5,10 @@ use std::{collections::HashMap, fmt};
 
 use slug_loader::{ForeignDeclaration, ForeignParameter};
 use slug_vm::{Program, SourceSpan};
+pub use slug_vm::{
+    SourceDiagnostic, SourceEdit, SourceErrorKind, SourceFix, SourcePosition, SourceRange,
+    apply_fix,
+};
 
 #[path = "syntax/ast.rs"]
 mod ast;
@@ -53,93 +57,6 @@ pub struct SourceError {
     /// Edits that resolve this error without changing what the rest of the
     /// program means. Empty unless a fix is certain.
     pub fixes: Box<[SourceFix]>,
-}
-
-/// One machine-applicable fix: apply all of its edits together.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceFix {
-    pub message: String,
-    pub edits: Vec<SourceEdit>,
-}
-
-impl SourceFix {
-    /// Applies this fix to `source`, the text its error was reported against.
-    /// Returns `None` when an edit lies outside `source` or edits overlap.
-    #[must_use]
-    pub fn apply(&self, source: &str) -> Option<String> {
-        apply_fix(source, self)
-    }
-}
-
-/// Applies `fix` to `source`, the text its error was reported against.
-/// Returns `None` when an edit lies outside `source` or edits overlap.
-#[must_use]
-pub fn apply_fix(source: &str, fix: &SourceFix) -> Option<String> {
-    let mut edits = fix
-        .edits
-        .iter()
-        .map(|edit| {
-            let start = char_offset(source, edit.range.start)?;
-            let end = char_offset(source, edit.range.end)?;
-            (start <= end).then_some((start, end, edit.text.as_str()))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    edits.sort_by_key(|(start, _, _)| *start);
-    if edits.windows(2).any(|pair| pair[0].1 > pair[1].0) {
-        return None;
-    }
-    let mut output = String::with_capacity(source.len());
-    let mut cursor = 0;
-    for (start, end, text) in edits {
-        output.push_str(&source[cursor..start]);
-        output.push_str(text);
-        cursor = end;
-    }
-    output.push_str(&source[cursor..]);
-    Some(output)
-}
-
-/// The byte offset of a 1-based line and scalar-value column, allowing the
-/// position just past the end of a line or of the text.
-fn char_offset(source: &str, position: SourcePosition) -> Option<usize> {
-    let mut line = 1;
-    let mut column = 1;
-    for (offset, character) in source.char_indices() {
-        if (line, column) == (position.line, position.column) {
-            return Some(offset);
-        }
-        if character == '\n' {
-            if line == position.line {
-                return None;
-            }
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-    ((line, column) == (position.line, position.column)).then_some(source.len())
-}
-
-/// Replace `range` with `text`. An empty range inserts; empty text deletes.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceEdit {
-    pub range: SourceRange,
-    pub text: String,
-}
-
-/// A source extent from `start` up to `end`, exclusive.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct SourceRange {
-    pub start: SourcePosition,
-    pub end: SourcePosition,
-}
-
-/// A 1-based line and column; columns count Unicode scalar values.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct SourcePosition {
-    pub line: u32,
-    pub column: u32,
 }
 
 /// The stable failure class of a [`SourceError`], listed in
@@ -253,12 +170,6 @@ impl SourceErrorCode {
             Self::Internal => "internal",
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SourceErrorKind {
-    Parse,
-    Semantic,
 }
 
 impl SourceError {
@@ -379,6 +290,21 @@ impl fmt::Display for SourceError {
     }
 }
 impl std::error::Error for SourceError {}
+
+impl From<&SourceError> for SourceDiagnostic {
+    fn from(error: &SourceError) -> Self {
+        Self {
+            kind: error.kind,
+            code: error.code.as_str(),
+            message: error.message.clone(),
+            span: error.span.clone(),
+            range: error.range,
+            expected: error.expected.clone(),
+            actual: error.actual.clone(),
+            fixes: error.fixes.clone(),
+        }
+    }
+}
 
 /// Compiles the currently supported core Slug source subset into a VM program.
 ///

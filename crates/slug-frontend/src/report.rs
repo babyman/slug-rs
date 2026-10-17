@@ -117,9 +117,9 @@ struct SourceFacts {
 
 impl SourceFacts {
     fn read(source: &ArtifactSource) -> Result<Self, ModuleLoadError> {
-        let error = |error: crate::SourceError| ModuleLoadError::Source {
+        let error = |error: crate::SourceError| ModuleLoadError::Compile {
             location: source.diagnostic_name.clone(),
-            message: error.to_string(),
+            error: Box::new((&error).into()),
         };
         let scan = import_scan(&source.diagnostic_name, &source.text).map_err(error)?;
         Ok(Self {

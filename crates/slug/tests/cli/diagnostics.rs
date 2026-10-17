@@ -689,3 +689,50 @@ fn json_mode_reports_entry_read_failures() {
     );
     assert!(diagnostic["location"].is_null());
 }
+
+#[test]
+fn import_compile_errors_keep_the_module_diagnostic_as_cause() {
+    let root = std::env::temp_dir().join(format!("slug-cli-import-cause-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create import cause root");
+    let library = root.join("lib.slug");
+    fs::write(&library, "val f = fn(x:num) { x + 1\n").expect("write broken library");
+    let main = root.join("main.slug");
+    fs::write(&main, "val lib = import(\"lib\")\nprintln(lib.f(1))\n").expect("write importer");
+
+    let json_output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&main)
+        .output()
+        .expect("run JSON import cause source");
+    let text_output = slug()
+        .arg(&main)
+        .output()
+        .expect("run text import cause source");
+    fs::remove_dir_all(&root).expect("remove import cause root");
+
+    assert_eq!(json_output.status.code(), Some(1));
+    let diagnostic = json_diagnostic(&json_output.stderr);
+    assert_eq!(diagnostic["category"], "module");
+    assert_eq!(diagnostic["code"], "module");
+    assert_eq!(diagnostic["location"]["line"], 1);
+    let cause = &diagnostic["cause"];
+    assert_eq!(cause["category"], "parse");
+    assert_eq!(cause["code"], "expected_syntax");
+    assert_eq!(cause["expected"], "`}`");
+    assert_eq!(cause["location"]["line"], 2);
+    assert!(
+        cause["location"]["path"]
+            .as_str()
+            .expect("cause path")
+            .ends_with("lib.slug")
+    );
+    assert_eq!(cause["fixes"][0]["edits"][0]["text"], "}");
+
+    assert_eq!(text_output.status.code(), Some(1));
+    let text = String::from_utf8(text_output.stderr).expect("stderr is UTF-8");
+    assert!(
+        text.contains("caused by: parse error: expected }"),
+        "{text}"
+    );
+    assert!(text.contains("val f = fn(x:num) { x + 1"), "{text}");
+}

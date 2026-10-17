@@ -60,7 +60,12 @@ def strip_fixes(stderr):
                 lines.append(line)
                 continue
             if isinstance(document, dict) and "fixes" in document:
-                document["fixes"] = []
+                # An import's compile error carries its fixes in `cause`.
+                nested = document
+                while isinstance(nested, dict):
+                    if "fixes" in nested:
+                        nested["fixes"] = []
+                    nested = nested.get("cause")
                 lines.append(json.dumps(document, separators=(",", ":")) + "\n")
                 continue
         lines.append(line)

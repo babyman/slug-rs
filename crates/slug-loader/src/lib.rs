@@ -5,6 +5,8 @@
 
 use std::{collections::HashMap, fmt, path::PathBuf};
 
+use slug_vm::{SourceDiagnostic, VmHostError};
+
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ModuleKey(String);
@@ -191,10 +193,28 @@ impl ModuleResolver for StaticModuleResolver {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleLoadError {
     InvalidName(String),
-    NotFound { name: String, searched: Vec<String> },
-    Read { location: String, message: String },
-    Source { location: String, message: String },
-    Clutch { location: String, message: String },
+    NotFound {
+        name: String,
+        searched: Vec<String>,
+    },
+    Read {
+        location: String,
+        message: String,
+    },
+    /// The module's source does not parse or type check.
+    Compile {
+        location: String,
+        error: Box<SourceDiagnostic>,
+    },
+    /// The module compiled but could not be installed or initialized.
+    Source {
+        location: String,
+        message: String,
+    },
+    Clutch {
+        location: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for ModuleLoadError {
@@ -203,6 +223,7 @@ impl fmt::Display for ModuleLoadError {
             Self::InvalidName(name) => write!(f, "invalid module name `{name}`"),
             Self::NotFound { name, .. } => write!(f, "module `{name}` was not found"),
             Self::Read { location, message } => write!(f, "cannot read {location}: {message}"),
+            Self::Compile { location, error } => write!(f, "cannot compile {location}: {error}"),
             Self::Source { location, message } => {
                 write!(f, "cannot compile {location}: {message}")
             }
@@ -214,6 +235,17 @@ impl fmt::Display for ModuleLoadError {
 }
 
 impl std::error::Error for ModuleLoadError {}
+
+impl From<ModuleLoadError> for VmHostError {
+    fn from(error: ModuleLoadError) -> Self {
+        let message = error.to_string();
+        match error {
+            ModuleLoadError::NotFound { .. } => Self::not_found(message),
+            ModuleLoadError::Compile { error, .. } => Self::compile(message, *error),
+            _ => Self::new(message),
+        }
+    }
+}
 
 /// Converts a dotted logical module name into its relative source path.
 ///

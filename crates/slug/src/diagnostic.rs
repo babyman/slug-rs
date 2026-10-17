@@ -3,8 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use slug_frontend::{SourceError, SourceErrorKind, SourcePosition, SourceRange};
-use slug_vm::{RuntimeError, RuntimeErrorKind, SourceSpan, Value};
+use slug_frontend::{SourceError, SourcePosition, SourceRange};
+use slug_vm::{
+    RuntimeError, RuntimeErrorKind, SourceDiagnostic, SourceErrorKind, SourceSpan, Value,
+};
 
 /// The diagnostic document version.
 pub const DIAGNOSTIC_VERSION: u8 = 2;
@@ -163,6 +165,11 @@ impl Diagnostic {
 
     #[must_use]
     pub fn from_source(error: &SourceError) -> Self {
+        Self::from_source_diagnostic(&error.into())
+    }
+
+    #[must_use]
+    pub fn from_source_diagnostic(error: &SourceDiagnostic) -> Self {
         let category = match error.kind {
             SourceErrorKind::Parse => DiagnosticCategory::Parse,
             SourceErrorKind::Semantic => DiagnosticCategory::Semantic,
@@ -187,7 +194,7 @@ impl Diagnostic {
                 .collect(),
             expected: error.expected.as_deref().map(str::to_owned),
             actual: error.actual.as_deref().map(str::to_owned),
-            ..Self::new(category, error.code.as_str(), error.message.clone())
+            ..Self::new(category, error.code, error.message.clone())
         }
     }
 
@@ -213,10 +220,17 @@ impl Diagnostic {
                 code: native.code.clone(),
                 data: native.data.as_ref().map(value_json),
             }),
-            cause: error
-                .cause
-                .as_deref()
-                .map(|cause| Box::new(Self::from_runtime(cause))),
+            // An import of a module that failed to compile is caused by that
+            // module's source error.
+            cause: error.compile_error.as_deref().map_or_else(
+                || {
+                    error
+                        .cause
+                        .as_deref()
+                        .map(|cause| Box::new(Self::from_runtime(cause)))
+                },
+                |compile_error| Some(Box::new(Self::from_source_diagnostic(compile_error))),
+            ),
             ..Self::new(category, runtime_code(&error.kind), error.message.clone())
         }
     }

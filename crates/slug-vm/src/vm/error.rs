@@ -1,7 +1,7 @@
 use alloc::{borrow::ToOwned, boxed::Box, string::String, vec::Vec};
 use core::{fmt, fmt::Write as _};
 
-use crate::{SourceSpan, Value};
+use crate::{SourceDiagnostic, SourceSpan, Value};
 
 use super::Vm;
 
@@ -31,6 +31,9 @@ pub struct RuntimeError {
     pub thrown: Option<Box<Value>>,
     pub native: Option<Box<NativeErrorDetails>>,
     pub cause: Option<Box<RuntimeError>>,
+    /// For a module error from an import, the source error of the module
+    /// that failed to compile.
+    pub compile_error: Option<Box<SourceDiagnostic>>,
 }
 
 #[derive(Clone, Debug)]
@@ -136,7 +139,22 @@ impl Vm {
                 })
                 .collect(),
             cause: None,
+            compile_error: None,
         }
+    }
+
+    /// A module error for a failed import, keeping the source error of a
+    /// module that failed to compile.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn import_error(
+        &self,
+        error: &crate::VmHostError,
+        span: Option<SourceSpan>,
+    ) -> RuntimeError {
+        let mut runtime_error = self.error(RuntimeErrorKind::Module, error.to_string(), span);
+        runtime_error.compile_error = error.compile_error().cloned().map(Box::new);
+        runtime_error
     }
 
     pub(super) fn thrown(&self, value: Value, span: Option<SourceSpan>) -> RuntimeError {

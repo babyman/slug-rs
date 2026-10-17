@@ -1396,9 +1396,7 @@ impl Vm {
         let instance = match host.import_module(None, "slug.builtin") {
             Ok(instance) => instance,
             Err(error) if error.is_not_found() => return Ok(()),
-            Err(error) => {
-                return Err(self.error(RuntimeErrorKind::Module, error.to_string(), None));
-            }
+            Err(error) => return Err(self.import_error(&error, None)),
         };
         let Value::Map(exports) = instance.exports else {
             return Err(self.error(
@@ -3603,7 +3601,7 @@ impl Vm {
             };
             let instance = host
                 .import_module(importer, &name)
-                .map_err(|error| self.error_at(RuntimeErrorKind::Module, error.to_string()))?;
+                .map_err(|error| self.import_error(&error, self.owned_span(None)))?;
             let Value::Map(module_exports) = instance.exports else {
                 return Err(self.error_at(
                     RuntimeErrorKind::InvalidBytecode,
