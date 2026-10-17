@@ -19,6 +19,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -198,8 +199,11 @@ def build_slug():
     return REPO / "target" / "release" / "slug"
 
 
-def prepare_workspace(run, run_dir):
-    workspace = run_dir / "workspace"
+def prepare_workspace(run, run_temp):
+    # Outside the repository, so the agent cannot find references or hidden
+    # cases by searching parent directories. It is copied into the results
+    # after the run.
+    workspace = run_temp / "workspace"
     docs = workspace / "slug-docs"
     docs.mkdir(parents=True)
     paths = list(COMMON_DOCS)
@@ -268,29 +272,42 @@ def claude_command(run, arguments):
     return command
 
 
-def wrapper_directory(run_dir):
-    directory = run_dir / "bin"
+def isolated_install(slug):
+    """Copies everything an agent's `slug` needs into a temporary directory,
+    so nothing the agent can see points into the repository, where reference
+    solutions and hidden cases live."""
+    install = Path(tempfile.mkdtemp(prefix="slug-eval-install-"))
+    for directory in ("lib", "clutch"):
+        shutil.copytree(REPO / directory, install / "home" / directory, ignore=shutil.ignore_patterns(".DS_Store"))
+    (install / "bin").mkdir()
+    shutil.copy2(slug, install / "bin" / "slug-real")
+    shutil.copy2(HERE / "slug_wrapper.py", install / "bin" / "slug_wrapper.py")
+    return install
+
+
+def wrapper_directory(run_temp, install):
+    directory = run_temp / "bin"
     directory.mkdir()
     wrapper = directory / "slug"
-    wrapper.write_text(
-        "#!/bin/sh\nexec " + json.dumps(sys.executable) + " " + json.dumps(str(HERE / "slug_wrapper.py")) + ' "$@"\n'
-    )
+    script = json.dumps(str(install / "bin" / "slug_wrapper.py"))
+    wrapper.write_text("#!/bin/sh\nexec " + json.dumps(sys.executable) + " " + script + ' "$@"\n')
     wrapper.chmod(0o755)
     return directory
 
 
-def execute(run, arguments, slug, results_dir, references):
+def execute(run, arguments, slug, install, results_dir, references):
     run_dir = results_dir / run["task"] / run["arm"] / str(run["repeat"])
     run_dir.mkdir(parents=True)
-    workspace = prepare_workspace(run, run_dir)
-    log = run_dir / "slug-invocations.jsonl"
+    run_temp = Path(tempfile.mkdtemp(prefix="slug-eval-run-"))
+    workspace = prepare_workspace(run, run_temp)
+    log = run_temp / "slug-invocations.jsonl"
     log.touch()
     arm = ARMS[run["arm"]]
     environment = {
         **os.environ,
-        "PATH": str(wrapper_directory(run_dir)) + os.pathsep + os.environ.get("PATH", ""),
-        "SLUG_HOME": str(REPO),
-        "SLUG_EVAL_REAL": str(slug),
+        "PATH": str(wrapper_directory(run_temp, install)) + os.pathsep + os.environ.get("PATH", ""),
+        "SLUG_HOME": str(install / "home"),
+        "SLUG_EVAL_REAL": str(install / "bin" / "slug-real"),
         "SLUG_EVAL_LOG": str(log),
         "SLUG_EVAL_DIAGNOSTICS": arm["diagnostics"],
         "SLUG_EVAL_FIXES": arm["fixes"],
@@ -337,6 +354,9 @@ def execute(run, arguments, slug, results_dir, references):
         "report_runs": sum(1 for item in invocations if item.get("command") == "report"),
     }
     record.update(check(run, workspace, slug, references))
+    shutil.copytree(workspace, run_dir / "workspace", ignore=shutil.ignore_patterns("slug-docs"))
+    shutil.copy2(log, run_dir / "slug-invocations.jsonl")
+    shutil.rmtree(run_temp, ignore_errors=True)
     (run_dir / "record.json").write_text(json.dumps(record, indent=2))
     return record
 
@@ -411,6 +431,7 @@ def command_run(arguments):
     slug = build_slug()
     coding = sorted({run["task"] for run in runs if run["kind"] == "coding"})
     references = reference_outputs(slug, coding)
+    install = isolated_install(slug)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     results_dir = RESULTS / (arguments.name or stamp)
     results_dir.mkdir(parents=True)
@@ -419,7 +440,7 @@ def command_run(arguments):
     )
     out = results_dir / "runs.jsonl"
     with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool, out.open("a") as sink:
-        futures = [pool.submit(execute, run, arguments, slug, results_dir, references) for run in runs]
+        futures = [pool.submit(execute, run, arguments, slug, install, results_dir, references) for run in runs]
         for future in concurrent.futures.as_completed(futures):
             record = future.result()
             sink.write(json.dumps(record) + "\n")
@@ -428,6 +449,7 @@ def command_run(arguments):
             print(f"{status} {record['task']} {record['arm']} #{record['repeat']} "
                   f"turns={record['claude'].get('num_turns')} slug_runs={record['slug_runs']} "
                   f"cost={record['claude'].get('total_cost_usd')}")
+    shutil.rmtree(install, ignore_errors=True)
     print(f"results: {out}")
     summarize(out)
 
