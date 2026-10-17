@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Runs Claude Code headless on Slug tasks and records one JSON line per run.
+"""Runs a coding agent, Codex or Claude Code, headless on Slug tasks and records
+one JSON line per run.
 
     python3 eval/agent/harness/run.py plan --arms baseline,json --repeats 3
     python3 eval/agent/harness/run.py run --arms baseline,json --repeats 3 --yes
@@ -241,6 +242,76 @@ def prompt(run):
     return REVIEW_PROMPT.format(arm_notes=notes)
 
 
+AGENTS = ("codex", "claude")
+
+
+def agent_command(run, arguments, workspace, log_directory, codex_home):
+    if arguments.agent == "codex":
+        return codex_command(run, arguments, workspace, log_directory), {"CODEX_HOME": str(codex_home)}
+    return claude_command(run, arguments), {}
+
+
+def codex_command(run, arguments, workspace, log_directory):
+    """`codex exec` with a sandbox that may write only the workspace, the
+    temporary directories, and the wrapper's log, with no network. Codex has no
+    spending limit, so the timeout alone bounds a run. Its home is a fresh
+    directory (see `isolated_codex_home`), so the user's config, skills,
+    plugins, memories, rules, and hooks do not reach the agent."""
+    command = [
+        "codex",
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        str(workspace),
+        "--add-dir",
+        str(log_directory),
+        "-c",
+        'approval_policy="never"',
+        "-c",
+        'web_search="disabled"',
+        "-c",
+        'shell_environment_policy.inherit="all"',
+    ]
+    if arguments.model:
+        command += ["--model", arguments.model]
+    return command + [prompt(run)]
+
+
+def isolated_codex_home():
+    """A temporary CODEX_HOME holding only a copy of the user's login.
+
+    Returns the directory and the login as copied. A run may refresh the
+    login's tokens; `restore_codex_login` copies a refreshed login back so a
+    rotated refresh token is not lost."""
+    real = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+    home = Path(tempfile.mkdtemp(prefix="slug-eval-codex-"))
+    original = real.read_bytes() if real.exists() else None
+    if original is not None:
+        login = home / "auth.json"
+        login.write_bytes(original)
+        login.chmod(0o600)
+    return home, real, original
+
+
+def restore_codex_login(home, real, original):
+    login = home / "auth.json"
+    try:
+        current = login.read_bytes()
+        # Copy back only when the run refreshed the login and nothing else
+        # changed the user's own copy meanwhile.
+        if original is not None and current != original and real.read_bytes() == original:
+            real.write_bytes(current)
+    except OSError:
+        pass
+    shutil.rmtree(home, ignore_errors=True)
+
+
 def claude_command(run, arguments):
     command = [
         "claude",
@@ -297,12 +368,16 @@ def wrapper_directory(run_temp, install):
     return directory
 
 
-def execute(run, arguments, slug, install, results_dir, references):
+def execute(run, arguments, slug, install, results_dir, references, codex_home):
     run_dir = results_dir / run["task"] / run["arm"] / str(run["repeat"])
     run_dir.mkdir(parents=True)
     run_temp = Path(tempfile.mkdtemp(prefix="slug-eval-run-"))
     workspace = prepare_workspace(run, run_temp)
-    log = run_temp / "slug-invocations.jsonl"
+    # The log has a directory of its own, the one place outside the workspace
+    # that a sandboxed agent's `slug` may write.
+    log_directory = run_temp / "log"
+    log_directory.mkdir()
+    log = log_directory / "slug-invocations.jsonl"
     log.touch()
     arm = ARMS[run["arm"]]
     environment = {
@@ -315,10 +390,12 @@ def execute(run, arguments, slug, install, results_dir, references):
         "SLUG_EVAL_FIXES": arm["fixes"],
         "SLUG_EVAL_REPORT": arm["report"],
     }
+    command, agent_environment = agent_command(run, arguments, workspace, log_directory, codex_home)
+    environment.update(agent_environment)
     started = time.monotonic()
     try:
         completed = subprocess.run(
-            claude_command(run, arguments),
+            command,
             cwd=workspace,
             env=environment,
             capture_output=True,
@@ -331,19 +408,21 @@ def execute(run, arguments, slug, install, results_dir, references):
         timed_out = True
         stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else (error.stdout or "")
         stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else (error.stderr or "")
-    (run_dir / "claude-stream.jsonl").write_text(stdout)
-    (run_dir / "claude-stderr.txt").write_text(stderr)
-    claude = stream_summary(stdout)
+    (run_dir / f"{arguments.agent}-stream.jsonl").write_text(stdout)
+    (run_dir / f"{arguments.agent}-stderr.txt").write_text(stderr)
+    summary = codex_summary(stdout) if arguments.agent == "codex" else stream_summary(stdout)
 
     invocations = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
     record = {
         **run,
         # A run that ends in an error after a turn or two never worked on the
         # task, typically because access ran out; summaries leave it out.
-        "infra_error": not claude or bool(claude.get("is_error")) and (claude.get("num_turns") or 0) <= 2,
+        "infra_error": not summary or bool(summary.get("is_error")) and (summary.get("num_turns") or 0) <= 2,
         "wall_seconds": round(time.monotonic() - started, 1),
         "timed_out": timed_out,
-        "claude": claude,
+        "agent": arguments.agent,
+        "model": arguments.model,
+        "session": summary,
         "slug_runs": len(invocations),
         "slug_failures": sum(1 for item in invocations if item.get("exit") not in (0, None)),
         "codes": [code for item in invocations for code in item.get("codes", [])],
@@ -397,6 +476,54 @@ def stream_summary(stdout):
             "input_tokens": total("inputTokens"),
             "cache_read_input_tokens": total("cacheReadInputTokens"),
             "cache_creation_input_tokens": total("cacheCreationInputTokens"),
+        },
+    }
+
+
+def codex_summary(stdout):
+    """Totals for a session from `codex exec --json` output.
+
+    Each completed item is one agent step: a message, a command, a file
+    change, or another tool call. `num_turns` counts the steps that are not
+    reasoning, which is close to, but not the same measure as, Claude Code's
+    assistant messages. Codex reports tokens but no cost.
+    """
+    events = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    if not events:
+        return {}
+    items = [
+        event.get("item") or {}
+        for event in events
+        if event.get("type") == "item.completed"
+    ]
+    steps = collections.Counter(item.get("type") for item in items)
+    usage = collections.Counter()
+    for event in events:
+        if event.get("type") == "turn.completed":
+            usage.update({key: value for key, value in (event.get("usage") or {}).items() if isinstance(value, int)})
+    failures = [event for event in events if event.get("type") in ("turn.failed", "error")]
+    return {
+        "subtype": "error" if failures else "success",
+        "is_error": bool(failures),
+        "errors": [
+            (event.get("error") or {}).get("message") if isinstance(event.get("error"), dict) else event.get("message")
+            for event in failures
+        ],
+        "num_turns": sum(count for kind, count in steps.items() if kind != "reasoning"),
+        "tool_calls": {kind: count for kind, count in steps.items() if kind not in ("agent_message", "reasoning")},
+        "total_cost_usd": None,
+        "usage": {
+            "output_tokens": usage.get("output_tokens", 0),
+            "thinking_tokens": usage.get("reasoning_output_tokens", 0),
+            "input_tokens": usage.get("input_tokens", 0),
+            "cache_read_input_tokens": usage.get("cached_input_tokens", 0),
         },
     }
 
@@ -458,8 +585,12 @@ def command_plan(arguments):
     counts = collections.Counter((run["kind"], run["arm"]) for run in runs)
     for (kind, arm), count in sorted(counts.items()):
         print(f"{kind:7} {arm:9} {count} runs")
-    worst = sum(budget(run, arguments) for run in runs)
-    print(f"total   {len(runs)} runs, at most ${worst:.2f} in budgets")
+    if arguments.agent == "codex":
+        longest = sum(minutes(run, arguments) for run in runs)
+        print(f"total   {len(runs)} codex runs, at most {longest} minutes in timeouts (codex has no budget limit)")
+    else:
+        worst = sum(budget(run, arguments) for run in runs)
+        print(f"total   {len(runs)} runs, at most ${worst:.2f} in budgets")
     return runs
 
 
@@ -479,16 +610,27 @@ def command_run(arguments):
         json.dumps({"arguments": vars(arguments), "arms": ARMS, "git": git_head()}, indent=2, default=str)
     )
     out = results_dir / "runs.jsonl"
-    with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool, out.open("a") as sink:
-        futures = [pool.submit(execute, run, arguments, slug, install, results_dir, references) for run in runs]
-        for future in concurrent.futures.as_completed(futures):
-            record = future.result()
-            sink.write(json.dumps(record) + "\n")
-            sink.flush()
-            status = "pass" if record["passed"] else "FAIL"
-            print(f"{status} {record['task']} {record['arm']} #{record['repeat']} "
-                  f"turns={record['claude'].get('num_turns')} slug_runs={record['slug_runs']} "
-                  f"cost={record['claude'].get('total_cost_usd')}")
+    codex = isolated_codex_home() if arguments.agent == "codex" else None
+    codex_home = codex[0] if codex else None
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool, out.open("a") as sink:
+            futures = [
+                pool.submit(execute, run, arguments, slug, install, results_dir, references, codex_home)
+                for run in runs
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                record = future.result()
+                sink.write(json.dumps(record) + "\n")
+                sink.flush()
+                status = "pass" if record["passed"] else "FAIL"
+                session = session_of(record)
+                print(f"{status} {record['task']} {record['arm']} #{record['repeat']} "
+                      f"turns={session.get('num_turns')} slug_runs={record['slug_runs']} "
+                      f"output_tokens={(session.get('usage') or {}).get('output_tokens')} "
+                      f"cost={session.get('total_cost_usd')}")
+    finally:
+        if codex:
+            restore_codex_login(*codex)
     shutil.rmtree(install, ignore_errors=True)
     print(f"results: {out}")
     summarize(out)
@@ -501,14 +643,20 @@ def git_head():
         return None
 
 
+def session_of(record):
+    """The agent session summary; records from before Codex support keep it
+    under `claude`."""
+    return record.get("session") or record.get("claude") or {}
+
+
 def summarize(path):
     path = Path(path)
     if path.is_dir():
         path = path / "runs.jsonl"
     loaded = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     def infra_error(record):
-        claude = record.get("claude") or {}
-        fallback = bool(claude.get("is_error")) and (claude.get("num_turns") or 0) <= 2
+        session = session_of(record)
+        fallback = bool(session.get("is_error")) and (session.get("num_turns") or 0) <= 2
         return record.get("infra_error", fallback)
 
     records = [record for record in loaded if not infra_error(record)]
@@ -516,7 +664,7 @@ def summarize(path):
         print(f"excluding {len(loaded) - len(records)} runs that ended in an access or harness error\n")
     groups = collections.defaultdict(list)
     for record in records:
-        groups[(record["kind"], record["arm"])].append(record)
+        groups[(record.get("agent", "claude"), record["kind"], record["arm"])].append(record)
 
     def mean(values):
         values = [value for value in values if value is not None]
@@ -525,18 +673,19 @@ def summarize(path):
     def show(value, digits=1):
         return "-" if value is None else f"{value:.{digits}f}"
 
-    print(f"{'kind':7} {'arm':9} {'runs':>4} {'pass':>5} {'score':>6} {'turns':>6} {'slug':>5} {'fails':>5} {'out_tok':>8} {'cost':>7} {'secs':>6}")
-    for (kind, arm), items in sorted(groups.items()):
-        usage = [item["claude"].get("usage") or {} for item in items]
+    print(f"{'agent':6} {'kind':7} {'arm':9} {'runs':>4} {'pass':>5} {'score':>6} {'turns':>6} {'slug':>5} {'fails':>5} {'out_tok':>8} {'cost':>7} {'secs':>6}")
+    for (agent, kind, arm), items in sorted(groups.items()):
+        sessions = [session_of(item) for item in items]
+        usage = [session.get("usage") or {} for session in sessions]
         print(
-            f"{kind:7} {arm:9} {len(items):>4} "
+            f"{agent:6} {kind:7} {arm:9} {len(items):>4} "
             f"{sum(item['passed'] for item in items) / len(items):>5.0%} "
             f"{show(mean([item.get('score') for item in items]), 2):>6} "
-            f"{show(mean([item['claude'].get('num_turns') for item in items])):>6} "
+            f"{show(mean([session.get('num_turns') for session in sessions])):>6} "
             f"{show(mean([item['slug_runs'] for item in items])):>5} "
             f"{show(mean([item['slug_failures'] for item in items])):>5} "
             f"{show(mean([u.get('output_tokens') for u in usage]), 0):>8} "
-            f"{show(mean([item['claude'].get('total_cost_usd') for item in items]), 3):>7} "
+            f"{show(mean([session.get('total_cost_usd') for session in sessions]), 3):>7} "
             f"{show(mean([item['wall_seconds'] for item in items])):>6}"
         )
     codes = collections.Counter(code for record in records for code in record["codes"])
@@ -586,8 +735,9 @@ def main():
         sub.add_argument("--arms", default="baseline,json,fixes,report")
         sub.add_argument("--tasks", help="comma-separated task name prefixes; default all")
         sub.add_argument("--repeats", type=int, default=3)
-        sub.add_argument("--max-budget-usd", type=float, help="per-run budget; default 1, or 5 for projects")
+        sub.add_argument("--max-budget-usd", type=float, help="per-run budget for claude; default 1, or 5 for projects")
         sub.add_argument("--timeout-minutes", type=int, help="per-run timeout; default 15, or 45 for projects")
+        sub.add_argument("--agent", choices=AGENTS, default="codex", help="the agent CLI to run; default codex")
         sub.add_argument("--model")
         sub.add_argument("--jobs", type=int, default=1)
         sub.add_argument("--name", help="results directory name; default a timestamp")

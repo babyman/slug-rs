@@ -4,8 +4,8 @@ This harness measures whether three agent-facing features help an agent
 write and review Slug: the [value JSON form](../../docs/reference/value-json.md),
 the [capability report](../../docs/reference/capability-report.md), and
 [diagnostics](../../docs/reference/diagnostics.md) with stable codes, ranges,
-expected and actual values, and fixes. It runs Claude Code headless on small
-tasks, once per feature arm and several times each, and records what happened.
+expected and actual values, and fixes. It runs a coding agent, Codex by
+default or Claude Code, headless on small tasks, once per feature arm and several times each, and records what happened.
 
 ## Tasks
 
@@ -76,7 +76,24 @@ python3 eval/agent/harness/run.py run --arms baseline,fixes --tasks 01,04 --repe
 python3 eval/agent/harness/run.py summarize eval/agent/results/<run>
 ```
 
-Each run is `claude -p` in a fresh workspace with `--permission-mode dontAsk`,
+`--agent` selects the agent: `codex` (the default) or `claude`.
+
+A Codex run is `codex exec --json --ephemeral` in a fresh workspace, sandboxed
+with `--sandbox workspace-write` and no network: the agent may write only its
+workspace, the temporary directories, and the wrapper's log directory, and web
+search is disabled. `CODEX_HOME` is a temporary directory holding only a copy
+of your `auth.json`, so your config, skills, plugins, memories, rules, and hooks
+do not reach the agent; `--ignore-user-config` alone would still load skills and
+plugins from your home. If a run refreshes the login, the refreshed copy is
+written back to your `auth.json` afterwards, unless that file changed
+meanwhile. Codex has no spending limit, so `--timeout-minutes` alone bounds a
+run, and records have tokens but no cost. Its `num_turns` counts agent steps
+(messages, commands, file changes, and other tool calls), which is not the
+same measure as Claude Code's turns, so compare arms within one agent.
+`--model` selects the model; without it Codex uses its built-in default, not
+the one in your config.
+
+A Claude run is `claude -p` in a fresh workspace with `--permission-mode dontAsk`,
 the tools `Bash, Read, Write, Edit, Glob, Grep`, and `--max-budget-usd`
 (default 1). By default it uses your normal login with
 `--setting-sources project` plus settings that disable hooks and auto-memory
@@ -94,9 +111,11 @@ The full default plan is 234 runs. Start with a few tasks and repeats.
 Results go to `eval/agent/results/<run>/`, which git ignores:
 
 - `runs.jsonl`: one record per run with the task, arm, repeat, pass or fail,
-  cases passed, Claude's turns, tokens, cost, and duration, the number of
+  cases passed, the agent and model, the agent's turns, tokens, cost (Claude
+  only), and duration, the number of
   `slug` invocations and failures, and every diagnostic code logged.
-- `<task>/<arm>/<repeat>/`: the agent's workspace, Claude's full `stream-json` session output, and
+- `<task>/<arm>/<repeat>/`: the agent's workspace, its full session output
+  (`codex-stream.jsonl` or `claude-stream.jsonl`), and
   the wrapper's invocation log, for reading what happened.
 
 A run that ends in an error after one or two turns, typically because access
