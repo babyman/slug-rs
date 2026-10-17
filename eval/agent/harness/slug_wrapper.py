@@ -86,8 +86,9 @@ def main():
         return 1
 
     arguments = ([JSON_FLAG] if diagnostics == "json" else []) + rest
-    stdin = None if sys.stdin is None else sys.stdin.buffer.read()
-    completed = subprocess.run([real] + arguments, input=stdin, capture_output=True)
+    # Standard input passes straight through: reading it here first would
+    # block every invocation whose input never ends, such as a terminal.
+    completed = subprocess.run([real] + arguments, capture_output=True)
     stderr = completed.stderr.decode("utf-8", "replace")
     if diagnostics == "json" and fixes == "off":
         stderr = strip_fixes(stderr)

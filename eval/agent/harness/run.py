@@ -247,7 +247,8 @@ def claude_command(run, arguments):
         "-p",
         prompt(run),
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--no-session-persistence",
         "--permission-mode",
         "dontAsk",
@@ -330,25 +331,19 @@ def execute(run, arguments, slug, install, results_dir, references):
         timed_out = True
         stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else (error.stdout or "")
         stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else (error.stderr or "")
-    (run_dir / "claude-stdout.json").write_text(stdout)
+    (run_dir / "claude-stream.jsonl").write_text(stdout)
     (run_dir / "claude-stderr.txt").write_text(stderr)
-    try:
-        claude = json.loads(stdout)
-    except ValueError:
-        claude = {}
+    claude = stream_summary(stdout)
 
     invocations = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
     record = {
         **run,
         # A run that ends in an error after a turn or two never worked on the
         # task, typically because access ran out; summaries leave it out.
-        "infra_error": bool(claude.get("is_error")) and (claude.get("num_turns") or 0) <= 2 or not claude,
+        "infra_error": not claude or bool(claude.get("is_error")) and (claude.get("num_turns") or 0) <= 2,
         "wall_seconds": round(time.monotonic() - started, 1),
         "timed_out": timed_out,
-        "claude": {
-            key: claude.get(key)
-            for key in ("subtype", "is_error", "num_turns", "duration_ms", "duration_api_ms", "total_cost_usd", "usage")
-        },
+        "claude": claude,
         "slug_runs": len(invocations),
         "slug_failures": sum(1 for item in invocations if item.get("exit") not in (0, None)),
         "codes": [code for item in invocations for code in item.get("codes", [])],
@@ -360,6 +355,50 @@ def execute(run, arguments, slug, install, results_dir, references):
     shutil.rmtree(run_temp, ignore_errors=True)
     (run_dir / "record.json").write_text(json.dumps(record, indent=2))
     return record
+
+
+def stream_summary(stdout):
+    """Totals for a whole session from Claude Code's stream-json output.
+
+    The final `result` event alone describes only the last exchange, which a
+    late background-task notification can make a trivial one, so turns and
+    tool calls are counted from every assistant message, and tokens and cost
+    come from the cumulative per-model usage.
+    """
+    events = []
+    for line in stdout.splitlines():
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            continue
+    assistants = [event for event in events if event.get("type") == "assistant"]
+    results = [event for event in events if event.get("type") == "result"]
+    if not results:
+        return {}
+    last = results[-1]
+    models = last.get("modelUsage") or {}
+    total = lambda key: sum(model.get(key) or 0 for model in models.values())
+    tools = collections.Counter(
+        block.get("name")
+        for event in assistants
+        for block in (event.get("message") or {}).get("content") or []
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    )
+    return {
+        "subtype": last.get("subtype"),
+        "is_error": any(result.get("is_error") for result in results),
+        "num_turns": len(assistants),
+        "tool_calls": dict(tools),
+        "results": len(results),
+        "total_cost_usd": last.get("total_cost_usd"),
+        "usage": {
+            "output_tokens": total("outputTokens"),
+            "thinking_tokens": total("thinkingTokens"),
+            "input_tokens": total("inputTokens"),
+            "cache_read_input_tokens": total("cacheReadInputTokens"),
+            "cache_creation_input_tokens": total("cacheCreationInputTokens"),
+        },
+    }
 
 
 def check(run, workspace, slug, references):

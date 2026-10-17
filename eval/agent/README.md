@@ -88,7 +88,7 @@ Results go to `eval/agent/results/<run>/`, which git ignores:
 - `runs.jsonl`: one record per run with the task, arm, repeat, pass or fail,
   cases passed, Claude's turns, tokens, cost, and duration, the number of
   `slug` invocations and failures, and every diagnostic code logged.
-- `<task>/<arm>/<repeat>/`: the agent's workspace, Claude's JSON result, and
+- `<task>/<arm>/<repeat>/`: the agent's workspace, Claude's full `stream-json` session output, and
   the wrapper's invocation log, for reading what happened.
 
 A run that ends in an error after one or two turns, typically because access
