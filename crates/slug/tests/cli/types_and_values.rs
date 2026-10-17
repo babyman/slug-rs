@@ -1631,3 +1631,48 @@ fn unconstrained_parameters_are_dynamic_inside_their_body() {
         "{stderr}"
     );
 }
+
+#[test]
+fn compatible_parameter_requirements_combine_to_the_narrower_type() {
+    let path = fixture_path("parameter-requirements");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write parameter requirement source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run parameter requirement source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // `e` is a number from `e < 0` and is also passed on to an unconstrained
+    // parameter, in either order.
+    let (code, stdout, stderr) = run(
+        "val pass = fn(flag, value) { if (flag) { value } else { 0 } }\n\
+         val before = fn(e) { if (e < 0) { -e } else { pass(true, e) } }\n\
+         val after = fn(e) { pass(true, e) * (if (e < 0) { -1 } else { 1 }) }\n\
+         println(before(-3), before(2), after(-4))\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "3 2 4\n");
+
+    // The combined requirement is still checked at calls.
+    let (code, _, stderr) = run("val pass = fn(value) { value }\n\
+         val f = fn(e) { if (e < 0) { 1 } else { pass(e) } }\n\
+         f(\"x\")\n");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("semantic error"), "{stderr}");
+
+    // Requirements with no common type still conflict.
+    let (code, _, stderr) = run("val g = fn(x) { if (x < 0) { 1 } else { -x } }\n\
+         val h = fn(x) { if (x < 0) { 1 } else { x < \"a\" } }\n");
+    fs::remove_file(&path).expect("remove parameter requirement source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("parameter `x` has incompatible body requirements: num and str"),
+        "{stderr}"
+    );
+}

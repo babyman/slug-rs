@@ -162,7 +162,15 @@ impl ParameterConstraints {
             requirement.span = expression.span.clone();
             return Ok(());
         }
-        if requirement.value_type == value_type {
+        // Both requirements must hold, so when one type is assignable to the
+        // other the narrower one is their intersection. Passing a `num`
+        // parameter on to an unconstrained (`any|nil`) parameter adds nothing.
+        if requirement.value_type.is_assignable_to(&value_type) {
+            return Ok(());
+        }
+        if value_type.is_assignable_to(&requirement.value_type) {
+            requirement.value_type = value_type;
+            requirement.span = expression.span.clone();
             return Ok(());
         }
         Err(SourceError::semantic(

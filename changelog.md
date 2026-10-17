@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- An unannotated parameter constrained more than once in its body takes the
+  narrower type when one constraint is assignable to the other. A number
+  parameter passed on to a helper's unconstrained parameter, as in
+  `fn(e) { if (e < 0) { -e } else { helper(e) } }`, previously failed with
+  `parameter `e` has incompatible body requirements: num and any|nil`.
+
 - Importing a module whose source does not compile now reports that module's
   own error. With `--diagnostic-format=json`, the `module` diagnostic's `cause`
   is the module's `parse` or `semantic` diagnostic, with its code, location,

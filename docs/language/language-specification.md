@@ -970,7 +970,11 @@ negation infer `num` when they require an unannotated parameter to be numeric.
 An ordering comparison infers `num` for an unannotated parameter compared with
 a number literal and `str` for one compared with a string literal. Comparing
 two unannotated parameters adds no constraint, because they may be two
-numbers or two strings.
+numbers or two strings. When the body constrains a parameter more than once,
+every constraint must hold: if one constraint's type is assignable to the
+other's, the parameter takes the narrower type, so passing a `num` parameter on
+to a callee's `any|nil` parameter keeps it `num`. Constraints of which neither
+is assignable to the other, such as `num` and `str`, are a static error.
 
 A direct `value == nil` or `value != nil` test for an unannotated parameter
 partitions its body requirements by reachable branch. The nil branch contributes
