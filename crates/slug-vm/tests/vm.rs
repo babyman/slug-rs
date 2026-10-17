@@ -43,6 +43,7 @@ impl ModuleResolver for NoModuleResolver {
         Err(ModuleLoadError::NotFound {
             name: request.name.into(),
             searched: Vec::new(),
+            suggestions: Vec::new(),
         })
     }
 }

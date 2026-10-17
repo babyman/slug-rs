@@ -50,6 +50,7 @@ impl ModuleResolver for OpaqueKeyResolver {
                 return Err(ModuleLoadError::NotFound {
                     name: request.name.into(),
                     searched: Vec::new(),
+                    suggestions: Vec::new(),
                 });
             }
         };
@@ -74,6 +75,7 @@ impl ModuleResolver for MemoryResolver {
             .ok_or_else(|| ModuleLoadError::NotFound {
                 name: request.name.into(),
                 searched: Vec::new(),
+                suggestions: Vec::new(),
             })?;
         Ok(ModuleSource {
             key: ModuleKey::new(format!("memory:{}", request.name)),
@@ -1463,7 +1465,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
     let error = Vm::with_host(Rc::new(loader))
         .run_named(&missing, "main")
         .expect_err("missing in-memory imports must be checked runtime errors");
-    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert_eq!(error.kind, RuntimeErrorKind::ModuleNotFound);
 }
 
 #[test]
@@ -1526,7 +1528,7 @@ fn source_imports_check_module_name_values_and_loader_failures() {
     let error = Vm::with_module_loader(loader)
         .run_named(&program, "main")
         .expect_err("missing imports must fail");
-    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert_eq!(error.kind, RuntimeErrorKind::ModuleNotFound);
     assert_eq!(error.message, "module `missing` was not found");
     fs::remove_dir_all(root).expect("remove module test directory");
 }

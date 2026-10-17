@@ -19,6 +19,7 @@ same failure. See the [decision record](../decisions/2026-10-14-one-diagnostic-d
   "expected": null,
   "actual": null,
   "fixes": [],
+  "suggestions": [],
   "frames": [],
   "native": null,
   "cause": null
@@ -39,6 +40,7 @@ Every member is always present, `null` when it does not apply, except
 | `expected` | What the parser or checker required at `location`, when known: a type such as `num`, or a token description such as `` `]` ``. Otherwise `null`. |
 | `actual` | What it found instead, when known: a type such as `str`, or a token description such as ``name `x` `` or `end of input`. Otherwise `null`. |
 | `fixes` | Machine-applicable fixes, each `{message, edits}`; see [Fixes](#fixes). Empty when no fix is certain. |
+| `suggestions` | Likely corrections in the same form as `fixes`, which may change what the program means; see [Suggestions](#suggestions). Usually empty. |
 | `frames` | Runtime call frames, innermost first, each `{function, location}`. Empty for other failures. Frames that only run deferred work are omitted. |
 | `thrown` | Present only when `code` is `thrown`: the thrown payload in the [value JSON form](value-json.md). `throw nil` is reported as `"thrown": null`. |
 | `native` | `{code, data}` when a native function failed: the native error code and its data in the value JSON form, or `null` data. Otherwise `null`. |
@@ -71,6 +73,39 @@ Currently two fixes exist:
 
 Rust hosts apply a fix with `slug_frontend::apply_fix`.
 
+## Suggestions
+
+A suggestion has the same `{message, edits}` form as a fix, but is only
+likely: applying it may change what the program means, so review it first.
+Its `edits` may be empty when the corrected source cannot be located. Currently
+one kind exists:
+
+| Code | Suggestion |
+|---|---|
+| `module_not_found` | Each available module whose name is close to the requested one, nearest first, at most three: one with the same last segment, such as `slug.io.stdin` for `slug.stdin`, or else one within a small edit distance, such as `utils` for `utlis`. The desktop host considers installed clutch modules and the `.slug` files in each searched directory. When the `import` names the module with a plain string literal, the diagnostic's `location` and `range` are that literal and each suggestion replaces it. |
+
+## Text form
+
+Without `--diagnostic-format=json`, the command line renders the same document
+as text. Its first line is `slug: <kind> error: <message>`, where `<kind>` is
+`parse`, `semantic`, or `runtime` (for `runtime` and `module` diagnostics), or
+`slug: <message>` for startup failures. The following lines show, when present:
+
+- `--> path:line:column`, then the source lines ending at that line with the
+  range underlined, or the column marked, when the source can be read;
+- each frame as `in <function> at path:line:column`;
+- `= code: <code>`;
+- `= expected <expected>, found <actual>`, or either alone;
+- `= native: <code> <data>`;
+- each fix as `= fix: <message>` and each suggestion as
+  `= suggestion: <message>`, each followed by its edits as
+  `at line:column[-line:column]: insert|replace with|delete`;
+- the `cause`, after a blank line, rendered the same way with `caused by:` in
+  place of `slug:`.
+
+A `thrown` payload appears in the message. The text form is for people and is
+not a stable contract; tools read the JSON form.
+
 ## Interactive server
 
 A failed interactive response carries the document as its `error` member. The
@@ -83,4 +118,5 @@ Version 1, emitted only by the command line, also had a `kind` member and no
 `native` member, and had no `protocol` category. Version 2 removes `kind`:
 `code` identifies the failure class and `category` the stage. Interactive
 diagnostics before version 2 used the categories `source`, `runtime`,
-`protocol`, and `host`.
+`protocol`, and `host`. Version 2 added `suggestions` after its first release;
+documents without it have no suggestions.

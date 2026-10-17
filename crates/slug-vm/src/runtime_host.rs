@@ -18,6 +18,15 @@ pub struct VmHostError {
     message: String,
     not_found: bool,
     compile_error: Option<Box<SourceDiagnostic>>,
+    missing_module: Option<Box<MissingModule>>,
+}
+
+/// The module a not-found import named, and the available names it most
+/// likely meant, nearest first.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissingModule {
+    pub name: String,
+    pub suggestions: Vec<String>,
 }
 
 impl VmHostError {
@@ -27,6 +36,7 @@ impl VmHostError {
             message: message.into(),
             not_found: false,
             compile_error: None,
+            missing_module: None,
         }
     }
 
@@ -36,6 +46,7 @@ impl VmHostError {
             message: message.into(),
             not_found: true,
             compile_error: None,
+            missing_module: None,
         }
     }
 
@@ -47,7 +58,16 @@ impl VmHostError {
             message: message.into(),
             not_found: false,
             compile_error: Some(Box::new(error)),
+            missing_module: None,
         }
+    }
+
+    /// Records the not-found module's name and the names it most likely
+    /// meant.
+    #[must_use]
+    pub fn with_missing_module(mut self, missing: MissingModule) -> Self {
+        self.missing_module = Some(Box::new(missing));
+        self
     }
 
     #[must_use]
@@ -59,6 +79,12 @@ impl VmHostError {
     #[must_use]
     pub fn compile_error(&self) -> Option<&SourceDiagnostic> {
         self.compile_error.as_deref()
+    }
+
+    /// For a not-found module, its name and the names it most likely meant.
+    #[must_use]
+    pub fn missing_module(&self) -> Option<&MissingModule> {
+        self.missing_module.as_deref()
     }
 }
 

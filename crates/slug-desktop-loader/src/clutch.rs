@@ -184,6 +184,11 @@ impl ClutchRepository {
         self.providers.get(name)
     }
 
+    /// The names of every module a clutch in this repository provides.
+    pub fn module_names(&self) -> impl Iterator<Item = &str> {
+        self.providers.keys().map(String::as_str)
+    }
+
     #[must_use]
     #[doc(hidden)]
     pub fn plugin(&self, entry: &str) -> Option<ClutchPluginInitializer> {

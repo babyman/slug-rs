@@ -53,7 +53,7 @@ pub use native::{
 };
 /// Experimental VM-to-host callbacks. This trait is not a stable embedding API.
 pub use runtime_host::{
-    EmptyVmConfiguration, VmConfiguration, VmHost, VmHostError, VmModuleExports,
+    EmptyVmConfiguration, MissingModule, VmConfiguration, VmHost, VmHostError, VmModuleExports,
 };
 pub use source_diagnostic::{
     SourceDiagnostic, SourceEdit, SourceErrorKind, SourceFix, SourcePosition, SourceRange,
@@ -73,6 +73,6 @@ pub use vm::InteractiveTask;
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
 pub use vm::{
-    CallFrame, InstalledProgram, InteractiveEnvironment, NativeErrorDetails, RuntimeError,
-    RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
+    CallFrame, ImportFailure, InstalledProgram, InteractiveEnvironment, NativeErrorDetails,
+    RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
 };

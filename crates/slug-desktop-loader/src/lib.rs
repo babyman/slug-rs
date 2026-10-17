@@ -14,6 +14,7 @@ use std::{
 use slug_loader::{
     ForeignDeclaration, ModuleActivation as ModuleActivationLease, ModuleActivationTransaction,
     ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
+    suggest_module_names,
 };
 use slug_vm::{NativeDescriptorError, NativeFunction, Value};
 #[doc(hidden)]
@@ -464,14 +465,64 @@ impl ModuleResolver for DesktopResolver {
                 activation: lease,
             });
         }
+        let local = local_module_names(&candidates);
         Err(ModuleLoadError::NotFound {
             name: request.name.into(),
             searched: candidates
                 .iter()
                 .map(|(_, path)| path.to_string_lossy().into_owned())
                 .collect(),
+            suggestions: suggest_module_names(
+                request.name,
+                local
+                    .iter()
+                    .map(String::as_str)
+                    .chain(self.clutch_repository.module_names()),
+            ),
         })
     }
+}
+
+/// The modules in each searched root's top directory and in the directory
+/// each search looked in, as candidates for a not-found suggestion. Reading
+/// only those directories keeps a failed import from walking a source tree.
+fn local_module_names(candidates: &[(&Path, PathBuf)]) -> Vec<String> {
+    let mut names = Vec::new();
+    for (root, path) in candidates {
+        let mut directories = vec![root.to_path_buf()];
+        if let Some(parent) = path.parent()
+            && parent != *root
+        {
+            directories.push(parent.to_path_buf());
+        }
+        for directory in directories {
+            let Ok(entries) = fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_none_or(|extension| extension != "slug") {
+                    continue;
+                }
+                let Ok(relative) = path
+                    .with_extension("")
+                    .strip_prefix(root)
+                    .map(Path::to_path_buf)
+                else {
+                    continue;
+                };
+                let name = relative
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                if module_path(&name).is_ok() {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
 }
 
 impl DesktopResolver {

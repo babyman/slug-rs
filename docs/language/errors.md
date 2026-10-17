@@ -47,6 +47,11 @@ available call-site coordinates. If a failure replaced another while unwinding,
 the rendering recursively includes the prior failure under `caused by:`.
 `stacktrace` does not read source files or render source excerpts.
 
+The command line renders each diagnostic as text from the same
+[diagnostic document](../reference/diagnostics.md#text-form) it writes in JSON
+mode, so text and JSON report the same code, location, expected and actual
+values, fixes, suggestions, frames, and cause.
+
 Diagnostic text is not a stable contract unless conformance fixture metadata
 marks it exact. See Runtime Requirements, “Error observability”, for the
 portable compatibility rules.

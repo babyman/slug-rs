@@ -355,6 +355,54 @@ pub(crate) fn import_scan(path: &str, source: &str) -> Result<ImportScan, Source
     Ok(typecheck::import_scan(&expressions))
 }
 
+/// The range of the string literal naming `module` in the `import` call that
+/// starts at `line` and `column` of `source`, when the call names it with a
+/// plain string literal. Hosts use it to point a module diagnostic at the
+/// name rather than the call.
+#[must_use]
+pub fn import_name_range(
+    path: &str,
+    source: &str,
+    line: u32,
+    column: u32,
+    module: &str,
+) -> Option<SourceRange> {
+    let tokens = Lexer::new(path, source).tokens().ok()?;
+    let call = tokens.iter().position(|token| {
+        token.span.line == line
+            && token.span.column == column
+            && matches!(&token.kind, ast::TokenKind::Name(name) if name == "import")
+    })?;
+    let mut depth = 0_usize;
+    for token in &tokens[call + 1..] {
+        match &token.kind {
+            ast::TokenKind::LParen => depth += 1,
+            ast::TokenKind::RParen => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return None;
+                }
+            }
+            ast::TokenKind::Interpolated(parts) if depth == 1 => {
+                if let [ast::StringPart::Text(text)] = parts.as_slice()
+                    && text == module
+                {
+                    return Some(SourceRange {
+                        start: SourcePosition {
+                            line: token.span.line,
+                            column: token.span.column,
+                        },
+                        end: token.end,
+                    });
+                }
+            }
+            _ if depth == 0 => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Returns the top-level `foreign` declarations of `source` with their type
 /// annotations rendered as canonical text.
 ///

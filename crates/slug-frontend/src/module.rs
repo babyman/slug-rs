@@ -481,7 +481,7 @@ impl ModuleGraph {
             }
             // A module whose own import failed to compile reports that
             // source error, which is what needs fixing.
-            return Err(match error.compile_error {
+            return Err(match error.compile_error().cloned().map(Box::new) {
                 Some(compile_error) => ModuleLoadError::Compile {
                     location: compile_error.span.as_ref().map_or_else(
                         || source.diagnostic_name.clone(),

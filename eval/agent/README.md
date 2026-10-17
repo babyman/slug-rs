@@ -44,14 +44,18 @@ hold-outs, and replace a hold-out once it has driven a change.
 
 | Arm        | Diagnostics | Fixes   | `slug report` | Tasks          |
 |------------|-------------|---------|---------------|----------------|
-| `baseline` | text        | -       | blocked       | coding, review |
+| `baseline` | text        | removed | blocked       | coding, review |
 | `json`     | JSON        | removed | blocked       | coding         |
 | `fixes`    | JSON        | kept    | blocked       | coding         |
-| `report`   | text        | -       | available     | review         |
+| `report`   | text        | removed | available     | review         |
 
 The agent's `slug` is a wrapper (`harness/slug_wrapper.py`) that applies the
-arm: it forces or strips `--diagnostic-format=json`, empties `fixes`, and
-rejects `slug report`. Each arm's prompt and copied documentation mention only
+arm: it forces or strips `--diagnostic-format=json`, removes fixes and the
+edits of suggestions (keeping each suggestion's message) from JSON and text
+output alike, and rejects `slug report`. Text diagnostics render the same
+members as JSON ones, so since text output gained codes, expected and actual
+values, and suggestions, text-arm runs from before then are not comparable
+with later ones. Each arm's prompt and copied documentation mention only
 the features it enables. After a failed run the wrapper reruns the command in
 JSON mode, only to log its diagnostic codes, so every arm records which
 failure classes the agent hit.

@@ -257,7 +257,10 @@ fn retains_source_locations_for_runtime_faults_from_source() {
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(stderr.starts_with("slug: runtime error: division by zero\n"));
     assert!(stderr.contains(&format!("    --> {}:2:11\n", path.display())));
-    assert!(stderr.ends_with("\n  in main\n"), "{stderr}");
+    assert!(
+        stderr.ends_with("\n  in main\n  = code: divide_by_zero\n"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -299,7 +302,11 @@ fn renders_available_source_context_for_parse_errors() {
     assert!(stderr.contains("    1 |     if(acc <= max) {\n"));
     assert!(stderr.contains("    2 |         match [acc % 3, acc % 5] {\n"));
     assert!(stderr.contains("  > 3 |             [0, 0] => \"FizzBuzz\"x\n"));
-    assert!(stderr.ends_with("      |                                 ^ here\n"));
+    assert!(stderr.contains("      |                                 ^ here\n"));
+    assert!(
+        stderr.ends_with("\n  = code: expected_syntax\n  = found name `x`\n"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -657,7 +664,7 @@ fn json_mode_reports_runtime_frames_and_module_failures() {
     assert!(output.stdout.is_empty());
     let diagnostic = json_diagnostic(&output.stderr);
     assert_eq!(diagnostic["category"], "module");
-    assert_eq!(diagnostic["code"], "module");
+    assert_eq!(diagnostic["code"], "module_not_found");
     assert!(
         diagnostic["message"]
             .as_str()
@@ -735,4 +742,50 @@ fn import_compile_errors_keep_the_module_diagnostic_as_cause() {
         "{text}"
     );
     assert!(text.contains("val f = fn(x:num) { x + 1"), "{text}");
+}
+
+#[test]
+fn missing_modules_suggest_close_names_in_text_and_json() {
+    let root = std::env::temp_dir().join(format!("slug-cli-module-suggest-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create module suggestion root");
+    fs::write(root.join("utils.slug"), "export val one = 1\n").expect("write sibling module");
+    let main = root.join("main.slug");
+    fs::write(&main, "val u = import(\"utlis\")\nprintln(u.one)\n").expect("write importer");
+
+    let json_output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&main)
+        .output()
+        .expect("run JSON module suggestion source");
+    let text_output = slug()
+        .arg(&main)
+        .output()
+        .expect("run text module suggestion source");
+    fs::remove_dir_all(&root).expect("remove module suggestion root");
+
+    let diagnostic = json_diagnostic(&json_output.stderr);
+    assert_eq!(diagnostic["code"], "module_not_found");
+    assert_eq!(diagnostic["location"]["column"], 16);
+    assert_eq!(diagnostic["range"]["start"]["column"], 16);
+    assert_eq!(diagnostic["range"]["end"]["column"], 23);
+    assert_eq!(diagnostic["fixes"], serde_json::json!([]));
+    let suggestion = &diagnostic["suggestions"][0];
+    assert_eq!(suggestion["message"], "did you mean `utils`?");
+    assert_eq!(suggestion["edits"][0]["text"], "\"utils\"");
+
+    let text = String::from_utf8(text_output.stderr).expect("stderr is UTF-8");
+    assert!(
+        text.starts_with("slug: runtime error: module `utlis` was not found\n"),
+        "{text}"
+    );
+    assert!(text.contains(":1:16\n"), "{text}");
+    assert!(
+        text.contains("      |                ^^^^^^^ here\n"),
+        "{text}"
+    );
+    assert!(text.contains("\n  = code: module_not_found\n"), "{text}");
+    assert!(
+        text.contains("\n  = suggestion: did you mean `utils`?\n      at 1:16-1:23: replace with `\"utils\"`\n"),
+        "{text}"
+    );
 }

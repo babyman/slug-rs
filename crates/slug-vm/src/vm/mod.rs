@@ -60,7 +60,7 @@ use calls::ClosureCallOptions;
 use calls::{CallableRuntimeSignature, ExpandedCallArguments, NamedArgument};
 use cleanup::{Cleanup, Deferred};
 use error::render_stacktrace;
-pub use error::{CallFrame, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
+pub use error::{CallFrame, ImportFailure, NativeErrorDetails, RuntimeError, RuntimeErrorKind};
 use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments};
 pub use installation::InstalledProgram;
 use operations::{

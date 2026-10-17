@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- An import of a module that does not exist now has the code
+  `module_not_found`, previously `module`, and suggests close module names:
+  `import("slug.stdin")` suggests `slug.io.stdin`, and `import("utlis")`
+  suggests a sibling `utils.slug`. The diagnostic points at the module name's
+  string literal, and each suggestion is an edit replacing it, in a new
+  `suggestions` member that holds likely but not certain corrections, separate
+  from `fixes`. `defer onerror` sees such a failure with type
+  `module_not_found`.
+
+- Text diagnostics now render the same document as `--diagnostic-format=json`:
+  after the source excerpt and frames they show the code, expected and actual
+  values, native error code, fixes and suggestions with their edits, and the
+  cause. The range is underlined rather than marked with one caret.
+
 - An unannotated parameter constrained more than once in its body takes the
   narrower type when one constraint is assignable to the other. A number
   parameter passed on to a helper's unconstrained parameter, as in

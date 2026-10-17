@@ -9,7 +9,9 @@ from environment variables set by the harness:
 - SLUG_EVAL_LOG: the JSON-lines invocation log.
 - SLUG_EVAL_DIAGNOSTICS: `text` strips `--diagnostic-format=json`; `json`
   forces it.
-- SLUG_EVAL_FIXES: `off` empties the `fixes` of JSON diagnostics.
+- SLUG_EVAL_FIXES: `off` removes every machine-applicable edit: it empties the
+  `fixes` of diagnostics and the `edits` of their `suggestions`, keeping each
+  suggestion's message, in JSON and in text alike.
 - SLUG_EVAL_REPORT: `off` rejects `slug report` as an unknown command would be.
 """
 
@@ -65,11 +67,23 @@ def strip_fixes(stderr):
                 while isinstance(nested, dict):
                     if "fixes" in nested:
                         nested["fixes"] = []
+                    for suggestion in nested.get("suggestions") or []:
+                        suggestion["edits"] = []
                     nested = nested.get("cause")
                 lines.append(json.dumps(document, separators=(",", ":")) + "\n")
                 continue
         lines.append(line)
     return "".join(lines)
+
+
+def strip_text_fixes(stderr):
+    """Removes fixes and suggested edits from text diagnostics, which render
+    each fix as a `  = fix:` line and every edit as an indented `at` line."""
+    return "".join(
+        line
+        for line in stderr.splitlines(keepends=True)
+        if not line.startswith(("  = fix: ", "      at "))
+    )
 
 
 def main():
@@ -95,8 +109,8 @@ def main():
     # block every invocation whose input never ends, such as a terminal.
     completed = subprocess.run([real] + arguments, capture_output=True)
     stderr = completed.stderr.decode("utf-8", "replace")
-    if diagnostics == "json" and fixes == "off":
-        stderr = strip_fixes(stderr)
+    if fixes == "off":
+        stderr = strip_fixes(stderr) if diagnostics == "json" else strip_text_fixes(stderr)
     sys.stdout.buffer.write(completed.stdout)
     sys.stderr.write(stderr)
 

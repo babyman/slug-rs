@@ -1,9 +1,12 @@
-//! The one diagnostic document shared by `--diagnostic-format=json` and the
-//! interactive server. See `docs/reference/diagnostics.md`.
+//! The one diagnostic document shared by `--diagnostic-format=json`, the
+//! interactive server, and text output, which renders the same document. See
+//! `docs/reference/diagnostics.md`.
+
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
-use slug_frontend::{SourceError, SourcePosition, SourceRange};
+use slug_frontend::{SourceError, SourcePosition, SourceRange, import_name_range};
 use slug_vm::{
     RuntimeError, RuntimeErrorKind, SourceDiagnostic, SourceErrorKind, SourceSpan, Value,
 };
@@ -36,6 +39,10 @@ pub struct Diagnostic {
     /// Machine-applicable fixes, each a set of edits in `location`'s file.
     #[serde(default)]
     pub fixes: Vec<DiagnosticFix>,
+    /// Likely, but not certain, corrections in the same form as `fixes`. They
+    /// may change what the program means, so review one before applying it.
+    #[serde(default)]
+    pub suggestions: Vec<DiagnosticFix>,
     #[serde(default)]
     pub frames: Vec<DiagnosticFrame>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,6 +154,7 @@ impl Diagnostic {
             expected: None,
             actual: None,
             fixes: Vec::new(),
+            suggestions: Vec::new(),
             frames: Vec::new(),
             thrown: None,
             native: None,
@@ -200,12 +208,23 @@ impl Diagnostic {
 
     #[must_use]
     pub fn from_runtime(error: &RuntimeError) -> Self {
-        let category = if error.kind == RuntimeErrorKind::Module {
+        Self::from_runtime_in(error, &|_| None)
+    }
+
+    /// Like [`Self::from_runtime`], reading source text through `sources`,
+    /// keyed by location path, to locate a not-found module's name in its
+    /// `import` call.
+    #[must_use]
+    pub fn from_runtime_in(error: &RuntimeError, sources: &dyn Fn(&str) -> Option<String>) -> Self {
+        let category = if matches!(
+            error.kind,
+            RuntimeErrorKind::Module | RuntimeErrorKind::ModuleNotFound
+        ) {
             DiagnosticCategory::Module
         } else {
             DiagnosticCategory::Runtime
         };
-        Self {
+        let mut diagnostic = Self {
             location: error.span.as_ref().map(location),
             frames: error
                 .frames
@@ -222,18 +241,246 @@ impl Diagnostic {
             }),
             // An import of a module that failed to compile is caused by that
             // module's source error.
-            cause: error.compile_error.as_deref().map_or_else(
+            cause: error.compile_error().map_or_else(
                 || {
                     error
                         .cause
                         .as_deref()
-                        .map(|cause| Box::new(Self::from_runtime(cause)))
+                        .map(|cause| Box::new(Self::from_runtime_in(cause, sources)))
                 },
                 |compile_error| Some(Box::new(Self::from_source_diagnostic(compile_error))),
             ),
             ..Self::new(category, runtime_code(&error.kind), error.message.clone())
+        };
+        if let Some(missing) = error.missing_module() {
+            diagnostic.suggest_modules(missing, sources);
+        }
+        diagnostic
+    }
+
+    /// Points a not-found module diagnostic at the module's name in its
+    /// `import` call, and suggests each close name as a replacement for it.
+    fn suggest_modules(
+        &mut self,
+        missing: &slug_vm::MissingModule,
+        sources: &dyn Fn(&str) -> Option<String>,
+    ) {
+        let name_range = self.location.as_ref().and_then(|location| {
+            let source = sources(&location.path)?;
+            import_name_range(
+                &location.path,
+                &source,
+                location.line,
+                location.column,
+                &missing.name,
+            )
+        });
+        if let (Some(location), Some(name_range)) = (self.location.as_mut(), name_range) {
+            location.line = name_range.start.line;
+            location.column = name_range.start.column;
+            self.range = Some(range(name_range));
+        }
+        self.suggestions = missing
+            .suggestions
+            .iter()
+            .map(|suggestion| DiagnosticFix {
+                message: format!("did you mean `{suggestion}`?"),
+                edits: self
+                    .range
+                    .iter()
+                    .map(|range| DiagnosticEdit {
+                        range: range.clone(),
+                        text: format!("\"{suggestion}\""),
+                    })
+                    .collect(),
+            })
+            .collect();
+    }
+
+    /// Renders this document as command-line text: the same members as the
+    /// JSON form, with the offending source line when `sources` can read it.
+    /// `sources` returns a file's text by location path.
+    #[must_use]
+    pub fn render_text(&self, sources: &dyn Fn(&str) -> Option<String>) -> String {
+        let mut rendered = String::new();
+        self.render_text_into(&mut rendered, "slug:", sources);
+        rendered
+    }
+
+    fn render_text_into(
+        &self,
+        rendered: &mut String,
+        prefix: &str,
+        sources: &dyn Fn(&str) -> Option<String>,
+    ) {
+        let label = match self.category {
+            DiagnosticCategory::Parse => Some("parse error"),
+            DiagnosticCategory::Semantic => Some("semantic error"),
+            DiagnosticCategory::Runtime | DiagnosticCategory::Module => Some("runtime error"),
+            _ => None,
+        };
+        match label {
+            Some(label) => write!(rendered, "{prefix} {label}: {}", self.message),
+            None => write!(rendered, "{prefix} {}", self.message),
+        }
+        .expect("writing to a string cannot fail");
+        if let Some(location) = &self.location {
+            write!(
+                rendered,
+                "\n    --> {}:{}:{}",
+                location.path, location.line, location.column
+            )
+            .expect("writing to a string cannot fail");
+            if let Some(source) = sources(&location.path) {
+                render_source_lines(rendered, &source, location, self.range.as_ref());
+            }
+        }
+        for frame in &self.frames {
+            write!(rendered, "\n  in {}", frame.function).expect("writing to a string cannot fail");
+            if let Some(location) = &frame.location {
+                write!(
+                    rendered,
+                    " at {}:{}:{}",
+                    location.path, location.line, location.column
+                )
+                .expect("writing to a string cannot fail");
+            }
+        }
+        write!(rendered, "\n  = code: {}", self.code).expect("writing to a string cannot fail");
+        match (&self.expected, &self.actual) {
+            (Some(expected), Some(actual)) => {
+                write!(rendered, "\n  = expected {expected}, found {actual}")
+            }
+            (Some(expected), None) => write!(rendered, "\n  = expected {expected}"),
+            (None, Some(actual)) => write!(rendered, "\n  = found {actual}"),
+            (None, None) => Ok(()),
+        }
+        .expect("writing to a string cannot fail");
+        if let Some(native) = &self.native {
+            write!(rendered, "\n  = native: {}", native.code)
+                .expect("writing to a string cannot fail");
+            if let Some(data) = &native.data {
+                write!(rendered, " {data}").expect("writing to a string cannot fail");
+            }
+        }
+        for (label, fixes) in [("fix", &self.fixes), ("suggestion", &self.suggestions)] {
+            for fix in fixes {
+                write!(rendered, "\n  = {label}: {}", fix.message)
+                    .expect("writing to a string cannot fail");
+                for edit in &fix.edits {
+                    write!(rendered, "\n      {}", render_edit(edit))
+                        .expect("writing to a string cannot fail");
+                }
+            }
+        }
+        if let Some(cause) = &self.cause {
+            rendered.push_str("\n\n");
+            cause.render_text_into(rendered, "caused by:", sources);
         }
     }
+}
+
+fn render_edit(edit: &DiagnosticEdit) -> String {
+    let DiagnosticRange { start, end } = &edit.range;
+    let at = if start == end {
+        format!("at {}:{}", start.line, start.column)
+    } else {
+        format!(
+            "at {}:{}-{}:{}",
+            start.line, start.column, end.line, end.column
+        )
+    };
+    let text = if edit.text.contains(['`', '\n', '\r']) {
+        format!("{:?}", edit.text)
+    } else {
+        format!("`{}`", edit.text)
+    };
+    match (start == end, edit.text.is_empty()) {
+        (true, _) => format!("{at}: insert {text}"),
+        (false, true) => format!("{at}: delete"),
+        (false, false) => format!("{at}: replace with {text}"),
+    }
+}
+
+/// Writes up to two lines before `location`'s line and that line, then
+/// underlines the range when it lies on that line, or marks the location.
+fn render_source_lines(
+    rendered: &mut String,
+    source: &str,
+    location: &DiagnosticLocation,
+    range: Option<&DiagnosticRange>,
+) {
+    // An error at the end of input may sit on the empty line after the last
+    // newline.
+    let lines = || source.lines().chain(std::iter::once(""));
+    let Some(line) = lines().nth(location.line.saturating_sub(1) as usize) else {
+        return;
+    };
+    let first_line = location.line.saturating_sub(2).max(1);
+    let line_width = location.line.to_string().len();
+    for (index, source_line) in lines()
+        .enumerate()
+        .skip(first_line as usize - 1)
+        .take((location.line - first_line + 1) as usize)
+    {
+        let number = index + 1;
+        let marker = if number == location.line as usize {
+            ">"
+        } else {
+            " "
+        };
+        write!(
+            rendered,
+            "\n  {marker} {number:>line_width$} | {}",
+            expand_tabs(source_line)
+        )
+        .expect("writing to a string cannot fail");
+    }
+    let (start, width) = range
+        .filter(|range| range.start.line == location.line && range.end.line == location.line)
+        .map_or((display_column(line, location.column), 1), |range| {
+            let start = display_column(line, range.start.column);
+            let end = display_column(line, range.end.column);
+            (start, end.saturating_sub(start).max(1))
+        });
+    write!(
+        rendered,
+        "\n    {} | {}{} here",
+        " ".repeat(line_width),
+        " ".repeat(start),
+        "^".repeat(width)
+    )
+    .expect("writing to a string cannot fail");
+}
+
+fn expand_tabs(text: &str) -> String {
+    let mut expanded = String::new();
+    let mut column = 0;
+    for character in text.chars() {
+        if character == '\t' {
+            let spaces = 4 - (column % 4);
+            expanded.push_str(&" ".repeat(spaces));
+            column += spaces;
+        } else {
+            expanded.push(character);
+            column += 1;
+        }
+    }
+    expanded
+}
+
+/// The display column of a 1-based scalar column, with tabs at width 4.
+fn display_column(text: &str, source_column: u32) -> usize {
+    let characters = source_column.saturating_sub(1) as usize;
+    let mut column = 0;
+    for character in text.chars().take(characters) {
+        if character == '\t' {
+            column += 4 - (column % 4);
+        } else {
+            column += 1;
+        }
+    }
+    column
 }
 
 fn range(range: SourceRange) -> DiagnosticRange {
@@ -268,6 +515,7 @@ pub fn runtime_code(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Native => "native",
         RuntimeErrorKind::NativeContract => "native_contract",
         RuntimeErrorKind::Module => "module",
+        RuntimeErrorKind::ModuleNotFound => "module_not_found",
         RuntimeErrorKind::NotImplemented => "not_implemented",
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",

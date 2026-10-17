@@ -1,7 +1,5 @@
 use std::{
-    env,
-    fmt::Write as FmtWrite,
-    fs,
+    env, fs,
     io::Write as IoWrite,
     path::{Path, PathBuf},
     process::ExitCode,
@@ -11,10 +9,9 @@ use slug::{
     DesktopLoader, build_default_host_vm, capability_report_json, default_library_root,
     diagnostic::{Diagnostic, DiagnosticCategory},
 };
-use slug_frontend::{ArtifactHost, SourceError, SourceErrorKind};
+use slug_frontend::{ArtifactHost, SourceError};
 use slug_vm::{
-    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
-    SourceSpan, Vm,
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -495,11 +492,7 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
     let mut program = match loader.compile_source(&resolved_path, &source) {
         Ok(program) => program,
         Err(error) => {
-            let category = match error.kind {
-                SourceErrorKind::Parse => "parse",
-                SourceErrorKind::Semantic => "semantic",
-            };
-            eprint_source_error(category, &error, &resolved_path, &source, json);
+            eprint_source_error(&error, &resolved_path, &source, json);
             return ExitCode::from(1);
         }
     };
@@ -520,186 +513,70 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
 }
 
 fn eprint_startup_error(category: &str, kind: &str, message: String, json: bool) {
-    if json {
-        let category = match category {
-            "usage" => DiagnosticCategory::Usage,
-            "io" => DiagnosticCategory::Io,
-            "host" => DiagnosticCategory::Host,
-            _ => DiagnosticCategory::Artifact,
-        };
-        // A usage kind names the subcommand, so it is not a unique code.
-        let code = if category == DiagnosticCategory::Usage {
-            "usage"
-        } else {
-            kind
-        };
-        eprint_json_diagnostic(&Diagnostic::new(category, code, message));
+    let category = match category {
+        "usage" => DiagnosticCategory::Usage,
+        "io" => DiagnosticCategory::Io,
+        "host" => DiagnosticCategory::Host,
+        _ => DiagnosticCategory::Artifact,
+    };
+    // A usage kind names the subcommand, so it is not a unique code.
+    let code = if category == DiagnosticCategory::Usage {
+        "usage"
     } else {
-        eprintln!("slug: {message}");
-    }
+        kind
+    };
+    eprint_diagnostic(&Diagnostic::new(category, code, message), "", "", json);
 }
 
-fn eprint_source_error(
-    category: &str,
-    error: &SourceError,
-    input_path: &str,
-    input: &str,
-    json: bool,
-) {
-    if json {
-        eprint_json_diagnostic(&Diagnostic::from_source(error));
-        return;
-    }
-    eprintln!(
-        "{}",
-        render_source_error(category, error, input_path, input)
-    );
-}
-
-fn render_source_error(
-    category: &str,
-    error: &SourceError,
-    input_path: &str,
-    input: &str,
-) -> String {
-    let headline = format!("slug: {category} error: {}", error.message);
-    render_source_context(&headline, error.span.as_ref(), input_path, input)
-        .unwrap_or_else(|| format!("slug: {category} error: {error}"))
+fn eprint_source_error(error: &SourceError, input_path: &str, input: &str, json: bool) {
+    eprint_diagnostic(&Diagnostic::from_source(error), input_path, input, json);
 }
 
 fn eprint_runtime_error(error: &RuntimeError, input_path: &str, input: &str, json: bool) {
+    let sources = source_reader(input_path, input);
+    eprint_diagnostic(
+        &Diagnostic::from_runtime_in(error, &sources),
+        input_path,
+        input,
+        json,
+    );
+}
+
+/// Prints `diagnostic` as one JSON line, or as text rendering the same
+/// members.
+fn eprint_diagnostic(diagnostic: &Diagnostic, input_path: &str, input: &str, json: bool) {
     if json {
-        eprint_json_diagnostic(&Diagnostic::from_runtime(error));
-        return;
-    }
-    eprintln!("{}", render_runtime_error(error, input_path, input));
-}
-
-fn eprint_json_diagnostic(diagnostic: &Diagnostic) {
-    println_to_stderr(
-        &serde_json::to_string(&diagnostic).expect("diagnostic JSON is serializable"),
-    );
-}
-
-fn println_to_stderr(text: &str) {
-    eprintln!("{text}");
-}
-
-fn render_runtime_error(error: &RuntimeError, input_path: &str, input: &str) -> String {
-    let headline = format!("slug: runtime error: {}", error.message);
-    let mut rendered = if let Some(mut rendered) =
-        render_source_context(&headline, error.span.as_ref(), input_path, input)
-    {
-        for frame in &error.frames {
-            write!(rendered, "\n  in {}", frame.function).expect("writing to a string cannot fail");
-            if let Some(span) = &frame.span {
-                write!(rendered, " at {}:{}:{}", span.path, span.line, span.column)
-                    .expect("writing to a string cannot fail");
-            }
-        }
-        rendered
+        eprintln!(
+            "{}",
+            serde_json::to_string(diagnostic).expect("diagnostic JSON is serializable")
+        );
     } else {
-        format!("slug: {error}")
-    };
-    if let Some(compile_error) = &error.compile_error {
-        let category = match compile_error.kind {
-            SourceErrorKind::Parse => "parse",
-            SourceErrorKind::Semantic => "semantic",
-        };
-        let headline = format!("caused by: {category} error: {}", compile_error.message);
-        let cause =
-            render_source_context(&headline, compile_error.span.as_ref(), input_path, input)
-                .unwrap_or_else(|| format!("caused by: {category} error: {compile_error}"));
-        write!(rendered, "\n\n{cause}").expect("writing to a string cannot fail");
+        eprintln!(
+            "{}",
+            diagnostic.render_text(&source_reader(input_path, input))
+        );
     }
-    rendered
 }
 
-fn render_source_context(
-    headline: &str,
-    span: Option<&SourceSpan>,
-    input_path: &str,
-    input: &str,
-) -> Option<String> {
-    let span = span?;
-    let source = if span.path.as_ref() == input_path {
-        Some(input.to_owned())
-    } else {
-        fs::read_to_string(span.path.as_ref()).ok()
-    };
-    let source = source?;
-    // An error at the end of input may sit on the empty line after the last
-    // newline.
-    let lines = || source.lines().chain(std::iter::once(""));
-    let line = lines().nth(span.line.saturating_sub(1) as usize)?;
-
-    let mut rendered = format!(
-        "{headline}\n    --> {}:{}:{}\n",
-        span.path, span.line, span.column
-    );
-    let first_line = span.line.saturating_sub(2).max(1);
-    let line_width = span.line.to_string().len();
-    for (index, source_line) in lines()
-        .enumerate()
-        .skip(first_line as usize - 1)
-        .take((span.line - first_line + 1) as usize)
-    {
-        let number = index + 1;
-        let source_line = expand_tabs(source_line);
-        if number == span.line as usize {
-            writeln!(rendered, "  > {number:>line_width$} | {source_line}")
-                .expect("writing to a string cannot fail");
+/// Reads diagnostic source text by path, using the entry's text for the
+/// entry so that an unsaved or since-changed file is not reread.
+fn source_reader<'a>(input_path: &'a str, input: &'a str) -> impl Fn(&str) -> Option<String> + 'a {
+    move |path| {
+        if path == input_path {
+            Some(input.to_owned())
         } else {
-            writeln!(rendered, "    {number:>line_width$} | {source_line}")
-                .expect("writing to a string cannot fail");
+            fs::read_to_string(path).ok()
         }
     }
-    let caret_offset = display_column(line, span.column);
-    write!(
-        rendered,
-        "    {} | {}^ here",
-        " ".repeat(line_width),
-        " ".repeat(caret_offset)
-    )
-    .expect("writing to a string cannot fail");
-    Some(rendered)
-}
-
-fn expand_tabs(text: &str) -> String {
-    let mut expanded = String::new();
-    let mut column = 0;
-    for character in text.chars() {
-        if character == '\t' {
-            let spaces = 4 - (column % 4);
-            expanded.push_str(&" ".repeat(spaces));
-            column += spaces;
-        } else {
-            expanded.push(character);
-            column += 1;
-        }
-    }
-    expanded
-}
-
-fn display_column(text: &str, source_column: u32) -> usize {
-    let characters = source_column.saturating_sub(1) as usize;
-    let mut column = 0;
-    for character in text.chars().take(characters) {
-        if character == '\t' {
-            column += 4 - (column % 4);
-        } else {
-            column += 1;
-        }
-    }
-    column
 }
 
 #[cfg(test)]
 mod tests {
+    use slug::diagnostic::Diagnostic;
     use slug_frontend::{SourceError, SourceErrorCode, SourceErrorKind};
     use slug_vm::SourceSpan;
 
-    use super::render_source_error;
+    use super::source_reader;
 
     #[test]
     fn falls_back_when_diagnostic_source_is_unavailable() {
@@ -715,8 +592,8 @@ mod tests {
         };
 
         assert_eq!(
-            render_source_error("parse", &error, "input.slug", "val = 1\n"),
-            "slug: parse error: expected expression at missing.slug:4:2"
+            Diagnostic::from_source(&error).render_text(&source_reader("input.slug", "val = 1\n")),
+            "slug: parse error: expected expression\n    --> missing.slug:4:2\n  = code: expected_syntax"
         );
     }
 }

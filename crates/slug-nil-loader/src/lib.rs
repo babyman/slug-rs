@@ -14,6 +14,7 @@ impl ModuleResolver for NilLoader {
         Err(ModuleLoadError::NotFound {
             name: request.name.into(),
             searched: Vec::new(),
+            suggestions: Vec::new(),
         })
     }
 }
@@ -38,6 +39,7 @@ mod tests {
             slug_loader::ModuleLoadError::NotFound {
                 name: "example.module".into(),
                 searched: Vec::new(),
+                suggestions: Vec::new(),
             }
         );
     }
