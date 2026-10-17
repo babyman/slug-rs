@@ -875,9 +875,12 @@ impl<'call> NativeValueRef<'call> {
         })
     }
 
+    /// The element count of a list or map, or the Unicode scalar count of a
+    /// string, without scanning the string.
     #[must_use]
     pub fn len(self) -> Option<usize> {
         match self.value {
+            Value::Str(text) => Some(text.char_len()),
             Value::List(values) => Some(values.len()),
             Value::Map(entries) => Some(entries.view().len()),
             _ => None,

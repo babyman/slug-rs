@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- String `len`, indexing, and slicing no longer scan the whole string. Each
+  string keeps its character count, ASCII strings index in constant time, and
+  others look positions up in a table built on first use, so loops over a
+  string's characters are linear rather than quadratic: a JSON parser on a
+  130 KB document went from 3.72 s to 0.18 s. `slug.string` adds `chars`,
+  which returns a string's characters as a list.
+
 - An unannotated parameter that its body gives no type is now dynamic inside
   the function, so a result returned through it no longer fails static
   checking. `val s:str = go(2, "")` with a recursive helper

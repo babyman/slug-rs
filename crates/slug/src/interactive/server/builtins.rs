@@ -24,16 +24,12 @@ pub(super) fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
         Err(error) => return call.raise(error),
     };
     let length = match value.kind() {
-        NativeValueKind::String => match value.as_str() {
-            Ok(value) => value.chars().count(),
-            Err(error) => return call.raise(error),
-        },
         NativeValueKind::Bytes => match value.as_bytes() {
             Ok(value) => value.len(),
             Err(error) => return call.raise(error),
         },
-        NativeValueKind::List | NativeValueKind::Map => {
-            value.len().expect("collection kind has a length")
+        NativeValueKind::String | NativeValueKind::List | NativeValueKind::Map => {
+            value.len().expect("text and collections have a length")
         }
         kind => {
             return call.raise(NativeError::new(

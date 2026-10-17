@@ -1,9 +1,4 @@
-use alloc::{
-    borrow::ToOwned,
-    rc::Rc,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{borrow::ToOwned, rc::Rc, string::String, vec::Vec};
 use core::cmp::Ordering;
 
 #[cfg(feature = "metrics")]
@@ -677,13 +672,12 @@ pub(super) fn index_value(
             let Value::Int(index) = index else {
                 return Err("string index must be an integer".into());
             };
-            let length = i64::try_from(value.chars().count())
-                .map_err(|_| "string is too large".to_owned())?;
+            let length =
+                i64::try_from(value.char_len()).map_err(|_| "string is too large".to_owned())?;
             let index = if *index < 0 { length + *index } else { *index };
             value
-                .chars()
-                .nth(usize::try_from(index).map_err(|_| "string index is out of bounds")?)
-                .map(|character| Value::string(character.to_string()))
+                .char_at(usize::try_from(index).map_err(|_| "string index is out of bounds")?)
+                .map(Value::string)
                 .ok_or_else(|| "string index is out of bounds".into())
         }
         Value::Map(entries) => {
@@ -728,7 +722,7 @@ pub(super) fn slice_value(
             "bytes",
         ),
         Value::Str(value) => (
-            i64::try_from(value.chars().count()).map_err(|_| "string is too large".to_owned())?,
+            i64::try_from(value.char_len()).map_err(|_| "string is too large".to_owned())?,
             "string",
         ),
         value => return Err(format!("cannot slice {}", value.type_name())),
@@ -774,16 +768,20 @@ pub(super) fn slice_value(
             ))
         }
         Value::Str(value) => {
-            let values = value.chars().collect::<Vec<_>>();
-            let mut result = String::new();
-            let mut index = start;
-            while index < end {
-                result.push(values[usize::try_from(index).expect("slice bounds are non-negative")]);
-                index = index
-                    .checked_add(step)
-                    .ok_or_else(|| "string slice step is too large".to_owned())?;
+            let start = usize::try_from(start).expect("slice bounds are non-negative");
+            let end = usize::try_from(end).expect("slice bounds are non-negative");
+            if start >= end {
+                return Ok(Value::string(""));
             }
-            Ok(Value::string(result))
+            let text = value.scalar_range(start, end);
+            if step == 1 {
+                return Ok(Value::string(text));
+            }
+            let step =
+                usize::try_from(step).map_err(|_| "string slice step is too large".to_owned())?;
+            Ok(Value::string(
+                text.chars().step_by(step).collect::<String>(),
+            ))
         }
         _ => unreachable!("collection kind was checked above"),
     }

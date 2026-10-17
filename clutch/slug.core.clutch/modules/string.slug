@@ -1,6 +1,6 @@
 /**
  * String operations: conversion between characters and their Unicode scalar
- * values, sorting, and joining.
+ * values, splitting into characters, sorting, and joining.
  *
  * Out-of-range arguments throw `Error` values whose `type` is `string.range`;
  * a list element that is not a string throws one whose `type` is
@@ -105,4 +105,16 @@ export val join = fn(strings:list<str>, separator:str = ""):str {
         }
     }
     go(0, "")
+}
+
+/**
+ * Returns the characters of `text` as a list of one-character strings, in
+ * order: `chars("héllo")` is `["h", "é", "l", "l", "o"]`. `join(chars(text))`
+ * is `text`.
+ */
+export val chars = fn(text:str):list<str> {
+    val go = fn(i:num, out:list<str>):list<str> {
+        if (i == len(text)) { out } else { recur(i + 1, out :+ text[i]) }
+    }
+    go(0, [])
 }

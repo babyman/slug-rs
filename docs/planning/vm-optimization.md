@@ -1586,3 +1586,22 @@ Seven interleaved rounds against `905f718`: `higher-order` 0.82x,
 `fannkuch-redux` 0.88x, `word-frequency` 0.93x, `binary-trees` 0.95x, and
 the hold-out `expression-evaluator` 0.96x. Tuned geomean 0.96x, hold-out
 0.98x, and no workload slower. `make check` passed.
+
+## Cached string positions
+
+Slug string positions count Unicode scalar values, and every `text[i]`
+counted the whole string to bound the index, then walked to position `i`;
+`len(text)` and slicing also counted it. A loop over a string's characters was
+quadratic: a JSON parser written the obvious way took 3.72 s on a 130 KB
+document. Each string now keeps its scalar count, updated as `+` appends in
+place, so `len` is constant-time. An all-ASCII string, whose scalar and byte
+positions agree, indexes and slices in constant time. Other strings build a
+table of every 64th scalar's byte offset on first positional access, so a
+lookup scans at most 64 characters; appending discards the table. A step-1
+slice copies only its range rather than collecting every character.
+
+The JSON parser fell from 3.72 s to 0.18 s on the 130 KB document and now
+scales linearly. Seven interleaved rounds against `a218e85`: tuned geomean
+1.00x and hold-out 0.97x, with `text-wrap` (hold-out) 0.93x, no workload
+slower, and `string-building` peak memory 6.2 MB to 4.6 MB. `make check`
+passed.

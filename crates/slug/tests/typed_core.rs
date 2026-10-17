@@ -255,3 +255,16 @@ fn sorts_and_joins_strings() {
          string.type: join requires a list of strings\n"
     );
 }
+
+#[test]
+fn splits_strings_into_characters() {
+    let output = run_cli(
+        "val {chars, join} = import(\"slug.string\")\n\
+         println(chars(\"h\u{e9}llo\u{1f600}\"), chars(\"\"), join(chars(\"round trip\")))\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "[\"h\", \"\u{e9}\", \"l\", \"l\", \"o\", \"\u{1f600}\"] [] round trip\n"
+    );
+}
