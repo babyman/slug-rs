@@ -549,7 +549,11 @@ pub(super) enum TokenKind {
     Dot,
     Ellipsis,
     Arrow,
+    /// A statement separator from a newline.
     Sep,
+    /// A statement separator written as `;`. Enum and struct member lists
+    /// accept newlines but not semicolons.
+    Semicolon,
     BlankSep,
     End,
 }
@@ -661,6 +665,7 @@ impl TokenKind {
             Self::Arrow => "`=>`".into(),
             Self::NotImplemented => "`???`".into(),
             Self::Sep => "statement separator".into(),
+            Self::Semicolon => "`;`".into(),
             Self::BlankSep => "blank line".into(),
             Self::End => "end of input".into(),
         }

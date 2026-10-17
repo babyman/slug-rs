@@ -96,7 +96,10 @@ impl Parser {
         }
     }
     fn is_separator(&self) -> bool {
-        matches!(self.kind(), TokenKind::Sep | TokenKind::BlankSep)
+        matches!(
+            self.kind(),
+            TokenKind::Sep | TokenKind::BlankSep | TokenKind::Semicolon
+        )
     }
     fn enter_nesting(&mut self, span: SourceSpan) -> Result<(), SourceError> {
         if self.nesting == MAX_PARSE_NESTING {
@@ -120,7 +123,11 @@ impl Parser {
             expressions.push(self.statement()?);
             if !matches!(
                 self.kind(),
-                TokenKind::End | TokenKind::Sep | TokenKind::BlankSep | TokenKind::Documentation(_)
+                TokenKind::End
+                    | TokenKind::Sep
+                    | TokenKind::BlankSep
+                    | TokenKind::Semicolon
+                    | TokenKind::Documentation(_)
             ) {
                 return Err(SourceError::at_token(
                     SourceErrorCode::ExpectedSyntax,
@@ -326,7 +333,7 @@ impl Parser {
                 .with_end(token.end));
             };
             self.consume(&TokenKind::LBrace, "expected { after enum name")?;
-            self.separators();
+            self.newlines();
             let mut cases = Vec::new();
             while !self.matches(&TokenKind::RBrace) {
                 if self.matches(&TokenKind::End) {
@@ -350,7 +357,7 @@ impl Parser {
                     .with_end(token.end));
                 }
                 cases.push(case);
-                self.member_separator("expected comma or newline between enum cases")?;
+                self.declaration_separator("expected comma or newline between enum cases")?;
             }
             self.next();
             if cases.is_empty() {
@@ -1126,7 +1133,7 @@ impl Parser {
         let delimiter = self.consume(&TokenKind::LBrace, "expected { after struct")?;
         self.enter_nesting(delimiter.span)?;
         let mut fields = Vec::new();
-        self.separators();
+        self.newlines();
         while !self.matches(&TokenKind::RBrace) {
             if self.matches(&TokenKind::End) {
                 return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
@@ -1157,7 +1164,7 @@ impl Parser {
                 annotation,
                 default,
             });
-            self.member_separator(STRUCT_FIELD_SEPARATOR)?;
+            self.declaration_separator(STRUCT_FIELD_SEPARATOR)?;
         }
         self.next();
         self.leave_nesting();
@@ -1192,7 +1199,7 @@ impl Parser {
     fn struct_fields(&mut self, span: &SourceSpan) -> Result<Vec<(String, Expr)>, SourceError> {
         self.enter_nesting(span.clone())?;
         let mut fields = Vec::new();
-        self.separators();
+        self.newlines();
         while !self.matches(&TokenKind::RBrace) {
             if self.matches(&TokenKind::End) {
                 return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
@@ -1208,21 +1215,32 @@ impl Parser {
             };
             self.consume(&TokenKind::Colon, "expected : after struct field name")?;
             fields.push((name, self.expression()?));
-            self.member_separator(STRUCT_FIELD_SEPARATOR)?;
+            self.initializer_separator()?;
         }
         self.next();
         self.leave_nesting();
         Ok(fields)
     }
-    /// Consumes the separator after an enum case or struct field: any run of
-    /// commas and newlines. Without one, the next token must close the braces.
-    fn member_separator(&mut self, message: &str) -> Result<(), SourceError> {
-        let mut separated = false;
-        while self.matches(&TokenKind::Comma) || self.is_separator() {
+    fn is_newline(&self) -> bool {
+        matches!(self.kind(), TokenKind::Sep | TokenKind::BlankSep)
+    }
+    fn newlines(&mut self) {
+        while self.is_newline() {
             self.next();
-            separated = true;
         }
-        if separated || self.matches(&TokenKind::RBrace) || self.matches(&TokenKind::End) {
+    }
+    /// Consumes the separator after an enum case or struct schema field: one
+    /// comma, one or more newlines, or both, with at most one comma. Without
+    /// one, the next token must close the braces.
+    fn declaration_separator(&mut self, message: &str) -> Result<(), SourceError> {
+        let newline_before = self.is_newline();
+        self.newlines();
+        let comma = self.matches(&TokenKind::Comma);
+        if comma {
+            self.next();
+            self.newlines();
+        }
+        if newline_before || comma || self.closes_members() {
             Ok(())
         } else {
             Err(SourceError::at_token(
@@ -1231,6 +1249,28 @@ impl Parser {
                 self.peek(),
             ))
         }
+    }
+    /// Consumes the separator after a struct construction or copy field: a
+    /// comma, with newlines allowed after it or before the closing brace.
+    fn initializer_separator(&mut self) -> Result<(), SourceError> {
+        if self.matches(&TokenKind::Comma) {
+            self.next();
+            self.newlines();
+            return Ok(());
+        }
+        self.newlines();
+        if self.closes_members() {
+            Ok(())
+        } else {
+            Err(SourceError::at_token(
+                SourceErrorCode::ExpectedSyntax,
+                "expected comma between struct fields",
+                self.peek(),
+            ))
+        }
+    }
+    fn closes_members(&self) -> bool {
+        self.matches(&TokenKind::RBrace) || self.matches(&TokenKind::End)
     }
     fn list(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.enter_nesting(span.clone())?;
@@ -1286,7 +1326,12 @@ impl Parser {
     fn next_non_separator_index(&self) -> usize {
         self.tokens[self.index..]
             .iter()
-            .position(|token| !matches!(token.kind, TokenKind::Sep | TokenKind::BlankSep))
+            .position(|token| {
+                !matches!(
+                    token.kind,
+                    TokenKind::Sep | TokenKind::BlankSep | TokenKind::Semicolon
+                )
+            })
             .map_or(self.index, |offset| self.index + offset)
     }
     fn starts_computed_map_key(&self, index: usize) -> bool {

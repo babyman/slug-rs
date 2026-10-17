@@ -9,12 +9,13 @@
   inferred as `str`, and comparing two unannotated parameters no longer forces
   them to be numbers, so `fn(a, b) { a < b }` works for strings.
 
-- Enum cases and struct fields can be separated by commas, newlines, or any
-  mix of both, with an optional trailing separator. One case or field per line
-  no longer needs commas. Two members with no separator between them report
-  `expected comma or newline between enum cases` or `... between struct
-  fields`. An enum or struct left open at the end of a file reports
-  `expected }` with its safe fix.
+- Enum cases and struct schema fields can be separated by a comma, one or more
+  newlines, or both, with an optional trailing comma, so one case or field per
+  line no longer needs commas. Semicolons and consecutive commas are not
+  separators. Two members with no separator report `expected comma or newline
+  between enum cases` or `... between struct fields`. Struct construction and
+  copy still require commas between fields. An enum or struct left open at the
+  end of a file reports `expected }` with its safe fix.
 
 - `slug app.slug`, with a bare file name, now imports modules beside the
   program. It previously failed with `cannot read :` because the program's

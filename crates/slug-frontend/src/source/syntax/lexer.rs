@@ -307,7 +307,7 @@ impl Lexer {
                 }
                 ';' => {
                     self.next();
-                    self.push(&mut result, TokenKind::Sep, span);
+                    self.push(&mut result, TokenKind::Semicolon, span);
                 }
                 '\n' => {
                     let blank = self.current_line_is_blank();

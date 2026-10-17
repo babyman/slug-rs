@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [Enum cases and struct schema fields separate with commas or newlines](2026-10-16-declaration-member-separators.md)
 
 ## Context
 

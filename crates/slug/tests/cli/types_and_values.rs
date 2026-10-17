@@ -1534,11 +1534,32 @@ fn enum_cases_and_struct_fields_separate_with_commas_or_newlines() {
         ),
         (
             "val Point = struct { x: num }\nprintln(Point { x: 1 y: 2 })\n",
-            "expected comma or newline between struct fields",
+            "expected comma between struct fields",
+        ),
+        (
+            "val Point = struct { x, y }\nprintln(Point {\n  x: 1\n  y: 2\n})\n",
+            "expected comma between struct fields",
         ),
         (
             "enum Colour { red green }\n",
             "expected comma or newline between enum cases",
+        ),
+        (
+            "enum Colour { red; green }\n",
+            "expected comma or newline between enum cases",
+        ),
+        (
+            "val Point = struct { x; y }\n",
+            "expected comma or newline between struct fields",
+        ),
+        ("enum Colour { red,, green }\n", "expected enum case name"),
+        (
+            "val Point = struct { x,, y }\n",
+            "expected struct field name",
+        ),
+        (
+            "val Point = struct { x, y }\nprintln(Point { x: 1,, y: 2 })\n",
+            "expected struct field name",
         ),
     ] {
         let (code, _, stderr) = run(source);

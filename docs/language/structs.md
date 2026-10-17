@@ -10,11 +10,11 @@ A struct expression creates a new schema identity every time it is evaluated.
 Its value has type `schema`; values constructed through a direct known schema
 binding `S` have type `struct<S>`. `schema` itself has no type arguments.
 Fields are ordered by their declaration order and names must be unique. A field
-without a default is required. Fields are separated by commas, newlines, or any
-mix of both, and a trailing separator is allowed; construction and copy field
-lists follow the same rule. Two fields with no separator between them, such as
-`x: num y: num`, are a parse error: `expected comma or newline between struct
-fields`.
+without a default is required. Schema fields are separated by a comma, one or
+more newlines, or both, and a trailing comma is allowed. Two fields with no
+separator between them, such as `x: num y: num`, are a parse error: `expected
+comma or newline between struct fields`. Semicolons and consecutive commas do
+not separate fields.
 
     val User = struct {
       name,
@@ -42,6 +42,10 @@ existing struct value.
 Applying a schema to a brace-delimited field list constructs a value:
 
     val user = User {name: "Slug"}
+
+Construction and copy fields require commas, with an optional trailing comma;
+newlines may follow a comma or precede the closing brace. A missing comma is a
+parse error: `expected comma between struct fields`.
 
 The schema expression is evaluated first, followed by provided field expressions
 in source order. Construction fails through the checked runtime type-error path
