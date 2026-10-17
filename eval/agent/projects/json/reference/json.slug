@@ -1,0 +1,313 @@
+/**
+ * JSON parsing and canonical serialization (RFC 8259).
+ *
+ * Objects are maps with string keys, arrays are lists, and `null` is `nil`.
+ * Invalid documents throw `json.parse` errors whose `data.offset` is the
+ * character index where the document became invalid; values with no JSON
+ * form throw `json.type` errors.
+ */
+
+val {ord, chr} = import("slug.string")
+
+val HEX = {"0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
+  "a": 10, "b": 11, "c": 12, "d": 13, "e": 14, "f": 15,
+  "A": 10, "B": 11, "C": 12, "D": 13, "E": 14, "F": 15}
+val DIGITS = "0123456789abcdef"
+
+val fail = fn(message, offset) {
+  throw Error {type: "json.parse", msg: message, data: {offset: offset}}
+}
+
+val isDigit = fn(c) { c >= "0" && c <= "9" }
+
+val skipSpace = fn(text, i) {
+  if (i < len(text) && (text[i] == " " || text[i] == "\t" || text[i] == "\n" || text[i] == "\r")) {
+    recur(text, i + 1)
+  } else {
+    i
+  }
+}
+
+val expectWord = fn(text, i, word, value) {
+  val check = fn(k) {
+    if (k == len(word)) {
+      [value, i + k]
+    } else if (i + k < len(text) && text[i + k] == word[k]) {
+      recur(k + 1)
+    } else {
+      fail("invalid literal", i + k)
+    }
+  }
+  check(0)
+}
+
+val hex4 = fn(text, i) {
+  val go = fn(k, value) {
+    if (k == 4) {
+      value
+    } else if (i + k >= len(text)) {
+      fail("unterminated escape", len(text))
+    } else {
+      val digit = HEX[text[i + k]]
+      if (digit == nil) { fail("invalid hex digit", i + k) } else { recur(k + 1, value * 16 + digit) }
+    }
+  }
+  go(0, 0)
+}
+
+// Slug strings have no \b or \f escape; octal \10 and \14 are those characters.
+val escapes = {"\"": "\"", "\\": "\\", "/": "/", "b": "\10", "f": "\14", "n": "\n", "r": "\r", "t": "\t"}
+
+val parseString = fn(text, start) {
+  val go = fn(i, out) {
+    if (i >= len(text)) {
+      fail("unterminated string", len(text))
+    } else {
+      val c = text[i]
+      if (c == "\"") {
+        [out, i + 1]
+      } else if (c == "\\") {
+        if (i + 1 >= len(text)) {
+          fail("unterminated escape", len(text))
+        } else if (text[i + 1] == "u") {
+          val code = hex4(text, i + 2)
+          if (code >= 55296 && code <= 56319) {
+            if (i + 7 < len(text) && text[i + 6] == "\\" && text[i + 7] == "u") {
+              val low = hex4(text, i + 8)
+              if (low >= 56320 && low <= 57343) {
+                recur(i + 12, out + chr(65536 + ((code - 55296) << 10) + (low - 56320)))
+              } else {
+                fail("invalid surrogate pair", i + 6)
+              }
+            } else {
+              fail("unpaired surrogate", i)
+            }
+          } else if (code >= 56320 && code <= 57343) {
+            fail("unpaired surrogate", i)
+          } else {
+            recur(i + 6, out + chr(code))
+          }
+        } else {
+          val replacement = escapes[text[i + 1]]
+          if (replacement == nil) { fail("invalid escape", i + 1) } else { recur(i + 2, out + replacement) }
+        }
+      } else if (ord(c) < 32) {
+        fail("control character in string", i)
+      } else {
+        recur(i + 1, out + c)
+      }
+    }
+  }
+  go(start + 1, "")
+}
+
+val digitsEnd = fn(text, i) {
+  if (i < len(text) && isDigit(text[i])) { recur(text, i + 1) } else { i }
+}
+
+val tenTo = fn(n, value) { if (n == 0) { value } else { recur(n - 1, value * 10) } }
+
+val digitsValue = fn(text, from, to, value) {
+  if (from == to) { value } else { recur(text, from + 1, to, value * 10 + HEX[text[from]]) }
+}
+
+val parseNumber = fn(text, start) {
+  val negative = text[start] == "-"
+  val intStart = if (negative) { start + 1 } else { start }
+  if (intStart >= len(text) || !isDigit(text[intStart])) {
+    fail("invalid number", intStart)
+  }
+  // A leading zero stands alone: "01" ends the number after the zero.
+  val intEnd = if (text[intStart] == "0") { intStart + 1 } else { digitsEnd(text, intStart) }
+  val hasFraction = intEnd < len(text) && text[intEnd] == "."
+  val fracEnd = if (hasFraction) { digitsEnd(text, intEnd + 1) } else { intEnd }
+  if (hasFraction && fracEnd == intEnd + 1) { fail("invalid number", fracEnd) }
+  val hasExponent = fracEnd < len(text) && (text[fracEnd] == "e" || text[fracEnd] == "E")
+  val signed = hasExponent && fracEnd + 1 < len(text) && (text[fracEnd + 1] == "+" || text[fracEnd + 1] == "-")
+  val expStart = if (signed) { fracEnd + 2 } else { fracEnd + 1 }
+  val end = if (hasExponent) { digitsEnd(text, expStart) } else { fracEnd }
+  if (hasExponent && end == expStart) { fail("invalid number", end) }
+  val exponentValue = if (hasExponent) { digitsValue(text, expStart, end, 0) } else { 0 }
+  val exponent = if (signed && text[fracEnd + 1] == "-") { -exponentValue } else { exponentValue }
+
+  val fractionDigits = if (hasFraction) { fracEnd - intEnd - 1 } else { 0 }
+  val count = (intEnd - intStart) + fractionDigits
+  val scale = exponent - fractionDigits
+  val start0 = if (count > 15) { 0.0 } else { 0 }
+  val integral = digitsValue(text, intStart, intEnd, start0)
+  val mantissa = if (hasFraction) { digitsValue(text, intEnd + 1, fracEnd, integral) } else { integral }
+  val magnitude = if (mantissa == 0 || count + scale < -330) {
+    0
+  } else if (count + scale > 309) {
+    fail("number out of range", start)
+  } else if (scale >= 0 && count <= 15 && count + scale <= 18) {
+    mantissa * tenTo(scale, 1)
+  } else if (scale >= 0) {
+    mantissa * tenTo(scale, 1.0)
+  } else if (scale >= -300) {
+    mantissa / tenTo(-scale, 1.0)
+  } else {
+    mantissa / tenTo(300, 1.0) / tenTo(-scale - 300, 1.0)
+  }
+  [if (negative) { -magnitude } else { magnitude }, end]
+}
+
+val parseValue = fn(text, at) {
+  val i = skipSpace(text, at)
+  if (i >= len(text)) {
+    fail("unexpected end of input", i)
+  }
+  val c = text[i]
+  if (c == "{") {
+    parseObject(text, i)
+  } else if (c == "[") {
+    parseArray(text, i)
+  } else if (c == "\"") {
+    parseString(text, i)
+  } else if (c == "t") {
+    expectWord(text, i, "true", true)
+  } else if (c == "f") {
+    expectWord(text, i, "false", false)
+  } else if (c == "n") {
+    expectWord(text, i, "null", nil)
+  } else if (c == "-" || isDigit(c)) {
+    parseNumber(text, i)
+  } else {
+    fail("unexpected character", i)
+  }
+}
+
+val parseArray = fn(text, start) {
+  val first = skipSpace(text, start + 1)
+  if (first < len(text) && text[first] == "]") {
+    [[], first + 1]
+  } else {
+    val go = fn(i, items) {
+      val [item, after] = parseValue(text, i)
+      val next = skipSpace(text, after)
+      if (next >= len(text)) {
+        fail("unterminated array", next)
+      } else if (text[next] == ",") {
+        recur(next + 1, items :+ item)
+      } else if (text[next] == "]") {
+        [items :+ item, next + 1]
+      } else {
+        fail("expected , or ]", next)
+      }
+    }
+    go(start + 1, [])
+  }
+}
+
+val parseObject = fn(text, start) {
+  val first = skipSpace(text, start + 1)
+  if (first < len(text) && text[first] == "}") {
+    [{}, first + 1]
+  } else {
+    val go = fn(i, entries) {
+      val keyAt = skipSpace(text, i)
+      if (keyAt >= len(text)) { fail("unterminated object", keyAt) }
+      if (text[keyAt] != "\"") { fail("expected string key", keyAt) }
+      val [key, afterKey] = parseString(text, keyAt)
+      val colon = skipSpace(text, afterKey)
+      if (colon >= len(text)) { fail("unterminated object", colon) }
+      if (text[colon] != ":") { fail("expected :", colon) }
+      val [value, after] = parseValue(text, colon + 1)
+      val next = skipSpace(text, after)
+      val merged = entries + {[key]: value}
+      if (next >= len(text)) {
+        fail("unterminated object", next)
+      } else if (text[next] == ",") {
+        recur(next + 1, merged)
+      } else if (text[next] == "}") {
+        [merged, next + 1]
+      } else {
+        fail("expected , or }", next)
+      }
+    }
+    go(start + 1, {})
+  }
+}
+
+/**
+ * Parses a JSON document. Throws a `json.parse` error for invalid input.
+ */
+export val parse = fn(text:str) {
+  val [value, after] = parseValue(text, 0)
+  val end = skipSpace(text, after)
+  if (end != len(text)) { fail("unexpected trailing content", end) }
+  value
+}
+
+val quote = fn(text) {
+  val go = fn(i, out) {
+    if (i == len(text)) {
+      out + "\""
+    } else {
+      val c = text[i]
+      val code = ord(c)
+      val piece = if (c == "\"") { "\\\"" } else if (c == "\\") { "\\\\" } else if (c == "\n") { "\\n" } else if (c == "\r") { "\\r" } else if (c == "\t") { "\\t" } else if (c == "\10") { "\\b" } else if (c == "\14") { "\\f" } else if (code < 32) {
+        "\\u00" + DIGITS[code >> 4] + DIGITS[code & 15]
+      } else {
+        c
+      }
+      recur(i + 1, out + piece)
+    }
+  }
+  go(0, "\"")
+}
+
+val typeError = fn(message) { throw Error {type: "json.type", msg: message} }
+
+val insert = fn(sorted, item, i) {
+  if (i == len(sorted)) { sorted :+ item } else if (item < sorted[i]) { sorted[0:i] + [item] + sorted[i:] } else { recur(sorted, item, i + 1) }
+}
+
+val sortKeys = fn(items, i, sorted) {
+  if (i == len(items)) { sorted } else { recur(items, i + 1, insert(sorted, items[i], 0)) }
+}
+
+val write = fn(value) {
+  match value {
+    nil => "null"
+    true => "true"
+    false => "false"
+    n:num => "$n"
+    s:str => quote(s)
+    items:list => {
+      val go = fn(i, out) {
+        if (i == len(items)) { out + "]" } else { recur(i + 1, out + (if (i == 0) { "" } else { "," }) + write(items[i])) }
+      }
+      go(0, "[")
+    }
+    entries:map => {
+      val names = keys(entries)
+      val check = fn(i) {
+        if (i < len(names)) {
+          match names[i] {
+            _:str => recur(i + 1)
+            _ => typeError("object keys must be strings")
+          }
+        }
+      }
+      check(0)
+      val sorted = sortKeys(names, 0, [])
+      val go = fn(i, out) {
+        if (i == len(sorted)) {
+          out + "}"
+        } else {
+          val name = sorted[i]
+          recur(i + 1, out + (if (i == 0) { "" } else { "," }) + quote(name) + ":" + write(entries[name]))
+        }
+      }
+      go(0, "{")
+    }
+    _ => typeError("value has no JSON form")
+  }
+}
+
+/**
+ * Serializes a value as compact canonical JSON with object keys sorted.
+ * Throws a `json.type` error for a value with no JSON form.
+ */
+export val stringify = fn(value) { write(value) }

@@ -28,9 +28,17 @@ REPO = EVAL.parent.parent
 sys.path.insert(0, str(HERE))
 
 from cases import ENTRY, load_cases, run_case  # noqa: E402
+import projects  # noqa: E402
 
 TASKS = EVAL / "tasks"
 REVIEWS = EVAL / "review"
+PROJECTS = EVAL / "projects"
+# Per-kind run limits; --max-budget-usd and --timeout-minutes override them.
+KIND_LIMITS = {
+    "coding": {"budget": 1.0, "minutes": 15},
+    "review": {"budget": 1.0, "minutes": 15},
+    "project": {"budget": 5.0, "minutes": 45},
+}
 RESULTS = EVAL / "results"
 REVIEW_KINDS = ["filesystem", "stdin", "database", "configuration", "native", "dynamic_import"]
 
@@ -96,6 +104,17 @@ before you finish. Print exactly the required output and nothing else.
 Stop when solution.slug is correct.
 """
 
+PROJECT_PROMPT = """\
+You are writing a library in Slug, a small programming language. Its
+documentation is in ./slug-docs: start with slug-docs/language-specification.md.
+Library module sources are in ./slug-docs/library. Run a program with
+`slug <file>`.
+
+{task}
+{arm_notes}
+Stop when the library is complete and you have tested it.
+"""
+
 REVIEW_PROMPT = """\
 You are reviewing a change to a program written in Slug, a small programming
 language. Its documentation is in ./slug-docs: start with
@@ -142,7 +161,7 @@ ARM_NOTES = {
 
 def tasks(selection):
     found = []
-    for kind, root in (("coding", TASKS), ("review", REVIEWS)):
+    for kind, root in (("coding", TASKS), ("review", REVIEWS), ("project", PROJECTS)):
         for directory in sorted(path for path in root.iterdir() if path.is_dir()):
             if selection and not any(directory.name.startswith(item) for item in selection):
                 continue
@@ -161,7 +180,7 @@ def plan(arguments):
         for arm in arms:
             # Diagnostics arms only matter for coding; the report arm only
             # for review. Skipping the other pairings keeps runs informative.
-            if kind == "coding" and arm == "report":
+            if kind in ("coding", "project") and arm == "report":
                 continue
             if kind == "review" and arm in ("json", "fixes"):
                 continue
@@ -198,8 +217,19 @@ def prepare_workspace(run, run_dir):
     return workspace
 
 
+def budget(run, arguments):
+    return arguments.max_budget_usd or KIND_LIMITS[run["kind"]]["budget"]
+
+
+def minutes(run, arguments):
+    return arguments.timeout_minutes or KIND_LIMITS[run["kind"]]["minutes"]
+
+
 def prompt(run):
     notes = ARM_NOTES.get(run["arm"], "")
+    if run["kind"] == "project":
+        task = (PROJECTS / run["task"] / "task.md").read_text().strip()
+        return PROJECT_PROMPT.format(task=task, arm_notes=notes)
     if run["kind"] == "coding":
         task = (TASKS / run["task"] / "task.md").read_text().strip()
         return CODING_PROMPT.format(task=task, arm_notes=notes)
@@ -219,7 +249,7 @@ def claude_command(run, arguments):
         "--allowedTools",
         "Bash,Read,Write,Edit,Glob,Grep",
         "--max-budget-usd",
-        str(arguments.max_budget_usd),
+        str(budget(run, arguments)),
     ]
     if arguments.model:
         command += ["--model", arguments.model]
@@ -274,7 +304,7 @@ def execute(run, arguments, slug, results_dir, references):
             env=environment,
             capture_output=True,
             text=True,
-            timeout=arguments.timeout_minutes * 60,
+            timeout=minutes(run, arguments) * 60,
         )
         timed_out = False
         stdout, stderr = completed.stdout, completed.stderr
@@ -292,6 +322,9 @@ def execute(run, arguments, slug, results_dir, references):
     invocations = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
     record = {
         **run,
+        # A run that ends in an error after a turn or two never worked on the
+        # task, typically because access ran out; summaries leave it out.
+        "infra_error": bool(claude.get("is_error")) and (claude.get("num_turns") or 0) <= 2 or not claude,
         "wall_seconds": round(time.monotonic() - started, 1),
         "timed_out": timed_out,
         "claude": {
@@ -309,6 +342,21 @@ def execute(run, arguments, slug, results_dir, references):
 
 
 def check(run, workspace, slug, references):
+    if run["kind"] == "project":
+        module = run["task"]
+        source = workspace / f"{module}.slug"
+        total = len(projects.load_cases(PROJECTS / run["task"]))
+        if not source.exists():
+            return {"passed": False, "score": 0.0, "cases_passed": 0, "cases": total, "detail": f"no {module}.slug"}
+        outcomes = projects.grade(str(slug), REPO, PROJECTS / run["task"], source, module)
+        passed = sum(outcome["passed"] for outcome in outcomes)
+        return {
+            "passed": passed == total,
+            "score": round(passed / total, 4),
+            "cases_passed": passed,
+            "cases": total,
+            "failed_cases": [outcome["id"] for outcome in outcomes if not outcome["passed"]],
+        }
     if run["kind"] == "review":
         expected = json.loads((REVIEWS / run["task"] / "answer.json").read_text())
         try:
@@ -350,7 +398,8 @@ def command_plan(arguments):
     counts = collections.Counter((run["kind"], run["arm"]) for run in runs)
     for (kind, arm), count in sorted(counts.items()):
         print(f"{kind:7} {arm:9} {count} runs")
-    print(f"total   {len(runs)} runs, at most ${len(runs) * arguments.max_budget_usd:.2f} at --max-budget-usd {arguments.max_budget_usd}")
+    worst = sum(budget(run, arguments) for run in runs)
+    print(f"total   {len(runs)} runs, at most ${worst:.2f} in budgets")
     return runs
 
 
@@ -394,7 +443,15 @@ def summarize(path):
     path = Path(path)
     if path.is_dir():
         path = path / "runs.jsonl"
-    records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    loaded = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    def infra_error(record):
+        claude = record.get("claude") or {}
+        fallback = bool(claude.get("is_error")) and (claude.get("num_turns") or 0) <= 2
+        return record.get("infra_error", fallback)
+
+    records = [record for record in loaded if not infra_error(record)]
+    if len(records) < len(loaded):
+        print(f"excluding {len(loaded) - len(records)} runs that ended in an access or harness error\n")
     groups = collections.defaultdict(list)
     for record in records:
         groups[(record["kind"], record["arm"])].append(record)
@@ -406,12 +463,13 @@ def summarize(path):
     def show(value, digits=1):
         return "-" if value is None else f"{value:.{digits}f}"
 
-    print(f"{'kind':7} {'arm':9} {'runs':>4} {'pass':>5} {'turns':>6} {'slug':>5} {'fails':>5} {'out_tok':>8} {'cost':>7} {'secs':>6}")
+    print(f"{'kind':7} {'arm':9} {'runs':>4} {'pass':>5} {'score':>6} {'turns':>6} {'slug':>5} {'fails':>5} {'out_tok':>8} {'cost':>7} {'secs':>6}")
     for (kind, arm), items in sorted(groups.items()):
         usage = [item["claude"].get("usage") or {} for item in items]
         print(
             f"{kind:7} {arm:9} {len(items):>4} "
             f"{sum(item['passed'] for item in items) / len(items):>5.0%} "
+            f"{show(mean([item.get('score') for item in items]), 2):>6} "
             f"{show(mean([item['claude'].get('num_turns') for item in items])):>6} "
             f"{show(mean([item['slug_runs'] for item in items])):>5} "
             f"{show(mean([item['slug_failures'] for item in items])):>5} "
@@ -424,6 +482,11 @@ def summarize(path):
         print("\ndiagnostic codes seen:")
         for code, count in codes.most_common():
             print(f"  {count:>4} {code}")
+    missed = collections.Counter(case for record in records for case in record.get("failed_cases", []))
+    if missed:
+        print("\nproject cases failed most often:")
+        for case, count in missed.most_common(15):
+            print(f"  {count:>4} {case}")
     failing = collections.Counter(record["task"] for record in records if not record["passed"])
     if failing:
         print("\nfailing tasks:")
@@ -436,6 +499,15 @@ def command_check_references(arguments):
     names = [directory.name for kind, directory in tasks([]) if kind == "coding"]
     outputs = reference_outputs(slug, names)
     print(f"{len(names)} coding references pass {sum(len(cases) for cases in outputs.values())} cases")
+    for kind, directory in tasks([]):
+        if kind != "project":
+            continue
+        module = directory.name
+        outcomes = projects.grade(str(slug), REPO, directory, directory / "reference" / f"{module}.slug", module)
+        failed = [outcome["id"] for outcome in outcomes if not outcome["passed"]]
+        if failed:
+            raise SystemExit(f"project {module} reference fails: {', '.join(failed)}")
+        print(f"project {module} reference passes {len(outcomes)} cases")
 
 
 def main():
@@ -446,8 +518,8 @@ def main():
         sub.add_argument("--arms", default="baseline,json,fixes,report")
         sub.add_argument("--tasks", help="comma-separated task name prefixes; default all")
         sub.add_argument("--repeats", type=int, default=3)
-        sub.add_argument("--max-budget-usd", type=float, default=1.0)
-        sub.add_argument("--timeout-minutes", type=int, default=15)
+        sub.add_argument("--max-budget-usd", type=float, help="per-run budget; default 1, or 5 for projects")
+        sub.add_argument("--timeout-minutes", type=int, help="per-run timeout; default 15, or 45 for projects")
         sub.add_argument("--model")
         sub.add_argument("--jobs", type=int, default=1)
         sub.add_argument("--name", help="results directory name; default a timestamp")

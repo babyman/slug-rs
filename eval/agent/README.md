@@ -20,6 +20,18 @@ tasks, once per feature arm and several times each, and records what happened.
   the program new kinds of access, such as the filesystem or configuration,
   including access gained indirectly or by dynamic import.
 
+- `projects/` holds larger exercises that produce something useful. `json/`
+  asks for a JSON library, `json.slug`, specified in its `task.md`. Its hidden
+  suite, `cases.json`, has 91 cases covering parsing, parse errors and their
+  offsets, canonical serialization, serialization errors, and round trips.
+  Each case runs as its own program beside the agent's module, so a crash or
+  hang fails only that case, and a run scores the fraction of cases passed.
+  `reference/json.slug` passes them all. Project runs default to a $5 budget
+  and a 45-minute timeout and use the coding arms.
+
+The small coding tasks are a quick smoke check after language changes; the
+projects are the main experiment.
+
 Write new tasks without looking at how the features behave, keep some aside as
 hold-outs, and replace a hold-out once it has driven a change.
 
@@ -42,7 +54,7 @@ failure classes the agent hit.
 ## Running
 
 ```sh
-# Check that every reference solution passes its cases.
+# Check that every reference solution, including project references, passes its cases.
 python3 eval/agent/harness/run.py check-references
 
 # Show the runs a selection would start, and their worst-case cost.
@@ -78,7 +90,10 @@ Results go to `eval/agent/results/<run>/`, which git ignores:
 - `<task>/<arm>/<repeat>/`: the agent's workspace, Claude's JSON result, and
   the wrapper's invocation log, for reading what happened.
 
-`summarize` prints, per kind and arm, the pass rate and mean turns, `slug`
+A run that ends in an error after one or two turns, typically because access
+ran out, is marked `infra_error` and left out of summaries.
+
+`summarize` prints, per kind and arm, the pass rate, the mean project score, and mean turns, `slug`
 runs, failed runs, output tokens, cost, and wall time, followed by every
 diagnostic code seen and the tasks that failed. Agent output is noisy: compare
 arms over several repeats, not single runs.
