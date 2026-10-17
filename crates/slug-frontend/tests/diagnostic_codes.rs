@@ -82,9 +82,9 @@ fn source_errors_report_what_was_expected_and_found() {
 
 fn only_fix(source: &str) -> Option<String> {
     let error = compile("fixes.slug", source).expect_err(source);
-    assert!(error.fixes.len() <= 1, "{source}: {:?}", error.fixes);
+    assert!(error.fixes().len() <= 1, "{source}: {:?}", error.fixes());
     error
-        .fixes
+        .fixes()
         .first()
         .map(|fix| fix.apply(source).expect("fix applies to its source"))
 }

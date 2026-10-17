@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- A match case's binding or wildcard no longer has the whole subject type: it
+  excludes what earlier unguarded cases match whole, such as `nil`. In
+  `match fs.readLine(file) { nil => "" ; line => line }`, `line` is `str`, so
+  the match can be a function's `str` result; previously `line` was `str|nil`
+  and the function failed with `expected str, got str|nil`. A named subject
+  narrows the same way inside the case.
+
+- A function whose result does not match its declared type now points at the
+  expression that produced the result, with its range, instead of the body's
+  opening `{`.
+
+- An integer literal larger than 9223372036854775807 now reports
+  `integer literal is out of range; the largest is 9223372036854775807`
+  instead of `invalid number`, and offers to append `.0`, making it a float:
+  as a fix when the float holds the value exactly, and otherwise as a
+  suggestion whose message gives the rounded value. Parse and semantic
+  diagnostics can now carry `suggestions`.
+
 - An import of a module that does not exist now has the code
   `module_not_found`, previously `module`, and suggests close module names:
   `import("slug.stdin")` suggests `slug.io.stdin`, and `import("utlis")`

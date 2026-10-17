@@ -1676,9 +1676,21 @@ fn check_function_body(
     if let Some(return_annotation) = return_annotation {
         let expected =
             resolve_static_annotation(return_annotation, type_parameters, &body.span, environment)?;
-        require(&expected, &actual, &body.span)?;
+        let result = result_expression(body);
+        require(&expected, &actual, &result.span).map_err(|error| error.with_extent(result))?;
     }
     Ok(actual)
+}
+
+/// The expression whose value a body produces: the last expression of each
+/// nested block.
+fn result_expression(mut body: &Expr) -> &Expr {
+    while let ExprKind::Block(values) = &body.kind
+        && let Some(last) = values.last()
+    {
+        body = last;
+    }
+    body
 }
 
 fn record_exports(
@@ -2151,7 +2163,11 @@ fn check_expression_inner(
             }
             let mut results = Vec::new();
             let mut surviving_subject_types = Vec::new();
+            // The type a value can still have on reaching each case, after
+            // every earlier unguarded case that matches it whole.
+            let mut unmatched = Some(subject_type.clone());
             for case in cases {
+                let reaching_type = unmatched.clone().unwrap_or_else(|| subject_type.clone());
                 let mut scoped = environment.clone();
                 scoped.enter_scope();
                 let mut constraints = Vec::new();
@@ -2165,8 +2181,26 @@ fn check_expression_inner(
                     }
                     bind_case_pattern(
                         &pattern.pattern,
-                        constraint.as_ref().unwrap_or(&subject_type),
+                        constraint.as_ref().unwrap_or(&reaching_type),
                         &mut scoped,
+                    );
+                }
+                if case.guard.is_none() {
+                    unmatched = case.patterns.iter().zip(&constraints).fold(
+                        unmatched,
+                        |unmatched, (pattern, constraint)| {
+                            let unmatched = unmatched?;
+                            match (&pattern.pattern, constraint) {
+                                (pattern, None) if is_irrefutable_pattern(pattern) => None,
+                                (pattern, Some(constraint)) if is_irrefutable_pattern(pattern) => {
+                                    type_subtract(&unmatched, constraint)
+                                }
+                                (Pattern::Literal(value), _) if value.kind() == ValueKind::Nil => {
+                                    type_subtract(&unmatched, &Type::Nil)
+                                }
+                                _ => Some(unmatched),
+                            }
+                        },
                     );
                 }
                 let mut case_subject_type = None;
@@ -2197,6 +2231,14 @@ fn check_expression_inner(
                         let narrowed = Type::union(narrowed);
                         apply_flow_facts(&mut scoped, vec![(name.clone(), narrowed.clone())]);
                         case_subject_type = Some(narrowed);
+                    } else if reaching_type != subject_type
+                        && case
+                            .patterns
+                            .iter()
+                            .any(|pattern| is_irrefutable_pattern(&pattern.pattern))
+                    {
+                        apply_flow_facts(&mut scoped, vec![(name.clone(), reaching_type.clone())]);
+                        case_subject_type = Some(reaching_type.clone());
                     }
                 }
                 environment.record_match_constraints(case.span.clone(), constraints.clone());

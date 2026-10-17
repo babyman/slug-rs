@@ -1676,3 +1676,39 @@ fn compatible_parameter_requirements_combine_to_the_narrower_type() {
         "{stderr}"
     );
 }
+
+#[test]
+fn match_bindings_exclude_types_matched_by_earlier_cases() {
+    let path = fixture_path("match-binding-narrowing");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write match narrowing source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run match narrowing source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // After `nil =>`, the binding, a wildcard's subject name, and a binding
+    // after a constrained case are all `str`.
+    let (code, stdout, stderr) = run("val g = fn(x):str|nil { x }\n\
+         val f = fn(p):str { match g(p) { nil => \"none\" ; line => line } }\n\
+         val h = fn(p):str { val v = g(p)\n match v { nil => \"none\" ; _ => v } }\n\
+         val k = fn(p):nil { match g(p) { s: str => nil ; other => other } }\n\
+         println(f(\"a\"), f(nil), h(\"b\"), k(nil))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "a none b nil\n");
+
+    // A guarded case may not match, so it narrows nothing, and the error
+    // covers the expression that produced the result.
+    let (code, _, stderr) = run("val g = fn(x):str|nil { x }\n\
+         val f = fn(p, q):str {\n  match g(p) { nil if q => \"\" ; line => line }\n}\n");
+    fs::remove_file(&path).expect("remove match narrowing source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected str, found str|nil"), "{stderr}");
+    assert!(stderr.contains(":3:3\n"), "{stderr}");
+}

@@ -101,7 +101,10 @@ bytes[1:] == 0x"0304"
 0x"0102" + 0x"0304" == 0x"01020304"
 ```
 
-Numbers may contain underscore separators. A bare identifier or quoted string
+Numbers may contain underscore separators. An integer literal without a
+fraction or exponent must be at most 9223372036854775807; a larger one is an
+`invalid_number` error, and written with a fraction (`.0`) it is a float.
+A bare identifier or quoted string
 used as a map key is a string key, so `{name: "Slug"}` and
 `{"name": "Slug"}` are indexed with `["name"]`. A bracketed map key evaluates
 an expression instead:
@@ -865,7 +868,12 @@ comparisons with a string literal. Function expressions infer structural
 and declared or inferred results. That precision is retained through ordinary
 bindings and collection inference. It infers generic arguments from
 annotated call positions and supports explicit type applications. Successful
-match type constraints narrow case-local bindings. Semantic analysis tracks an
+match type constraints narrow case-local bindings. A binding or wildcard case
+without a constraint has the subject's type less what earlier unguarded cases
+match whole: a `nil` literal, or a binding or wildcard pattern with or without
+a constraint. So in `match line { nil => "" ; text => text }`, where `line` is
+`str|nil`, `text` is `str`, and when the subject is a name, it narrows the same
+way inside the case. Semantic analysis tracks an
 expression's value type separately from whether its control flow can continue:
 `return`, `throw`, and `recur(...)` terminate their current flow even when a
 payload remains relevant to function result checking. Broader flow-sensitive

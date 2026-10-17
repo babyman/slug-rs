@@ -588,7 +588,7 @@ mod tests {
             range: None,
             expected: None,
             actual: None,
-            fixes: Box::default(),
+            corrections: None,
         };
 
         assert_eq!(

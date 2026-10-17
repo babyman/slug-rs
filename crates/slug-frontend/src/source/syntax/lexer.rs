@@ -2,7 +2,7 @@
 use slug_vm::SourceSpan;
 
 use super::{
-    SourceError, SourceErrorCode, SourcePosition,
+    SourceEdit, SourceError, SourceErrorCode, SourcePosition, SourceRange,
     ast::{StringPart, Token, TokenKind},
 };
 
@@ -182,6 +182,33 @@ impl Lexer {
             line: 1,
             column: 1,
             brace_depth: 0,
+        }
+    }
+
+    /// A decimal integer literal too large for a 64-bit integer. Written
+    /// with a fraction it is a float instead: a fix when the float holds the
+    /// same value, and otherwise a suggestion, since the float rounds it.
+    fn integer_out_of_range(&self, digits: &str, span: SourceSpan) -> SourceError {
+        let end = self.position();
+        let error = SourceError::at(
+            SourceErrorCode::InvalidNumber,
+            "integer literal is out of range; the largest is 9223372036854775807",
+            span,
+        )
+        .with_end(end);
+        let edit = SourceEdit {
+            range: SourceRange { start: end, end },
+            text: ".0".into(),
+        };
+        let float: f64 = digits.parse().expect("decimal digits parse as a float");
+        let rounded = format!("{float:.0}");
+        if rounded == digits.trim_start_matches('0') {
+            error.with_fix("write it as a float, which holds it exactly", edit)
+        } else {
+            error.with_suggestion(
+                format!("write it as a float, which rounds it to {rounded}"),
+                edit,
+            )
         }
     }
 
@@ -748,14 +775,9 @@ impl Lexer {
                         }
                         self.push(&mut result, TokenKind::Float(value), span);
                     } else {
-                        let value = text.parse().map_err(|_| {
-                            SourceError::at(
-                                SourceErrorCode::InvalidNumber,
-                                "invalid number",
-                                span.clone(),
-                            )
-                            .with_end(self.position())
-                        })?;
+                        let Ok(value) = text.parse() else {
+                            return Err(self.integer_out_of_range(&text, span));
+                        };
                         self.push(&mut result, TokenKind::Int(value), span);
                     }
                 }

@@ -77,11 +77,12 @@ Rust hosts apply a fix with `slug_frontend::apply_fix`.
 
 A suggestion has the same `{message, edits}` form as a fix, but is only
 likely: applying it may change what the program means, so review it first.
-Its `edits` may be empty when the corrected source cannot be located. Currently
-one kind exists:
+Its `edits` may be empty when the corrected source cannot be located. These
+kinds exist:
 
 | Code | Suggestion |
 |---|---|
+| `invalid_number` | For an integer literal larger than 9223372036854775807 whose value a float would round, appending `.0` to make it a float; the message gives the rounded value. When the float holds the value exactly, the edit is a fix instead. |
 | `module_not_found` | Each available module whose name is close to the requested one, nearest first, at most three: one with the same last segment, such as `slug.io.stdin` for `slug.stdin`, or else one within a small edit distance, such as `utils` for `utlis`. The desktop host considers installed clutch modules and the `.slug` files in each searched directory. When the `import` names the module with a plain string literal, the diagnostic's `location` and `range` are that literal and each suggestion replaces it. |
 
 ## Text form

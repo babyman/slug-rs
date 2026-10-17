@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
-use slug_frontend::{SourceError, SourcePosition, SourceRange, import_name_range};
+use slug_frontend::{SourceError, SourceFix, SourcePosition, SourceRange, import_name_range};
 use slug_vm::{
     RuntimeError, RuntimeErrorKind, SourceDiagnostic, SourceErrorKind, SourceSpan, Value,
 };
@@ -185,21 +185,8 @@ impl Diagnostic {
         Self {
             location: error.span.as_ref().map(location),
             range: error.range.map(range),
-            fixes: error
-                .fixes
-                .iter()
-                .map(|fix| DiagnosticFix {
-                    message: fix.message.clone(),
-                    edits: fix
-                        .edits
-                        .iter()
-                        .map(|edit| DiagnosticEdit {
-                            range: range(edit.range),
-                            text: edit.text.clone(),
-                        })
-                        .collect(),
-                })
-                .collect(),
+            fixes: error.fixes.iter().map(diagnostic_fix).collect(),
+            suggestions: error.suggestions.iter().map(diagnostic_fix).collect(),
             expected: error.expected.as_deref().map(str::to_owned),
             actual: error.actual.as_deref().map(str::to_owned),
             ..Self::new(category, error.code, error.message.clone())
@@ -481,6 +468,20 @@ fn display_column(text: &str, source_column: u32) -> usize {
         }
     }
     column
+}
+
+fn diagnostic_fix(fix: &SourceFix) -> DiagnosticFix {
+    DiagnosticFix {
+        message: fix.message.clone(),
+        edits: fix
+            .edits
+            .iter()
+            .map(|edit| DiagnosticEdit {
+                range: range(edit.range),
+                text: edit.text.clone(),
+            })
+            .collect(),
+    }
 }
 
 fn range(range: SourceRange) -> DiagnosticRange {

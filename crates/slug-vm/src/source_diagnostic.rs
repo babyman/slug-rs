@@ -31,6 +31,9 @@ pub struct SourceDiagnostic {
     pub actual: Option<Box<str>>,
     /// Machine-applicable fixes, each a set of edits in `span`'s file.
     pub fixes: Box<[SourceFix]>,
+    /// Likely corrections in the same form as `fixes`, which may change what
+    /// the program means.
+    pub suggestions: Box<[SourceFix]>,
 }
 
 impl fmt::Display for SourceDiagnostic {

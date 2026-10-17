@@ -789,3 +789,42 @@ fn missing_modules_suggest_close_names_in_text_and_json() {
         "{text}"
     );
 }
+
+#[test]
+fn out_of_range_integer_literals_offer_a_float() {
+    let run = |name: &str, source: &str| {
+        let path = fixture_path(name);
+        fs::write(&path, source).expect("write integer literal source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run integer literal source");
+        fs::remove_file(&path).expect("remove integer literal source");
+        json_diagnostic(&output.stderr)
+    };
+
+    // 2^64 is exact as a float, so appending `.0` is a fix.
+    let exact = run("integer-literal-exact", "println(18446744073709551616)\n");
+    assert_eq!(exact["code"], "invalid_number");
+    assert_eq!(
+        exact["message"],
+        "integer literal is out of range; the largest is 9223372036854775807"
+    );
+    assert_eq!(exact["range"]["end"]["column"], 29);
+    assert_eq!(exact["fixes"][0]["edits"][0]["text"], ".0");
+    assert_eq!(
+        exact["fixes"][0]["edits"][0]["range"]["start"]["column"],
+        29
+    );
+    assert_eq!(exact["suggestions"], serde_json::json!([]));
+
+    // This one rounds, so it is only a suggestion.
+    let rounded = run("integer-literal-rounded", "println(18014398509481986000)\n");
+    assert_eq!(rounded["fixes"], serde_json::json!([]));
+    assert_eq!(
+        rounded["suggestions"][0]["message"],
+        "write it as a float, which rounds it to 18014398509481986048"
+    );
+    assert_eq!(rounded["suggestions"][0]["edits"][0]["text"], ".0");
+}

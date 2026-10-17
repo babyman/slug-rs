@@ -54,9 +54,20 @@ pub struct SourceError {
     pub expected: Option<Box<str>>,
     /// What it found instead, when it is known.
     pub actual: Option<Box<str>>,
-    /// Edits that resolve this error without changing what the rest of the
+    /// Its fixes and suggestions, when it has any; see
+    /// [`SourceError::fixes`] and [`SourceError::suggestions`].
+    pub corrections: Option<Box<SourceCorrections>>,
+}
+
+/// The edits a [`SourceError`] offers, boxed because most errors have none.
+#[derive(Clone, Debug, Default)]
+pub struct SourceCorrections {
+    /// Edits that resolve the error without changing what the rest of the
     /// program means. Empty unless a fix is certain.
-    pub fixes: Box<[SourceFix]>,
+    pub fixes: Vec<SourceFix>,
+    /// Likely corrections in the same form as `fixes`, which may change what
+    /// the program means.
+    pub suggestions: Vec<SourceFix>,
 }
 
 /// The stable failure class of a [`SourceError`], listed in
@@ -182,7 +193,7 @@ impl SourceError {
             range: None,
             expected: None,
             actual: None,
-            fixes: Box::default(),
+            corrections: None,
         }
     }
 
@@ -192,13 +203,43 @@ impl SourceError {
         error
     }
 
+    /// Edits that resolve this error without changing what the rest of the
+    /// program means. Empty unless a fix is certain.
+    #[must_use]
+    pub fn fixes(&self) -> &[SourceFix] {
+        self.corrections
+            .as_ref()
+            .map_or(&[], |corrections| &corrections.fixes)
+    }
+
+    /// Likely corrections in the same form as [`Self::fixes`], which may
+    /// change what the program means.
+    #[must_use]
+    pub fn suggestions(&self) -> &[SourceFix] {
+        self.corrections
+            .as_ref()
+            .map_or(&[], |corrections| &corrections.suggestions)
+    }
+
     fn with_fix(mut self, message: impl Into<String>, edit: SourceEdit) -> Self {
-        let mut fixes = std::mem::take(&mut self.fixes).into_vec();
-        fixes.push(SourceFix {
-            message: message.into(),
-            edits: vec![edit],
-        });
-        self.fixes = fixes.into_boxed_slice();
+        self.corrections
+            .get_or_insert_default()
+            .fixes
+            .push(SourceFix {
+                message: message.into(),
+                edits: vec![edit],
+            });
+        self
+    }
+
+    fn with_suggestion(mut self, message: impl Into<String>, edit: SourceEdit) -> Self {
+        self.corrections
+            .get_or_insert_default()
+            .suggestions
+            .push(SourceFix {
+                message: message.into(),
+                edits: vec![edit],
+            });
         self
     }
 
@@ -275,7 +316,7 @@ impl SourceError {
             range: None,
             expected: None,
             actual: None,
-            fixes: Box::default(),
+            corrections: None,
         }
     }
 }
@@ -301,7 +342,8 @@ impl From<&SourceError> for SourceDiagnostic {
             range: error.range,
             expected: error.expected.clone(),
             actual: error.actual.clone(),
-            fixes: error.fixes.clone(),
+            fixes: error.fixes().into(),
+            suggestions: error.suggestions().into(),
         }
     }
 }
