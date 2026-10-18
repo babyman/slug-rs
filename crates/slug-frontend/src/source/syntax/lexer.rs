@@ -12,7 +12,6 @@ pub(super) struct Lexer {
     index: usize,
     line: u32,
     column: u32,
-    brace_depth: usize,
 }
 
 impl Lexer {
@@ -181,7 +180,6 @@ impl Lexer {
             index: 0,
             line: 1,
             column: 1,
-            brace_depth: 0,
         }
     }
 
@@ -327,7 +325,12 @@ impl Lexer {
     #[allow(clippy::too_many_lines)]
     pub(super) fn tokens(mut self) -> Result<Vec<Token>, SourceError> {
         let mut result = Vec::new();
-        let mut delimiters = 0usize;
+        // The open delimiters, innermost last: `true` for a brace. A newline
+        // separates statements at top level and directly inside braces, but
+        // continues a parenthesized or bracketed expression, even one inside
+        // a block, while a block inside parentheses still separates its own
+        // statements.
+        let mut open: Vec<bool> = Vec::new();
         while let Some(character) = self.peek() {
             let span = self.span();
             match character {
@@ -341,10 +344,7 @@ impl Lexer {
                 '\n' => {
                     let blank = self.current_line_is_blank();
                     self.next();
-                    // Parenthesized calls and list expressions normally continue across
-                    // lines, but their callback blocks still need statement separators.
-                    if (delimiters == 0 || self.brace_depth > 0) && !self.newline_continues(&result)
-                    {
+                    if open.last().is_none_or(|brace| *brace) && !self.newline_continues(&result) {
                         self.push(
                             &mut result,
                             if blank {
@@ -446,6 +446,7 @@ impl Lexer {
                         TokenKind::OrOr
                     } else if self.peek() == Some('}') {
                         self.next();
+                        open.pop();
                         TokenKind::RExactMap
                     } else {
                         TokenKind::Pipe
@@ -454,17 +455,17 @@ impl Lexer {
                 }
                 '(' => {
                     self.next();
-                    delimiters += 1;
+                    open.push(false);
                     self.push(&mut result, TokenKind::LParen, span);
                 }
                 ')' => {
                     self.next();
-                    delimiters = delimiters.saturating_sub(1);
+                    open.pop();
                     self.push(&mut result, TokenKind::RParen, span);
                 }
                 '{' => {
                     self.next();
-                    self.brace_depth += 1;
+                    open.push(true);
                     let kind = if self.peek() == Some('|') {
                         self.next();
                         TokenKind::LExactMap
@@ -475,17 +476,17 @@ impl Lexer {
                 }
                 '}' => {
                     self.next();
-                    self.brace_depth = self.brace_depth.saturating_sub(1);
+                    open.pop();
                     self.push(&mut result, TokenKind::RBrace, span);
                 }
                 '[' => {
                     self.next();
-                    delimiters += 1;
+                    open.push(false);
                     self.push(&mut result, TokenKind::LBracket, span);
                 }
                 ']' => {
                     self.next();
-                    delimiters = delimiters.saturating_sub(1);
+                    open.pop();
                     self.push(&mut result, TokenKind::RBracket, span);
                 }
                 ',' => {

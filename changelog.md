@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A list, call, or other bracketed expression inside a function body or
+  other block may span lines, as at module level: `f(1,` then `2)` on the
+  next line previously failed with `expected expression` inside any `{ }`.
+  An exact map pattern `{| |}` also no longer makes newlines inside later
+  brackets separate statements.
+
 - `limit` is now an ordinary name except directly after `nursery`, so
   `val limit = 10` works. A reserved word used as a name now reports
   `` `copy` is a reserved word and cannot be used as a name `` instead of

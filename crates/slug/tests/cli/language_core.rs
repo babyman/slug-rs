@@ -880,3 +880,51 @@ fn else_may_start_a_line() {
         "big one small 2\n"
     );
 }
+
+#[test]
+fn bracketed_expressions_continue_across_lines_inside_blocks() {
+    let path = fixture_path("multiline-brackets-in-blocks");
+    fs::write(
+        &path,
+        // Inside a function body, a list and a call continue across lines,
+        // while a callback block inside the call still separates its own
+        // statements. An exact map pattern closes like any brace.
+        "val add = fn(a, b) { a + b }\n\
+         val apply = fn(f) { f() }\n\
+         val body = fn() {\n\
+           val xs = [\n\
+             1,\n\
+             2,\n\
+           ]\n\
+           val sum = add(xs[0],\n\
+             xs[1])\n\
+           apply(fn() {\n\
+             val a = sum\n\
+             val b = 10\n\
+             a + b\n\
+           })\n\
+         }\n\
+         val m = {a: 1}\n\
+         val shape = match m {\n\
+           {|a|} => \"exact\"\n\
+           _ => \"other\"\n\
+         }\n\
+         println(body(), [shape,\n\
+           \"after\"])\n",
+    )
+    .expect("write multiline bracket source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run multiline bracket source");
+    fs::remove_file(path).expect("remove multiline bracket source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "13 [\"exact\", \"after\"]\n"
+    );
+}
