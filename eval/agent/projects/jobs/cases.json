@@ -1,0 +1,283 @@
+{
+ "prelude": "val jobs = import(\"{module}\")\nval J = jobs.Job\nval S = jobs.Status\nval sleep = fn(ms) { select { after ms } }\nval value = fn(v) { fn(inputs) { v } }\nval fails = fn(message) { fn(inputs) { throw Error { type: \"test\", msg: message } } }\nvar problems = []\nval expect = fn(label, actual, wanted) {\n    if (actual != wanted) { problems = problems :+ [label, actual, wanted] }\n}\nval finish = fn() {\n    if (len(problems) == 0) { println(\"PASS\") } else { println(\"FAIL\", problems) }\n}\nval outcome = fn(results, name, status, result, attempts, error) {\n    val got = results[name]\n    if (got == nil) {\n        problems = problems :+ [name, \"missing from results\"]\n    } else {\n        expect(name + \" status\", got.status, status)\n        expect(name + \" value\", got.value, result)\n        expect(name + \" attempts\", got.attempts, attempts)\n        expect(name + \" error\", got.error, error)\n    }\n}\nval invalidData = fn(body) {\n    defer onerror(err) {\n        return if (err.type == \"jobs.invalid\") { err.data } else { {reason: \"wrong error\", error: err} }\n    }\n    body()\n    return {reason: \"no error\"}\n}\nvar active = 0\nvar peak = 0\nvar events = []\nval tracked = fn(name, ms, result) {\n    fn(inputs) {\n        events = events :+ [\"start\", name]\n        active = active + 1\n        if (active > peak) { peak = active }\n        sleep(ms)\n        active = active - 1\n        events = events :+ [\"end\", name]\n        result\n    }\n}",
+ "cases": [
+  {
+   "id": "plan-empty",
+   "kind": "program",
+   "source": "expect(\"plan\", jobs.plan([]), [])\nfinish()"
+  },
+  {
+   "id": "plan-single",
+   "kind": "program",
+   "source": "expect(\"plan\", jobs.plan([J { name: \"only\", action: value(1) }]), [[\"only\"]])\nfinish()"
+  },
+  {
+   "id": "plan-chain",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"c\", deps: [\"b\"], action: value(1) },\n    J { name: \"b\", deps: [\"a\"], action: value(1) },\n    J { name: \"a\", action: value(1) },\n]\nexpect(\"plan\", jobs.plan(list), [[\"a\"], [\"b\"], [\"c\"]])\nfinish()"
+  },
+  {
+   "id": "plan-diamond",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"top\", action: value(1) },\n    J { name: \"right\", deps: [\"top\"], action: value(1) },\n    J { name: \"left\", deps: [\"top\"], action: value(1) },\n    J { name: \"bottom\", deps: [\"left\", \"right\"], action: value(1) },\n]\nexpect(\"plan\", jobs.plan(list), [[\"top\"], [\"left\", \"right\"], [\"bottom\"]])\nfinish()"
+  },
+  {
+   "id": "plan-waves-sorted",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"zeta\", action: value(1) },\n    J { name: \"alpha\", action: value(1) },\n    J { name: \"Mid\", action: value(1) },\n    J { name: \"beta\", deps: [\"zeta\"], action: value(1) },\n    J { name: \"aardvark\", deps: [\"zeta\", \"alpha\"], action: value(1) },\n]\nexpect(\"plan\", jobs.plan(list), [[\"Mid\", \"alpha\", \"zeta\"], [\"aardvark\", \"beta\"]])\nfinish()"
+  },
+  {
+   "id": "plan-wave-is-longest-path",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"a\", action: value(1) },\n    J { name: \"b\", deps: [\"a\"], action: value(1) },\n    J { name: \"c\", deps: [\"b\"], action: value(1) },\n    J { name: \"d\", deps: [\"a\", \"c\"], action: value(1) },\n    J { name: \"e\", deps: [\"a\"], action: value(1) },\n]\nexpect(\"plan\", jobs.plan(list), [[\"a\"], [\"b\", \"e\"], [\"c\"], [\"d\"]])\nfinish()"
+  },
+  {
+   "id": "plan-repeated-dependency",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"a\", action: value(1) },\n    J { name: \"b\", deps: [\"a\", \"a\"], action: value(1) },\n]\nexpect(\"plan\", jobs.plan(list), [[\"a\"], [\"b\"]])\nfinish()"
+  },
+  {
+   "id": "plan-does-not-run-actions",
+   "kind": "program",
+   "source": "var calls = 0\nval counted = fn(inputs) { calls = calls + 1 }\njobs.plan([J { name: \"a\", action: counted }, J { name: \"b\", deps: [\"a\"], action: counted }])\nexpect(\"calls\", calls, 0)\nfinish()"
+  },
+  {
+   "id": "invalid-duplicate",
+   "kind": "program",
+   "source": "val data = invalidData(fn() {\n    jobs.plan([J { name: \"a\", action: value(1) }, J { name: \"b\", action: value(1) }, J { name: \"a\", action: value(2) }])\n})\nexpect(\"reason\", data.reason, \"duplicate\")\nexpect(\"name\", data.name, \"a\")\nfinish()"
+  },
+  {
+   "id": "invalid-first-duplicate",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"x\", action: value(1) },\n    J { name: \"y\", action: value(1) },\n    J { name: \"y\", action: value(1) },\n    J { name: \"x\", action: value(1) },\n]\nval data = invalidData(fn() { jobs.plan(list) })\nexpect(\"reason\", data.reason, \"duplicate\")\nexpect(\"name\", data.name, \"y\")\nfinish()"
+  },
+  {
+   "id": "invalid-duplicate-before-missing",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"a\", deps: [\"nowhere\"], action: value(1) },\n    J { name: \"b\", action: value(1) },\n    J { name: \"b\", action: value(1) },\n]\nval data = invalidData(fn() { jobs.plan(list) })\nexpect(\"reason\", data.reason, \"duplicate\")\nexpect(\"name\", data.name, \"b\")\nfinish()"
+  },
+  {
+   "id": "invalid-missing",
+   "kind": "program",
+   "source": "val data = invalidData(fn() {\n    jobs.plan([J { name: \"a\", action: value(1) }, J { name: \"b\", deps: [\"a\", \"c\"], action: value(1) }])\n})\nexpect(\"reason\", data.reason, \"missing\")\nexpect(\"name\", data.name, \"b\")\nexpect(\"dependency\", data.dependency, \"c\")\nfinish()"
+  },
+  {
+   "id": "invalid-first-missing",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"a\", action: value(1) },\n    J { name: \"b\", deps: [\"q\", \"p\"], action: value(1) },\n    J { name: \"c\", deps: [\"r\"], action: value(1) },\n]\nval data = invalidData(fn() { jobs.plan(list) })\nexpect(\"reason\", data.reason, \"missing\")\nexpect(\"name\", data.name, \"b\")\nexpect(\"dependency\", data.dependency, \"q\")\nfinish()"
+  },
+  {
+   "id": "invalid-self-cycle",
+   "kind": "program",
+   "source": "val data = invalidData(fn() { jobs.plan([J { name: \"loop\", deps: [\"loop\"], action: value(1) }]) })\nexpect(\"reason\", data.reason, \"cycle\")\nexpect(\"names\", data.names, [\"loop\"])\nfinish()"
+  },
+  {
+   "id": "invalid-cycle-names",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"free\", action: value(1) },\n    J { name: \"up\", deps: [\"free\"], action: value(1) },\n    J { name: \"p\", deps: [\"q\", \"up\"], action: value(1) },\n    J { name: \"q\", deps: [\"p\"], action: value(1) },\n    J { name: \"down\", deps: [\"q\"], action: value(1) },\n    J { name: \"other\", deps: [\"free\"], action: value(1) },\n]\nval data = invalidData(fn() { jobs.plan(list) })\nexpect(\"reason\", data.reason, \"cycle\")\nexpect(\"names\", data.names, [\"down\", \"p\", \"q\"])\nfinish()"
+  },
+  {
+   "id": "invalid-missing-before-cycle",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"a\", deps: [\"b\"], action: value(1) },\n    J { name: \"b\", deps: [\"a\"], action: value(1) },\n    J { name: \"c\", deps: [\"gone\"], action: value(1) },\n]\nval data = invalidData(fn() { jobs.plan(list) })\nexpect(\"reason\", data.reason, \"missing\")\nexpect(\"name\", data.name, \"c\")\nfinish()"
+  },
+  {
+   "id": "invalid-run-runs-nothing",
+   "kind": "program",
+   "source": "var calls = 0\nval counted = fn(inputs) { calls = calls + 1 }\nval list = [\n    J { name: \"fine\", action: counted },\n    J { name: \"a\", deps: [\"b\"], action: counted },\n    J { name: \"b\", deps: [\"a\"], action: counted },\n]\nval data = invalidData(fn() { jobs.run(list) })\nexpect(\"reason\", data.reason, \"cycle\")\nexpect(\"names\", data.names, [\"a\", \"b\"])\nexpect(\"calls\", calls, 0)\nfinish()"
+  },
+  {
+   "id": "invalid-concurrency-zero",
+   "kind": "program",
+   "source": "var calls = 0\nval data = invalidData(fn() { jobs.run([J { name: \"a\", action: fn(inputs) { calls = calls + 1 } }], concurrency = 0) })\nexpect(\"reason\", data.reason, \"concurrency\")\nexpect(\"calls\", calls, 0)\nfinish()"
+  },
+  {
+   "id": "invalid-concurrency-fraction",
+   "kind": "program",
+   "source": "var calls = 0\nval data = invalidData(fn() { jobs.run([J { name: \"a\", action: fn(inputs) { calls = calls + 1 } }], concurrency = 1.5) })\nexpect(\"reason\", data.reason, \"concurrency\")\nexpect(\"calls\", calls, 0)\nfinish()"
+  },
+  {
+   "id": "invalid-concurrency-negative",
+   "kind": "program",
+   "source": "var calls = 0\nval data = invalidData(fn() { jobs.run([J { name: \"a\", action: fn(inputs) { calls = calls + 1 } }], concurrency = -2) })\nexpect(\"reason\", data.reason, \"concurrency\")\nexpect(\"calls\", calls, 0)\nfinish()"
+  },
+  {
+   "id": "run-empty",
+   "kind": "program",
+   "source": "expect(\"results\", jobs.run([]), {})\nfinish()"
+  },
+  {
+   "id": "run-single",
+   "kind": "program",
+   "source": "val results = jobs.run([J { name: \"only\", action: value(42) }])\noutcome(results, \"only\", S.Ok, 42, 1, nil)\nexpect(\"keys\", len(results), 1)\nfinish()"
+  },
+  {
+   "id": "run-inputs",
+   "kind": "program",
+   "source": "var seen = nil\nval list = [\n    J { name: \"sum\", deps: [\"x\", \"y\"], action: fn(inputs) { seen = inputs; inputs[\"x\"] + inputs[\"y\"] } },\n    J { name: \"x\", action: value(2) },\n    J { name: \"y\", deps: [\"x\"], action: fn(inputs) { inputs[\"x\"] * 10 } },\n]\nval results = jobs.run(list)\noutcome(results, \"x\", S.Ok, 2, 1, nil)\noutcome(results, \"y\", S.Ok, 20, 1, nil)\noutcome(results, \"sum\", S.Ok, 22, 1, nil)\nexpect(\"inputs\", seen, {x: 2, y: 20})\nfinish()"
+  },
+  {
+   "id": "run-inputs-only-direct-deps",
+   "kind": "program",
+   "source": "var seen = nil\nval list = [\n    J { name: \"a\", action: value(\"A\") },\n    J { name: \"b\", deps: [\"a\"], action: value(\"B\") },\n    J { name: \"c\", deps: [\"b\"], action: fn(inputs) { seen = inputs; \"C\" } },\n]\njobs.run(list)\nexpect(\"inputs\", seen, {b: \"B\"})\nfinish()"
+  },
+  {
+   "id": "run-no-deps-gets-empty-map",
+   "kind": "program",
+   "source": "var seen = nil\njobs.run([J { name: \"a\", action: fn(inputs) { seen = inputs; 1 } }])\nexpect(\"inputs\", seen, {})\nfinish()"
+  },
+  {
+   "id": "run-any-result-value",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"list\", action: value([1, [2]]) },\n    J { name: \"map\", action: value({k: \"v\"}) },\n    J { name: \"text\", action: value(\"t\") },\n    J { name: \"nothing\", action: fn(inputs) { nil } },\n    J { name: \"uses\", deps: [\"list\", \"map\", \"nothing\"], action: fn(inputs) { [inputs[\"list\"][1][0], inputs[\"map\"].k, inputs[\"nothing\"]] } },\n]\nval results = jobs.run(list)\noutcome(results, \"list\", S.Ok, [1, [2]], 1, nil)\noutcome(results, \"map\", S.Ok, {k: \"v\"}, 1, nil)\noutcome(results, \"nothing\", S.Ok, nil, 1, nil)\noutcome(results, \"uses\", S.Ok, [2, \"v\", nil], 1, nil)\nfinish()"
+  },
+  {
+   "id": "run-failure",
+   "kind": "program",
+   "source": "val results = jobs.run([J { name: \"bad\", action: fails(\"it broke\") }])\noutcome(results, \"bad\", S.Failed, nil, 1, \"it broke\")\nfinish()"
+  },
+  {
+   "id": "run-failure-skips-dependents",
+   "kind": "program",
+   "source": "var calls = 0\nval counted = fn(inputs) { calls = calls + 1 }\nval list = [\n    J { name: \"bad\", action: fails(\"no\") },\n    J { name: \"child\", deps: [\"bad\"], action: counted },\n    J { name: \"grandchild\", deps: [\"child\"], action: counted },\n    J { name: \"mixed\", deps: [\"ok\", \"grandchild\"], action: counted },\n    J { name: \"ok\", action: value(1) },\n    J { name: \"fine\", deps: [\"ok\"], action: fn(inputs) { inputs[\"ok\"] + 1 } },\n]\nval results = jobs.run(list)\noutcome(results, \"bad\", S.Failed, nil, 1, \"no\")\noutcome(results, \"child\", S.Skipped, nil, 0, nil)\noutcome(results, \"grandchild\", S.Skipped, nil, 0, nil)\noutcome(results, \"mixed\", S.Skipped, nil, 0, nil)\noutcome(results, \"ok\", S.Ok, 1, 1, nil)\noutcome(results, \"fine\", S.Ok, 2, 1, nil)\nexpect(\"calls\", calls, 0)\nexpect(\"keys\", len(results), 6)\nfinish()"
+  },
+  {
+   "id": "run-failure-does-not-cancel-siblings",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"quick-fail\", action: fails(\"early\") },\n    J { name: \"slow-1\", action: tracked(\"slow-1\", 60, \"one\") },\n    J { name: \"slow-2\", action: tracked(\"slow-2\", 80, \"two\") },\n    J { name: \"after-slow\", deps: [\"slow-1\", \"slow-2\"], action: fn(inputs) { inputs[\"slow-1\"] + inputs[\"slow-2\"] } },\n]\nval results = jobs.run(list)\noutcome(results, \"quick-fail\", S.Failed, nil, 1, \"early\")\noutcome(results, \"slow-1\", S.Ok, \"one\", 1, nil)\noutcome(results, \"slow-2\", S.Ok, \"two\", 1, nil)\noutcome(results, \"after-slow\", S.Ok, \"onetwo\", 1, nil)\nfinish()"
+  },
+  {
+   "id": "run-retries-succeed",
+   "kind": "program",
+   "source": "var calls = 0\nval flaky = fn(inputs) {\n    calls = calls + 1\n    if (calls < 3) { throw Error { type: \"test\", msg: \"attempt $calls\" } }\n    \"steady\"\n}\nval results = jobs.run([J { name: \"flaky\", action: flaky, retries: 5 }])\noutcome(results, \"flaky\", S.Ok, \"steady\", 3, nil)\nexpect(\"calls\", calls, 3)\nfinish()"
+  },
+  {
+   "id": "run-retries-exhausted",
+   "kind": "program",
+   "source": "var calls = 0\nval broken = fn(inputs) {\n    calls = calls + 1\n    throw Error { type: \"test\", msg: \"attempt $calls\" }\n}\nval list = [J { name: \"broken\", action: broken, retries: 2 }, J { name: \"next\", deps: [\"broken\"], action: value(1) }]\nval results = jobs.run(list)\noutcome(results, \"broken\", S.Failed, nil, 3, \"attempt 3\")\noutcome(results, \"next\", S.Skipped, nil, 0, nil)\nexpect(\"calls\", calls, 3)\nfinish()"
+  },
+  {
+   "id": "run-retries-get-same-inputs",
+   "kind": "program",
+   "source": "var seen = []\nvar calls = 0\nval list = [\n    J { name: \"src\", action: value(7) },\n    J { name: \"use\", deps: [\"src\"], retries: 1, action: fn(inputs) {\n        seen = seen :+ inputs\n        calls = calls + 1\n        if (calls == 1) { throw Error { type: \"test\", msg: \"first\" } }\n        inputs[\"src\"]\n    } },\n]\nval results = jobs.run(list)\noutcome(results, \"use\", S.Ok, 7, 2, nil)\nexpect(\"seen\", seen, [{src: 7}, {src: 7}])\nfinish()"
+  },
+  {
+   "id": "run-timeout",
+   "kind": "program",
+   "source": "var calls = 0\nval list = [\n    J { name: \"slow\", timeout: 40, action: fn(inputs) { sleep(400); \"late\" } },\n    J { name: \"after\", deps: [\"slow\"], action: fn(inputs) { calls = calls + 1 } },\n]\nval results = jobs.run(list)\noutcome(results, \"slow\", S.TimedOut, nil, 1, \"timeout\")\noutcome(results, \"after\", S.Skipped, nil, 0, nil)\nexpect(\"calls\", calls, 0)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-timeout-then-retry",
+   "kind": "program",
+   "source": "var calls = 0\nval list = [J { name: \"sometimes\", timeout: 50, retries: 2, action: fn(inputs) {\n    calls = calls + 1\n    if (calls == 1) { sleep(300) }\n    \"attempt $calls\"\n} }]\nval results = jobs.run(list)\noutcome(results, \"sometimes\", S.Ok, \"attempt 2\", 2, nil)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-timeout-retries-exhausted",
+   "kind": "program",
+   "source": "val list = [J { name: \"stuck\", timeout: 30, retries: 1, action: fn(inputs) { sleep(200); 1 } }]\nval results = jobs.run(list)\noutcome(results, \"stuck\", S.TimedOut, nil, 2, \"timeout\")\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-timeout-failure-reports-failure",
+   "kind": "program",
+   "source": "val list = [J { name: \"fast-fail\", timeout: 500, action: fails(\"quickly\") }]\nval results = jobs.run(list)\noutcome(results, \"fast-fail\", S.Failed, nil, 1, \"quickly\")\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-timeout-not-reached",
+   "kind": "program",
+   "source": "val list = [J { name: \"in-time\", timeout: 500, action: fn(inputs) { sleep(20); \"made it\" } }]\noutcome(jobs.run(list), \"in-time\", S.Ok, \"made it\", 1, nil)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-zero-timeout-waits",
+   "kind": "program",
+   "source": "val list = [J { name: \"patient\", action: fn(inputs) { sleep(150); \"done\" } }]\noutcome(jobs.run(list), \"patient\", S.Ok, \"done\", 1, nil)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-timeout-abandoned-failure-is-contained",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"slow-fail\", timeout: 30, action: fn(inputs) { sleep(150); throw Error { type: \"test\", msg: \"late\" } } },\n    J { name: \"neighbour\", action: tracked(\"neighbour\", 250, \"fine\") },\n]\nval results = jobs.run(list)\noutcome(results, \"slow-fail\", S.TimedOut, nil, 1, \"timeout\")\noutcome(results, \"neighbour\", S.Ok, \"fine\", 1, nil)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-concurrency-default",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 10) { out } else {\n        val name = \"job-$i\"\n        recur(i + 1, out :+ J { name: name, action: tracked(name, 40, i) })\n    }\n}\nval results = jobs.run(make(0, []))\nexpect(\"peak\", peak, 4)\nexpect(\"active\", active, 0)\nexpect(\"count\", len(results), 10)\nexpect(\"value\", results[\"job-3\"].value, 3)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-concurrency-two",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 7) { out } else {\n        val name = \"job-$i\"\n        recur(i + 1, out :+ J { name: name, action: tracked(name, 40, i) })\n    }\n}\nval results = jobs.run(make(0, []), concurrency = 2)\nexpect(\"peak\", peak, 2)\nexpect(\"active\", active, 0)\nexpect(\"count\", len(results), 7)\nexpect(\"value\", results[\"job-3\"].value, 3)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-concurrency-one",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 4) { out } else {\n        val name = \"job-$i\"\n        recur(i + 1, out :+ J { name: name, action: tracked(name, 40, i) })\n    }\n}\nval results = jobs.run(make(0, []), concurrency = 1)\nexpect(\"peak\", peak, 1)\nexpect(\"active\", active, 0)\nexpect(\"count\", len(results), 4)\nexpect(\"value\", results[\"job-3\"].value, 3)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-concurrency-above-job-count",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 5) { out } else {\n        val name = \"job-$i\"\n        recur(i + 1, out :+ J { name: name, action: tracked(name, 40, i) })\n    }\n}\nval results = jobs.run(make(0, []), concurrency = 10)\nexpect(\"peak\", peak, 5)\nexpect(\"active\", active, 0)\nexpect(\"count\", len(results), 5)\nexpect(\"value\", results[\"job-3\"].value, 3)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-deps-finish-before-dependents-start",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"d\", deps: [\"b\", \"c\"], action: tracked(\"d\", 10, 4) },\n    J { name: \"c\", deps: [\"a\"], action: tracked(\"c\", 10, 3) },\n    J { name: \"b\", deps: [\"a\"], action: tracked(\"b\", 50, 2) },\n    J { name: \"a\", action: tracked(\"a\", 30, 1) },\n    J { name: \"e\", action: tracked(\"e\", 5, 5) },\n]\njobs.run(list, concurrency = 3)\nval position = fn(event, i) {\n    if (i == len(events)) { -1 } else if (events[i] == event) { i } else { recur(event, i + 1) }\n}\nval before = fn(dep, job) {\n    expect(dep + \" ends before \" + job + \" starts\", position([\"end\", dep], 0) < position([\"start\", job], 0), true)\n}\nbefore(\"a\", \"b\")\nbefore(\"a\", \"c\")\nbefore(\"b\", \"d\")\nbefore(\"c\", \"d\")\nexpect(\"events\", len(events), 10)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "run-independent-jobs-overlap",
+   "kind": "program",
+   "source": "val list = [\n    J { name: \"root\", action: tracked(\"root\", 10, 0) },\n    J { name: \"left\", deps: [\"root\"], action: tracked(\"left\", 80, 1) },\n    J { name: \"right\", deps: [\"root\"], action: tracked(\"right\", 80, 2) },\n]\njobs.run(list, concurrency = 2)\nexpect(\"peak\", peak, 2)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "log-lines",
+   "kind": "program",
+   "source": "val fs = import(\"slug.io.fs\")\nval path = \"jobs-log.txt\"\nval list = [\n    J { name: \"a\", action: value(1) },\n    J { name: \"b\", deps: [\"a\"], action: fails(\"x\"), retries: 1 },\n    J { name: \"c\", deps: [\"b\"], action: value(1) },\n    J { name: \"t\", timeout: 20, action: fn(inputs) { sleep(200) } },\n    J { name: \"d\", deps: [\"a\"], action: value(1) },\n]\njobs.run(list, log = path)\nval file = fs.openRead(path)\nval read = fn(out) {\n    val line = fs.readLine(file)\n    if (line == nil) { out } else { recur(out :+ line) }\n}\nval lines = read([])\nfs.close(file)\nval s = import(\"slug.string\")\nexpect(\"lines\", s.sort(lines), [\"a ok 1\", \"b failed 2\", \"c skipped 0\", \"d ok 1\", \"t timed_out 1\"])\nval index = fn(prefix, i) {\n    if (i == len(lines)) { -1 } else if (lines[i][:len(prefix)] == prefix) { i } else { recur(prefix, i + 1) }\n}\nexpect(\"a before b\", index(\"a \", 0) < index(\"b \", 0), true)\nexpect(\"b before c\", index(\"b \", 0) < index(\"c \", 0), true)\nexpect(\"a before d\", index(\"a \", 0) < index(\"d \", 0), true)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "log-truncates",
+   "kind": "program",
+   "source": "val fs = import(\"slug.io.fs\")\nval path = \"jobs-log.txt\"\nval old = fs.openWrite(path)\nfs.write(old, \"stale line one\\nstale line two\\nstale line three\\n\")\nfs.close(old)\njobs.run([J { name: \"only\", action: value(1) }], log = path)\nval file = fs.openRead(path)\nval first = fs.readLine(file)\nval second = fs.readLine(file)\nfs.close(file)\nexpect(\"first\", first, \"only ok 1\")\nexpect(\"second\", second, nil)\nfinish()"
+  },
+  {
+   "id": "log-empty-run",
+   "kind": "program",
+   "source": "val fs = import(\"slug.io.fs\")\nval path = \"jobs-log.txt\"\njobs.run([], log = path)\nval file = fs.openRead(path)\nval first = fs.readLine(file)\nfs.close(file)\nexpect(\"first\", first, nil)\nfinish()"
+  },
+  {
+   "id": "size-plan-wide",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 2000) { out } else { recur(i + 1, out :+ J { name: \"n$i\", action: value(i) }) }\n}\nval waves = jobs.plan(make(0, []))\nexpect(\"waves\", len(waves), 1)\nexpect(\"width\", len(waves[0]), 2000)\nexpect(\"first\", waves[0][0], \"n0\")\nexpect(\"sorted\", waves[0][1], \"n1\")\nexpect(\"sorted later\", waves[0][2], \"n10\")\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "size-plan-chain",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 400) { out } else {\n        val prev = i - 1\n        val deps = if (i == 0) { [] } else { [\"n$prev\"] }\n        recur(i + 1, [J { name: \"n$i\", deps: deps, action: value(i) }] + out)\n    }\n}\nval waves = jobs.plan(make(0, []))\nexpect(\"waves\", len(waves), 400)\nexpect(\"last\", waves[399], [\"n399\"])\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "size-run-chain",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 300) { out } else {\n        val name = fn(k) { \"n$k\" }\n        val deps = if (i == 0) { [] } else { [name(i - 1)] }\n        val dep = if (i == 0) { nil } else { name(i - 1) }\n        recur(i + 1, out :+ J { name: name(i), deps: deps, action: fn(inputs) { if (dep == nil) { 0 } else { inputs[dep] + 1 } } })\n    }\n}\nval results = jobs.run(make(0, []))\noutcome(results, \"n299\", S.Ok, 299, 1, nil)\nfinish()",
+   "seconds": 10
+  },
+  {
+   "id": "size-run-wide",
+   "kind": "program",
+   "source": "val make = fn(i, out) {\n    if (i == 1000) { out } else { recur(i + 1, out :+ J { name: \"w$i\", action: value(i) }) }\n}\nval list = make(0, []) :+ J { name: \"total\", deps: [\"w0\", \"w500\", \"w999\"], action: fn(inputs) { inputs[\"w0\"] + inputs[\"w500\"] + inputs[\"w999\"] } }\nval results = jobs.run(list, concurrency = 16)\nexpect(\"count\", len(results), 1001)\noutcome(results, \"total\", S.Ok, 1499, 1, nil)\nfinish()",
+   "seconds": 10
+  }
+ ]
+}

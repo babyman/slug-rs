@@ -31,8 +31,14 @@ default or Claude Code, headless on small tasks, once per feature arm and severa
   Cases may set a `generate` recipe, for documents too large to store, and a
   `seconds` time limit. `reference/json.slug` is a naive baseline for agents
   to beat: it fails the cases marked `reference_fails`, such as correctly
-  rounded numbers, and passes the rest. Project runs default to a $5 budget
-  and a 45-minute timeout and use the coding arms.
+  rounded numbers, and passes the rest. `jobs/` asks for a concurrent job
+  runner, `jobs.slug`: dependency planning and validation, a concurrency
+  limit, retries, timeouts, failures that skip dependents without stopping
+  other jobs, and a log file. Its 52 cases are `program` cases: whole Slug
+  programs, run after the suite's shared `prelude`, that print `PASS`; some
+  depend on timing, with margins of tens of milliseconds. Its reference passes
+  every case; `make_cases.py` regenerates `cases.json`. Project runs default to a $5 budget and a 45-minute timeout and
+  use the coding arms.
 
 The small coding tasks are a quick smoke check after language changes; the
 projects are the main experiment.

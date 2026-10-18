@@ -4,6 +4,10 @@ Each case runs as its own program beside the agent's module, so a crash,
 wrong error, or infinite loop fails only that case. Inputs and expected JSON
 text reach the program through `cfg`, read from a slug.toml, so they need no
 escaping into Slug source.
+
+A `program` case is a whole Slug program, `source`, run after the project's
+shared `prelude` from cases.json; it passes when it prints exactly `PASS`.
+`{module}` in either is replaced by the module name.
 """
 
 import json
@@ -77,8 +81,12 @@ check()
 }
 
 
+def load_suite(project_dir):
+    return json.loads((Path(project_dir) / "cases.json").read_text())
+
+
 def load_cases(project_dir):
-    return [expand(case) for case in json.loads((Path(project_dir) / "cases.json").read_text())["cases"]]
+    return [expand(case) for case in load_suite(project_dir)["cases"]]
 
 
 def expand(case):
@@ -110,7 +118,9 @@ def expand(case):
     return {**case, "input": text, "expect": expect}
 
 
-def case_program(case, module):
+def case_program(case, module, prelude=""):
+    if case["kind"] == "program":
+        return (prelude + "\n" + case["source"]).replace("{module}", module)
     offset = case.get("offset")
     return PROGRAMS[case["kind"]].format(
         module=module,
@@ -132,12 +142,12 @@ def case_toml(case):
     return "\n".join(lines) + "\n"
 
 
-def run_case(slug, slug_home, module_path, module, case):
+def run_case(slug, slug_home, module_path, module, case, prelude=""):
     """Returns (passed, detail) for one case. A case's `seconds` bounds its
     run time, including Slug startup."""
     with tempfile.TemporaryDirectory(prefix="slug-eval-project-") as directory:
         shutil.copyfile(module_path, os.path.join(directory, f"{module}.slug"))
-        Path(directory, "case.slug").write_text(case_program(case, module))
+        Path(directory, "case.slug").write_text(case_program(case, module, prelude))
         Path(directory, "slug.toml").write_text(case_toml(case))
         try:
             completed = subprocess.run(
@@ -158,7 +168,8 @@ def run_case(slug, slug_home, module_path, module, case):
 def grade(slug, slug_home, project_dir, module_path, module):
     """Runs every case and returns per-case outcomes."""
     outcomes = []
+    prelude = load_suite(project_dir).get("prelude", "")
     for case in load_cases(project_dir):
-        passed, detail = run_case(slug, slug_home, module_path, module, case)
+        passed, detail = run_case(slug, slug_home, module_path, module, case, prelude)
         outcomes.append({"id": case["id"], "kind": case["kind"], "passed": passed, "detail": detail})
     return outcomes
