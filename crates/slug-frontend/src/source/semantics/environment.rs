@@ -78,6 +78,9 @@ pub(super) struct SemanticBinding {
     /// declaration. `value_type` is then its current type, which assignments
     /// and nil tests refine for the code that follows.
     pub(super) declared: Option<Type>,
+    /// An implicit builtin, such as `close`, which a declaration of the same
+    /// name replaces rather than overloads, as it does at runtime.
+    pub(super) implicit: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +126,7 @@ impl SemanticBinding {
             type_members: HashMap::new(),
             module_binding: false,
             declared: None,
+            implicit: false,
         }
     }
 
@@ -137,6 +141,7 @@ impl SemanticBinding {
             type_members: HashMap::new(),
             module_binding: false,
             declared: None,
+            implicit: false,
         }
     }
 
@@ -154,6 +159,7 @@ impl SemanticBinding {
             type_members,
             module_binding: true,
             declared: None,
+            implicit: false,
         }
     }
 
@@ -294,10 +300,12 @@ impl Environment {
         else {
             return;
         };
+        let mut binding = binding.clone();
+        binding.implicit = true;
         self.scopes
             .first_mut()
             .expect("a semantic environment always has a root scope")
-            .insert(name.into(), binding.clone());
+            .insert(name.into(), binding);
     }
 
     pub(super) fn import_snapshot(&self, name: &str) -> Option<ModuleSnapshot> {
@@ -344,7 +352,7 @@ impl Environment {
             scope.insert(name, SemanticBinding::callable(signature));
             return Ok(());
         };
-        if existing.callables.is_empty() {
+        if existing.callables.is_empty() || existing.implicit {
             *existing = SemanticBinding::callable(signature);
             return Ok(());
         }

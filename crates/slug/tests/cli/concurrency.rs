@@ -541,3 +541,40 @@ fn a_variable_named_limit_can_be_a_nursery_limit() {
     );
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "[1, 2]\n");
 }
+
+#[test]
+fn a_blocked_task_is_reported_where_it_waits() {
+    for (name, source, line) in [
+        (
+            "blocked-in-call",
+            "val c = chan()\nval wait = fn() {\n  select { recv c }\n}\nwait()\n",
+            3,
+        ),
+        (
+            "blocked-child",
+            "val c = chan()\nval t = spawn { select { recv c } }\nprintln(\"spawned\")\n",
+            2,
+        ),
+    ] {
+        let path = fixture_path(name);
+        fs::write(&path, source).expect("write blocked task source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run blocked task source");
+        fs::remove_file(&path).expect("remove blocked task source");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let line_text = stderr
+            .lines()
+            .find(|line| line.starts_with('{'))
+            .expect("a diagnostic");
+        let diagnostic: serde_json::Value =
+            serde_json::from_str(line_text).expect("diagnostic JSON");
+        assert_eq!(
+            diagnostic["message"],
+            "task remains blocked with no runnable work"
+        );
+        assert_eq!(diagnostic["location"]["line"], line, "{name}: {diagnostic}");
+    }
+}

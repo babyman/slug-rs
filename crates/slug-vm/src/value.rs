@@ -866,6 +866,15 @@ impl Task {
         }
     }
 
+    /// For a task still suspended, the error reporting that it can never
+    /// resume, located where it waits.
+    pub(crate) fn blocked_error(&self) -> Option<crate::RuntimeError> {
+        match &self.state.borrow().phase {
+            TaskPhase::Pending(execution) => Some(execution.blocked_error()),
+            TaskPhase::Running | TaskPhase::Settled(_) => None,
+        }
+    }
+
     pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
         let phase = mem::replace(&mut state.phase, TaskPhase::Running);

@@ -109,6 +109,15 @@ impl Nursery {
             .find_map(|task| task.unobserved_error())
     }
 
+    /// The error of the first task that is still waiting, located where it
+    /// waits.
+    pub(super) fn first_blocked_error(&self) -> Option<RuntimeError> {
+        self.tasks
+            .borrow()
+            .iter()
+            .find_map(|task| task.blocked_error())
+    }
+
     pub(super) fn cancel_all(&self, error: &RuntimeError) {
         for task in self.tasks.borrow().iter() {
             task.cancel(error);
@@ -131,12 +140,17 @@ impl Nursery {
             }
             if !self.wait_for_progress() {
                 let body_error = result.as_ref().err().cloned();
+                // Report the first task that is still waiting, where it waits,
+                // rather than the settling owner.
+                let blocked = self
+                    .first_blocked_error()
+                    .unwrap_or_else(|| blocked.clone());
                 self.cancel_all(if body_error.is_some() {
                     cancellation
                 } else {
-                    blocked
+                    &blocked
                 });
-                return Err(body_error.unwrap_or_else(|| blocked.clone()));
+                return Err(body_error.unwrap_or(blocked));
             }
         }
     }

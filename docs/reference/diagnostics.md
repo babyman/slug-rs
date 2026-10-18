@@ -83,7 +83,7 @@ kinds exist:
 | Code | Suggestion |
 |---|---|
 | `invalid_number` | For an integer literal larger than 9223372036854775807 whose value a float would round, appending `.0` to make it a float; the message gives the rounded value. When the float holds the value exactly, the edit is a fix instead. |
-| `module_not_found` | Each available module whose name is close to the requested one, nearest first, at most three: one with the same last segment, such as `slug.io.stdin` for `slug.stdin`, or else one within a small edit distance, such as `utils` for `utlis`. The desktop host considers installed clutch modules and the `.slug` files in each searched directory. When the `import` names the module with a plain string literal, the diagnostic's `location` and `range` are that literal and each suggestion replaces it. |
+| `module_not_found` | Each available module whose name is close to the requested one, nearest first, at most three: one with the same last segment, such as `slug.io.stdin` for `slug.stdin`, or else one within a small edit distance, such as `utils` for `utlis`. The desktop host considers installed clutch modules and the `.slug` files in each searched directory. When the `import` names the module with a plain string literal, the diagnostic's `location` and `range` are that literal and each suggestion replaces it. A file with the module's name up to four directories above a searched one, such as `../jobs.slug` from a program in `tests/`, adds a suggestion naming it, with no edits, since imports cannot reach upward. |
 
 ## Text form
 

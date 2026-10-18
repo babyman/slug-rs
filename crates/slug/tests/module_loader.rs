@@ -51,6 +51,7 @@ impl ModuleResolver for OpaqueKeyResolver {
                     name: request.name.into(),
                     searched: Vec::new(),
                     suggestions: Vec::new(),
+                    elsewhere: Vec::new(),
                 });
             }
         };
@@ -76,6 +77,7 @@ impl ModuleResolver for MemoryResolver {
                 name: request.name.into(),
                 searched: Vec::new(),
                 suggestions: Vec::new(),
+                elsewhere: Vec::new(),
             })?;
         Ok(ModuleSource {
             key: ModuleKey::new(format!("memory:{}", request.name)),

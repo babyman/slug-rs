@@ -251,6 +251,9 @@ pub struct VmMetrics {
     pub program_clone_bytes: usize,
 }
 
+/// Reported when no task can make progress while one is still waiting.
+const BLOCKED_TASK_MESSAGE: &str = "task remains blocked with no runnable work";
+
 /// The independently owned interpreter state for a spawned task.
 ///
 /// It currently runs to settlement, but keeping the VM intact makes future
@@ -314,6 +317,12 @@ enum RuntimeSelectCase {
 
 #[cfg(feature = "concurrency")]
 impl TaskExecution {
+    /// The error reporting that this suspended task can never resume, at the
+    /// operation it is suspended in and with its own call frames.
+    pub(crate) fn blocked_error(&self) -> RuntimeError {
+        self.vm.suspended_error()
+    }
+
     fn run(mut self) -> TaskRunOutcome {
         match self.vm.execute() {
             ExecutionOutcome::Suspended => {
@@ -1786,13 +1795,7 @@ impl Vm {
                         .and_then(|execution| execution.result.as_ref())
                         .and_then(|result| result.as_ref().err())
                         .cloned()
-                        .unwrap_or_else(|| {
-                            self.error(
-                                RuntimeErrorKind::InvalidCall,
-                                "task remains blocked with no runnable work".into(),
-                                None,
-                            )
-                        });
+                        .unwrap_or_else(|| self.blocked_error());
                     if let Some(execution) = self.host_execution.take() {
                         self.release_host_execution(execution, Some(&result));
                     }
@@ -1917,11 +1920,8 @@ impl Vm {
                         if let Some(wait_registration) = self.wait_registration.take() {
                             wait_registration.remove_for_waiter(&Waiter::root(root.clone()));
                         }
-                        let blocked = self.error(
-                            RuntimeErrorKind::InvalidCall,
-                            "task remains blocked with no runnable work".into(),
-                            None,
-                        );
+                        // The root itself is waiting, at its own position.
+                        let blocked = self.blocked_error();
                         #[cfg(feature = "concurrency")]
                         return self.settle_tasks(&Err(blocked));
                         #[cfg(not(feature = "concurrency"))]
@@ -3456,11 +3456,7 @@ impl Vm {
             "sibling cancelled due to fail-fast".into(),
             None,
         );
-        let blocked = self.error(
-            RuntimeErrorKind::InvalidCall,
-            "task remains blocked with no runnable work".into(),
-            None,
-        );
+        let blocked = self.blocked_error();
         self.nursery.settle(result, &cancellation, &blocked)
     }
 
@@ -3536,10 +3532,7 @@ impl Vm {
         nursery.enqueue(body.clone());
         nursery.run_task(&body);
         if body.is_pending() {
-            let blocked = self.error_at(
-                RuntimeErrorKind::InvalidCall,
-                "task remains blocked with no runnable work".into(),
-            );
+            let blocked = self.error_at(RuntimeErrorKind::InvalidCall, BLOCKED_TASK_MESSAGE.into());
             nursery.cancel_all(&blocked);
             body.cancel(&blocked);
             return Err(blocked);
@@ -4893,6 +4886,36 @@ impl Vm {
 
     #[cold]
     #[inline(never)]
+    /// The error for a stalled program. When this VM has nothing of its own
+    /// to wait for, the blocked work is a child task's, reported where it
+    /// waits.
+    fn blocked_error(&self) -> RuntimeError {
+        #[cfg(feature = "concurrency")]
+        if self.suspension.is_none()
+            && let Some(error) = self.nursery.first_blocked_error()
+        {
+            return error;
+        }
+        self.suspended_error()
+    }
+
+    /// The error for this VM, suspended and never to resume, located at the
+    /// `select` it waits in when one is recorded.
+    fn suspended_error(&self) -> RuntimeError {
+        #[cfg(feature = "concurrency")]
+        let span = match &self.suspension {
+            Some(Suspension::Select { span: Some(span) }) => Some(span.clone()),
+            _ => self.owned_span(None),
+        };
+        #[cfg(not(feature = "concurrency"))]
+        let span = self.owned_span(None);
+        self.error(
+            RuntimeErrorKind::InvalidCall,
+            BLOCKED_TASK_MESSAGE.into(),
+            span,
+        )
+    }
+
     fn error_at(&self, kind: RuntimeErrorKind, message: String) -> RuntimeError {
         self.error(kind, message, self.owned_span(None))
     }

@@ -282,6 +282,15 @@ impl Diagnostic {
                     .collect(),
             })
             .collect();
+        // Imports cannot reach upward, so a module above the search has no
+        // edit; the importing file must move beside it.
+        self.suggestions
+            .extend(missing.elsewhere.iter().map(|path| DiagnosticFix {
+                message: format!(
+                    "`{path}` exists outside the directories searched: imports look only in the importing file's directory, the program's directory, and installed modules, so move the importing file beside it"
+                ),
+                edits: Vec::new(),
+            }));
     }
 
     /// Renders this document as command-line text: the same members as the

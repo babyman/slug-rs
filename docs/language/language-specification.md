@@ -663,7 +663,10 @@ the imported overload set.
 `slug.builtin` is the small, host-provided foundation module. When the host
 registers matching bindings, its exports are implicitly available in every
 module and may also be imported explicitly with `import("slug.builtin")`.
-Local declarations take precedence over implicit builtin bindings. A host that
+Local declarations take precedence over implicit builtin bindings: a module
+that declares a function named like a builtin, such as `close`, replaces the
+builtin there rather than adding an overload to it, so `slug.io.fs`'s `close`
+accepts only files. A host that
 does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 

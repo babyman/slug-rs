@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- A module function named like an implicit builtin now replaces the builtin
+  in the checker, as the specification and the runtime already did, rather
+  than adding an overload. `fs.close(file)` with an unannotated or
+  `nil`-initialized `file` previously failed with
+  `ambiguous overload for close`, and `fs.close(channel)` type-checked and
+  then failed at runtime.
+
+- `task remains blocked with no runnable work` now reports where the blocked
+  task waits, with its call frames: the `select`, receive, or await that can
+  never complete. Previously it had no location.
+
+- A `module_not_found` for a module whose file is in a directory above the
+  search, as when a test in `tests/` imports a sibling of `tests/`, adds a
+  suggestion naming that file, such as `../jobs.slug`.
+
 - `slug.std`'s `map` and `find` accept lists that contain `nil`. `map` is no
   longer generic: its result holds whatever its function returns, so it is a
   plain `list`, where its old signature claimed the input's element type, and

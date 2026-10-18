@@ -15,6 +15,7 @@ impl ModuleResolver for NilLoader {
             name: request.name.into(),
             searched: Vec::new(),
             suggestions: Vec::new(),
+            elsewhere: Vec::new(),
         })
     }
 }
@@ -40,6 +41,7 @@ mod tests {
                 name: "example.module".into(),
                 searched: Vec::new(),
                 suggestions: Vec::new(),
+                elsewhere: Vec::new(),
             }
         );
     }

@@ -44,6 +44,7 @@ impl ModuleResolver for NoModuleResolver {
             name: request.name.into(),
             searched: Vec::new(),
             suggestions: Vec::new(),
+            elsewhere: Vec::new(),
         })
     }
 }

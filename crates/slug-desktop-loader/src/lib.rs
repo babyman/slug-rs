@@ -465,21 +465,71 @@ impl ModuleResolver for DesktopResolver {
                 activation: lease,
             });
         }
-        let local = local_module_names(&candidates);
-        Err(ModuleLoadError::NotFound {
-            name: request.name.into(),
+        Err(self.not_found(request.name, &candidates, &relative))
+    }
+}
+
+/// How many directories above a searched one to look for a misplaced module.
+const MODULE_SEARCH_ANCESTORS: usize = 4;
+
+/// The module's file in a directory above any searched root, where a program
+/// in a subdirectory, such as `tests/`, might expect its import to find it.
+/// Each is relative to the root it is above, such as `../jobs.slug`.
+fn modules_above<'a>(roots: impl Iterator<Item = &'a Path>, relative: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for root in roots {
+        // A relative root such as `.` has no ancestors of its own.
+        let Ok(root) = root.canonicalize() else {
+            continue;
+        };
+        let mut up = PathBuf::new();
+        for ancestor in root.ancestors().skip(1).take(MODULE_SEARCH_ANCESTORS) {
+            up.push("..");
+            if ancestor.join(relative).is_file() {
+                let shown = up.join(relative).to_string_lossy().into_owned();
+                if !found.contains(&shown) {
+                    found.push(shown);
+                }
+                break;
+            }
+        }
+    }
+    found
+}
+
+impl DesktopResolver {
+    /// The not-found error for `name`, with close module names and any file
+    /// of that name above the directories searched.
+    fn not_found(
+        &self,
+        name: &str,
+        candidates: &[(&Path, PathBuf)],
+        relative: &Path,
+    ) -> ModuleLoadError {
+        let local = local_module_names(candidates);
+        let library_root = self.library_root.as_deref();
+        let elsewhere = modules_above(
+            candidates
+                .iter()
+                .filter(|(root, _)| Some(*root) != library_root)
+                .map(|(root, _)| *root),
+            relative,
+        );
+        ModuleLoadError::NotFound {
+            name: name.into(),
             searched: candidates
                 .iter()
                 .map(|(_, path)| path.to_string_lossy().into_owned())
                 .collect(),
             suggestions: suggest_module_names(
-                request.name,
+                name,
                 local
                     .iter()
                     .map(String::as_str)
                     .chain(self.clutch_repository.module_names()),
             ),
-        })
+            elsewhere,
+        }
     }
 }
 

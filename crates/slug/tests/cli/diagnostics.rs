@@ -864,3 +864,30 @@ fn reserved_words_used_as_names_say_so() {
         assert_eq!(diagnostic["range"]["start"]["column"], column);
     }
 }
+
+#[test]
+fn a_module_above_the_search_is_named_without_an_edit() {
+    let root = std::env::temp_dir().join(format!("slug-cli-module-above-{}", std::process::id()));
+    fs::create_dir_all(root.join("tests")).expect("create module above root");
+    fs::write(root.join("jobs.slug"), "export val one = 1\n").expect("write module above");
+    let main = root.join("tests").join("basic.slug");
+    fs::write(&main, "val j = import(\"jobs\")\nprintln(j.one)\n").expect("write importer");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&main)
+        .output()
+        .expect("run module above source");
+    fs::remove_dir_all(&root).expect("remove module above root");
+
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(diagnostic["code"], "module_not_found");
+    let suggestion = &diagnostic["suggestions"][0];
+    assert!(
+        suggestion["message"]
+            .as_str()
+            .is_some_and(|message| message
+                .starts_with("`../jobs.slug` exists outside the directories searched")),
+        "{suggestion}"
+    );
+    assert_eq!(suggestion["edits"], serde_json::json!([]));
+}

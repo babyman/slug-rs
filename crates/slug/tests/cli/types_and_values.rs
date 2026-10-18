@@ -1928,3 +1928,40 @@ fn std_list_helpers_accept_lists_containing_nil() {
         "[false, true, false] [1, 2] 4\n"
     );
 }
+
+#[test]
+fn a_declaration_replaces_an_implicit_builtin_of_the_same_name() {
+    let path = fixture_path("builtin-shadowing");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write builtin shadowing source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run builtin shadowing source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // `fs.close` is one function, so an unannotated or nil-initialized
+    // argument resolves to it, and the builtin `close` still closes channels.
+    let (code, stdout, stderr) = run("val fs = import(\"slug.io.fs\")\n\
+         val closeFile = fn(file) { fs.close(file) }\n\
+         var file = nil\n\
+         file = fs.openWrite(\"builtin-shadowing.txt\")\n\
+         if (file != nil) { closeFile(file) }\n\
+         val ch = chan(1)\n\
+         close(ch)\n\
+         println(\"closed\")\n");
+    let _ = fs::remove_file(path.with_file_name("builtin-shadowing.txt"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "closed\n");
+
+    // A module's own `close` replaces the builtin there, as it does at runtime.
+    let (code, _, stderr) = run("val close = fn(x:num) { x }\nclose(chan(1))\n");
+    fs::remove_file(&path).expect("remove builtin shadowing source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("semantic error: expected num"), "{stderr}");
+}
