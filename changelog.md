@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A type mismatch whose value is a `var` that started as `nil` now says so and
+  names the declaration to annotate:
+  ``expected num, got any: `held` starts as `nil`, so its type is `any|nil`;
+  declare the type it holds, as in `var held:num|nil = nil` ``. A nested
+  function sees such a `var` only by its declared type, so state filled in by
+  one closure and read by another previously failed with a bare
+  `expected num, got any`.
+
 - A function whose unannotated parameters meet in a `+`, `-`, or `*` is typed
   by that operation's overloads only when every value it returns is the
   operation itself. `fn(a, b) { val sum = a + b; [sum] }` was typed as

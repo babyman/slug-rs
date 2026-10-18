@@ -1974,7 +1974,8 @@ fn check_expression_inner(
                 })
                 .transpose()?;
             if let Some(expected) = &declared {
-                require(expected, &actual, &expression.span)?;
+                require(expected, &actual, &expression.span)
+                    .map_err(|error| explain_nil_start(error, value, environment))?;
             }
             if callable.is_none() {
                 let mut binding = value_binding(value, &actual, environment, type_parameters)?;
@@ -2228,8 +2229,9 @@ fn check_expression_inner(
             let actual = check_expression(value, environment, type_parameters)?;
             if let Some(binding) = environment.lookup(name) {
                 let expected = binding.declared.as_ref().unwrap_or(&binding.value_type);
-                require(expected, &actual, &value.span)
-                    .map_err(|error| error.with_extent(value))?;
+                require(expected, &actual, &value.span).map_err(|error| {
+                    explain_nil_start(error.with_extent(value), value, environment)
+                })?;
             }
             if let Some(binding) = environment.lookup_mut(name) {
                 binding.callables.clear();
@@ -2242,8 +2244,9 @@ fn check_expression_inner(
         ExprKind::Return { value } => {
             let actual = check_expression(value, environment, type_parameters)?;
             if let Some(expected) = environment.expected_return() {
-                require(&expected, &actual, &value.span)
-                    .map_err(|error| error.with_extent(value))?;
+                require(&expected, &actual, &value.span).map_err(|error| {
+                    explain_nil_start(error.with_extent(value), value, environment)
+                })?;
             }
             environment.record_return(actual.clone());
             Ok(actual)
@@ -2574,7 +2577,8 @@ fn check_expression_inner(
                         )
                         .with_extent(value)
                     })?;
-                    require(&expected.value_type, &actual, &value.span)?;
+                    require(&expected.value_type, &actual, &value.span)
+                        .map_err(|error| explain_nil_start(error, value, environment))?;
                 }
             }
             if let Some(schema) = &schema_binding
@@ -2618,7 +2622,8 @@ fn check_expression_inner(
                         )
                         .with_extent(replacement)
                     })?;
-                    require(&expected.value_type, &actual, &replacement.span)?;
+                    require(&expected.value_type, &actual, &replacement.span)
+                        .map_err(|error| explain_nil_start(error, replacement, environment))?;
                 }
             }
             if let Type::Map(Some((key, value))) = &result {
@@ -4222,6 +4227,39 @@ fn require(expected: &Type, actual: &Type, span: &SourceSpan) -> Result<(), Sour
         )
         .with_expected_actual(expected_display, actual_display))
     }
+}
+
+/// Explains a mismatch whose value is a `var` that started as `nil`. Its type
+/// is then `any|nil`, and a nested function, which may run after any
+/// assignment, sees only that, so the fix is to declare the type it holds.
+fn explain_nil_start(
+    mut error: SourceError,
+    value: &Expr,
+    environment: &Environment,
+) -> SourceError {
+    let ExprKind::Name(name) = &value.kind else {
+        return error;
+    };
+    if !matches!(error.code, SourceErrorCode::TypeMismatch)
+        || !environment
+            .lookup(name)
+            .is_some_and(|binding| binding.starts_nil)
+    {
+        return error;
+    }
+    let Some(expected) = error.expected.clone() else {
+        return error;
+    };
+    let declared = if expected.split('|').any(|member| member == "nil") {
+        expected.to_string()
+    } else {
+        format!("{expected}|nil")
+    };
+    error.message = format!(
+        "{}: `{name}` starts as `nil`, so its type is `any|nil`; declare the type it holds, as in `var {name}:{declared} = nil`",
+        error.message
+    );
+    error
 }
 
 fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<(), SourceError> {

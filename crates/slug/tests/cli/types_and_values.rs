@@ -1847,6 +1847,27 @@ fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
             "{source}: {stderr}"
         );
     }
+
+    // A closure sees such a `var` only as `any|nil`, so a mismatch names the
+    // declaration to annotate.
+    for source in [
+        "var n = 1\nvar held = nil\nval take = fn() { if (held != nil) { n = held } }\n",
+        "var held = nil\nval take = fn():num { if (held != nil) { return held }; 0 }\n",
+        "val P = struct { n:num }\nvar held = nil\nval make = fn() { if (held != nil) { P { n: held } } }\n",
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains(
+                "expected num, got any: `held` starts as `nil`, so its type is `any|nil`; \
+                 declare the type it holds, as in `var held:num|nil = nil`"
+            ),
+            "{source}: {stderr}"
+        );
+    }
+    let (code, _, stderr) = run("var held:num|nil = nil\nvar n = 1\n\
+         val take = fn() { if (held != nil) { n = held } }\nheld = 2\ntake()\nprintln(n)\n");
+    assert_eq!(code, Some(0), "{stderr}");
     fs::remove_file(&path).expect("remove nil first value source");
 }
 

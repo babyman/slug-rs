@@ -78,6 +78,8 @@ pub(super) struct SemanticBinding {
     /// declaration. `value_type` is then its current type, which assignments
     /// and nil tests refine for the code that follows.
     pub(super) declared: Option<Type>,
+    /// A `var` whose first value is `nil`, so `declared` is `any|nil`.
+    pub(super) starts_nil: bool,
     /// An implicit builtin, such as `close`, which a declaration of the same
     /// name replaces rather than overloads, as it does at runtime.
     pub(super) implicit: bool,
@@ -126,6 +128,7 @@ impl SemanticBinding {
             type_members: HashMap::new(),
             module_binding: false,
             declared: None,
+            starts_nil: false,
             implicit: false,
         }
     }
@@ -141,6 +144,7 @@ impl SemanticBinding {
             type_members: HashMap::new(),
             module_binding: false,
             declared: None,
+            starts_nil: false,
             implicit: false,
         }
     }
@@ -159,6 +163,7 @@ impl SemanticBinding {
             type_members,
             module_binding: true,
             declared: None,
+            starts_nil: false,
             implicit: false,
         }
     }
@@ -397,6 +402,7 @@ impl Environment {
         if let Some(binding) = self.scopes.last_mut().and_then(|scope| scope.get_mut(name)) {
             if binding.value_type == Type::Nil {
                 binding.value_type = Type::universal();
+                binding.starts_nil = true;
             }
             binding.declared = Some(binding.value_type.clone());
         }
