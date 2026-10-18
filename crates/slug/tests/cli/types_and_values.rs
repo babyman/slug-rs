@@ -1903,3 +1903,28 @@ fn an_error_handlers_value_joins_the_function_result() {
     assert_eq!(code, Some(1));
     assert!(stderr.contains("expected str, found num"), "{stderr}");
 }
+
+#[test]
+fn std_list_helpers_accept_lists_containing_nil() {
+    let path = fixture_path("std-lists-with-nil");
+    fs::write(
+        &path,
+        "val {map, find} = import(\"slug.std\")\n\
+         val flags = map([0, nil, \"2\"], fn(v) { v == nil })\n\
+         val lengths = map([\"a\", \"bb\"], fn(s) { len(s) })\n\
+         val found:num|nil = find([nil, 3, 4], fn(v) { v != nil && v > 3 })\n\
+         println(flags, lengths, found)\n",
+    )
+    .expect("write std nil list source");
+    let output = slug().arg(&path).output().expect("run std nil list source");
+    fs::remove_file(path).expect("remove std nil list source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[false, true, false] [1, 2] 4\n"
+    );
+}

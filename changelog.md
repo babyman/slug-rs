@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `slug.std`'s `map` and `find` accept lists that contain `nil`. `map` is no
+  longer generic: its result holds whatever its function returns, so it is a
+  plain `list`, where its old signature claimed the input's element type, and
+  `val xs:list<str> = map(["a"], fn(s) { len(s) })` type-checked and then
+  failed at runtime. `find` takes `list<T|nil>` and still returns `T|nil`.
+
 - A `defer onerror` handler's value, which becomes the function's result when
   it recovers from an error, is now part of the function's inferred result and
   is checked against a declared result type. Previously
