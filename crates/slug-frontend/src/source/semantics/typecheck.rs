@@ -2016,6 +2016,7 @@ fn check_expression_inner(
         ExprKind::Block(values) => {
             let mut scoped = environment.clone();
             scoped.enter_scope();
+            predeclare_functions(values, &mut scoped);
             let mut result = Type::Nil;
             for value in values {
                 result = check_expression(value, &mut scoped, type_parameters)?;
@@ -2554,6 +2555,25 @@ fn check_expression_inner(
 /// The existing type checker remains the authority for an expression's value
 /// type. Flow-sensitive constructs progressively use this result to decide
 /// which environments can reach their continuation.
+/// Declares, as dynamic, each function a block declares by name, as the
+/// compiler hoists them, so an earlier function's call to a later one is not
+/// checked against an outer binding of that name. Each declaration then
+/// replaces its entry with the function's signature.
+fn predeclare_functions(values: &[Expr], environment: &mut Environment) {
+    for value in values {
+        if let ExprKind::Declare {
+            pattern: Pattern::Binding(name),
+            value: declared,
+            ..
+        } = &value.kind
+            && matches!(declared.kind, ExprKind::Function { .. })
+            && environment.lookup_in_scope(name).is_none()
+        {
+            environment.declare(name.clone(), SemanticBinding::value(Type::Unknown));
+        }
+    }
+}
+
 fn check_expression_with_flow(
     expression: &Expr,
     environment: &mut Environment,
@@ -2562,6 +2582,7 @@ fn check_expression_with_flow(
     if let ExprKind::Block(values) = &expression.kind {
         let mut scoped = environment.clone();
         scoped.enter_scope();
+        predeclare_functions(values, &mut scoped);
         let mut result = Type::Nil;
         for value in values {
             let checked = check_expression_with_flow(value, &mut scoped, type_parameters)?;

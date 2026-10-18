@@ -38,6 +38,13 @@ pub(super) struct State {
     chunk: Chunk,
     scopes: Vec<HashMap<String, Binding>>,
     callables: Vec<HashSet<String>>,
+    /// Per scope, the local functions whose slots were declared when the
+    /// block began and are not yet claimed by their declarations.
+    hoisted: Vec<HashSet<String>>,
+    /// Per scope, the other names the block declares later; and those of the
+    /// enclosing functions' blocks. Such a name cannot be used yet.
+    later: Vec<HashSet<String>>,
+    outer_later: HashSet<String>,
     outer: HashMap<String, Binding>,
     captures: Vec<CaptureRequest>,
     root: bool,
@@ -52,6 +59,9 @@ impl State {
             chunk: Chunk::new("main", 0),
             scopes: vec![HashMap::new()],
             callables: vec![HashSet::new()],
+            hoisted: vec![HashSet::new()],
+            later: vec![HashSet::new()],
+            outer_later: HashSet::new(),
             outer: HashMap::new(),
             captures: Vec::new(),
             root: true,
@@ -74,6 +84,9 @@ impl State {
             chunk: Chunk::new("<fn>", parameters.len()),
             scopes: vec![parameters_scope],
             callables: vec![HashSet::new()],
+            hoisted: vec![HashSet::new()],
+            later: vec![HashSet::new()],
+            outer_later: HashSet::new(),
             outer,
             captures: Vec::new(),
             root: false,
@@ -181,12 +194,81 @@ impl State {
     pub(super) fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.callables.push(HashSet::new());
+        self.hoisted.push(HashSet::new());
+        self.later.push(HashSet::new());
     }
     pub(super) fn leave_scope(&mut self) {
         self.scopes.pop();
         self.callables.pop();
+        self.hoisted.pop();
+        self.later.pop();
+    }
+    /// Records a name the current block declares later, other than a hoisted
+    /// function.
+    pub(super) fn declare_later(&mut self, name: &str) {
+        self.later
+            .last_mut()
+            .expect("a compiler state always has a scope")
+            .insert(name.into());
+    }
+    /// Whether `name` is declared later in an enclosing block, here or in an
+    /// enclosing function, and so cannot be used yet.
+    pub(super) fn declared_later(&self, name: &str) -> bool {
+        self.later.iter().any(|later| later.contains(name)) || self.outer_later.contains(name)
+    }
+    /// The names a nested function cannot use yet.
+    pub(super) fn inherit_later(&mut self, parent: &State) {
+        self.outer_later = parent
+            .later
+            .iter()
+            .flatten()
+            .chain(&parent.outer_later)
+            .cloned()
+            .collect();
+    }
+    /// Declares a local function's slot when its block begins, so functions
+    /// declared earlier in the block can call it; its declaration claims it.
+    pub(super) fn hoist(&mut self, name: &str, mutable: bool) {
+        let hoisted = self
+            .hoisted
+            .last_mut()
+            .expect("a compiler state always has a scope");
+        if hoisted.insert(name.into()) {
+            self.declare(name.into(), mutable, false);
+        }
+    }
+    /// Whether `name`, read in this function, is a local function hoisted in
+    /// an enclosing scope of it whose declaration has not run yet. A nested
+    /// function may refer to it, since that runs later, but a direct use
+    /// would find no function.
+    pub(super) fn before_declaration(&self, name: &str) -> bool {
+        for (scope, hoisted) in self.scopes.iter().zip(&self.hoisted).rev() {
+            if scope.contains_key(name) {
+                return hoisted.contains(name);
+            }
+        }
+        false
+    }
+    /// The slot hoisted for `name` in this scope, now claimed by its
+    /// declaration as a callable binding.
+    pub(super) fn claim_hoisted(&mut self, name: &str) -> Option<usize> {
+        if !self.hoisted.last_mut()?.remove(name) {
+            return None;
+        }
+        let Some(Binding::Local { slot, .. }) = self.scopes.last()?.get(name) else {
+            return None;
+        };
+        let slot = *slot;
+        self.callables
+            .last_mut()
+            .expect("a compiler state always has a callable scope")
+            .insert(name.into());
+        Some(slot)
     }
     pub(super) fn declare(&mut self, name: String, mutable: bool, callable: bool) -> usize {
+        if let Some(later) = self.later.last_mut() {
+            later.remove(&name);
+        }
         let slot = self.next_local;
         self.next_local += 1;
         self.scopes

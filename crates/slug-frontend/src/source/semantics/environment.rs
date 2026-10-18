@@ -415,6 +415,11 @@ impl Environment {
         }
     }
 
+    /// The binding of `name` in the innermost scope only.
+    pub(super) fn lookup_in_scope(&self, name: &str) -> Option<&SemanticBinding> {
+        self.scopes.last()?.get(name)
+    }
+
     pub(super) fn lookup(&self, name: &str) -> Option<&SemanticBinding> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }

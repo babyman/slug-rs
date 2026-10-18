@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Functions declared in a block with `val name = fn ...` can call functions
+  declared later in the same block, so local helpers can be mutually
+  recursive, as module-level functions already could. Previously the call
+  compiled to a module lookup and failed at runtime with `unknown name`.
+  Calling such a function before its declaration has run, or using a value
+  the block declares later, is now a compile-time error at the use. A local
+  function shadowing an outer one of the same name is now called by functions
+  declared earlier in the block too.
+
+- `a < b` is no longer misread as a type application when a `>` followed by
+  `(` appears anywhere later in the file, which reported
+  `expected > in type application` far from any generic call. Nested type
+  arguments may also close with `>>`, as in `list<list<str>>` and
+  `id<list<str>>(xs)`, which previously failed to parse.
+
 - A module function named like an implicit builtin now replaces the builtin
   in the checker, as the specification and the runtime already did, rather
   than adding an overload. `fs.close(file)` with an unannotated or

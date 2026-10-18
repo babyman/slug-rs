@@ -145,7 +145,12 @@ var_expr = "var" , match_pattern , [ ":" , type_annotation ] , "=" , expression 
 assignment = identifier , "=" , assignment | logical_or ;
 ```
 
-Bindings are lexical. A name resolves to its nearest enclosing binding. An
+Bindings are lexical. A name resolves to its nearest enclosing binding.
+Inside a function, a block's `val name = fn ...` and `var name = fn ...`
+declarations are visible throughout that block, so its functions may call one
+another in any order, as at module level. Using such a function directly
+before its declaration has run, or using another binding before the block
+declares it, is a static error at the use. An
 assignment changes an existing `var` binding and is invalid for a `val` binding
 or an unknown name. It evaluates to the value assigned, so an assignment may be
 the final expression of a function body or appear inside another expression.

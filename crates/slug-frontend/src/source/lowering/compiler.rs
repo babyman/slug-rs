@@ -341,11 +341,29 @@ impl Compiler {
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::NotImplemented => state.emit(Op::NotImplemented, &expression.span),
+            ExprKind::Name(name) if state.before_declaration(name) => {
+                return Err(SourceError::semantic(
+                    SourceErrorCode::UnknownName,
+                    format!("`{name}` is used before its declaration"),
+                    expression.span.clone(),
+                )
+                .with_extent(expression));
+            }
             ExprKind::Name(name) => match state.lookup(name).or_else(|| {
                 self.globals
                     .get(name)
                     .map(|mutable| Binding::Global { mutable: *mutable })
             }) {
+                None if state.declared_later(name) => {
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::UnknownName,
+                        format!(
+                            "`{name}` is declared later in this block; only a function declared with `fn` can be used before its declaration"
+                        ),
+                        expression.span.clone(),
+                    )
+                    .with_extent(expression));
+                }
                 Some(Binding::Global { .. }) | None => {
                     state.emit(Op::GetGlobal(name.clone()), &expression.span);
                 }
@@ -405,7 +423,11 @@ impl Compiler {
                 // functions already resolve by name when called.
                 let own_slot = callable_name
                     .filter(|_| existing_callable.is_none() && !state.is_root())
-                    .map(|name| state.declare(name.clone(), *mutable, true));
+                    .map(|name| {
+                        state
+                            .claim_hoisted(name)
+                            .unwrap_or_else(|| state.declare(name.clone(), *mutable, true))
+                    });
                 self.expression(state, value)?;
                 if let Some(slot) = own_slot {
                     state.emit(Op::SetLocal(slot), &expression.span);
@@ -1032,6 +1054,7 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
+                hoist_functions(state, values);
                 let runtime_scope = values.iter().any(contains_scoped_defer);
                 if runtime_scope {
                     state.emit(Op::EnterScope, &expression.span);
@@ -1479,6 +1502,7 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
+                hoist_functions(state, values);
                 let runtime_scope = values.iter().any(contains_scoped_defer);
                 if runtime_scope {
                     state.emit(Op::EnterScope, &expression.span);
@@ -1539,6 +1563,7 @@ impl Compiler {
         parent: &mut State,
     ) -> Result<(Chunk, Vec<Capture>), SourceError> {
         let mut state = State::function(parameters, parent.visible());
+        state.inherit_later(parent);
         for (slot, parameter) in parameter_metadata.iter().enumerate() {
             if let Some(default) = &parameter.default {
                 let end = state.jump_if_provided(slot, &default.span);
@@ -1557,6 +1582,7 @@ impl Compiler {
         let ExprKind::Block(values) = &body.kind else {
             return self.tail_expression(state, body);
         };
+        hoist_functions(state, values);
         for (index, value) in values.iter().enumerate() {
             if index + 1 == values.len() {
                 self.tail_expression(state, value)?;
@@ -1569,6 +1595,31 @@ impl Compiler {
             state.emit(Op::Nil, &body.span);
         }
         Ok(())
+    }
+}
+
+/// Declares the slot of each function a block declares by name, so the
+/// block's functions can call one another whatever their order. Only
+/// functions are hoisted: a function body runs after the block has declared
+/// it, while other values could be read before they exist.
+fn hoist_functions(state: &mut State, values: &[Expr]) {
+    if state.is_root() {
+        return;
+    }
+    for value in values {
+        if let ExprKind::Declare {
+            pattern: Pattern::Binding(name),
+            value: declared,
+            mutable,
+            ..
+        } = &value.kind
+        {
+            if matches!(declared.kind, ExprKind::Function { .. }) {
+                state.hoist(name, *mutable);
+            } else {
+                state.declare_later(name);
+            }
+        }
     }
 }
 

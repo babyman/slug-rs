@@ -1007,3 +1007,76 @@ fn reserved_words_are_keys_properties_and_field_names() {
         "{\"nil\": 1, \"true\": 2, \"if\": 3, \"copy\": 4} 1 4 d true r 4\n"
     );
 }
+
+#[test]
+fn less_than_is_not_a_type_application_however_far_the_next_greater_is() {
+    let path = fixture_path("less-than-lookahead");
+    fs::write(
+        &path,
+        // The `> (` six lines below once made `i < size` parse as `i<...>(`.
+        "val size = 3\n\
+         val at = fn(i) { if (i < size) { \"in\" } else { \"out\" } }\n\
+         val id = fn<T>(x:T):T { x }\n\
+         val nested:list<list<str>> = [[\"a\"]]\n\
+         val table:map<str, list<num>> = {a: [1]}\n\
+         val check = fn(n) {\n\
+           if (n > (size - 1)) { \"big\" } else { \"small\" }\n\
+         }\n\
+         println(at(1), at(5), check(9), id<list<str>>([\"b\"]), nested, table, 16 >> 2)\n",
+    )
+    .expect("write lookahead source");
+    let output = slug().arg(&path).output().expect("run lookahead source");
+    fs::remove_file(path).expect("remove lookahead source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "in out big [\"b\"] [[\"a\"]] {\"a\": [1]} 4\n"
+    );
+}
+
+#[test]
+fn local_functions_may_call_functions_declared_later_in_their_block() {
+    let path = fixture_path("hoisted-local-functions");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write hoisting source");
+        let output = slug().arg(&path).output().expect("run hoisting source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stdout, stderr) = run("val g = fn() { \"outer g\" }\n\
+         val outer = fn() {\n\
+           val isEven = fn(n) { if (n == 0) { true } else { isOdd(n - 1) } }\n\
+           val isOdd = fn(n) { if (n == 0) { false } else { isEven(n - 1) } }\n\
+           val f = fn() { g() }\n\
+           val g = fn() { \"inner g\" }\n\
+           [isEven(10), isOdd(7), f()]\n\
+         }\n\
+         println(outer())\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "[true, true, \"inner g\"]\n");
+
+    // Using a function before its declaration has run, or a value declared
+    // later, is reported where it is used.
+    let (code, _, stderr) =
+        run("val f = fn() {\n  val r = later()\n  val later = fn() { 1 }\n  r\n}\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("`later` is used before its declaration"),
+        "{stderr}"
+    );
+    let (code, _, stderr) =
+        run("val f = fn() {\n  val use = fn() { value + 1 }\n  val value = 1\n  use()\n}\n");
+    fs::remove_file(&path).expect("remove hoisting source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("`value` is declared later in this block"),
+        "{stderr}"
+    );
+}

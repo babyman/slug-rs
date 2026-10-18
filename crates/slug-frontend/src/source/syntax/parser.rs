@@ -790,7 +790,7 @@ impl Parser {
                     }
                     self.next();
                 }
-                self.consume(&TokenKind::Greater, "expected > in type application")?;
+                self.consume_type_close("expected > in type application")?;
                 let span = value.span.clone();
                 value = Expr {
                     end: self.previous_end(),
@@ -844,16 +844,48 @@ impl Parser {
         Ok(value)
     }
 
+    /// Consumes the `>` closing a type's arguments. The lexer reads `>>` as
+    /// one shift token, so in `list<list<str>>` it is split: the first `>`
+    /// closes the inner type and the second remains for the outer one.
+    fn consume_type_close(&mut self, message: &str) -> Result<Token, SourceError> {
+        if !self.matches(&TokenKind::ShiftRight) {
+            return self.consume(&TokenKind::Greater, message);
+        }
+        let shift = self.peek().clone();
+        let mut rest = shift.clone();
+        rest.kind = TokenKind::Greater;
+        rest.span.column += 1;
+        self.tokens[self.index] = rest;
+        Ok(Token {
+            kind: TokenKind::Greater,
+            end: SourcePosition {
+                line: shift.span.line,
+                column: shift.span.column + 1,
+            },
+            span: shift.span,
+        })
+    }
     fn starts_type_application_call(&self) -> bool {
         if !self.matches(&TokenKind::Less) {
             return false;
         }
+        // Only tokens that can appear in a type may lie between `<` and its
+        // `>`; any other ends the search, so `i < size) { ... }` is a
+        // comparison however far away the next `> (` is.
         let mut depth = 0usize;
         for (offset, token) in self.tokens[self.index..].iter().enumerate() {
             match token.kind {
                 TokenKind::Less => depth += 1,
-                TokenKind::Greater => {
-                    depth -= 1;
+                TokenKind::Greater | TokenKind::ShiftRight => {
+                    let closes = if matches!(token.kind, TokenKind::ShiftRight) {
+                        2
+                    } else {
+                        1
+                    };
+                    if closes > depth {
+                        return false;
+                    }
+                    depth -= closes;
                     if depth == 0 {
                         return matches!(
                             self.tokens
@@ -863,7 +895,16 @@ impl Parser {
                         );
                     }
                 }
-                _ => {}
+                TokenKind::Name(_)
+                | TokenKind::Dot
+                | TokenKind::Pipe
+                | TokenKind::Comma
+                | TokenKind::LBracket
+                | TokenKind::RBracket
+                | TokenKind::Fn
+                | TokenKind::Struct
+                | TokenKind::Nil => {}
+                _ => return false,
             }
         }
         false
@@ -2020,7 +2061,7 @@ impl Parser {
                     self.next();
                 }
             }
-            self.consume(&TokenKind::Greater, "expected > in type annotation")?;
+            self.consume_type_close("expected > in type annotation")?;
             let TypeAnnotation::Name(name) = annotation else {
                 unreachable!("only named types have arguments")
             };

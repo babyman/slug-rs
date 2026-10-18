@@ -16,7 +16,7 @@ val isLetter = fn(c) { (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == 
 val lex = fn(source) {
     val cs = s.chars(source)
     val size = len(cs)
-    val at = fn(i) { if (size > i) { cs[i] } else { "" } }
+    val at = fn(i) { if (i < size) { cs[i] } else { "" } }
     val token = fn(kind, line, column, value) { {kind: kind, line: line, column: column, value: value} }
     val integer = fn(i, line, column) {
         val go = fn(k, n) {
@@ -90,11 +90,9 @@ val lex = fn(source) {
 val parse = fn(tokens) {
     var pos = 0
     var depth = 0
-    // Declared first so the mutually recursive functions below can call
-    // each other: a local name is visible only after its declaration.
+    // Built by `binary` below rather than declared with `fn`, so it is
+    // declared first for the functions above it to call.
     var expression = nil
-    var block = nil
-    var statement = nil
     val peek = fn() { tokens[pos] }
     val ahead = fn() { tokens[pos + 1] ?? tokens[pos] }
     val next = fn() {
@@ -223,7 +221,7 @@ val parse = fn(tokens) {
     val conjunction = binary({and: true}, equality)
     expression = binary({or: true}, conjunction)
 
-    block = fn() {
+    val block = fn() {
         val open = expect("{")
         val go = fn(out) {
             if (peek().kind == "}") {
@@ -250,7 +248,7 @@ val parse = fn(tokens) {
         }
         at(t, {node: "if", condition: condition, then: then, otherwise: otherwise})
     }
-    statement = fn() {
+    val statement = fn() {
         val t = peek()
         match t.kind {
             "let" => {
@@ -366,11 +364,6 @@ export val run = fn(source:str) {
         {kind: "closure", id: functions, name: name, params: params, body: body, scope: scope}
     }
     val globals = newScope(nil)
-    // Declared first so the mutually recursive functions below can call
-    // each other: a local name is visible only after its declaration.
-    var evaluate = nil
-    var execute = nil
-    var step = nil
     globals.define("len", {kind: "builtin", id: -1, name: "len"})
     globals.define("str", {kind: "builtin", id: -2, name: "str"})
 
@@ -392,7 +385,7 @@ export val run = fn(source:str) {
         if (len(args) != len(callee.params)) { fail("arity", node.line, node.column) }
         val scope = newScope(callee.scope)
         val bind = fn(i) {
-            if (len(args) > i) {
+            if (i < len(args)) {
                 scope.define(callee.params[i], args[i])
                 recur(i + 1)
             }
@@ -423,14 +416,14 @@ export val run = fn(source:str) {
         val kind = typeOf(a)
         if (kind != typeOf(b) || (kind != "int" && kind != "string")) { fail("type", node.line, node.column) }
         match node.op {
-            "<" => b > a
+            "<" => a < b
             "<=" => a <= b
             ">" => a > b
             ">=" => a >= b
         }
     }
 
-    evaluate = fn(node, scope) {
+    val evaluate = fn(node, scope) {
         match node.node {
             "literal" => node.value
             "name" => {
@@ -482,7 +475,7 @@ export val run = fn(source:str) {
                 val index = evaluate(node.index, scope)
                 val kind = typeOf(target)
                 if ((kind != "list" && kind != "string") || !number(index)) { fail("type", node.line, node.column) }
-                if (0 > index || index >= len(target)) { fail("index", node.line, node.column) }
+                if (index < 0 || index >= len(target)) { fail("index", node.line, node.column) }
                 target[index]
             }
         }
@@ -490,7 +483,7 @@ export val run = fn(source:str) {
 
     // Runs statements in `scope`; returns `nil`, or `[value]` when a `return`
     // ran.
-    execute = fn(statements, scope) {
+    val execute = fn(statements, scope) {
         val go = fn(i) {
             if (i == len(statements)) { return nil }
             val signal = step(statements[i], scope)
@@ -499,7 +492,7 @@ export val run = fn(source:str) {
         go(0)
     }
 
-    step = fn(node, scope) {
+    val step = fn(node, scope) {
         match node.node {
             "let" => {
                 scope.define(node.name, evaluate(node.value, scope))
