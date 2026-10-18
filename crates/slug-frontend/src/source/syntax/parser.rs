@@ -90,6 +90,14 @@ impl Parser {
         }
         error
     }
+    /// The text of a token that names a map key, property, or struct field:
+    /// an identifier or, since a key is never a binding, a reserved word.
+    fn key_name(kind: &TokenKind) -> Option<String> {
+        match kind {
+            TokenKind::Name(name) => Some(name.clone()),
+            other => other.reserved_word().map(str::to_owned),
+        }
+    }
     /// An error for `token` where a name was expected, saying so when it is
     /// a reserved word, the likely mistake.
     fn expected_name(token: &Token, message: &str) -> SourceError {
@@ -800,18 +808,14 @@ impl Parser {
             } else if self.matches(&TokenKind::Dot) {
                 let span = self.next().span;
                 let name = self.next();
-                let name = match name.kind {
-                    TokenKind::Name(name) => name,
-                    // `select` is reserved only where it begins a select
-                    // expression; maps and module exports may still use it.
-                    TokenKind::Select => "select".into(),
-                    _ => {
-                        return Err(SourceError::at(
-                            SourceErrorCode::ExpectedSyntax,
-                            "expected property name",
-                            name.span,
-                        ));
-                    }
+                // Any key may follow `.`, reserved words included.
+                let Some(name) = Self::key_name(&name.kind) else {
+                    return Err(SourceError::at(
+                        SourceErrorCode::ExpectedSyntax,
+                        "expected property name",
+                        name.span,
+                    )
+                    .with_end(name.end));
                 };
                 let index = Expr {
                     end: self.previous_end(),
@@ -1148,7 +1152,7 @@ impl Parser {
                 return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
             }
             let token = self.next();
-            let TokenKind::Name(name) = token.kind else {
+            let Some(name) = Self::key_name(&token.kind) else {
                 return Err(SourceError::at(
                     SourceErrorCode::ExpectedSyntax,
                     "expected struct field name",
@@ -1214,7 +1218,7 @@ impl Parser {
                 return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
             }
             let token = self.next();
-            let TokenKind::Name(name) = token.kind else {
+            let Some(name) = Self::key_name(&token.kind) else {
                 return Err(SourceError::at(
                     SourceErrorCode::ExpectedSyntax,
                     "expected struct field name",
@@ -1319,10 +1323,10 @@ impl Parser {
             });
         }
         let first_entry = self.next_non_separator_index();
-        let map = ((matches!(
-            self.tokens.get(first_entry).map(|token| &token.kind),
-            Some(TokenKind::Name(_) | TokenKind::Interpolated(_))
-        )) && matches!(
+        let map = (self.tokens.get(first_entry).is_some_and(|token| {
+            matches!(token.kind, TokenKind::Interpolated(_))
+                || Self::key_name(&token.kind).is_some()
+        }) && matches!(
             self.tokens.get(first_entry + 1).map(|token| &token.kind),
             Some(TokenKind::Colon)
         )) || self.starts_computed_map_key(first_entry);
@@ -1381,7 +1385,9 @@ impl Parser {
             } else {
                 let token = self.next();
                 let kind = match token.kind {
-                    TokenKind::Name(name) => ExprKind::Value(Value::string(name)),
+                    ref kind if Self::key_name(kind).is_some() => {
+                        ExprKind::Value(Value::string(Self::key_name(kind).expect("checked above")))
+                    }
                     TokenKind::Interpolated(parts) => {
                         if let [StringPart::Text(value)] = parts.as_slice() {
                             ExprKind::Value(Value::string(value.clone()))
@@ -1871,8 +1877,15 @@ impl Parser {
                     MapPatternKey::Computed(key)
                 } else {
                     let token = self.next();
+                    // A reserved key needs an explicit pattern, since the
+                    // shorthand would bind the reserved word as a name.
+                    if token.kind.reserved_word().is_some() && !self.matches(&TokenKind::Colon) {
+                        return Err(Self::expected_name(&token, "expected map pattern key"));
+                    }
                     match token.kind {
-                        TokenKind::Name(name) => MapPatternKey::String(name),
+                        ref kind if Self::key_name(kind).is_some() => {
+                            MapPatternKey::String(Self::key_name(kind).expect("checked above"))
+                        }
                         TokenKind::Interpolated(parts) => {
                             let [StringPart::Text(value)] = parts.as_slice() else {
                                 return Err(SourceError::at(

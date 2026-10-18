@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reserved words may be map keys, property names, and struct field names:
+  `{nil: 1, copy: true}`, `m.copy`, `struct { default = 0 }`. Previously these
+  failed with misleading errors such as `expected statement separator` at the
+  `:`. A map pattern with a reserved key needs an explicit pattern,
+  `{nil: value}`.
+
 - New `??` operator: `a ?? b` is `a` unless it is `nil`, and otherwise
   evaluates `b`. Its type is `a`'s without `nil`, joined with `b`'s, so
   `fs.readLine(file) ?? ""` is a `str` and `counts[word] ?? 0` defaults a

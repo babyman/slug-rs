@@ -65,7 +65,11 @@ These words are reserved and cannot be used as names: `copy`, `defer`, `else`,
 `enum`, `export`, `false`, `fn`, `foreign`, `if`, `match`, `nil`, `nursery`,
 `onerror`, `onsuccess`, `recur`, `resource`, `return`, `select`, `spawn`,
 `struct`, `throw`, `true`, `val`, and `var`. `limit` is a keyword only directly
-after `nursery`, and is an ordinary name elsewhere.
+after `nursery`, and is an ordinary name elsewhere. A reserved word may still
+be a map key, a property name after `.`, or a struct field name, none of which
+binds a name: `{nil: 1, copy: true}` has the string keys `"nil"` and
+`"copy"`, read as `m.nil` and `m.copy`. A map pattern with a reserved key needs
+an explicit pattern, `{nil: value}`, since the shorthand `{nil}` would bind it.
 
 Blocks are expressions containing statements:
 

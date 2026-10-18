@@ -969,3 +969,41 @@ fn nil_coalescing_defaults_only_nil_and_short_circuits() {
         "x empty\nkept 0 side 1\n2 0 Ada\nfalse true false 0\n10\n"
     );
 }
+
+#[test]
+fn reserved_words_are_keys_properties_and_field_names() {
+    let path = fixture_path("reserved-word-keys");
+    fs::write(
+        &path,
+        "val m = {nil: 1, true: 2, if: 3, copy: 4}\n\
+         val f = fn() {\n\
+           val inner = {\n\
+             default: \"d\",\n\
+             type: \"t\",\n\
+           }\n\
+           inner.default\n\
+         }\n\
+         val Config = struct { copy = false, return }\n\
+         val c = Config { return: \"r\", copy: true }\n\
+         val picked = match m {\n\
+           {nil: one, if: three} => one + three\n\
+           _ => 0\n\
+         }\n\
+         println(m, m.nil, m.copy, f(), c.copy, c.return, picked)\n",
+    )
+    .expect("write reserved word key source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run reserved word key source");
+    fs::remove_file(path).expect("remove reserved word key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"nil\": 1, \"true\": 2, \"if\": 3, \"copy\": 4} 1 4 d true r 4\n"
+    );
+}

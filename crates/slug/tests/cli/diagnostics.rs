@@ -839,6 +839,12 @@ fn reserved_words_used_as_names_say_so() {
             12,
             "match",
         ),
+        (
+            "reserved-pattern-shorthand",
+            "val m = {a: 1}\nval r = match m { {nil} => 1\n _ => 0 }\n",
+            20,
+            "nil",
+        ),
     ] {
         let path = fixture_path(name);
         fs::write(&path, source).expect("write reserved word source");
