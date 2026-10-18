@@ -99,6 +99,23 @@ Strings are Slug's only textual value type. The language does not expose a
 separate symbol or atom value; implementations may still intern identifiers
 internally.
 
+Double-quoted strings interpret escapes and `$identifier` interpolation. The
+escapes are `\n`, `\r`, `\t`, `\b` (backspace), `\f` (form feed), `\\`, `\"`,
+`\$`, and a backslash followed by one to three octal digits, such as `\101`
+for `A`. A backslash followed by any other character is kept as written, so
+`"\q"` is the two characters `\q`. Single-quoted strings are raw: they
+interpret no escapes and no interpolation, so `'\\'` is two backslashes, `'\n'`
+is a backslash and an `n`, and `'"'` is one double quote. Tripled quotes
+(`'''` and `"""`) write multiline strings with the same rules as their single
+forms; a newline right after the opening delimiter or right before the closing
+one is omitted.
+
+```slug
+'say "hi"' == "say \"hi\""
+'\\' == "\\\\"
+len("\\") == 1
+```
+
 Bytes use pairs of hexadecimal digits. `0x""` is the empty bytes value; a
 non-empty bytes literal must contain a whole number of pairs.
 

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A function whose unannotated parameters meet in a `+`, `-`, or `*` is typed
+  by that operation's overloads only when every value it returns is the
+  operation itself. `fn(a, b) { val sum = a + b; [sum] }` was typed as
+  returning `num`, so indexing its result failed to check and
+  `val total:num = wrap(1, 2)` accepted a list. Other functions keep the
+  result their body is checked to produce.
+
+- The specification now states the string escapes: double-quoted strings
+  interpret `\n`, `\r`, `\t`, `\b`, `\f`, `\\`, `\"`, `\$`, and octal escapes,
+  and single-quoted strings are raw.
+
 - Functions declared in a block with `val name = fn ...` can call functions
   declared later in the same block, so local helpers can be mutually
   recursive, as module-level functions already could. Previously the call

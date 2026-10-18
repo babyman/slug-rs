@@ -96,6 +96,9 @@ struct ParameterConstraints {
     subtract_operands: Vec<PlusOperands>,
     multiply_operands: Vec<PlusOperands>,
     nil_partitions: Vec<NilGuardPartition>,
+    /// Whether the body leaves through `return`, so its result is not only
+    /// its final expression.
+    returns: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +146,7 @@ impl ParameterConstraints {
             subtract_operands: Vec::new(),
             multiply_operands: Vec::new(),
             nil_partitions: Vec::new(),
+            returns: false,
         }
     }
 
@@ -272,8 +276,11 @@ impl ParameterConstraints {
                 self.collect_tags(tags)?;
                 self.collect(value)
             }
+            ExprKind::Return { value } => {
+                self.returns = true;
+                self.collect(value)
+            }
             ExprKind::Assign { value, .. }
-            | ExprKind::Return { value }
             | ExprKind::Throw { value }
             | ExprKind::Defer { value, .. }
             | ExprKind::Spawn(value)
@@ -915,7 +922,123 @@ fn canonical_inferred_alternatives(
     (alternatives.len() <= MAX_INFERRED_ALTERNATIVES).then_some(alternatives)
 }
 
+/// Derives the function's correlated schemes from its first direct `+`, `-`,
+/// or `*` of two parameters, narrowed by the operations composed with it. A
+/// scheme's result is that operation's result, which the composed operations
+/// share for every family that survives, so the schemes describe the function
+/// only when every value it can return is one of those operations on the same
+/// operands; otherwise the function keeps the result its body is checked to
+/// produce.
 fn inferred_overload_alternatives(
+    parameters: &[Parameter],
+    body: &Expr,
+    constraints: &ParameterConstraints,
+) -> Result<Vec<InferredAlternative>, SourceError> {
+    let (operators, operands) = if let Some(operands) = constraints.plus_operands.first() {
+        let mut operators = vec![Binary::Add];
+        if !constraints.subtract_operands.is_empty() {
+            operators.push(Binary::Subtract);
+        }
+        if !constraints.multiply_operands.is_empty() {
+            operators.push(Binary::Multiply);
+        }
+        (operators, operands)
+    } else if let Some(operands) = constraints.subtract_operands.first() {
+        (vec![Binary::Subtract], operands)
+    } else if let Some(operands) = constraints.multiply_operands.first() {
+        (vec![Binary::Multiply], operands)
+    } else {
+        return Ok(Vec::new());
+    };
+    let alternatives = operation_alternatives(parameters, constraints)?;
+    let results_are_operation =
+        !constraints.returns && results_are_operation(body, &operators, operands, parameters);
+    Ok(if results_are_operation {
+        alternatives
+    } else {
+        Vec::new()
+    })
+}
+
+/// Whether every value `expression` can produce as a function result is
+/// `left operator right` over the collected operands, for one of `operators`. A `recur` produces the
+/// function's own result, and the nil branch of a guard on an operand is
+/// covered by its own scheme when that scheme can be derived.
+fn results_are_operation(
+    expression: &Expr,
+    operators: &[Binary],
+    operands: &PlusOperands,
+    parameters: &[Parameter],
+) -> bool {
+    let recurse = |expression| results_are_operation(expression, operators, operands, parameters);
+    match &expression.kind {
+        ExprKind::Binary {
+            left,
+            operator: actual,
+            right,
+        } if operators
+            .iter()
+            .any(|operator| std::mem::discriminant(actual) == std::mem::discriminant(operator)) =>
+        {
+            matches!(
+                (&left.kind, &right.kind),
+                (ExprKind::Name(left), ExprKind::Name(right))
+                    if *left == operands.left && *right == operands.right
+            )
+        }
+        ExprKind::Recur(_) => true,
+        ExprKind::Block(values) => values.last().is_some_and(recurse),
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_branch),
+        } => {
+            let covered_nil_branch = matches!(operators.first(), Some(Binary::Add))
+                .then(|| operand_nil_branch(condition, then_branch, else_branch, operands))
+                .flatten()
+                .filter(|branch| alternative_branch_result(branch, parameters).is_some());
+            match covered_nil_branch {
+                Some(branch) if std::ptr::eq(branch, then_branch.as_ref()) => recurse(else_branch),
+                Some(_) => recurse(then_branch),
+                None => recurse(then_branch) && recurse(else_branch),
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The branch taken when an operand is nil, for a condition comparing that
+/// operand with `nil`.
+fn operand_nil_branch<'a>(
+    condition: &Expr,
+    then_branch: &'a Expr,
+    else_branch: &'a Expr,
+    operands: &PlusOperands,
+) -> Option<&'a Expr> {
+    let ExprKind::Binary {
+        left,
+        operator,
+        right,
+    } = &condition.kind
+    else {
+        return None;
+    };
+    let ((ExprKind::Name(parameter), ExprKind::Value(Value::Nil))
+    | (ExprKind::Value(Value::Nil), ExprKind::Name(parameter))) = (&left.kind, &right.kind)
+    else {
+        return None;
+    };
+    if *parameter != operands.left && *parameter != operands.right {
+        return None;
+    }
+    match operator {
+        Binary::Equal => Some(then_branch),
+        Binary::NotEqual => Some(else_branch),
+        _ => None,
+    }
+}
+
+fn operation_alternatives(
     parameters: &[Parameter],
     constraints: &ParameterConstraints,
 ) -> Result<Vec<InferredAlternative>, SourceError> {
@@ -1621,7 +1744,7 @@ fn callable_signature(
         return Ok(None);
     };
     let constraints = parameter_constraints(parameters, body, environment)?;
-    let inferred_alternatives = inferred_overload_alternatives(parameters, &constraints)?;
+    let inferred_alternatives = inferred_overload_alternatives(parameters, body, &constraints)?;
     let inferred_parameters = solved_parameter_types(&constraints);
     let mut signature = function_type(
         type_parameters,
@@ -1917,7 +2040,8 @@ fn check_expression_inner(
             body,
         } => {
             let constraints = parameter_constraints(parameters, body, environment)?;
-            let inferred_alternatives = inferred_overload_alternatives(parameters, &constraints)?;
+            let inferred_alternatives =
+                inferred_overload_alternatives(parameters, body, &constraints)?;
             let inferred_parameters = solved_parameter_types(&constraints);
             let mut signature = function_type(
                 function_type_parameters,
