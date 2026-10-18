@@ -1796,3 +1796,56 @@ fn early_returns_join_and_check_a_functions_result() {
     assert!(stderr.contains("expected num, found str"), "{stderr}");
     assert!(stderr.contains(":2:24\n"), "{stderr}");
 }
+
+#[test]
+fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
+    let path = fixture_path("nil-first-value");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write nil first value source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run nil first value source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A `var` or field that starts as `nil` may later hold anything; an
+    // annotated `var` keeps its annotation after assignments; a closure sees
+    // a captured `var` by its declared type; and a `val` stays exactly `nil`.
+    let (code, stdout, stderr) = run("var best = nil\n\
+         best = 5\n\
+         val first:num = best\n\
+         best = \"s\"\n\
+         var x:num|nil = nil\n\
+         x = 5\n\
+         x = nil\n\
+         var total:num|nil = nil\n\
+         val add = fn(n:num) { total = if (total == nil) { n } else { total + n } }\n\
+         add(2)\n\
+         add(3)\n\
+         val none = nil\n\
+         val kept:str|nil = none\n\
+         val S = struct { e = nil, n = 0 }\n\
+         println(first, best, x, total, kept, S { e: \"text\" }.e, S { e: {k: 1} }.e)\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "5 s nil 5 nil text {\"k\": 1}\n");
+
+    // A concrete first value still fixes the type.
+    for source in [
+        "var x = 0\nx = \"s\"\n",
+        "var x = 0\nx = nil\n",
+        "val S = struct { n = 0 }\nS { n: \"seven\" }\n",
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains("semantic error: expected num"),
+            "{source}: {stderr}"
+        );
+    }
+    fs::remove_file(&path).expect("remove nil first value source");
+}

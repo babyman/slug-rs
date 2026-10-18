@@ -28,7 +28,10 @@ default expressions.
 
 The current Rust subset accepts fields with optional annotations and defaults.
 During compilation, a statically known default must conform to its field
-annotation. Known local, aliased, and imported schema bindings retain their
+annotation. An unannotated field's type is set by its default, as a `var`'s is
+by its initializer: `count = 0` accepts only numbers, while a `nil` default,
+`error = nil`, declares `any|nil`, so construction and copying may give the
+field any value. A field with neither has no static type. Known local, aliased, and imported schema bindings retain their
 field metadata for construction, copy, and direct field-access checks;
 annotations do not coerce runtime values.
 

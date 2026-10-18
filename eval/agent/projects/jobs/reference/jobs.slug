@@ -7,7 +7,7 @@ export enum Status { Ok, Failed, Skipped, TimedOut }
 
 export val Job = struct { name, action, deps = [], retries = 0, timeout = 0 }
 
-export val Outcome = struct { status, value:any|nil = nil, attempts:num = 0, error:str|nil = nil }
+export val Outcome = struct { status, value = nil, attempts = 0, error = nil }
 
 val invalid = fn(data) {
     throw Error { type: "jobs.invalid", msg: "invalid jobs: " + data.reason, data: data }

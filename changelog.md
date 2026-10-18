@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A `var` or struct field whose first value is `nil` may later hold any value:
+  `var best = nil` then `best = 5`, and `struct { error = nil }` constructed
+  with `error: "boom"`, previously failed with `expected nil, got ...`. A
+  `val` that is `nil` stays exactly `nil`. An annotated `var` now keeps its
+  annotation after assignments: `var x:num|nil = nil`, `x = 5`, `x = nil`
+  previously failed, because the first assignment replaced the declared type.
+  Inside a nested function, a captured `var` reads as its declared type.
+
 - A function's inferred result now includes the values of its early
   `return`s, and a declared result type is checked at each `return`.
   Previously `fn(n) { if (n == 0) { return "a" } ; 5 }` was inferred as `num`,

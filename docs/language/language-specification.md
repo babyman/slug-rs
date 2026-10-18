@@ -146,6 +146,16 @@ assignment changes an existing `var` binding and is invalid for a `val` binding
 or an unknown name. It evaluates to the value assigned, so an assignment may be
 the final expression of a function body or appear inside another expression.
 
+A binding's type is set by its first value. A `var` has a declared type that
+every later assignment must conform to: its annotation, or else the type of
+its initializer, except that a `nil` initializer declares `any|nil`, since
+`nil` there means no value yet. So `var count = 0` accepts only numbers, while
+`var best = nil` may later hold any value. A `val` is never assigned again,
+so `val none = nil` stays exactly `nil`. Within a function, an assignment or a
+nil test refines the type that following code reads, but never the declared
+type; a nested function reads a captured `var` by its declared type, since it
+may run after any later assignment.
+
 At module top level, `{*}` may be used as a declaration pattern. It requires a
 map with string keys and creates one top-level binding per entry. This is the
 module-import selection form: `val {*} = import("slug.std")`. When its right

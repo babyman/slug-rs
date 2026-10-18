@@ -1644,6 +1644,7 @@ fn check_function_body(
     type_parameters: &[String],
 ) -> Result<Type, SourceError> {
     let mut scoped = environment.clone();
+    scoped.forget_mutable_facts();
     scoped.enter_scope();
     for (parameter, signature_parameter) in parameters.iter().zip(&signature.parameters) {
         let parameter_type = &signature_parameter.value_type;
@@ -1819,6 +1820,7 @@ fn check_expression_inner(
             pattern,
             annotation,
             value,
+            mutable,
             ..
         } => {
             let callable = if let Pattern::Binding(name) = pattern {
@@ -1863,6 +1865,13 @@ fn check_expression_inner(
                     binding.value_type = declared;
                 }
                 bind_semantic_pattern(pattern, &binding, environment);
+                if *mutable {
+                    let mut names = Vec::new();
+                    pattern_binding_names(pattern, &mut names);
+                    for name in names {
+                        environment.declare_mutable(name);
+                    }
+                }
             }
             Ok(actual)
         }
@@ -2092,8 +2101,10 @@ fn check_expression_inner(
             .map_or(Type::Unknown, |binding| binding.value_type.clone())),
         ExprKind::Assign { name, value } => {
             let actual = check_expression(value, environment, type_parameters)?;
-            if let Some(expected) = environment.lookup(name) {
-                require(&expected.value_type, &actual, &value.span)?;
+            if let Some(binding) = environment.lookup(name) {
+                let expected = binding.declared.as_ref().unwrap_or(&binding.value_type);
+                require(expected, &actual, &value.span)
+                    .map_err(|error| error.with_extent(value))?;
             }
             if let Some(binding) = environment.lookup_mut(name) {
                 binding.callables.clear();
@@ -3122,7 +3133,12 @@ fn schema_binding(
                 environment,
             )?
         } else if let Some(default) = &field.default {
-            check_expression(default, environment, type_parameters)?.widen_unknown()
+            // Construction and copying can replace a default, so like a
+            // `var` initializer, a `nil` default means no value yet.
+            match check_expression(default, environment, type_parameters)?.widen_unknown() {
+                Type::Nil => Type::universal(),
+                default_type => default_type,
+            }
         } else {
             Type::Unknown
         };

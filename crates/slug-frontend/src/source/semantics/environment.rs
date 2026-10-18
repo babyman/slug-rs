@@ -74,6 +74,10 @@ pub(super) struct SemanticBinding {
     pub(super) resource_identity: Option<ResourceIdentity>,
     pub(super) type_members: HashMap<String, TypeMember>,
     pub(super) module_binding: bool,
+    /// For a `var`, the type every assignment must conform to, fixed at its
+    /// declaration. `value_type` is then its current type, which assignments
+    /// and nil tests refine for the code that follows.
+    pub(super) declared: Option<Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +122,7 @@ impl SemanticBinding {
             resource_identity: None,
             type_members: HashMap::new(),
             module_binding: false,
+            declared: None,
         }
     }
 
@@ -131,6 +136,7 @@ impl SemanticBinding {
             resource_identity: None,
             type_members: HashMap::new(),
             module_binding: false,
+            declared: None,
         }
     }
 
@@ -147,6 +153,7 @@ impl SemanticBinding {
             resource_identity: None,
             type_members,
             module_binding: true,
+            declared: None,
         }
     }
 
@@ -372,6 +379,31 @@ impl Environment {
         {
             signature.result = result;
             binding.value_type = function_value_type(signature);
+        }
+    }
+
+    /// Makes the named binding a `var` whose declared type is its current
+    /// one, except that a `nil` initializer declares `any|nil`: `nil` there
+    /// means no value yet, not a value that is always `nil`.
+    pub(super) fn declare_mutable(&mut self, name: &str) {
+        if let Some(binding) = self.scopes.last_mut().and_then(|scope| scope.get_mut(name)) {
+            if binding.value_type == Type::Nil {
+                binding.value_type = Type::universal();
+            }
+            binding.declared = Some(binding.value_type.clone());
+        }
+    }
+
+    /// Forgets what assignments and nil tests established about every `var`
+    /// in scope, as a nested function must: it may run after any later
+    /// assignment.
+    pub(super) fn forget_mutable_facts(&mut self) {
+        for scope in &mut self.scopes {
+            for binding in scope.values_mut() {
+                if let Some(declared) = &binding.declared {
+                    binding.value_type = declared.clone();
+                }
+            }
         }
     }
 
