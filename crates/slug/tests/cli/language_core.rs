@@ -759,3 +759,47 @@ fn rejects_arithmetic_that_overflows_to_infinity() {
             .starts_with("slug: runtime error: numeric operation produced a non-finite number")
     );
 }
+
+#[test]
+fn nested_closures_capture_the_binding_they_name() {
+    let path = fixture_path("nested-closure-captures");
+    fs::write(
+        &path,
+        // A function that already captured `p` creates a closure that also
+        // uses it; and in `parent`, local slot 0 (`x`) must not stand in
+        // for the enclosing function's slot 0 (`g`).
+        "val reused = fn() {\n\
+           var p = 1\n\
+           val inner = fn() { p = p + 1\n val f = fn() { p }\n f() }\n\
+           inner()\n\
+         }\n\
+         val clash = fn() {\n\
+           val g = \"g\"\n\
+           val parent = fn(x) { val child = fn() { x + g }\n child() }\n\
+           parent(\"x\")\n\
+         }\n\
+         val deep = fn() {\n\
+           val v = \"deep\"\n\
+           val b = fn(q) { val c = fn(r) { val d = fn() { v }\n d() }\n c(1) }\n\
+           b(2)\n\
+         }\n\
+         val shared = fn() {\n\
+           var n = 0\n\
+           val outer = fn() { val bump = fn() { n = n + 1 }\n bump()\n bump()\n n }\n\
+           outer() + n\n\
+         }\n\
+         println(reused(), clash(), deep(), shared())\n",
+    )
+    .expect("write nested closure source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nested closure source");
+    fs::remove_file(path).expect("remove nested closure source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2 xg deep 4\n");
+}

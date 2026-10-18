@@ -355,7 +355,9 @@ impl Compiler {
                 Some(Binding::Capture { slot, .. }) => {
                     state.emit(Op::GetCapture(slot), &expression.span);
                 }
-                Some(Binding::Outer { .. }) => unreachable!("outer bindings are captured lazily"),
+                Some(Binding::Inherited { .. }) => {
+                    unreachable!("inherited bindings are captured lazily")
+                }
             },
             ExprKind::Declare {
                 mutable,
@@ -410,8 +412,8 @@ impl Compiler {
                         Binding::Capture { .. } => {
                             unreachable!("current scope cannot contain a capture")
                         }
-                        Binding::Outer { .. } => {
-                            unreachable!("current scope cannot contain an outer binding")
+                        Binding::Inherited { .. } => {
+                            unreachable!("current scope cannot contain an inherited binding")
                         }
                     }
                     state.emit(Op::CombineOverloads, &expression.span);
@@ -426,8 +428,8 @@ impl Compiler {
                         Binding::Capture { .. } => {
                             unreachable!("current scope cannot contain a capture")
                         }
-                        Binding::Outer { .. } => {
-                            unreachable!("current scope cannot contain an outer binding")
+                        Binding::Inherited { .. } => {
+                            unreachable!("current scope cannot contain an inherited binding")
                         }
                     }
                 } else {
@@ -475,7 +477,7 @@ impl Compiler {
                     Binding::Global { mutable }
                     | Binding::Local { mutable, .. }
                     | Binding::Capture { mutable, .. }
-                    | Binding::Outer { mutable, .. } => mutable,
+                    | Binding::Inherited { mutable } => mutable,
                 };
                 if !mutable {
                     return Err(SourceError::semantic(
@@ -498,7 +500,9 @@ impl Compiler {
                     Binding::Capture { slot, .. } => {
                         state.emit(Op::SetCapture(slot), &expression.span);
                     }
-                    Binding::Outer { .. } => unreachable!("outer bindings are captured lazily"),
+                    Binding::Inherited { .. } => {
+                        unreachable!("inherited bindings are captured lazily")
+                    }
                 }
             }
             ExprKind::Return { value } => {
@@ -1336,7 +1340,7 @@ impl Compiler {
             Binding::Global { .. } => state.emit(Op::GetGlobal(name.into()), span),
             Binding::Local { slot, .. } => state.emit(Op::GetLocal(slot), span),
             Binding::Capture { slot, .. } => state.emit(Op::GetCapture(slot), span),
-            Binding::Outer { .. } => unreachable!("outer bindings are captured lazily"),
+            Binding::Inherited { .. } => unreachable!("inherited bindings are captured lazily"),
         }
         Ok(())
     }
@@ -1393,7 +1397,7 @@ impl Compiler {
                 Binding::Global { .. } => state.emit(Op::DefineGlobal(name.clone()), span),
                 Binding::Local { slot, .. } => state.emit(Op::SetLocal(*slot), span),
                 Binding::Capture { .. } => unreachable!("new bindings cannot be captures"),
-                Binding::Outer { .. } => unreachable!("new bindings cannot be outer bindings"),
+                Binding::Inherited { .. } => unreachable!("new bindings cannot be inherited"),
             }
         }
         let end = state.jump(span);

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed nested closures capturing the wrong binding. A closure created inside
+  a function that had already used a captured name, as in
+  `fn() { val q = p ; val f = fn() { p } ; f() }`, failed with `capture 0 does
+  not exist` or silently read another captured value; a parameter could stand
+  in for an enclosing function's local in the same slot, so
+  `fn(x) { fn() { x + g } }` read `x` for `g`; and a name captured across
+  three or more function levels could resolve against the wrong function.
+
 - A match case's binding or wildcard no longer has the whole subject type: it
   excludes what earlier unguarded cases match whole, such as `nil`. In
   `match fs.readLine(file) { nil => "" ; line => line }`, `line` is `str`, so

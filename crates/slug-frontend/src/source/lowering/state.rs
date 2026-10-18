@@ -2,18 +2,36 @@ use std::collections::{HashMap, HashSet};
 
 use slug_vm::{BinaryOperator, Capture, Chunk, Constant, Op, SourceSpan, Value};
 
+/// Where a name lives, as seen by one function. In `State::outer`, a
+/// `Local` is a slot of the enclosing function and a `Capture` is a slot of
+/// this function's own captures.
 #[derive(Clone, Debug)]
 pub(super) enum Binding {
-    Global { mutable: bool },
-    Local { slot: usize, mutable: bool },
-    Capture { slot: usize, mutable: bool },
-    Outer { source: Capture, mutable: bool },
+    Global {
+        mutable: bool,
+    },
+    Local {
+        slot: usize,
+        mutable: bool,
+    },
+    Capture {
+        slot: usize,
+        mutable: bool,
+    },
+    /// A name the enclosing function itself sees from further out. The
+    /// enclosing function resolves it, capturing it in turn, when this one
+    /// is finished.
+    Inherited {
+        mutable: bool,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum CaptureRequest {
+    /// A capture of the enclosing function's local or capture slot.
     Direct(Capture),
-    ThroughParent(Capture),
+    /// A name the enclosing function must capture from further out.
+    ThroughParent(String),
 }
 
 pub(super) struct State {
@@ -206,23 +224,24 @@ impl State {
         {
             return Some(binding);
         }
-        let binding = self.outer.get(name).cloned()?;
-        match binding {
-            Binding::Global { .. } | Binding::Capture { .. } => Some(binding),
-            Binding::Local { slot, mutable } => {
-                let slot = self.request_capture(CaptureRequest::Direct(Capture::Local(slot)));
-                let binding = Binding::Capture { slot, mutable };
-                self.outer.insert(name.into(), binding.clone());
-                Some(binding)
-            }
-            Binding::Outer { source, mutable } => {
-                let slot = self.request_capture(CaptureRequest::ThroughParent(source));
-                let binding = Binding::Capture { slot, mutable };
-                self.outer.insert(name.into(), binding.clone());
-                Some(binding)
-            }
-        }
+        self.lookup_outer(name)
     }
+    /// Resolves a name from outside this function, capturing it on first use.
+    fn lookup_outer(&mut self, name: &str) -> Option<Binding> {
+        let binding = self.outer.get(name).cloned()?;
+        let (request, mutable) = match binding {
+            Binding::Global { .. } | Binding::Capture { .. } => return Some(binding),
+            Binding::Local { slot, mutable } => {
+                (CaptureRequest::Direct(Capture::Local(slot)), mutable)
+            }
+            Binding::Inherited { mutable } => (CaptureRequest::ThroughParent(name.into()), mutable),
+        };
+        let slot = self.request_capture(request);
+        let binding = Binding::Capture { slot, mutable };
+        self.outer.insert(name.into(), binding.clone());
+        Some(binding)
+    }
+    /// The names a function nested here sees, as that function sees them.
     pub(super) fn visible(&self) -> HashMap<String, Binding> {
         let mut result: HashMap<String, Binding> = self
             .outer
@@ -230,18 +249,9 @@ impl State {
             .map(|(name, binding)| {
                 let binding = match binding {
                     Binding::Global { mutable } => Binding::Global { mutable: *mutable },
-                    Binding::Local { slot, mutable } => Binding::Outer {
-                        source: Capture::Local(*slot),
-                        mutable: *mutable,
-                    },
-                    Binding::Capture { slot, mutable } => Binding::Capture {
-                        slot: *slot,
-                        mutable: *mutable,
-                    },
-                    Binding::Outer { source, mutable } => Binding::Outer {
-                        source: source.clone(),
-                        mutable: *mutable,
-                    },
+                    Binding::Local { mutable, .. }
+                    | Binding::Capture { mutable, .. }
+                    | Binding::Inherited { mutable } => Binding::Inherited { mutable: *mutable },
                 };
                 (name.clone(), binding)
             })
@@ -256,9 +266,10 @@ impl State {
             .into_iter()
             .map(|capture| match capture {
                 CaptureRequest::Direct(capture) => capture,
-                CaptureRequest::ThroughParent(capture) => {
-                    Capture::Capture(self.request_capture(CaptureRequest::Direct(capture)))
-                }
+                CaptureRequest::ThroughParent(name) => match self.lookup_outer(&name) {
+                    Some(Binding::Capture { slot, .. }) => Capture::Capture(slot),
+                    other => unreachable!("inherited name `{name}` resolved to {other:?}"),
+                },
             })
             .collect()
     }
@@ -276,21 +287,6 @@ impl State {
         }
         let slot = self.captures.len();
         self.captures.push(capture);
-        if let Some(CaptureRequest::Direct(source)) = self.captures.last() {
-            for binding in self.outer.values_mut() {
-                if let Binding::Outer {
-                    source: outer_source,
-                    mutable,
-                } = binding
-                    && outer_source == source
-                {
-                    *binding = Binding::Capture {
-                        slot,
-                        mutable: *mutable,
-                    };
-                }
-            }
-        }
         slot
     }
 }
@@ -320,6 +316,28 @@ mod tests {
         ));
         let middle_captures = root.resolve_child_captures(middle.captures());
         assert_eq!(middle_captures, vec![Capture::Local(0)]);
+    }
+
+    #[test]
+    fn a_child_captures_its_parents_capture_rather_than_reusing_its_slot() {
+        let mut root = State::root();
+        root.declare("value".into(), false, false);
+
+        let mut parent = State::function(&[], root.visible());
+        assert!(matches!(
+            parent.lookup("value"),
+            Some(Binding::Capture { slot: 0, .. })
+        ));
+        let mut child = State::function(&[], parent.visible());
+        assert!(matches!(
+            child.lookup("value"),
+            Some(Binding::Capture { slot: 0, .. })
+        ));
+        assert_eq!(
+            parent.resolve_child_captures(child.captures()),
+            vec![Capture::Capture(0)]
+        );
+        assert_eq!(parent.captures().len(), 1);
     }
 
     #[test]
