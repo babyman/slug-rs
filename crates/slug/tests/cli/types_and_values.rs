@@ -1871,3 +1871,35 @@ fn nil_coalescing_removes_nil_from_the_left_type() {
     assert_eq!(code, Some(1));
     assert!(stderr.contains("expected num, found num|str"), "{stderr}");
 }
+
+#[test]
+fn an_error_handlers_value_joins_the_function_result() {
+    let path = fixture_path("onerror-result");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write onerror result source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run onerror result source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stdout, stderr) = run("val errorOf = fn(f) {\n\
+           defer onerror(e) { e }\n\
+           f()\n\
+           nil\n\
+         }\n\
+         val caught = errorOf(fn() { throw Error { type: \"t\", msg: \"m\" } })\n\
+         println(caught.type, errorOf(fn() { 1 }))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "t nil\n");
+
+    // A declared result is checked against the handler's value.
+    let (code, _, stderr) = run("val f = fn():str {\n  defer onerror(e) { 0 }\n  \"ok\"\n}\n");
+    fs::remove_file(&path).expect("remove onerror result source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected str, found num"), "{stderr}");
+}

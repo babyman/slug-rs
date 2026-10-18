@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A `defer onerror` handler's value, which becomes the function's result when
+  it recovers from an error, is now part of the function's inferred result and
+  is checked against a declared result type. Previously
+  `fn(f) { defer onerror(e) { e } ; f() ; nil }` was inferred to return `nil`,
+  so using the returned error, as in `errorOf(...).type`, failed to type-check.
+
 - Reserved words may be map keys, property names, and struct field names:
   `{nil: 1, copy: true}`, `m.copy`, `struct { default = 0 }`. Previously these
   failed with misleading errors such as `expected statement separator` at the

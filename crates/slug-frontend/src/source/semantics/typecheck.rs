@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use slug_vm::{CallableIdentity, SourceSpan, Value, ValueKind};
+use slug_vm::{CallableIdentity, DeferMode, SourceSpan, Value, ValueKind};
 
 use super::{
     SourceError, SourceErrorCode,
@@ -2127,8 +2127,17 @@ fn check_expression_inner(
             check_expression(value, environment, type_parameters)?;
             Ok(Type::Never)
         }
-        ExprKind::Defer { value, .. } => {
-            check_expression(value, environment, type_parameters)?;
+        ExprKind::Defer { value, mode, .. } => {
+            let handled = check_expression(value, environment, type_parameters)?;
+            // An error handler that completes normally recovers, and its
+            // value becomes the enclosing function's result.
+            if matches!(mode, DeferMode::Error) {
+                if let Some(expected) = environment.expected_return() {
+                    require(&expected, &handled, &value.span)
+                        .map_err(|error| error.with_extent(value))?;
+                }
+                environment.record_return(handled);
+            }
             Ok(Type::Nil)
         }
         ExprKind::Spawn(value) => {

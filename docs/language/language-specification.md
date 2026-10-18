@@ -913,9 +913,10 @@ way inside the case. Semantic analysis tracks an
 expression's value type separately from whether its control flow can continue:
 `return`, `throw`, and `recur(...)` terminate their current flow even when a
 payload remains relevant to function result checking: a function's result
-type is the union of its body's value and every `return` value in it,
-including one in a match case or a `defer onerror` handler, and a declared
-result type is checked at each `return`. Broader flow-sensitive
+type is the union of its body's value, every `return` value in it, including
+one in a match case or a `defer onerror` handler, and the value of each
+`defer onerror` handler, which becomes the result when it recovers. A
+declared result type is checked at each of them. Broader flow-sensitive
 narrowing and inference for dynamic expression forms remain future work.
 
 Operators, indexing, and slicing check
