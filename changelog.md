@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A function declared inside another function can call itself by name, as in
+  `val go = fn(n) { if (n == 0) { 0 } else { go(n - 1) } }`. Previously only
+  module-level functions could; a local one compiled, then failed when called
+  with the error unknown name `go`. A local function that called an outer
+  function of the same name, such as `val log = fn(x) { log("> " + x) }`, now
+  calls itself instead; rename it.
+
 - Fixed nested closures capturing the wrong binding. A closure created inside
   a function that had already used a captured name, as in
   `fn() { val q = p ; val f = fn() { p } ; f() }`, failed with `capture 0 does

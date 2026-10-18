@@ -399,8 +399,17 @@ impl Compiler {
                     }
                 });
                 self.tags(state, tags, declaration, &expression.span)?;
+                // A local function is bound before its body is compiled, so
+                // the body can call it by name; captures are live, so the
+                // slot holds the function by the time the body runs. Module
+                // functions already resolve by name when called.
+                let own_slot = callable_name
+                    .filter(|_| existing_callable.is_none() && !state.is_root())
+                    .map(|name| state.declare(name.clone(), *mutable, true));
                 self.expression(state, value)?;
-                if let Some(binding) = existing_callable {
+                if let Some(slot) = own_slot {
+                    state.emit(Op::SetLocal(slot), &expression.span);
+                } else if let Some(binding) = existing_callable {
                     match binding {
                         Binding::Global { .. } => state.emit(
                             Op::GetGlobal(callable_name.expect("callable name").clone()),

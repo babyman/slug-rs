@@ -803,3 +803,45 @@ fn nested_closures_capture_the_binding_they_name() {
     );
     assert_eq!(String::from_utf8(output.stdout).unwrap(), "2 xg deep 4\n");
 }
+
+#[test]
+fn local_functions_call_themselves_by_name() {
+    let path = fixture_path("local-self-reference");
+    fs::write(
+        &path,
+        // The local `go` shadows the module's; a nested closure reaches the
+        // enclosing function by name; and a later overload calls the set.
+        "val go = 99\n\
+         val shadow = fn() {\n\
+           val go = fn(n) { if (n == 0) { \"inner\" } else { go(n - 1) } }\n\
+           go(2)\n\
+         }\n\
+         val nested = fn() {\n\
+           val walk = fn(xs) {\n\
+             match xs { [] => 0 ; [head, ...rest] => { val add = fn() { head + walk(rest) }\n add() } }\n\
+           }\n\
+           walk([1, 2, 3])\n\
+         }\n\
+         val overloads = fn() {\n\
+           val f = fn(a) { \"one \" + a }\n\
+           val f = fn(a, b) { f(a) + b }\n\
+           f(\"x\", \"y\")\n\
+         }\n\
+         println(go, shadow(), nested(), overloads())\n",
+    )
+    .expect("write local self-reference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run local self-reference source");
+    fs::remove_file(path).expect("remove local self-reference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "99 inner 6 one xy\n"
+    );
+}

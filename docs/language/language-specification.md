@@ -518,7 +518,11 @@ call frames.
 
 Recursion is Slug's only source-language looping construct. Slug has no
 `while`, `for`, or `loop` form, and it has no `break` or `continue` statement.
-Programs express repetition by calling a function recursively. In a tail
+Programs express repetition by calling a function recursively. A function
+declared with `val name = fn ...` or `var name = fn ...` may call itself by
+`name` in its body, at module level or inside another function; inside a
+function the new binding is visible to the body, so it shadows any outer
+binding of the same name there. In a tail
 position, `recur(...)` is the stack-safe form: it restarts the current function
 with new argument values instead of making another call.
 
