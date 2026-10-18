@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Lists, maps, and tasks are covariant: `val mixed:list<num|str> = [1, 2]` and
+  `var record:map<str, any|nil> = {kind: "text"}` now check, where element
+  types previously had to match exactly. Channels, which also take values in,
+  still match exactly. Union normalization drops a member another member
+  covers, so a function returning `{a: 1}` or `{a: 1, b: nil}` is typed
+  `map<str, num|nil>` rather than a union of the two map types.
+
 - Indexing or slicing a value whose type is a union of collections, such as
   a function's result that is one of two map shapes, now checks each member
   and yields any of their results: `{a: 1}` or `{a: "x"}` indexed by `a` is

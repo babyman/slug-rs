@@ -490,6 +490,22 @@ impl Type {
         }
         flattened.sort_by_key(sort_key);
         flattened.dedup();
+        // A member that another member already covers adds nothing, such as
+        // `list<num>` beside `list<num|str>`. Of two members that cover each
+        // other, the first is kept.
+        let covered = (0..flattened.len())
+            .filter(|&index| {
+                let member = &flattened[index];
+                flattened.iter().enumerate().any(|(other_index, other)| {
+                    other_index != index
+                        && member.is_assignable_to(other)
+                        && (!other.is_assignable_to(member) || other_index < index)
+                })
+            })
+            .collect::<Vec<_>>();
+        for index in covered.into_iter().rev() {
+            flattened.remove(index);
+        }
         match flattened.len() {
             0 => Self::Never,
             1 => flattened.pop().expect("one normalized union member"),
@@ -560,7 +576,7 @@ impl Type {
             Self::Union(members) => members.iter().any(|member| self.is_assignable_to(member)),
             Self::List(expected) => match self {
                 Self::List(actual) => {
-                    optional_argument_assignable(actual.as_deref(), expected.as_deref())
+                    optional_covariant_assignable(actual.as_deref(), expected.as_deref())
                 }
                 _ => false,
             },
@@ -576,7 +592,7 @@ impl Type {
             },
             Self::Task(expected) => match self {
                 Self::Task(actual) => {
-                    optional_argument_assignable(actual.as_deref(), expected.as_deref())
+                    optional_covariant_assignable(actual.as_deref(), expected.as_deref())
                 }
                 _ => false,
             },
@@ -616,13 +632,25 @@ fn optional_argument_assignable(actual: Option<&Type>, expected: Option<&Type>) 
     }
 }
 
+/// Lists, maps, and tasks only give their elements out, so one whose elements
+/// fit the expected element type fits; a channel, which also takes them in,
+/// matches exactly.
+fn optional_covariant_assignable(actual: Option<&Type>, expected: Option<&Type>) -> bool {
+    match (actual, expected) {
+        (_, None) | (None | Some(Type::Unknown), Some(_)) => true,
+        (Some(actual), Some(expected)) => actual.is_assignable_to(expected),
+    }
+}
+
 fn optional_pair_assignable(
     actual: Option<&(Box<Type>, Box<Type>)>,
     expected: Option<&(Box<Type>, Box<Type>)>,
 ) -> bool {
     match (actual, expected) {
         (_, None) | (None, Some(_)) => true,
-        (Some(actual), Some(expected)) => actual == expected,
+        (Some(actual), Some(expected)) => {
+            actual.0.is_assignable_to(&expected.0) && actual.1.is_assignable_to(&expected.1)
+        }
     }
 }
 

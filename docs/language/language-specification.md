@@ -1032,6 +1032,19 @@ val names:list<str|nil> = ["Ada", nil]
 val scores:map<str, num|nil> = {ada: 10, bob: nil}
 ```
 
+Lists, maps, and tasks only give their elements out, so they are covariant: a
+`list<A>` conforms to `list<B>` when `A` conforms to `B`, a `map<K, V>` to
+`map<J, W>` when `K` conforms to `J` and `V` to `W`, and a `task<A>` to
+`task<B>` when `A` conforms to `B`. A channel also takes values in, so
+`chan<A>` conforms only to `chan<A>`. Union normalization drops a member that
+another member covers, so `list<num>|list<num|str>` is `list<num|str>`.
+
+```slug
+val mixed:list<num|str> = [1, 2]
+var record:map<str, any|nil> = {kind: "text"}
+record = {kind: "number", value: 1}
+```
+
 An unannotated parameter derives its type from constraints in its declaring
 function body; callers validate the completed signature but never contribute to
 its inference. A direct call in that body may use an already-known, uniquely

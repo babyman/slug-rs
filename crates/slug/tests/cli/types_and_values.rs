@@ -1872,6 +1872,63 @@ fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
 }
 
 #[test]
+fn lists_maps_and_tasks_are_covariant_and_channels_are_not() {
+    let path = fixture_path("collection-variance");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write collection variance source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run collection variance source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run("val mixed:list<num|str> = [1, 2]\n\
+         var record:map<str, any|nil> = {kind: \"text\"}\n\
+         record = {kind: \"number\", value: 1}\n\
+         val nested:list<list<num|nil>> = [[1], [2]]\n\
+         val widen = fn(pending:task<num>) { val wider:task<num|str> = pending; wider }\n\
+         println(mixed, record, nested)\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "[1, 2] {\"kind\": \"number\", \"value\": 1} [[1], [2]]\n"
+    );
+
+    // A covered union member is dropped, so a mismatch names one map type.
+    for (source, message) in [
+        (
+            "val numbers:list<num> = [1, \"a\"]\n",
+            "expected list<num>, got list<num|str>",
+        ),
+        (
+            "val c:chan<num|str> = chan<num>(1)\n",
+            "expected chan<num|str>, got chan<num>",
+        ),
+        (
+            "val pick = fn(c) { if (c) { {a: 1} } else { {a: 1, b: nil} } }\nval n:num = pick(true)\n",
+            "expected num, got map<str, num|nil>",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+
+    // The more specific overload still wins, whichever is declared first.
+    let (code, stdout, stderr) = run("val f = fn(xs:list<num|str>) { \"mixed\" }\n\
+         val f = fn(xs:list<num>) { \"numbers\" }\n\
+         println(f([1]), f([1, \"a\"]))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "numbers mixed\n");
+    fs::remove_file(&path).expect("remove collection variance source");
+}
+
+#[test]
 fn indexing_a_union_of_collections_yields_any_member_result() {
     let path = fixture_path("union-index");
     let run = |source: &str| {
