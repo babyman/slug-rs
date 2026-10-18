@@ -1872,6 +1872,49 @@ fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
 }
 
 #[test]
+fn indexing_a_union_of_collections_yields_any_member_result() {
+    let path = fixture_path("union-index");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write union index source");
+        let output = slug().arg(&path).output().expect("run union index source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run(
+        "val pick = fn(c) { if (c) { {a: 1} } else { {a: \"x\", b: nil} } }\n\
+         val list:list<num>|list<str> = [1, 2]\n\
+         val text:str|list<str> = \"ab\"\n\
+         println(pick(true).a, pick(false)[\"b\"], list[0], list[1:], text[0], text[1:])\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "1 nil 1 [2] a b\n");
+
+    for (source, message) in [
+        (
+            "val pick = fn(c) { if (c) { {a: 1} } else { {a: \"x\"} } }\nval n:num = pick(true).a\n",
+            "expected num, got num|str|nil",
+        ),
+        (
+            "val m:map<str, num>|nil = nil\nm.a\n",
+            "operator `[]` does not accept map<str, num>|nil and str",
+        ),
+        (
+            "val l:list<num>|list<str> = [1]\nl[\"a\"]\n",
+            "operator `[]` does not accept list<num>|list<str> and str",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    fs::remove_file(&path).expect("remove union index source");
+}
+
+#[test]
 fn nil_coalescing_removes_nil_from_the_left_type() {
     let path = fixture_path("nil-coalescing-types");
     let run = |source: &str| {

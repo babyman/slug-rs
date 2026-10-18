@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Indexing or slicing a value whose type is a union of collections, such as
+  a function's result that is one of two map shapes, now checks each member
+  and yields any of their results: `{a: 1}` or `{a: "x"}` indexed by `a` is
+  `num|str|nil`. Previously it failed with
+  ``operator `[]` does not accept map<str, num>|map<str, str> and str``. A
+  union with a member that cannot be indexed, such as `nil`, is still an
+  error.
+
 - A type mismatch whose value is a `var` that started as `nil` now says so and
   names the declaration to annotate:
   ``expected num, got any: `held` starts as `nil`, so its type is `any|nil`;

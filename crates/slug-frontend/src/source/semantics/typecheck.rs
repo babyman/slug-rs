@@ -3019,6 +3019,14 @@ fn index_result(collection: &Type, index: &Type, span: &SourceSpan) -> Result<Ty
             require_operation_operand(&Type::Str, index, span)?;
             Ok(Type::Unknown)
         }
+        // A value of a union type is one of its members, so indexing it
+        // yields any of their results, when every member can be indexed.
+        Type::Union(members) => members
+            .iter()
+            .map(|member| index_result(member, index, span))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Type::union)
+            .or_else(|_| invalid_operation("[]", collection, index, span)),
         other => invalid_operation("[]", other, index, span),
     }
 }
@@ -3031,6 +3039,17 @@ fn slice_result(collection: &Type, span: &SourceSpan) -> Result<Type, SourceErro
         Type::List(element) => Ok(Type::List(element.clone())),
         Type::Bytes => Ok(Type::Bytes),
         Type::Str => Ok(Type::Str),
+        Type::Union(members)
+            if members
+                .iter()
+                .all(|member| slice_result(member, span).is_ok()) =>
+        {
+            Ok(Type::union(
+                members
+                    .iter()
+                    .filter_map(|member| slice_result(member, span).ok()),
+            ))
+        }
         other => Err(SourceError::semantic(
             SourceErrorCode::TypeMismatch,
             format!("expected list, got {other}"),
