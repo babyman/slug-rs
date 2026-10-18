@@ -1754,3 +1754,45 @@ fn recursive_function_variables_accept_reassignment() {
         "{stderr}"
     );
 }
+
+#[test]
+fn early_returns_join_and_check_a_functions_result() {
+    let path = fixture_path("early-return-results");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write early return source");
+        let output = slug().arg(&path).output().expect("run early return source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A recursive helper that returns early has its returns' type, not
+    // `never`, and a return inside a match case or an onerror handler counts.
+    let (code, stdout, stderr) = run("val peel = fn(n, out) {\n\
+           if (n == 0) { return out }\n\
+           recur(n - 1, out :+ n)\n\
+         }\n\
+         val pick = fn(x):str { match x { 0 => { return \"zero\" }\n _ => \"other\" } }\n\
+         val rescue = fn():str {\n\
+           defer onerror(e) { return e.msg }\n\
+           throw Error { type: \"t\", msg: \"caught\" }\n\
+         }\n\
+         println(peel(3, [])[0], pick(0), rescue())\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "3 zero caught\n");
+
+    // An early return's type is part of the inferred result.
+    let (code, _, stderr) =
+        run("val f = fn(n) {\n  if (n == 0) { return \"a\" }\n  5\n}\nval x:num = f(0)\n");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, found num|str"), "{stderr}");
+
+    // A declared result is checked at each return.
+    let (code, _, stderr) = run("val f = fn(n):num {\n  if (n == 0) { return \"zero\" }\n  n\n}\n");
+    fs::remove_file(&path).expect("remove early return source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, found str"), "{stderr}");
+    assert!(stderr.contains(":2:24\n"), "{stderr}");
+}

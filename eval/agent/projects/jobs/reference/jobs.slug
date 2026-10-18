@@ -65,7 +65,7 @@ val waves = fn(jobs) {
     peel(jobs, {}, [])
 }
 
-export val plan = fn(jobs:list):list { waves(jobs) }
+export val plan = fn(jobs:list) { waves(jobs) }
 
 // One attempt: ["ok", value], ["error", msg], or ["timeout", nil].
 val attempt = fn(job, inputs) {
@@ -103,7 +103,7 @@ val execute = fn(job, inputs) {
     go(0)
 }
 
-export val run = fn(jobs:list, concurrency = 4, log = nil):map {
+export val run = fn(jobs:list, concurrency = 4, log = nil) {
     if (concurrency < 1 || int(concurrency) != concurrency) {
         invalid({reason: "concurrency"})
     }

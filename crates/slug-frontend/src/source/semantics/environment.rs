@@ -216,6 +216,17 @@ pub(super) struct Environment {
     type_scopes: Vec<HashMap<String, TypeMember>>,
     imports: Rc<ImportSnapshots>,
     records: Rc<RefCell<SemanticRecords>>,
+    /// The function body being checked, shared by every environment cloned
+    /// within it, such as a match case's, and replaced inside a nested
+    /// function. `None` outside any function.
+    function: Option<Rc<RefCell<FunctionReturns>>>,
+}
+
+/// What a function body's `return` expressions must and do produce.
+#[derive(Debug)]
+struct FunctionReturns {
+    expected: Option<Type>,
+    returned: Vec<Type>,
 }
 
 impl Environment {
@@ -233,7 +244,39 @@ impl Environment {
             type_scopes: vec![session.types.clone()],
             imports: Rc::new(imports),
             records: Rc::new(RefCell::new(SemanticRecords::default())),
+            function: None,
         }
+    }
+
+    /// Begins checking a function body whose result must conform to
+    /// `expected`, when it is declared.
+    pub(super) fn enter_function(&mut self, expected: Option<Type>) {
+        self.function = Some(Rc::new(RefCell::new(FunctionReturns {
+            expected,
+            returned: Vec::new(),
+        })));
+    }
+
+    /// The declared result of the function being checked, if any.
+    pub(super) fn expected_return(&self) -> Option<Type> {
+        self.function
+            .as_ref()
+            .and_then(|function| function.borrow().expected.clone())
+    }
+
+    /// Records the type a `return` in the current function produces.
+    pub(super) fn record_return(&self, value_type: Type) {
+        if let Some(function) = &self.function {
+            function.borrow_mut().returned.push(value_type);
+        }
+    }
+
+    /// The types every `return` in the current function produced.
+    pub(super) fn returned_types(&self) -> Vec<Type> {
+        self.function
+            .as_ref()
+            .map(|function| function.borrow().returned.clone())
+            .unwrap_or_default()
     }
 
     pub(super) fn install_implicit_callable_export(&mut self, module: &ModuleSnapshot, name: &str) {

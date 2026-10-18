@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A function's inferred result now includes the values of its early
+  `return`s, and a declared result type is checked at each `return`.
+  Previously `fn(n) { if (n == 0) { return "a" } ; 5 }` was inferred as `num`,
+  so `val x:num = f(0)` passed checking and bound `"a"`; a recursive helper
+  that returned early and ended in `recur(...)` was inferred as `never`; and
+  `return "zero"` in a function declared `:num` was not reported.
+
 - A list, call, or other bracketed expression inside a function body or
   other block may span lines, as at module level: `f(1,` then `2)` on the
   next line previously failed with `expected expression` inside any `{ }`.

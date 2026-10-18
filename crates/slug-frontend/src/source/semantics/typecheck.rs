@@ -1672,14 +1672,22 @@ fn check_function_body(
             require(parameter_type, &actual, &default.span)?;
         }
     }
-    let actual = check_expression_with_flow(body, &mut scoped, type_parameters)?.value_type;
-    if let Some(return_annotation) = return_annotation {
-        let expected =
-            resolve_static_annotation(return_annotation, type_parameters, &body.span, environment)?;
+    let expected = return_annotation
+        .map(|annotation| {
+            resolve_static_annotation(annotation, type_parameters, &body.span, environment)
+        })
+        .transpose()?;
+    scoped.enter_function(expected.clone());
+    let completed = check_expression_with_flow(body, &mut scoped, type_parameters)?.value_type;
+    if let Some(expected) = &expected {
         let result = result_expression(body);
-        require(&expected, &actual, &result.span).map_err(|error| error.with_extent(result))?;
+        require(expected, &completed, &result.span).map_err(|error| error.with_extent(result))?;
     }
-    Ok(actual)
+    // The function produces its body's value or any `return`'s, which were
+    // each checked against `expected` where they occur.
+    Ok(Type::union(
+        std::iter::once(completed).chain(scoped.returned_types()),
+    ))
 }
 
 /// The expression whose value a body produces: the last expression of each
@@ -2095,7 +2103,15 @@ fn check_expression_inner(
             }
             Ok(actual)
         }
-        ExprKind::Return { value } => check_expression(value, environment, type_parameters),
+        ExprKind::Return { value } => {
+            let actual = check_expression(value, environment, type_parameters)?;
+            if let Some(expected) = environment.expected_return() {
+                require(&expected, &actual, &value.span)
+                    .map_err(|error| error.with_extent(value))?;
+            }
+            environment.record_return(actual.clone());
+            Ok(actual)
+        }
         ExprKind::Throw { value } => {
             check_expression(value, environment, type_parameters)?;
             Ok(Type::Never)
