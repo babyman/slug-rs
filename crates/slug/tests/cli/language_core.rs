@@ -928,3 +928,44 @@ fn bracketed_expressions_continue_across_lines_inside_blocks() {
         "13 [\"exact\", \"after\"]\n"
     );
 }
+
+#[test]
+fn nil_coalescing_defaults_only_nil_and_short_circuits() {
+    let path = fixture_path("nil-coalescing");
+    fs::write(
+        &path,
+        "val maybe = fn(x):str|nil { x }\n\
+         val number = fn(x):num|nil { x }\n\
+         val needStr = fn(s:str) { s }\n\
+         var calls = 0\n\
+         val side = fn() { calls = calls + 1\n \"side\" }\n\
+         val counts = {a: 2}\n\
+         val User = struct { nickname = nil, name }\n\
+         val ada = User { name: \"Ada\" }\n\
+         println(needStr(maybe(\"x\") ?? \"\"), needStr(maybe(nil) ?? \"empty\"))\n\
+         println(maybe(\"kept\") ?? side(), calls, maybe(nil) ?? side(), calls)\n\
+         println(counts[\"a\"] ?? 0, counts[\"b\"] ?? 0, ada.nickname ?? ada.name ?? \"anonymous\")\n\
+         println(number(nil) ?? 0 > 3, number(5) ?? 0 > 3, false ?? true, 0 ?? 1)\n\
+         val total = counts[\"z\"]\n\
+           ?? 10\n\
+         val later = fn() {\n\
+           ???\n\
+         }\n\
+         println(total)\n",
+    )
+    .expect("write nil coalescing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nil coalescing source");
+    fs::remove_file(path).expect("remove nil coalescing source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "x empty\nkept 0 side 1\n2 0 Ada\nfalse true false 0\n10\n"
+    );
+}

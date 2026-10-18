@@ -252,6 +252,7 @@ impl Lexer {
                     | TokenKind::GreaterEq
                     | TokenKind::AndAnd
                     | TokenKind::OrOr
+                    | TokenKind::QuestionQuestion
                     | TokenKind::Ampersand
                     | TokenKind::Pipe
                     | TokenKind::ShiftLeft
@@ -278,13 +279,34 @@ impl Lexer {
         if self.pinned_match_case_starts_at(index) {
             return false;
         }
-        !matches!(
-            (self.input.get(index), self.input.get(index + 1)),
-            (Some('/'), Some('/' | '*'))
-        ) && matches!(
-            self.input.get(index),
-            Some('+' | '-' | '*' | '/' | '%' | ':' | '<' | '>' | '=' | '!' | '&' | '|' | '^' | '.',)
-        )
+        // A line beginning with `??` continues; one beginning with the `???`
+        // placeholder is a statement of its own.
+        let coalesce = matches!(
+            (self.input.get(index), self.input.get(index + 1), self.input.get(index + 2)),
+            (Some('?'), Some('?'), next) if next != Some(&'?')
+        );
+        coalesce
+            || !matches!(
+                (self.input.get(index), self.input.get(index + 1)),
+                (Some('/'), Some('/' | '*'))
+            ) && matches!(
+                self.input.get(index),
+                Some(
+                    '+' | '-'
+                        | '*'
+                        | '/'
+                        | '%'
+                        | ':'
+                        | '<'
+                        | '>'
+                        | '='
+                        | '!'
+                        | '&'
+                        | '|'
+                        | '^'
+                        | '.',
+                )
+            )
     }
 
     fn pinned_match_case_starts_at(&self, mut index: usize) -> bool {
@@ -513,10 +535,13 @@ impl Lexer {
                         self.next();
                         self.next();
                         self.push(&mut result, TokenKind::NotImplemented, span);
+                    } else if self.peek() == Some('?') {
+                        self.next();
+                        self.push(&mut result, TokenKind::QuestionQuestion, span);
                     } else {
                         return Err(SourceError::at(
                             SourceErrorCode::ExpectedSyntax,
-                            "expected ???",
+                            "expected ?? or ???",
                             span,
                         )
                         .with_end(self.position()));

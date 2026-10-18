@@ -444,6 +444,8 @@ pub(super) enum Pattern {
 pub(super) enum Binary {
     Or,
     And,
+    /// `??`: the left operand unless it is `nil`, else the right one.
+    Coalesce,
     BitOr,
     BitXor,
     BitAnd,
@@ -528,6 +530,7 @@ pub(super) enum TokenKind {
     GreaterEq,
     AndAnd,
     OrOr,
+    QuestionQuestion,
     Ampersand,
     Pipe,
     ShiftLeft,
@@ -672,6 +675,7 @@ impl TokenKind {
             Self::GreaterEq => "`>=`".into(),
             Self::AndAnd => "`&&`".into(),
             Self::OrOr => "`||`".into(),
+            Self::QuestionQuestion => "`??`".into(),
             Self::Ampersand => "`&`".into(),
             Self::Pipe => "`|`".into(),
             Self::ShiftLeft => "`<<`".into(),

@@ -1849,3 +1849,25 @@ fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
     }
     fs::remove_file(&path).expect("remove nil first value source");
 }
+
+#[test]
+fn nil_coalescing_removes_nil_from_the_left_type() {
+    let path = fixture_path("nil-coalescing-types");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write nil coalescing type source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run nil coalescing type source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stderr) = run("val maybe = fn(x):str|nil { x }\nval s:str = maybe(nil) ?? \"\"\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    let (code, stderr) = run("val maybe = fn(x):str|nil { x }\nval n:num = maybe(nil) ?? 0\n");
+    fs::remove_file(&path).expect("remove nil coalescing type source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, found num|str"), "{stderr}");
+}

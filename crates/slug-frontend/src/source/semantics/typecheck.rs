@@ -2641,6 +2641,7 @@ fn binary_result(
     }
     match operator {
         Binary::Or | Binary::And | Binary::Equal | Binary::NotEqual => Ok(Type::Bool),
+        Binary::Coalesce => Ok(coalesce_result(left, right)),
         Binary::Greater | Binary::GreaterEqual | Binary::Less | Binary::LessEqual => {
             ordering_operands(operator, left, right, span)?;
             Ok(Type::Bool)
@@ -2656,6 +2657,16 @@ fn binary_result(
         Binary::Add => add_result(left, right, span),
         Binary::Multiply => multiply_result(left, right, span),
         Binary::Pipeline => Ok(right.clone()),
+    }
+}
+
+/// `left ?? right` is `left` without `nil`, or `right` when `left` is `nil`.
+/// When `left` can never be `nil`, `right` is never evaluated.
+fn coalesce_result(left: &Type, right: &Type) -> Type {
+    match type_subtract(left, &Type::Nil) {
+        None => right.clone(),
+        Some(present) if present == *left && !matches!(left, Type::Unknown) => present,
+        Some(present) => Type::union([present, right.clone()]),
     }
 }
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- New `??` operator: `a ?? b` is `a` unless it is `nil`, and otherwise
+  evaluates `b`. Its type is `a`'s without `nil`, joined with `b`'s, so
+  `fs.readLine(file) ?? ""` is a `str` and `counts[word] ?? 0` defaults a
+  missing entry. It binds more tightly than comparison and groups to the right.
+
 - A `var` or struct field whose first value is `nil` may later hold any value:
   `var best = nil` then `best = 5`, and `struct { error = nil }` constructed
   with `error: "boom"`, previously failed with `expected nil, got ...`. A

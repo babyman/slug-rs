@@ -705,6 +705,15 @@ impl Compiler {
                         self.expression(state, right)?;
                         state.patch(end);
                     }
+                    Binary::Coalesce => {
+                        state.emit(Op::Duplicate, &expression.span);
+                        state.emit(Op::Nil, &expression.span);
+                        state.emit(Op::Equal, &expression.span);
+                        let end = state.jump_if_false_pop(&expression.span);
+                        state.emit(Op::Pop, &expression.span);
+                        self.expression(state, right)?;
+                        state.patch(end);
+                    }
                     Binary::Or => {
                         let right_hand_side = state.jump_if_false(&expression.span);
                         let end = state.jump(&expression.span);

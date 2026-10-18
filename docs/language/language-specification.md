@@ -186,6 +186,7 @@ Operator precedence, from lowest to highest, is:
 | `&&` | left |
 | `==` `!=` | left |
 | `<` `<=` `>` `>=` | left |
+| `??` | right |
 | `|` `^` `&` | left |
 | `<<` `>>` | left |
 | `+` `-` | left |
@@ -195,6 +196,15 @@ Operator precedence, from lowest to highest, is:
 | prefix `!` `-` `~` | right |
 | pipeline `/>` | left |
 | calls, indexing, dot access, struct initialization and copy | left |
+
+`a ?? b` is `a` unless `a` is `nil`, in which case it evaluates and is `b`;
+`b` is not evaluated otherwise. Only `nil` selects `b`: `false ?? true`,
+`0 ?? 1`, and `"" ?? "x"` keep their left operand. Its type is `a`'s type
+without `nil`, joined with `b`'s, so `readLine(file) ?? ""` is a `str` and
+`counts[word] ?? 0` defaults a missing map entry. `??` binds more tightly than
+comparison and less than the bitwise and arithmetic operators, and groups to
+the right, so `a ?? b ?? c` tries each in turn and `count ?? 0 > 3` compares
+`count ?? 0`. A line beginning with `??` continues the expression before it.
 
 Bitwise operators (`&`, `|`, and `^`) accept two integers or byte operands.
 When either operand is bytes, an integer from `0` through `255` becomes a

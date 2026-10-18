@@ -673,25 +673,27 @@ impl Parser {
                 TokenKind::LessEq => (Binary::LessEqual, 4),
                 TokenKind::Greater => (Binary::Greater, 4),
                 TokenKind::GreaterEq => (Binary::GreaterEqual, 4),
-                TokenKind::Pipe => (Binary::BitOr, 5),
-                TokenKind::Caret => (Binary::BitXor, 6),
-                TokenKind::Ampersand => (Binary::BitAnd, 7),
-                TokenKind::ShiftLeft => (Binary::ShiftLeft, 8),
-                TokenKind::ShiftRight => (Binary::ShiftRight, 8),
-                TokenKind::Plus => (Binary::Add, 9),
-                TokenKind::Minus => (Binary::Subtract, 9),
-                TokenKind::Star => (Binary::Multiply, 10),
-                TokenKind::Slash => (Binary::Divide, 10),
-                TokenKind::Percent => (Binary::Modulo, 10),
-                TokenKind::ColonPlus => (Binary::Append, 11),
-                TokenKind::PlusColon => (Binary::Prepend, 11),
+                TokenKind::QuestionQuestion => (Binary::Coalesce, 5),
+                TokenKind::Pipe => (Binary::BitOr, 6),
+                TokenKind::Caret => (Binary::BitXor, 7),
+                TokenKind::Ampersand => (Binary::BitAnd, 8),
+                TokenKind::ShiftLeft => (Binary::ShiftLeft, 9),
+                TokenKind::ShiftRight => (Binary::ShiftRight, 9),
+                TokenKind::Plus => (Binary::Add, 10),
+                TokenKind::Minus => (Binary::Subtract, 10),
+                TokenKind::Star => (Binary::Multiply, 11),
+                TokenKind::Slash => (Binary::Divide, 11),
+                TokenKind::Percent => (Binary::Modulo, 11),
+                TokenKind::ColonPlus => (Binary::Append, 12),
+                TokenKind::PlusColon => (Binary::Prepend, 12),
                 _ => break,
             };
             if precedence < minimum {
                 break;
             }
             let span = self.next().span;
-            let right = self.binary(if matches!(operator, Binary::Prepend) {
+            // `+:` and `??` group to the right.
+            let right = self.binary(if matches!(operator, Binary::Prepend | Binary::Coalesce) {
                 precedence
             } else {
                 precedence + 1
