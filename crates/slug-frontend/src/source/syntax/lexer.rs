@@ -814,7 +814,6 @@ impl Lexer {
                         "onerror" => TokenKind::Onerror,
                         "recur" => TokenKind::Recur,
                         "nursery" => TokenKind::Nursery,
-                        "limit" => TokenKind::Limit,
                         "spawn" => TokenKind::Spawn,
                         "select" => TokenKind::Select,
                         "match" => TokenKind::Match,

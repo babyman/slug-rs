@@ -845,3 +845,38 @@ fn local_functions_call_themselves_by_name() {
         "99 inner 6 one xy\n"
     );
 }
+
+#[test]
+fn else_may_start_a_line() {
+    let path = fixture_path("else-newline");
+    fs::write(
+        &path,
+        "val grade = fn(x) {\n\
+           if (x > 1) {\n\
+             \"big\"\n\
+           }\n\
+         \n\
+           // a comment between\n\
+           else if (x > 0) {\n\
+             \"one\"\n\
+           }\n\
+           else {\n\
+             \"small\"\n\
+           }\n\
+         }\n\
+         val limit = 2\n\
+         println(grade(5), grade(1), grade(0), limit)\n",
+    )
+    .expect("write else source");
+    let output = slug().arg(&path).output().expect("run else source");
+    fs::remove_file(path).expect("remove else source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "big one small 2\n"
+    );
+}

@@ -90,6 +90,21 @@ impl Parser {
         }
         error
     }
+    /// An error for `token` where a name was expected, saying so when it is
+    /// a reserved word, the likely mistake.
+    fn expected_name(token: &Token, message: &str) -> SourceError {
+        let mut error = match token.kind.reserved_word() {
+            Some(word) => SourceError::at(
+                SourceErrorCode::ExpectedSyntax,
+                format!("`{word}` is a reserved word and cannot be used as a name"),
+                token.span.clone(),
+            ),
+            None => SourceError::at(SourceErrorCode::ExpectedSyntax, message, token.span.clone()),
+        }
+        .with_end(token.end);
+        error.actual = Some(token.kind.describe().into());
+        error
+    }
     fn separators(&mut self) {
         while self.is_separator() {
             self.next();
@@ -227,12 +242,7 @@ impl Parser {
                 self.consume(&TokenKind::LParen, "expected ( after onerror")?;
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at(
-                        SourceErrorCode::ExpectedSyntax,
-                        "expected error binding name",
-                        token.span,
-                    )
-                    .with_end(token.end));
+                    return Err(Self::expected_name(&token, "expected error binding name"));
                 };
                 self.consume(&TokenKind::RParen, "expected ) after error binding")?;
                 (DeferMode::Error, Some(name))
@@ -435,11 +445,10 @@ impl Parser {
             ));
         }
         let name = self.next();
-        let TokenKind::Name(name) = name.kind else {
-            return Err(SourceError::at(
-                SourceErrorCode::ExpectedSyntax,
+        let TokenKind::Name(name) = name.kind.clone() else {
+            return Err(Self::expected_name(
+                &name,
                 "expected foreign declaration name",
-                name.span,
             ));
         };
         self.consume(&TokenKind::Eq, "expected = after foreign declaration name")?;
@@ -483,11 +492,7 @@ impl Parser {
             };
             let parameter = self.next();
             let TokenKind::Name(name) = parameter.kind else {
-                return Err(SourceError::at(
-                    SourceErrorCode::ExpectedSyntax,
-                    "expected parameter name",
-                    parameter.span,
-                ));
+                return Err(Self::expected_name(&parameter, "expected parameter name"));
             };
             let annotation = if self.matches(&TokenKind::Colon) {
                 self.next();
@@ -1054,7 +1059,9 @@ impl Parser {
         })
     }
     fn nursery(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
-        let limit = if self.matches(&TokenKind::Limit) {
+        // `limit` is a keyword only here: a nursery body begins with `fn` or
+        // `{`, so a name directly after `nursery` can only be `limit`.
+        let limit = if matches!(self.kind(), TokenKind::Name(name) if name == "limit") {
             self.next();
             // A following block begins the nursery body rather than a struct
             // initializer applied to the limit expression.
@@ -1498,12 +1505,7 @@ impl Parser {
                 };
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at(
-                        SourceErrorCode::ExpectedSyntax,
-                        "expected parameter name",
-                        token.span,
-                    )
-                    .with_end(token.end));
+                    return Err(Self::expected_name(&token, "expected parameter name"));
                 };
                 let discard = name == "_";
                 let name = if discard {
@@ -1755,24 +1757,14 @@ impl Parser {
             TokenKind::Caret => {
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at(
-                        SourceErrorCode::ExpectedSyntax,
-                        "expected pinned binding name",
-                        token.span,
-                    )
-                    .with_end(token.end));
+                    return Err(Self::expected_name(&token, "expected pinned binding name"));
                 };
                 Ok(Pattern::Pinned(name))
             }
             TokenKind::LBracket => self.list_pattern(&token.span),
             TokenKind::LBrace => self.map_pattern(&token.span),
             TokenKind::LExactMap => self.exact_map_pattern(&token.span),
-            _ => Err(SourceError::at(
-                SourceErrorCode::ExpectedSyntax,
-                "expected match pattern",
-                token.span,
-            )
-            .with_end(token.end)),
+            _ => Err(Self::expected_name(&token, "expected match pattern")),
         }
     }
     fn rest_pattern(&mut self) -> RestPattern {
@@ -2026,6 +2018,18 @@ impl Parser {
         let condition = self.expression()?;
         self.consume(&TokenKind::RParen, "expected )")?;
         let then_branch = self.block()?;
+        // No expression begins with `else`, so one on a following line
+        // continues this `if` rather than starting a new expression.
+        let mut ahead = self.index;
+        while matches!(
+            self.tokens[ahead].kind,
+            TokenKind::Sep | TokenKind::BlankSep
+        ) {
+            ahead += 1;
+        }
+        if matches!(self.tokens[ahead].kind, TokenKind::Else) {
+            self.index = ahead;
+        }
         let else_branch = if self.matches(&TokenKind::Else) {
             self.next();
             Some(Box::new(if self.matches(&TokenKind::If) {

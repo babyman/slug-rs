@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `limit` is now an ordinary name except directly after `nursery`, so
+  `val limit = 10` works. A reserved word used as a name now reports
+  `` `copy` is a reserved word and cannot be used as a name `` instead of
+  `expected match pattern` or `expected parameter name`, and the language
+  specification lists the reserved words.
+
+- An `else` at the start of a line continues the `if` before it, so `}` and
+  `else {` may be on separate lines. Previously the `if` ended at the newline
+  and the `else` failed with `expected expression`.
+
 - A `var` holding a recursive function can be reassigned. The checker cannot
   infer such a function's result, and an unknown result or parameter in a
   function type now matches any type, so `var f = fn(n) { ... f(n - 1) }`

@@ -514,3 +514,30 @@ fn explicit_nursery_cancels_pending_siblings_after_a_child_failure() {
             .contains("uncaught throw: first failure")
     );
 }
+
+#[test]
+fn a_variable_named_limit_can_be_a_nursery_limit() {
+    let path = fixture_path("nursery-limit-name");
+    fs::write(
+        &path,
+        "val tasks = import(\"slug.channel\")\n\
+         val limit = 2\n\
+         println(nursery limit limit {\n\
+           val a = spawn { 1 }\n\
+           val b = spawn { 2 }\n\
+           [tasks.await(a), tasks.await(b)]\n\
+         })\n",
+    )
+    .expect("write nursery limit source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nursery limit source");
+    fs::remove_file(path).expect("remove nursery limit source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "[1, 2]\n");
+}

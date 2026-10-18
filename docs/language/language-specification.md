@@ -57,7 +57,15 @@ statement_sep = ";" | NEWLINE ;
 
 Newlines separate statements only where the lexer and parser permit automatic
 statement termination. Authors should use parentheses or a continued operator
-expression when a value spans lines.
+expression when a value spans lines. No statement begins with `else`, so an
+`else` at the start of a line, after any blank or comment lines, continues the
+`if` before it; a `;` before `else` still ends that `if`.
+
+These words are reserved and cannot be used as names: `copy`, `defer`, `else`,
+`enum`, `export`, `false`, `fn`, `foreign`, `if`, `match`, `nil`, `nursery`,
+`onerror`, `onsuccess`, `recur`, `resource`, `return`, `select`, `spawn`,
+`struct`, `throw`, `true`, `val`, and `var`. `limit` is a keyword only directly
+after `nursery`, and is an ordinary name elsewhere.
 
 Blocks are expressions containing statements:
 

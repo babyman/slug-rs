@@ -502,7 +502,6 @@ pub(super) enum TokenKind {
     Onerror,
     Recur,
     Nursery,
-    Limit,
     Spawn,
     Select,
     Match,
@@ -591,6 +590,37 @@ impl TokenKind {
         }
     }
 
+    /// The word, when this token is a reserved word, which cannot be a name.
+    pub(super) fn reserved_word(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::Export => "export",
+            Self::Foreign => "foreign",
+            Self::Resource => "resource",
+            Self::Enum => "enum",
+            Self::Val => "val",
+            Self::Var => "var",
+            Self::Fn => "fn",
+            Self::If => "if",
+            Self::Else => "else",
+            Self::Return => "return",
+            Self::Throw => "throw",
+            Self::Defer => "defer",
+            Self::Onsuccess => "onsuccess",
+            Self::Onerror => "onerror",
+            Self::Recur => "recur",
+            Self::Nursery => "nursery",
+            Self::Spawn => "spawn",
+            Self::Select => "select",
+            Self::Match => "match",
+            Self::Struct => "struct",
+            Self::Copy => "copy",
+            Self::True => "true",
+            Self::False => "false",
+            Self::Nil => "nil",
+            _ => return None,
+        })
+    }
+
     /// A short description of this token for diagnostics, such as `` `}` ``
     /// or ``name `x` ``.
     pub(super) fn describe(&self) -> String {
@@ -616,7 +646,6 @@ impl TokenKind {
             Self::Onerror => "`onerror`".into(),
             Self::Recur => "`recur`".into(),
             Self::Nursery => "`nursery`".into(),
-            Self::Limit => "`limit`".into(),
             Self::Spawn => "`spawn`".into(),
             Self::Select => "`select`".into(),
             Self::Match => "`match`".into(),

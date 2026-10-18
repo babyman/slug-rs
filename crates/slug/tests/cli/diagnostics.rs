@@ -828,3 +828,33 @@ fn out_of_range_integer_literals_offer_a_float() {
     );
     assert_eq!(rounded["suggestions"][0]["edits"][0]["text"], ".0");
 }
+
+#[test]
+fn reserved_words_used_as_names_say_so() {
+    for (name, source, column, word) in [
+        ("reserved-binding", "val copy = 1\n", 5, "copy"),
+        (
+            "reserved-parameter",
+            "val f = fn(match) { 1 }\n",
+            12,
+            "match",
+        ),
+    ] {
+        let path = fixture_path(name);
+        fs::write(&path, source).expect("write reserved word source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run reserved word source");
+        fs::remove_file(&path).expect("remove reserved word source");
+        let diagnostic = json_diagnostic(&output.stderr);
+        assert_eq!(diagnostic["code"], "expected_syntax");
+        assert_eq!(
+            diagnostic["message"],
+            format!("`{word}` is a reserved word and cannot be used as a name")
+        );
+        assert_eq!(diagnostic["actual"], format!("`{word}`"));
+        assert_eq!(diagnostic["range"]["start"]["column"], column);
+    }
+}
