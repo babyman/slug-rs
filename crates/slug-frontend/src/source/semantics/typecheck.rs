@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use slug_vm::{CallableIdentity, DeferMode, SourceSpan, Value, ValueKind};
 
@@ -10,7 +13,7 @@ use super::{
     },
     environment::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
-        SemanticAnalysis, SemanticBinding, SessionSnapshot, function_value_type,
+        NilStartSite, SemanticAnalysis, SemanticBinding, SessionSnapshot, function_value_type,
     },
     semantic::{
         AlternativeType, AlternativeVariable, InferredAlternative, ResourceIdentity,
@@ -1546,6 +1549,7 @@ fn analyze_expressions(
             .with_extent(expression));
         }
     }
+    infer_nil_starts(expressions, &environment, &[], false);
     for expression in expressions {
         let _ = check_expression_with_flow(expression, &mut environment, &[])?;
         record_exports(expression, &environment, &mut exports, &mut types);
@@ -1993,7 +1997,7 @@ fn check_expression_inner(
                     let mut names = Vec::new();
                     pattern_binding_names(pattern, &mut names);
                     for name in names {
-                        environment.declare_mutable(name);
+                        environment.declare_mutable(name, &expression.span);
                     }
                 }
             }
@@ -2139,6 +2143,7 @@ fn check_expression_inner(
             })))
         }
         ExprKind::Block(values) => {
+            infer_nil_starts(values, environment, type_parameters, true);
             let mut scoped = environment.clone();
             scoped.enter_scope();
             predeclare_functions(values, &mut scoped);
@@ -2227,10 +2232,25 @@ fn check_expression_inner(
             .map_or(Type::Unknown, |binding| binding.value_type.clone())),
         ExprKind::Assign { name, value } => {
             let actual = check_expression(value, environment, type_parameters)?;
-            if let Some(binding) = environment.lookup(name) {
+            if environment.in_trial() {
+                environment.log_assignment(name, &value.span, &actual);
+            }
+            if let Some(binding) = environment
+                .lookup(name)
+                .filter(|binding| !(environment.in_trial() && binding.nil_start.is_some()))
+            {
                 let expected = binding.declared.as_ref().unwrap_or(&binding.value_type);
                 require(expected, &actual, &value.span).map_err(|error| {
-                    explain_nil_start(error.with_extent(value), value, environment)
+                    let error = error.with_extent(value);
+                    if binding
+                        .nil_start
+                        .as_ref()
+                        .is_some_and(|start| !start.assignments.is_empty())
+                    {
+                        explain_nil_start_assignment(error, name, binding, &actual)
+                    } else {
+                        explain_nil_start(error, value, environment)
+                    }
                 })?;
             }
             if let Some(binding) = environment.lookup_mut(name) {
@@ -2703,12 +2723,121 @@ fn predeclare_functions(values: &[Expr], environment: &mut Environment) {
     }
 }
 
+/// Infers the type of each `var` these statements start with `nil` from a
+/// trial check of them, which logs every assignment to it, including in
+/// nested functions and in later code: its declared type is `nil` with the
+/// type of the first one written, which later assignments must then conform
+/// to. A trial that fails because of such a `var`, or that finds no
+/// assignment or a first one of unknown type, leaves the `var` `any|nil`. Within a trial every such `var` is
+/// dynamic and no further trial runs, so nested blocks are checked a bounded
+/// number of extra times.
+fn infer_nil_starts(
+    values: &[Expr],
+    environment: &Environment,
+    type_parameters: &[String],
+    scoped: bool,
+) {
+    if environment.in_trial() {
+        return;
+    }
+    let sites = values
+        .iter()
+        .filter_map(|value| match &value.kind {
+            ExprKind::Declare {
+                mutable: true,
+                pattern: Pattern::Binding(name),
+                annotation: None,
+                value: initial,
+                ..
+            } if matches!(initial.kind, ExprKind::Value(Value::Nil)) => {
+                Some((value.span.clone(), name.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<NilStartSite>>();
+    if sites.is_empty() {
+        return;
+    }
+    // Each round seeds every `var` with the first assignment's type the last
+    // one found, so an accumulator such as `count = count + 1` is typed once
+    // `count` is. The first round is final when every first assignment's
+    // type is known, since none then came from a dynamic `var`; a later one
+    // when it finds exactly the types it was seeded with. A trial checks no
+    // assignment to these vars, so a later assignment of another type is
+    // reported by the real check rather than ending the trial.
+    let mut seed = HashMap::new();
+    for round in 0..MAX_NIL_START_ROUNDS {
+        let mut trial = environment.trial(seed.clone());
+        if scoped {
+            trial.enter_scope();
+            predeclare_functions(values, &mut trial);
+        }
+        // An error in the first round, in which these vars are dynamic, is
+        // not theirs, so the assignments checked before it still count.
+        let mut failed = false;
+        for value in values {
+            match check_expression_with_flow(value, &mut trial, type_parameters) {
+                Ok(checked) if checked.continuation == Continuation::Terminates => break,
+                Ok(_) => {}
+                Err(_) if round == 0 => {
+                    failed = true;
+                    break;
+                }
+                Err(_) => return,
+            }
+        }
+        let mut assignments = trial.trial_assignments();
+        let mut next = HashMap::new();
+        let mut settled = true;
+        for site in &sites {
+            let mut found = assignments.remove(site).unwrap_or_default();
+            found.truncate(1);
+            let known = found
+                .iter()
+                .filter(|(_, value_type)| value_type.clone().widen_unknown() == *value_type)
+                .cloned()
+                .collect::<Vec<_>>();
+            let seeded = seed.get(site).map(|types: &Rc<Vec<(SourceSpan, Type)>>| {
+                Type::union(types.iter().map(|(_, value_type)| value_type.clone()))
+            });
+            let complete = !found.is_empty() && known.len() == found.len();
+            let union = Type::union(known.iter().map(|(_, value_type)| value_type.clone()));
+            settled &= known.is_empty()
+                || if round == 0 {
+                    complete
+                } else {
+                    seeded.as_ref() == Some(&union)
+                };
+            if !known.is_empty() {
+                next.insert(site.clone(), (complete, known));
+            }
+        }
+        if settled || failed {
+            for (site, (complete, known)) in next {
+                if complete {
+                    environment.infer_nil_start(site, known);
+                }
+            }
+            return;
+        }
+        seed = next
+            .into_iter()
+            .map(|(site, (_, known))| (site, Rc::new(known)))
+            .collect();
+    }
+}
+
+/// Trial rounds before a `nil`-started `var` whose assignments keep changing
+/// its type is left `any|nil`.
+const MAX_NIL_START_ROUNDS: usize = 3;
+
 fn check_expression_with_flow(
     expression: &Expr,
     environment: &mut Environment,
     type_parameters: &[String],
 ) -> Result<CheckedExpression, SourceError> {
     if let ExprKind::Block(values) = &expression.kind {
+        infer_nil_starts(values, environment, type_parameters, true);
         let mut scoped = environment.clone();
         scoped.enter_scope();
         predeclare_functions(values, &mut scoped);
@@ -4248,9 +4377,11 @@ fn require(expected: &Type, actual: &Type, span: &SourceSpan) -> Result<(), Sour
     }
 }
 
-/// Explains a mismatch whose value is a `var` that started as `nil`. Its type
-/// is then `any|nil`, and a nested function, which may run after any
-/// assignment, sees only that, so the fix is to declare the type it holds.
+/// Explains a mismatch whose value is a `var` that started as `nil`. Its
+/// declared type then comes from its first assignment, which the message
+/// names; with none of known type it is `any|nil`, and a nested function,
+/// which may run after any assignment, sees only that, so the fix is to
+/// declare the type it holds.
 fn explain_nil_start(
     mut error: SourceError,
     value: &Expr,
@@ -4259,11 +4390,17 @@ fn explain_nil_start(
     let ExprKind::Name(name) = &value.kind else {
         return error;
     };
-    if !matches!(error.code, SourceErrorCode::TypeMismatch)
-        || !environment
-            .lookup(name)
-            .is_some_and(|binding| binding.starts_nil)
-    {
+    if !matches!(error.code, SourceErrorCode::TypeMismatch) {
+        return error;
+    }
+    let Some(binding) = environment.lookup(name) else {
+        return error;
+    };
+    if binding.nil_start.is_none() {
+        return error;
+    }
+    if let Some(origin) = nil_start_origin(name, binding) {
+        error.message = format!("{}: {origin}", error.message);
         return error;
     }
     let Some(expected) = error.expected.clone() else {
@@ -4279,6 +4416,41 @@ fn explain_nil_start(
         error.message
     );
     error
+}
+
+/// Explains a mismatch in an assignment to a `var` that started as `nil`,
+/// whose declared type its first assignment set: it names that assignment
+/// and the declaration that would hold both types.
+fn explain_nil_start_assignment(
+    mut error: SourceError,
+    name: &str,
+    binding: &SemanticBinding,
+    actual: &Type,
+) -> SourceError {
+    let Some(origin) = nil_start_origin(name, binding) else {
+        return error;
+    };
+    if !matches!(error.code, SourceErrorCode::TypeMismatch) {
+        return error;
+    }
+    let declared = binding.declared.clone().unwrap_or(Type::universal());
+    let both = Type::union([declared, actual.clone()]);
+    error.message = format!(
+        "{}: {origin}; to hold both, declare `var {name}:{both} = nil`",
+        error.message
+    );
+    error
+}
+
+/// Where a `nil`-started `var`'s declared type came from, when its first
+/// assignment set it.
+fn nil_start_origin(name: &str, binding: &SemanticBinding) -> Option<String> {
+    let (span, _) = binding.nil_start.as_ref()?.assignments.first()?;
+    let declared = binding.declared.clone().unwrap_or(Type::universal());
+    Some(format!(
+        "`{name}` is `{declared}`, from its first value `nil` and its first assignment at {}:{}",
+        span.line, span.column
+    ))
 }
 
 fn validate_expression(expression: &Expr, type_parameters: &[String]) -> Result<(), SourceError> {

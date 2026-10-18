@@ -26,7 +26,8 @@ otherwise the initializer or default.
 
 - A `var`, and a struct field, which construction and copying can replace,
   has a declared type that every assignment must conform to. A `nil` first
-  value declares `any|nil`.
+  value declares `any|nil`; for a `var`, see
+  [A `nil`-started var takes its first assignment's type](2026-10-18-a-nil-started-var-takes-its-first-assignments-type.md).
 - A `val` is assigned once, so a `nil` `val` stays exactly `nil`.
 - A `var` also has a current type, which assignments and nil tests refine for
   the code that follows, without changing the declared type. A nested function

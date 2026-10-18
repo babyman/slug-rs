@@ -174,9 +174,14 @@ the final expression of a function body or appear inside another expression.
 
 A binding's type is set by its first value. A `var` has a declared type that
 every later assignment must conform to: its annotation, or else the type of
-its initializer, except that a `nil` initializer declares `any|nil`, since
-`nil` there means no value yet. So `var count = 0` accepts only numbers, while
-`var best = nil` may later hold any value. A `val` is never assigned again,
+its initializer, except for a `nil` initializer, since `nil` there means no
+value yet. A `var` that starts as `nil` is declared `nil` with the type of its
+first assignment written in its scope, including one in a nested function,
+and is `any|nil` when it has none or that assignment's type is unknown. So
+`var count = 0` accepts only numbers, and after `var best = nil` and
+`best = 5`, `best = "s"` is an error that names the declaration to write,
+`var best:num|str|nil = nil`. An accumulator such as `count = count + 1`
+takes the type its other assignments give it. A `val` is never assigned again,
 so `val none = nil` stays exactly `nil`. Within a function, an assignment or a
 nil test refines the type that following code reads, but never the declared
 type; a nested function reads a captured `var` by its declared type, since it

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- A `var` that starts as `nil` takes the type of its first assignment:
+  after `var ahead = nil` and `ahead = next()`, `ahead` is `nil` or a token
+  everywhere, including in closures, where it was `any|nil`. A later
+  assignment of another type is an error that names where the type came from
+  and what to declare:
+  ``expected num|nil, got str: `best` is `num|nil`, from its first value `nil`
+  and its first assignment at 2:8; to hold both, declare
+  `var best:num|str|nil = nil` ``. A `var` with no assignment, or whose first
+  assignment's type is unknown, is still `any|nil`; struct fields are
+  unchanged. Migration: a `var` that holds several types besides `nil` needs
+  them declared.
+
 - Lists, maps, and tasks are covariant: `val mixed:list<num|str> = [1, 2]` and
   `var record:map<str, any|nil> = {kind: "text"}` now check, where element
   types previously had to match exactly. Channels, which also take values in,

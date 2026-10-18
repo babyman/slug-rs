@@ -78,8 +78,9 @@ pub(super) struct SemanticBinding {
     /// declaration. `value_type` is then its current type, which assignments
     /// and nil tests refine for the code that follows.
     pub(super) declared: Option<Type>,
-    /// A `var` whose first value is `nil`, so `declared` is `any|nil`.
-    pub(super) starts_nil: bool,
+    /// For a `var` whose first value is `nil`, where it was declared and the
+    /// assignments its declared type was inferred from.
+    pub(super) nil_start: Option<NilStart>,
     /// An implicit builtin, such as `close`, which a declaration of the same
     /// name replaces rather than overloads, as it does at runtime.
     pub(super) implicit: bool,
@@ -128,7 +129,7 @@ impl SemanticBinding {
             type_members: HashMap::new(),
             module_binding: false,
             declared: None,
-            starts_nil: false,
+            nil_start: None,
             implicit: false,
         }
     }
@@ -144,7 +145,7 @@ impl SemanticBinding {
             type_members: HashMap::new(),
             module_binding: false,
             declared: None,
-            starts_nil: false,
+            nil_start: None,
             implicit: false,
         }
     }
@@ -163,7 +164,7 @@ impl SemanticBinding {
             type_members,
             module_binding: true,
             declared: None,
-            starts_nil: false,
+            nil_start: None,
             implicit: false,
         }
     }
@@ -228,6 +229,27 @@ struct SemanticRecords {
     expression_types: HashMap<SourceSpan, Type>,
 }
 
+/// A `var` whose first value is `nil`. Its declared type is `nil` with the
+/// type of its first assignment written in its scope, which a trial check of
+/// that scope finds; with none found, or one of unknown type, it is
+/// `any|nil`. `assignments` holds that first assignment, if found.
+#[derive(Clone, Debug)]
+pub(super) struct NilStart {
+    pub(super) site: NilStartSite,
+    pub(super) assignments: Rc<Vec<(SourceSpan, Type)>>,
+}
+
+/// A `nil`-started `var`, by the span of its declaration and its name.
+pub(super) type NilStartSite = (SourceSpan, String);
+
+#[derive(Debug, Default)]
+struct NilStarts {
+    /// Present during a trial check: the assignments seen to each `var`.
+    trial: Option<HashMap<NilStartSite, Vec<(SourceSpan, Type)>>>,
+    /// The assignments trial checks found, for the real check to declare.
+    inferred: HashMap<NilStartSite, Rc<Vec<(SourceSpan, Type)>>>,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Environment {
     scopes: Vec<HashMap<String, SemanticBinding>>,
@@ -238,10 +260,11 @@ pub(super) struct Environment {
     /// within it, such as a match case's, and replaced inside a nested
     /// function. `None` outside any function.
     function: Option<Rc<RefCell<FunctionReturns>>>,
+    nil_starts: Rc<RefCell<NilStarts>>,
 }
 
 /// What a function body's `return` expressions must and do produce.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FunctionReturns {
     expected: Option<Type>,
     returned: Vec<Type>,
@@ -263,6 +286,58 @@ impl Environment {
             imports: Rc::new(imports),
             records: Rc::new(RefCell::new(SemanticRecords::default())),
             function: None,
+            nil_starts: Rc::new(RefCell::new(NilStarts::default())),
+        }
+    }
+
+    /// A copy for a trial check, sharing nothing it could record into with
+    /// this environment, in which `nil`-started vars are dynamic, except
+    /// those `seed` gives assignments for, and their assignments are logged.
+    pub(super) fn trial(&self, seed: HashMap<NilStartSite, Rc<Vec<(SourceSpan, Type)>>>) -> Self {
+        let mut trial = self.clone();
+        trial.records = Rc::new(RefCell::new(self.records.borrow().clone()));
+        trial.function = self
+            .function
+            .as_ref()
+            .map(|function| Rc::new(RefCell::new(function.borrow().clone())));
+        trial.nil_starts = Rc::new(RefCell::new(NilStarts {
+            trial: Some(HashMap::new()),
+            inferred: seed,
+        }));
+        trial
+    }
+
+    pub(super) fn in_trial(&self) -> bool {
+        self.nil_starts.borrow().trial.is_some()
+    }
+
+    /// The assignments a finished trial logged.
+    pub(super) fn trial_assignments(&self) -> HashMap<NilStartSite, Vec<(SourceSpan, Type)>> {
+        self.nil_starts.borrow().trial.clone().unwrap_or_default()
+    }
+
+    /// Records the assignments a `var` declared at `site` was found to have.
+    pub(super) fn infer_nil_start(&self, site: NilStartSite, assignments: Vec<(SourceSpan, Type)>) {
+        self.nil_starts
+            .borrow_mut()
+            .inferred
+            .insert(site, Rc::new(assignments));
+    }
+
+    /// Logs, during a trial, an assignment of `value_type` to `name`.
+    pub(super) fn log_assignment(&self, name: &str, span: &SourceSpan, value_type: &Type) {
+        let Some(site) = self
+            .lookup(name)
+            .and_then(|binding| binding.nil_start.as_ref())
+            .map(|start| start.site.clone())
+        else {
+            return;
+        };
+        if let Some(trial) = &mut self.nil_starts.borrow_mut().trial {
+            trial
+                .entry(site)
+                .or_default()
+                .push((span.clone(), value_type.clone()));
         }
     }
 
@@ -396,13 +471,27 @@ impl Environment {
     }
 
     /// Makes the named binding a `var` whose declared type is its current
-    /// one, except that a `nil` initializer declares `any|nil`: `nil` there
-    /// means no value yet, not a value that is always `nil`.
-    pub(super) fn declare_mutable(&mut self, name: &str) {
+    /// one, except that a `nil` initializer declares `nil` with the type of
+    /// the first assignment a trial check found, or else `any|nil`: `nil`
+    /// there means no value yet, not a value that is always `nil`.
+    pub(super) fn declare_mutable(&mut self, name: &str, declaration: &SourceSpan) {
+        let in_trial = self.in_trial();
+        let site = (declaration.clone(), name.to_string());
+        let inferred = self.nil_starts.borrow().inferred.get(&site).cloned();
         if let Some(binding) = self.scopes.last_mut().and_then(|scope| scope.get_mut(name)) {
             if binding.value_type == Type::Nil {
-                binding.value_type = Type::universal();
-                binding.starts_nil = true;
+                let assignments = inferred.unwrap_or_default();
+                binding.value_type = if assignments.is_empty() && in_trial {
+                    Type::Unknown
+                } else if assignments.is_empty() {
+                    Type::universal()
+                } else {
+                    Type::union(
+                        std::iter::once(Type::Nil)
+                            .chain(assignments.iter().map(|(_, value_type)| value_type.clone())),
+                    )
+                };
+                binding.nil_start = Some(NilStart { site, assignments });
             }
             binding.declared = Some(binding.value_type.clone());
         }

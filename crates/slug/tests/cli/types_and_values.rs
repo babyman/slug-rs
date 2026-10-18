@@ -1798,7 +1798,7 @@ fn early_returns_join_and_check_a_functions_result() {
 }
 
 #[test]
-fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
+fn a_nil_first_value_takes_its_var_type_from_the_first_assignment() {
     let path = fixture_path("nil-first-value");
     let run = |source: &str| {
         fs::write(&path, source).expect("write nil first value source");
@@ -1813,26 +1813,57 @@ fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
         )
     };
 
-    // A `var` or field that starts as `nil` may later hold anything; an
-    // annotated `var` keeps its annotation after assignments; a closure sees
-    // a captured `var` by its declared type; and a `val` stays exactly `nil`.
+    // A `var` that starts as `nil` takes `nil` with the type of its first
+    // assignment, even one in a closure, and an accumulator's is found from
+    // its other assignments; an annotated `var` keeps its annotation; a
+    // field that starts as `nil` may hold anything; and a `val` stays
+    // exactly `nil`.
     let (code, stdout, stderr) = run("var best = nil\n\
          best = 5\n\
          val first:num = best\n\
-         best = \"s\"\n\
-         var x:num|nil = nil\n\
-         x = 5\n\
-         x = nil\n\
-         var total:num|nil = nil\n\
-         val add = fn(n:num) { total = if (total == nil) { n } else { total + n } }\n\
-         add(2)\n\
-         add(3)\n\
+         best = nil\n\
+         var held = nil\n\
+         val keep = fn(v:num) { held = v }\n\
+         keep(2)\n\
+         val doubled = if (held != nil) { held * 2 } else { 0 }\n\
+         var count = nil\n\
+         val bump = fn() { if (count == nil) { count = 0 } else { count = count + 1 } }\n\
+         bump()\n\
+         bump()\n\
+         var mixed:num|str|nil = nil\n\
+         mixed = 5\n\
+         mixed = \"s\"\n\
          val none = nil\n\
          val kept:str|nil = none\n\
          val S = struct { e = nil, n = 0 }\n\
-         println(first, best, x, total, kept, S { e: \"text\" }.e, S { e: {k: 1} }.e)\n");
+         println(first, best, doubled, count, mixed, kept, S { e: \"text\" }.e, S { e: {k: 1} }.e)\n");
     assert_eq!(code, Some(0), "{stderr}");
-    assert_eq!(stdout, "5 s nil 5 nil text {\"k\": 1}\n");
+    assert_eq!(stdout, "5 nil 4 1 s nil text {\"k\": 1}\n");
+
+    // A later assignment of another type is a mismatch where it is written,
+    // and a mismatch at a use names the first assignment. The first
+    // assignment is the first written, even in a closure that runs later.
+    for (source, message) in [
+        (
+            "var best = nil\nbest = 5\nbest = \"s\"\n",
+            "expected num|nil, got str: `best` is `num|nil`, from its first value `nil` and \
+             its first assignment at 2:8; to hold both, declare `var best:num|str|nil = nil`",
+        ),
+        (
+            "var best = nil\nbest = 5\nval s:str = best\n",
+            "expected str, got num: `best` is `num|nil`, from its first value `nil` and its \
+             first assignment at 2:8",
+        ),
+        (
+            "var x = nil\nval later = fn() { x = \"late\" }\nx = 5\n",
+            "expected str|nil, got num: `x` is `str|nil`, from its first value `nil` and its \
+             first assignment at 2:24",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
 
     // A concrete first value still fixes the type.
     for source in [
@@ -1848,7 +1879,7 @@ fn a_nil_first_value_declares_any_value_for_vars_and_fields() {
         );
     }
 
-    // A closure sees such a `var` only as `any|nil`, so a mismatch names the
+    // With no assignment its type is `any|nil`, so a mismatch names the
     // declaration to annotate.
     for source in [
         "var n = 1\nvar held = nil\nval take = fn() { if (held != nil) { n = held } }\n",
