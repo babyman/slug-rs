@@ -1,0 +1,993 @@
+{
+ "checks": [
+  {
+   "id": "print-values/empty",
+   "source": "",
+   "lines": []
+  },
+  {
+   "id": "print-values/int",
+   "source": "print 42;",
+   "lines": [
+    "42"
+   ]
+  },
+  {
+   "id": "print-values/negative",
+   "source": "print -12;",
+   "lines": [
+    "-12"
+   ]
+  },
+  {
+   "id": "print-values/string",
+   "source": "print \"hi there\";",
+   "lines": [
+    "hi there"
+   ]
+  },
+  {
+   "id": "print-values/bools",
+   "source": "print true; print false;",
+   "lines": [
+    "true",
+    "false"
+   ]
+  },
+  {
+   "id": "print-values/nil",
+   "source": "print nil;",
+   "lines": [
+    "nil"
+   ]
+  },
+  {
+   "id": "print-values/list",
+   "source": "print [1, \"a\", [true, nil], []];",
+   "lines": [
+    "[1, \"a\", [true, nil], []]"
+   ]
+  },
+  {
+   "id": "print-values/functions",
+   "source": "fn named() { } print named; print fn() { }; print [named];",
+   "lines": [
+    "<fn named>",
+    "<fn>",
+    "[<fn named>]"
+   ]
+  },
+  {
+   "id": "print-strings-in-lists/quoted-only-nested",
+   "source": "print \"x\"; print [\"x\"]; print [[\"y\"]];",
+   "lines": [
+    "x",
+    "[\"x\"]",
+    "[[\"y\"]]"
+   ]
+  },
+  {
+   "id": "string-escapes/escapes",
+   "source": "print \"a\\tb\\nc\"; print \"q\\\"q\"; print \"back\\\\slash\";",
+   "lines": [
+    "a\tb\nc",
+    "q\"q",
+    "back\\slash"
+   ]
+  },
+  {
+   "id": "comments-and-whitespace/comments",
+   "source": "# leading\nprint 1; # trailing\n\n\t print   2 ;\r\nprint 3;",
+   "lines": [
+    "1",
+    "2",
+    "3"
+   ]
+  },
+  {
+   "id": "comments-and-whitespace/comment-at-end",
+   "source": "print 1; # no newline",
+   "lines": [
+    "1"
+   ]
+  },
+  {
+   "id": "arithmetic-precedence/precedence",
+   "source": "print 1 + 2 * 3; print (1 + 2) * 3; print 10 - 3 - 2; print 2 * 3 % 4; print 100 / 10 / 5;",
+   "lines": [
+    "7",
+    "9",
+    "5",
+    "2",
+    "2"
+   ]
+  },
+  {
+   "id": "arithmetic-precedence/unary",
+   "source": "print -3 * 2; print - -4; print -(1 + 2);",
+   "lines": [
+    "-6",
+    "4",
+    "-3"
+   ]
+  },
+  {
+   "id": "division-truncates/division",
+   "source": "print 7 / 2; print -7 / 2; print 7 / -2; print -7 / -2; print 0 / 5;",
+   "lines": [
+    "3",
+    "-3",
+    "-3",
+    "3",
+    "0"
+   ]
+  },
+  {
+   "id": "division-truncates/remainder",
+   "source": "print 7 % 2; print -7 % 2; print 7 % -2; print -7 % -2; print 6 % 3;",
+   "lines": [
+    "1",
+    "-1",
+    "1",
+    "-1",
+    "0"
+   ]
+  },
+  {
+   "id": "large-integers/max",
+   "source": "print 9223372036854775807;",
+   "lines": [
+    "9223372036854775807"
+   ]
+  },
+  {
+   "id": "large-integers/arithmetic",
+   "source": "print 4611686018427387903 * 2 + 1;",
+   "lines": [
+    "9223372036854775807"
+   ]
+  },
+  {
+   "id": "large-integers/too-large",
+   "source": "print 9223372036854775808;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 7
+   }
+  },
+  {
+   "id": "strings/join",
+   "source": "print \"ab\" + \"cd\"; print \"\" + \"x\";",
+   "lines": [
+    "abcd",
+    "x"
+   ]
+  },
+  {
+   "id": "strings/index",
+   "source": "let s = \"hello\"; print s[0]; print s[4]; print len(s); print len(\"\");",
+   "lines": [
+    "h",
+    "o",
+    "5",
+    "0"
+   ]
+  },
+  {
+   "id": "strings/compare",
+   "source": "print \"a\" < \"b\"; print \"b\" < \"ab\"; print \"abc\" <= \"abc\"; print \"Z\" < \"a\"; print \"b\" > \"a\";",
+   "lines": [
+    "true",
+    "false",
+    "true",
+    "true",
+    "true"
+   ]
+  },
+  {
+   "id": "lists/join-and-index",
+   "source": "let xs = [1, 2] + [3]; print xs; print xs[2]; print len(xs); print len([]);",
+   "lines": [
+    "[1, 2, 3]",
+    "3",
+    "3",
+    "0"
+   ]
+  },
+  {
+   "id": "lists/nested",
+   "source": "let m = [[1, 2], [3, [4]]]; print m[1][1][0]; print m[0];",
+   "lines": [
+    "4",
+    "[1, 2]"
+   ]
+  },
+  {
+   "id": "lists/index-expression",
+   "source": "let xs = [10, 20, 30]; let i = 1; print xs[i + 1]; print [5, 6][0];",
+   "lines": [
+    "30",
+    "5"
+   ]
+  },
+  {
+   "id": "equality/same-types",
+   "source": "print 1 == 1; print 1 != 2; print \"a\" == \"a\"; print nil == nil; print true != false;",
+   "lines": [
+    "true",
+    "true",
+    "true",
+    "true",
+    "true"
+   ]
+  },
+  {
+   "id": "equality/different-types",
+   "source": "print 1 == \"1\"; print nil == false; print 0 == false; print [] == nil; print 1 != \"1\";",
+   "lines": [
+    "false",
+    "false",
+    "false",
+    "false",
+    "true"
+   ]
+  },
+  {
+   "id": "equality/lists",
+   "source": "print [1, [2]] == [1, [2]]; print [1] == [1, 2]; print [] == [];",
+   "lines": [
+    "true",
+    "false",
+    "true"
+   ]
+  },
+  {
+   "id": "equality/functions",
+   "source": "fn f() { } fn g() { } let h = f; print f == f; print f == g; print h == f; print fn() { } == fn() { };",
+   "lines": [
+    "true",
+    "false",
+    "true",
+    "false"
+   ]
+  },
+  {
+   "id": "logic/operators",
+   "source": "print true and true; print true and false; print false or true; print false or false; print not false;",
+   "lines": [
+    "true",
+    "false",
+    "true",
+    "false",
+    "true"
+   ]
+  },
+  {
+   "id": "logic/precedence",
+   "source": "print true or false and false; print not true or true; print 1 < 2 and 2 < 3;",
+   "lines": [
+    "true",
+    "true",
+    "true"
+   ]
+  },
+  {
+   "id": "logic/short-circuit",
+   "source": "print false and 1; print true or 1; print false and missing(); print true or missing();",
+   "lines": [
+    "false",
+    "true",
+    "false",
+    "true"
+   ]
+  },
+  {
+   "id": "if-else/chain",
+   "source": "fn sign(n) { if (n < 0) { return \"neg\"; } else if (n == 0) { return \"zero\"; } else { return \"pos\"; } } print sign(-5); print sign(0); print sign(9);",
+   "lines": [
+    "neg",
+    "zero",
+    "pos"
+   ]
+  },
+  {
+   "id": "if-else/no-else",
+   "source": "if (false) { print 1; } print 2;",
+   "lines": [
+    "2"
+   ]
+  },
+  {
+   "id": "if-else/nested",
+   "source": "if (true) { if (false) { print 1; } else { print 2; } }",
+   "lines": [
+    "2"
+   ]
+  },
+  {
+   "id": "while-loops/sum",
+   "source": "let i = 0; let total = 0; while (i < 10) { total = total + i; i = i + 1; } print total;",
+   "lines": [
+    "45"
+   ]
+  },
+  {
+   "id": "while-loops/never-runs",
+   "source": "while (false) { print 1; } print 2;",
+   "lines": [
+    "2"
+   ]
+  },
+  {
+   "id": "while-loops/nested",
+   "source": "let i = 0; while (i < 3) { let j = 0; while (j < i) { print [i, j]; j = j + 1; } i = i + 1; }",
+   "lines": [
+    "[1, 0]",
+    "[2, 0]",
+    "[2, 1]"
+   ]
+  },
+  {
+   "id": "scopes/block-shadows",
+   "source": "let x = 1; { let x = 2; print x; } print x;",
+   "lines": [
+    "2",
+    "1"
+   ]
+  },
+  {
+   "id": "scopes/assign-outer",
+   "source": "let x = 1; { x = 2; } print x; if (true) { x = 3; } print x;",
+   "lines": [
+    "2",
+    "3"
+   ]
+  },
+  {
+   "id": "scopes/let-replaces",
+   "source": "let x = 1; let x = x + 1; print x;",
+   "lines": [
+    "2"
+   ]
+  },
+  {
+   "id": "scopes/loop-body-scope",
+   "source": "let i = 0; while (i < 2) { let seen = i; i = i + 1; } print i;",
+   "lines": [
+    "2"
+   ]
+  },
+  {
+   "id": "functions/call",
+   "source": "fn add(a, b) { return a + b; } print add(2, 3);",
+   "lines": [
+    "5"
+   ]
+  },
+  {
+   "id": "functions/no-return",
+   "source": "fn nothing() { print \"side\"; } print nothing();",
+   "lines": [
+    "side",
+    "nil"
+   ]
+  },
+  {
+   "id": "functions/bare-return",
+   "source": "fn early(n) { if (n > 0) { return; } print \"not\"; } print early(1);",
+   "lines": [
+    "nil"
+   ]
+  },
+  {
+   "id": "functions/return-from-loop",
+   "source": "fn find(xs, v) { let i = 0; while (i < len(xs)) { if (xs[i] == v) { return i; } i = i + 1; } return -1; } print find([5, 6, 7], 7); print find([], 1);",
+   "lines": [
+    "2",
+    "-1"
+   ]
+  },
+  {
+   "id": "functions/anonymous",
+   "source": "let twice = fn(f, x) { return f(f(x)); }; print twice(fn(n) { return n * 3; }, 2);",
+   "lines": [
+    "18"
+   ]
+  },
+  {
+   "id": "functions/argument-order",
+   "source": "fn show(x) { print x; return x; } fn pair(a, b) { return [a, b]; } print pair(show(1), show(2));",
+   "lines": [
+    "1",
+    "2",
+    "[1, 2]"
+   ]
+  },
+  {
+   "id": "recursion/factorial",
+   "source": "fn fact(n) { if (n == 0) { return 1; } return n * fact(n - 1); } print fact(10);",
+   "lines": [
+    "3628800"
+   ]
+  },
+  {
+   "id": "recursion/mutual",
+   "source": "fn even(n) { if (n == 0) { return true; } return odd(n - 1); } fn odd(n) { if (n == 0) { return false; } return even(n - 1); } print even(10); print odd(7);",
+   "lines": [
+    "true",
+    "true"
+   ]
+  },
+  {
+   "id": "recursion/local-recursion",
+   "source": "fn outer() { fn count(n) { if (n == 0) { return 0; } return 1 + count(n - 1); } return count(5); } print outer();",
+   "lines": [
+    "5"
+   ]
+  },
+  {
+   "id": "closures/counter",
+   "source": "fn counter() { let n = 0; return fn() { n = n + 1; return n; }; } let c = counter(); c(); c(); print c(); let d = counter(); print d(); print c();",
+   "lines": [
+    "3",
+    "1",
+    "4"
+   ]
+  },
+  {
+   "id": "closures/shared",
+   "source": "fn pair() { let v = 0; let get = fn() { return v; }; let set = fn(x) { v = x; }; return [get, set]; } let p = pair(); p[1](7); print p[0]();",
+   "lines": [
+    "7"
+   ]
+  },
+  {
+   "id": "closures/captures-scope-not-value",
+   "source": "let x = 1; fn read() { return x; } x = 2; print read();",
+   "lines": [
+    "2"
+   ]
+  },
+  {
+   "id": "closures/adder",
+   "source": "fn adder(n) { return fn(x) { return x + n; }; } let add5 = adder(5); print add5(10); print adder(1)(1);",
+   "lines": [
+    "15",
+    "2"
+   ]
+  },
+  {
+   "id": "builtins/len-and-str",
+   "source": "print len(\"abc\"); print len([1, [2, 3]]); print str(12) + \"!\"; print str([1, \"a\"]); print str(\"s\"); print str(nil);",
+   "lines": [
+    "3",
+    "2",
+    "12!",
+    "[1, \"a\"]",
+    "s",
+    "nil"
+   ]
+  },
+  {
+   "id": "builtins/str-of-function",
+   "source": "fn f() { } print str(f) + str(fn() { });",
+   "lines": [
+    "<fn f><fn>"
+   ]
+  },
+  {
+   "id": "builtins/replaceable",
+   "source": "fn len(x) { return 99; } print len([]);",
+   "lines": [
+    "99"
+   ]
+  },
+  {
+   "id": "syntax-errors-lexical/bad-character",
+   "source": "let x = 1 @ 2;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 11
+   }
+  },
+  {
+   "id": "syntax-errors-lexical/bad-character-line-2",
+   "source": "print 1;\n  print $;",
+   "error": {
+    "kind": "syntax",
+    "line": 2,
+    "column": 9
+   }
+  },
+  {
+   "id": "syntax-errors-lexical/unterminated-string",
+   "source": "print \"abc",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 7
+   }
+  },
+  {
+   "id": "syntax-errors-lexical/string-across-lines",
+   "source": "print \"ab\ncd\";",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 7
+   }
+  },
+  {
+   "id": "syntax-errors-lexical/bad-escape",
+   "source": "print \"a\\qb\";",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 9
+   }
+  },
+  {
+   "id": "syntax-errors-lexical/too-large",
+   "source": "print 99999999999999999999;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 7
+   }
+  },
+  {
+   "id": "syntax-errors-lexical/tab-counts-one",
+   "source": "\tprint @;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 8
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/missing-operand",
+   "source": "print (1 + ;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 12
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/missing-semicolon",
+   "source": "print 1\nprint 2;",
+   "error": {
+    "kind": "syntax",
+    "line": 2,
+    "column": 1
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/end-of-input",
+   "source": "print 1",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 8
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/end-after-newline",
+   "source": "print 1 +\n  ",
+   "error": {
+    "kind": "syntax",
+    "line": 2,
+    "column": 3
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/unclosed-block",
+   "source": "if (true) { print 1;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 21
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/let-needs-name",
+   "source": "let 5 = 1;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 5
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/keyword-as-name",
+   "source": "let while = 1;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 5
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/assign-to-expression",
+   "source": "1 = 2;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 3
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/else-without-block",
+   "source": "if (true) { } else print 1;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 20
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/trailing-comma",
+   "source": "print [1, ];",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 11
+   }
+  },
+  {
+   "id": "syntax-errors-grammar/parameter-must-be-name",
+   "source": "fn f(1) { }",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 6
+   }
+  },
+  {
+   "id": "syntax-errors-return/top-level",
+   "source": "return 1;",
+   "error": {
+    "kind": "syntax",
+    "line": 1,
+    "column": 1
+   }
+  },
+  {
+   "id": "syntax-errors-return/in-top-level-block",
+   "source": "if (true) {\n  return;\n}",
+   "error": {
+    "kind": "syntax",
+    "line": 2,
+    "column": 3
+   }
+  },
+  {
+   "id": "syntax-errors-return/in-nested-function",
+   "source": "fn f() { let g = fn() { return 1; }; return g(); } print f();",
+   "lines": [
+    "1"
+   ]
+  },
+  {
+   "id": "syntax-errors-before-running/nothing-runs",
+   "source": "print 1;\nprint 2 +;",
+   "error": {
+    "kind": "syntax",
+    "line": 2,
+    "column": 10
+   }
+  },
+  {
+   "id": "name-errors/read",
+   "source": "print 1;\nprint missing;",
+   "error": {
+    "kind": "name",
+    "line": 2,
+    "column": 7
+   }
+  },
+  {
+   "id": "name-errors/assign",
+   "source": "  ghost = 1;",
+   "error": {
+    "kind": "name",
+    "line": 1,
+    "column": 3
+   }
+  },
+  {
+   "id": "name-errors/out-of-scope",
+   "source": "{ let inner = 1; } print inner;",
+   "error": {
+    "kind": "name",
+    "line": 1,
+    "column": 26
+   }
+  },
+  {
+   "id": "name-errors/callee",
+   "source": "nope(1);",
+   "error": {
+    "kind": "name",
+    "line": 1,
+    "column": 1
+   }
+  },
+  {
+   "id": "type-errors/add-mixed",
+   "source": "print 1 + \"a\";",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 9
+   }
+  },
+  {
+   "id": "type-errors/subtract-strings",
+   "source": "print \"a\" - \"b\";",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 11
+   }
+  },
+  {
+   "id": "type-errors/negate-string",
+   "source": "print -\"a\";",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 7
+   }
+  },
+  {
+   "id": "type-errors/compare-mixed",
+   "source": "print 1 < \"2\";",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 9
+   }
+  },
+  {
+   "id": "type-errors/compare-lists",
+   "source": "print [1] < [2];",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 11
+   }
+  },
+  {
+   "id": "type-errors/and-operand",
+   "source": "print 1 and true;",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 9
+   }
+  },
+  {
+   "id": "type-errors/or-right-operand",
+   "source": "print false or 2;",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 13
+   }
+  },
+  {
+   "id": "type-errors/not-operand",
+   "source": "print not 0;",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 7
+   }
+  },
+  {
+   "id": "type-errors/if-condition",
+   "source": "let x = 1;\nif (x) { print 1; }",
+   "error": {
+    "kind": "type",
+    "line": 2,
+    "column": 1
+   }
+  },
+  {
+   "id": "type-errors/while-condition",
+   "source": "while (nil) { }",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 1
+   }
+  },
+  {
+   "id": "type-errors/call-non-function",
+   "source": "let x = 1; x();",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 13
+   }
+  },
+  {
+   "id": "type-errors/index-non-list",
+   "source": "let n = 5; print n[0];",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 19
+   }
+  },
+  {
+   "id": "type-errors/index-by-string",
+   "source": "print [1, 2][\"0\"];",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 13
+   }
+  },
+  {
+   "id": "type-errors/len-of-number",
+   "source": "print len(5);",
+   "error": {
+    "kind": "type",
+    "line": 1,
+    "column": 10
+   }
+  },
+  {
+   "id": "division-and-index-errors/divide-by-zero",
+   "source": "let z = 0;\nprint 10 / z;",
+   "error": {
+    "kind": "division",
+    "line": 2,
+    "column": 10
+   }
+  },
+  {
+   "id": "division-and-index-errors/remainder-by-zero",
+   "source": "print 10 % 0;",
+   "error": {
+    "kind": "division",
+    "line": 1,
+    "column": 10
+   }
+  },
+  {
+   "id": "division-and-index-errors/index-too-large",
+   "source": "let xs = [1, 2];\nprint xs[2];",
+   "error": {
+    "kind": "index",
+    "line": 2,
+    "column": 9
+   }
+  },
+  {
+   "id": "division-and-index-errors/negative-index",
+   "source": "print [1][-1];",
+   "error": {
+    "kind": "index",
+    "line": 1,
+    "column": 10
+   }
+  },
+  {
+   "id": "division-and-index-errors/string-index",
+   "source": "print \"ab\"[5];",
+   "error": {
+    "kind": "index",
+    "line": 1,
+    "column": 11
+   }
+  },
+  {
+   "id": "arity-errors/too-many",
+   "source": "fn f(a) { return a; } f(1, 2);",
+   "error": {
+    "kind": "arity",
+    "line": 1,
+    "column": 24
+   }
+  },
+  {
+   "id": "arity-errors/too-few",
+   "source": "fn f(a, b) { } print f(1);",
+   "error": {
+    "kind": "arity",
+    "line": 1,
+    "column": 23
+   }
+  },
+  {
+   "id": "arity-errors/builtin",
+   "source": "print len();",
+   "error": {
+    "kind": "arity",
+    "line": 1,
+    "column": 10
+   }
+  },
+  {
+   "id": "errors-stop-the-run/after-output",
+   "source": "print 1;\nprint 2;\nprint 1 / 0;\nprint 3;",
+   "error": {
+    "kind": "division",
+    "line": 3,
+    "column": 9
+   }
+  },
+  {
+   "id": "errors-stop-the-run/inside-function",
+   "source": "fn f(x) {\n  return x[3];\n}\nprint f([1]);",
+   "error": {
+    "kind": "index",
+    "line": 2,
+    "column": 11
+   }
+  },
+  {
+   "id": "errors-stop-the-run/in-argument",
+   "source": "fn f(x) { return x; }\nprint f(1 + nil);",
+   "error": {
+    "kind": "type",
+    "line": 2,
+    "column": 11
+   }
+  },
+  {
+   "id": "size-loop/loop",
+   "source": "let i = 0; let total = 0; while (i < 20000) { total = total + i; i = i + 1; } print total;",
+   "lines": [
+    "199990000"
+   ],
+   "seconds": 10
+  },
+  {
+   "id": "size-recursion/fib",
+   "source": "fn fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } print fib(18);",
+   "lines": [
+    "2584"
+   ],
+   "seconds": 10
+  },
+  {
+   "id": "size-recursion/deep",
+   "source": "fn down(n) { if (n == 0) { return 0; } return 1 + down(n - 1); } print down(2000);",
+   "lines": [
+    "2000"
+   ],
+   "seconds": 10
+  },
+  {
+   "id": "size-lists/build",
+   "source": "let xs = []; let i = 0; while (i < 1000) { xs = xs + [i * i]; i = i + 1; } print len(xs); print xs[999];",
+   "lines": [
+    "1000",
+    "998001"
+   ],
+   "seconds": 20
+  },
+  {
+   "id": "size-lists/sieve",
+   "source": "fn primes(n) { let flags = []; let i = 0; while (i < n) { flags = flags + [true]; i = i + 1; } let out = []; let p = 2; while (p < n) { if (flags[p]) { out = out + [p]; let m = p * p; while (m < n) { let before = flags; flags = []; let k = 0; while (k < len(before)) { if (k == m) { flags = flags + [false]; } else { flags = flags + [before[k]]; } k = k + 1; } m = m + p; } } p = p + 1; } return out; } print primes(40);",
+   "lines": [
+    "[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]"
+   ],
+   "seconds": 20
+  },
+  {
+   "id": "size-program-text/many-statements",
+   "source": "let v0 = 0;\nlet v1 = 1;\nlet v2 = 2;\nlet v3 = 3;\nlet v4 = 4;\nlet v5 = 5;\nlet v6 = 6;\nlet v7 = 7;\nlet v8 = 8;\nlet v9 = 9;\nlet v10 = 10;\nlet v11 = 11;\nlet v12 = 12;\nlet v13 = 13;\nlet v14 = 14;\nlet v15 = 15;\nlet v16 = 16;\nlet v17 = 17;\nlet v18 = 18;\nlet v19 = 19;\nlet v20 = 20;\nlet v21 = 21;\nlet v22 = 22;\nlet v23 = 23;\nlet v24 = 24;\nlet v25 = 25;\nlet v26 = 26;\nlet v27 = 27;\nlet v28 = 28;\nlet v29 = 29;\nlet v30 = 30;\nlet v31 = 31;\nlet v32 = 32;\nlet v33 = 33;\nlet v34 = 34;\nlet v35 = 35;\nlet v36 = 36;\nlet v37 = 37;\nlet v38 = 38;\nlet v39 = 39;\nlet v40 = 40;\nlet v41 = 41;\nlet v42 = 42;\nlet v43 = 43;\nlet v44 = 44;\nlet v45 = 45;\nlet v46 = 46;\nlet v47 = 47;\nlet v48 = 48;\nlet v49 = 49;\nlet v50 = 50;\nlet v51 = 51;\nlet v52 = 52;\nlet v53 = 53;\nlet v54 = 54;\nlet v55 = 55;\nlet v56 = 56;\nlet v57 = 57;\nlet v58 = 58;\nlet v59 = 59;\nlet v60 = 60;\nlet v61 = 61;\nlet v62 = 62;\nlet v63 = 63;\nlet v64 = 64;\nlet v65 = 65;\nlet v66 = 66;\nlet v67 = 67;\nlet v68 = 68;\nlet v69 = 69;\nlet v70 = 70;\nlet v71 = 71;\nlet v72 = 72;\nlet v73 = 73;\nlet v74 = 74;\nlet v75 = 75;\nlet v76 = 76;\nlet v77 = 77;\nlet v78 = 78;\nlet v79 = 79;\nlet v80 = 80;\nlet v81 = 81;\nlet v82 = 82;\nlet v83 = 83;\nlet v84 = 84;\nlet v85 = 85;\nlet v86 = 86;\nlet v87 = 87;\nlet v88 = 88;\nlet v89 = 89;\nlet v90 = 90;\nlet v91 = 91;\nlet v92 = 92;\nlet v93 = 93;\nlet v94 = 94;\nlet v95 = 95;\nlet v96 = 96;\nlet v97 = 97;\nlet v98 = 98;\nlet v99 = 99;\nlet v100 = 100;\nlet v101 = 101;\nlet v102 = 102;\nlet v103 = 103;\nlet v104 = 104;\nlet v105 = 105;\nlet v106 = 106;\nlet v107 = 107;\nlet v108 = 108;\nlet v109 = 109;\nlet v110 = 110;\nlet v111 = 111;\nlet v112 = 112;\nlet v113 = 113;\nlet v114 = 114;\nlet v115 = 115;\nlet v116 = 116;\nlet v117 = 117;\nlet v118 = 118;\nlet v119 = 119;\nlet v120 = 120;\nlet v121 = 121;\nlet v122 = 122;\nlet v123 = 123;\nlet v124 = 124;\nlet v125 = 125;\nlet v126 = 126;\nlet v127 = 127;\nlet v128 = 128;\nlet v129 = 129;\nlet v130 = 130;\nlet v131 = 131;\nlet v132 = 132;\nlet v133 = 133;\nlet v134 = 134;\nlet v135 = 135;\nlet v136 = 136;\nlet v137 = 137;\nlet v138 = 138;\nlet v139 = 139;\nlet v140 = 140;\nlet v141 = 141;\nlet v142 = 142;\nlet v143 = 143;\nlet v144 = 144;\nlet v145 = 145;\nlet v146 = 146;\nlet v147 = 147;\nlet v148 = 148;\nlet v149 = 149;\nlet v150 = 150;\nlet v151 = 151;\nlet v152 = 152;\nlet v153 = 153;\nlet v154 = 154;\nlet v155 = 155;\nlet v156 = 156;\nlet v157 = 157;\nlet v158 = 158;\nlet v159 = 159;\nlet v160 = 160;\nlet v161 = 161;\nlet v162 = 162;\nlet v163 = 163;\nlet v164 = 164;\nlet v165 = 165;\nlet v166 = 166;\nlet v167 = 167;\nlet v168 = 168;\nlet v169 = 169;\nlet v170 = 170;\nlet v171 = 171;\nlet v172 = 172;\nlet v173 = 173;\nlet v174 = 174;\nlet v175 = 175;\nlet v176 = 176;\nlet v177 = 177;\nlet v178 = 178;\nlet v179 = 179;\nlet v180 = 180;\nlet v181 = 181;\nlet v182 = 182;\nlet v183 = 183;\nlet v184 = 184;\nlet v185 = 185;\nlet v186 = 186;\nlet v187 = 187;\nlet v188 = 188;\nlet v189 = 189;\nlet v190 = 190;\nlet v191 = 191;\nlet v192 = 192;\nlet v193 = 193;\nlet v194 = 194;\nlet v195 = 195;\nlet v196 = 196;\nlet v197 = 197;\nlet v198 = 198;\nlet v199 = 199;\nlet v200 = 200;\nlet v201 = 201;\nlet v202 = 202;\nlet v203 = 203;\nlet v204 = 204;\nlet v205 = 205;\nlet v206 = 206;\nlet v207 = 207;\nlet v208 = 208;\nlet v209 = 209;\nlet v210 = 210;\nlet v211 = 211;\nlet v212 = 212;\nlet v213 = 213;\nlet v214 = 214;\nlet v215 = 215;\nlet v216 = 216;\nlet v217 = 217;\nlet v218 = 218;\nlet v219 = 219;\nlet v220 = 220;\nlet v221 = 221;\nlet v222 = 222;\nlet v223 = 223;\nlet v224 = 224;\nlet v225 = 225;\nlet v226 = 226;\nlet v227 = 227;\nlet v228 = 228;\nlet v229 = 229;\nlet v230 = 230;\nlet v231 = 231;\nlet v232 = 232;\nlet v233 = 233;\nlet v234 = 234;\nlet v235 = 235;\nlet v236 = 236;\nlet v237 = 237;\nlet v238 = 238;\nlet v239 = 239;\nlet v240 = 240;\nlet v241 = 241;\nlet v242 = 242;\nlet v243 = 243;\nlet v244 = 244;\nlet v245 = 245;\nlet v246 = 246;\nlet v247 = 247;\nlet v248 = 248;\nlet v249 = 249;\nlet v250 = 250;\nlet v251 = 251;\nlet v252 = 252;\nlet v253 = 253;\nlet v254 = 254;\nlet v255 = 255;\nlet v256 = 256;\nlet v257 = 257;\nlet v258 = 258;\nlet v259 = 259;\nlet v260 = 260;\nlet v261 = 261;\nlet v262 = 262;\nlet v263 = 263;\nlet v264 = 264;\nlet v265 = 265;\nlet v266 = 266;\nlet v267 = 267;\nlet v268 = 268;\nlet v269 = 269;\nlet v270 = 270;\nlet v271 = 271;\nlet v272 = 272;\nlet v273 = 273;\nlet v274 = 274;\nlet v275 = 275;\nlet v276 = 276;\nlet v277 = 277;\nlet v278 = 278;\nlet v279 = 279;\nlet v280 = 280;\nlet v281 = 281;\nlet v282 = 282;\nlet v283 = 283;\nlet v284 = 284;\nlet v285 = 285;\nlet v286 = 286;\nlet v287 = 287;\nlet v288 = 288;\nlet v289 = 289;\nlet v290 = 290;\nlet v291 = 291;\nlet v292 = 292;\nlet v293 = 293;\nlet v294 = 294;\nlet v295 = 295;\nlet v296 = 296;\nlet v297 = 297;\nlet v298 = 298;\nlet v299 = 299;\nlet v300 = 300;\nlet v301 = 301;\nlet v302 = 302;\nlet v303 = 303;\nlet v304 = 304;\nlet v305 = 305;\nlet v306 = 306;\nlet v307 = 307;\nlet v308 = 308;\nlet v309 = 309;\nlet v310 = 310;\nlet v311 = 311;\nlet v312 = 312;\nlet v313 = 313;\nlet v314 = 314;\nlet v315 = 315;\nlet v316 = 316;\nlet v317 = 317;\nlet v318 = 318;\nlet v319 = 319;\nlet v320 = 320;\nlet v321 = 321;\nlet v322 = 322;\nlet v323 = 323;\nlet v324 = 324;\nlet v325 = 325;\nlet v326 = 326;\nlet v327 = 327;\nlet v328 = 328;\nlet v329 = 329;\nlet v330 = 330;\nlet v331 = 331;\nlet v332 = 332;\nlet v333 = 333;\nlet v334 = 334;\nlet v335 = 335;\nlet v336 = 336;\nlet v337 = 337;\nlet v338 = 338;\nlet v339 = 339;\nlet v340 = 340;\nlet v341 = 341;\nlet v342 = 342;\nlet v343 = 343;\nlet v344 = 344;\nlet v345 = 345;\nlet v346 = 346;\nlet v347 = 347;\nlet v348 = 348;\nlet v349 = 349;\nlet v350 = 350;\nlet v351 = 351;\nlet v352 = 352;\nlet v353 = 353;\nlet v354 = 354;\nlet v355 = 355;\nlet v356 = 356;\nlet v357 = 357;\nlet v358 = 358;\nlet v359 = 359;\nlet v360 = 360;\nlet v361 = 361;\nlet v362 = 362;\nlet v363 = 363;\nlet v364 = 364;\nlet v365 = 365;\nlet v366 = 366;\nlet v367 = 367;\nlet v368 = 368;\nlet v369 = 369;\nlet v370 = 370;\nlet v371 = 371;\nlet v372 = 372;\nlet v373 = 373;\nlet v374 = 374;\nlet v375 = 375;\nlet v376 = 376;\nlet v377 = 377;\nlet v378 = 378;\nlet v379 = 379;\nlet v380 = 380;\nlet v381 = 381;\nlet v382 = 382;\nlet v383 = 383;\nlet v384 = 384;\nlet v385 = 385;\nlet v386 = 386;\nlet v387 = 387;\nlet v388 = 388;\nlet v389 = 389;\nlet v390 = 390;\nlet v391 = 391;\nlet v392 = 392;\nlet v393 = 393;\nlet v394 = 394;\nlet v395 = 395;\nlet v396 = 396;\nlet v397 = 397;\nlet v398 = 398;\nlet v399 = 399;\nlet v400 = 400;\nlet v401 = 401;\nlet v402 = 402;\nlet v403 = 403;\nlet v404 = 404;\nlet v405 = 405;\nlet v406 = 406;\nlet v407 = 407;\nlet v408 = 408;\nlet v409 = 409;\nlet v410 = 410;\nlet v411 = 411;\nlet v412 = 412;\nlet v413 = 413;\nlet v414 = 414;\nlet v415 = 415;\nlet v416 = 416;\nlet v417 = 417;\nlet v418 = 418;\nlet v419 = 419;\nlet v420 = 420;\nlet v421 = 421;\nlet v422 = 422;\nlet v423 = 423;\nlet v424 = 424;\nlet v425 = 425;\nlet v426 = 426;\nlet v427 = 427;\nlet v428 = 428;\nlet v429 = 429;\nlet v430 = 430;\nlet v431 = 431;\nlet v432 = 432;\nlet v433 = 433;\nlet v434 = 434;\nlet v435 = 435;\nlet v436 = 436;\nlet v437 = 437;\nlet v438 = 438;\nlet v439 = 439;\nlet v440 = 440;\nlet v441 = 441;\nlet v442 = 442;\nlet v443 = 443;\nlet v444 = 444;\nlet v445 = 445;\nlet v446 = 446;\nlet v447 = 447;\nlet v448 = 448;\nlet v449 = 449;\nlet v450 = 450;\nlet v451 = 451;\nlet v452 = 452;\nlet v453 = 453;\nlet v454 = 454;\nlet v455 = 455;\nlet v456 = 456;\nlet v457 = 457;\nlet v458 = 458;\nlet v459 = 459;\nlet v460 = 460;\nlet v461 = 461;\nlet v462 = 462;\nlet v463 = 463;\nlet v464 = 464;\nlet v465 = 465;\nlet v466 = 466;\nlet v467 = 467;\nlet v468 = 468;\nlet v469 = 469;\nlet v470 = 470;\nlet v471 = 471;\nlet v472 = 472;\nlet v473 = 473;\nlet v474 = 474;\nlet v475 = 475;\nlet v476 = 476;\nlet v477 = 477;\nlet v478 = 478;\nlet v479 = 479;\nlet v480 = 480;\nlet v481 = 481;\nlet v482 = 482;\nlet v483 = 483;\nlet v484 = 484;\nlet v485 = 485;\nlet v486 = 486;\nlet v487 = 487;\nlet v488 = 488;\nlet v489 = 489;\nlet v490 = 490;\nlet v491 = 491;\nlet v492 = 492;\nlet v493 = 493;\nlet v494 = 494;\nlet v495 = 495;\nlet v496 = 496;\nlet v497 = 497;\nlet v498 = 498;\nlet v499 = 499;\nlet v500 = 500;\nlet v501 = 501;\nlet v502 = 502;\nlet v503 = 503;\nlet v504 = 504;\nlet v505 = 505;\nlet v506 = 506;\nlet v507 = 507;\nlet v508 = 508;\nlet v509 = 509;\nlet v510 = 510;\nlet v511 = 511;\nlet v512 = 512;\nlet v513 = 513;\nlet v514 = 514;\nlet v515 = 515;\nlet v516 = 516;\nlet v517 = 517;\nlet v518 = 518;\nlet v519 = 519;\nlet v520 = 520;\nlet v521 = 521;\nlet v522 = 522;\nlet v523 = 523;\nlet v524 = 524;\nlet v525 = 525;\nlet v526 = 526;\nlet v527 = 527;\nlet v528 = 528;\nlet v529 = 529;\nlet v530 = 530;\nlet v531 = 531;\nlet v532 = 532;\nlet v533 = 533;\nlet v534 = 534;\nlet v535 = 535;\nlet v536 = 536;\nlet v537 = 537;\nlet v538 = 538;\nlet v539 = 539;\nlet v540 = 540;\nlet v541 = 541;\nlet v542 = 542;\nlet v543 = 543;\nlet v544 = 544;\nlet v545 = 545;\nlet v546 = 546;\nlet v547 = 547;\nlet v548 = 548;\nlet v549 = 549;\nlet v550 = 550;\nlet v551 = 551;\nlet v552 = 552;\nlet v553 = 553;\nlet v554 = 554;\nlet v555 = 555;\nlet v556 = 556;\nlet v557 = 557;\nlet v558 = 558;\nlet v559 = 559;\nlet v560 = 560;\nlet v561 = 561;\nlet v562 = 562;\nlet v563 = 563;\nlet v564 = 564;\nlet v565 = 565;\nlet v566 = 566;\nlet v567 = 567;\nlet v568 = 568;\nlet v569 = 569;\nlet v570 = 570;\nlet v571 = 571;\nlet v572 = 572;\nlet v573 = 573;\nlet v574 = 574;\nlet v575 = 575;\nlet v576 = 576;\nlet v577 = 577;\nlet v578 = 578;\nlet v579 = 579;\nlet v580 = 580;\nlet v581 = 581;\nlet v582 = 582;\nlet v583 = 583;\nlet v584 = 584;\nlet v585 = 585;\nlet v586 = 586;\nlet v587 = 587;\nlet v588 = 588;\nlet v589 = 589;\nlet v590 = 590;\nlet v591 = 591;\nlet v592 = 592;\nlet v593 = 593;\nlet v594 = 594;\nlet v595 = 595;\nlet v596 = 596;\nlet v597 = 597;\nlet v598 = 598;\nlet v599 = 599;\nlet v600 = 600;\nlet v601 = 601;\nlet v602 = 602;\nlet v603 = 603;\nlet v604 = 604;\nlet v605 = 605;\nlet v606 = 606;\nlet v607 = 607;\nlet v608 = 608;\nlet v609 = 609;\nlet v610 = 610;\nlet v611 = 611;\nlet v612 = 612;\nlet v613 = 613;\nlet v614 = 614;\nlet v615 = 615;\nlet v616 = 616;\nlet v617 = 617;\nlet v618 = 618;\nlet v619 = 619;\nlet v620 = 620;\nlet v621 = 621;\nlet v622 = 622;\nlet v623 = 623;\nlet v624 = 624;\nlet v625 = 625;\nlet v626 = 626;\nlet v627 = 627;\nlet v628 = 628;\nlet v629 = 629;\nlet v630 = 630;\nlet v631 = 631;\nlet v632 = 632;\nlet v633 = 633;\nlet v634 = 634;\nlet v635 = 635;\nlet v636 = 636;\nlet v637 = 637;\nlet v638 = 638;\nlet v639 = 639;\nlet v640 = 640;\nlet v641 = 641;\nlet v642 = 642;\nlet v643 = 643;\nlet v644 = 644;\nlet v645 = 645;\nlet v646 = 646;\nlet v647 = 647;\nlet v648 = 648;\nlet v649 = 649;\nlet v650 = 650;\nlet v651 = 651;\nlet v652 = 652;\nlet v653 = 653;\nlet v654 = 654;\nlet v655 = 655;\nlet v656 = 656;\nlet v657 = 657;\nlet v658 = 658;\nlet v659 = 659;\nlet v660 = 660;\nlet v661 = 661;\nlet v662 = 662;\nlet v663 = 663;\nlet v664 = 664;\nlet v665 = 665;\nlet v666 = 666;\nlet v667 = 667;\nlet v668 = 668;\nlet v669 = 669;\nlet v670 = 670;\nlet v671 = 671;\nlet v672 = 672;\nlet v673 = 673;\nlet v674 = 674;\nlet v675 = 675;\nlet v676 = 676;\nlet v677 = 677;\nlet v678 = 678;\nlet v679 = 679;\nlet v680 = 680;\nlet v681 = 681;\nlet v682 = 682;\nlet v683 = 683;\nlet v684 = 684;\nlet v685 = 685;\nlet v686 = 686;\nlet v687 = 687;\nlet v688 = 688;\nlet v689 = 689;\nlet v690 = 690;\nlet v691 = 691;\nlet v692 = 692;\nlet v693 = 693;\nlet v694 = 694;\nlet v695 = 695;\nlet v696 = 696;\nlet v697 = 697;\nlet v698 = 698;\nlet v699 = 699;\nlet v700 = 700;\nlet v701 = 701;\nlet v702 = 702;\nlet v703 = 703;\nlet v704 = 704;\nlet v705 = 705;\nlet v706 = 706;\nlet v707 = 707;\nlet v708 = 708;\nlet v709 = 709;\nlet v710 = 710;\nlet v711 = 711;\nlet v712 = 712;\nlet v713 = 713;\nlet v714 = 714;\nlet v715 = 715;\nlet v716 = 716;\nlet v717 = 717;\nlet v718 = 718;\nlet v719 = 719;\nlet v720 = 720;\nlet v721 = 721;\nlet v722 = 722;\nlet v723 = 723;\nlet v724 = 724;\nlet v725 = 725;\nlet v726 = 726;\nlet v727 = 727;\nlet v728 = 728;\nlet v729 = 729;\nlet v730 = 730;\nlet v731 = 731;\nlet v732 = 732;\nlet v733 = 733;\nlet v734 = 734;\nlet v735 = 735;\nlet v736 = 736;\nlet v737 = 737;\nlet v738 = 738;\nlet v739 = 739;\nlet v740 = 740;\nlet v741 = 741;\nlet v742 = 742;\nlet v743 = 743;\nlet v744 = 744;\nlet v745 = 745;\nlet v746 = 746;\nlet v747 = 747;\nlet v748 = 748;\nlet v749 = 749;\nlet v750 = 750;\nlet v751 = 751;\nlet v752 = 752;\nlet v753 = 753;\nlet v754 = 754;\nlet v755 = 755;\nlet v756 = 756;\nlet v757 = 757;\nlet v758 = 758;\nlet v759 = 759;\nlet v760 = 760;\nlet v761 = 761;\nlet v762 = 762;\nlet v763 = 763;\nlet v764 = 764;\nlet v765 = 765;\nlet v766 = 766;\nlet v767 = 767;\nlet v768 = 768;\nlet v769 = 769;\nlet v770 = 770;\nlet v771 = 771;\nlet v772 = 772;\nlet v773 = 773;\nlet v774 = 774;\nlet v775 = 775;\nlet v776 = 776;\nlet v777 = 777;\nlet v778 = 778;\nlet v779 = 779;\nlet v780 = 780;\nlet v781 = 781;\nlet v782 = 782;\nlet v783 = 783;\nlet v784 = 784;\nlet v785 = 785;\nlet v786 = 786;\nlet v787 = 787;\nlet v788 = 788;\nlet v789 = 789;\nlet v790 = 790;\nlet v791 = 791;\nlet v792 = 792;\nlet v793 = 793;\nlet v794 = 794;\nlet v795 = 795;\nlet v796 = 796;\nlet v797 = 797;\nlet v798 = 798;\nlet v799 = 799;\nprint v799 + v1;",
+   "lines": [
+    "800"
+   ],
+   "seconds": 10
+  }
+ ]
+}

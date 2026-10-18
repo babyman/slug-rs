@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Runs a coding agent, Codex or Claude Code, headless on Slug tasks and records
-one JSON line per run.
+one JSON line per run. The `python` arm implements a project in Python
+instead, as a control, for projects that ship checks.json and python/task.md.
 
     python3 eval/agent/harness/run.py plan --arms baseline,json --repeats 3
     python3 eval/agent/harness/run.py run --arms baseline,json --repeats 3 --yes
@@ -16,6 +17,7 @@ import concurrent.futures
 import datetime
 import json
 import os
+import platform
 import shutil
 import statistics
 import subprocess
@@ -44,13 +46,22 @@ KIND_LIMITS = {
 RESULTS = EVAL / "results"
 REVIEW_KINDS = ["filesystem", "stdin", "database", "configuration", "native", "dynamic_import"]
 
-# Each arm is one combination of the three features under test.
+# Each Slug arm is one combination of the three features under test. The
+# `python` arm writes the project in Python, with none of them.
 ARMS = {
     "baseline": {"diagnostics": "text", "fixes": "off", "report": "off"},
     "json": {"diagnostics": "json", "fixes": "off", "report": "off"},
     "fixes": {"diagnostics": "json", "fixes": "on", "report": "off"},
     "report": {"diagnostics": "text", "fixes": "off", "report": "on"},
+    "python": {"diagnostics": "text", "fixes": "off", "report": "off", "language": "python"},
 }
+# The interpreter Python-arm agents and their grading use: the one running
+# the harness.
+PYTHON = sys.executable
+
+
+def language(run):
+    return ARMS[run["arm"]].get("language", "slug")
 
 # Documentation every arm sees, copied into the workspace as slug-docs/.
 COMMON_DOCS = [
@@ -114,6 +125,14 @@ Library module sources are in ./slug-docs/library. Run a program with
 
 The library's specification is in ./spec.md. Implement it exactly.
 {arm_notes}
+Stop when the library is complete and you have tested it.
+"""
+
+PYTHON_PROJECT_PROMPT = """\
+You are writing a library in Python. Run Python with `python3`.
+
+The library's specification is in ./spec.md. Implement it exactly.
+
 Stop when the library is complete and you have tested it.
 """
 
@@ -186,6 +205,8 @@ def plan(arguments):
                 continue
             if kind == "review" and arm in ("json", "fixes"):
                 continue
+            if arm == "python" and not (kind == "project" and projects.supports_python(directory)):
+                continue
             for repeat in range(arguments.repeats):
                 runs.append({"kind": kind, "task": directory.name, "arm": arm, "repeat": repeat})
     return runs
@@ -205,6 +226,10 @@ def prepare_workspace(run, run_temp):
     # cases by searching parent directories. It is copied into the results
     # after the run.
     workspace = run_temp / "workspace"
+    if language(run) == "python":
+        workspace.mkdir()
+        shutil.copyfile(PROJECTS / run["task"] / "python" / "task.md", workspace / "spec.md")
+        return workspace
     docs = workspace / "slug-docs"
     docs.mkdir(parents=True)
     paths = list(COMMON_DOCS)
@@ -234,6 +259,8 @@ def minutes(run, arguments):
 
 def prompt(run):
     notes = ARM_NOTES.get(run["arm"], "")
+    if language(run) == "python":
+        return PYTHON_PROJECT_PROMPT
     if run["kind"] == "project":
         return PROJECT_PROMPT.format(arm_notes=notes)
     if run["kind"] == "coding":
@@ -355,16 +382,23 @@ def isolated_install(slug):
     (install / "bin").mkdir()
     shutil.copy2(slug, install / "bin" / "slug-real")
     shutil.copy2(HERE / "slug_wrapper.py", install / "bin" / "slug_wrapper.py")
+    shutil.copy2(HERE / "python_wrapper.py", install / "bin" / "python_wrapper.py")
     return install
 
 
-def wrapper_directory(run_temp, install):
+def wrapper_directory(run_temp, install, run):
     directory = run_temp / "bin"
     directory.mkdir()
-    wrapper = directory / "slug"
-    script = json.dumps(str(install / "bin" / "slug_wrapper.py"))
-    wrapper.write_text("#!/bin/sh\nexec " + json.dumps(sys.executable) + " " + script + ' "$@"\n')
-    wrapper.chmod(0o755)
+    if language(run) == "python":
+        script = json.dumps(str(install / "bin" / "python_wrapper.py"))
+        names = ("python3", "python")
+    else:
+        script = json.dumps(str(install / "bin" / "slug_wrapper.py"))
+        names = ("slug",)
+    for name in names:
+        wrapper = directory / name
+        wrapper.write_text("#!/bin/sh\nexec " + json.dumps(sys.executable) + " " + script + ' "$@"\n')
+        wrapper.chmod(0o755)
     return directory
 
 
@@ -382,7 +416,8 @@ def execute(run, arguments, slug, install, results_dir, references, codex_home):
     arm = ARMS[run["arm"]]
     environment = {
         **os.environ,
-        "PATH": str(wrapper_directory(run_temp, install)) + os.pathsep + os.environ.get("PATH", ""),
+        "PATH": str(wrapper_directory(run_temp, install, run)) + os.pathsep + os.environ.get("PATH", ""),
+        "SLUG_EVAL_PYTHON": PYTHON,
         "SLUG_HOME": str(install / "home"),
         "SLUG_EVAL_REAL": str(install / "bin" / "slug-real"),
         "SLUG_EVAL_LOG": str(log),
@@ -427,7 +462,14 @@ def execute(run, arguments, slug, install, results_dir, references, codex_home):
         "slug_failures": sum(1 for item in invocations if item.get("exit") not in (0, None)),
         "codes": [code for item in invocations for code in item.get("codes", [])],
         "report_runs": sum(1 for item in invocations if item.get("command") == "report"),
+        "language": language(run),
     }
+    if language(run) == "python":
+        # `slug_runs` counts python3 runs here, which include scripts that
+        # edit files; `program_runs` breaks them down by how the program was
+        # given.
+        record["python_version"] = platform.python_version()
+        record["program_runs"] = dict(collections.Counter(item.get("program") for item in invocations))
     record.update(check(run, workspace, slug, references))
     shutil.copytree(workspace, run_dir / "workspace", ignore=shutil.ignore_patterns("slug-docs"))
     shutil.copy2(log, run_dir / "slug-invocations.jsonl")
@@ -529,6 +571,21 @@ def codex_summary(stdout):
 
 
 def check(run, workspace, slug, references):
+    if language(run) == "python":
+        module = run["task"]
+        source = workspace / f"{module}.py"
+        total = len(projects.load_checks(PROJECTS / run["task"]))
+        if not source.exists():
+            return {"passed": False, "score": 0.0, "cases_passed": 0, "cases": total, "detail": f"no {module}.py"}
+        outcomes = projects.grade_python(PYTHON, PROJECTS / run["task"], source, module)
+        passed = sum(outcome["passed"] for outcome in outcomes)
+        return {
+            "passed": passed == total,
+            "score": round(passed / total, 4),
+            "cases_passed": passed,
+            "cases": total,
+            "failed_cases": [outcome["id"] for outcome in outcomes if not outcome["passed"]],
+        }
     if run["kind"] == "project":
         module = run["task"]
         source = workspace / f"{module}.slug"
@@ -725,6 +782,13 @@ def command_check_references(arguments):
             fixed = ", ".join(sorted(expected - failed)) or "none"
             raise SystemExit(f"project {module} reference: unexpected failures {unexpected}; now passing {fixed}")
         print(f"project {module} reference passes {len(outcomes) - len(failed)} of {len(outcomes)} cases, failing only its {len(expected)} known cases")
+        if projects.supports_python(directory):
+            reference = directory / "python" / "reference" / f"{module}.py"
+            outcomes = projects.grade_python(PYTHON, directory, reference, module)
+            failed = sorted(outcome["id"] for outcome in outcomes if not outcome["passed"])
+            if failed:
+                raise SystemExit(f"project {module} Python reference fails {', '.join(failed)}")
+            print(f"project {module} Python reference passes {len(outcomes)} of {len(outcomes)} checks")
 
 
 def main():

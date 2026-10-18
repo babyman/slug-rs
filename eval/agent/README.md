@@ -59,6 +59,21 @@ hold-outs, and replace a hold-out once it has driven a change.
 | `json`     | JSON        | removed | blocked       | coding         |
 | `fixes`    | JSON        | kept    | blocked       | coding         |
 | `report`   | text        | removed | available     | review         |
+| `python`   | -           | -       | -             | `tiny` project |
+
+The `python` arm is a control: the agent implements the project in Python
+from `python/task.md`, which `make_cases.py` writes from `task.md` with only
+the interface changed, so both languages face the same definition. Its
+workspace holds only `spec.md`. The same checks, written as data to
+`checks.json`, are graded by `harness/projects.py` against `tiny.py`, one
+`python3` process per check with the same ids and time limits as the Slug
+cases, so results compare case by case. `python/reference/tiny.py`, a port of
+the Slug reference, passes all of them. The agent's `python3` is a wrapper
+(`harness/python_wrapper.py`) that logs each run; agents also run Python to
+edit files, so a record's `slug_runs` counts every `python3` run and
+`program_runs` splits them into scripts, `-c`, `-m`, and standard input.
+It runs under the interpreter running the harness, recorded as
+`python_version`.
 
 The agent's `slug` is a wrapper (`harness/slug_wrapper.py`) that applies the
 arm: it forces or strips `--diagnostic-format=json`, removes fixes and the
@@ -82,6 +97,9 @@ python3 eval/agent/harness/run.py plan --arms baseline,fixes --tasks 01,04 --rep
 
 # Start them. Nothing runs without --yes.
 python3 eval/agent/harness/run.py run --arms baseline,fixes --tasks 01,04 --repeats 3 --yes
+
+# The Python control on the Tiny project.
+python3 eval/agent/harness/run.py run --arms python --tasks tiny --repeats 1 --yes
 
 # Summarize a finished or partial run.
 python3 eval/agent/harness/run.py summarize eval/agent/results/<run>

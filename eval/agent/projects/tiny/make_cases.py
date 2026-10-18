@@ -1,4 +1,6 @@
-"""Writes this project's cases.json:
+"""Writes this project's cases.json; checks.json, the same checks as data for
+grading an implementation in Python; and python/task.md, task.md with its
+interface written for Python:
 
     python3 eval/agent/projects/tiny/make_cases.py
 
@@ -35,6 +37,7 @@ val finish = fn() {
 '''.strip("\n")
 
 cases = []
+checks = []
 
 
 def slug_string(text):
@@ -58,20 +61,23 @@ def source(text):
 
 def runs(label, program, lines):
     wanted = "[" + ", ".join(slug_string(line) for line in lines) + "]"
-    return label, f"runs({slug_string(label)}, {source(program)}, {wanted})"
+    return label, f"runs({slug_string(label)}, {source(program)}, {wanted})", {"source": program, "lines": lines}
 
 
 def fails(label, program, kind, line, column):
-    return label, f"fails({slug_string(label)}, {source(program)}, {slug_string(kind)}, {line}, {column})"
+    check = f"fails({slug_string(label)}, {source(program)}, {slug_string(kind)}, {line}, {column})"
+    return label, check, {"source": program, "error": {"kind": kind, "line": line, "column": column}}
 
 
-def case(group, *checks, seconds=None):
+def case(group, *checks_, seconds=None):
     """One case per check, so a score counts checks: `group/label`."""
-    for label, check in checks:
+    for label, check, data in checks_:
         entry = {"id": f"{group}/{label.replace(' ', '-')}", "kind": "program", "source": check + "\nfinish()"}
+        data = {"id": entry["id"], **data}
         if seconds:
-            entry["seconds"] = seconds
+            entry["seconds"] = data["seconds"] = seconds
         cases.append(entry)
+        checks.append(data)
 
 
 # Printing and values
@@ -271,4 +277,37 @@ ids = [c["id"] for c in cases]
 assert len(ids) == len(set(ids)), "duplicate case id"
 target = Path(__file__).resolve().parent / "cases.json"
 target.write_text(json.dumps({"prelude": PRELUDE, "cases": cases}, indent=1, ensure_ascii=False) + "\n")
+target.with_name("checks.json").write_text(json.dumps({"checks": checks}, indent=1, ensure_ascii=False) + "\n")
+
+# The Python task shares task.md's definition of Tiny word for word; only the
+# interface before it differs.
+PYTHON_INTERFACE = """\
+# Tiny interpreter
+
+Write a Python module, `./tiny.py`, that interprets Tiny, a small scripting
+language defined below. It will be graded by a hidden suite of programs that
+import it with `import tiny` and run under `python3` (Python 3.9), with only
+the standard library.
+
+Define `run` and `TinyError`, described below.
+
+## `run(source)`
+
+Runs the Tiny program `source`, a `str`, and returns the list of lines it
+printed, as a `list` of `str`, in order. A program that prints nothing returns
+`[]`.
+
+An invalid or failing program raises `TinyError`, a subclass of `Exception`,
+with attributes `kind`, `line`, and `column`, where `kind` is one of the kinds
+below and `line` and `column` give the position the error is reported at.
+Lines and columns count from 1; a column counts characters, and a tab is one
+character. The first error ends the run, and nothing printed before it is
+returned.
+
+"""
+task = target.with_name("task.md").read_text()
+definition = task[task.index("## Lexical structure"):]
+assert definition.count("`tiny.slug`") == 1
+python_task = target.parent / "python" / "task.md"
+python_task.write_text(PYTHON_INTERFACE + definition.replace("`tiny.slug`", "`tiny.py`"))
 print(len(cases), "cases")

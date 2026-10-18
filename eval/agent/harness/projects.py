@@ -173,3 +173,65 @@ def grade(slug, slug_home, project_dir, module_path, module):
         passed, detail = run_case(slug, slug_home, module_path, module, case, prelude)
         outcomes.append({"id": case["id"], "kind": case["kind"], "passed": passed, "detail": detail})
     return outcomes
+
+
+# A project with checks.json and python/task.md can also be implemented in
+# Python, as a control: the same checks, as data, graded against a module
+# that defines `run(source)` and `TinyError`-style errors with `kind`, `line`,
+# and `column` attributes.
+PYTHON_DRIVER = """\
+import json, sys
+sys.path.insert(0, ".")
+check = json.load(open("check.json"))
+import {module}
+try:
+    got = {module}.run(check["source"])
+except Exception as error:
+    wanted = check.get("error")
+    found = [getattr(error, name, None) for name in ("kind", "line", "column")]
+    if type(error).__name__ == "{error}" and wanted and found == [wanted["kind"], wanted["line"], wanted["column"]]:
+        print("PASS")
+    else:
+        print("FAIL raised", repr(error), found, "wanted", wanted or check.get("lines"))
+else:
+    if "error" in check:
+        print("FAIL no error", repr(got), "wanted", check["error"])
+    elif type(got) is list and got == check["lines"] and all(type(line) is str for line in got):
+        print("PASS")
+    else:
+        print("FAIL got", repr(got), "wanted", check["lines"])
+"""
+
+
+def supports_python(project_dir):
+    return (Path(project_dir) / "checks.json").exists() and (Path(project_dir) / "python" / "task.md").exists()
+
+
+def load_checks(project_dir):
+    return json.loads((Path(project_dir) / "checks.json").read_text())["checks"]
+
+
+def grade_python(python, project_dir, module_path, module, error="TinyError"):
+    """Runs every check against a Python module and returns per-check
+    outcomes with the same ids as the Slug cases."""
+    outcomes = []
+    for check in load_checks(project_dir):
+        with tempfile.TemporaryDirectory(prefix="slug-eval-python-") as directory:
+            shutil.copyfile(module_path, os.path.join(directory, f"{module}.py"))
+            Path(directory, "check.json").write_text(json.dumps(check, ensure_ascii=False))
+            Path(directory, "driver.py").write_text(PYTHON_DRIVER.format(module=module, error=error))
+            seconds = check.get("seconds", CASE_TIMEOUT_SECONDS)
+            try:
+                completed = subprocess.run(
+                    [python, "-I", "driver.py"],
+                    cwd=directory,
+                    capture_output=True,
+                    text=True,
+                    timeout=seconds,
+                )
+                passed = completed.returncode == 0 and completed.stdout.strip() == "PASS"
+                detail = (completed.stdout.strip() or completed.stderr.strip())[:300]
+            except subprocess.TimeoutExpired:
+                passed, detail = False, f"timed out after {seconds} s"
+        outcomes.append({"id": check["id"], "kind": "python", "passed": passed, "detail": detail})
+    return outcomes
