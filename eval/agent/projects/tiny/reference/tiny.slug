@@ -1,0 +1,557 @@
+val s = import("slug.string")
+
+val KEYWORDS = {let: true, fn: true, return: true, if: true, else: true, while: true, true: true, false: true, nil: true, and: true, or: true, not: true, print: true}
+// The largest integer is 922337203685477580 * 10 + 7.
+val MAX_TENTH = 922337203685477580
+
+val fail = fn(kind, line, column) {
+    throw Error { type: "tiny.error", msg: "$kind error at $line:$column", data: {kind: kind, line: line, column: column} }
+}
+
+val isDigit = fn(c) { c >= "0" && c <= "9" }
+val isLetter = fn(c) { (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" }
+
+// Lexing: a list of tokens, each a map with `kind`, its `line` and `column`,
+// and a `value` for integers, strings, and names.
+val lex = fn(source) {
+    val cs = s.chars(source)
+    val size = len(cs)
+    val at = fn(i) { if (size > i) { cs[i] } else { "" } }
+    val token = fn(kind, line, column, value) { {kind: kind, line: line, column: column, value: value} }
+    val integer = fn(i, line, column) {
+        val go = fn(k, n) {
+            if (isDigit(at(k))) {
+                val d = s.ord(at(k)) - 48
+                if (n > MAX_TENTH || (n == MAX_TENTH && d > 7)) { fail("syntax", line, column) }
+                recur(k + 1, n * 10 + d)
+            } else {
+                [k, n]
+            }
+        }
+        go(i, 0)
+    }
+    val text = fn(i, line, column) {
+        val go = fn(k, out) {
+            val c = at(k)
+            if (c == "" || c == "\n") { fail("syntax", line, column) }
+            if (c == "\"") { return [k + 1, s.join(out)] }
+            if (c != "\\") { return recur(k + 1, out :+ c) }
+            val escaped = match at(k + 1) {
+                "n" => "\n"
+                "t" => "\t"
+                "\"" => "\""
+                "\\" => "\\"
+                _ => fail("syntax", line, column + (k - i))
+            }
+            recur(k + 2, out :+ escaped)
+        }
+        go(i + 1, [])
+    }
+    val word = fn(i) {
+        val go = fn(k) { if (isLetter(at(k)) || isDigit(at(k))) { recur(k + 1) } else { k } }
+        go(i)
+    }
+    val two = {"==": true, "!=": true, "<=": true, ">=": true}
+    val one = {"+": true, "-": true, "*": true, "/": true, "%": true, "<": true, ">": true, "=": true, "(": true, ")": true, "{": true, "}": true, "[": true, "]": true, ",": true, ";": true}
+    val scan = fn(i, line, column, out) {
+        val c = at(i)
+        if (c == "") { return out :+ token("end", line, column, nil) }
+        if (c == "\n") { return recur(i + 1, line + 1, 1, out) }
+        if (c == " " || c == "\t" || c == "\r") { return recur(i + 1, line, column + 1, out) }
+        if (c == "#") {
+            val skip = fn(k) { if (at(k) == "" || at(k) == "\n") { k } else { recur(k + 1) } }
+            val k = skip(i)
+            return recur(k, line, column + (k - i), out)
+        }
+        if (isDigit(c)) {
+            val [k, n] = integer(i, line, column)
+            return recur(k, line, column + (k - i), out :+ token("int", line, column, n))
+        }
+        if (c == "\"") {
+            val [k, value] = text(i, line, column)
+            return recur(k, line, column + (k - i), out :+ token("string", line, column, value))
+        }
+        if (isLetter(c)) {
+            val k = word(i)
+            val name = s.join(cs[i:k])
+            val kind = if (KEYWORDS[name] != nil) { name } else { "name" }
+            return recur(k, line, column + (k - i), out :+ token(kind, line, column, name))
+        }
+        val pair = c + at(i + 1)
+        if (two[pair] != nil) { return recur(i + 2, line, column + 2, out :+ token(pair, line, column, nil)) }
+        if (one[c] != nil) { return recur(i + 1, line, column + 1, out :+ token(c, line, column, nil)) }
+        fail("syntax", line, column)
+    }
+    scan(0, 1, 1, [])
+}
+
+// Parsing: statements and expressions are maps with a `node` kind and the
+// position their errors are reported at.
+val parse = fn(tokens) {
+    var pos = 0
+    var depth = 0
+    // Declared first so the mutually recursive functions below can call
+    // each other: a local name is visible only after its declaration.
+    var expression = nil
+    var block = nil
+    var statement = nil
+    val peek = fn() { tokens[pos] }
+    val ahead = fn() { tokens[pos + 1] ?? tokens[pos] }
+    val next = fn() {
+        val t = tokens[pos]
+        pos = pos + 1
+        t
+    }
+    val unexpected = fn() {
+        val t = peek()
+        fail("syntax", t.line, t.column)
+    }
+    val expect = fn(kind) { if (peek().kind != kind) { unexpected() } else { next() } }
+    val at = fn(t, fields) { {line: t.line, column: t.column} + fields }
+
+    val params = fn() {
+        expect("(")
+        if (peek().kind == ")") {
+            next()
+            return []
+        }
+        val go = fn(out) {
+            val name = expect("name").value
+            if (peek().kind == ",") {
+                next()
+                recur(out :+ name)
+            } else {
+                expect(")")
+                out :+ name
+            }
+        }
+        go([])
+    }
+    val arguments = fn(close) {
+        if (peek().kind == close) {
+            next()
+            return []
+        }
+        val go = fn(out) {
+            val value = expression()
+            if (peek().kind == ",") {
+                next()
+                recur(out :+ value)
+            } else {
+                expect(close)
+                out :+ value
+            }
+        }
+        go([])
+    }
+    val functionBody = fn() {
+        depth = depth + 1
+        val body = block()
+        depth = depth - 1
+        body
+    }
+    val primary = fn() {
+        val t = next()
+        match t.kind {
+            "int" => at(t, {node: "literal", value: t.value})
+            "string" => at(t, {node: "literal", value: t.value})
+            "true" => at(t, {node: "literal", value: true})
+            "false" => at(t, {node: "literal", value: false})
+            "nil" => at(t, {node: "literal", value: nil})
+            "name" => at(t, {node: "name", name: t.value})
+            "(" => {
+                val inner = expression()
+                expect(")")
+                inner
+            }
+            "[" => at(t, {node: "list", items: arguments("]")})
+            "fn" => {
+                val ps = params()
+                at(t, {node: "function", name: nil, params: ps, body: functionBody()})
+            }
+            _ => {
+                pos = pos - 1
+                unexpected()
+            }
+        }
+    }
+    val postfix = fn() {
+        val go = fn(value) {
+            val t = peek()
+            if (t.kind == "(") {
+                next()
+                recur(at(t, {node: "call", callee: value, args: arguments(")")}))
+            } else if (t.kind == "[") {
+                next()
+                val index = expression()
+                expect("]")
+                recur(at(t, {node: "index", target: value, index: index}))
+            } else {
+                value
+            }
+        }
+        go(primary())
+    }
+    val unary = fn() {
+        val t = peek()
+        if (t.kind == "-" || t.kind == "not") {
+            next()
+            at(t, {node: "unary", op: t.kind, operand: unary()})
+        } else {
+            postfix()
+        }
+    }
+    // Each level is a left-grouping loop over its operators.
+    val binary = fn(operators, operand) {
+        fn() {
+            val go = fn(left) {
+                val t = peek()
+                if (operators[t.kind] != nil) {
+                    next()
+                    recur(at(t, {node: "binary", op: t.kind, left: left, right: operand()}))
+                } else {
+                    left
+                }
+            }
+            go(operand())
+        }
+    }
+    val term = binary({"*": true, "/": true, "%": true}, unary)
+    val additive = binary({"+": true, "-": true}, term)
+    val comparison = binary({"<": true, "<=": true, ">": true, ">=": true}, additive)
+    val equality = binary({"==": true, "!=": true}, comparison)
+    val conjunction = binary({and: true}, equality)
+    expression = binary({or: true}, conjunction)
+
+    block = fn() {
+        val open = expect("{")
+        val go = fn(out) {
+            if (peek().kind == "}") {
+                next()
+                out
+            } else if (peek().kind == "end") {
+                unexpected()
+            } else {
+                recur(out :+ statement())
+            }
+        }
+        at(open, {node: "block", body: go([])})
+    }
+    val ifStatement = fn(t) {
+        expect("(")
+        val condition = expression()
+        expect(")")
+        val then = block()
+        val otherwise = if (peek().kind == "else") {
+            next()
+            if (peek().kind == "if") { ifStatement(next()) } else { block() }
+        } else {
+            nil
+        }
+        at(t, {node: "if", condition: condition, then: then, otherwise: otherwise})
+    }
+    statement = fn() {
+        val t = peek()
+        match t.kind {
+            "let" => {
+                next()
+                val name = expect("name").value
+                expect("=")
+                val value = expression()
+                expect(";")
+                at(t, {node: "let", name: name, value: value})
+            }
+            "print" => {
+                next()
+                val value = expression()
+                expect(";")
+                at(t, {node: "print", value: value})
+            }
+            "if" => ifStatement(next())
+            "while" => {
+                next()
+                expect("(")
+                val condition = expression()
+                expect(")")
+                at(t, {node: "while", condition: condition, body: block()})
+            }
+            "return" => {
+                if (depth == 0) { fail("syntax", t.line, t.column) }
+                next()
+                if (peek().kind == ";") {
+                    next()
+                    at(t, {node: "return", value: nil})
+                } else {
+                    val value = expression()
+                    expect(";")
+                    at(t, {node: "return", value: value})
+                }
+            }
+            "{" => block()
+            "fn" if ahead().kind == "name" => {
+                next()
+                val name = next().value
+                val ps = params()
+                at(t, {node: "declare", name: name, params: ps, body: functionBody()})
+            }
+            "name" if ahead().kind == "=" => {
+                next()
+                next()
+                val value = expression()
+                expect(";")
+                at(t, {node: "assign", name: t.value, value: value})
+            }
+            _ => {
+                val value = expression()
+                expect(";")
+                at(t, {node: "expression", value: value})
+            }
+        }
+    }
+    val program = fn(out) {
+        if (peek().kind == "end") { out } else { recur(out :+ statement()) }
+    }
+    program([])
+}
+
+// Scopes hold boxed values, `[value]`, so a name bound to `nil` is still
+// distinguishable from an unbound one.
+val newScope = fn(parent) {
+    var vars = {}
+    {
+        parent: parent,
+        find: fn(name) { vars[name] },
+        define: fn(name, value) { vars = vars + {[name]: [value]} },
+    }
+}
+
+val lookupScope = fn(scope, name) {
+    if (scope == nil) { nil } else if (scope.find(name) != nil) { scope } else { recur(scope.parent, name) }
+}
+
+val typeOf = fn(v) {
+    match v {
+        n: num => "int"
+        t: str => "string"
+        b: bool => "bool"
+        l: list => "list"
+        f: map => "function"
+        _ => "nil"
+    }
+}
+
+val show = fn(v, nested) {
+    match typeOf(v) {
+        "int" => "$v"
+        "string" => if (nested) { "\"" + v + "\"" } else { v }
+        "bool" => if (v) { "true" } else { "false" }
+        "nil" => "nil"
+        "list" => {
+            val parts = fn(i, out) { if (i == len(v)) { out } else { recur(i + 1, out :+ show(v[i], true)) } }
+            "[" + s.join(parts(0, []), ", ") + "]"
+        }
+        _ => if (v.name == nil) { "<fn>" } else {
+            val name = v.name
+            "<fn $name>"
+        }
+    }
+}
+
+export val run = fn(source:str) {
+    val program = parse(lex(source))
+    var output = []
+    var functions = 0
+    val makeFunction = fn(name, params, body, scope) {
+        functions = functions + 1
+        {kind: "closure", id: functions, name: name, params: params, body: body, scope: scope}
+    }
+    val globals = newScope(nil)
+    // Declared first so the mutually recursive functions below can call
+    // each other: a local name is visible only after its declaration.
+    var evaluate = nil
+    var execute = nil
+    var step = nil
+    globals.define("len", {kind: "builtin", id: -1, name: "len"})
+    globals.define("str", {kind: "builtin", id: -2, name: "str"})
+
+    val number = fn(v) { typeOf(v) == "int" }
+    val boolean = fn(node, v) { if (typeOf(v) != "bool") { fail("type", node.line, node.column) } else { v } }
+
+    val call = fn(node, callee, args) {
+        if (typeOf(callee) != "function") { fail("type", node.line, node.column) }
+        if (callee.kind == "builtin") {
+            if (len(args) != 1) { fail("arity", node.line, node.column) }
+            val x = args[0]
+            return if (callee.name == "len") {
+                if (typeOf(x) != "string" && typeOf(x) != "list") { fail("type", node.line, node.column) }
+                len(x)
+            } else {
+                show(x, false)
+            }
+        }
+        if (len(args) != len(callee.params)) { fail("arity", node.line, node.column) }
+        val scope = newScope(callee.scope)
+        val bind = fn(i) {
+            if (len(args) > i) {
+                scope.define(callee.params[i], args[i])
+                recur(i + 1)
+            }
+        }
+        bind(0)
+        val signal = execute(callee.body.body, scope)
+        if (signal == nil) { nil } else { signal[0] }
+    }
+
+    // Annotated: inferring `num` from the `-`, `/`, and `%` below would
+    // ignore the string and list cases handled first.
+    val arithmetic = fn(node, a:any|nil, b:any|nil) {
+        val op = node.op
+        if (op == "+" && typeOf(a) == typeOf(b) && (typeOf(a) == "string" || typeOf(a) == "list")) {
+            return a + b
+        }
+        if (!number(a) || !number(b)) { fail("type", node.line, node.column) }
+        match op {
+            "+" => a + b
+            "-" => a - b
+            "*" => a * b
+            "/" => if (b == 0) { fail("division", node.line, node.column) } else { int(a / b) }
+            "%" => if (b == 0) { fail("division", node.line, node.column) } else { a % b }
+        }
+    }
+
+    val compare = fn(node, a, b) {
+        val kind = typeOf(a)
+        if (kind != typeOf(b) || (kind != "int" && kind != "string")) { fail("type", node.line, node.column) }
+        match node.op {
+            "<" => b > a
+            "<=" => a <= b
+            ">" => a > b
+            ">=" => a >= b
+        }
+    }
+
+    evaluate = fn(node, scope) {
+        match node.node {
+            "literal" => node.value
+            "name" => {
+                val owner = lookupScope(scope, node.name)
+                if (owner == nil) { fail("name", node.line, node.column) }
+                owner.find(node.name)[0]
+            }
+            "list" => {
+                val items = fn(i, out) { if (i == len(node.items)) { out } else { recur(i + 1, out :+ evaluate(node.items[i], scope)) } }
+                items(0, [])
+            }
+            "function" => makeFunction(nil, node.params, node.body, scope)
+            "unary" => {
+                val v = evaluate(node.operand, scope)
+                if (node.op == "-") {
+                    if (!number(v)) { fail("type", node.line, node.column) }
+                    0 - v
+                } else {
+                    !boolean(node, v)
+                }
+            }
+            "binary" => {
+                val op = node.op
+                val left = evaluate(node.left, scope)
+                if (op == "and") {
+                    return if (boolean(node, left)) { boolean(node, evaluate(node.right, scope)) } else { false }
+                }
+                if (op == "or") {
+                    return if (boolean(node, left)) { true } else { boolean(node, evaluate(node.right, scope)) }
+                }
+                val right = evaluate(node.right, scope)
+                match op {
+                    "==" => left == right
+                    "!=" => left != right
+                    "<" => compare(node, left, right)
+                    "<=" => compare(node, left, right)
+                    ">" => compare(node, left, right)
+                    ">=" => compare(node, left, right)
+                    _ => arithmetic(node, left, right)
+                }
+            }
+            "call" => {
+                val callee = evaluate(node.callee, scope)
+                val args = fn(i, out) { if (i == len(node.args)) { out } else { recur(i + 1, out :+ evaluate(node.args[i], scope)) } }
+                call(node, callee, args(0, []))
+            }
+            "index" => {
+                val target = evaluate(node.target, scope)
+                val index = evaluate(node.index, scope)
+                val kind = typeOf(target)
+                if ((kind != "list" && kind != "string") || !number(index)) { fail("type", node.line, node.column) }
+                if (0 > index || index >= len(target)) { fail("index", node.line, node.column) }
+                target[index]
+            }
+        }
+    }
+
+    // Runs statements in `scope`; returns `nil`, or `[value]` when a `return`
+    // ran.
+    execute = fn(statements, scope) {
+        val go = fn(i) {
+            if (i == len(statements)) { return nil }
+            val signal = step(statements[i], scope)
+            if (signal != nil) { signal } else { recur(i + 1) }
+        }
+        go(0)
+    }
+
+    step = fn(node, scope) {
+        match node.node {
+            "let" => {
+                scope.define(node.name, evaluate(node.value, scope))
+                nil
+            }
+            "assign" => {
+                val value = evaluate(node.value, scope)
+                val owner = lookupScope(scope, node.name)
+                if (owner == nil) { fail("name", node.line, node.column) }
+                owner.define(node.name, value)
+                nil
+            }
+            "print" => {
+                // Evaluated first: the value may itself print.
+                val line = show(evaluate(node.value, scope), false)
+                output = output :+ line
+                nil
+            }
+            "expression" => {
+                evaluate(node.value, scope)
+                nil
+            }
+            "block" => execute(node.body, newScope(scope))
+            "declare" => {
+                scope.define(node.name, makeFunction(node.name, node.params, node.body, scope))
+                nil
+            }
+            "return" => [if (node.value == nil) { nil } else { evaluate(node.value, scope) }]
+            "if" => {
+                val condition = evaluate(node.condition, scope)
+                if (typeOf(condition) != "bool") { fail("type", node.line, node.column) }
+                if (condition) {
+                    step(node.then, scope)
+                } else if (node.otherwise != nil) {
+                    step(node.otherwise, scope)
+                } else {
+                    nil
+                }
+            }
+            "while" => {
+                val loop = fn() {
+                    val condition = evaluate(node.condition, scope)
+                    if (typeOf(condition) != "bool") { fail("type", node.line, node.column) }
+                    if (!condition) { return nil }
+                    val signal = step(node.body, scope)
+                    if (signal != nil) { signal } else { recur() }
+                }
+                loop()
+            }
+        }
+    }
+
+    execute(program, globals)
+    output
+}
