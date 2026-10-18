@@ -626,10 +626,20 @@ fn optional_pair_assignable(
     }
 }
 
+/// Signatures match position by position, where `unknown` on either side, a
+/// result or parameter the checker could not infer, such as a recursive
+/// function's own result, matches any type.
 fn optional_signature_assignable(actual: Option<&[Type]>, expected: Option<&[Type]>) -> bool {
     match (actual, expected) {
         (_, None) | (None, Some(_)) => true,
-        (Some(actual), Some(expected)) => actual == expected,
+        (Some(actual), Some(expected)) => {
+            actual.len() == expected.len()
+                && actual.iter().zip(expected).all(|(actual, expected)| {
+                    actual == expected
+                        || matches!(actual, Type::Unknown)
+                        || matches!(expected, Type::Unknown)
+                })
+        }
     }
 }
 

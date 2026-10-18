@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A `var` holding a recursive function can be reassigned. The checker cannot
+  infer such a function's result, and an unknown result or parameter in a
+  function type now matches any type, so `var f = fn(n) { ... f(n - 1) }`
+  followed by `f = fn(n) { "new" }` no longer fails with
+  `expected fn<unknown, any|nil>, got fn<str, any|nil>`.
+
 - A function declared inside another function can call itself by name, as in
   `val go = fn(n) { if (n == 0) { 0 } else { go(n - 1) } }`. Previously only
   module-level functions could; a local one compiled, then failed when called

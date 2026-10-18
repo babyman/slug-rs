@@ -1104,7 +1104,10 @@ arguments. The common parameterized forms are `list<T>`, `map<K, V>`,
 fixed-length tuple type. A function type is written `fn<R, P1, P2, ...>`,
 where the first argument is the return type and the remaining arguments are
 the parameter types. For example, `fn<num, num, num>` denotes a function that
-returns `num` and accepts two `num` parameters.
+returns `num` and accepts two `num` parameters. Two function types match when
+they have the same number of arguments and each pair is equal, or one of the
+pair is a result or parameter the checker could not infer, such as a
+recursive function's own result, which matches any type.
 
 Resource types, enums, and aliases are declared as specified in
 [Nominal types](nominal-types.md). There is no built-in broad `resource` type.

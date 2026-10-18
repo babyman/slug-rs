@@ -1712,3 +1712,45 @@ fn match_bindings_exclude_types_matched_by_earlier_cases() {
     assert!(stderr.contains("expected str, found str|nil"), "{stderr}");
     assert!(stderr.contains(":3:3\n"), "{stderr}");
 }
+
+#[test]
+fn recursive_function_variables_accept_reassignment() {
+    let path = fixture_path("recursive-function-variable");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write recursive function variable source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run recursive function variable source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // The recursive function's result is not inferred, so any function with
+    // the same parameters may replace it, at module level or locally.
+    let (code, stdout, stderr) = run(
+        "var f = fn(n) { if (n == 0) { \"old\" } else { f(n - 1) } }\n\
+         val first = f(1)\n\
+         f = fn(n) { \"new\" }\n\
+         val local = fn() {\n\
+           var g = fn(n) { if (n == 0) { \"old\" } else { g(n - 1) } }\n\
+           g = fn(n) { \"new\" }\n\
+           g(0)\n\
+         }\n\
+         println(first, f(0), local())\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "old new new\n");
+
+    // Known results must still match.
+    let (code, _, stderr) = run("var g = fn(n:num):num { n }\ng = fn(n:num):str { \"x\" }\n");
+    fs::remove_file(&path).expect("remove recursive function variable source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("expected fn<num, num>, found fn<str, num>"),
+        "{stderr}"
+    );
+}
