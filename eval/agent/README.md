@@ -68,10 +68,11 @@ workspace holds only `spec.md`. The same checks, written as data to
 `checks.json`, are graded by `harness/projects.py` against `tiny.py`, one
 `python3` process per check with the same ids and time limits as the Slug
 cases, so results compare case by case. `python/reference/tiny.py`, a port of
-the Slug reference, passes all of them. The agent's `python3` is a wrapper
-(`harness/python_wrapper.py`) that logs each run; agents also run Python to
-edit files, so a record's `slug_runs` counts every `python3` run and
-`program_runs` splits them into scripts, `-c`, `-m`, and standard input.
+the Slug reference, passes all of them. Agents also run Python to edit files, so a
+record's `slug_runs` counts every command that runs Python and `program_runs`
+splits them into scripts, `-c`, `-m`, and standard input. For Codex they come
+from its command log, since its login shell puts `/usr/bin` ahead of the
+`python3` wrapper (`harness/python_wrapper.py`), which logs them for Claude.
 It runs under the interpreter running the harness, recorded as
 `python_version`.
 

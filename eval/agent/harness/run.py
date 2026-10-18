@@ -18,6 +18,7 @@ import datetime
 import json
 import os
 import platform
+import re
 import shutil
 import statistics
 import subprocess
@@ -465,9 +466,15 @@ def execute(run, arguments, slug, install, results_dir, references, codex_home):
         "language": language(run),
     }
     if language(run) == "python":
-        # `slug_runs` counts python3 runs here, which include scripts that
-        # edit files; `program_runs` breaks them down by how the program was
-        # given.
+        # Codex runs commands in a login shell, whose profile puts /usr/bin
+        # ahead of the wrapper, so its Python runs come from its own command
+        # log instead. `slug_runs` counts commands that run Python here,
+        # including scripts that edit files; `program_runs` breaks them down
+        # by how the program was given.
+        if arguments.agent == "codex":
+            invocations = codex_python_commands(stdout)
+            record["slug_runs"] = len(invocations)
+            record["slug_failures"] = sum(1 for item in invocations if item.get("exit") not in (0, None))
         record["python_version"] = platform.python_version()
         record["program_runs"] = dict(collections.Counter(item.get("program") for item in invocations))
     record.update(check(run, workspace, slug, references))
@@ -568,6 +575,41 @@ def codex_summary(stdout):
             "cache_read_input_tokens": usage.get("cached_input_tokens", 0),
         },
     }
+
+
+PYTHON_COMMAND = re.compile(r"(?:^|[\s;&|(\"'])(?:[^\s\"']*/)?python3?(?=\s|$)(.*)")
+
+
+def codex_python_commands(stdout):
+    """The commands in a Codex session that run Python, with their exit codes
+    and how each gave its program: a script, `-c`, `-m`, or standard input,
+    as heredoc edit scripts do."""
+    found = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        item = event.get("item") or {} if isinstance(event, dict) else {}
+        if event.get("type") != "item.completed" or item.get("type") != "command_execution":
+            continue
+        command = item.get("command") or ""
+        for text in command.splitlines():
+            match = PYTHON_COMMAND.search(text)
+            if not match:
+                continue
+            rest = match.group(1).split()
+            if not rest or rest[0] in ("-", "<<", "<") or rest[0].startswith("<<"):
+                program = "stdin"
+            elif rest[0] == "-c":
+                program = "inline"
+            elif rest[0] == "-m":
+                program = "module"
+            else:
+                program = "script"
+            found.append({"command": text.strip()[:200], "program": program, "exit": item.get("exit_code")})
+            break
+    return found
 
 
 def check(run, workspace, slug, references):
