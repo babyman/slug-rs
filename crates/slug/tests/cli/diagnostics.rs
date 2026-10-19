@@ -116,6 +116,45 @@ fn short_circuits_logical_operators_and_continues_across_newlines() {
 }
 
 #[test]
+fn a_line_beginning_with_a_prefix_operator_starts_a_statement() {
+    let path = fixture_path("prefix-line-start");
+    // `-k` and `!v` touching their operand start a statement; `- b` with a
+    // space after the `-`, and `!=`, continue the line before.
+    fs::write(
+        &path,
+        "val f = fn(x) { x * 2 }\n\
+         val k = f(3)\n\
+         -k + 1\n\
+         val negate = fn(v) {\n\
+           println(\"negating\")\n\
+           -v\n\
+         }\n\
+         val invert = fn(v) {\n\
+           println(\"inverting\")\n\
+           !v\n\
+         }\n\
+         val a = 10\n\
+         val c = a\n\
+           - 3\n\
+         val d = a\n\
+           != 3\n\
+         println(k, negate(4), invert(false), c, d)\n",
+    )
+    .expect("write prefix line start source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run prefix line start source");
+    fs::remove_file(path).expect("remove prefix line start source");
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "negating\ninverting\n6 -4 true 7 true\n"
+    );
+}
+
+#[test]
 fn handles_comments_and_multiline_delimited_expressions() {
     let path = fixture_path("newlines");
     fs::write(

@@ -285,6 +285,19 @@ impl Lexer {
             (self.input.get(index), self.input.get(index + 1), self.input.get(index + 2)),
             (Some('?'), Some('?'), next) if next != Some(&'?')
         );
+        // `-` and `!` are also prefix operators. A line beginning with `-`
+        // continues only when a space follows it, so `-k` starts a statement
+        // and `- k` subtracts; one beginning with `!` continues only as `!=`.
+        match self.input.get(index) {
+            Some('-') => {
+                return matches!(
+                    self.input.get(index + 1),
+                    None | Some(' ' | '\t' | '\r' | '\n')
+                );
+            }
+            Some('!') => return self.input.get(index + 1) == Some(&'='),
+            _ => {}
+        }
         coalesce
             || !matches!(
                 (self.input.get(index), self.input.get(index + 1)),

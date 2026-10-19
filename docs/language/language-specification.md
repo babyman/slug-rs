@@ -57,9 +57,14 @@ statement_sep = ";" | NEWLINE ;
 
 Newlines separate statements only where the lexer and parser permit automatic
 statement termination. Authors should use parentheses or a continued operator
-expression when a value spans lines. No statement begins with `else`, so an
-`else` at the start of a line, after any blank or comment lines, continues the
-`if` before it; a `;` before `else` still ends that `if`.
+expression when a value spans lines. A newline after an infix operator, or
+before a line that begins with one, continues the expression. `-` and `!` are
+also prefix operators, so a line beginning with `-` continues only when a space
+follows the `-`, and one beginning with `!` only as `!=`: after `val k = f(x)`,
+a line `-k + 1` is a statement of its own, while `    - k` subtracts. No
+statement begins with `else`, so an `else` at the start of a line, after any
+blank or comment lines, continues the `if` before it; a `;` before `else` still
+ends that `if`.
 
 These words are reserved and cannot be used as names: `copy`, `defer`, `else`,
 `enum`, `export`, `false`, `fn`, `foreign`, `if`, `match`, `nil`, `nursery`,

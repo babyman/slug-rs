@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A line that begins with `-` or `!` touching its operand starts a statement:
+  after `val k = f(x)`, a line `-k + 1` is no longer read as
+  `val k = f(x) - k + 1`, which failed at runtime with ``unknown name `k` ``,
+  and a line `!done` is no longer a parse error. A line beginning with `- `
+  (a space after the `-`) or `!=` still continues the expression before it.
+
 - A `var` that starts as `nil` takes the type of its first assignment:
   after `var ahead = nil` and `ahead = next()`, `ahead` is `nil` or a token
   everywhere, including in closures, where it was `any|nil`. A later
