@@ -1,4 +1,9 @@
-use alloc::{borrow::ToOwned, boxed::Box, string::String, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{fmt, fmt::Write as _};
 
 use crate::{SourceDiagnostic, SourceSpan, Value};
