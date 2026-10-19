@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Parameter type inference follows paths through the body: a parameter is
+  constrained only when every path that finishes constrains it alike. A
+  function that returns `a + b` early for strings and later divides `a` now
+  accepts strings, where the division made `a` a number everywhere and, with
+  dynamic arguments, compiled the early addition as numeric-only, which
+  faulted at runtime. A parameter compared with a literal has that literal's
+  type on the comparison's path, so `if (n == 0) { 1 } else { recur(n - 1) }`
+  still infers `num`. Migration: a recursive helper whose base case returns a
+  parameter untouched, such as `gcd(a, b)` returning `a`, now leaves it
+  dynamic; annotate it to keep it checked when compiling.
+
 - A line that begins with `-` or `!` touching its operand starts a statement:
   after `val k = f(x)`, a line `-k + 1` is no longer read as
   `val k = f(x) - k + 1`, which failed at runtime with ``unknown name `k` ``,

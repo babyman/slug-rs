@@ -1067,11 +1067,31 @@ negation infer `num` when they require an unannotated parameter to be numeric.
 An ordering comparison infers `num` for an unannotated parameter compared with
 a number literal and `str` for one compared with a string literal. Comparing
 two unannotated parameters adds no constraint, because they may be two
-numbers or two strings. When the body constrains a parameter more than once,
-every constraint must hold: if one constraint's type is assignable to the
-other's, the parameter takes the narrower type, so passing a `num` parameter on
-to a callee's `any|nil` parameter keeps it `num`. Constraints of which neither
-is assignable to the other, such as `num` and `str`, are a static error.
+numbers or two strings. When one path through the body constrains a parameter
+more than once, every constraint must hold: if one constraint's type is
+assignable to the other's, the parameter takes the narrower type, so passing a
+`num` parameter on to a callee's `any|nil` parameter keeps it `num`.
+Constraints of which neither is assignable to the other, such as `num` and
+`str`, are a static error.
+
+Constraints follow the paths a call can take. A parameter is constrained only
+when every path that finishes, by the body's end or a `return`, constrains it
+to the same type; a path that throws does not finish. So the branches of an
+`if` or `match`, the right operand of `&&`, `||`, and `??`, and the code after
+an early `return` constrain only their own paths:
+
+```slug
+val arithmetic = fn(op, a, b) {
+  if (op == "+" && isText(a)) { return a + b }   // a stays dynamic,
+  a / b                                          // so "x" + "y" is allowed
+}
+```
+
+On the path where a parameter equals a literal, such as the `then` branch of
+`if (n == 0)` or the right operand of `n != 0 && ...`, the parameter has the
+literal's type. A recursive helper whose base case returns a parameter
+untouched leaves that parameter dynamic. A parameter default runs whenever its
+argument is omitted, so its constraints hold on every path.
 
 A direct `value == nil` or `value != nil` test for an unannotated parameter
 partitions its body requirements by reachable branch. The nil branch contributes

@@ -8,8 +8,8 @@ use slug_vm::{CallableIdentity, DeferMode, SourceSpan, Value, ValueKind};
 use super::{
     SourceError, SourceErrorCode,
     ast::{
-        Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, Parameter,
-        Pattern, Prefix, SelectCaseKind, Tag, TypeAnnotation,
+        Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, MatchCase,
+        Parameter, Pattern, Prefix, SelectCaseKind, Tag, TypeAnnotation,
     },
     environment::{
         CallableParameter, CallableSignature, Environment, ImportSnapshots, ModuleSnapshot,
@@ -94,7 +94,17 @@ struct CheckedExpression {
 /// contributing evidence to an enclosing parameter.
 #[derive(Debug)]
 struct ParameterConstraints {
+    /// What the path being collected requires of each parameter; once the
+    /// body is collected, what every path that finishes requires.
     requirements: HashMap<String, ParameterRequirement>,
+    /// Whether the path being collected still runs: `return` and `throw`
+    /// end it.
+    reachable: bool,
+    /// The requirements of each path that left through `return`.
+    exits: Vec<HashMap<String, ParameterRequirement>>,
+    /// The requirements the operator collection found, which known-call
+    /// propagation reads but does not change.
+    facts: HashMap<String, Type>,
     plus_operands: Vec<PlusOperands>,
     subtract_operands: Vec<PlusOperands>,
     multiply_operands: Vec<PlusOperands>,
@@ -108,6 +118,12 @@ struct ParameterConstraints {
 struct ParameterRequirement {
     value_type: Type,
     span: SourceSpan,
+}
+
+/// Where one path of a branch ended.
+struct ConstraintPath {
+    requirements: HashMap<String, ParameterRequirement>,
+    reachable: bool,
 }
 
 #[derive(Debug)]
@@ -145,12 +161,108 @@ impl ParameterConstraints {
                     )
                 })
                 .collect(),
+            reachable: true,
+            exits: Vec::new(),
+            facts: HashMap::new(),
             plus_operands: Vec::new(),
             subtract_operands: Vec::new(),
             multiply_operands: Vec::new(),
             nil_partitions: Vec::new(),
             returns: false,
         }
+    }
+
+    /// Collects one path of a branch from the current point, and returns
+    /// where it ended, leaving the current point as it was.
+    fn path(
+        &mut self,
+        collect: impl FnOnce(&mut Self) -> Result<(), SourceError>,
+    ) -> Result<ConstraintPath, SourceError> {
+        let requirements = self.requirements.clone();
+        let reachable = self.reachable;
+        collect(self)?;
+        Ok(ConstraintPath {
+            requirements: std::mem::replace(&mut self.requirements, requirements),
+            reachable: std::mem::replace(&mut self.reachable, reachable),
+        })
+    }
+
+    /// The current point as a path that takes no branch.
+    fn untaken(&self) -> ConstraintPath {
+        ConstraintPath {
+            requirements: self.requirements.clone(),
+            reachable: self.reachable,
+        }
+    }
+
+    /// Continues from the paths of a branch that still run. A body may take
+    /// any of them, so a parameter keeps a requirement only when every one
+    /// has it; with none still running, neither does the current path.
+    fn join(&mut self, paths: Vec<ConstraintPath>) {
+        let running = paths
+            .into_iter()
+            .filter(|path| path.reachable)
+            .map(|path| path.requirements);
+        match joined_requirements(running) {
+            Some(requirements) => {
+                self.requirements = requirements;
+                self.reachable = true;
+            }
+            None => self.reachable = false,
+        }
+    }
+
+    /// Ends the body: its requirements become those every path that
+    /// finishes, by its end or through `return`, has. A path that throws
+    /// does not finish, so it adds none.
+    fn finish(&mut self) {
+        let mut paths = std::mem::take(&mut self.exits);
+        if self.reachable {
+            paths.push(self.requirements.clone());
+        }
+        if let Some(requirements) = joined_requirements(paths.into_iter()) {
+            self.requirements = requirements;
+        }
+        self.reachable = true;
+    }
+
+    /// Starts known-call propagation, which collects its own paths and reads
+    /// the requirements found so far as fixed facts.
+    fn start_known_calls(&mut self) -> HashMap<String, ParameterRequirement> {
+        self.facts = self
+            .requirements
+            .iter()
+            .map(|(name, requirement)| (name.clone(), requirement.value_type.clone()))
+            .collect();
+        let unconstrained = self
+            .requirements
+            .iter()
+            .map(|(name, requirement)| {
+                (
+                    name.clone(),
+                    ParameterRequirement {
+                        value_type: Type::Unknown,
+                        span: requirement.span.clone(),
+                    },
+                )
+            })
+            .collect();
+        std::mem::replace(&mut self.requirements, unconstrained)
+    }
+
+    /// Combines the operator requirements with known-call propagation's:
+    /// each holds on every path that finishes, so both do.
+    fn combine(
+        &mut self,
+        operators: HashMap<String, ParameterRequirement>,
+    ) -> Result<(), SourceError> {
+        let calls = std::mem::replace(&mut self.requirements, operators);
+        for (name, requirement) in calls {
+            if !matches!(requirement.value_type, Type::Unknown) {
+                self.require_name(&name, requirement.value_type, &requirement.span, None)?;
+            }
+        }
+        Ok(())
     }
 
     /// Records a requirement at the operand occurrence. If later inference
@@ -161,12 +273,22 @@ impl ParameterConstraints {
         let ExprKind::Name(name) = &expression.kind else {
             return Ok(());
         };
+        self.require_name(name, value_type, &expression.span, Some(expression))
+    }
+
+    fn require_name(
+        &mut self,
+        name: &str,
+        value_type: Type,
+        span: &SourceSpan,
+        expression: Option<&Expr>,
+    ) -> Result<(), SourceError> {
         let Some(requirement) = self.requirements.get_mut(name) else {
             return Ok(());
         };
         if matches!(requirement.value_type, Type::Unknown) {
             requirement.value_type = value_type;
-            requirement.span = expression.span.clone();
+            requirement.span = span.clone();
             return Ok(());
         }
         // Both requirements must hold, so when one type is assignable to the
@@ -177,18 +299,21 @@ impl ParameterConstraints {
         }
         if value_type.is_assignable_to(&requirement.value_type) {
             requirement.value_type = value_type;
-            requirement.span = expression.span.clone();
+            requirement.span = span.clone();
             return Ok(());
         }
-        Err(SourceError::semantic(
+        let error = SourceError::semantic(
             SourceErrorCode::TypeMismatch,
             format!(
                 "parameter `{name}` has incompatible body requirements: {} and {}",
                 requirement.value_type, value_type
             ),
-            expression.span.clone(),
-        )
-        .with_extent(expression))
+            span.clone(),
+        );
+        Err(match expression {
+            Some(expression) => error.with_extent(expression),
+            None => error,
+        })
     }
 
     fn include_nil_partition(&mut self, name: &str) {
@@ -265,6 +390,18 @@ impl ParameterConstraints {
                 }
                 self.collect(value)
             }
+            ExprKind::Binary {
+                left,
+                operator: operator @ (Binary::And | Binary::Or | Binary::Coalesce),
+                right,
+            } => {
+                self.collect(left)?;
+                let mut skipped = self.untaken();
+                let mut evaluated = self.path(|constraints| constraints.collect(right))?;
+                assume_short_circuit(*operator, left, &mut skipped, &mut evaluated);
+                self.join(vec![skipped, evaluated]);
+                Ok(())
+            }
             ExprKind::Binary { left, right, .. } => {
                 self.collect(left)?;
                 self.collect(right)
@@ -281,10 +418,19 @@ impl ParameterConstraints {
             }
             ExprKind::Return { value } => {
                 self.returns = true;
-                self.collect(value)
+                self.collect(value)?;
+                if self.reachable {
+                    self.exits.push(self.requirements.clone());
+                }
+                self.reachable = false;
+                Ok(())
+            }
+            ExprKind::Throw { value } => {
+                self.collect(value)?;
+                self.reachable = false;
+                Ok(())
             }
             ExprKind::Assign { value, .. }
-            | ExprKind::Throw { value }
             | ExprKind::Defer { value, .. }
             | ExprKind::Spawn(value)
             | ExprKind::TypeApply { callee: value, .. } => self.collect(value),
@@ -307,25 +453,37 @@ impl ParameterConstraints {
                         }
                         SelectCaseKind::Default => {}
                     }
-                    if let Some(handler) = &case.handler {
-                        self.collect(handler)?;
-                    }
                 }
+                let mut paths = Vec::new();
+                for case in cases {
+                    paths.push(self.path(|constraints| {
+                        case.handler
+                            .as_ref()
+                            .map_or(Ok(()), |handler| constraints.collect(handler))
+                    })?);
+                }
+                self.join(paths);
                 Ok(())
             }
             ExprKind::Match { subject, cases } => {
                 if let Some(subject) = subject {
                     self.collect(subject)?;
                 }
+                let mut paths = Vec::new();
                 for case in cases {
-                    for pattern in &case.patterns {
-                        self.collect_pattern(&pattern.pattern)?;
-                    }
-                    if let Some(guard) = &case.guard {
-                        self.collect(guard)?;
-                    }
-                    self.collect(&case.value)?;
+                    let mut path = self.path(|constraints| {
+                        for pattern in &case.patterns {
+                            constraints.collect_pattern(&pattern.pattern)?;
+                        }
+                        if let Some(guard) = &case.guard {
+                            constraints.collect(guard)?;
+                        }
+                        constraints.collect(&case.value)
+                    })?;
+                    assume_match_case(&mut path, case);
+                    paths.push(path);
                 }
+                self.join(paths);
                 Ok(())
             }
             ExprKind::Call { callee, arguments } => {
@@ -345,10 +503,16 @@ impl ParameterConstraints {
             } => {
                 self.collect_nil_guard_partition(condition, then_branch, else_branch.as_deref());
                 self.collect(condition)?;
-                self.collect(then_branch)?;
-                if let Some(else_branch) = else_branch {
-                    self.collect(else_branch)?;
-                }
+                let mut then = self.path(|constraints| constraints.collect(then_branch))?;
+                let mut otherwise = self.path(|constraints| {
+                    else_branch
+                        .as_deref()
+                        .map_or(Ok(()), |else_branch| constraints.collect(else_branch))
+                })?;
+                cover_nil_path(condition, &mut then, &mut otherwise);
+                assume(&mut then, condition, true);
+                assume(&mut otherwise, condition, false);
+                self.join(vec![then, otherwise]);
                 Ok(())
             }
             ExprKind::List(values) => {
@@ -611,9 +775,20 @@ impl ParameterConstraints {
                 }
                 Ok(())
             }
+            ExprKind::Return { value } => {
+                self.collect_known_calls(value, environment)?;
+                if self.reachable {
+                    self.exits.push(self.requirements.clone());
+                }
+                self.reachable = false;
+                Ok(())
+            }
+            ExprKind::Throw { value } => {
+                self.collect_known_calls(value, environment)?;
+                self.reachable = false;
+                Ok(())
+            }
             ExprKind::Assign { value, .. }
-            | ExprKind::Return { value }
-            | ExprKind::Throw { value }
             | ExprKind::Defer { value, .. }
             | ExprKind::Spawn(value)
             | ExprKind::Prefix { value, .. }
@@ -641,22 +816,47 @@ impl ParameterConstraints {
                         }
                         SelectCaseKind::Default => {}
                     }
-                    if let Some(handler) = &case.handler {
-                        self.collect_known_calls(handler, environment)?;
-                    }
                 }
+                let mut paths = Vec::new();
+                for case in cases {
+                    paths.push(self.path(|constraints| {
+                        case.handler.as_ref().map_or(Ok(()), |handler| {
+                            constraints.collect_known_calls(handler, environment)
+                        })
+                    })?);
+                }
+                self.join(paths);
                 Ok(())
             }
             ExprKind::Match { subject, cases } => {
                 if let Some(subject) = subject {
                     self.collect_known_calls(subject, environment)?;
                 }
+                let mut paths = Vec::new();
                 for case in cases {
-                    if let Some(guard) = &case.guard {
-                        self.collect_known_calls(guard, environment)?;
-                    }
-                    self.collect_known_calls(&case.value, environment)?;
+                    let mut path = self.path(|constraints| {
+                        if let Some(guard) = &case.guard {
+                            constraints.collect_known_calls(guard, environment)?;
+                        }
+                        constraints.collect_known_calls(&case.value, environment)
+                    })?;
+                    assume_match_case(&mut path, case);
+                    paths.push(path);
                 }
+                self.join(paths);
+                Ok(())
+            }
+            ExprKind::Binary {
+                left,
+                operator: operator @ (Binary::And | Binary::Or | Binary::Coalesce),
+                right,
+            } => {
+                self.collect_known_calls(left, environment)?;
+                let mut skipped = self.untaken();
+                let mut evaluated =
+                    self.path(|constraints| constraints.collect_known_calls(right, environment))?;
+                assume_short_circuit(*operator, left, &mut skipped, &mut evaluated);
+                self.join(vec![skipped, evaluated]);
                 Ok(())
             }
             ExprKind::Binary { left, right, .. } => {
@@ -675,10 +875,18 @@ impl ParameterConstraints {
                 else_branch,
             } => {
                 self.collect_known_calls(condition, environment)?;
-                self.collect_known_calls(then_branch, environment)?;
-                if let Some(else_branch) = else_branch {
-                    self.collect_known_calls(else_branch, environment)?;
-                }
+                let mut then = self.path(|constraints| {
+                    constraints.collect_known_calls(then_branch, environment)
+                })?;
+                let mut otherwise = self.path(|constraints| {
+                    else_branch.as_deref().map_or(Ok(()), |else_branch| {
+                        constraints.collect_known_calls(else_branch, environment)
+                    })
+                })?;
+                cover_nil_path(condition, &mut then, &mut otherwise);
+                assume(&mut then, condition, true);
+                assume(&mut otherwise, condition, false);
+                self.join(vec![then, otherwise]);
                 Ok(())
             }
             ExprKind::List(values) => {
@@ -750,9 +958,7 @@ impl ParameterConstraints {
         let ExprKind::Name(name) = &expression.kind else {
             return Type::Unknown;
         };
-        self.requirements
-            .get(name)
-            .map_or(Type::Unknown, |requirement| requirement.value_type.clone())
+        self.facts.get(name).cloned().unwrap_or(Type::Unknown)
     }
 
     fn collect_known_call_arguments(
@@ -891,17 +1097,144 @@ fn parameter_constraints(
     body: &Expr,
     environment: &Environment,
 ) -> Result<ParameterConstraints, SourceError> {
+    // A default runs whenever its argument is omitted, so a call that omits
+    // it has the default's requirements on every path.
     let mut constraints = ParameterConstraints::for_parameters(parameters);
     for parameter in parameters {
         if let Some(default) = &parameter.default {
             constraints.collect(default)?;
-            constraints.collect_known_calls(default, environment)?;
         }
     }
     constraints.collect(body)?;
+    constraints.finish();
+    let operators = constraints.start_known_calls();
+    for parameter in parameters {
+        if let Some(default) = &parameter.default {
+            constraints.collect_known_calls(default, environment)?;
+        }
+    }
     constraints.collect_known_calls(body, environment)?;
+    constraints.finish();
+    constraints.combine(operators)?;
     constraints.collect_nil_partitions(body);
     Ok(constraints)
+}
+
+/// For a condition comparing a parameter with `nil`, gives the path it takes
+/// when the parameter is `nil` the other path's requirement of it, if it has
+/// none of its own: that path holds only `nil`, which the nil partition adds
+/// to the requirement.
+fn cover_nil_path(condition: &Expr, then: &mut ConstraintPath, otherwise: &mut ConstraintPath) {
+    let ExprKind::Binary {
+        left,
+        operator,
+        right,
+    } = &condition.kind
+    else {
+        return;
+    };
+    let ((ExprKind::Name(parameter), ExprKind::Value(Value::Nil))
+    | (ExprKind::Value(Value::Nil), ExprKind::Name(parameter))) = (&left.kind, &right.kind)
+    else {
+        return;
+    };
+    let (nil_path, other) = match operator {
+        Binary::Equal => (then, otherwise),
+        Binary::NotEqual => (otherwise, then),
+        _ => return,
+    };
+    let Some(required) = other.requirements.get(parameter).cloned() else {
+        return;
+    };
+    if let Some(requirement) = nil_path.requirements.get_mut(parameter)
+        && matches!(requirement.value_type, Type::Unknown)
+    {
+        *requirement = required;
+    }
+}
+
+/// Gives each parameter that `condition` evaluating to `holds` shows to equal
+/// a literal that literal's type on `path`, if it has no requirement there:
+/// on that path it is that type, so a requirement of it holds.
+fn assume(path: &mut ConstraintPath, condition: &Expr, holds: bool) {
+    let mut facts = Vec::new();
+    literal_equalities(condition, holds, &mut facts);
+    for (name, value_type) in facts {
+        if let Some(requirement) = path.requirements.get_mut(name)
+            && matches!(requirement.value_type, Type::Unknown)
+        {
+            requirement.value_type = value_type;
+        }
+    }
+}
+
+/// `&&` skips its right operand when the left one is false, and `||` when it
+/// is true.
+fn assume_short_circuit(
+    operator: Binary,
+    left: &Expr,
+    skipped: &mut ConstraintPath,
+    evaluated: &mut ConstraintPath,
+) {
+    let skips_when = match operator {
+        Binary::And => false,
+        Binary::Or => true,
+        _ => return,
+    };
+    assume(skipped, left, skips_when);
+    assume(evaluated, left, !skips_when);
+}
+
+/// A case's guard shows what its equalities do on the case's path.
+fn assume_match_case(path: &mut ConstraintPath, case: &MatchCase) {
+    if let Some(guard) = &case.guard {
+        assume(path, guard, true);
+    }
+}
+
+/// The parameters `condition` evaluating to `holds` shows to equal a
+/// literal, with the literal's type.
+fn literal_equalities<'a>(condition: &'a Expr, holds: bool, facts: &mut Vec<(&'a str, Type)>) {
+    let ExprKind::Binary {
+        left,
+        operator,
+        right,
+    } = &condition.kind
+    else {
+        return;
+    };
+    match (operator, holds) {
+        (Binary::And, true) | (Binary::Or, false) => {
+            literal_equalities(left, holds, facts);
+            literal_equalities(right, holds, facts);
+        }
+        (Binary::Equal, true) | (Binary::NotEqual, false) => match (&left.kind, &right.kind) {
+            (ExprKind::Name(name), _) => {
+                facts.extend(literal_family(right).map(|family| (name.as_str(), family)));
+            }
+            (_, ExprKind::Name(name)) => {
+                facts.extend(literal_family(left).map(|family| (name.as_str(), family)));
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
+/// The requirements every path has: a parameter keeps one only when each
+/// path requires the same type. `None` when there is no path.
+fn joined_requirements(
+    mut paths: impl Iterator<Item = HashMap<String, ParameterRequirement>>,
+) -> Option<HashMap<String, ParameterRequirement>> {
+    let mut joined = paths.next()?;
+    for path in paths {
+        for (name, requirement) in &mut joined {
+            if path.get(name).map(|other| &other.value_type) != Some(&requirement.value_type) {
+                requirement.value_type = Type::Unknown;
+            }
+        }
+    }
+    Some(joined)
 }
 
 fn solved_parameter_types(constraints: &ParameterConstraints) -> HashMap<String, Type> {
@@ -4867,42 +5200,40 @@ mod tests {
     }
 
     #[test]
-    fn parameter_constraints_collect_direct_numeric_operands_through_control_flow() {
-        let body = Expr {
+    fn parameter_constraints_follow_control_flow_paths() {
+        let negate = || Expr {
             end: test_end(),
-            kind: ExprKind::If {
-                condition: Box::new(Expr {
-                    end: test_end(),
-                    kind: ExprKind::Binary {
-                        left: Box::new(name("value")),
-                        operator: Binary::Less,
-                        right: Box::new(name("limit")),
-                    },
-                    span: span(),
-                }),
-                then_branch: Box::new(Expr {
-                    end: test_end(),
-                    kind: ExprKind::Prefix {
-                        operators: vec![(Prefix::Negate, span())],
-                        value: Box::new(name("value")),
-                    },
-                    span: span(),
-                }),
-                else_branch: None,
+            kind: ExprKind::Prefix {
+                operators: vec![(Prefix::Negate, span())],
+                value: Box::new(name("value")),
             },
             span: span(),
         };
-        let constraints = parameter_constraints(
-            &[parameter("value"), parameter("limit")],
-            &body,
-            &Environment::new(),
-        )
-        .expect("numeric body requirements collect");
+        let body = |else_branch: Option<Expr>| Expr {
+            end: test_end(),
+            kind: ExprKind::If {
+                condition: Box::new(binary(name("value"), Binary::Less, name("limit"))),
+                then_branch: Box::new(negate()),
+                else_branch: else_branch.map(Box::new),
+            },
+            span: span(),
+        };
+        let parameters = [parameter("value"), parameter("limit")];
 
+        // Both paths negate `value`, so it must be a number.
+        let constraints =
+            parameter_constraints(&parameters, &body(Some(negate())), &Environment::new())
+                .expect("numeric body requirements collect");
         assert_eq!(constraints.requirements["value"].value_type, Type::Num);
         // Ordering two parameters may compare numbers or strings, so only the
         // negation constrains `value`, and `limit` stays unconstrained.
         assert_eq!(constraints.requirements["limit"].value_type, Type::Unknown);
+
+        // Without an `else`, a path that does not negate `value` finishes, so
+        // nothing requires it to be a number.
+        let constraints = parameter_constraints(&parameters, &body(None), &Environment::new())
+            .expect("numeric body requirements collect");
+        assert_eq!(constraints.requirements["value"].value_type, Type::Unknown);
     }
 
     #[test]
