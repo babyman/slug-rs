@@ -1121,7 +1121,10 @@ from it, are checked at runtime, so `fn(out) { out }` or a recursive helper
 returning its accumulator can be used where a `str` is required. An explicit
 `any|nil` annotation keeps its static meaning. An unannotated binding
 is inferred from its initializer, and an unannotated function result is inferred
-from all reachable result expressions. An explicit annotation remains the
+from all reachable result expressions. A part of an initializer's type that the
+checker cannot infer, such as the result of a call to such a helper, stays
+dynamic in the binding, as it is where the value is used directly: after
+`val b = helper()`, `b` may be used wherever `helper()` may. An explicit annotation remains the
 declaration's public type even when its value is inferred more narrowly:
 
 ```slug

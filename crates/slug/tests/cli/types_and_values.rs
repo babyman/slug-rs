@@ -1903,6 +1903,44 @@ fn a_nil_first_value_takes_its_var_type_from_the_first_assignment() {
 }
 
 #[test]
+fn a_binding_keeps_the_dynamic_type_of_its_value() {
+    let path = fixture_path("dynamic-binding");
+    fs::write(
+        &path,
+        "val helper = fn(out) { out }\n\
+         val block = fn() { val b = helper([1])\nb }\n\
+         var other = []\n\
+         other = if (len(other) > 0) { [2] } else { block() }\n\
+         val [first, second] = helper([3, 4])\n\
+         val nested = [helper(5)]\n\
+         val five:num = nested[0]\n\
+         println(other, first + second, five)\n",
+    )
+    .expect("write dynamic binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic binding source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "[1] 7 5\n");
+
+    // An annotation still sets the binding's type.
+    fs::write(&path, "val b:any|nil = 1\nval n:num = b\n").expect("write annotated source");
+    let output = slug().arg(&path).output().expect("run annotated source");
+    fs::remove_file(&path).expect("remove dynamic binding source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("expected num, got any|nil"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn lists_maps_and_tasks_are_covariant_and_channels_are_not() {
     let path = fixture_path("collection-variance");
     let run = |source: &str| {

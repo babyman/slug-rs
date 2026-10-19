@@ -56,7 +56,8 @@ otherwise the initializer or default.
   failed compiles.
 - Values the checker cannot infer are still widened to `any|nil` when bound.
   Keeping them dynamic is a separate decision, because binding and field
-  annotations are not checked at runtime.
+  annotations are not checked at runtime. For unannotated bindings, see
+  [A binding keeps a value's dynamic type](2026-10-18-a-binding-keeps-a-values-dynamic-type.md).
 
 ## Migration
 

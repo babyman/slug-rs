@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An unannotated `val` or `var` keeps the part of its value's type that the
+  checker cannot infer dynamic, as it is where the value is used directly,
+  instead of widening it to `any|nil`. `fn() { val b = parse(); b }` can now be
+  used wherever `fn() { parse() }` can, where a list was previously rejected
+  with `expected list, got any|nil`; likewise `[parse()]` keeps dynamic
+  elements. Annotated bindings and struct fields are unchanged.
+
 - A name that nothing declares is a compile error that suggests the names in
   scope it most likely misspells, as in
   ``unknown name `pirntln`; did you mean `println`?``, with each suggestion

@@ -3712,6 +3712,10 @@ fn expression_binding(expression: &Expr, environment: &Environment) -> Option<Se
     }
 }
 
+/// The binding an unannotated declaration gives its value. It keeps the
+/// value's type, including any part the checker could not infer, which stays
+/// dynamic as it is where the value is used directly: naming a value never
+/// changes its type.
 fn value_binding(
     expression: &Expr,
     value_type: &Type,
@@ -3725,7 +3729,7 @@ fn value_binding(
         return Ok(binding);
     }
     if let ExprKind::Map(entries) = &expression.kind {
-        let mut binding = SemanticBinding::value(value_type.clone().widen_unknown());
+        let mut binding = SemanticBinding::value(value_type.clone());
         for (key, value) in entries {
             if let ExprKind::Value(Value::Str(name)) = &key.kind {
                 binding.members.insert(
@@ -3737,11 +3741,11 @@ fn value_binding(
         return Ok(binding);
     }
     if let Some(schema) = known_struct_schema(value_type, environment) {
-        let mut binding = SemanticBinding::value(value_type.clone().widen_unknown());
+        let mut binding = SemanticBinding::value(value_type.clone());
         binding.members = schema.members;
         return Ok(binding);
     }
-    Ok(SemanticBinding::value(value_type.clone().widen_unknown()))
+    Ok(SemanticBinding::value(value_type.clone()))
 }
 
 fn static_map_member_binding(
