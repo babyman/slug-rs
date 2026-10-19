@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `i64::MIN % -1` is `0` rather than an integer overflow error; only the
+  quotient of that division overflows.
+
 - An unannotated `val` or `var` keeps the part of its value's type that the
   checker cannot infer dynamic, as it is where the value is used directly,
   instead of widening it to `any|nil`. `fn() { val b = parse(); b }` can now be

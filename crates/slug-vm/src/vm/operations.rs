@@ -158,13 +158,12 @@ pub(super) fn divide_num(left: Value, right: Value) -> Result<Value, (RuntimeErr
 
 pub(super) fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-        return left.checked_rem(*right).map(Value::Int).ok_or_else(|| {
-            if *right == 0 {
-                (RuntimeErrorKind::DivideByZero, "division by zero".into())
-            } else {
-                (RuntimeErrorKind::Type, "integer overflow".into())
-            }
-        });
+        // The remainder always fits, including `i64::MIN % -1`, which is 0:
+        // only the quotient of that division overflows.
+        if *right == 0 {
+            return Err((RuntimeErrorKind::DivideByZero, "division by zero".into()));
+        }
+        return Ok(Value::Int(left.wrapping_rem(*right)));
     }
     let (a, b) = numbers(left, right).map_err(|message| (RuntimeErrorKind::Type, message))?;
     if b == 0.0 {

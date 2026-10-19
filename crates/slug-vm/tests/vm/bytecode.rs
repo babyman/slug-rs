@@ -431,6 +431,24 @@ fn reports_checked_integer_overflow() {
 }
 
 #[test]
+fn takes_the_remainder_of_the_most_negative_integer() {
+    // `i64::MIN / -1` overflows, but its remainder is 0.
+    for op in [Op::Modulo, Op::ModuloNum] {
+        let mut main = Chunk::new("main", 0);
+        let left = main.constant(Value::Int(i64::MIN));
+        let right = main.constant(Value::Int(-1));
+        main.emit(Op::Constant(left))
+            .emit(Op::Constant(right))
+            .emit(op)
+            .emit(Op::Return);
+        assert_eq!(
+            Vm::new().run(&program_with_main(main), 0).unwrap(),
+            Value::Int(0)
+        );
+    }
+}
+
+#[test]
 fn appends_values_through_private_list_bytecode() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));
