@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Match cases written on one line without a newline or `;` between them are
+  reported as ``match cases are separated by a newline or `;` ``, with a fix
+  replacing a `,` and a suggested `;` otherwise, instead of
+  `expected match case separator`. A function `match` body written with a
+  subject, as in `fn(x) match x { ... }`, now says that such a body matches
+  its arguments, instead of `expected { after match subject`.
+
 - An assignment that discards a change a call inside it makes is a compile
   error, `lost_update`. In `output = output :+ render(evaluate(x))`, `output`
   is read before `evaluate` runs, so anything `evaluate` appends to it is

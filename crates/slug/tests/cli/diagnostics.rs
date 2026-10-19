@@ -316,6 +316,53 @@ fn a_pipe_between_match_patterns_offers_a_comma() {
 }
 
 #[test]
+fn match_case_separators_and_function_match_bodies_explain_the_syntax() {
+    let path = fixture_path("match-case-separators");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write match syntax source");
+        let output = slug()
+            .arg("--diagnostic-format=json")
+            .arg(&path)
+            .output()
+            .expect("run match syntax source");
+        assert_eq!(output.status.code(), Some(1), "{source}");
+        json_diagnostic(&output.stderr)
+    };
+
+    // A `,` between cases can only be a separator, so it is replaced.
+    let diagnostic = run("val f = fn(e) { match e { \"n\" => 1, _ => 0 } }\n");
+    assert_eq!(
+        diagnostic["message"],
+        "match cases are separated by a newline or `;`, not `,`"
+    );
+    assert_eq!(diagnostic["fixes"][0]["edits"][0]["text"], ";");
+    assert_eq!(
+        diagnostic["fixes"][0]["edits"][0]["range"]["start"]["column"],
+        35
+    );
+
+    // Without one, a `;` after the case is suggested.
+    let diagnostic = run("val f = fn(e) { match e { \"n\" => 1 _ => 0 } }\n");
+    assert_eq!(
+        diagnostic["message"],
+        "match cases are separated by a newline or `;`"
+    );
+    assert_eq!(diagnostic["suggestions"][0]["edits"][0]["text"], ";");
+    assert_eq!(
+        diagnostic["suggestions"][0]["edits"][0]["range"]["start"]["column"],
+        35
+    );
+
+    // A function's `match` body has no subject.
+    let diagnostic = run("val f = fn(x) match x { _ => 0 }\n");
+    assert_eq!(
+        diagnostic["message"],
+        "a function's `match` body matches its arguments and takes no subject: write `fn(x) match { ... }`, or `fn(x) { match x { ... } }`"
+    );
+    fs::remove_file(&path).expect("remove match syntax source");
+}
+
+#[test]
 fn handles_comments_and_multiline_delimited_expressions() {
     let path = fixture_path("newlines");
     fs::write(
@@ -494,7 +541,9 @@ fn renders_available_source_context_for_parse_errors() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.starts_with("slug: parse error: expected match case separator\n"));
+    assert!(
+        stderr.starts_with("slug: parse error: match cases are separated by a newline or `;`\n")
+    );
     assert!(
         stderr.contains(&format!("    --> {}:3:24\n", path.display())),
         "{stderr}"
@@ -504,7 +553,9 @@ fn renders_available_source_context_for_parse_errors() {
     assert!(stderr.contains("  > 3 |             [0, 0] => \"FizzBuzz\"x\n"));
     assert!(stderr.contains("      |                                 ^ here\n"));
     assert!(
-        stderr.ends_with("\n  = code: expected_syntax\n  = found name `x`\n"),
+        stderr.ends_with(
+            "\n  = code: expected_syntax\n  = found name `x`\n  = suggestion: insert `;`\n      at 3:24: insert `;`\n"
+        ),
         "{stderr}"
     );
 }

@@ -90,6 +90,43 @@ impl Parser {
         }
         error
     }
+    /// An error for match cases not separated by a newline or `;`. A `,`,
+    /// which other languages use, can only mean a separator here, so it is
+    /// replaced; otherwise a `;` is likely what is missing.
+    fn missing_case_separator(&self) -> SourceError {
+        let token = self.peek();
+        let comma = matches!(token.kind, TokenKind::Comma);
+        let message = if comma {
+            "match cases are separated by a newline or `;`, not `,`"
+        } else {
+            "match cases are separated by a newline or `;`"
+        };
+        let error = SourceError::at_token(SourceErrorCode::ExpectedSyntax, message, token);
+        if comma {
+            error.with_fix(
+                "replace `,` with `;`",
+                SourceEdit {
+                    range: SourceRange {
+                        start: SourcePosition {
+                            line: token.span.line,
+                            column: token.span.column,
+                        },
+                        end: token.end,
+                    },
+                    text: ";".into(),
+                },
+            )
+        } else {
+            let at = self.previous_end();
+            error.with_suggestion(
+                "insert `;`",
+                SourceEdit {
+                    range: SourceRange { start: at, end: at },
+                    text: ";".into(),
+                },
+            )
+        }
+    }
     /// An error for a `|` between a match case's patterns, which other
     /// languages use for alternatives, offering the `,` that Slug uses.
     fn pattern_alternative_pipe(&self) -> SourceError {
@@ -1640,6 +1677,12 @@ impl Parser {
         };
         let body = if self.matches(&TokenKind::Match) {
             let match_span = self.next().span;
+            if !self.matches(&TokenKind::LBrace) {
+                return Err(self.expected_token(
+                    &TokenKind::LBrace,
+                    "a function's `match` body matches its arguments and takes no subject: write `fn(x) match { ... }`, or `fn(x) { match x { ... } }`",
+                ));
+            }
             let subject = if parameters.len() == 1 {
                 Expr {
                     end: self.previous_end(),
@@ -1746,11 +1789,7 @@ impl Parser {
                 return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
             }
             if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
-                return Err(SourceError::at_token(
-                    SourceErrorCode::ExpectedSyntax,
-                    "expected match case separator",
-                    self.peek(),
-                ));
+                return Err(self.missing_case_separator());
             }
             self.separators();
         }

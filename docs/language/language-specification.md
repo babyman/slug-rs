@@ -367,7 +367,12 @@ type_parameters  = "<" , identifier , { "," , identifier } , ">" ;
 parameter        = { tag } , [ "..." ] , ( identifier | "_" ) ,
                    [ ":" , type_annotation ] , [ "=" , expression ] ;
 match_body       = "match" , "{" , [ match_case , { case_sep , match_case } ] , "}" ;
+case_sep         = ";" | NEWLINE ;
 ```
+
+Match cases are separated by a newline or `;`, as statements are; a `,`
+separates the alternative patterns of one case. A function's `match` body
+matches its arguments and takes no subject.
 
 Parameters may have default expressions. A variadic parameter uses `...` and
 must be final. Calls accept positional, named, and spread arguments:
