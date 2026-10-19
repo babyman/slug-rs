@@ -1,4 +1,5 @@
 val s = import("slug.string")
+val math = import("slug.math")
 
 val KEYWORDS = {let: true, fn: true, return: true, if: true, else: true, while: true, true: true, false: true, nil: true, and: true, or: true, not: true, print: true}
 // The largest integer is 922337203685477580 * 10 + 7.
@@ -407,7 +408,7 @@ export val run = fn(source:str) {
             "+" => a + b
             "-" => a - b
             "*" => a * b
-            "/" => if (b == 0) { fail("division", node.line, node.column) } else { int(a / b) }
+            "/" => if (b == 0) { fail("division", node.line, node.column) } else { math.div(a, b) }
             "%" => if (b == 0) { fail("division", node.line, node.column) } else { a % b }
         }
     }

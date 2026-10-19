@@ -97,6 +97,16 @@
    "source": "fails(\"too large\", '''print 9223372036854775808;''', \"syntax\", 1, 7)\nfinish()"
   },
   {
+   "id": "large-division/exact-quotients",
+   "kind": "program",
+   "source": "runs(\"exact quotients\", '''print 9223372036854775807 / 3; print -9223372036854775807 / 2; print 9223372036854775807 / -10; print 9007199254740993 / 2;''', [\"3074457345618258602\", \"-4611686018427387903\", \"-922337203685477580\", \"4503599627370496\"])\nfinish()"
+  },
+  {
+   "id": "large-division/remainders",
+   "kind": "program",
+   "source": "runs(\"remainders\", '''print 9223372036854775807 % 3; print -9223372036854775807 % 2; print 9223372036854775807 % -10;''', [\"1\", \"-1\", \"7\"])\nfinish()"
+  },
+  {
    "id": "strings/join",
    "kind": "program",
    "source": "runs(\"join\", '''print \"ab\" + \"cd\"; print \"\" + \"x\";''', [\"abcd\", \"x\"])\nfinish()"
