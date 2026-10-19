@@ -176,6 +176,28 @@ fn adds_and_takes_square_roots() {
 }
 
 #[test]
+fn divides_integers_exactly_toward_zero() {
+    let output = run_cli(
+        "val math = import(\"slug.math\")\n\
+         println(math.div(7, 2), math.div(-7, 2), math.div(7, -2), math.div(-7, -2), math.div(6, 3))\n\
+         println(math.div(9223372036854775807, 3), int(9223372036854775807 / 3) == math.div(9223372036854775807, 3))\n\
+         println(math.div(-9223372036854775807 - 1, 1), math.div(-7, 2) * 2 + -7 % 2)\n\
+         val failure = fn(work) { defer onerror(err) { err.type + \": \" + err.msg }; work() }\n\
+         println(failure(fn() { math.div(1, 0) }))\n\
+         println(failure(fn() { math.div(-9223372036854775807 - 1, -1) }))\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "3 -3 -3 3 2\n\
+         3074457345618258602 false\n\
+         -9223372036854775808 -7\n\
+         math.domain: div requires a non-zero divisor\n\
+         math.range: integer division overflowed\n"
+    );
+}
+
+#[test]
 fn throws_typed_math_errors() {
     let output = run_cli(
         "val math = import(\"slug.math\")\n\
@@ -204,6 +226,25 @@ fn converts_characters_and_unicode_scalar_values() {
     assert_eq!(
         stdout(&output),
         "65 233 8364 128512 1114111\nA \u{e9} \u{20ac} \u{1f600} true\n"
+    );
+}
+
+#[test]
+fn parses_decimal_integers() {
+    let output = run_cli(
+        "val {toInt} = import(\"slug.string\")\n\
+         println(toInt(\"42\"), toInt(\"-7\"), toInt(\"+5\"), toInt(\"007\"), toInt(\"0\"), toInt(\"-0\"))\n\
+         println(toInt(\"9223372036854775807\"), toInt(\"-9223372036854775808\"))\n\
+         println(toInt(\"9223372036854775808\"), toInt(\"-9223372036854775809\"), toInt(\"99999999999999999999\"))\n\
+         println(toInt(\"\"), toInt(\"-\"), toInt(\"1.5\"), toInt(\" 1\"), toInt(\"1_000\"), toInt(\"\u{663}\"), toInt(\"x\") ?? 0)\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "42 -7 5 7 0 0\n\
+         9223372036854775807 -9223372036854775808\n\
+         nil nil nil\n\
+         nil nil nil nil nil nil 0\n"
     );
 }
 

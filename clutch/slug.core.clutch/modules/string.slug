@@ -1,6 +1,6 @@
 /**
  * String operations: conversion between characters and their Unicode scalar
- * values, splitting into characters, sorting, and joining.
+ * values, parsing integers, splitting into characters, sorting, and joining.
  *
  * Out-of-range arguments throw `Error` values whose `type` is `string.range`;
  * a list element that is not a string throws one whose `type` is
@@ -105,6 +105,48 @@ export val join = fn(strings:list<str>, separator:str = ""):str {
         }
     }
     go(0, "")
+}
+
+/**
+ * Returns the integer that `text` writes in decimal, with an optional leading
+ * `-` or `+`: `toInt("42")` is 42 and `toInt("-7")` is -7. Returns `nil` when
+ * `text` is not such an integer, including when it has spaces, a fraction,
+ * or digits beyond the range of a Slug integer, so `toInt(text) ?? 0` gives a
+ * default.
+ */
+export val toInt = fn(text:str):num|nil {
+    val sign = if (len(text) > 0) { text[0] } else { "" }
+    val negative = sign == "-"
+    val start = if (negative || sign == "+") { 1 } else { 0 }
+    // Accumulating toward the most negative integer covers it, which has no
+    // positive counterpart. `limit` is the least value that can take one more
+    // digit: `(x - x % 10) / 10` divides exactly, rounding toward zero.
+    val go = fn(i:num, value:num):num|nil {
+        if (i == len(text)) {
+            return value
+        }
+        val c = text[i]
+        if (c < "0" || c > "9") {
+            return nil
+        }
+        val digit = ordRaw(c) - 48
+        val floor = -9223372036854775807 - 1 + digit
+        val limit = (floor - floor % 10) / 10
+        if (value < limit) { nil } else { recur(i + 1, value * 10 - digit) }
+    }
+    if (start == len(text)) {
+        return nil
+    }
+    val magnitude = go(start, 0)
+    if (magnitude == nil) {
+        nil
+    } else if (negative) {
+        magnitude
+    } else if (magnitude == -9223372036854775807 - 1) {
+        nil
+    } else {
+        -magnitude
+    }
 }
 
 /**

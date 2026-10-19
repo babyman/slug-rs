@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `slug.math` adds `div(left, right)`, the quotient rounded toward zero and
+  exact for integers of any size, where `int(a / b)` loses precision because
+  `/` gives a float for an inexact division. `slug.string` adds
+  `toInt(text)`, which parses a decimal integer with an optional sign and
+  returns `nil` for anything else, including values out of range. Agents
+  writing the Tiny interpreter hand-wrote both in most runs.
+
 - Match cases written on one line without a newline or `;` between them are
   reported as ``match cases are separated by a newline or `;` ``, with a fix
   replacing a `,` and a suggested `;` otherwise, instead of

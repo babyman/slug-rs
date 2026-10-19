@@ -22,6 +22,29 @@ export val add = fn(left:num, right:num):num {
 }
 
 /**
+ * Returns the quotient of `left` and `right` rounded toward zero, exact for
+ * integers of any size: `div(7, 2)` is 3 and `div(-7, 2)` is -3. With `%`,
+ * which also rounds toward zero, `div(a, b) * b + a % b` is `a`. `int(a / b)`
+ * is not exact, because `/` gives a float when the division is not exact.
+ *
+ * Throws a `math.domain` error when `right` is 0, and a `math.range` error
+ * for the one quotient that does not fit, the most negative integer divided
+ * by -1.
+ */
+export val div = fn(left:num, right:num):num {
+    if (right == 0) {
+        throw Error {type: "math.domain", msg: "div requires a non-zero divisor"}
+    }
+    if (right == -1 && left == -9223372036854775807 - 1) {
+        throw Error {type: "math.range", msg: "integer division overflowed"}
+    }
+    // Removing the remainder, which has the sign of `left` and is smaller
+    // than `right`, moves `left` toward zero to an exact multiple of `right`,
+    // which `/` divides exactly.
+    int((left - left % right) / right)
+}
+
+/**
  * Returns the non-negative square root of `value`.
  *
  * Throws a `math.domain` error when `value` is negative.
