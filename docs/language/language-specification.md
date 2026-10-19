@@ -258,6 +258,14 @@ comparison and less than the bitwise and arithmetic operators, and groups to
 the right, so `a ?? b ?? c` tries each in turn and `count ?? 0 > 3` compares
 `count ?? 0`. A line beginning with `??` continues the expression before it.
 
+Arithmetic on two integers gives an integer, and one whose result does not fit
+is a runtime error. `/` gives an integer only when the division is exact and a
+float otherwise, so `7 / 2` is `3.5`. `%` gives the remainder with the sign of
+the dividend: `-7 % 2` is `-1`. For the quotient rounded toward zero, use
+`div` from `slug.math`: `math.div(-7, 2)` is `-3`, exact for integers of any
+size. `int(a / b)` is not exact for large integers, because the float quotient
+holds only 53 bits.
+
 Bitwise operators (`&`, `|`, and `^`) accept two integers or byte operands.
 When either operand is bytes, an integer from `0` through `255` becomes a
 one-byte value and the result is bytes. A shorter non-empty bytes operand

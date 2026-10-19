@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The specification now describes integer arithmetic: when `/` gives an
+  integer or a float, the sign of `%`, and `math.div` for an exact quotient
+  rounded toward zero. The Tiny project's hidden suite gains a
+  `large-division` group, which the reference failed until it used
+  `math.div`.
+
 - `slug.math` adds `div(left, right)`, the quotient rounded toward zero and
   exact for integers of any size, where `int(a / b)` loses precision because
   `/` gives a float for an inexact division. `slug.string` adds
