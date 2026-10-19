@@ -98,7 +98,9 @@ CODING_PROMPT = """\
 You are writing a program in Slug, a small programming language. Its
 documentation is in ./slug-docs: start with slug-docs/language-specification.md.
 Library module sources are in ./slug-docs/library. Run a program with
-`slug <file>`.
+`slug <file>`. Single-quoted Slug strings are raw: '\\n' is a backslash and an
+`n`, not a newline. Use double quotes, with `\\"` for a quote, when a string
+needs escapes.
 
 Write the program to ./solution.slug in the current directory.
 
@@ -122,7 +124,9 @@ PROJECT_PROMPT = """\
 You are writing a library in Slug, a small programming language. Its
 documentation is in ./slug-docs: start with slug-docs/language-specification.md.
 Library module sources are in ./slug-docs/library. Run a program with
-`slug <file>`.
+`slug <file>`. Single-quoted Slug strings are raw: '\\n' is a backslash and an
+`n`, not a newline. Use double quotes, with `\\"` for a quote, when a string
+needs escapes.
 
 The library's specification is in ./spec.md. Implement it exactly.
 {arm_notes}

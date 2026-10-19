@@ -87,6 +87,10 @@ the features it enables. After a failed run the wrapper reruns the command in
 JSON mode, only to log its diagnostic codes, so every arm records which
 failure classes the agent hit.
 
+Since 2026-10-18 the Slug prompts also say that single-quoted strings are
+raw, after agents in nearly every Tiny run wrote escapes inside them in their
+own tests. Runs from before then are not comparable on that count.
+
 ## Running
 
 ```sh
