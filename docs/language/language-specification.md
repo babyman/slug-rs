@@ -492,8 +492,8 @@ rule and current implementation boundary.
 ## Pattern matching
 
 `match` selects the first matching case. A case may have a guard introduced by
-`if`. Pattern alternatives in one case are allowed only when they do not create
-bindings. If the subject is a map literal, it must be parenthesized to avoid
+`if`. Pattern alternatives in one case are separated by `,`, as in
+`"+", "-" => ...`, and are allowed only when they do not create bindings. If the subject is a map literal, it must be parenthesized to avoid
 being read as the case block: `match ({name: "Slug"}) { {name} => name }`.
 A guard whose ordering comparison receives incompatible operand types evaluates
 to `false`, allowing matching to continue with the next case; ordering

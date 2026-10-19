@@ -90,6 +90,30 @@ impl Parser {
         }
         error
     }
+    /// An error for a `|` between a match case's patterns, which other
+    /// languages use for alternatives, offering the `,` that Slug uses.
+    fn pattern_alternative_pipe(&self) -> SourceError {
+        let token = self.peek();
+        let mut error = SourceError::at_token(
+            SourceErrorCode::ExpectedSyntax,
+            "alternative match patterns are separated by `,`, not `|`, as in `\"+\", \"-\" => ...`",
+            token,
+        );
+        error.expected = Some(TokenKind::Arrow.describe().into());
+        error.with_fix(
+            "replace `|` with `,`",
+            SourceEdit {
+                range: SourceRange {
+                    start: SourcePosition {
+                        line: token.span.line,
+                        column: token.span.column,
+                    },
+                    end: token.end,
+                },
+                text: ",".into(),
+            },
+        )
+    }
     /// The text of a token that names a map key, property, or struct field:
     /// an identifier or, since a key is never a binding, a reserved word.
     fn key_name(kind: &TokenKind) -> Option<String> {
@@ -1703,6 +1727,9 @@ impl Parser {
             } else {
                 None
             };
+            if self.matches(&TokenKind::Pipe) {
+                return Err(self.pattern_alternative_pipe());
+            }
             let case_span = self
                 .consume(&TokenKind::Arrow, "expected => after match pattern")?
                 .span;

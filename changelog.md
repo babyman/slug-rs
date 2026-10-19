@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A `|` between match patterns is reported as
+  ``alternative match patterns are separated by `,`, not `|` `` with a fix
+  that replaces it, instead of ``expected => after match pattern``.
+
 - `i64::MIN % -1` is `0` rather than an integer overflow error; only the
   quotient of that division overflows.
 

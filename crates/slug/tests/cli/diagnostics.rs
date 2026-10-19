@@ -226,6 +226,33 @@ fn an_unknown_name_is_a_compile_error_with_suggestions() {
 }
 
 #[test]
+fn a_pipe_between_match_patterns_offers_a_comma() {
+    let path = fixture_path("pattern-pipe");
+    fs::write(
+        &path,
+        "val f = fn(op) {\n  match op {\n    \"+\" | \"-\" => 1\n    _ => 0\n  }\n}\n",
+    )
+    .expect("write pattern pipe source");
+    let output = slug()
+        .arg("--diagnostic-format=json")
+        .arg(&path)
+        .output()
+        .expect("run pattern pipe source");
+    fs::remove_file(&path).expect("remove pattern pipe source");
+    assert_eq!(output.status.code(), Some(1));
+    let diagnostic = json_diagnostic(&output.stderr);
+    assert_eq!(
+        diagnostic["message"],
+        "alternative match patterns are separated by `,`, not `|`, as in `\"+\", \"-\" => ...`"
+    );
+    assert_eq!(diagnostic["fixes"][0]["edits"][0]["text"], ",");
+    assert_eq!(
+        diagnostic["fixes"][0]["edits"][0]["range"]["start"]["column"],
+        9
+    );
+}
+
+#[test]
 fn handles_comments_and_multiline_delimited_expressions() {
     let path = fixture_path("newlines");
     fs::write(
