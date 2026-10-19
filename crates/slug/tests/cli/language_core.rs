@@ -150,10 +150,10 @@ fn interpolates_identifier_values_in_non_raw_strings() {
         .expect("run unknown interpolation source");
     fs::remove_file(path).expect("remove unknown interpolation source");
     assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .starts_with("slug: runtime error:")
+        stderr.starts_with("slug: semantic error: unknown name `missing`"),
+        "{stderr}"
     );
 }
 

@@ -172,7 +172,15 @@ Inside a function, a block's `val name = fn ...` and `var name = fn ...`
 declarations are visible throughout that block, so its functions may call one
 another in any order, as at module level. Using such a function directly
 before its declaration has run, or using another binding before the block
-declares it, is a static error at the use. An
+declares it, is a static error at the use. A name that is not declared, and
+is not one the runtime provides to every module, is a static error that
+suggests the names in scope it most likely misspells. The runtime provides
+the exports of `slug.builtin` and the VM functions `cfg`, `int`, and
+`stacktrace`. When the compiler cannot know every name the runtime will
+provide, because `slug.builtin` is not available to it, a `{*}` declaration
+selects from a map whose entries are known only when it runs, or the source is
+an interactive session's, whose host may add names, an undeclared name is
+instead looked up when it runs and is an error then. An
 assignment changes an existing `var` binding and is invalid for a `val` binding
 or an unknown name. It evaluates to the value assigned, so an assignment may be
 the final expression of a function body or appear inside another expression.

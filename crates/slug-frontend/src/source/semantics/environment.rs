@@ -198,6 +198,13 @@ pub(crate) struct ModuleSnapshot {
     pub(super) types: HashMap<String, TypeMember>,
 }
 
+impl ModuleSnapshot {
+    /// The names of the module's exported values.
+    pub(crate) fn export_names(&self) -> impl Iterator<Item = &str> {
+        self.exports.keys().map(String::as_str)
+    }
+}
+
 /// Semantic bindings retained by one interactive source session.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SessionSnapshot {
@@ -217,6 +224,9 @@ pub(super) struct SemanticAnalysis {
     pub(crate) foreign_resource_signatures: HashMap<SourceSpan, ForeignResourceSignature>,
     pub(super) match_constraints: HashMap<SourceSpan, Vec<Option<Type>>>,
     pub(super) expression_types: HashMap<SourceSpan, Type>,
+    /// The names `{*}` declarations define, or `None` when one selects from
+    /// a map whose entries are not known until it runs.
+    pub(super) selected_globals: Option<HashSet<String>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -227,6 +237,8 @@ struct SemanticRecords {
     foreign_resource_signatures: HashMap<SourceSpan, ForeignResourceSignature>,
     match_constraints: HashMap<SourceSpan, Vec<Option<Type>>>,
     expression_types: HashMap<SourceSpan, Type>,
+    selected_globals: HashSet<String>,
+    unknown_selection: bool,
 }
 
 /// A `var` whose first value is `nil`. Its declared type is `nil` with the
@@ -721,6 +733,16 @@ impl Environment {
             .insert(span, value_type);
     }
 
+    /// Records the names a `{*}` declaration defines, or, with `None`, that
+    /// they are not known until it runs.
+    pub(super) fn record_selection<'a>(&self, names: Option<impl Iterator<Item = &'a String>>) {
+        let mut records = self.records.borrow_mut();
+        match names {
+            Some(names) => records.selected_globals.extend(names.cloned()),
+            None => records.unknown_selection = true,
+        }
+    }
+
     pub(super) fn analysis(&self, snapshot: ModuleSnapshot) -> SemanticAnalysis {
         let records = self.records.borrow();
         SemanticAnalysis {
@@ -732,6 +754,8 @@ impl Environment {
             foreign_resource_signatures: records.foreign_resource_signatures.clone(),
             match_constraints: records.match_constraints.clone(),
             expression_types: records.expression_types.clone(),
+            selected_globals: (!records.unknown_selection)
+                .then(|| records.selected_globals.clone()),
         }
     }
 

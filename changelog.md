@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A name that nothing declares is a compile error that suggests the names in
+  scope it most likely misspells, as in
+  ``unknown name `pirntln`; did you mean `println`?``, with each suggestion
+  offered as a replacement edit. Such a name previously compiled and failed
+  only when its use ran. Names the runtime provides, the exports of
+  `slug.builtin` and the VM's `cfg`, `int`, and `stacktrace`, are known, as are
+  the names a `{*}` import selects. When the compiler cannot know every name,
+  as in an interactive session, the name is still looked up when it runs.
+
 - Parameter type inference follows paths through the body: a parameter is
   constrained only when every path that finishes constrains it alike. A
   function that returns `a + b` early for strings and later divides `a` now

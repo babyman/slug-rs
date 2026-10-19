@@ -3905,6 +3905,7 @@ fn bind_semantic_pattern(
             } else {
                 binding.members.clone()
             };
+            environment.record_selection((!members.is_empty()).then(|| members.keys()));
             for (name, member) in members {
                 environment.declare(name, member);
             }

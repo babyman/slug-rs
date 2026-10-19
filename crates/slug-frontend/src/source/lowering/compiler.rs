@@ -11,7 +11,7 @@ use slug_vm::{
 };
 
 use super::{
-    SourceError, SourceErrorCode, SourcePosition,
+    SourceEdit, SourceError, SourceErrorCode, SourcePosition, SourceRange,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ForeignSignature, ListElement,
         MapPatternKey, MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind,
@@ -36,7 +36,16 @@ pub(super) struct Compiler {
     expression_types: HashMap<SourceSpan, super::semantic::Type>,
     callable_identities: Vec<CallableIdentity>,
     guard_comparisons: bool,
+    /// The names the runtime provides to every module, when they are known
+    /// at compile time. A name that is neither these nor declared is then
+    /// an error; otherwise it is looked up when it runs.
+    implicit_globals: Option<HashSet<String>>,
+    /// The names `{*}` declarations define, when they are known.
+    selected_globals: Option<HashSet<String>>,
 }
+
+/// The VM's own builtins, which it installs in every module's globals.
+const VM_BUILTINS: [&str; 3] = ["cfg", "int", "stacktrace"];
 
 pub(super) struct CompiledProgram {
     pub(super) program: Program,
@@ -71,7 +80,77 @@ impl Compiler {
             expression_types: analysis.expression_types.clone(),
             callable_identities: Vec::new(),
             guard_comparisons: false,
+            implicit_globals: None,
+            selected_globals: analysis.selected_globals.clone(),
         }
+    }
+
+    /// Makes a name that is neither declared nor one of `names`, the
+    /// exports of the implicit `slug.builtin` module, nor a VM builtin an
+    /// error at compile time.
+    pub(super) fn with_implicit_globals(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.implicit_globals = Some(
+            names
+                .into_iter()
+                .chain(VM_BUILTINS.map(String::from))
+                .collect(),
+        );
+        self
+    }
+
+    /// Whether `name` is certainly not a global the runtime will have.
+    fn is_unknown_global(&self, name: &str) -> bool {
+        let (Some(implicit), Some(selected)) = (&self.implicit_globals, &self.selected_globals)
+        else {
+            return false;
+        };
+        !implicit.contains(name) && !selected.contains(name)
+    }
+
+    /// The error for a name that nothing declares, suggesting the names in
+    /// scope that it most likely misspells.
+    fn unknown_name(&self, name: &str, expression: &Expr, state: &State) -> SourceError {
+        let mut candidates = state.visible().into_keys().collect::<HashSet<_>>();
+        candidates.extend(self.globals.keys().cloned());
+        candidates.extend(self.implicit_globals.iter().flatten().cloned());
+        candidates.extend(self.selected_globals.iter().flatten().cloned());
+        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates.sort();
+        let suggestions =
+            slug_loader::suggest_module_names(name, candidates.iter().map(String::as_str));
+        let message = match suggestions.as_slice() {
+            [] => format!("unknown name `{name}`"),
+            [suggestion] => format!("unknown name `{name}`; did you mean `{suggestion}`?"),
+            suggestions => format!(
+                "unknown name `{name}`; did you mean one of {}?",
+                suggestions
+                    .iter()
+                    .map(|suggestion| format!("`{suggestion}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        let range = SourceRange {
+            start: expression.extent_start(),
+            end: expression.end,
+        };
+        suggestions.into_iter().fold(
+            SourceError::semantic(
+                SourceErrorCode::UnknownName,
+                message,
+                expression.span.clone(),
+            )
+            .with_extent(expression),
+            |error, suggestion| {
+                error.with_suggestion(
+                    format!("replace with `{suggestion}`"),
+                    SourceEdit {
+                        range,
+                        text: suggestion,
+                    },
+                )
+            },
+        )
     }
     #[allow(clippy::too_many_lines)]
     pub(super) fn compile(mut self) -> Result<CompiledProgram, SourceError> {
@@ -363,6 +442,9 @@ impl Compiler {
                         expression.span.clone(),
                     )
                     .with_extent(expression));
+                }
+                None if self.is_unknown_global(name) => {
+                    return Err(self.unknown_name(name, expression, state));
                 }
                 Some(Binding::Global { .. }) | None => {
                     state.emit(Op::GetGlobal(name.clone()), &expression.span);

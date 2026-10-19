@@ -356,7 +356,7 @@ impl From<&SourceError> for SourceDiagnostic {
 pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    let mut compilation = compile_expressions(path, expressions, ImportSnapshots::new())?;
+    let mut compilation = compile_expressions(path, expressions, ImportSnapshots::new(), None)?;
     compilation.program.set_module_key(path);
     Ok(compilation.program)
 }
@@ -380,7 +380,20 @@ pub(crate) fn compile_with_resolver(
     {
         entry.insert(snapshot);
     }
-    let mut compilation = compile_expressions(path, expressions, imports)?;
+    // With the implicit module's exports known, every name the runtime
+    // provides is known, so an undeclared one is an error now rather than
+    // when it runs. An explicit import of `slug.builtin` does not tell
+    // which names the runtime installs, so it does not count.
+    let implicit_globals = include_implicit_builtins
+        .then(|| imports.get("slug.builtin"))
+        .flatten()
+        .map(|builtins| {
+            builtins
+                .export_names()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        });
+    let mut compilation = compile_expressions(path, expressions, imports, implicit_globals)?;
     compilation.program.set_module_key(path);
     Ok(compilation)
 }
@@ -511,11 +524,14 @@ fn compile_expressions(
     path: &str,
     expressions: Vec<ast::Expr>,
     imports: ImportSnapshots,
+    implicit_globals: Option<Vec<String>>,
 ) -> Result<CompiledSource, SourceError> {
     let analysis = typecheck::analyze_with_imports(&expressions, imports)?;
-    let program = Compiler::new(path, expressions, &analysis)
-        .compile()?
-        .program;
+    let mut compiler = Compiler::new(path, expressions, &analysis);
+    if let Some(names) = implicit_globals {
+        compiler = compiler.with_implicit_globals(names);
+    }
+    let program = compiler.compile()?.program;
     Ok(CompiledSource {
         program,
         snapshot: analysis.snapshot,

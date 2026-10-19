@@ -1183,7 +1183,7 @@ fn infers_block_results_without_leaking_block_bindings() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(
-        stderr.starts_with("slug: runtime error: unknown name `local`"),
+        stderr.starts_with("slug: semantic error: unknown name `local`"),
         "{stderr}"
     );
 }

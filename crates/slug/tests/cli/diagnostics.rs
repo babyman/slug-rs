@@ -155,6 +155,77 @@ fn a_line_beginning_with_a_prefix_operator_starts_a_statement() {
 }
 
 #[test]
+fn an_unknown_name_is_a_compile_error_with_suggestions() {
+    let path = fixture_path("unknown-names");
+    let run = |source: &str, json: bool| {
+        fs::write(&path, source).expect("write unknown name source");
+        let mut command = slug();
+        if json {
+            command.arg("--diagnostic-format=json");
+        }
+        let output = command
+            .arg(&path)
+            .output()
+            .expect("run unknown name source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A misspelled builtin, local, or global is reported before anything
+    // runs, with the names it most likely meant.
+    for (source, message) in [
+        (
+            "println(\"first\")\npirntln(\"hi\")\n",
+            "semantic error: unknown name `pirntln`; did you mean `println`?",
+        ),
+        (
+            "val count = 3\nval f = fn() { cuont + 1 }\n",
+            "semantic error: unknown name `cuont`; did you mean `count`?",
+        ),
+        (
+            "val f = fn(total) { val step = 1\ntotl + step }\n",
+            "semantic error: unknown name `totl`; did you mean `total`?",
+        ),
+        ("missing\n", "semantic error: unknown name `missing`\n"),
+    ] {
+        let (code, stdout, stderr) = run(source, false);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stdout.is_empty(), "{source}: {stdout}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    let (_, _, stderr) = run("pirntln(\"hi\")\n", true);
+    let diagnostic: serde_json::Value =
+        serde_json::from_str(stderr.trim()).expect("JSON diagnostic");
+    assert_eq!(diagnostic["code"], "unknown_name");
+    assert_eq!(diagnostic["suggestions"][0]["edits"][0]["text"], "println");
+
+    // Builtins, the VM's own functions, later top-level declarations, and
+    // the names a `{*}` declaration selects from a known map are all known;
+    // a `{*}` over a map whose entries are known only when it runs leaves
+    // other names to be looked up then.
+    let (code, stdout, stderr) = run(
+        "val e = Error {msg: \"x\"}\n\
+         val later = fn() { soon() }\n\
+         val soon = fn() { 1 }\n\
+         val {*} = {answer: 42}\n\
+         println(int(2.5), len([1]), cfg(\"k\", 0), e.msg, later(), answer)\n",
+        false,
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "2 1 0 x 1 42\n");
+    let (code, stdout, stderr) = run(
+        "val pick = fn(entries) { entries }\nval {*} = pick({late: 7})\nprintln(late)\n",
+        false,
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "7\n");
+    fs::remove_file(&path).expect("remove unknown name source");
+}
+
+#[test]
 fn handles_comments_and_multiline_delimited_expressions() {
     let path = fixture_path("newlines");
     fs::write(
