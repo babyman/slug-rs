@@ -27,6 +27,8 @@ mod semantic;
 mod state;
 #[path = "semantics/typecheck.rs"]
 mod typecheck;
+#[path = "semantics/updates.rs"]
+mod updates;
 use compiler::Compiler;
 use lexer::Lexer;
 use parser::Parser;
@@ -104,6 +106,7 @@ pub enum SourceErrorCode {
     NoMatchingOverload,
     AmbiguousOverload,
     RepeatedMapKey,
+    LostUpdate,
     InvalidEntrypoint,
     Internal,
 }
@@ -140,6 +143,7 @@ impl SourceErrorCode {
         Self::NoMatchingOverload,
         Self::AmbiguousOverload,
         Self::RepeatedMapKey,
+        Self::LostUpdate,
         Self::InvalidEntrypoint,
         Self::Internal,
     ];
@@ -177,6 +181,7 @@ impl SourceErrorCode {
             Self::NoMatchingOverload => "no_matching_overload",
             Self::AmbiguousOverload => "ambiguous_overload",
             Self::RepeatedMapKey => "repeated_map_key",
+            Self::LostUpdate => "lost_update",
             Self::InvalidEntrypoint => "invalid_entrypoint",
             Self::Internal => "internal",
         }
@@ -527,6 +532,7 @@ fn compile_expressions(
     implicit_globals: Option<Vec<String>>,
 ) -> Result<CompiledSource, SourceError> {
     let analysis = typecheck::analyze_with_imports(&expressions, imports)?;
+    updates::check_lost_updates(&expressions)?;
     let mut compiler = Compiler::new(path, expressions, &analysis);
     if let Some(names) = implicit_globals {
         compiler = compiler.with_implicit_globals(names);

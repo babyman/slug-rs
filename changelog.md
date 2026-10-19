@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An assignment that discards a change a call inside it makes is a compile
+  error, `lost_update`. In `output = output :+ render(evaluate(x))`, `output`
+  is read before `evaluate` runs, so anything `evaluate` appends to it is
+  overwritten; the error names the call and suggests binding its result
+  first. Agents writing the Tiny interpreter lost nested `print` output this
+  way in four of five runs.
+
 - A `|` between match patterns is reported as
   ``alternative match patterns are separated by `,`, not `|` `` with a fix
   that replaces it, instead of ``expected => after match pattern``.

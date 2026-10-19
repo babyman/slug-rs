@@ -184,6 +184,14 @@ instead looked up when it runs and is an error then. An
 assignment changes an existing `var` binding and is invalid for a `val` binding
 or an unknown name. It evaluates to the value assigned, so an assignment may be
 the final expression of a function body or appear inside another expression.
+An assignment whose value reads the `var` before calling a function that may
+assign it, directly or through the functions it calls, is a static error,
+because the assignment would discard the call's change: in
+`output = output :+ render(evaluate(x))`, an `output` appended to while
+`evaluate` runs is overwritten. Bind the call's result first and read the
+`var` after it. Only calls of functions declared with `val name = fn ...` are
+followed, and only through functions nested in the one that declares the
+`var`, which share the same `var`.
 
 A binding's type is set by its first value. A `var` has a declared type that
 every later assignment must conform to: its annotation, or else the type of

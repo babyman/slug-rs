@@ -226,6 +226,69 @@ fn an_unknown_name_is_a_compile_error_with_suggestions() {
 }
 
 #[test]
+fn an_assignment_that_discards_a_calls_change_is_a_compile_error() {
+    let path = fixture_path("lost-update");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write lost update source");
+        let output = slug().arg(&path).output().expect("run lost update source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // `output` is read before `evaluate` runs, and `evaluate` appends to it
+    // through `execute`, so the assignment would discard that append.
+    for (source, message, location) in [
+        (
+            "val run = fn() {\n\
+             var output = []\n\
+             val execute = fn(n) { output = output :+ \"inner\" }\n\
+             val evaluate = fn(n) { execute(n); n }\n\
+             output = output :+ evaluate(1)\n\
+             output\n\
+             }\n",
+            "this assignment to `output` discards what the call to `evaluate` at 5:20 assigns to it",
+            ":5:10\n",
+        ),
+        (
+            "var log = []\nval note = fn(m) { log = log :+ m; m }\nlog = log :+ note(\"a\")\n",
+            "this assignment to `log` discards what the call to `note` at 3:14 assigns to it",
+            ":3:7\n",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains("code: lost_update"), "{source}: {stderr}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+        assert!(stderr.contains(location), "{source}: {stderr}");
+    }
+
+    // Reading after the call keeps its change, and a call that reaches the
+    // `var` only by calling its declaring function again changes a new one.
+    let (code, stdout, stderr) = run("val run = fn() {\n\
+         var output = []\n\
+         val execute = fn(n) { output = output :+ \"inner\" }\n\
+         val evaluate = fn(n) { execute(n); n }\n\
+         val value = evaluate(1)\n\
+         output = output :+ value\n\
+         output\n\
+         }\n\
+         val block = fn(depth) {\n\
+         var xs = []\n\
+         val more = fn() { if (len(xs) < 2) { xs = xs :+ statement(depth); recur() } }\n\
+         more()\n\
+         xs\n\
+         }\n\
+         val statement = fn(depth) { if (depth > 0) { block(depth - 1) } else { depth } }\n\
+         println(run(), block(1))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "[\"inner\", 1] [[0, 0], [0, 0]]\n");
+    fs::remove_file(&path).expect("remove lost update source");
+}
+
+#[test]
 fn a_pipe_between_match_patterns_offers_a_comma() {
     let path = fixture_path("pattern-pipe");
     fs::write(
