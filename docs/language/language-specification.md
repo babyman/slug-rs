@@ -1004,8 +1004,15 @@ payload remains relevant to function result checking: a function's result
 type is the union of its body's value, every `return` value in it, including
 one in a match case or a `defer onerror` handler, and the value of each
 `defer onerror` handler, which becomes the result when it recovers. A
-declared result type is checked at each of them. Broader flow-sensitive
-narrowing and inference for dynamic expression forms remain future work.
+declared result type is checked at each of them. A nil test narrows a name,
+and also a string-keyed member of an immutable binding, such as a `val`,
+parameter, or pattern binding: after `r.error != nil`, `r.error` and
+`r["error"]` are not `nil` on that path, as they are past
+`if (r.error == nil) { return ... }`. A `var`'s members are not narrowed,
+since an assignment may replace the value. A member stays narrowed after
+branches only when every branch that continues narrowed it. Broader
+flow-sensitive narrowing and inference for dynamic expression forms remain
+future work.
 
 Operators, indexing, and slicing check
 statically known operand families. Numeric arithmetic, bitwise and shift

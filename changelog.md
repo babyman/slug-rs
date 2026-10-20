@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A nil test narrows a string-keyed member of an immutable binding: after
+  `r.error != nil`, `r.error` is not `nil` on that path, through `&&`, past an
+  early `return`, and in functions defined there. Previously only a name was
+  narrowed, so code had to bind the member first. A `var`'s members are not
+  narrowed, since an assignment may replace the value.
+
 - `slug.fmt.json` reads and writes JSON: `parse` reads a document into maps,
   lists, strings, numbers, booleans, and `nil`, with every integer that fits
   in 64 bits exact and other numbers correctly rounded, and `stringify` writes

@@ -2746,7 +2746,10 @@ fn check_expression_inner(
                         .collect::<Vec<_>>();
                     if !narrowed.is_empty() {
                         let narrowed = Type::union(narrowed);
-                        apply_flow_facts(&mut scoped, vec![(name.clone(), narrowed.clone())]);
+                        apply_flow_facts(
+                            &mut scoped,
+                            vec![FlowFact::Binding(name.clone(), narrowed.clone())],
+                        );
                         case_subject_type = Some(narrowed);
                     } else if reaching_type != subject_type
                         && case
@@ -2754,7 +2757,10 @@ fn check_expression_inner(
                             .iter()
                             .any(|pattern| is_irrefutable_pattern(&pattern.pattern))
                     {
-                        apply_flow_facts(&mut scoped, vec![(name.clone(), reaching_type.clone())]);
+                        apply_flow_facts(
+                            &mut scoped,
+                            vec![FlowFact::Binding(name.clone(), reaching_type.clone())],
+                        );
                         case_subject_type = Some(reaching_type.clone());
                     }
                 }
@@ -2891,7 +2897,10 @@ fn check_expression_inner(
             {
                 apply_flow_facts(
                     environment,
-                    vec![(name.clone(), Type::union(surviving_subject_types))],
+                    vec![FlowFact::Binding(
+                        name.clone(),
+                        Type::union(surviving_subject_types),
+                    )],
                 );
             }
             Ok(
@@ -2991,6 +3000,7 @@ fn check_expression_inner(
             }
         }
         ExprKind::Index { collection, index } => {
+            let collection_expression = collection;
             let collection = check_expression(collection, environment, type_parameters)?;
             let index_type = check_expression(index, environment, type_parameters)?;
             let result = index_result(&collection, &index_type, &expression.span)?;
@@ -3004,6 +3014,14 @@ fn check_expression_inner(
                     expression.span.clone(),
                 )
                 .with_extent(expression));
+            }
+            if let (ExprKind::Name(name), ExprKind::Value(Value::Str(key))) =
+                (&collection_expression.kind, &index.kind)
+                && let Some(narrowed) = environment
+                    .lookup(name)
+                    .and_then(|binding| binding.member_facts.get(key.as_ref()))
+            {
+                return Ok(narrowed.clone());
             }
             Ok(expression_binding(expression, environment)
                 .map(|binding| binding.value_type)
@@ -3652,10 +3670,18 @@ fn is_irrefutable_pattern(pattern: &Pattern) -> bool {
     }
 }
 
-/// Narrowed bindings known on one control-flow path. Facts retain their actual
+/// Narrowed types known on one control-flow path: a binding's own, or that of
+/// a string-keyed member of an immutable binding. Facts retain their actual
 /// `Type` values, including nominal identities, so match constraints can share
 /// this representation with direct conditions.
-type FlowFacts = Vec<(String, Type)>;
+type FlowFacts = Vec<FlowFact>;
+
+#[derive(Clone, Debug)]
+enum FlowFact {
+    Binding(String, Type),
+    /// The member `key` of the binding `name`, as `name.key` or `name["key"]`.
+    Member(String, String, Type),
+}
 
 fn condition_facts(expression: &Expr, environment: &Environment) -> (FlowFacts, FlowFacts) {
     let ExprKind::Binary {
@@ -3666,30 +3692,67 @@ fn condition_facts(expression: &Expr, environment: &Environment) -> (FlowFacts, 
     else {
         return (Vec::new(), Vec::new());
     };
-    let ((ExprKind::Name(name), ExprKind::Value(Value::Nil))
-    | (ExprKind::Value(Value::Nil), ExprKind::Name(name))) = (&left.kind, &right.kind)
-    else {
-        return (Vec::new(), Vec::new());
-    };
     if !matches!(operator, Binary::Equal | Binary::NotEqual) {
         return (Vec::new(), Vec::new());
     }
-    let Some(binding) = environment.lookup(name) else {
+    let tested = match (&left.kind, &right.kind) {
+        (_, ExprKind::Value(Value::Nil)) => left,
+        (ExprKind::Value(Value::Nil), _) => right,
+        _ => return (Vec::new(), Vec::new()),
+    };
+    let fact = |value_type: Type| match &tested.kind {
+        ExprKind::Name(name) => Some(FlowFact::Binding(name.clone(), value_type)),
+        ExprKind::Index { collection, index } => match (&collection.kind, &index.kind) {
+            (ExprKind::Name(name), ExprKind::Value(Value::Str(key))) => {
+                Some(FlowFact::Member(name.clone(), key.to_string(), value_type))
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let current = match &tested.kind {
+        ExprKind::Name(name) => environment
+            .lookup(name)
+            .map(|binding| binding.value_type.clone()),
+        // Only an immutable binding's member keeps its value, so only its
+        // members are narrowed; the condition's check recorded the type.
+        ExprKind::Index { collection, .. } => match &collection.kind {
+            ExprKind::Name(name)
+                if environment
+                    .lookup(name)
+                    .is_some_and(|binding| binding.declared.is_none()) =>
+            {
+                environment.recorded_expression_type(&tested.span)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(current) = current else {
         return (Vec::new(), Vec::new());
     };
-    let non_nil = binding.value_type.without_nil();
-    let nil = Type::Nil;
+    let non_nil = fact(current.without_nil()).into_iter().collect();
+    let nil = fact(Type::Nil).into_iter().collect();
     if matches!(operator, Binary::NotEqual) {
-        (vec![(name.clone(), non_nil)], vec![(name.clone(), nil)])
+        (non_nil, nil)
     } else {
-        (vec![(name.clone(), nil)], vec![(name.clone(), non_nil)])
+        (nil, non_nil)
     }
 }
 
 fn apply_flow_facts(environment: &mut Environment, facts: FlowFacts) {
-    for (name, value_type) in facts {
-        if let Some(binding) = environment.lookup_mut(&name) {
-            binding.value_type = value_type;
+    for fact in facts {
+        match fact {
+            FlowFact::Binding(name, value_type) => {
+                if let Some(binding) = environment.lookup_mut(&name) {
+                    binding.value_type = value_type;
+                }
+            }
+            FlowFact::Member(name, key, value_type) => {
+                if let Some(binding) = environment.lookup_mut(&name) {
+                    binding.member_facts.insert(key, value_type);
+                }
+            }
         }
     }
 }

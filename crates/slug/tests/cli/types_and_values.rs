@@ -1941,6 +1941,65 @@ fn a_binding_keeps_the_dynamic_type_of_its_value() {
 }
 
 #[test]
+fn a_nil_test_narrows_a_member_of_an_immutable_binding() {
+    let path = fixture_path("member-narrowing");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write member narrowing source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run member narrowing source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let prelude = "val f = fn(n) { if (n > 0) { {error: {at: 1}} } else { {error: nil} } }\n";
+
+    // A member tested against nil, by `.` or `[]`, through `&&`, past an early
+    // return, and inside a function defined on the narrowed path.
+    let (code, stdout, stderr) = run(&format!(
+        "{prelude}\
+         val r = f(1)\n\
+         if (r.error != nil) {{ println(r.error + {{kind: \"dot\"}}) }}\n\
+         if (r[\"error\"] != nil) {{ println(r[\"error\"] + {{kind: \"index\"}}) }}\n\
+         val check = fn(result) {{\n\
+             if (result.error == nil) {{ return \"ok\" }}\n\
+             result.error + {{kind: \"early\"}}\n\
+         }}\n\
+         println(check(r), check(f(0)))\n\
+         val both = fn(a) {{ if (a.x != nil && a.x > 1) {{ \"big\" }} else {{ \"small\" }} }}\n\
+         println(both({{x: 2}}), both({{x: nil}}))\n\
+         if (r.error != nil) {{ val later = fn() {{ r.error + {{kind: \"closure\"}} }}\nprintln(later()) }}\n"
+    ));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "{\"at\": 1, \"kind\": \"dot\"}\n\
+         {\"at\": 1, \"kind\": \"index\"}\n\
+         {\"at\": 1, \"kind\": \"early\"} ok\n\
+         big small\n\
+         {\"at\": 1, \"kind\": \"closure\"}\n"
+    );
+
+    // A `var`'s member, and a member after branches that disagree, stay
+    // possibly nil.
+    for source in [
+        "var v = f(1)\nif (v.error != nil) { v.error + {kind: \"x\"} }\n",
+        "val r = f(1)\nif (r.error != nil) { 1 } else { 2 }\nr.error + {kind: \"x\"}\n",
+    ] {
+        let (code, _, stderr) = run(&format!("{prelude}{source}"));
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains("operator `+` does not accept map<str, num>|nil and map<str, str>"),
+            "{source}: {stderr}"
+        );
+    }
+    fs::remove_file(&path).expect("remove member narrowing source");
+}
+
+#[test]
 fn lists_maps_and_tasks_are_covariant_and_channels_are_not() {
     let path = fixture_path("collection-variance");
     let run = |source: &str| {

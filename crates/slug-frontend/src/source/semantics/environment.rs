@@ -84,6 +84,10 @@ pub(super) struct SemanticBinding {
     /// An implicit builtin, such as `close`, which a declaration of the same
     /// name replaces rather than overloads, as it does at runtime.
     pub(super) implicit: bool,
+    /// For an immutable binding, the narrowed types of string-keyed members a
+    /// nil test established on this path, such as `r.error` after
+    /// `r.error != nil`. The binding never changes, so neither do they.
+    pub(super) member_facts: HashMap<String, Type>,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +135,7 @@ impl SemanticBinding {
             declared: None,
             nil_start: None,
             implicit: false,
+            member_facts: HashMap::new(),
         }
     }
 
@@ -147,6 +152,7 @@ impl SemanticBinding {
             declared: None,
             nil_start: None,
             implicit: false,
+            member_facts: HashMap::new(),
         }
     }
 
@@ -166,6 +172,7 @@ impl SemanticBinding {
             declared: None,
             nil_start: None,
             implicit: false,
+            member_facts: HashMap::new(),
         }
     }
 
@@ -660,6 +667,14 @@ impl Environment {
                 if left.value_type == right.value_type {
                     binding.value_type = left.value_type.clone();
                 }
+                // A member fact holds after the branches only when each one
+                // that continues established it.
+                binding.member_facts = left
+                    .member_facts
+                    .iter()
+                    .filter(|(key, value_type)| right.member_facts.get(*key) == Some(*value_type))
+                    .map(|(key, value_type)| (key.clone(), value_type.clone()))
+                    .collect();
             }
         }
     }
@@ -724,6 +739,11 @@ impl Environment {
             .borrow_mut()
             .match_constraints
             .insert(span, constraints);
+    }
+
+    /// The type last recorded for the expression at `span`.
+    pub(super) fn recorded_expression_type(&self, span: &SourceSpan) -> Option<Type> {
+        self.records.borrow().expression_types.get(span).cloned()
     }
 
     pub(super) fn record_expression_type(&self, span: SourceSpan, value_type: Type) {
