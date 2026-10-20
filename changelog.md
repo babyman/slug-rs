@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `slug.fmt.toml` reads TOML documents into maps, lists, strings, integers,
+  and booleans, with comments, bare, quoted, and dotted keys, `[table]`
+  headers, arrays, and inline tables. Floats, dates, multi-line strings,
+  non-decimal integers, and arrays of tables are reported as unsupported.
+  Errors are `toml.parse` with the line and column. Data format modules are
+  named `slug.fmt.*`.
+
 - `describe(module, unexported = false)` returns a module's top-level
   declarations, each with its name, whether it is exported or mutable, its
   documentation, its tags with their evaluated arguments, and its value, so

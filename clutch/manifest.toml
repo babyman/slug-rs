@@ -7,5 +7,6 @@
 "slug.db.sqlite.transaction" = "slug.db.sqlite.clutch"
 "slug.math" = "slug.core.clutch"
 "slug.string" = "slug.core.clutch"
+"slug.fmt.toml" = "slug.core.clutch"
 "slug.gpio" = "slug.embedded.clutch"
 "slug.time" = "slug.embedded.clutch"

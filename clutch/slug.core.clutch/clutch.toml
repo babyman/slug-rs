@@ -3,6 +3,7 @@
 "slug.io.stdin" = { source = "modules/stdin.slug" }
 "slug.math" = { source = "modules/math.slug" }
 "slug.string" = { source = "modules/string.slug" }
+"slug.fmt.toml" = { source = "modules/toml.slug" }
 
 [native]
 profile = "events"

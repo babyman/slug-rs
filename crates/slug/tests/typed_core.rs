@@ -66,6 +66,7 @@ fn slug_home(directory: &TemporaryDirectory) {
         "modules/stdin.slug",
         "modules/math.slug",
         "modules/string.slug",
+        "modules/toml.slug",
         "native/source/core.c",
         "native/source/slug_core.h",
     ] {
@@ -80,7 +81,8 @@ fn slug_home(directory: &TemporaryDirectory) {
          \"slug.std\" = \"slug.core.clutch\"\n\
          \"slug.io.stdin\" = \"slug.core.clutch\"\n\
          \"slug.math\" = \"slug.core.clutch\"\n\
-         \"slug.string\" = \"slug.core.clutch\"\n",
+         \"slug.string\" = \"slug.core.clutch\"\n\
+         \"slug.fmt.toml\" = \"slug.core.clutch\"\n",
     )
     .expect("write repository manifest");
     let manifest = NativeManifest::from_clutch_source(
@@ -245,6 +247,73 @@ fn parses_decimal_integers() {
          9223372036854775807 -9223372036854775808\n\
          nil nil nil\n\
          nil nil nil nil nil nil 0\n"
+    );
+}
+
+#[test]
+fn parses_toml_documents() {
+    let output = run_cli(
+        "val toml = import(\"slug.fmt.toml\")\n\
+         println(toml.parse(\"[a]\\nb = 1\"))\n\
+         println(toml.parse(\"x = \\\"hi\\\\tthere\\\" # comment\\ny = 'raw\\\\n'\\nz = [1, 2,\\n  3, # c\\n]\\nw = { k = true, \\\"q.k\\\" = -5 }\\n[t.\\\"u.v\\\".w]\\nn = 1_000\\na.b = false\\n\"))\n\
+         println(toml.parse(\"a = \\\"\\\\u00e9 \\\\U0001F600\\\"\\r\\nb = 2\\r\\n\"), toml.parse(\"\"), toml.parse(\"# only\\n\\n\"))\n\
+         println(toml.parse(\"[a]\\nb=1\\n[a.c]\\nd=2\"), toml.parse(\"a = [1, \\\"x\\\", [true], {}]\\nb . c = 3\"))\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "{\"a\": {\"b\": 1}}\n\
+         {\"x\": \"hi\\tthere\", \"y\": \"raw\\\\n\", \"z\": [1, 2, 3], \"w\": {\"k\": true, \"q.k\": -5}, \"t\": {\"u.v\": {\"w\": {\"n\": 1000, \"a\": {\"b\": false}}}}}\n\
+         {\"a\": \"\u{e9} \u{1f600}\", \"b\": 2} {} {}\n\
+         {\"a\": {\"b\": 1, \"c\": {\"d\": 2}}} {\"a\": [1, \"x\", [true], {}], \"b\": {\"c\": 3}}\n"
+    );
+}
+
+#[test]
+fn reports_toml_errors_and_unsupported_features_by_position() {
+    let output = run_cli(
+        "val toml = import(\"slug.fmt.toml\")\n\
+         val err = fn(text) {\n\
+             defer onerror(e) { val line = e.data.line; val column = e.data.column; val msg = e.msg; return e.type + \" $line:$column $msg\" }\n\
+             toml.parse(text)\n\
+             \"no error\"\n\
+         }\n\
+         println(err(\"a = 1\\na = 2\"))\n\
+         println(err(\"[t]\\n[t]\"))\n\
+         println(err(\"a = 1.5\"))\n\
+         println(err(\"[[x]]\"))\n\
+         println(err(\"a = \\\"\\\"\\\"x\\\"\\\"\\\"\"))\n\
+         println(err(\"a = 0x10\"))\n\
+         println(err(\"a = 01\"))\n\
+         println(err(\"a = 1979-05-27\"))\n\
+         println(err(\"a = \\\"x\"))\n\
+         println(err(\"a = 1 b = 2\"))\n\
+         println(err(\"a = 1_\"))\n\
+         println(err(\"a = 9223372036854775808\"))\n\
+         println(err(\"a = 1\\na.b = 2\"))\n\
+         println(err(\"= 1\"))\n\
+         println(err(\"a = \"))\n\
+         println(err(\"a = \\\"\\\\q\\\"\"))\n",
+        b"",
+    );
+    assert_eq!(
+        stdout(&output),
+        "toml.parse 2:1 key `a` is defined twice\n\
+         toml.parse 2:1 table [t] is defined twice\n\
+         toml.parse 1:5 floats are not supported\n\
+         toml.parse 1:1 arrays of tables are not supported\n\
+         toml.parse 1:5 multi-line strings are not supported\n\
+         toml.parse 1:5 only decimal integers are supported\n\
+         toml.parse 1:5 an integer must not have a leading zero\n\
+         toml.parse 1:5 dates and times are not supported\n\
+         toml.parse 1:7 unterminated string\n\
+         toml.parse 1:7 expected the end of the line\n\
+         toml.parse 1:6 an underscore must sit between two digits\n\
+         toml.parse 1:5 integer is out of range\n\
+         toml.parse 2:1 key `a` is not a table\n\
+         toml.parse 1:1 expected a key\n\
+         toml.parse 1:5 expected a value\n\
+         toml.parse 1:7 invalid escape\n"
     );
 }
 
