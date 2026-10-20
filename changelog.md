@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- After branches rejoin, a binding's type is the union of its types in them.
+  A narrowed `var` that one branch set to `nil` previously kept its narrowed
+  type, so `if (x != nil) { if (c) { x = nil }; x + 1 }` compiled and failed
+  only when `c` held; it is now a compile error.
+
 - A nil test narrows a string-keyed member of an immutable binding: after
   `r.error != nil`, `r.error` is not `nil` on that path, through `&&`, past an
   early `return`, and in functions defined there. Previously only a name was

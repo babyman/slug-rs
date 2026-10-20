@@ -2000,6 +2000,52 @@ fn a_nil_test_narrows_a_member_of_an_immutable_binding() {
 }
 
 #[test]
+fn branches_rejoin_with_the_union_of_their_types() {
+    let path = fixture_path("branch-merge");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write branch merge source");
+        let output = slug().arg(&path).output().expect("run branch merge source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A branch that assigns `nil` to a narrowed `var` makes it possibly nil
+    // again after the branches rejoin, where it previously kept the narrowed
+    // type and failed only when that branch ran.
+    let (code, _, stderr) = run("val f = fn(c) {\n\
+           var x:num|nil = 5\n\
+           if (x != nil) {\n\
+             if (c) { x = nil }\n\
+             x + 1\n\
+           }\n\
+         }\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("operator `+` does not accept num|nil and num"),
+        "{stderr}"
+    );
+
+    // Branches that agree keep their type, and narrowing in both keeps it.
+    let (code, stdout, stderr) = run("val f = fn(c) {\n\
+           var x:num|nil = nil\n\
+           if (c) { x = 1 } else { x = 2 }\n\
+           val y:num = x\n\
+           y + 1\n\
+         }\n\
+         val g = fn(v:num|nil) {\n\
+           if (v == nil) { return 0 }\n\
+           if (v > 1) { v } else { v + 1 }\n\
+         }\n\
+         println(f(true), f(false), g(nil), g(5), g(1))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "2 3 0 5 2\n");
+    fs::remove_file(&path).expect("remove branch merge source");
+}
+
+#[test]
 fn lists_maps_and_tasks_are_covariant_and_channels_are_not() {
     let path = fixture_path("collection-variance");
     let run = |source: &str| {

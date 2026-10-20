@@ -652,6 +652,10 @@ impl Environment {
         })
     }
 
+    /// The types bindings may have after two branches, `left` and `right`,
+    /// rejoin: each binding's type is the union of its types in them, since
+    /// either may have run. A binding a branch assigned is not left at its
+    /// type from before the branch, which that assignment may have changed.
     pub(super) fn merge_compatible_types(&mut self, left: &Self, right: &Self) {
         for (index, scope) in self.scopes.iter_mut().enumerate() {
             let (Some(left_scope), Some(right_scope)) =
@@ -664,9 +668,11 @@ impl Environment {
                 else {
                     continue;
                 };
-                if left.value_type == right.value_type {
-                    binding.value_type = left.value_type.clone();
-                }
+                binding.value_type = if left.value_type == right.value_type {
+                    left.value_type.clone()
+                } else {
+                    Type::union([left.value_type.clone(), right.value_type.clone()])
+                };
                 // A member fact holds after the branches only when each one
                 // that continues established it.
                 binding.member_facts = left
