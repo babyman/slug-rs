@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A clutch declares its test files with `[tests] files = [...]` in
+  `clutch.toml`. Each is a module named after the clutch and the file's path,
+  so `tests/string.slug` in `slug.core.clutch` is `slug.core.tests.string`,
+  and resolves only when slug runs with `--allow-unexported`.
+
 - `slug.fmt.toml` reads TOML documents into maps, lists, strings, integers,
   and booleans, with comments, bare, quoted, and dotted keys, `[table]`
   headers, arrays, and inline tables. Floats, dates, multi-line strings,

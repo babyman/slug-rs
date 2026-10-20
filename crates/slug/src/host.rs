@@ -314,6 +314,11 @@ impl DesktopLoader {
     /// Grants `permission`, such as [`slug_vm::DESCRIBE_UNEXPORTED`], to the
     /// programs this loader runs. Only the user running slug grants one.
     pub fn grant(&self, permission: &str) {
+        // Test modules use their clutch's unexported declarations, so they
+        // resolve under the same permission.
+        if permission == slug_vm::DESCRIBE_UNEXPORTED {
+            self.state.resolver.enable_test_modules();
+        }
         self.state
             .permissions
             .borrow_mut()

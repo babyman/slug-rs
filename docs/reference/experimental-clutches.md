@@ -87,6 +87,26 @@ module is installed. It does not search system paths or fall back to a host
 plugin. A C source that sends into a Slug channel includes the generated
 `slug_producer.h` from beside its shim.
 
+Optionally, a clutch declares its test files, which a test runner finds
+through the manifest rather than by listing directories:
+
+```toml
+[tests]
+files = ["tests/string.slug", "tests/math.slug"]
+```
+
+Each path is relative to the clutch root, must stay within it, and must name a
+`.slug` file. A test file's module identity is the clutch's name, its
+directory name without `.clutch`, followed by the file's path without `.slug`,
+with `/` written as `.`: `tests/string.slug` in `slug.core.clutch` is
+`slug.core.tests.string`. It must be a valid module name and must not match a
+module the repository provides. Test modules see their clutch's unexported
+declarations through `describe`, so an indexed clutch's test modules resolve
+only when the user running slug grants `describe.unexported` with
+`--allow-unexported`; otherwise importing one reports that. A missing test
+file is reported when its module is imported, so it never stops other
+programs from loading the repository.
+
 The experiment does not define archive encoding, signatures, remote fetching,
 lock files, a package registry, dependency solving, or a `.cslug` entry.
 

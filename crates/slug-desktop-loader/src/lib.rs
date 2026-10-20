@@ -4,7 +4,7 @@
 //! not discover process environment, command-line arguments, or configuration.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
@@ -41,6 +41,9 @@ pub struct DesktopResolver {
     activation_state: Rc<RefCell<DesktopActivationState>>,
     /// Text-result switches of each staged typed activation.
     typed_text_results: Rc<RefCell<HashMap<ModuleActivationLease, TextResults>>>,
+    /// Whether indexed clutches' test modules resolve, which only the user
+    /// running slug enables.
+    test_modules: Cell<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -162,7 +165,15 @@ impl DesktopResolver {
             activation_sources: Rc::new(RefCell::new(HashMap::new())),
             activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
             typed_text_results: Rc::new(RefCell::new(HashMap::new())),
+            test_modules: Cell::new(false),
         }
+    }
+
+    /// Lets indexed clutches' test modules resolve. They see their clutch's
+    /// unexported declarations, so a host enables them only when its user
+    /// grants that.
+    pub fn enable_test_modules(&self) {
+        self.test_modules.set(true);
     }
 
     /// Stages the native registrations required by a resolved module.
@@ -364,6 +375,38 @@ impl DesktopResolver {
             }
         }
     }
+
+    /// Resolves `name` when it is an indexed clutch's test module, which
+    /// requires test modules to be enabled.
+    fn resolve_test_module(&self, name: &str) -> Option<Result<ModuleSource, ModuleLoadError>> {
+        let path = self.clutch_repository.test_module(name)?;
+        if !self.test_modules.get() {
+            return Some(Err(ModuleLoadError::Clutch {
+                location: name.into(),
+                message: format!(
+                    "`{name}` is a clutch test module, which resolves only when slug runs with --allow-unexported"
+                ),
+            }));
+        }
+        Some(
+            path.map_err(|message| ModuleLoadError::Clutch {
+                location: name.into(),
+                message,
+            })
+            .and_then(|path| {
+                let text = fs::read_to_string(&path).map_err(|error| ModuleLoadError::Read {
+                    location: path.to_string_lossy().into_owned(),
+                    message: error.to_string(),
+                })?;
+                Ok(ModuleSource {
+                    key: ModuleKey::new(path.to_string_lossy()),
+                    diagnostic_name: path.to_string_lossy().into_owned(),
+                    text,
+                    activation: None,
+                })
+            }),
+        )
+    }
 }
 
 fn remove_foreign_batch(
@@ -464,6 +507,9 @@ impl ModuleResolver for DesktopResolver {
                 text,
                 activation: lease,
             });
+        }
+        if let Some(source) = self.resolve_test_module(request.name) {
+            return source;
         }
         Err(self.not_found(request.name, &candidates, &relative))
     }
@@ -755,6 +801,98 @@ mod tests {
 
         assert_eq!(source.text, "export val answer = 42\n");
         assert!(source.activation.is_some());
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    #[test]
+    fn resolves_declared_clutch_test_modules_only_when_enabled() {
+        let root = root();
+        let repository_root = root.join("repository");
+        let clutch = repository_root.join("demo.clutch");
+        fs::create_dir_all(clutch.join("modules")).expect("create clutch module directory");
+        fs::create_dir_all(clutch.join("tests/unit")).expect("create clutch test directory");
+        fs::write(clutch.join("modules/lib.slug"), "export val answer = 42\n")
+            .expect("write clutch module");
+        fs::write(
+            clutch.join("tests/unit/lib.slug"),
+            "export val checked = true\n",
+        )
+        .expect("write clutch test");
+        fs::write(
+            repository_root.join("manifest.toml"),
+            "[modules]\n\"demo.lib\" = \"demo.clutch\"\n",
+        )
+        .expect("write repository manifest");
+        let manifest = |files: &str| {
+            fs::write(
+                clutch.join("clutch.toml"),
+                format!(
+                    "[modules]\n\"demo.lib\" = {{ source = \"modules/lib.slug\" }}\n\n[tests]\nfiles = [{files}]\n"
+                ),
+            )
+            .expect("write clutch manifest");
+        };
+
+        // A test file's name is the clutch's, then its path, without `.slug`.
+        manifest("\"tests/unit/lib.slug\"");
+        let repository =
+            ClutchRepository::from_manifest(&repository_root).expect("load clutch repository");
+        let resolver = DesktopResolver::with_clutch_repository(&root, None, repository);
+        let error = resolver
+            .resolve(ModuleRequest::new(None, "demo.tests.unit.lib"))
+            .expect_err("test modules are not enabled");
+        assert!(
+            error.to_string().contains(
+                "`demo.tests.unit.lib` is a clutch test module, which resolves only when slug runs with --allow-unexported"
+            ),
+            "{error}"
+        );
+        resolver.enable_test_modules();
+        let source = resolver
+            .resolve(ModuleRequest::new(None, "demo.tests.unit.lib"))
+            .expect("resolve test module");
+        assert_eq!(source.text, "export val checked = true\n");
+        assert!(source.activation.is_none());
+
+        // A missing test file is reported when the module resolves, not when
+        // the repository loads, so it does not break other programs.
+        manifest("\"tests/missing.slug\"");
+        let repository =
+            ClutchRepository::from_manifest(&repository_root).expect("load clutch repository");
+        let resolver = DesktopResolver::with_clutch_repository(&root, None, repository);
+        resolver.enable_test_modules();
+        let error = resolver
+            .resolve(ModuleRequest::new(None, "demo.tests.missing"))
+            .expect_err("the test file is missing");
+        assert!(
+            error.to_string().contains("cannot access test file"),
+            "{error}"
+        );
+
+        // Invalid declarations are manifest errors.
+        for (files, message) in [
+            (
+                "\"../escape.slug\"",
+                "test file `../escape.slug` escapes the clutch root",
+            ),
+            (
+                "\"tests/notes.txt\"",
+                "test file `tests/notes.txt` must name a `.slug` file",
+            ),
+            (
+                "\"tests/bad-name.slug\"",
+                "would be module `demo.tests.bad-name`",
+            ),
+            (
+                "\"lib.slug\"",
+                "module `demo.lib` has more than one clutch provider",
+            ),
+        ] {
+            manifest(files);
+            let error = ClutchRepository::from_manifest(&repository_root)
+                .expect_err("invalid test declaration");
+            assert!(error.to_string().contains(message), "{files}: {error}");
+        }
         fs::remove_dir_all(root).expect("remove temporary resolver directory");
     }
 

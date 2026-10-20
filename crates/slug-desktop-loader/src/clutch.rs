@@ -11,9 +11,15 @@ use std::{
 ///
 /// Hosts may construct this mapping directly or load it from a local clutch
 /// repository manifest.
+/// A clutch root and the path of one of its test files within it.
+type TestFile = (PathBuf, String);
+
 #[derive(Clone, Default)]
 pub struct ClutchRepository {
     providers: HashMap<String, PathBuf>,
+    /// Each indexed clutch's test files, by import name: the clutch root and
+    /// the file's path in it, which is read only when the module resolves.
+    tests: HashMap<String, TestFile>,
     plugin_initializers: HashMap<String, ClutchPluginInitializer>,
 }
 
@@ -22,6 +28,7 @@ impl fmt::Debug for ClutchRepository {
         formatter
             .debug_struct("ClutchRepository")
             .field("providers", &self.providers)
+            .field("tests", &self.tests)
             .field("plugin_initializer_count", &self.plugin_initializers.len())
             .finish()
     }
@@ -82,6 +89,7 @@ impl ClutchRepository {
         }
         Ok(Self {
             providers: indexed,
+            tests: HashMap::new(),
             plugin_initializers: HashMap::new(),
         })
     }
@@ -122,6 +130,8 @@ impl ClutchRepository {
             }
         })?;
         let mut providers = HashMap::new();
+        let mut tests = HashMap::new();
+        let mut clutches = HashSet::new();
         for (name, directory) in indexed {
             let path = clutch_directory(&root, &directory).map_err(|message| {
                 ClutchRepositoryError::Manifest {
@@ -147,12 +157,28 @@ impl ClutchRepository {
                     message: format!("clutch does not provide indexed module `{name}`"),
                 });
             }
+            if clutches.insert(path.clone()) {
+                for (test, file) in test_modules(&path, &manifest.tests).map_err(|message| {
+                    ClutchRepositoryError::Manifest {
+                        path: path.join("clutch.toml"),
+                        message,
+                    }
+                })? {
+                    if tests.insert(test.clone(), file).is_some() {
+                        return Err(ClutchRepositoryError::DuplicateProvider { name: test });
+                    }
+                }
+            }
             if providers.insert(name.clone(), path).is_some() {
                 return Err(ClutchRepositoryError::DuplicateProvider { name });
             }
         }
+        if let Some(name) = tests.keys().find(|test| providers.contains_key(*test)) {
+            return Err(ClutchRepositoryError::DuplicateProvider { name: name.clone() });
+        }
         Ok(Self {
             providers,
+            tests,
             plugin_initializers: HashMap::new(),
         })
     }
@@ -187,6 +213,18 @@ impl ClutchRepository {
     /// The names of every module a clutch in this repository provides.
     pub fn module_names(&self) -> impl Iterator<Item = &str> {
         self.providers.keys().map(String::as_str)
+    }
+
+    /// The file of the test module an indexed clutch declares under `name`,
+    /// or `None` when no indexed clutch declares one. The inner error reports
+    /// a declared file that escapes its clutch or cannot be accessed.
+    #[must_use]
+    pub fn test_module(&self, name: &str) -> Option<Result<PathBuf, String>> {
+        let (root, file) = self.tests.get(name)?;
+        Some(
+            source_path(root, file)
+                .map_err(|message| message.replace("module source", "test file")),
+        )
     }
 
     #[must_use]
@@ -467,6 +505,8 @@ pub fn load_module(root: &Path, name: &str) -> Result<ClutchModule, String> {
 struct ClutchManifest {
     modules: HashMap<String, ClutchModuleEntry>,
     native: Option<NativeClutch>,
+    /// The clutch's test files, relative to its root, from `[tests] files`.
+    tests: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -488,7 +528,7 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "manifest root must be a table".to_string())?;
-    require_keys(table, &["modules", "native"], "manifest")?;
+    require_keys(table, &["modules", "native", "tests"], "manifest")?;
     let modules = table_value(table, "modules", "manifest")?;
     let modules = modules
         .as_table()
@@ -539,10 +579,82 @@ fn parse_manifest(source: &str) -> Result<ClutchManifest, String> {
             },
         );
     }
+    let tests = table
+        .get("tests")
+        .map(parse_tests)
+        .transpose()?
+        .unwrap_or_default();
     Ok(ClutchManifest {
         modules: result,
         native,
+        tests,
     })
+}
+
+fn parse_tests(value: &toml::Value) -> Result<Vec<String>, String> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| "`tests` must be a table".to_string())?;
+    require_keys(table, &["files"], "`tests`")?;
+    let files = table_value(table, "files", "`tests`")?
+        .as_array()
+        .ok_or_else(|| "`files` in `tests` must be an array of paths".to_string())?;
+    files
+        .iter()
+        .map(|file| {
+            file.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "`files` in `tests` must be an array of paths".to_string())
+        })
+        .collect()
+}
+
+/// Each test file's import name, with the clutch root and the file's path:
+/// the clutch's name, its directory name without `.clutch`, followed by the
+/// file's path without `.slug`, with `/` written as `.`, so
+/// `tests/string.slug` in `slug.core.clutch` is `slug.core.tests.string`.
+/// Only the path's form is checked here; the file is read when the module
+/// resolves, as a module's source is.
+fn test_modules(root: &Path, files: &[String]) -> Result<Vec<(String, TestFile)>, String> {
+    let clutch = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".clutch"))
+        .ok_or_else(|| format!("clutch root {} must end in `.clutch`", root.display()))?;
+    files
+        .iter()
+        .map(|file| {
+            let relative = Path::new(file);
+            if relative.as_os_str().is_empty()
+                || relative.is_absolute()
+                || !relative
+                    .components()
+                    .all(|component| matches!(component, Component::Normal(_)))
+            {
+                return Err(format!("test file `{file}` escapes the clutch root"));
+            }
+            if relative
+                .extension()
+                .and_then(|extension| extension.to_str())
+                != Some("slug")
+            {
+                return Err(format!("test file `{file}` must name a `.slug` file"));
+            }
+            let module = Path::new(file)
+                .with_extension("")
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(".");
+            let name = format!("{clutch}.{module}");
+            if !valid_module_name(&name) {
+                return Err(format!(
+                    "test file `{file}` would be module `{name}`, which is not a valid module name"
+                ));
+            }
+            Ok((name, (root.to_path_buf(), file.clone())))
+        })
+        .collect()
 }
 
 fn parse_native(value: &toml::Value) -> Result<NativeClutch, String> {
