@@ -19,6 +19,10 @@ formats; Slug's string interpolation covers formatting values, so no
 `slug.fmt` module formats text. Each reports invalid input as an `Error` whose
 `type` is `<format>.parse`.
 
+`slug.fmt.json`, in the core clutch, is the library an agent wrote in the
+JSON project's json-fixes-2 run, chosen over five others for its correctness
+and speed, with the project's hidden suite as its tests.
+
 `slug.fmt.toml` lives in the core clutch and reads the part of TOML 1.0 that
 configuration and clutch manifests use: comments, bare, quoted, and dotted
 keys, `[table]` headers, basic and literal strings, decimal integers,

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- `slug.fmt.json` reads and writes JSON: `parse` reads a document into maps,
+  lists, strings, numbers, booleans, and `nil`, with every integer that fits
+  in 64 bits exact and other numbers correctly rounded, and `stringify` writes
+  compact, canonical JSON with sorted keys. Errors are `json.parse` with the
+  offset and `json.type`. It is the library an agent wrote in the JSON
+  project's json-fixes-2 run, chosen for passing every case and every extra
+  check and parsing a 1 MB document in 0.66 s, five or more times faster than
+  the others. The project's hidden suite runs as its Slug tests.
+
+- Agent evaluation installs leave out clutch test directories, which hold
+  project suites' hidden cases, and modules a project asks agents to write,
+  now `slug.fmt.json`. The JSON project's suite gains a case for an integer
+  written with an exponent, `7.2057594037927933e16`.
+
 - The core clutch's behaviour is tested in Slug: `@testWith` examples on
   `slug.math`, `slug.string`, and `slug.fmt.toml` functions, which also
   document them, and test files under its `[tests]`. `make check` runs them
