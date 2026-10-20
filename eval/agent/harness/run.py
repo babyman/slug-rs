@@ -833,9 +833,8 @@ def command_check_references(arguments):
             continue
         module = directory.name
         outcomes = projects.grade(str(slug), REPO, directory, directory / "reference" / f"{module}.slug", module)
-        # The reference is a naive baseline: cases marked `reference_fails`,
-        # such as correctly rounded numbers, are ones it is known to miss.
-        # Any other difference means the suite or the reference changed.
+        # Cases marked `reference_fails` are ones a reference is known to
+        # miss. Any other difference means the suite or the reference changed.
         expected = {case["id"] for case in projects.load_cases(directory) if case.get("reference_fails")}
         failed = {outcome["id"] for outcome in outcomes if not outcome["passed"]}
         if failed != expected:

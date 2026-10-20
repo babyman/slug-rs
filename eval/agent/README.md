@@ -23,15 +23,15 @@ default or Claude Code, headless on small tasks, once per feature arm and severa
 - `projects/` holds larger exercises that produce something useful. `json/`
   asks for a JSON library, `json.slug`, specified in its `task.md`, which the
   agent receives as `spec.md` in its workspace. Its hidden
-  suite, `cases.json`, has 108 cases covering parsing, correctly rounded
+  suite, `cases.json`, has 109 cases covering parsing, correctly rounded
   numbers, parse errors and their offsets, canonical serialization,
   serialization errors, round trips, and large and deeply nested documents.
   Each case runs as its own program beside the agent's module, so a crash or
   hang fails only that case, and a run scores the fraction of cases passed.
   Cases may set a `generate` recipe, for documents too large to store, and a
-  `seconds` time limit. `reference/json.slug` is a naive baseline for agents
-  to beat: it fails the cases marked `reference_fails`, such as correctly
-  rounded numbers, and passes the rest. `jobs/` asks for a concurrent job
+  `seconds` time limit. `reference/json.slug` is `slug.fmt.json`, the
+  library an agent wrote in the json-fixes-2 run, and passes every case. A
+  case a reference is known to fail can be marked `reference_fails`. `jobs/` asks for a concurrent job
   runner, `jobs.slug`: dependency planning and validation, a concurrency
   limit, retries, timeouts, failures that skip dependents without stopping
   other jobs, and a log file. Its 52 cases are `program` cases: whole Slug
