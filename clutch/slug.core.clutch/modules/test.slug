@@ -1,0 +1,162 @@
+/**
+ * Tools for writing tests: assertions, and the pieces a test runner uses to
+ * run `@test` and `@testWith` declarations.
+ *
+ * Every assertion that does not hold throws an `Error` whose `type` is
+ * `test.failure`, whose `msg` describes the failure, and whose `data` is
+ * `{expected, actual}`. A runner, such as `slug test`, reports it.
+ *
+ * A function tagged `@test` takes no arguments; it passes when it returns
+ * without throwing and does not return `false`. A tag
+ * `@testWith(arguments, expected, ...)` gives the function examples, each a
+ * list of arguments and the result calling the function with them must
+ * return, in pairs, as many as the tag holds.
+ */
+
+/**
+ * Throws a `test.failure` saying `message`, with `expected` and `actual` as
+ * its data.
+ */
+export val fail = fn(message:str, expected = nil, actual = nil) {
+    throw Error {
+        type: "test.failure",
+        msg: message,
+        data: {expected: expected, actual: actual},
+    }
+}
+
+/**
+ * Checks that `actual` equals `expected`.
+ */
+@testWith([1, 1], nil, [[1, "a"], [1, "a"]], nil)
+export val assertEqual = fn(actual, expected, message:str = "values differ") {
+    if (actual != expected) { fail(message, expected, actual) }
+}
+
+/**
+ * Checks that `actual` does not equal `unexpected`.
+ */
+export val assertNotEqual = fn(actual, unexpected, message:str = "values are equal") {
+    if (actual == unexpected) { fail(message, "a value other than $unexpected", actual) }
+}
+
+/**
+ * Checks that `value` is `true`.
+ */
+export val assertTrue = fn(value, message:str = "expected true") {
+    if (value != true) { fail(message, true, value) }
+}
+
+/**
+ * Checks that `value` is `false`.
+ */
+export val assertFalse = fn(value, message:str = "expected false") {
+    if (value != false) { fail(message, false, value) }
+}
+
+/**
+ * Checks that `actual` is within `tolerance` of `expected`, for comparing
+ * floats.
+ */
+@testWith([0.30000000000000004, 0.3, 0.000001], nil)
+export val assertNear = fn(actual:num, expected:num, tolerance:num, message:str = "values are not close") {
+    val difference = if (actual > expected) { actual - expected } else { expected - actual }
+    if (difference > tolerance) { fail(message, expected, actual) }
+}
+
+/**
+ * Checks that calling `work` throws, and returns what it threw. With `type`,
+ * the thrown value must be an error of that type, such as `"math.range"`.
+ */
+export val assertThrows = fn(work:fn, type:str|nil = nil) {
+    val outcome = attempt(work)
+    if (outcome.threw == false) {
+        fail("expected an error", type ?? "an error", outcome.value)
+    }
+    val thrown = outcome.value
+    if (type != nil) {
+        val actual = match thrown {
+            {type: kind} => kind
+            _ => thrown
+        }
+        if (actual != type) { fail("expected an error of type $type", type, actual) }
+    }
+    thrown
+}
+
+/**
+ * Calls `work` and returns `{threw: false, value}` with its result, or
+ * `{threw: true, value}` with what it threw.
+ */
+export val attempt = fn(work:fn):map {
+    defer onerror(error) {
+        return {threw: true, value: error}
+    }
+    {threw: false, value: work()}
+}
+
+/**
+ * The examples one `@testWith` tag gives, as `{arguments, expected}` maps.
+ * A tag whose argument count is odd gives none, and `check` reports that.
+ */
+@testWith([{name: "testWith", arguments: [[1, 2], 3, [0, 0], 0]}], [{arguments: [1, 2], expected: 3}, {arguments: [0, 0], expected: 0}])
+export val examples = fn(tag:map):list {
+    val values = tag.arguments
+    val go = fn(i:num, out:list):list {
+        if (i + 1 >= len(values)) {
+            out
+        } else {
+            recur(i + 2, out :+ {arguments: values[i], expected: values[i + 1]})
+        }
+    }
+    go(0, [])
+}
+
+/**
+ * Calls `function` with the list `arguments` and compares its result with
+ * `expected`, returning `nil` when they are equal and otherwise a failure
+ * map without throwing: `{msg, expected, actual}` for a wrong result or a
+ * failed assertion, or `{msg, error}` with what the function threw.
+ */
+export val check = fn(function, arguments, expected):map|nil {
+    val listed = match arguments {
+        _: list => true
+        _ => false
+    }
+    if (!listed) {
+        return {msg: "example arguments must be a list", expected: "a list", actual: arguments}
+    }
+    val outcome = attempt(fn() { function(...arguments) })
+    if (outcome.threw) {
+        describeThrown(outcome.value)
+    } else if (outcome.value != expected) {
+        {msg: "wrong result", expected: expected, actual: outcome.value}
+    } else {
+        nil
+    }
+}
+
+/**
+ * Runs a function tagged `@test`, returning `nil` when it passes and
+ * otherwise a failure map, as `check` returns.
+ */
+export val runTest = fn(function):map|nil {
+    val outcome = attempt(function)
+    if (outcome.threw) {
+        describeThrown(outcome.value)
+    } else if (outcome.value == false) {
+        {msg: "returned false", expected: nil, actual: false}
+    } else {
+        nil
+    }
+}
+
+// A failure map for a thrown value: an assertion's own message and values,
+// or the error as it was thrown.
+val describeThrown = fn(thrown):map {
+    match thrown {
+        {type: "test.failure", msg: msg, data: data} => {msg: msg, expected: data.expected, actual: data.actual}
+        {type: kind, msg: msg} => {msg: "threw $kind: $msg", error: thrown}
+        _ => {msg: "threw a value", error: thrown}
+    }
+}

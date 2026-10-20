@@ -67,6 +67,7 @@ fn slug_home(directory: &TemporaryDirectory) {
         "modules/math.slug",
         "modules/string.slug",
         "modules/toml.slug",
+        "modules/test.slug",
         "native/source/core.c",
         "native/source/slug_core.h",
     ] {
@@ -82,7 +83,8 @@ fn slug_home(directory: &TemporaryDirectory) {
          \"slug.io.stdin\" = \"slug.core.clutch\"\n\
          \"slug.math\" = \"slug.core.clutch\"\n\
          \"slug.string\" = \"slug.core.clutch\"\n\
-         \"slug.fmt.toml\" = \"slug.core.clutch\"\n",
+         \"slug.fmt.toml\" = \"slug.core.clutch\"\n\
+         \"slug.test\" = \"slug.core.clutch\"\n",
     )
     .expect("write repository manifest");
     let manifest = NativeManifest::from_clutch_source(

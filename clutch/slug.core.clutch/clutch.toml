@@ -4,6 +4,7 @@
 "slug.math" = { source = "modules/math.slug" }
 "slug.string" = { source = "modules/string.slug" }
 "slug.fmt.toml" = { source = "modules/toml.slug" }
+"slug.test" = { source = "modules/test.slug" }
 
 [native]
 profile = "events"

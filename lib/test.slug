@@ -1,0 +1,159 @@
+/**
+ * slug test — runs the tests of installed clutches.
+ *
+ *     slug --allow-unexported test ./path/to/name.clutch ...
+ *
+ * For each clutch, it runs every `@test` function and every `@testWith`
+ * example in the modules the clutch provides and in the test files its
+ * `clutch.toml` lists under `[tests] files`, unexported declarations
+ * included. A clutch must be the installed one, so its modules and test
+ * modules resolve. It prints each failure and a summary per clutch, and fails
+ * when any test does. See `slug.test` for assertions.
+ */
+
+val fs = import("slug.io.fs")
+val toml = import("slug.fmt.toml")
+val test = import("slug.test")
+val {join, chars} = import("slug.string")
+
+val readText = fn(path:str):str {
+    val file = fs.openRead(path)
+    defer fs.close(file)
+    val go = fn(lines:list<str>):list<str> {
+        match fs.readLine(file) {
+            nil => lines
+            line => recur(lines :+ line)
+        }
+    }
+    join(go([]), "\n")
+}
+
+// The clutch's name: its directory's name without `.clutch`.
+val clutchName = fn(path:str):str {
+    val parts = chars(path)
+    val trimmed = fn(end:num):num { if (end > 0 && parts[end - 1] == "/") { recur(end - 1) } else { end } }
+    val end = trimmed(len(parts))
+    val start = fn(i:num):num { if (i > 0 && parts[i - 1] != "/") { recur(i - 1) } else { i } }
+    val directory = join(parts[start(end):end])
+    val suffix = ".clutch"
+    if (len(directory) <= len(suffix) || directory[len(directory) - len(suffix):] != suffix) {
+        throw "$path is not a clutch directory ending in .clutch"
+    }
+    directory[0:len(directory) - len(suffix)]
+}
+
+// A test file's module name: the clutch's name, then the file's path without
+// `.slug`, with `/` as `.`.
+val testModuleName = fn(clutch:str, file:str):str {
+    val stem = if (len(file) > 5 && file[len(file) - 5:] == ".slug") { file[0:len(file) - 5] } else { file }
+    val dotted = join(chars(stem) /> map(fn(c) { if (c == "/") { "." } else { c } }))
+    clutch + "." + dotted
+}
+
+val map = fn(items:list, f:fn):list {
+    val go = fn(i:num, out:list):list { if (i == len(items)) { out } else { recur(i + 1, out :+ f(items[i])) } }
+    go(0, [])
+}
+
+// The outcomes of one module's tests, each `{label, failure}`, where
+// `failure` is `nil` for a pass.
+val runModule = fn(name:str):list {
+    val described = test.attempt(fn() { describe(name, unexported = true) })
+    if (described.threw) {
+        val error = described.value
+        return [{label: name, failure: {msg: "cannot load the module", error: error}}]
+    }
+    val forDeclaration = fn(declaration:map):list {
+        val label = name + "." + declaration.name
+        val forTag = fn(tag:map):list {
+            if (tag.name == "test") {
+                [{label: label, failure: test.runTest(declaration.value)}]
+            } else if (tag.name == "testWith") {
+                val examples = test.examples(tag)
+                if (len(tag.arguments) % 2 != 0) {
+                    [{label: label, failure: {msg: "@testWith needs pairs of an argument list and a result", error: tag.arguments}}]
+                } else {
+                    val go = fn(i:num, out:list):list {
+                        if (i == len(examples)) {
+                            out
+                        } else {
+                            val example = examples[i]
+                            val number = i + 1
+                            val failure = test.check(declaration.value, example.arguments, example.expected)
+                            val outcome = {label: "$label, example $number", failure: failure, arguments: example.arguments}
+                            recur(i + 1, out :+ outcome)
+                        }
+                    }
+                    go(0, [])
+                }
+            } else {
+                []
+            }
+        }
+        flatten(map(declaration.tags, forTag))
+    }
+    flatten(map(described.value, forDeclaration))
+}
+
+val flatten = fn(lists:list):list {
+    val go = fn(i:num, out:list):list { if (i == len(lists)) { out } else { recur(i + 1, out + lists[i]) } }
+    go(0, [])
+}
+
+val report = fn(outcome:map) {
+    val failure = outcome.failure
+    if (failure != nil) {
+        val label = outcome.label
+        val msg = failure.msg
+        println("FAIL $label: $msg")
+        if (outcome.arguments != nil) {
+            val arguments = outcome.arguments
+            println("  arguments: $arguments")
+        }
+        if (failure.error != nil) {
+            val error = failure.error
+            println("  error:     $error")
+        } else {
+            val expected = failure.expected
+            val actual = failure.actual
+            println("  expected:  $expected")
+            println("  actual:    $actual")
+        }
+    }
+}
+
+// Runs one clutch's tests and returns how many failed.
+val runClutch = fn(path:str):num {
+    val clutch = clutchName(path)
+    val manifest = toml.parse(readText(path + "/clutch.toml"))
+    val modules = keys(manifest.modules ?? {})
+    val files = (manifest.tests ?? {}).files ?? []
+    val names = modules + map(files, fn(file) { testModuleName(clutch, file) })
+    val outcomes = flatten(map(names, runModule))
+    val go = fn(i:num, failed:num):num {
+        if (i == len(outcomes)) {
+            failed
+        } else {
+            report(outcomes[i])
+            recur(i + 1, failed + (if (outcomes[i].failure == nil) { 0 } else { 1 }))
+        }
+    }
+    val failed = go(0, 0)
+    val passed = len(outcomes) - failed
+    println("$clutch: $passed passed, $failed failed")
+    failed
+}
+
+val main = fn(args:list) {
+    if (len(args) == 0) {
+        throw "usage: slug --allow-unexported test ./path/to/name.clutch ..."
+    }
+    val failed = map(args, runClutch)
+    val count = fn(i:num, sum:num):num { if (i == len(failed)) { sum } else { recur(i + 1, sum + failed[i]) } }
+    val failures = count(0, 0)
+    // A thrown value is the only way a Slug program exits with a failure
+    // status.
+    if (failures > 0) {
+        throw "$failures tests failed"
+    }
+}

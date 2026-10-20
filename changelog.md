@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `slug test` runs a clutch's tests:
+  `slug --allow-unexported test ./path/to/name.clutch`. It runs every `@test`
+  function and `@testWith` example in the clutch's modules and its declared
+  test files, prints each failure with its expected and actual values, and
+  exits nonzero when any fail. The new `slug.test` module provides
+  `assertEqual`, `assertNotEqual`, `assertTrue`, `assertFalse`, `assertNear`,
+  `assertThrows`, and `fail`, which throw `test.failure` errors.
+
 - A clutch declares its test files with `[tests] files = [...]` in
   `clutch.toml`. Each is a module named after the clutch and the file's path,
   so `tests/string.slug` in `slug.core.clutch` is `slug.core.tests.string`,
