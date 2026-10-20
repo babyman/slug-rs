@@ -1433,6 +1433,7 @@ impl Vm {
         globals.insert("cfg".into(), Value::Builtin(Builtin::Cfg));
         globals.insert("int".into(), Value::Builtin(Builtin::Int));
         globals.insert("stacktrace".into(), Value::Builtin(Builtin::Stacktrace));
+        globals.insert("describe".into(), Value::Builtin(Builtin::Describe));
     }
 
     #[cfg(not(feature = "concurrency"))]
@@ -4142,7 +4143,150 @@ impl Vm {
                 }
                 Ok(Value::string(render_stacktrace(&active)))
             }
+            Builtin::Describe => self.describe(arguments, span),
         }
+    }
+
+    /// `describe(module, unexported = false)`: the top-level declarations of
+    /// the named module, one map per binding, in source order. Unexported
+    /// ones are included only when asked for and the host's user granted it.
+    fn describe(&self, arguments: &[Value], span: Option<SourceSpan>) -> VmResult<Value> {
+        if arguments.is_empty() || arguments.len() > 2 {
+            return Err(self.error(
+                RuntimeErrorKind::Arity,
+                format!(
+                    "`describe` expects 1 or 2 arguments, got {}",
+                    arguments.len()
+                ),
+                span,
+            ));
+        }
+        let Value::Str(name) = &arguments[0] else {
+            return Err(self.error(
+                RuntimeErrorKind::Type,
+                format!(
+                    "`describe` expects a module name, got {}",
+                    arguments[0].type_name()
+                ),
+                span,
+            ));
+        };
+        let unexported = match arguments.get(1) {
+            None => false,
+            Some(Value::Bool(unexported)) => *unexported,
+            Some(other) => {
+                return Err(self.error(
+                    RuntimeErrorKind::Type,
+                    format!(
+                        "`describe` expects `unexported` to be bool, got {}",
+                        other.type_name()
+                    ),
+                    span,
+                ));
+            }
+        };
+        let host = self.host.clone().ok_or_else(|| {
+            self.error(
+                RuntimeErrorKind::Module,
+                "module loader is not configured".into(),
+                span.clone(),
+            )
+        })?;
+        if unexported && !host.permits(crate::DESCRIBE_UNEXPORTED) {
+            return Err(self.error(
+                RuntimeErrorKind::Permission,
+                "`describe` with `unexported = true` requires running slug with --allow-unexported"
+                    .into(),
+                span,
+            ));
+        }
+        let importer = self
+            .module_program
+            .as_ref()
+            .and_then(|program| program.module_key());
+        let description = host
+            .describe_module(importer, name)
+            .map_err(|error| self.import_error(&error, span.clone()))?;
+        let mut declarations = Vec::new();
+        for declaration in &description.declarations {
+            if !declaration.exported && !unexported {
+                continue;
+            }
+            let tags = Value::list(
+                declaration
+                    .tags
+                    .iter()
+                    .map(|tag| {
+                        Value::map(vec![
+                            (Value::string("name"), Value::string(tag.name.as_str())),
+                            (
+                                Value::string("arguments"),
+                                Value::list(tag.arguments.clone()),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            );
+            let documentation = declaration
+                .documentation
+                .as_deref()
+                .map_or(Value::Nil, |raw| {
+                    Value::string(Self::documentation_text(raw))
+                });
+            for binding in &declaration.bindings {
+                let value = description
+                    .values
+                    .get(binding)
+                    .cloned()
+                    .unwrap_or(Value::Nil);
+                declarations.push(Value::map(vec![
+                    (Value::string("name"), Value::string(binding.as_str())),
+                    (Value::string("exported"), Value::Bool(declaration.exported)),
+                    (Value::string("mutable"), Value::Bool(declaration.mutable)),
+                    (Value::string("documentation"), documentation.clone()),
+                    (Value::string("tags"), tags.clone()),
+                    (Value::string("value"), value),
+                ]));
+            }
+        }
+        Ok(Value::list(declarations))
+    }
+
+    /// A doc block's text without its comment markers: each line's leading
+    /// `*` and the one space after it, and blank lines at either end.
+    fn documentation_text(raw: &str) -> String {
+        let lines = raw
+            .lines()
+            .map(|line| {
+                let line = line.trim_start();
+                let line = line.strip_prefix('*').unwrap_or(line);
+                line.strip_prefix(' ').unwrap_or(line).trim_end()
+            })
+            .collect::<Vec<_>>();
+        let first = lines.iter().position(|line| !line.is_empty());
+        let last = lines.iter().rposition(|line| !line.is_empty());
+        match (first, last) {
+            (Some(first), Some(last)) => lines[first..=last].join("\n"),
+            _ => String::new(),
+        }
+    }
+
+    /// The values of the module's top-level declarations, as initialization
+    /// left them, by binding name.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn declared_values(&self) -> crate::platform::HashMap<String, Value> {
+        let globals = self.globals.borrow();
+        self.module_metadata
+            .iter()
+            .flat_map(|declaration| &declaration.bindings)
+            .filter_map(|name| {
+                globals
+                    .get(name)
+                    .and_then(|value| value.resolve().ok())
+                    .map(|value| (name.clone(), value))
+            })
+            .collect()
     }
 
     fn configuration(&self, span: Option<SourceSpan>) -> VmResult<&dyn crate::VmConfiguration> {
@@ -4574,6 +4718,54 @@ impl Vm {
         ))
     }
 
+    /// Places a builtin's named arguments at their parameters' positions.
+    /// Builtins take no gaps: every parameter before the last one given must
+    /// be given.
+    fn bind_builtin_arguments(
+        &self,
+        builtin: Builtin,
+        positional: Vec<Value>,
+        named: Vec<(String, Value)>,
+    ) -> VmResult<(Vec<Value>, Vec<bool>)> {
+        let parameters = builtin.parameter_names();
+        let mut bound = positional.into_iter().map(Some).collect::<Vec<_>>();
+        for (name, value) in named {
+            let slot = parameters
+                .iter()
+                .position(|parameter| *parameter == name)
+                .ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::Name,
+                        format!("unknown parameter `{name}`"),
+                    )
+                })?;
+            if bound.len() <= slot {
+                bound.resize_with(slot + 1, || None);
+            }
+            if bound[slot].is_some() {
+                return Err(self.error_at(
+                    RuntimeErrorKind::Arity,
+                    format!("parameter `{name}` was assigned more than once"),
+                ));
+            }
+            bound[slot] = Some(value);
+        }
+        let arguments = bound
+            .into_iter()
+            .enumerate()
+            .map(|(slot, value)| {
+                value.ok_or_else(|| {
+                    self.error_at(
+                        RuntimeErrorKind::Arity,
+                        format!("missing argument for parameter `{}`", parameters[slot]),
+                    )
+                })
+            })
+            .collect::<VmResult<Vec<_>>>()?;
+        let provided = vec![true; arguments.len()];
+        Ok((arguments, provided))
+    }
+
     fn bind_call_arguments(
         &self,
         program: &Program,
@@ -4581,6 +4773,11 @@ impl Vm {
         mut positional: Vec<Value>,
         named: Vec<(String, Value)>,
     ) -> VmResult<(Vec<Value>, Vec<bool>)> {
+        if let Value::Builtin(builtin) = callee
+            && !named.is_empty()
+        {
+            return self.bind_builtin_arguments(*builtin, positional, named);
+        }
         let Value::Closure(closure) = callee else {
             if named.is_empty() {
                 return Ok((positional.clone(), vec![true; positional.len()]));

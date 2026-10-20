@@ -53,7 +53,8 @@ pub use native::{
 };
 /// Experimental VM-to-host callbacks. This trait is not a stable embedding API.
 pub use runtime_host::{
-    EmptyVmConfiguration, MissingModule, VmConfiguration, VmHost, VmHostError, VmModuleExports,
+    DESCRIBE_UNEXPORTED, EmptyVmConfiguration, MissingModule, VmConfiguration, VmHost, VmHostError,
+    VmModuleDescription, VmModuleExports,
 };
 pub use source_diagnostic::{
     SourceDiagnostic, SourceEdit, SourceErrorKind, SourceFix, SourcePosition, SourceRange,

@@ -188,10 +188,15 @@ fn main() -> ExitCode {
     let mut args = env::args();
     let executable = args.next().unwrap_or_else(|| "slug".into());
     let mut remaining = args.collect::<Vec<_>>().into_iter().peekable();
-    let json = remaining
-        .peek()
-        .is_some_and(|argument| argument == "--diagnostic-format=json");
-    if json {
+    // Leading options, in any order, before the command or program.
+    let mut json = false;
+    let mut allow_unexported = false;
+    while let Some(option) = remaining.peek() {
+        match option.as_str() {
+            "--diagnostic-format=json" => json = true,
+            "--allow-unexported" => allow_unexported = true,
+            _ => break,
+        }
         remaining.next();
     }
     match remaining.next().as_deref() {
@@ -206,7 +211,7 @@ fn main() -> ExitCode {
                 "slim build"
             };
             println!(
-                "slug-vm {} ({build})\n\nUsage:\n  {executable} [--diagnostic-format=json] program.slug [arguments...]\n  {executable} [--diagnostic-format=json] compile program.slug output.cslug\n  {executable} [--diagnostic-format=json] run program.cslug [arguments...]\n  {executable} [--diagnostic-format=json] report program.slug|program.cslug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len. Compiled .cslug artifacts are closed programs and run without source resolution.",
+                "slug-vm {} ({build})\n\nUsage:\n  {executable} [--diagnostic-format=json] [--allow-unexported] program.slug [arguments...]\n  {executable} [--diagnostic-format=json] compile program.slug output.cslug\n  {executable} [--diagnostic-format=json] run program.cslug [arguments...]\n  {executable} [--diagnostic-format=json] report program.slug|program.cslug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len. Compiled .cslug artifacts are closed programs and run without source resolution.",
                 env!("CARGO_PKG_VERSION"),
             );
             ExitCode::SUCCESS
@@ -262,7 +267,7 @@ fn main() -> ExitCode {
         }
         Some(path) => {
             let program_arguments = remaining.collect::<Vec<_>>();
-            run(path, &program_arguments, json)
+            run(path, &program_arguments, json, allow_unexported)
         }
     }
 }
@@ -450,7 +455,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
     }
 }
 
-fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
+fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: bool) -> ExitCode {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let library_root = default_library_root(slug_home.as_deref());
@@ -488,6 +493,9 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if allow_unexported {
+        loader.grant(slug_vm::DESCRIBE_UNEXPORTED);
+    }
     let resolved_path = resolved_path.to_string_lossy();
     let mut program = match loader.compile_source(&resolved_path, &source) {
         Ok(program) => program,

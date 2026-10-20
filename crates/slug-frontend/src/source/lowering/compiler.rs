@@ -45,7 +45,7 @@ pub(super) struct Compiler {
 }
 
 /// The VM's own builtins, which it installs in every module's globals.
-const VM_BUILTINS: [&str; 3] = ["cfg", "int", "stacktrace"];
+const VM_BUILTINS: [&str; 4] = ["cfg", "int", "stacktrace", "describe"];
 
 pub(super) struct CompiledProgram {
     pub(super) program: Program,

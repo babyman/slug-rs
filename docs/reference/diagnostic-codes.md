@@ -54,7 +54,9 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 Runtime and module diagnostics use these codes: `invalid_bytecode`, `type`,
 `name`, `arity`, `divide_by_zero`, `invalid_call`, `native`,
 `native_contract`, `module`, `module_not_found`, `not_implemented`, `match`,
-or `thrown`. `module_not_found` is an import of a module that no root or clutch
+`thrown`, or `permission`. `permission` is an operation the user running slug
+has not granted, such as `describe` of unexported declarations without
+`--allow-unexported`. `module_not_found` is an import of a module that no root or clutch
 provides; its diagnostic may carry [suggestions](diagnostics.md#suggestions).
 Other module failures currently share the `module` code. When an imported
 module does not compile, the `module` diagnostic's `cause` is that module's

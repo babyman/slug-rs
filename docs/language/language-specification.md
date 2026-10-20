@@ -870,14 +870,37 @@ The current Rust subset accepts tags on `val`, `var`, `foreign`, `resource`,
 and `enum` declarations and on function parameters. It evaluates their
 arguments in the current lexical environment when the corresponding declaration
 or function literal is evaluated; declaration tags run before the declared
-value. Tagged foreign declarations retain their metadata, but host resolution
-and `slug.meta` introspection are not implemented yet.
+value. Tagged foreign declarations retain their metadata. `describe` reports a
+module's top-level declaration tags, as described below.
 
 The subset also parses strict documentation blocks on top-level `val`, `var`,
 `foreign`, `resource`, and `enum` declarations, as well as a first module doc
 block followed by a blank line. It retains top-level declaration documentation
-and evaluated tag metadata in the module model; metadata introspection is not
-implemented yet.
+and evaluated tag metadata in the module model, which `describe` reports.
+
+`describe(module, unexported = false)` initializes the module named `module`,
+resolved as `import` resolves it, and returns its top-level declarations in
+source order, one map per declared binding:
+
+| Key | Value |
+|---|---|
+| `name` | the binding's name |
+| `exported` | whether the declaration is exported |
+| `mutable` | whether it is a `var` |
+| `documentation` | its doc block's text without the `*` markers, or `nil` |
+| `tags` | its tags in order, each `{name, arguments}`, with the arguments as evaluated |
+| `value` | the binding's value when the module finished initializing |
+
+```slug
+val examples = describe("calc")[0].tags   // [{name: "testWith", arguments: [[1, 2], 3]}]
+```
+
+By default only exported declarations are returned. `unexported = true` adds
+the others, which bypasses the module's encapsulation, so it is allowed only
+when the user running slug grants the `describe.unexported` permission with
+`--allow-unexported`; otherwise it is a `permission` runtime error. A host
+without module metadata, such as one running a compiled `.cslug` artifact,
+reports that it cannot describe modules.
 
 ```slug
 @deprecated
@@ -938,7 +961,8 @@ A doc block uses `/** ... */`. Every non-empty content line must begin with
 is exported, allowing intervening tags, the `export` modifier, and comments.
 The first meaningful doc
 block in a module is the module documentation when it is followed by a blank
-line. Documentation and tags are observable through `slug.meta` introspection.
+line. Top-level declaration documentation and tags are observable through
+`describe`.
 
 ## Static checking
 

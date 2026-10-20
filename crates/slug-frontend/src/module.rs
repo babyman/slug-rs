@@ -18,7 +18,7 @@ use slug_loader::{
 };
 use slug_vm::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
-    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports,
+    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleDescription, VmModuleExports,
     cslug::{Artifact, ImportEdge, Module as ArtifactModule},
     native_resource_registry,
 };
@@ -465,6 +465,7 @@ impl ModuleGraph {
             program: program.program().clone(),
             exports: Value::map(Vec::new()),
             metadata: vm.module_metadata().to_vec(),
+            values: HashMap::new(),
             live_exports: vm.live_exported_values(program.program()),
         };
         self.state
@@ -498,6 +499,7 @@ impl ModuleGraph {
         let instance = ModuleInstance {
             exports: vm.exported_values(program.program()),
             metadata: vm.module_metadata().to_vec(),
+            values: vm.declared_values(),
             ..instance
         };
         self.state
@@ -581,6 +583,7 @@ impl ModuleGraph {
             program,
             exports: exports.clone(),
             metadata: Vec::new(),
+            values: HashMap::new(),
             live_exports: exports,
         };
         self.state
@@ -610,10 +613,26 @@ pub struct ModuleInstance {
     pub program: Program,
     pub exports: Value,
     pub metadata: Vec<ModuleDeclaration>,
+    /// Every top-level binding's value as initialization left it, exported or
+    /// not, for `describe`.
+    pub values: HashMap<String, Value>,
     pub(crate) live_exports: Value,
 }
 
 impl ModuleInstance {
+    /// Its declarations and their values, as `describe` reports them.
+    #[must_use]
+    pub fn description(&self) -> VmModuleDescription {
+        VmModuleDescription {
+            declarations: self.metadata.clone(),
+            values: self
+                .values
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        }
+    }
+
     /// Returns the live export map used by runtime `import()` calls.
     #[must_use]
     pub fn live_exports(&self) -> Value {
@@ -880,6 +899,18 @@ impl VmHost for ModuleHost {
         Ok(VmModuleExports {
             exports: instance.live_exports,
         })
+    }
+
+    fn describe_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleDescription, VmHostError> {
+        let importer = importer.map(ModuleKey::new);
+        let instance = self
+            .initialize_request(ModuleRequest::new(importer.as_ref(), name))
+            .map_err(VmHostError::from)?;
+        Ok(instance.description())
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value> {

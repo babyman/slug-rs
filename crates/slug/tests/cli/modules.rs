@@ -451,3 +451,83 @@ fn a_bare_program_name_imports_sibling_modules() {
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
 }
+
+#[test]
+fn describes_a_modules_declarations_and_gates_unexported_ones() {
+    let root = std::env::temp_dir().join(format!("slug-cli-describe-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create describe fixture directory");
+    fs::write(
+        root.join("lib.slug"),
+        "/**\n * Adds two numbers.\n */\n\
+         @testWith([1, 2], 3)\n\
+         @testWith([0, 0], 0)\n\
+         export val add = fn(a, b) { a + b }\n\
+         \n\
+         @test\n\
+         val helper = fn() { add(2, 2) == 4 }\n\
+         \n\
+         export var count = 7\n",
+    )
+    .expect("write described module");
+    let path = root.join("main.slug");
+    let run = |source: &str, allow: bool| {
+        fs::write(&path, source).expect("write describing source");
+        let mut command = slug();
+        if allow {
+            command.arg("--allow-unexported");
+        }
+        let output = command.arg(&path).output().expect("run describing source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // Exported declarations, in source order, with their documentation,
+    // evaluated tags, and values.
+    let exported = "val all = describe(\"lib\")\n\
+         println(len(all), all[0].name, all[0].exported, all[0].mutable, all[0].documentation)\n\
+         println(all[0].tags, all[0].value(20, 22))\n\
+         println(all[1].name, all[1].mutable, all[1].documentation, all[1].value)\n";
+    for allow in [false, true] {
+        let (code, stdout, stderr) = run(exported, allow);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert_eq!(
+            stdout,
+            "2 add true false Adds two numbers.\n\
+             [{\"name\": \"testWith\", \"arguments\": [[1, 2], 3]}, {\"name\": \"testWith\", \"arguments\": [[0, 0], 0]}] 42\n\
+             count true nil 7\n"
+        );
+    }
+
+    // Unexported declarations need the user's permission.
+    let unexported = "val all = describe(\"lib\", unexported = true)\n\
+         println(len(all), all[1].name, all[1].exported, all[1].tags, all[1].value())\n";
+    let (code, stdout, stderr) = run(unexported, true);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "3 helper false [{\"name\": \"test\", \"arguments\": []}] true\n"
+    );
+    for source in [unexported, "describe(\"lib\", true)\n"] {
+        let (code, _, stderr) = run(source, false);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains(
+                "runtime error: `describe` with `unexported = true` requires running slug with --allow-unexported"
+            ),
+            "{source}: {stderr}"
+        );
+        assert!(stderr.contains("code: permission"), "{stderr}");
+    }
+
+    // A module that does not exist fails as an import does.
+    let (code, _, stderr) = run("describe(\"missing\")\n", false);
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("module `missing` was not found"),
+        "{stderr}"
+    );
+    fs::remove_dir_all(root).expect("remove describe fixture directory");
+}

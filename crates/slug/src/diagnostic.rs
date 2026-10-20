@@ -529,6 +529,7 @@ pub fn runtime_code(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::NotImplemented => "not_implemented",
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
+        RuntimeErrorKind::Permission => "permission",
     }
 }
 

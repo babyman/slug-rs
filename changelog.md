@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `describe(module, unexported = false)` returns a module's top-level
+  declarations, each with its name, whether it is exported or mutable, its
+  documentation, its tags with their evaluated arguments, and its value, so
+  a Slug program can find `@test` and `@testWith` declarations. Unexported
+  declarations need the new `--allow-unexported` runner flag, which grants the
+  `describe.unexported` permission; without it the request is a `permission`
+  runtime error. Builtins now accept named arguments.
+
 - The specification now describes integer arithmetic: when `/` gives an
   integer or a float, the sign of `%`, and `math.div` for an exact quotient
   rounded toward zero. The Tiny project's hidden suite gains a

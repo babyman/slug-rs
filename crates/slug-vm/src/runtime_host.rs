@@ -8,8 +8,8 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use core::fmt;
 
 use crate::{
-    NativeDescriptorError, NativeFunction, NativeResourceRegistry, SourceDiagnostic, Value,
-    platform::HashMap,
+    ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry,
+    SourceDiagnostic, Value, platform::HashMap,
 };
 
 /// Checked failure returned by a VM host callback.
@@ -106,6 +106,18 @@ pub struct VmModuleExports {
     pub exports: Value,
 }
 
+/// An initialized module's top-level declarations, for `describe`: their
+/// metadata, in source order, and the value of each binding they declare.
+#[derive(Clone, Debug)]
+pub struct VmModuleDescription {
+    pub declarations: Vec<ModuleDeclaration>,
+    pub values: HashMap<String, Value>,
+}
+
+/// The permission that lets `describe` return a module's unexported
+/// declarations, which a host grants only when its user asks.
+pub const DESCRIBE_UNEXPORTED: &str = "describe.unexported";
+
 /// Runtime configuration callbacks required by `cfg` and typed entrypoints.
 ///
 /// Concrete hosts collect and interpret configuration before constructing a VM.
@@ -167,6 +179,32 @@ pub trait VmHost {
         importer: Option<&str>,
         name: &str,
     ) -> Result<VmModuleExports, VmHostError>;
+
+    /// Initializes a module, as [`Self::import_module`] does, and describes
+    /// its top-level declarations. Hosts without module metadata keep the
+    /// default, which reports that `describe` is unavailable.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked host failure when the module is unavailable or cannot
+    /// be initialized, or the host cannot describe modules.
+    fn describe_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleDescription, VmHostError> {
+        let _ = importer;
+        Err(VmHostError::new(format!(
+            "this host cannot describe modules, so `describe(\"{name}\")` is unavailable"
+        )))
+    }
+
+    /// Whether the host's user granted `permission`, such as
+    /// [`DESCRIBE_UNEXPORTED`]. Hosts grant nothing by default.
+    fn permits(&self, permission: &str) -> bool {
+        let _ = permission;
+        false
+    }
 
     /// Values exposed by the host-provided `slug.builtin` module.
     fn builtin_globals(&self) -> HashMap<String, Value>;

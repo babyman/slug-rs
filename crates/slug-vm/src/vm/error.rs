@@ -25,6 +25,9 @@ pub enum RuntimeErrorKind {
     NotImplemented,
     Match,
     Thrown,
+    /// An operation the host's user has not granted, such as describing a
+    /// module's unexported declarations.
+    Permission,
 }
 
 /// A Slug-level runtime error, never a host panic.
@@ -251,5 +254,6 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::NotImplemented => "not_implemented",
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
+        RuntimeErrorKind::Permission => "permission",
     }
 }

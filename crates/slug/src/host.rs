@@ -2,7 +2,7 @@
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
     rc::Rc,
@@ -16,7 +16,8 @@ use slug_frontend::{
 use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_vm::{
     NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program, Value, Vm,
-    VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+    VmConfiguration, VmHost, VmHostError, VmModuleDescription, VmModuleExports,
+    native_resource_registry,
 };
 
 use crate::Configuration;
@@ -35,6 +36,8 @@ struct DesktopLoaderState {
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
+    /// What the user running slug granted, such as `describe.unexported`.
+    permissions: RefCell<HashSet<String>>,
 }
 
 impl DesktopLoader {
@@ -100,6 +103,7 @@ impl DesktopLoader {
                 native_resources: native_resource_registry(),
                 warnings: RefCell::new(Vec::new()),
                 shutdown_errors: RefCell::new(Vec::new()),
+                permissions: RefCell::new(HashSet::new()),
             }),
         }
     }
@@ -306,6 +310,17 @@ impl ModuleGraphHost for DesktopLoader {
     }
 }
 
+impl DesktopLoader {
+    /// Grants `permission`, such as [`slug_vm::DESCRIBE_UNEXPORTED`], to the
+    /// programs this loader runs. Only the user running slug grants one.
+    pub fn grant(&self, permission: &str) {
+        self.state
+            .permissions
+            .borrow_mut()
+            .insert(permission.into());
+    }
+}
+
 impl VmHost for DesktopLoader {
     fn import_module(
         &self,
@@ -321,6 +336,24 @@ impl VmHost for DesktopLoader {
         Ok(VmModuleExports {
             exports: instance.live_exports(),
         })
+    }
+
+    fn describe_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleDescription, VmHostError> {
+        let importer = importer.map(ModuleKey::new);
+        let instance = self
+            .state
+            .graph
+            .initialize(self, ModuleRequest::new(importer.as_ref(), name))
+            .map_err(VmHostError::from)?;
+        Ok(instance.description())
+    }
+
+    fn permits(&self, permission: &str) -> bool {
+        self.state.permissions.borrow().contains(permission)
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value> {

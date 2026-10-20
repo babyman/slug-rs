@@ -29,6 +29,20 @@ pub enum Builtin {
     Cfg,
     Int,
     Stacktrace,
+    Describe,
+}
+
+impl Builtin {
+    /// The names a call may give the builtin's parameters, in order.
+    #[must_use]
+    pub const fn parameter_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Cfg => &["key", "default"],
+            Self::Int => &["value"],
+            Self::Stacktrace => &["error"],
+            Self::Describe => &["module", "unexported"],
+        }
+    }
 }
 
 /// A FIFO channel with bounded buffering and parked task wait queues.
