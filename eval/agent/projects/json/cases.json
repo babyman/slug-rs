@@ -620,6 +620,13 @@
    "reference_fails": true
   },
   {
+   "id": "number-exponent-integer",
+   "kind": "parse",
+   "input": "7.2057594037927933e16",
+   "expect": "72057594037927933",
+   "reference_fails": true
+  },
+  {
    "id": "number-smallest-integer",
    "kind": "parse",
    "input": "-9223372036854775808",

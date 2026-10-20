@@ -87,6 +87,11 @@ JSON_DOCS = [
     "docs/reference/value-json.md",
 ]
 REPORT_DOCS = ["docs/reference/capability-report.md"]
+# Library modules a project asks agents to write, with their source files,
+# withheld from every run's documentation and install so no agent finds one
+# ready-made: `slug.fmt.json` is the JSON project's chosen solution.
+WITHHELD_MODULES = {"slug.fmt.json": "json.slug"}
+
 LIBRARY_SOURCES = [
     ("lib/slug", "library"),
     ("clutch/slug.core.clutch/modules", "library/core"),
@@ -245,7 +250,11 @@ def prepare_workspace(run, run_temp):
     for path in paths:
         shutil.copyfile(REPO / path, docs / Path(path).name)
     for source, target in LIBRARY_SOURCES:
-        shutil.copytree(REPO / source, docs / target, ignore=shutil.ignore_patterns(".DS_Store"))
+        shutil.copytree(
+            REPO / source,
+            docs / target,
+            ignore=shutil.ignore_patterns(".DS_Store", *WITHHELD_MODULES.values()),
+        )
     if run["kind"] == "project":
         shutil.copyfile(PROJECTS / run["task"] / "task.md", workspace / "spec.md")
     if run["kind"] == "review":
@@ -382,8 +391,14 @@ def isolated_install(slug):
     so nothing the agent can see points into the repository, where reference
     solutions and hidden cases live."""
     install = Path(tempfile.mkdtemp(prefix="slug-eval-install-"))
+    # Clutch tests are left out: some hold project suites' hidden cases.
+    ignore = shutil.ignore_patterns(".DS_Store", "tests", *WITHHELD_MODULES.values())
     for directory in ("lib", "clutch"):
-        shutil.copytree(REPO / directory, install / "home" / directory, ignore=shutil.ignore_patterns(".DS_Store"))
+        shutil.copytree(REPO / directory, install / "home" / directory, ignore=ignore)
+    for manifest in (install / "home" / "clutch").glob("**/*.toml"):
+        lines = manifest.read_text().splitlines(keepends=True)
+        kept = [line for line in lines if not any(f'"{name}"' in line for name in WITHHELD_MODULES)]
+        manifest.write_text("".join(kept))
     (install / "bin").mkdir()
     shutil.copy2(slug, install / "bin" / "slug-real")
     shutil.copy2(HERE / "slug_wrapper.py", install / "bin" / "slug_wrapper.py")
