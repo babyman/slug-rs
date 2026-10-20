@@ -1,0 +1,32 @@
+val test = import("slug.test")
+
+@test
+val assertionsThrowTestFailures = fn() {
+    val thrown = test.assertThrows(fn() { test.assertEqual(1, 2, "numbers") }, "test.failure")
+    test.assertEqual(thrown.msg, "numbers")
+    test.assertEqual(thrown.data, {expected: 2, actual: 1})
+    test.assertThrows(fn() { test.assertTrue(1) }, "test.failure")
+    test.assertThrows(fn() { test.assertFalse(nil) }, "test.failure")
+    test.assertThrows(fn() { test.assertNotEqual(1, 1) }, "test.failure")
+    test.assertThrows(fn() { test.assertNear(1.0, 1.1, 0.01) }, "test.failure")
+}
+
+@test
+val assertThrowsChecksTheType = fn() {
+    val wrongType = test.assertThrows(fn() { test.assertThrows(fn() { 1 / 0 }, "math.range") })
+    test.assertEqual(wrongType.data, {expected: "math.range", actual: "divide_by_zero"})
+    val nothing = test.assertThrows(fn() { test.assertThrows(fn() { 1 }) })
+    test.assertEqual(nothing.msg, "expected an error")
+    test.assertEqual(test.assertThrows(fn() { throw "plain" }), "plain")
+}
+
+@test
+val checkAndRunTestReportFailuresWithoutThrowing = fn() {
+    val add = fn(a, b) { a + b }
+    test.assertEqual(test.check(add, [1, 2], 3), nil)
+    test.assertEqual(test.check(add, [1, 2], 4), {msg: "wrong result", expected: 4, actual: 3})
+    test.assertEqual((test.check(add, 1, 2) ?? {}).msg, "example arguments must be a list")
+    test.assertEqual((test.check(fn() { 1 / 0 }, [], 1) ?? {}).msg, "threw divide_by_zero: division by zero")
+    test.assertEqual(test.runTest(fn() { true }), nil)
+    test.assertEqual((test.runTest(fn() { false }) ?? {}).msg, "returned false")
+}

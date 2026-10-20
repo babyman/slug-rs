@@ -1,0 +1,55 @@
+val toml = import("slug.fmt.toml")
+val {assertEqual, assertThrows} = import("slug.test")
+
+@test
+val readsEveryValueForm = fn() {
+    val text = "x = \"hi\\tthere\" # comment\ny = 'raw\\n'\nz = [1, 2,\n  3, # c\n]\nw = { k = true, \"q.k\" = -5 }\n[t.\"u.v\".w]\nn = 1_000\na.b = false\n"
+    assertEqual(toml.parse(text), {
+        x: "hi\tthere",
+        y: "raw\\n",
+        z: [1, 2, 3],
+        w: {k: true, "q.k": -5},
+        t: {"u.v": {w: {n: 1000, a: {b: false}}}},
+    })
+}
+
+@test
+val readsEscapesAndWindowsLineEndings = fn() {
+    assertEqual(toml.parse("a = \"\\u00e9 \\U0001F600\"\r\nb = 2\r\n"), {a: "é 😀", b: 2})
+    assertEqual(toml.parse("# only a comment\n\n"), {})
+}
+
+@test
+val headersAndDottedKeysBuildTables = fn() {
+    assertEqual(toml.parse("[a]\nb=1\n[a.c]\nd=2"), {a: {b: 1, c: {d: 2}}})
+    assertEqual(toml.parse("a = [1, \"x\", [true], {}]\nb . c = 3"), {a: [1, "x", [true], {}], b: {c: 3}})
+}
+
+// Where `text` fails and why, as "line:column message".
+val error = fn(text:str):str {
+    val thrown = assertThrows(fn() { toml.parse(text) }, "toml.parse")
+    val line = thrown.data.line
+    val column = thrown.data.column
+    val msg = thrown.msg
+    "$line:$column $msg"
+}
+
+@testWith(
+    ["a = 1\na = 2"], "2:1 key `a` is defined twice",
+    ["[t]\n[t]"], "2:1 table [t] is defined twice",
+    ["a = 1.5"], "1:5 floats are not supported",
+    ["[[x]]"], "1:1 arrays of tables are not supported",
+    ["a = \"\"\"x\"\"\""], "1:5 multi-line strings are not supported",
+    ["a = 0x10"], "1:5 only decimal integers are supported",
+    ["a = 01"], "1:5 an integer must not have a leading zero",
+    ["a = 1979-05-27"], "1:5 dates and times are not supported",
+    ["a = \"x"], "1:7 unterminated string",
+    ["a = 1 b = 2"], "1:7 expected the end of the line",
+    ["a = 1_"], "1:6 an underscore must sit between two digits",
+    ["a = 9223372036854775808"], "1:5 integer is out of range",
+    ["a = 1\na.b = 2"], "2:1 key `a` is not a table",
+    ["= 1"], "1:1 expected a key",
+    ["a = "], "1:5 expected a value",
+    ["a = \"\\q\""], "1:7 invalid escape"
+)
+val reportsErrorsByPosition = error

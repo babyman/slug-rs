@@ -1,0 +1,66 @@
+val {ord, chr, sort, join, toInt, chars} = import("slug.string")
+val {assertEqual, assertThrows} = import("slug.test")
+
+val failure = fn(work:fn):list {
+    val error = assertThrows(work)
+    [error.type, error.msg]
+}
+
+@test
+val charactersRoundTrip = fn() {
+    assertEqual(ord("😀"), 128512)
+    assertEqual(ord(chr(1114111)), 1114111)
+    assertEqual(chr(128512), "😀")
+    assertEqual(chr(0) == "\0", true)
+}
+
+@test
+val ordAndChrRejectWhatIsNotOneScalarValue = fn() {
+    val oneCharacter = ["string.range", "ord requires a string of exactly one character"]
+    val scalar = ["string.range", "chr requires a Unicode scalar value"]
+    assertEqual(failure(fn() { ord("") }), oneCharacter)
+    assertEqual(failure(fn() { ord("ab") }), oneCharacter)
+    assertEqual(failure(fn() { chr(55296) }), scalar)
+    assertEqual(failure(fn() { chr(1114112) }), scalar)
+    assertEqual(failure(fn() { chr(-1) }), scalar)
+    assertEqual(failure(fn() { chr(65.5) }), ["string.range", "chr requires an integer code"])
+}
+
+@test
+val sortAndJoinRejectNonStrings = fn() {
+    val mixed = keys({a: 1, [2]: 2})
+    assertEqual(failure(fn() { sort(mixed) }), ["string.type", "sort requires a list of strings"])
+    assertEqual(failure(fn() { join(mixed, "-") }), ["string.type", "join requires a list of strings"])
+}
+
+@test
+val sortLeavesItsArgumentAlone = fn() {
+    val words = ["pear", "é", "b"]
+    assertEqual(sort(words), ["b", "pear", "é"])
+    assertEqual(words, ["pear", "é", "b"])
+}
+
+@test
+val charsRoundTripsThroughJoin = fn() {
+    assertEqual(chars("h😀"), ["h", "😀"])
+    assertEqual(join(chars("round trip")), "round trip")
+}
+
+@test
+val toIntCoversTheIntegerRangeExactly = fn() {
+    assertEqual(toInt("9223372036854775807"), 9223372036854775807)
+    assertEqual(toInt("-9223372036854775808"), -9223372036854775807 - 1)
+    assertEqual(toInt("9223372036854775808"), nil)
+    assertEqual(toInt("-9223372036854775809"), nil)
+    assertEqual(toInt("99999999999999999999"), nil)
+    assertEqual(toInt("-0"), 0)
+}
+
+@test
+val toIntRejectsEverythingButDecimalDigits = fn() {
+    assertEqual(toInt("-"), nil)
+    assertEqual(toInt(" 1"), nil)
+    assertEqual(toInt("1_000"), nil)
+    assertEqual(toInt("٣"), nil)
+    assertEqual(toInt("x") ?? 0, 0)
+}

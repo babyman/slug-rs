@@ -17,6 +17,7 @@ foreign chrRaw = fn(code:num):list
  *
  * Throws a `string.range` error when `character` is not one character long.
  */
+@testWith(["A"], 65, ["é"], 233, ["€"], 8364)
 export val ord = fn(character:str):num {
     if (len(character) != 1) {
         throw Error {type: "string.range", msg: "ord requires a string of exactly one character"}
@@ -31,6 +32,7 @@ export val ord = fn(character:str):num {
  * Throws a `string.range` error when `code` is not an integer from 0 through
  * 0x10FFFF, or is a surrogate from 0xD800 through 0xDFFF.
  */
+@testWith([65], "A", [233], "é", [8364], "€")
 export val chr = fn(code:num):str {
     if (int(code) != code) {
         throw Error {type: "string.range", msg: "chr requires an integer code"}
@@ -81,6 +83,7 @@ val mergeSort = fn(values) {
  *
  * Throws a `string.type` error when an element is not a string.
  */
+@testWith([["pear", "Apple", "fig", "apple"]], ["Apple", "apple", "fig", "pear"], [[]], [])
 export val sort = fn(strings:list<str>):list<str> {
     requireStrings(strings, "sort")
     mergeSort(strings)
@@ -93,6 +96,7 @@ export val sort = fn(strings:list<str>):list<str> {
  *
  * Throws a `string.type` error when an element is not a string.
  */
+@testWith([["x", "y"]], "xy", [["c", "a"], ", "], "c, a", [[]], "")
 export val join = fn(strings:list<str>, separator:str = ""):str {
     requireStrings(strings, "join")
     val go = fn(i:num, out:str):str {
@@ -114,6 +118,14 @@ export val join = fn(strings:list<str>, separator:str = ""):str {
  * or digits beyond the range of a Slug integer, so `toInt(text) ?? 0` gives a
  * default.
  */
+@testWith(
+    ["42"], 42,
+    ["-7"], -7,
+    ["+5"], 5,
+    ["007"], 7,
+    ["1.5"], nil,
+    [""], nil
+)
 export val toInt = fn(text:str):num|nil {
     val sign = if (len(text) > 0) { text[0] } else { "" }
     val negative = sign == "-"
@@ -154,6 +166,7 @@ export val toInt = fn(text:str):num|nil {
  * order: `chars("héllo")` is `["h", "é", "l", "l", "o"]`. `join(chars(text))`
  * is `text`.
  */
+@testWith(["héllo"], ["h", "é", "l", "l", "o"], [""], [])
 export val chars = fn(text:str):list<str> {
     val go = fn(i:num, out:list<str>):list<str> {
         if (i == len(text)) { out } else { recur(i + 1, out :+ text[i]) }

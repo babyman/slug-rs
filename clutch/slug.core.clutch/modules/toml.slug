@@ -20,6 +20,11 @@ val {toInt, chr, join} = import("slug.string")
  * keys, an array a list, a string a `str`, an integer a `num`, and a boolean a
  * `bool`. `parse("[a]\nb = 1")` is `{a: {b: 1}}`.
  */
+@testWith(
+    ["[a]\nb = 1"], {a: {b: 1}},
+    ["x = 'raw'\ny = [1, 2]\nz = { k = true }"], {x: "raw", y: [1, 2], z: {k: true}},
+    [""], {}
+)
 export val parse = fn(text:str):map {
     // Each step returns the position after what it read; values come back as
     // `[value, position]`. `state` carries the document being built, the

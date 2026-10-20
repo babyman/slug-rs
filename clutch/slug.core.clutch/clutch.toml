@@ -6,6 +6,9 @@
 "slug.fmt.toml" = { source = "modules/toml.slug" }
 "slug.test" = { source = "modules/test.slug" }
 
+[tests]
+files = ["tests/math.slug", "tests/string.slug", "tests/toml.slug", "tests/test.slug"]
+
 [native]
 profile = "events"
 headers = ["native/source/slug_core.h"]

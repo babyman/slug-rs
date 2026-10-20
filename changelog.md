@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The core clutch's behaviour is tested in Slug: `@testWith` examples on
+  `slug.math`, `slug.string`, and `slug.fmt.toml` functions, which also
+  document them, and test files under its `[tests]`. `make check` runs them
+  with `make test-clutches`. The Rust tests keep one check of each native
+  binding against a freshly built library.
+
 - `slug test` runs a clutch's tests:
   `slug --allow-unexported test ./path/to/name.clutch`. It runs every `@test`
   function and `@testWith` example in the clutch's modules and its declared

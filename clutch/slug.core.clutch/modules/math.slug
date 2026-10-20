@@ -14,6 +14,7 @@ foreign sqrtRaw = fn(value:num):num
  *
  * Throws a `math.range` error when the result cannot fit in a Slug integer.
  */
+@testWith([20, 22], 42, [-5, 2], -3)
 export val add = fn(left:num, right:num):num {
     match addRaw(left, right) {
         [true, sum] => sum
@@ -31,6 +32,14 @@ export val add = fn(left:num, right:num):num {
  * for the one quotient that does not fit, the most negative integer divided
  * by -1.
  */
+@testWith(
+    [7, 2], 3,
+    [-7, 2], -3,
+    [7, -2], -3,
+    [-7, -2], 3,
+    [6, 3], 2,
+    [9223372036854775807, 3], 3074457345618258602
+)
 export val div = fn(left:num, right:num):num {
     if (right == 0) {
         throw Error {type: "math.domain", msg: "div requires a non-zero divisor"}
@@ -49,6 +58,7 @@ export val div = fn(left:num, right:num):num {
  *
  * Throws a `math.domain` error when `value` is negative.
  */
+@testWith([9.0], 3, [16], 4, [0], 0)
 export val sqrt = fn(value:num):num {
     if (value < 0) {
         throw Error {type: "math.domain", msg: "sqrt requires a non-negative number"}
