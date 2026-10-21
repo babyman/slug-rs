@@ -85,6 +85,13 @@ def load_suite(project_dir):
     return json.loads((Path(project_dir) / "cases.json").read_text())
 
 
+def needs_loopback(project_dir):
+    """Whether the project's agents run servers, which needs a sandbox that
+    allows loopback sockets: `"sandbox": "loopback"` in its cases.json."""
+    path = Path(project_dir) / "cases.json"
+    return path.exists() and load_suite(project_dir).get("sandbox") == "loopback"
+
+
 def load_cases(project_dir):
     return [expand(case) for case in load_suite(project_dir)["cases"]]
 

@@ -294,12 +294,30 @@ def agent_command(run, arguments, workspace, log_directory, codex_home):
     return claude_command(run, arguments), {}
 
 
+# A Codex permission profile like `--sandbox workspace-write`, but allowing
+# loopback sockets, so an agent can run a server and connect to it. Codex's
+# network proxy, with no outside domain allowed, still blocks everything else:
+# a socket to an outside address fails with "Operation not permitted", and a
+# proxied request is refused with 403.
+LOOPBACK_PERMISSIONS = [
+    "-c", 'default_permissions="eval"',
+    "-c", "features.network_proxy=true",
+    "-c", 'permissions.eval.extends=":workspace"',
+    "-c", "permissions.eval.network.enabled=true",
+    "-c", "permissions.eval.network.allow_local_binding=true",
+    "-c", 'permissions.eval.network.domains={localhost="allow","127.0.0.1"="allow","::1"="allow"}',
+]
+
+
 def codex_command(run, arguments, workspace, log_directory):
     """`codex exec` with a sandbox that may write only the workspace, the
-    temporary directories, and the wrapper's log, with no network. Codex has no
+    temporary directories, and the wrapper's log, with no network, or for a
+    project whose agents run servers, only loopback network. Codex has no
     spending limit, so the timeout alone bounds a run. Its home is a fresh
     directory (see `isolated_codex_home`), so the user's config, skills,
     plugins, memories, rules, and hooks do not reach the agent."""
+    loopback = run["kind"] == "project" and projects.needs_loopback(PROJECTS / run["task"])
+    sandbox = LOOPBACK_PERMISSIONS if loopback else ["--sandbox", "workspace-write"]
     command = [
         "codex",
         "exec",
@@ -308,8 +326,7 @@ def codex_command(run, arguments, workspace, log_directory):
         "--skip-git-repo-check",
         "--ignore-user-config",
         "--ignore-rules",
-        "--sandbox",
-        "workspace-write",
+        *sandbox,
         "--cd",
         str(workspace),
         "--add-dir",
@@ -455,6 +472,9 @@ def execute(run, arguments, slug, install, results_dir, references, codex_home):
             command,
             cwd=workspace,
             env=environment,
+            # `codex exec` reads more prompt from a stdin that is not a
+            # terminal, and waits for it.
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=minutes(run, arguments) * 60,
