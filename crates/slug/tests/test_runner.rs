@@ -150,11 +150,7 @@ fn runs_test_and_test_with_declarations_and_reports_failures() {
          error:     {\"type\": \"divide_by_zero\", \"msg\": \"division by zero\", \"data\": nil}\n\
          demo: 3 passed, 3 failed\n"
     );
-    assert!(
-        text(&output.stderr).contains("uncaught throw: 3 tests failed"),
-        "{}",
-        text(&output.stderr)
-    );
+    assert!(output.stderr.is_empty(), "{}", text(&output.stderr));
 }
 
 #[test]
@@ -170,25 +166,18 @@ fn passes_the_core_clutch_and_needs_the_permission() {
     assert!(stdout.ends_with(" passed, 0 failed\n"), "{stdout}");
 
     // Without the flag, no module can be described with its unexported
-    // declarations.
+    // declarations, and the runner says so once.
+    let usage = "usage: slug --allow-unexported test ./path/to/name.clutch ...\n";
     let output = home.run(false, &["demo.clutch"]);
-    assert_eq!(output.status.code(), Some(1));
-    let stdout = text(&output.stdout);
-    assert!(
-        stdout.starts_with("FAIL demo.lib: cannot load the module\n"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("requires running slug with --allow-unexported"),
-        "{stdout}"
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        text(&output.stdout),
+        format!(
+            "cannot run tests: `describe` with `unexported = true` requires running slug with --allow-unexported\n{usage}"
+        )
     );
 
     let output = home.run(true, &[]);
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        text(&output.stderr)
-            .contains("usage: slug --allow-unexported test ./path/to/name.clutch ..."),
-        "{}",
-        text(&output.stderr)
-    );
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(text(&output.stdout), usage);
 }

@@ -7,8 +7,9 @@
  * example in the modules the clutch provides and in the test files its
  * `clutch.toml` lists under `[tests] files`, unexported declarations
  * included. A clutch must be the installed one, so its modules and test
- * modules resolve. It prints each failure and a summary per clutch, and fails
- * when any test does. See `slug.test` for assertions.
+ * modules resolve. It prints each failure and a summary per clutch. It exits
+ * with status 1 when any test fails, and 2 when it cannot run. See
+ * `slug.test` for assertions.
  */
 
 val fs = import("slug.io.fs")
@@ -144,16 +145,22 @@ val runClutch = fn(path:str):num {
     failed
 }
 
-val main = fn(args:list) {
+val usage = "usage: slug --allow-unexported test ./path/to/name.clutch ..."
+
+val main = fn(args:list):num {
     if (len(args) == 0) {
-        throw "usage: slug --allow-unexported test ./path/to/name.clutch ..."
+        println(usage)
+        return 2
+    }
+    // Without the permission no module can be described, so say so once.
+    val probe = test.attempt(fn() { describe("slug.test", unexported = true) })
+    if (probe.threw && probe.value.type == "permission") {
+        val msg = probe.value.msg
+        println("cannot run tests: $msg")
+        println(usage)
+        return 2
     }
     val failed = map(args, runClutch)
     val count = fn(i:num, sum:num):num { if (i == len(failed)) { sum } else { recur(i + 1, sum + failed[i]) } }
-    val failures = count(0, 0)
-    // A thrown value is the only way a Slug program exits with a failure
-    // status.
-    if (failures > 0) {
-        throw "$failures tests failed"
-    }
+    if (count(0, 0) > 0) { 1 } else { 0 }
 }
