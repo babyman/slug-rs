@@ -89,9 +89,15 @@ JSON_DOCS = [
 ]
 REPORT_DOCS = ["docs/reference/capability-report.md"]
 # Library modules a project asks agents to write, with their source files,
-# withheld from every run's documentation and install so no agent finds one
-# ready-made: `slug.fmt.json` is the JSON project's chosen solution.
-WITHHELD_MODULES = {"slug.fmt.json": "json.slug"}
+# withheld from that project's documentation and install so its agents do not
+# find one ready-made: `slug.fmt.json` is the JSON project's chosen solution.
+# Other runs have them as ordinary library modules.
+WITHHELD_MODULES = {"json": {"slug.fmt.json": "json.slug"}}
+
+
+def withheld(run):
+    """The modules withheld from `run`, by module name, with source files."""
+    return WITHHELD_MODULES.get(run["task"], {}) if run["kind"] == "project" else {}
 
 LIBRARY_SOURCES = [
     ("lib/slug", "library"),
@@ -255,7 +261,7 @@ def prepare_workspace(run, run_temp):
         shutil.copytree(
             REPO / source,
             docs / target,
-            ignore=shutil.ignore_patterns(".DS_Store", *WITHHELD_MODULES.values()),
+            ignore=shutil.ignore_patterns(".DS_Store", *withheld(run).values()),
         )
     if run["kind"] == "project":
         shutil.copyfile(PROJECTS / run["task"] / "task.md", workspace / "spec.md")
@@ -405,18 +411,18 @@ def claude_command(run, arguments):
     return command
 
 
-def isolated_install(slug):
+def isolated_install(slug, withheld_modules):
     """Copies everything an agent's `slug` needs into a temporary directory,
     so nothing the agent can see points into the repository, where reference
-    solutions and hidden cases live."""
+    solutions and hidden cases live, leaving out `withheld_modules`."""
     install = Path(tempfile.mkdtemp(prefix="slug-eval-install-"))
     # Clutch tests are left out: some hold project suites' hidden cases.
-    ignore = shutil.ignore_patterns(".DS_Store", "tests", *WITHHELD_MODULES.values())
+    ignore = shutil.ignore_patterns(".DS_Store", "tests", *withheld_modules.values())
     for directory in ("lib", "clutch"):
         shutil.copytree(REPO / directory, install / "home" / directory, ignore=ignore)
     for manifest in (install / "home" / "clutch").glob("**/*.toml"):
         lines = manifest.read_text().splitlines(keepends=True)
-        kept = [line for line in lines if not any(f'"{name}"' in line for name in WITHHELD_MODULES)]
+        kept = [line for line in lines if not any(f'"{name}"' in line for name in withheld_modules)]
         manifest.write_text("".join(kept))
     (install / "bin").mkdir()
     shutil.copy2(slug, install / "bin" / "slug-real")
@@ -742,7 +748,12 @@ def command_run(arguments):
     slug = build_slug()
     coding = sorted({run["task"] for run in runs if run["kind"] == "coding"})
     references = reference_outputs(slug, coding)
-    install = isolated_install(slug)
+    # One install for each set of withheld modules the runs need.
+    installs = {}
+    for run in runs:
+        key = tuple(sorted(withheld(run)))
+        if key not in installs:
+            installs[key] = isolated_install(slug, withheld(run))
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     results_dir = RESULTS / (arguments.name or stamp)
     results_dir.mkdir(parents=True)
@@ -755,7 +766,10 @@ def command_run(arguments):
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool, out.open("a") as sink:
             futures = [
-                pool.submit(execute, run, arguments, slug, install, results_dir, references, codex_home)
+                pool.submit(
+                    execute, run, arguments, slug, installs[tuple(sorted(withheld(run)))],
+                    results_dir, references, codex_home,
+                )
                 for run in runs
             ]
             for future in concurrent.futures.as_completed(futures):
@@ -771,7 +785,8 @@ def command_run(arguments):
     finally:
         if codex:
             restore_codex_login(*codex)
-    shutil.rmtree(install, ignore_errors=True)
+    for install in installs.values():
+        shutil.rmtree(install, ignore_errors=True)
     print(f"results: {out}")
     summarize(out)
 
