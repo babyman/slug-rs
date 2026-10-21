@@ -869,7 +869,7 @@ pub(super) fn resolve_resource_references(
     }
 }
 
-fn resolve_schema_references(
+pub(super) fn resolve_schema_references(
     value_type: Type,
     span: &SourceSpan,
     environment: &Environment,

@@ -107,6 +107,18 @@ matching. An alias does not create a value, a constructor, or a new nominal
 identity. Recursive alias definitions are source errors. Generic aliases and
 strong typedefs are outside this feature.
 
+An alias of a struct type names the schema where the alias is declared, so a
+module can export a struct type while keeping its schema private:
+
+```slug
+val PointSchema = struct { x: num, y: num }
+export type Point = struct<PointSchema>
+export val point = fn(x:num, y:num):Point { PointSchema {x: x, y: y} }
+```
+
+An importer writes `shapes.Point`, and its field accesses are checked against
+`PointSchema`, though it cannot name or construct the schema.
+
 ## Imports
 
 An exported type is selected through the compile-time type namespace of an

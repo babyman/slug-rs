@@ -74,6 +74,9 @@ pub(super) struct SemanticBinding {
     pub(super) resource_identity: Option<ResourceIdentity>,
     pub(super) type_members: HashMap<String, TypeMember>,
     pub(super) module_binding: bool,
+    /// For a module binding, the schemas its exported types name, including
+    /// private ones, so an importer can check their fields.
+    pub(super) schemas: Vec<SemanticBinding>,
     /// For a `var`, the type every assignment must conform to, fixed at its
     /// declaration. `value_type` is then its current type, which assignments
     /// and nil tests refine for the code that follows.
@@ -132,6 +135,7 @@ impl SemanticBinding {
             resource_identity: None,
             type_members: HashMap::new(),
             module_binding: false,
+            schemas: Vec::new(),
             declared: None,
             nil_start: None,
             implicit: false,
@@ -149,6 +153,7 @@ impl SemanticBinding {
             resource_identity: None,
             type_members: HashMap::new(),
             module_binding: false,
+            schemas: Vec::new(),
             declared: None,
             nil_start: None,
             implicit: false,
@@ -159,6 +164,7 @@ impl SemanticBinding {
     pub(super) fn module(
         members: HashMap<String, SemanticBinding>,
         type_members: HashMap<String, TypeMember>,
+        schemas: Vec<SemanticBinding>,
     ) -> Self {
         Self {
             value_type: Type::Map(None),
@@ -169,6 +175,7 @@ impl SemanticBinding {
             resource_identity: None,
             type_members,
             module_binding: true,
+            schemas,
             declared: None,
             nil_start: None,
             implicit: false,
@@ -203,6 +210,8 @@ pub(super) fn function_value_type(signature: &CallableSignature) -> Type {
 pub(crate) struct ModuleSnapshot {
     pub(super) exports: HashMap<String, SemanticBinding>,
     pub(super) types: HashMap<String, TypeMember>,
+    /// The schemas that exported values and types name.
+    pub(super) schemas: Vec<SemanticBinding>,
 }
 
 impl ModuleSnapshot {
@@ -807,6 +816,7 @@ fn find_schema_binding(
     binding
         .members
         .values()
+        .chain(&binding.schemas)
         .find_map(|member| find_schema_binding(member, identity))
 }
 

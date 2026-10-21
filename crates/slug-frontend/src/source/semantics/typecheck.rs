@@ -1887,7 +1887,64 @@ fn analyze_expressions(
         let _ = check_expression_with_flow(expression, &mut environment, &[])?;
         record_exports(expression, &environment, &mut exports, &mut types);
     }
-    Ok(environment.analysis(ModuleSnapshot { exports, types }))
+    let schemas = exported_schemas(&exports, &types, &environment);
+    Ok(environment.analysis(ModuleSnapshot {
+        exports,
+        types,
+        schemas,
+    }))
+}
+
+/// The schemas that exported values and type aliases name, so importers can
+/// check fields of a struct whose schema the module keeps private.
+fn exported_schemas(
+    exports: &HashMap<String, SemanticBinding>,
+    types: &HashMap<String, super::environment::TypeMember>,
+    environment: &Environment,
+) -> Vec<SemanticBinding> {
+    fn collect(value_type: &Type, identities: &mut Vec<super::semantic::SchemaIdentity>) {
+        match value_type {
+            Type::Struct(Some(identity)) => {
+                if !identities.contains(identity) {
+                    identities.push(identity.clone());
+                }
+            }
+            Type::List(Some(element))
+            | Type::Task(Some(element))
+            | Type::Channel(Some(element)) => {
+                collect(element, identities);
+            }
+            Type::Map(Some((key, value))) => {
+                collect(key, identities);
+                collect(value, identities);
+            }
+            Type::Function(Some(values)) | Type::Tuple(values) | Type::Union(values) => {
+                for value in values {
+                    collect(value, identities);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut identities = Vec::new();
+    for binding in exports.values() {
+        collect(&binding.value_type, &mut identities);
+        for signature in &binding.callables {
+            collect(&signature.result, &mut identities);
+            for parameter in &signature.parameters {
+                collect(&parameter.value_type, &mut identities);
+            }
+        }
+    }
+    for member in types.values() {
+        if let super::environment::TypeMember::Alias(value_type) = member {
+            collect(value_type, &mut identities);
+        }
+    }
+    identities
+        .iter()
+        .filter_map(|identity| environment.schema_by_identity(identity))
+        .collect()
 }
 
 fn resolve_type_aliases(
@@ -2229,8 +2286,23 @@ fn record_exports(
             name,
             ..
         } => {
-            if let Some(member) = environment.type_member(name) {
-                types.insert(name.clone(), member.clone());
+            // An alias's `struct<S>` stays unresolved until a use resolves
+            // it, but an importer has no binding `S`, so the export carries
+            // the schema identity resolved here.
+            let member = match environment.type_member(name) {
+                Some(super::environment::TypeMember::Alias(value_type)) => {
+                    super::semantic::resolve_schema_references(
+                        value_type.clone(),
+                        &expression.span,
+                        environment,
+                    )
+                    .ok()
+                    .map(super::environment::TypeMember::Alias)
+                }
+                member => member.cloned(),
+            };
+            if let Some(member) = member {
+                types.insert(name.clone(), member);
             }
         }
         _ => {}
@@ -2956,7 +3028,11 @@ fn check_expression_inner(
                 )
                 .with_extent(expression));
             }
-            Ok(known_schema_identity(schema, environment)
+            // A schema reached through a module, as in `shapes.Point {...}`,
+            // has its identity on the member's binding.
+            Ok(schema_binding
+                .and_then(|binding| binding.schema_identity)
+                .or_else(|| known_schema_identity(schema, environment))
                 .map_or(Type::Struct(None), |identity| Type::Struct(Some(identity))))
         }
         ExprKind::StructCopy { value, fields } => {
@@ -3899,6 +3975,7 @@ fn imported_modules(
 ) -> Option<SemanticBinding> {
     let mut result: HashMap<String, SemanticBinding> = HashMap::new();
     let mut type_members = HashMap::new();
+    let mut schemas = Vec::new();
     for argument in arguments {
         let CallArgument::Positional(Expr {
             kind: ExprKind::Value(Value::Str(module_name)),
@@ -3933,8 +4010,9 @@ fn imported_modules(
                 .entry(name.clone())
                 .or_insert_with(|| member.with_resource_runtime_module(module_name.as_ref()));
         }
+        schemas.extend(snapshot.schemas.iter().cloned());
     }
-    Some(SemanticBinding::module(result, type_members))
+    Some(SemanticBinding::module(result, type_members, schemas))
 }
 
 fn bind_semantic_pattern(
