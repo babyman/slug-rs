@@ -467,10 +467,12 @@ impl Parser {
                     span,
                 ));
             }
-            if documentation.is_some() || !tags.is_empty() {
+            // A type has no runtime declaration for tags to describe. Its
+            // documentation is for readers of the source.
+            if !tags.is_empty() {
                 return Err(SourceError::at_token(
                     SourceErrorCode::InvalidDocumentation,
-                    "documentation blocks and tags cannot prefix a type alias",
+                    "tags cannot prefix a type alias",
                     self.peek(),
                 ));
             }

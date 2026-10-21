@@ -879,9 +879,11 @@ value. Tagged foreign declarations retain their metadata. `describe` reports a
 module's top-level declaration tags, as described below.
 
 The subset also parses strict documentation blocks on top-level `val`, `var`,
-`foreign`, `resource`, and `enum` declarations, as well as a first module doc
-block followed by a blank line. It retains top-level declaration documentation
-and evaluated tag metadata in the module model, which `describe` reports.
+`foreign`, `resource`, `enum`, and `type` declarations, as well as a first
+module doc block followed by a blank line. It retains top-level declaration
+documentation and evaluated tag metadata in the module model, which `describe`
+reports. A type alias has no runtime declaration, so its documentation is for
+readers of the source only, and a tag on one is a parse error.
 
 `describe(module, unexported = false)` initializes the module named `module`,
 resolved as `import` resolves it, and returns its top-level declarations in

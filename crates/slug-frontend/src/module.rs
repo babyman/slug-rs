@@ -163,7 +163,7 @@ impl ModuleGraph {
                 &source.key,
                 &source.diagnostic_name,
                 &source.text,
-                request.name != "slug.builtin",
+                Some(request.name),
             )
             .map_err(|error| ModuleLoadError::Compile {
                 location: source.diagnostic_name.clone(),
@@ -213,7 +213,7 @@ impl ModuleGraph {
         path: &str,
         source: &str,
     ) -> Result<Program, SourceError> {
-        self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, true)
+        self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, None)
             .map(|compilation| compilation.program)
     }
 
@@ -282,13 +282,7 @@ impl ModuleGraph {
             return Ok(*index);
         }
         let mut compilation = self
-            .compile_source_for_module(
-                resolver,
-                key,
-                diagnostic_name,
-                source,
-                name != "slug.builtin",
-            )
+            .compile_source_for_module(resolver, key, diagnostic_name, source, Some(name))
             .map_err(|error| ModuleLoadError::Compile {
                 location: diagnostic_name.into(),
                 error: Box::new((&error).into()),
@@ -350,9 +344,9 @@ impl ModuleGraph {
         key: &ModuleKey,
         diagnostic_name: &str,
         source: &str,
-        include_implicit_builtins: bool,
+        module_name: Option<&str>,
     ) -> Result<crate::source::CompiledSource, SourceError> {
-        compile_with_resolver(diagnostic_name, source, include_implicit_builtins, |name| {
+        compile_with_resolver(diagnostic_name, source, module_name, |name| {
             self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name))
         })
     }
@@ -380,7 +374,7 @@ impl ModuleGraph {
                 &source.key,
                 &source.diagnostic_name,
                 &source.text,
-                request.name != "slug.builtin",
+                Some(request.name),
             )
             .ok()
             .map(|compilation| compilation.snapshot);
@@ -545,7 +539,7 @@ impl ModuleGraph {
                 &source.key,
                 &source.diagnostic_name,
                 &source.text,
-                module_name != "slug.builtin",
+                Some(module_name),
             )
             .map_err(|error| ModuleLoadError::Compile {
                 location: source.diagnostic_name.clone(),

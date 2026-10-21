@@ -361,17 +361,22 @@ impl From<&SourceError> for SourceDiagnostic {
 pub fn compile(path: &str, source: &str) -> Result<Program, SourceError> {
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
-    let mut compilation = compile_expressions(path, expressions, ImportSnapshots::new(), None)?;
+    let mut compilation =
+        compile_expressions(path, expressions, ImportSnapshots::new(), None, None)?;
     compilation.program.set_module_key(path);
     Ok(compilation.program)
 }
 
+/// Compiles a module's source. `module_name` is the name it is imported by,
+/// which its resource and enum types carry at runtime; an entry program has
+/// none. Every module but `slug.builtin` sees that module's exports.
 pub(crate) fn compile_with_resolver(
     path: &str,
     source: &str,
-    include_implicit_builtins: bool,
+    module_name: Option<&str>,
     mut resolve: impl FnMut(&str) -> Option<ModuleSnapshot>,
 ) -> Result<CompiledSource, SourceError> {
+    let include_implicit_builtins = module_name != Some("slug.builtin");
     let tokens = Lexer::new(path, source).tokens()?;
     let expressions = Parser::new(tokens).parse()?;
     let mut imports = typecheck::static_import_names(&expressions)
@@ -398,7 +403,8 @@ pub(crate) fn compile_with_resolver(
                 .map(String::from)
                 .collect::<Vec<_>>()
         });
-    let mut compilation = compile_expressions(path, expressions, imports, implicit_globals)?;
+    let mut compilation =
+        compile_expressions(path, expressions, imports, implicit_globals, module_name)?;
     compilation.program.set_module_key(path);
     Ok(compilation)
 }
@@ -530,10 +536,14 @@ fn compile_expressions(
     expressions: Vec<ast::Expr>,
     imports: ImportSnapshots,
     implicit_globals: Option<Vec<String>>,
+    module_name: Option<&str>,
 ) -> Result<CompiledSource, SourceError> {
-    let analysis = typecheck::analyze_with_imports(&expressions, imports)?;
+    let analysis = typecheck::analyze_with_imports(&expressions, imports, module_name)?;
     updates::check_lost_updates(&expressions)?;
     let mut compiler = Compiler::new(path, expressions, &analysis);
+    if let Some(name) = module_name {
+        compiler = compiler.with_module_name(name);
+    }
     if let Some(names) = implicit_globals {
         compiler = compiler.with_implicit_globals(names);
     }

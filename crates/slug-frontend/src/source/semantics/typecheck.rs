@@ -31,11 +31,17 @@ use type_relations::{
 pub(super) fn analyze_with_imports(
     expressions: &[Expr],
     imports: ImportSnapshots,
+    module_name: Option<&str>,
 ) -> Result<SemanticAnalysis, SourceError> {
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
-    analyze_expressions(expressions, imports, &SessionSnapshot::default())
+    analyze_expressions(
+        expressions,
+        imports,
+        &SessionSnapshot::default(),
+        module_name,
+    )
 }
 
 pub(super) fn analyze_with_imports_and_session(
@@ -46,7 +52,7 @@ pub(super) fn analyze_with_imports_and_session(
     for expression in expressions {
         validate_expression(expression, &[])?;
     }
-    analyze_expressions(expressions, imports, session)
+    analyze_expressions(expressions, imports, session, None)
 }
 
 pub(super) fn static_import_names(expressions: &[Expr]) -> Vec<String> {
@@ -1802,7 +1808,17 @@ fn analyze_expressions(
     expressions: &[Expr],
     imports: ImportSnapshots,
     session: &SessionSnapshot,
+    module_name: Option<&str>,
 ) -> Result<SemanticAnalysis, SourceError> {
+    // A module's own resource and enum types carry the name it is imported
+    // by, as its native resources and enum values do at runtime, so its
+    // matches on them agree with an importer's.
+    let in_module = |mut identity: super::semantic::NominalIdentity| {
+        if let Some(name) = module_name {
+            identity.set_runtime_module(name.into());
+        }
+        identity
+    };
     let mut environment = Environment::with_imports_and_session(imports, session);
     if let Some(builtins) = environment.import_snapshot("slug.builtin") {
         environment.install_implicit_callable_export(&builtins, "chan");
@@ -1822,7 +1838,10 @@ fn analyze_expressions(
                 )
                 .with_extent(expression));
             }
-            let identity = ResourceIdentity::declared(expression.span.path.as_ref(), name.clone());
+            let identity = in_module(ResourceIdentity::declared(
+                expression.span.path.as_ref(),
+                name.clone(),
+            ));
             environment.declare_type(
                 name.clone(),
                 super::environment::TypeMember::Resource(identity),
@@ -1840,10 +1859,10 @@ fn analyze_expressions(
                 )
                 .with_extent(expression));
             }
-            let identity = super::semantic::EnumIdentity::declared(
+            let identity = in_module(super::semantic::EnumIdentity::declared(
                 expression.span.path.as_ref(),
                 name.clone(),
-            );
+            ));
             environment.declare_type(
                 name.clone(),
                 super::environment::TypeMember::Enum {
@@ -5252,7 +5271,7 @@ mod tests {
         let expressions = super::super::Parser::new(tokens)
             .parse()
             .expect("source parses");
-        analyze_with_imports(&expressions, HashMap::new())
+        analyze_with_imports(&expressions, HashMap::new(), None)
             .expect("source analyzes")
             .snapshot
             .exports

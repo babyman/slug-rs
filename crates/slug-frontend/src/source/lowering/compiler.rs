@@ -40,6 +40,8 @@ pub(super) struct Compiler {
     /// at compile time. A name that is neither these nor declared is then
     /// an error; otherwise it is looked up when it runs.
     implicit_globals: Option<HashSet<String>>,
+    /// The name the module is imported by, which its enum values carry.
+    module_name: Option<String>,
     /// The names `{*}` declarations define, when they are known.
     selected_globals: Option<HashSet<String>>,
 }
@@ -81,6 +83,7 @@ impl Compiler {
             callable_identities: Vec::new(),
             guard_comparisons: false,
             implicit_globals: None,
+            module_name: None,
             selected_globals: analysis.selected_globals.clone(),
         }
     }
@@ -88,6 +91,11 @@ impl Compiler {
     /// Makes a name that is neither declared nor one of `names`, the
     /// exports of the implicit `slug.builtin` module, nor a VM builtin an
     /// error at compile time.
+    pub(super) fn with_module_name(mut self, name: &str) -> Self {
+        self.module_name = Some(name.into());
+        self
+    }
+
     pub(super) fn with_implicit_globals(mut self, names: impl IntoIterator<Item = String>) -> Self {
         self.implicit_globals = Some(
             names
@@ -1001,7 +1009,12 @@ impl Compiler {
                     let key = state.constant(Value::string(case.clone()));
                     state.emit(Op::Constant(key), &expression.span);
                     let value = state.constant(Value::Enum(Rc::new(EnumValue {
-                        module: self.path.clone().into(),
+                        module: self
+                            .module_name
+                            .as_ref()
+                            .unwrap_or(&self.path)
+                            .clone()
+                            .into(),
                         name: name.clone().into(),
                         case: case.clone().into(),
                     })));

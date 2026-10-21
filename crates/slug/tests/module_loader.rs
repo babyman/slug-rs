@@ -1829,6 +1829,9 @@ fn imports_struct_type_aliases_with_their_schema_identity() {
     fs::write(
         root.join("shapes.slug"),
         "val PointSchema = struct { x: num, y: num }\n\
+         /**\n\
+          * A point on the plane.\n\
+          */\n\
          export type Point = struct<PointSchema>\n\
          export type Points = list<Point>\n\
          export val point = fn(x:num, y:num):Point { PointSchema {x: x, y: y} }\n\
@@ -1873,6 +1876,45 @@ fn imports_struct_type_aliases_with_their_schema_identity() {
         assert!(error.to_string().contains(message), "{error}");
     }
     fs::remove_dir_all(root).expect("remove struct alias module directory");
+}
+
+#[test]
+fn matches_enum_types_in_the_declaring_module_and_its_importers() {
+    let root = root("enum-type-matches");
+    fs::create_dir_all(&root).expect("create enum module directory");
+    fs::write(
+        root.join("colors.slug"),
+        "export enum Color { Red, Blue }\n\
+         export val kind = fn(value) { match value { _:Color => \"color\"; _ => \"other\" } }\n",
+    )
+    .expect("write enum module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val colors = import(\"colors\")\n\
+             val kind = fn(value) { match value { _:colors.Color => \"color\"; _ => \"other\" } }\n\
+             export val value = [colors.kind(colors.Color.Red), colors.kind(3), kind(colors.Color.Blue), kind(3)]\n",
+        )
+        .expect("compile enum importer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main").expect("run enum importer");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"value\": [\"color\", \"other\", \"color\", \"other\"]}"
+    );
+
+    let error = loader
+        .compile_source(&main_path.to_string_lossy(), "@test\ntype Name = str\n")
+        .expect_err("a tag cannot prefix a type alias");
+    assert!(
+        error
+            .to_string()
+            .contains("tags cannot prefix a type alias"),
+        "{error}"
+    );
+    fs::remove_dir_all(root).expect("remove enum module directory");
 }
 
 #[test]
