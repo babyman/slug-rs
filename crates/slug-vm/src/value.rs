@@ -450,9 +450,14 @@ impl Channel {
         let Some(producer) = self.native_producer.get() else {
             return false;
         };
+        // Read before draining: a producer closes after its last send, so
+        // every value it sent is then queued and drains with the others.
+        let producer_closed = producer.is_closed();
         let values = producer.drain(usize::MAX);
-        let changed = !values.is_empty() || producer.is_closed();
         let mut state = self.state.borrow_mut();
+        // A channel closed by an earlier drain is no progress; reporting it
+        // as progress forever would keep the scheduler from running tasks.
+        let changed = !values.is_empty() || (producer_closed && !state.closed);
         let mut resumed = Vec::new();
         let mut rejected_senders = Vec::new();
         for value in values {
@@ -463,7 +468,7 @@ impl Channel {
                 state.messages.push_back(value.into_value());
             }
         }
-        if producer.is_closed() {
+        if producer_closed {
             state.closed = true;
             resumed.extend(
                 state
@@ -474,6 +479,7 @@ impl Channel {
             rejected_senders.extend(state.senders.drain(..).map(|(sender, _)| sender));
         }
         drop(state);
+        let changed = changed || !resumed.is_empty() || !rejected_senders.is_empty();
         for (receiver, value) in resumed {
             receiver.resume(Ok(value));
         }
