@@ -52,7 +52,7 @@ A request is a map:
 |---|---|
 | `method` | The method, as sent, such as `"GET"`. Methods are case-sensitive. |
 | `path` | The target's path, percent-decoded, such as `"/files/a b"` for `/files/a%20b`. |
-| `query` | A map of the query string's parameters, percent-decoded, with `+` as a space. A parameter without `=` has the value `""`. When a name repeats, the last value wins. |
+| `query` | A map of the query string's parameters, percent-decoded, with `+` as a space. A parameter without `=` has the value `""`. Empty parameters, as in `?&a=1&`, are skipped. When a name repeats, the last value wins. |
 | `headers` | A map from each header name, lowercased, to its value without surrounding spaces or tabs. When a name repeats, the values are joined with `", "` in order. |
 | `body` | The body as bytes; `0x""` when there is none. |
 | `params` | The path parameters `router` matched, as a map; `{}` otherwise. |
