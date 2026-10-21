@@ -1,0 +1,38 @@
+[modules]
+"slug.net.tcp" = { source = "modules/tcp.slug" }
+
+[tests]
+files = ["tests/tcp.slug"]
+
+[native]
+profile = "events"
+headers = ["native/source/slug_net_tcp.h"]
+sources = ["native/source/tcp.c"]
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_net_tcp.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_net_tcp.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_net_tcp.so"
+
+[native.resources."slug.net.tcp".ListenerHandle]
+type = "slug_tcp_listener"
+release = { symbol = "slug_tcp_listener_release", signature = "(handle<ListenerHandle> listener) -> void" }
+
+[native.resources."slug.net.tcp".ConnectingHandle]
+type = "slug_tcp_connecting"
+release = { symbol = "slug_tcp_connecting_release", signature = "(handle<ConnectingHandle> connecting) -> void" }
+
+[native.resources."slug.net.tcp".ConnectionHandle]
+type = "slug_tcp_connection"
+release = { symbol = "slug_tcp_connection_release", signature = "(handle<ConnectionHandle> connection) -> void" }
+
+[native.functions."slug.net.tcp"]
+listenRaw = { symbol = "slug_tcp_listen", signature = "(cstr host, i64 port, i64 backlog, producer ready, out handle<ListenerHandle> listener, out i64 detail) -> i32" }
+localPortRaw = { symbol = "slug_tcp_local_port", signature = "(handle<ListenerHandle> listener) -> i64" }
+adoptRaw = { symbol = "slug_tcp_adopt", signature = "(handle<ListenerHandle> listener, out handle<ConnectionHandle> connection) -> i32" }
+closeListenerRaw = { symbol = "slug_tcp_listener_release", signature = "(close handle<ListenerHandle> listener) -> void" }
+connectRaw = { symbol = "slug_tcp_connect", signature = "(cstr host, i64 port, i64 timeout, producer done, out handle<ConnectingHandle> connecting, out i64 detail) -> i32" }
+finishConnectRaw = { symbol = "slug_tcp_finish_connect", signature = "(handle<ConnectingHandle> connecting, out handle<ConnectionHandle> connection, out i64 detail) -> i32" }
+closeConnectingRaw = { symbol = "slug_tcp_connecting_release", signature = "(close handle<ConnectingHandle> connecting) -> void" }
+closeConnectionRaw = { symbol = "slug_tcp_connection_release", signature = "(close handle<ConnectionHandle> connection) -> void" }
+messageRaw = { symbol = "slug_tcp_message", signature = "(i32 status, i64 detail) -> cstr" }

@@ -1,0 +1,145 @@
+/**
+ * slug.net.tcp — TCP servers and clients
+ *
+ * `listen` opens a listening socket and `accept` waits for the next
+ * connection; `connect` opens a connection to a server. Waiting parks only the
+ * calling task, so a server can `spawn` a task per connection. Close listeners
+ * and connections explicitly, normally with `defer`.
+ *
+ * Failures throw `Error` values whose `type` is `net.address` for a host that
+ * does not resolve, `net.refused` for a refused connection, `net.timeout`
+ * when a timeout elapses, or `net.error` for any other failure, with the
+ * system's message.
+ */
+
+resource ListenerHandle
+resource ConnectingHandle
+resource ConnectionHandle
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign listenRaw = fn(host:str, port:num, backlog:num, ready:chan<num>):list
+foreign localPortRaw = fn(listener:ListenerHandle):num
+foreign adoptRaw = fn(listener:ListenerHandle):list
+foreign closeListenerRaw = fn(listener:ListenerHandle):nil
+foreign connectRaw = fn(host:str, port:num, timeout:num, done:chan<num>):list
+foreign finishConnectRaw = fn(connecting:ConnectingHandle):list
+foreign closeConnectingRaw = fn(connecting:ConnectingHandle):nil
+foreign closeConnectionRaw = fn(connection:ConnectionHandle):nil
+foreign messageRaw = fn(status:num, detail:num):str
+
+// Statuses the native functions return.
+val ok = 0
+val address = 1
+val refused = 2
+val timedOut = 3
+val closed = 5
+
+val ListenerSchema = struct { handle: ListenerHandle, ready: chan<num> }
+val ConnectionSchema = struct { handle: ConnectionHandle }
+
+/**
+ * A listening socket, from `listen`.
+ */
+export type Listener = struct<ListenerSchema>
+
+/**
+ * A connected socket, from `accept` or `connect`.
+ */
+export type Connection = struct<ConnectionSchema>
+
+val fail = fn(status:num, detail:num) {
+    val type = match status {
+        1 => "net.address"
+        2 => "net.refused"
+        3 => "net.timeout"
+        _ => "net.error"
+    }
+    throw Error {type: type, msg: messageRaw(status, detail)}
+}
+
+val requirePort = fn(port:num) {
+    if (int(port) != port || port < 0 || port > 65535) {
+        throw Error {type: "net.address", msg: "a port is an integer from 0 to 65535"}
+    }
+}
+
+/**
+ * Listens for connections on `host` and `port`. A `port` of 0 picks a free
+ * port, which `localPort` reports. An empty `host` listens on every
+ * interface. `backlog` bounds the connections the system queues before
+ * `accept` takes them.
+ */
+export val listen = fn(host:str, port:num, backlog:num = 128):Listener {
+    requirePort(port)
+    // Each accepted connection is one tick; at 64 untaken, accepting pauses.
+    val ready:chan<num> = chan(64)
+    match listenRaw(host, port, backlog, ready) {
+        [0, handle, _] => ListenerSchema {handle: handle, ready: ready}
+        [status, _, detail] => fail(status, detail)
+    }
+}
+
+/**
+ * The port `listener` is bound to.
+ */
+export val localPort = fn(listener:Listener):num {
+    localPortRaw(listener.handle)
+}
+
+/**
+ * Waits for the next connection on `listener` and returns it, or `nil` once
+ * the listener is closed. With `timeout`, in milliseconds, throws a
+ * `net.timeout` error when no connection arrives in time.
+ */
+export val accept = fn(listener:Listener, timeout:num|nil = nil):Connection|nil {
+    val tick = if (timeout == nil) {
+        select { recv listener.ready }
+    } else {
+        select {
+            recv listener.ready /> fn(value) { value }
+            after timeout /> fn(_) { "timeout" }
+        }
+    }
+    match tick {
+        nil => nil
+        "timeout" => throw Error {type: "net.timeout", msg: "no connection arrived in time"}
+        0 => match adoptRaw(listener.handle) {
+            [0, handle] => ConnectionSchema {handle: handle}
+            _ => nil
+        }
+        // A fatal accept error, as -errno; the channel closes after it.
+        code => fail(4, -code)
+    }
+}
+
+/**
+ * Connects to `host` and `port` and returns the connection. Throws a
+ * `net.timeout` error when it is not connected within `timeout`
+ * milliseconds.
+ */
+export val connect = fn(host:str, port:num, timeout:num = 10000):Connection {
+    requirePort(port)
+    val done:chan<num> = chan(1)
+    match connectRaw(host, port, timeout, done) {
+        [0, connecting, _] => {
+            defer closeConnectingRaw(connecting)
+            select { recv done }
+            match finishConnectRaw(connecting) {
+                [0, handle, _] => ConnectionSchema {handle: handle}
+                [status, _, detail] => fail(status, detail)
+            }
+        }
+        [status, _, detail] => fail(status, detail)
+    }
+}
+
+/**
+ * Closes a listener or a connection. Closing a listener makes tasks waiting
+ * in `accept` return `nil`. Closing twice does nothing.
+ */
+export val close = fn(value:Listener|Connection):nil {
+    match value.handle {
+        handle:ListenerHandle => closeListenerRaw(handle)
+        handle:ConnectionHandle => closeConnectionRaw(handle)
+    }
+}

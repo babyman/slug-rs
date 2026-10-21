@@ -45,18 +45,29 @@ A task waiting on that channel with `select` parks, and the others run.
 ### Handing over a connection
 
 A producer can send only scalars, text and bytes, not resource handles. The
-accept thread therefore sends an integer id, not a socket. The id names an
-entry in the listener's own pending table, and `adoptRaw(listener, id)` moves
-the socket out of that table into a new `Connection` resource. So:
+accept thread therefore queues each accepted socket inside the listener and
+sends only a tick, `0`, into the listener's channel. A task that receives a tick
+calls `adoptRaw(listener)`, which moves the oldest queued socket into a new
+connection resource. Ticks and queued sockets are matched one for one, so any
+number of tasks can accept from one listener. So:
 
-- Slug code never holds a raw file descriptor, and an arbitrary integer cannot
-  adopt someone else's socket, such as standard input: an id is only valid for
-  the listener that issued it, and only once.
-- Closing the listener closes every socket still pending in its table, so an
-  accepted connection that was never adopted does not leak.
+- Slug code never holds a number that names a socket, so it cannot take over
+  another one, such as standard input.
+- Closing the listener closes every socket still queued, so an accepted
+  connection that was never adopted does not leak.
+- A fatal accept error is sent as a negative tick, `-errno`, and then the
+  channel closes.
 
-`connect` works the same way, with a connect thread that sends one id, or an
-error code, into a channel of its own.
+`connect` uses a connecting resource of its own: a connect thread resolves the
+host and connects, records the socket or the error in it, and sends the status
+into a one-slot channel. The task waiting on that channel then calls
+`finishConnectRaw` to take the socket.
+
+### Types
+
+`Listener` and `Connection` are structs that pair the native handle with its
+channel, exported as type aliases over private schemas, so programs write
+`tcp.Connection` but cannot construct one.
 
 ### Lifetimes
 
@@ -154,6 +165,7 @@ Each step ends with `make check` passing and is one commit.
 2. **Clutch skeleton.** `clutch/slug.net.tcp.clutch` with `listen`,
    `localPort`, `accept`, `connect` and `close`, the C source, staging in
    `scripts/stage-native-clutches.sh`, and an entry in `clutch/manifest.toml`.
+   Done.
 3. **Reading and writing.** The reader thread, `read`, `chunks`, `write`, the
    send timeout, `shutdownWrite` and `peer`.
 4. **Robustness.** The tests below that cover failure: peer resets, closing a

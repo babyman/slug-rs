@@ -52,6 +52,7 @@ test-repl:
 test-native:
 	cargo test -p slug --test typed_native
 	cargo test -p slug --test typed_sqlite
+	cargo test -p slug --test typed_net
 	cargo test -p slug --test typed_core
 	cargo test -p slug-native-manifest
 
@@ -59,7 +60,7 @@ test-native:
 # repository as SLUG_HOME.
 test-clutches:
 	cargo build -p slug
-	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.net.tcp.clutch
 
 bench-native-scalar:
 	sh scripts/benchmark-native-scalar.sh
