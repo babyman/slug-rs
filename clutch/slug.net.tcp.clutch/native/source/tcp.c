@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <sys/time.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -21,8 +22,45 @@
 #include <time.h>
 #include <unistd.h>
 
+/* Bytes a reader receives at once, and so the largest chunk it sends. */
+#define READ_BUFFER 16384
+/* How long the peer may take nothing before a write times out. */
+#define DEFAULT_WRITE_TIMEOUT_MS 5000
+/* Bytes the writer sends at once. */
+#define WRITE_SLICE 65536
+
+/* Bytes waiting for the writer, oldest first. */
+struct pending {
+  struct pending *next;
+  size_t length;
+  size_t sent;
+  uint8_t data[];
+};
+
 struct slug_tcp_connection {
   int fd;
+  /* The resource and the reader and writer threads each hold one reference;
+   * the socket closes when the last goes. */
+  atomic_int references;
+  atomic_bool closed;
+  atomic_bool started;
+  char peer[64];
+  /* The writer's queue, guarded by `lock`. */
+  pthread_mutex_t lock;
+  pthread_cond_t more;
+  struct pending *first;
+  struct pending *last;
+  size_t queued;
+  /* The errno a failed send ended writing with, or 0. */
+  int write_error;
+  /* Set by `slug_tcp_wait_writable`: the writer sends a tick through
+   * `writable` when the queue next shrinks. */
+  bool waiting;
+  bool writing;
+  /* `slug_tcp_shutdown_write` was called; `shut_down` once the writer has. */
+  bool shutdown_requested;
+  bool shut_down;
+  slug_producer *writable;
 };
 
 struct slug_tcp_listener {
@@ -76,6 +114,26 @@ static void prepare_connected(int fd) {
 #endif
 }
 
+static void set_write_timeout(int fd, int64_t milliseconds) {
+  struct timeval timeout = {(time_t)(milliseconds / 1000), (suseconds_t)(milliseconds % 1000) * 1000};
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+}
+
+/* The peer's address as `host:port`, or `[host]:port` for IPv6. */
+static void describe_peer(int fd, char *buffer, size_t size) {
+  struct sockaddr_storage address;
+  socklen_t length = sizeof address;
+  char host[INET6_ADDRSTRLEN + 8];
+  char port[8];
+  buffer[0] = '\0';
+  if (getpeername(fd, (struct sockaddr *)&address, &length) != 0 ||
+      getnameinfo((struct sockaddr *)&address, length, host, sizeof host, port, sizeof port,
+                  NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
+    return;
+  }
+  snprintf(buffer, size, address.ss_family == AF_INET6 ? "[%s]:%s" : "%s:%s", host, port);
+}
+
 static slug_tcp_connection *new_connection(int fd) {
   slug_tcp_connection *connection = malloc(sizeof *connection);
   if (connection == NULL) {
@@ -83,6 +141,22 @@ static slug_tcp_connection *new_connection(int fd) {
     return NULL;
   }
   connection->fd = fd;
+  atomic_init(&connection->references, 1);
+  atomic_init(&connection->closed, false);
+  atomic_init(&connection->started, false);
+  pthread_mutex_init(&connection->lock, NULL);
+  pthread_cond_init(&connection->more, NULL);
+  connection->first = NULL;
+  connection->last = NULL;
+  connection->queued = 0;
+  connection->write_error = 0;
+  connection->waiting = false;
+  connection->writing = false;
+  connection->shutdown_requested = false;
+  connection->shut_down = false;
+  connection->writable = NULL;
+  set_write_timeout(fd, DEFAULT_WRITE_TIMEOUT_MS);
+  describe_peer(fd, connection->peer, sizeof connection->peer);
   return connection;
 }
 
@@ -450,11 +524,299 @@ int32_t slug_tcp_finish_connect(slug_tcp_connecting *connecting,
 
 void slug_tcp_connecting_release(slug_tcp_connecting *connecting) { drop_connecting(connecting); }
 
-void slug_tcp_connection_release(slug_tcp_connection *connection) {
-  shutdown(connection->fd, SHUT_RDWR);
+static void free_pending(struct pending *pending) {
+  while (pending != NULL) {
+    struct pending *next = pending->next;
+    free(pending);
+    pending = next;
+  }
+}
+
+static void drop_connection(slug_tcp_connection *connection) {
+  if (atomic_fetch_sub(&connection->references, 1) != 1) return;
+  free_pending(connection->first);
+  pthread_cond_destroy(&connection->more);
+  pthread_mutex_destroy(&connection->lock);
   close(connection->fd);
   free(connection);
 }
+
+void slug_tcp_connection_release(slug_tcp_connection *connection) {
+  atomic_store(&connection->closed, true);
+  pthread_mutex_lock(&connection->lock);
+  bool writing = connection->writing;
+  pthread_cond_signal(&connection->more);
+  pthread_mutex_unlock(&connection->lock);
+  /* Without a writer to finish the queue, shut down now, waking the reader
+   * blocked in recv. The writer shuts down once it has finished. */
+  if (!writing) shutdown(connection->fd, SHUT_RDWR);
+  drop_connection(connection);
+}
+
+/* Ticks through `writable`. */
+#define TICK_PROGRESS 0
+#define TICK_STALLED 1
+
+/* With the lock held: tells a waiting `write` that the queue shrank, that
+ * writing failed, or with TICK_STALLED that the peer took nothing for the
+ * write timeout. A tick already in the channel will do. */
+static void notify_writable(slug_tcp_connection *connection, int64_t tick) {
+  if (!connection->waiting) return;
+  connection->waiting = false;
+  slug_producer_send_i64(connection->writable, tick);
+}
+
+struct threads {
+  slug_tcp_connection *connection;
+  slug_producer *chunks;
+};
+
+static void *read_loop(void *argument) {
+  struct threads *threads = argument;
+  slug_tcp_connection *connection = threads->connection;
+  slug_producer *chunks = threads->chunks;
+  free(threads);
+  uint8_t *buffer = malloc(READ_BUFFER);
+  int error = buffer == NULL ? ENOMEM : 0;
+  while (buffer != NULL) {
+    ssize_t received = recv(connection->fd, buffer, READ_BUFFER, 0);
+    if (received == 0) break;
+    if (received < 0) {
+      if (errno == EINTR) continue;
+      /* A shutdown by `close` is not a failure. */
+      if (!atomic_load(&connection->closed)) error = errno;
+      break;
+    }
+    bool sent = false;
+    while (!sent) {
+      switch (slug_producer_send_bytes(chunks, buffer, (size_t)received)) {
+        case SLUG_PRODUCER_SENT:
+          sent = true;
+          break;
+        case SLUG_PRODUCER_FULL:
+          if (atomic_load(&connection->closed)) goto done;
+          pause_briefly();
+          break;
+        default:
+          goto done;
+      }
+    }
+  }
+  if (error != 0) send_value(chunks, error, &connection->closed);
+done:
+  free(buffer);
+  slug_producer_close(chunks);
+  slug_producer_release(chunks);
+  drop_connection(connection);
+  return NULL;
+}
+
+/* Sends the queue's bytes until the connection is closed and the queue is
+ * empty, or a send fails. A send that times out is retried, except once the
+ * connection is closed: then the peer has had the write timeout to take what
+ * remains. */
+static void *write_loop(void *argument) {
+  slug_tcp_connection *connection = argument;
+  int flags = 0;
+#if defined(MSG_NOSIGNAL)
+  flags = MSG_NOSIGNAL;
+#endif
+  pthread_mutex_lock(&connection->lock);
+  for (;;) {
+    while (connection->first == NULL && !atomic_load(&connection->closed) &&
+           connection->shutdown_requested == connection->shut_down) {
+      pthread_cond_wait(&connection->more, &connection->lock);
+    }
+    struct pending *pending = connection->first;
+    if (pending == NULL && connection->shutdown_requested && !connection->shut_down) {
+      shutdown(connection->fd, SHUT_WR);
+      connection->shut_down = true;
+      continue;
+    }
+    if (pending == NULL) break;
+    size_t length = pending->length - pending->sent;
+    if (length > WRITE_SLICE) length = WRITE_SLICE;
+    const uint8_t *data = pending->data + pending->sent;
+    pthread_mutex_unlock(&connection->lock);
+    ssize_t sent = send(connection->fd, data, length, flags);
+    int error = sent < 0 ? errno : 0;
+    pthread_mutex_lock(&connection->lock);
+    if (sent < 0) {
+      if (error == EINTR) continue;
+      if ((error == EAGAIN || error == EWOULDBLOCK) && !atomic_load(&connection->closed)) {
+        notify_writable(connection, TICK_STALLED);
+        continue;
+      }
+      connection->write_error = error == EAGAIN || error == EWOULDBLOCK ? ETIMEDOUT : error;
+      free_pending(connection->first);
+      connection->first = connection->last = NULL;
+      connection->queued = 0;
+      notify_writable(connection, TICK_PROGRESS);
+      break;
+    }
+    pending->sent += (size_t)sent;
+    connection->queued -= (size_t)sent;
+    if (pending->sent == pending->length) {
+      connection->first = pending->next;
+      if (connection->first == NULL) connection->last = NULL;
+      free(pending);
+    }
+    notify_writable(connection, TICK_PROGRESS);
+  }
+  connection->writing = false;
+  slug_producer *writable = connection->writable;
+  connection->writable = NULL;
+  pthread_mutex_unlock(&connection->lock);
+  slug_producer_close(writable);
+  slug_producer_release(writable);
+  /* Once closed and finished, wake the reader and let the peer see the end. */
+  if (atomic_load(&connection->closed)) shutdown(connection->fd, SHUT_RDWR);
+  drop_connection(connection);
+  return NULL;
+}
+
+int32_t slug_tcp_start(slug_tcp_connection *connection, slug_producer *chunks,
+                       slug_producer *writable, int64_t *detail) {
+  *detail = 0;
+  if (atomic_exchange(&connection->started, true)) {
+    slug_producer_release(chunks);
+    slug_producer_release(writable);
+    return SLUG_TCP_OK;
+  }
+  struct threads *threads = malloc(sizeof *threads);
+  if (threads == NULL) {
+    slug_producer_release(chunks);
+    slug_producer_release(writable);
+    *detail = ENOMEM;
+    return SLUG_TCP_ERROR;
+  }
+  threads->connection = connection;
+  threads->chunks = chunks;
+  pthread_mutex_lock(&connection->lock);
+  connection->writable = writable;
+  connection->writing = true;
+  pthread_mutex_unlock(&connection->lock);
+  atomic_fetch_add(&connection->references, 2);
+  pthread_t reader;
+  pthread_t writer;
+  int error = pthread_create(&writer, NULL, write_loop, connection);
+  if (error != 0) {
+    pthread_mutex_lock(&connection->lock);
+    connection->writing = false;
+    connection->writable = NULL;
+    pthread_mutex_unlock(&connection->lock);
+    atomic_fetch_sub(&connection->references, 2);
+    free(threads);
+    slug_producer_release(chunks);
+    slug_producer_release(writable);
+    *detail = error;
+    return SLUG_TCP_ERROR;
+  }
+  pthread_detach(writer);
+  error = pthread_create(&reader, NULL, read_loop, threads);
+  if (error != 0) {
+    /* The writer runs; without a reader, nothing is received. */
+    atomic_fetch_sub(&connection->references, 1);
+    free(threads);
+    slug_producer_release(chunks);
+    *detail = error;
+    return SLUG_TCP_ERROR;
+  }
+  pthread_detach(reader);
+  return SLUG_TCP_OK;
+}
+
+/* With the lock held: whether the connection can still take writes. */
+static int32_t writable_status(slug_tcp_connection *connection, int64_t *detail) {
+  if (connection->write_error != 0) {
+    *detail = connection->write_error;
+    return *detail == ETIMEDOUT ? SLUG_TCP_TIMEOUT : SLUG_TCP_ERROR;
+  }
+  if (connection->shutdown_requested) {
+    *detail = EPIPE;
+    return SLUG_TCP_ERROR;
+  }
+  return connection->writing ? SLUG_TCP_OK : SLUG_TCP_CLOSED;
+}
+
+/* Queues a copy of `data` for the writer, writing the bytes now queued. */
+static int32_t queue_write(slug_tcp_connection *connection, const uint8_t *data, size_t length,
+                       int64_t *queued, int64_t *detail) {
+  *detail = 0;
+  pthread_mutex_lock(&connection->lock);
+  *queued = (int64_t)connection->queued;
+  int32_t status = writable_status(connection, detail);
+  if (status != SLUG_TCP_OK) {
+    pthread_mutex_unlock(&connection->lock);
+    return status;
+  }
+  if (length > 0) {
+    struct pending *pending = malloc(sizeof *pending + length);
+    if (pending == NULL) {
+      pthread_mutex_unlock(&connection->lock);
+      *detail = ENOMEM;
+      return SLUG_TCP_ERROR;
+    }
+    pending->next = NULL;
+    pending->length = length;
+    pending->sent = 0;
+    memcpy(pending->data, data, length);
+    if (connection->last == NULL) {
+      connection->first = pending;
+    } else {
+      connection->last->next = pending;
+    }
+    connection->last = pending;
+    connection->queued += length;
+    *queued = (int64_t)connection->queued;
+    pthread_cond_signal(&connection->more);
+  }
+  pthread_mutex_unlock(&connection->lock);
+  return SLUG_TCP_OK;
+}
+
+int32_t slug_tcp_write(slug_tcp_connection *connection, const uint8_t *data, size_t length,
+                       int64_t *queued, int64_t *detail) {
+  return queue_write(connection, data, length, queued, detail);
+}
+
+int32_t slug_tcp_write_text(slug_tcp_connection *connection, const char *text, size_t length,
+                            int64_t *queued, int64_t *detail) {
+  return queue_write(connection, (const uint8_t *)text, length, queued, detail);
+}
+
+int32_t slug_tcp_wait_writable(slug_tcp_connection *connection, int64_t *queued,
+                               int64_t *detail) {
+  *detail = 0;
+  pthread_mutex_lock(&connection->lock);
+  *queued = (int64_t)connection->queued;
+  int32_t status = writable_status(connection, detail);
+  if (status == SLUG_TCP_OK) connection->waiting = true;
+  pthread_mutex_unlock(&connection->lock);
+  return status;
+}
+
+void slug_tcp_set_write_timeout(slug_tcp_connection *connection, int64_t milliseconds) {
+  set_write_timeout(connection->fd, milliseconds);
+}
+
+int32_t slug_tcp_shutdown_write(slug_tcp_connection *connection, int64_t *detail) {
+  *detail = 0;
+  pthread_mutex_lock(&connection->lock);
+  int32_t status = writable_status(connection, detail);
+  if (status == SLUG_TCP_OK) {
+    /* The writer shuts down once it has sent what is queued. */
+    connection->shutdown_requested = true;
+    pthread_cond_signal(&connection->more);
+  } else if (connection->shutdown_requested) {
+    status = SLUG_TCP_OK;
+    *detail = 0;
+  }
+  pthread_mutex_unlock(&connection->lock);
+  return status;
+}
+
+const char *slug_tcp_peer(slug_tcp_connection *connection) { return connection->peer; }
 
 const char *slug_tcp_message(int32_t status, int64_t detail) {
   switch (status) {
@@ -463,7 +825,7 @@ const char *slug_tcp_message(int32_t status, int64_t detail) {
     case SLUG_TCP_ADDRESS:
       return gai_strerror((int)detail);
     case SLUG_TCP_TIMEOUT:
-      return "the connection timed out";
+      return "the operation timed out";
     case SLUG_TCP_CLOSED:
       return "the connection is closed";
     default:

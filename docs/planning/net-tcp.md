@@ -85,15 +85,24 @@ references drain the same way.
 
 ### Writing
 
-`write` is a direct native call that sends everything it is given. A peer
-that stops reading fills the kernel's send buffer, and then the write blocks
-the scheduler. Version 1 bounds this with a send timeout (`SO_SNDTIMEO`,
-5 seconds by default, settable per connection); a write that times out throws
-`net.timeout`, and the connection should be closed. Typical responses fit in
-the send buffer, so this rarely triggers, but an HTTP server's slow-client test
-will reach it. A writer thread with its own queue would remove the limit, but
-the native interface has no way for C to receive from a Slug channel, so it is
-left for a later version.
+A blocking `send` inside a native call would stop every task while a peer is
+slow to read, and a first version that did so deadlocked an in-process echo:
+the writing task held the scheduler while the reading task could not run.
+`SO_SNDTIMEO` did not bound it either, because the timeout restarts after
+every partial send.
+
+Each connection therefore also has a writer thread. `write` copies the data
+into a native queue, in a call that never blocks, and the writer sends from
+the queue. While more than 256 KiB is queued, `write` parks its task: it asks
+for a tick through the connection's one-slot `writable` channel, which the
+writer sends as the queue shrinks, and throws `net.timeout` when the peer
+takes nothing for the write timeout (5 seconds by default, settable per
+connection). A failed send is reported by the next `write`.
+
+`shutdownWrite` and `close` are queued behind the data: the writer shuts down
+the sending side once the queue is empty, and `close` waits, parking its task,
+for the writer to finish, bounded by the write timeout, so a response written
+just before `close` is not lost when the program exits.
 
 ## API
 
@@ -129,8 +138,9 @@ loop()
 | `accept(listener:Listener, timeout:num\|nil = nil):Connection\|nil` | The next connection, or `nil` once the listener is closed. Parks only the calling task. |
 | `connect(host:str, port:num, timeout:num = 10000):Connection` | A connected socket. |
 | `read(connection:Connection, timeout:num\|nil = nil):bytes\|nil` | The next chunk, or `nil` at end of stream. |
-| `chunks(connection:Connection):chan<bytes>` | The connection's chunk channel, for a `select` over several sources. |
-| `write(connection:Connection, data:bytes\|str):nil` | Sends all of `data`. |
+| `chunks(connection:Connection):chan<bytes\|num>` | The connection's chunk channel, for a `select` over several sources; a number is a failed receive's error code. |
+| `write(connection:Connection, data:bytes\|str):nil` | Queues all of `data`, waiting while more than 256 KiB is queued. |
+| `setWriteTimeout(connection:Connection, milliseconds:num):nil` | How long the peer may take nothing before a write times out. |
 | `shutdownWrite(connection:Connection):nil` | Half-close: the peer sees end of stream, and reading continues. |
 | `close(value:Connection\|Listener):nil` | Closes it; closing twice does nothing. |
 | `peer(connection:Connection):str` | The peer's address and port. |
@@ -166,8 +176,8 @@ Each step ends with `make check` passing and is one commit.
    `localPort`, `accept`, `connect` and `close`, the C source, staging in
    `scripts/stage-native-clutches.sh`, and an entry in `clutch/manifest.toml`.
    Done.
-3. **Reading and writing.** The reader thread, `read`, `chunks`, `write`, the
-   send timeout, `shutdownWrite` and `peer`.
+3. **Reading and writing.** The reader and writer threads, `read`, `chunks`,
+   `write`, the write timeout, `shutdownWrite` and `peer`. Done.
 4. **Robustness.** The tests below that cover failure: peer resets, closing a
    listener while a task waits in `accept`, closing a connection while its
    reader is blocked, VM shutdown with live threads, and 200 concurrent

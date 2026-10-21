@@ -4,7 +4,9 @@
 #![cfg(unix)]
 
 use std::{
-    env, fs,
+    env,
+    fmt::Write as _,
+    fs,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
@@ -27,8 +29,28 @@ fn platform() -> &'static str {
     }
 }
 
-/// A `SLUG_HOME` with the TCP clutch, built from the repository's sources,
-/// and the repository's `slug.builtin` and `slug.channel`.
+/// Copies `source` to `target`, leaving out staged platform builds.
+fn copy_clutch(source: &Path, target: &Path) {
+    fs::create_dir_all(target).expect("create clutch directory");
+    for entry in fs::read_dir(source).expect("read clutch directory") {
+        let entry = entry.expect("read clutch entry");
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("macos-") || name.starts_with("linux-") || name.starts_with("windows-")
+        {
+            continue;
+        }
+        let destination = target.join(entry.file_name());
+        if entry.file_type().expect("read entry type").is_dir() {
+            copy_clutch(&entry.path(), &destination);
+        } else {
+            fs::copy(entry.path(), destination).expect("copy clutch file");
+        }
+    }
+}
+
+/// A `SLUG_HOME` with the TCP and core clutches, built from the repository's
+/// sources, and the repository's `slug.builtin` and `slug.channel`.
 struct Home(PathBuf);
 
 impl Home {
@@ -38,31 +60,30 @@ impl Home {
             std::process::id(),
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ));
-        let source = workspace_root().join("clutch/slug.net.tcp.clutch");
         let repository = home.join("clutch");
-        let root = repository.join("slug.net.tcp.clutch");
-        for file in [
-            "clutch.toml",
-            "modules/tcp.slug",
-            "native/source/tcp.c",
-            "native/source/slug_net_tcp.h",
+        let mut index = String::from("[modules]\n");
+        for (clutch, provider) in [
+            ("slug.net.tcp.clutch", "slug_net_tcp"),
+            ("slug.core.clutch", "slug_core"),
         ] {
-            let target = root.join(file);
-            fs::create_dir_all(target.parent().expect("clutch file has a parent"))
-                .expect("create clutch directory");
-            fs::copy(source.join(file), target).expect("copy TCP clutch file");
+            let root = repository.join(clutch);
+            copy_clutch(&workspace_root().join("clutch").join(clutch), &root);
+            let text = fs::read_to_string(root.join("clutch.toml")).expect("read clutch manifest");
+            let manifest =
+                NativeManifest::from_clutch_source(&text).expect("valid clutch manifest");
+            build_dynamic(&root, &manifest, provider, platform())
+                .unwrap_or_else(|error| panic!("build {clutch}: {error}"));
+            // The modules the clutch provides, from its `[modules]` table.
+            for line in text.lines().skip_while(|line| *line != "[modules]").skip(1) {
+                if line.starts_with('[') {
+                    break;
+                }
+                if let Some((module, _)) = line.split_once(" = ") {
+                    let _ = writeln!(index, "{module} = \"{clutch}\"");
+                }
+            }
         }
-        fs::write(
-            repository.join("manifest.toml"),
-            "[modules]\n\"slug.net.tcp\" = \"slug.net.tcp.clutch\"\n",
-        )
-        .expect("write repository manifest");
-        let manifest = NativeManifest::from_clutch_source(
-            &fs::read_to_string(root.join("clutch.toml")).expect("read TCP manifest"),
-        )
-        .expect("valid TCP manifest");
-        build_dynamic(&root, &manifest, "slug_net_tcp", platform())
-            .unwrap_or_else(|error| panic!("build TCP clutch: {error}"));
+        fs::write(repository.join("manifest.toml"), index).expect("write repository manifest");
         let library = home.join("lib/slug");
         fs::create_dir_all(&library).expect("create SLUG_HOME library");
         for module in ["builtin.slug", "channel.slug"] {
@@ -100,6 +121,11 @@ fn run(source: &str) -> String {
     let output = home.run(&format!(
         "val tcp = import(\"slug.net.tcp\")\n\
          val {{await}} = import(\"slug.channel\")\n\
+         val {{fromBytes}} = import(\"slug.string\")\n\
+         // `text` doubled `times` times.\n\
+         val repeat = fn(text:str, times:num):str {{\n\
+             if (times == 0) {{ text }} else {{ recur(text + text, times - 1) }}\n\
+         }}\n\
          val failure = fn(work:fn):str {{\n\
              defer onerror(error) {{ return error.type }}\n\
              work()\n\
@@ -208,5 +234,177 @@ fn listens_and_connects_over_ipv6() {
              println(await(server))\n\
              tcp.close(listener)\n"),
         "true\n"
+    );
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn echoes_a_mebibyte_across_many_chunks() {
+    assert_eq!(
+        run("val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+             val server = spawn {\n\
+                 val connection = tcp.accept(listener)\n\
+                 if (connection != nil) {\n\
+                     defer tcp.close(connection)\n\
+                     val echo = fn(chunks:num):num {\n\
+                         match tcp.read(connection) {\n\
+                             nil => chunks\n\
+                             data => { tcp.write(connection, data); recur(chunks + 1) }\n\
+                         }\n\
+                     }\n\
+                     echo(0)\n\
+                 }\n\
+             }\n\
+             val client = tcp.connect(\"127.0.0.1\", tcp.localPort(listener))\n\
+             val sent = repeat(\"0123456789abcdef\", 16)\n\
+             val sender = spawn { tcp.write(client, sent); tcp.shutdownWrite(client) }\n\
+             val collect = fn(received:bytes):bytes {\n\
+                 match tcp.read(client, timeout = 5000) {\n\
+                     nil => received\n\
+                     data => recur(received + data)\n\
+                 }\n\
+             }\n\
+             val received = collect(0x\"\")\n\
+             await(sender)\n\
+             println(len(received), fromBytes(received) == sent, (await(server) ?? 0) > 1)\n\
+             tcp.close(client)\n\
+             tcp.close(listener)\n"),
+        "1048576 true true\n"
+    );
+}
+
+#[test]
+fn half_closes_and_reports_each_peer() {
+    assert_eq!(
+        run("val listener = tcp.listen(\"::1\", 0)\n\
+             val client = tcp.connect(\"::1\", tcp.localPort(listener))\n\
+             val server = tcp.accept(listener)\n\
+             if (server != nil) {\n\
+                 val port = tcp.localPort(listener)\n\
+                 println(tcp.peer(client) == \"[::1]:$port\", tcp.peer(server) != tcp.peer(client))\n\
+                 tcp.write(client, \"request\")\n\
+                 tcp.shutdownWrite(client)\n\
+                 println(fromBytes(tcp.read(server) ?? 0x\"\"), tcp.read(server))\n\
+                 // The client stopped sending, but still reads.\n\
+                 tcp.write(server, \"reply\")\n\
+                 tcp.close(server)\n\
+                 println(fromBytes(tcp.read(client) ?? 0x\"\"), tcp.read(client))\n\
+             }\n\
+             tcp.close(client)\n\
+             tcp.close(listener)\n"),
+        "true true\nrequest nil\nreply nil\n"
+    );
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn read_times_out_and_closing_a_connection_ends_a_waiting_read() {
+    assert_eq!(
+        run("val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+             val client = tcp.connect(\"127.0.0.1\", tcp.localPort(listener))\n\
+             val server = tcp.accept(listener)\n\
+             if (server != nil) {\n\
+                 println(failure(fn() { tcp.read(server, timeout = 50) }))\n\
+                 val reader = spawn { tcp.read(server) }\n\
+                 select { after 50 /> fn(_) { nil } }\n\
+                 tcp.close(server)\n\
+                 println(await(reader))\n\
+             }\n\
+             tcp.close(client)\n\
+             tcp.close(listener)\n"),
+        "net.timeout\nnil\n"
+    );
+}
+
+#[test]
+fn writing_to_a_closed_peer_fails_without_a_signal() {
+    assert_eq!(
+        run("val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+             val client = tcp.connect(\"127.0.0.1\", tcp.localPort(listener))\n\
+             val server = tcp.accept(listener)\n\
+             if (server != nil) { tcp.close(server) }\n\
+             val chunk = repeat(\"x\", 16)\n\
+             // The first writes may land in the buffers before the reset arrives.\n\
+             val until = fn(tries:num):str {\n\
+                 val outcome = failure(fn() { tcp.write(client, chunk) })\n\
+                 if (outcome != \"no error\" || tries == 0) { outcome } else { recur(tries - 1) }\n\
+             }\n\
+             println(until(1000))\n\
+             tcp.close(client)\n\
+             tcp.close(listener)\n"),
+        "net.error\n"
+    );
+}
+
+#[test]
+fn a_write_the_peer_does_not_take_times_out() {
+    assert_eq!(
+        run("val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+             val client = tcp.connect(\"127.0.0.1\", tcp.localPort(listener))\n\
+             // The server never reads, so the buffers fill.\n\
+             val server = tcp.accept(listener)\n\
+             tcp.setWriteTimeout(client, 200)\n\
+             println(failure(fn() { tcp.write(client, repeat(\"x\", 24)) }))\n\
+             println(failure(fn() { tcp.setWriteTimeout(client, -1) }))\n\
+             if (server != nil) { tcp.close(server) }\n\
+             tcp.close(client)\n\
+             tcp.close(listener)\n"),
+        "net.timeout\nnet.error\n"
+    );
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn a_peer_that_stops_reading_does_not_hold_up_other_connections() {
+    assert_eq!(
+        run("val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+             val port = tcp.localPort(listener)\n\
+             val stalled = tcp.connect(\"127.0.0.1\", port)\n\
+             val stalledServer = tcp.accept(listener)\n\
+             val prompt = tcp.connect(\"127.0.0.1\", port)\n\
+             val promptServer = tcp.accept(listener)\n\
+             // A nil test narrows one binding at a time.\n\
+             if (stalledServer != nil) { if (promptServer != nil) {\n\
+                 tcp.setWriteTimeout(stalledServer, 1000)\n\
+                 // This task waits for a peer that never reads, then times out.\n\
+                 val flood = spawn { failure(fn() { tcp.write(stalledServer, repeat(\"x\", 24)) }) }\n\
+                 tcp.write(prompt, \"ping\")\n\
+                 println(fromBytes(tcp.read(promptServer, timeout = 500) ?? 0x\"\"))\n\
+                 tcp.write(promptServer, \"pong\")\n\
+                 println(fromBytes(tcp.read(prompt, timeout = 500) ?? 0x\"\"))\n\
+                 println(await(flood))\n\
+                 tcp.close(stalledServer)\n\
+                 tcp.close(promptServer)\n\
+             } }\n\
+             tcp.close(stalled)\n\
+             tcp.close(prompt)\n\
+             tcp.close(listener)\n"),
+        "ping\npong\nnet.timeout\n"
+    );
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn closing_a_connection_first_sends_what_is_queued() {
+    assert_eq!(
+        run("val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+             val client = tcp.connect(\"127.0.0.1\", tcp.localPort(listener))\n\
+             val server = tcp.accept(listener)\n\
+             val sent = repeat(\"0123456789abcdef\", 18)\n\
+             val sender = spawn {\n\
+                 if (server != nil) { tcp.write(server, sent); tcp.close(server) }\n\
+             }\n\
+             val collect = fn(received:bytes):bytes {\n\
+                 match tcp.read(client, timeout = 5000) {\n\
+                     nil => received\n\
+                     data => recur(received + data)\n\
+                 }\n\
+             }\n\
+             val received = collect(0x\"\")\n\
+             await(sender)\n\
+             println(len(received), fromBytes(received) == sent)\n\
+             tcp.close(client)\n\
+             tcp.close(listener)\n"),
+        "4194304 true\n"
     );
 }

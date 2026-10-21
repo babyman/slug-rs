@@ -2,9 +2,11 @@
  * slug.net.tcp — TCP servers and clients
  *
  * `listen` opens a listening socket and `accept` waits for the next
- * connection; `connect` opens a connection to a server. Waiting parks only the
- * calling task, so a server can `spawn` a task per connection. Close listeners
- * and connections explicitly, normally with `defer`.
+ * connection; `connect` opens a connection to a server. `read` returns the
+ * bytes a connection receives, as they arrive, and `write` sends bytes or
+ * text. Waiting parks only the calling task, so a server can `spawn` a task
+ * per connection. Close listeners and connections explicitly, normally with
+ * `defer`.
  *
  * Failures throw `Error` values whose `type` is `net.address` for a host that
  * does not resolve, `net.refused` for a refused connection, `net.timeout`
@@ -25,17 +27,24 @@ foreign connectRaw = fn(host:str, port:num, timeout:num, done:chan<num>):list
 foreign finishConnectRaw = fn(connecting:ConnectingHandle):list
 foreign closeConnectingRaw = fn(connecting:ConnectingHandle):nil
 foreign closeConnectionRaw = fn(connection:ConnectionHandle):nil
+foreign startRaw = fn(connection:ConnectionHandle, chunks:chan, writable:chan<num>):list
+foreign writeRaw = fn(connection:ConnectionHandle, data:bytes):list
+foreign writeTextRaw = fn(connection:ConnectionHandle, text:str):list
+foreign waitWritableRaw = fn(connection:ConnectionHandle):list
+foreign setWriteTimeoutRaw = fn(connection:ConnectionHandle, milliseconds:num):nil
+foreign shutdownWriteRaw = fn(connection:ConnectionHandle):list
+foreign peerRaw = fn(connection:ConnectionHandle):str
 foreign messageRaw = fn(status:num, detail:num):str
 
-// Statuses the native functions return.
-val ok = 0
-val address = 1
-val refused = 2
-val timedOut = 3
-val closed = 5
-
 val ListenerSchema = struct { handle: ListenerHandle, ready: chan<num> }
-val ConnectionSchema = struct { handle: ConnectionHandle }
+val ConnectionSchema = struct {
+    handle: ConnectionHandle,
+    chunks: chan<bytes|num>,
+    writable: chan<num>,
+}
+
+// Queued bytes above which `write` waits for the writer to catch up.
+val writeLimit = 262144
 
 /**
  * A listening socket, from `listen`.
@@ -55,6 +64,22 @@ val fail = fn(status:num, detail:num) {
         _ => "net.error"
     }
     throw Error {type: type, msg: messageRaw(status, detail)}
+}
+
+// A connection over `handle`, with a reader filling its chunk channel and a
+// writer sending what `write` queues. At 16 unread chunks reading pauses, and
+// the peer's sending slows.
+val connection = fn(handle:ConnectionHandle):Connection {
+    val chunks:chan<bytes|num> = chan(16)
+    // One tick is enough to wake a waiting write.
+    val writable:chan<num> = chan(1)
+    match startRaw(handle, chunks, writable) {
+        [0, _] => ConnectionSchema {handle: handle, chunks: chunks, writable: writable}
+        [status, detail] => {
+            closeConnectionRaw(handle)
+            fail(status, detail)
+        }
+    }
 }
 
 val requirePort = fn(port:num) {
@@ -104,7 +129,7 @@ export val accept = fn(listener:Listener, timeout:num|nil = nil):Connection|nil 
         nil => nil
         "timeout" => throw Error {type: "net.timeout", msg: "no connection arrived in time"}
         0 => match adoptRaw(listener.handle) {
-            [0, handle] => ConnectionSchema {handle: handle}
+            [0, handle] => connection(handle)
             _ => nil
         }
         // A fatal accept error, as -errno; the channel closes after it.
@@ -125,7 +150,7 @@ export val connect = fn(host:str, port:num, timeout:num = 10000):Connection {
             defer closeConnectingRaw(connecting)
             select { recv done }
             match finishConnectRaw(connecting) {
-                [0, handle, _] => ConnectionSchema {handle: handle}
+                [0, handle, _] => connection(handle)
                 [status, _, detail] => fail(status, detail)
             }
         }
@@ -134,12 +159,124 @@ export val connect = fn(host:str, port:num, timeout:num = 10000):Connection {
 }
 
 /**
+ * Waits for the next bytes `connection` receives and returns them, or `nil`
+ * at end of stream, once the peer has closed or shut down its sending side.
+ * A chunk holds at most 16 KiB, and its boundaries are wherever the bytes
+ * happened to arrive, not where the peer's writes were. With `timeout`, in
+ * milliseconds, throws a `net.timeout` error when nothing arrives in time.
+ */
+export val read = fn(connection:Connection, timeout:num|nil = nil):bytes|nil {
+    val chunk = if (timeout == nil) {
+        select { recv connection.chunks }
+    } else {
+        select {
+            recv connection.chunks /> fn(value) { value }
+            after timeout /> fn(_) { "timeout" }
+        }
+    }
+    match chunk {
+        nil => nil
+        "timeout" => throw Error {type: "net.timeout", msg: "nothing arrived in time"}
+        data:bytes => data
+        // A failed receive, as its errno; the channel closes after it.
+        error:num => fail(4, error)
+    }
+}
+
+/**
+ * The channel `read` takes chunks from, for a `select` that also waits on
+ * other channels or timers. It receives bytes, and closes at end of stream. A
+ * failed receive sends a number, the system's error code, before it closes.
+ */
+export val chunks = fn(connection:Connection):chan<bytes|num> {
+    connection.chunks
+}
+
+// Waits until the writer has sent enough that at most `writeLimit` bytes are
+// queued. The writer ticks 0 as the queue shrinks, and 1 when the peer takes
+// nothing for the write timeout.
+val waitForSpace = fn(connection:Connection) {
+    match waitWritableRaw(connection.handle) {
+        [0, queued, _] => if (queued > writeLimit) {
+            if (select { recv connection.writable } == 1) {
+                throw Error {type: "net.timeout", msg: "the peer took nothing in time"}
+            }
+            recur(connection)
+        }
+        [status, _, detail] => fail(status, detail)
+    }
+}
+
+/**
+ * Sends all of `data`, bytes or text as UTF-8. `write` queues the data and
+ * returns; a writer sends it as the peer takes it. While more than 256 KiB is
+ * queued, `write` waits, parking only the calling task, and throws a
+ * `net.timeout` error when the peer takes nothing for the write timeout, 5
+ * seconds unless `setWriteTimeout` changed it. A failed send is reported by
+ * the next `write`.
+ */
+export val write = fn(connection:Connection, data:bytes|str):nil {
+    val result = match data {
+        text:str => writeTextRaw(connection.handle, text)
+        bytes:bytes => writeRaw(connection.handle, bytes)
+    }
+    match result {
+        [0, queued, _] => if (queued > writeLimit) { waitForSpace(connection) }
+        [status, _, detail] => fail(status, detail)
+    }
+}
+
+/**
+ * Sets how long, in milliseconds, the peer may take nothing before a write
+ * times out; 0 waits indefinitely.
+ */
+export val setWriteTimeout = fn(connection:Connection, milliseconds:num):nil {
+    if (int(milliseconds) != milliseconds || milliseconds < 0) {
+        throw Error {type: "net.error", msg: "a timeout is a non-negative integer of milliseconds"}
+    }
+    setWriteTimeoutRaw(connection.handle, milliseconds)
+}
+
+/**
+ * Shuts down the sending side of `connection` once what is queued has been
+ * sent: the peer reads end of stream, and `read` still returns what the peer
+ * sends. A later `write` fails.
+ */
+export val shutdownWrite = fn(connection:Connection):nil {
+    match shutdownWriteRaw(connection.handle) {
+        [0, _] => nil
+        [status, detail] => fail(status, detail)
+    }
+}
+
+/**
+ * The address and port of the other end of `connection`, as
+ * `"127.0.0.1:54321"`, or `"[::1]:54321"` for IPv6.
+ */
+export val peer = fn(connection:Connection):str {
+    peerRaw(connection.handle)
+}
+
+// Waits, parking only the calling task, for the writer of a closed
+// connection to stop: it sends what is queued, giving up once the peer takes
+// nothing for the write timeout, and then closes `writable`.
+val drain = fn(writable:chan<num>) {
+    if (select { recv writable } != nil) { recur(writable) }
+}
+
+/**
  * Closes a listener or a connection. Closing a listener makes tasks waiting
- * in `accept` return `nil`. Closing twice does nothing.
+ * in `accept` return `nil`. Closing a connection first lets the peer take
+ * what writes queued, waiting at most the write timeout for it to take each
+ * part, and parking only the calling task. Closing twice does nothing.
  */
 export val close = fn(value:Listener|Connection):nil {
-    match value.handle {
-        handle:ListenerHandle => closeListenerRaw(handle)
-        handle:ConnectionHandle => closeConnectionRaw(handle)
+    match value {
+        listener:Listener => closeListenerRaw(listener.handle)
+        // A close of a closed handle does nothing; the writer has stopped.
+        connection:Connection => {
+            closeConnectionRaw(connection.handle)
+            drain(connection.writable)
+        }
     }
 }

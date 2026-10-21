@@ -35,4 +35,11 @@ connectRaw = { symbol = "slug_tcp_connect", signature = "(cstr host, i64 port, i
 finishConnectRaw = { symbol = "slug_tcp_finish_connect", signature = "(handle<ConnectingHandle> connecting, out handle<ConnectionHandle> connection, out i64 detail) -> i32" }
 closeConnectingRaw = { symbol = "slug_tcp_connecting_release", signature = "(close handle<ConnectingHandle> connecting) -> void" }
 closeConnectionRaw = { symbol = "slug_tcp_connection_release", signature = "(close handle<ConnectionHandle> connection) -> void" }
+startRaw = { symbol = "slug_tcp_start", signature = "(handle<ConnectionHandle> connection, producer chunks, producer writable, out i64 detail) -> i32" }
+writeRaw = { symbol = "slug_tcp_write", signature = "(handle<ConnectionHandle> connection, bytes data, out i64 queued, out i64 detail) -> i32" }
+writeTextRaw = { symbol = "slug_tcp_write_text", signature = "(handle<ConnectionHandle> connection, str text, out i64 queued, out i64 detail) -> i32" }
+waitWritableRaw = { symbol = "slug_tcp_wait_writable", signature = "(handle<ConnectionHandle> connection, out i64 queued, out i64 detail) -> i32" }
+setWriteTimeoutRaw = { symbol = "slug_tcp_set_write_timeout", signature = "(handle<ConnectionHandle> connection, i64 milliseconds) -> void" }
+shutdownWriteRaw = { symbol = "slug_tcp_shutdown_write", signature = "(handle<ConnectionHandle> connection, out i64 detail) -> i32" }
+peerRaw = { symbol = "slug_tcp_peer", signature = "(handle<ConnectionHandle> connection) -> cstr" }
 messageRaw = { symbol = "slug_tcp_message", signature = "(i32 status, i64 detail) -> cstr" }

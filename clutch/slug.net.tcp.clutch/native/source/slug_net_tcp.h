@@ -55,8 +55,49 @@ int32_t slug_tcp_finish_connect(slug_tcp_connecting *connecting,
  * connect thread has finished. */
 void slug_tcp_connecting_release(slug_tcp_connecting *connecting);
 
-/* Shuts down and closes the connection's socket and frees `connection`. */
+/* Closes the connection: the writer sends what is queued, waiting at most
+ * the write timeout for the peer to take each part, then shuts down the
+ * socket, which wakes the reader. Releases the resource's reference; the
+ * socket closes with the last reference. */
 void slug_tcp_connection_release(slug_tcp_connection *connection);
+
+/* Starts the connection's reader and writer threads. The reader sends what
+ * the connection receives through `chunks` as bytes, at most 16 KiB at a
+ * time, and closes `chunks` at end of stream; a failed receive first sends
+ * its errno as a number. The writer sends what writes queue; when a write is
+ * waiting it sends a tick through `writable` as the queue shrinks, and it
+ * closes `writable` when it stops. Takes ownership of both producers whatever
+ * the result. A second call does nothing. */
+int32_t slug_tcp_start(slug_tcp_connection *connection, slug_producer *chunks,
+                       slug_producer *writable, int64_t *detail);
+
+/* Queues a copy of `data` for the writer, never blocking, and writes the bytes
+ * now queued. After a failed send, returns its status and errno: a send that
+ * timed out once the connection was closing is SLUG_TCP_TIMEOUT. */
+int32_t slug_tcp_write(slug_tcp_connection *connection, const uint8_t *data, size_t length,
+                       int64_t *queued, int64_t *detail);
+
+/* As slug_tcp_write, for text. */
+int32_t slug_tcp_write_text(slug_tcp_connection *connection, const char *text, size_t length,
+                            int64_t *queued, int64_t *detail);
+
+/* Writes the bytes queued and asks the writer for a tick through `writable`:
+ * 0 when the queue next shrinks or writing fails, or 1 when the peer takes
+ * nothing for the write timeout. Returns the status writing failed with, if
+ * it has. */
+int32_t slug_tcp_wait_writable(slug_tcp_connection *connection, int64_t *queued,
+                               int64_t *detail);
+
+/* Sets how long the peer may take nothing before a send times out; 0 waits
+ * indefinitely. */
+void slug_tcp_set_write_timeout(slug_tcp_connection *connection, int64_t milliseconds);
+
+/* Shuts down the sending side once what is queued has been sent, so the peer
+ * reads end of stream. Later writes fail with EPIPE. */
+int32_t slug_tcp_shutdown_write(slug_tcp_connection *connection, int64_t *detail);
+
+/* The peer's address and port, as `host:port` or `[host]:port`. */
+const char *slug_tcp_peer(slug_tcp_connection *connection);
 
 /* A message describing `status` and its `detail`. */
 const char *slug_tcp_message(int32_t status, int64_t detail);
