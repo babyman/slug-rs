@@ -1165,6 +1165,46 @@ fn full_positional_calls_skip_defaults_and_pipelines_prepend_their_value() {
 }
 
 #[test]
+fn number_bytes_and_boolean_literals_are_map_keys() {
+    let path = fixture_path("literal-map-keys");
+    fs::write(
+        &path,
+        "val reasons = {200: \"OK\", 404: \"Not Found\"}\n\
+         val mixed = {-1: \"negative\", 1.5: \"float\", 0x\"00\": \"bytes\", true: \"yes\", false: \"no\"}\n\
+         val named = {nil: 1, copy: 2}\n\
+         val found = match ({201: \"Created\", true: \"t\"}) {\n\
+           {201: reason, true: flag} => reason + flag\n\
+           _ => \"none\"\n\
+         }\n\
+         println(reasons[404], mixed[-1], mixed[1.5], mixed[0x\"00\"], mixed[true], mixed[false], named.nil, found)\n\
+         println({ -1 })\n",
+    )
+    .expect("write literal key source");
+    let output = slug().arg(&path).output().expect("run literal key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Not Found negative float bytes yes no 1 Createdt\n-1\n"
+    );
+
+    fs::write(&path, "val m = {1: 1}\nmatch m { {1} => 1; _ => 0 }\n")
+        .expect("write shorthand source");
+    let output = slug().arg(&path).output().expect("run shorthand source");
+    fs::remove_file(&path).expect("remove literal key source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a literal map pattern key needs a pattern"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
     let run = |source: &str| {

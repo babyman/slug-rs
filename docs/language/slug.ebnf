@@ -161,8 +161,10 @@ index_args = expression
 map_literal = "{" , [ map_entries ] , "}" ;
 map_entries = map_entry , { "," , map_entry } , [ "," ] ;
 map_entry = map_key , ":" , expression ;
-(* Bare identifiers and quoted strings denote string keys unless bracketed. *)
-map_key = identifier | string | "[" , expression , "]" ;
+(* Bare identifiers, reserved words other than true and false, and quoted
+   strings denote string keys; numbers, bytes, and booleans are keys of their
+   own type. *)
+map_key = identifier | string | [ "-" ] , number | bytes | boolean | "[" , expression , "]" ;
 
 struct_schema = "struct" , "{" , { NEWLINE } , [ struct_schema_fields ] , "}" ;
 struct_schema_fields = struct_schema_field , { member_sep , struct_schema_field } , [ member_sep ] ;
@@ -223,10 +225,11 @@ map_pattern_body = "*" | map_pattern_entry , { "," , map_pattern_entry } , [ ","
 map_pattern_entry = spread_pattern
                   | ( identifier | string ) , ":" , match_pattern
                   | identifier
+                  | ( [ "-" ] , number | bytes | boolean ) , ":" , match_pattern
                   | "[" , expression , "]" , ":" , match_pattern
                   ;
-(* Bare identifiers and static string keys denote strings; quoted and computed
-   keys require a value pattern. *)
+(* Bare identifiers and static string keys denote strings; quoted, literal,
+   and computed keys require a value pattern. *)
 
 block = "{" , { statement_sep } , { statement , { statement_sep } } , "}" ;
 (* In expression position, braces are classified structurally: map-entry shapes

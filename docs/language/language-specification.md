@@ -73,8 +73,11 @@ These words are reserved and cannot be used as names: `copy`, `defer`, `else`,
 after `nursery`, and is an ordinary name elsewhere. A reserved word may still
 be a map key, a property name after `.`, or a struct field name, none of which
 binds a name: `{nil: 1, copy: true}` has the string keys `"nil"` and
-`"copy"`, read as `m.nil` and `m.copy`. A map pattern with a reserved key needs
-an explicit pattern, `{nil: value}`, since the shorthand `{nil}` would bind it.
+`"copy"`, read as `m.nil` and `m.copy`. `true` and `false` are the exception
+as map keys: like number and bytes literals, they are keys of their own type,
+so `{true: 1}` has the boolean key `true`. A map pattern with a reserved key
+needs an explicit pattern, `{nil: value}`, since the shorthand `{nil}` would
+bind it.
 
 Blocks are expressions containing statements:
 

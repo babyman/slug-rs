@@ -153,6 +153,38 @@ impl Parser {
     }
     /// The text of a token that names a map key, property, or struct field:
     /// an identifier or, since a key is never a binding, a reserved word.
+    /// A literal map key at `index`, with the tokens it spans: a number,
+    /// possibly negated, bytes, `true`, or `false`. Other reserved words are
+    /// string keys, as names are.
+    fn literal_key_at(&self, index: usize) -> Option<(Value, usize)> {
+        let kind = |offset: usize| self.tokens.get(index + offset).map(|token| &token.kind);
+        match kind(0)? {
+            TokenKind::Int(value) => Some((Value::Int(*value), 1)),
+            TokenKind::Float(value) => Some((Value::Float(*value), 1)),
+            TokenKind::Bytes(value) => Some((Value::Bytes(value.clone().into()), 1)),
+            TokenKind::True => Some((Value::Bool(true), 1)),
+            TokenKind::False => Some((Value::Bool(false), 1)),
+            TokenKind::Minus => match kind(1)? {
+                TokenKind::Int(value) => Some((Value::Int(value.checked_neg()?), 2)),
+                TokenKind::Float(value) => Some((Value::Float(-value), 2)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    /// Takes a literal map key at the current token, if there is one.
+    fn literal_key(&mut self) -> Option<Expr> {
+        let (value, count) = self.literal_key_at(self.index)?;
+        let span = self.peek().span.clone();
+        for _ in 0..count {
+            self.next();
+        }
+        Some(Expr {
+            end: self.previous_end(),
+            span,
+            kind: ExprKind::Value(value),
+        })
+    }
     fn key_name(kind: &TokenKind) -> Option<String> {
         match kind {
             TokenKind::Name(name) => Some(name.clone()),
@@ -1427,13 +1459,20 @@ impl Parser {
             });
         }
         let first_entry = self.next_non_separator_index();
+        let colon_at = |index: usize| {
+            matches!(
+                self.tokens.get(index).map(|token| &token.kind),
+                Some(TokenKind::Colon)
+            )
+        };
         let map = (self.tokens.get(first_entry).is_some_and(|token| {
             matches!(token.kind, TokenKind::Interpolated(_))
                 || Self::key_name(&token.kind).is_some()
-        }) && matches!(
-            self.tokens.get(first_entry + 1).map(|token| &token.kind),
-            Some(TokenKind::Colon)
-        )) || self.starts_computed_map_key(first_entry);
+        }) && colon_at(first_entry + 1))
+            || self
+                .literal_key_at(first_entry)
+                .is_some_and(|(_, count)| colon_at(first_entry + count))
+            || self.starts_computed_map_key(first_entry);
         if map {
             self.map(span)
         } else {
@@ -1481,7 +1520,9 @@ impl Parser {
         let mut entries = Vec::new();
         self.separators();
         loop {
-            let key = if self.matches(&TokenKind::LBracket) {
+            let key = if let Some(key) = self.literal_key() {
+                key
+            } else if self.matches(&TokenKind::LBracket) {
                 self.next();
                 let key = self.expression()?;
                 self.consume(&TokenKind::RBracket, "expected ]")?;
@@ -1979,7 +2020,16 @@ impl Parser {
                     }
                     break;
                 }
-                let key = if self.matches(&TokenKind::LBracket) {
+                let key = if let Some(key) = self.literal_key() {
+                    if !self.matches(&TokenKind::Colon) {
+                        return Err(SourceError::at_token(
+                            SourceErrorCode::InvalidPattern,
+                            "a literal map pattern key needs a pattern, as in `{200: value}`",
+                            self.peek(),
+                        ));
+                    }
+                    MapPatternKey::Computed(key)
+                } else if self.matches(&TokenKind::LBracket) {
                     self.next();
                     let key = self.expression()?;
                     self.consume(&TokenKind::RBracket, "expected ]")?;

@@ -1,7 +1,7 @@
 val s = import("slug.string")
 val math = import("slug.math")
 
-val KEYWORDS = {let: true, fn: true, return: true, if: true, else: true, while: true, true: true, false: true, nil: true, and: true, or: true, not: true, print: true}
+val KEYWORDS = {let: true, fn: true, return: true, if: true, else: true, while: true, "true": true, "false": true, nil: true, and: true, or: true, not: true, print: true}
 // The largest integer is 922337203685477580 * 10 + 7.
 val MAX_TENTH = 922337203685477580
 

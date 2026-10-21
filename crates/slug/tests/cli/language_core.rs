@@ -1004,7 +1004,7 @@ fn reserved_words_are_keys_properties_and_field_names() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "{\"nil\": 1, \"true\": 2, \"if\": 3, \"copy\": 4} 1 4 d true r 4\n"
+        "{\"nil\": 1, true: 2, \"if\": 3, \"copy\": 4} 1 4 d true r 4\n"
     );
 }
 
