@@ -322,6 +322,82 @@ impl ParameterConstraints {
         })
     }
 
+    /// Narrows requirements the body has by what its nested functions
+    /// require of the same parameters, as in `defer tcp.close(c)` followed
+    /// by a function that calls `tcp.read(c)`. A nested function may never
+    /// run, so it only narrows a requirement and never adds one; its body is
+    /// checked against the parameter's type, so a requirement it does not
+    /// meet would be an error there anyway. `shadowed` holds the names
+    /// enclosing nested functions bind.
+    fn narrow_from_nested_functions(
+        &mut self,
+        expression: &Expr,
+        environment: &Environment,
+        shadowed: &HashSet<String>,
+    ) -> Result<(), SourceError> {
+        let mut result = Ok(());
+        expression.for_each_child(|child| {
+            if result.is_err() {
+                return;
+            }
+            result = match &child.kind {
+                ExprKind::Function {
+                    parameters, body, ..
+                } => {
+                    let mut shadowed = shadowed.clone();
+                    shadowed.extend(parameters.iter().map(|parameter| parameter.name.clone()));
+                    self.narrow_from_nested_function(body, environment, &shadowed)
+                        .and_then(|()| {
+                            self.narrow_from_nested_functions(body, environment, &shadowed)
+                        })
+                }
+                _ => self.narrow_from_nested_functions(child, environment, shadowed),
+            };
+        });
+        result
+    }
+
+    fn narrow_from_nested_function(
+        &mut self,
+        body: &Expr,
+        environment: &Environment,
+        shadowed: &HashSet<String>,
+    ) -> Result<(), SourceError> {
+        let mut nested = Self::for_parameters(&[]);
+        nested.requirements = self
+            .requirements
+            .iter()
+            .filter(|(name, requirement)| {
+                !shadowed.contains(*name) && !matches!(requirement.value_type, Type::Unknown)
+            })
+            .map(|(name, requirement)| {
+                (
+                    name.clone(),
+                    ParameterRequirement {
+                        value_type: Type::Unknown,
+                        span: requirement.span.clone(),
+                    },
+                )
+            })
+            .collect();
+        if nested.requirements.is_empty() {
+            return Ok(());
+        }
+        nested.collect(body)?;
+        nested.collect_known_calls(body, environment)?;
+        nested.finish();
+        for (name, requirement) in nested.requirements {
+            let narrower = self.requirements.get(&name).is_some_and(|outer| {
+                requirement.value_type.is_assignable_to(&outer.value_type)
+                    && !outer.value_type.is_assignable_to(&requirement.value_type)
+            });
+            if narrower && !matches!(requirement.value_type, Type::Unknown) {
+                self.require_name(&name, requirement.value_type, &requirement.span, None)?;
+            }
+        }
+        Ok(())
+    }
+
     fn include_nil_partition(&mut self, name: &str) {
         let Some(requirement) = self.requirements.get_mut(name) else {
             return;
@@ -1122,6 +1198,7 @@ fn parameter_constraints(
     constraints.collect_known_calls(body, environment)?;
     constraints.finish();
     constraints.combine(operators)?;
+    constraints.narrow_from_nested_functions(body, environment, &HashSet::new())?;
     constraints.collect_nil_partitions(body);
     Ok(constraints)
 }
@@ -3778,7 +3855,46 @@ enum FlowFact {
     Member(String, String, Type),
 }
 
+/// The facts a condition establishes when it holds and when it does not.
+/// Both sides of a holding `&&` hold, and neither side of a failing `||`
+/// does; `!` swaps them.
 fn condition_facts(expression: &Expr, environment: &Environment) -> (FlowFacts, FlowFacts) {
+    match &expression.kind {
+        ExprKind::Binary {
+            left,
+            operator: operator @ (Binary::And | Binary::Or),
+            right,
+        } => {
+            let and = matches!(operator, Binary::And);
+            let (left_then, left_else) = condition_facts(left, environment);
+            let left_known = if and { left_then } else { left_else };
+            // The right side is evaluated only on that path, so it sees the
+            // left side's facts.
+            let mut narrowed = environment.clone();
+            apply_flow_facts(&mut narrowed, left_known.clone());
+            let (right_then, right_else) = condition_facts(right, &narrowed);
+            let right_known = if and { right_then } else { right_else };
+            let known = left_known.into_iter().chain(right_known).collect();
+            return if and {
+                (known, Vec::new())
+            } else {
+                (Vec::new(), known)
+            };
+        }
+        ExprKind::Prefix { operators, value }
+            if operators
+                .iter()
+                .all(|(operator, _)| matches!(operator, super::ast::Prefix::Not)) =>
+        {
+            let (then_facts, else_facts) = condition_facts(value, environment);
+            return if operators.len() % 2 == 0 {
+                (then_facts, else_facts)
+            } else {
+                (else_facts, then_facts)
+            };
+        }
+        _ => {}
+    }
     let ExprKind::Binary {
         left,
         operator,

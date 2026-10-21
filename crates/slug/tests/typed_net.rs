@@ -422,8 +422,7 @@ fn a_peer_that_stops_reading_does_not_hold_up_other_connections() {
              val stalledServer = tcp.accept(listener)\n\
              val prompt = tcp.connect(\"127.0.0.1\", port)\n\
              val promptServer = tcp.accept(listener)\n\
-             // A nil test narrows one binding at a time.\n\
-             if (stalledServer != nil) { if (promptServer != nil) {\n\
+             if (stalledServer != nil && promptServer != nil) {\n\
                  tcp.setWriteTimeout(stalledServer, 1000)\n\
                  // This task waits for a peer that never reads, then times out.\n\
                  val flood = spawn { failure(fn() { tcp.write(stalledServer, repeat(\"x\", 24)) }) }\n\
@@ -434,7 +433,7 @@ fn a_peer_that_stops_reading_does_not_hold_up_other_connections() {
                  println(await(flood))\n\
                  tcp.close(stalledServer)\n\
                  tcp.close(promptServer)\n\
-             } }\n\
+             }\n\
              tcp.close(stalled)\n\
              tcp.close(prompt)\n\
              tcp.close(listener)\n"),
@@ -486,7 +485,7 @@ fn serves_200_concurrent_clients_each_their_own_data() {
     let server = Server::start(
         "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
          println(tcp.localPort(listener))\n\
-         val serve = fn(connection:tcp.Connection) {\n\
+         val serve = fn(connection) {\n\
              defer tcp.close(connection)\n\
              val echo = fn() {\n\
                  match tcp.read(connection) {\n\

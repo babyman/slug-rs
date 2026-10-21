@@ -1017,7 +1017,10 @@ parameter, or pattern binding: after `r.error != nil`, `r.error` and
 `r["error"]` are not `nil` on that path, as they are past
 `if (r.error == nil) { return ... }`. A `var`'s members are not narrowed,
 since an assignment may replace the value. A member stays narrowed after
-branches only when every branch that continues narrowed it. Broader
+branches only when every branch that continues narrowed it. Nil tests combine:
+where `a != nil && b != nil` holds, neither is `nil`; where
+`a == nil || b == nil` fails, as past `if (a == nil || b == nil) { return 0 }`,
+neither is `nil`; and `!` swaps where a test holds and fails. Broader
 flow-sensitive narrowing and inference for dynamic expression forms remain
 future work.
 
@@ -1159,6 +1162,13 @@ On the path where a parameter equals a literal, such as the `then` branch of
 literal's type. A recursive helper whose base case returns a parameter
 untouched leaves that parameter dynamic. A parameter default runs whenever its
 argument is omitted, so its constraints hold on every path.
+
+A nested function may never run, so it adds no constraint to an enclosing
+function's parameter. It does narrow one the enclosing body already has: in
+`fn(c) { defer tcp.close(c); val serve = fn() { tcp.read(c) }; serve() }`,
+`close` accepts a listener or a connection and `read` only a connection, so
+`c` is a connection. A nested function's own parameter of the same name is a
+different binding.
 
 A direct `value == nil` or `value != nil` test for an unannotated parameter
 partitions its body requirements by reachable branch. The nil branch contributes

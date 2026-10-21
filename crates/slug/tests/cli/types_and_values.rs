@@ -1941,6 +1941,90 @@ fn a_binding_keeps_the_dynamic_type_of_its_value() {
 }
 
 #[test]
+fn a_nested_function_narrows_what_the_body_requires_of_a_parameter() {
+    let path = fixture_path("nested-parameter-requirements");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write nested requirement source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run nested requirement source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // The body requires `num|str` of `x`; a nested function narrows that to
+    // `num`, in either order.
+    let (code, stdout, stderr) = run("val show = fn(value:num|str):str { \"$value\" }\n\
+         val before = fn(x) { show(x); val negate = fn() { -x }; negate() }\n\
+         val after = fn(x) { val negate = fn() { -x }; show(x); negate() }\n\
+         println(before(4), after(5))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "-4 -5\n");
+
+    // The narrowed requirement is checked at calls.
+    let (code, _, stderr) = run("val show = fn(value:num|str):str { \"$value\" }\n\
+         val f = fn(x) { show(x); val negate = fn() { -x }; negate() }\n\
+         f(\"a\")\n");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, got str"), "{stderr}");
+
+    // A nested function adds no requirement of its own, and its own
+    // parameter of the same name is a different binding.
+    let (code, stdout, stderr) = run("val show = fn(value:num|str):str { \"$value\" }\n\
+         val lazy = fn(x) { val negate = fn() { -x }; x }\n\
+         val shadow = fn(x) { show(x); val negate = fn(x) { -x }; negate(3) }\n\
+         println(lazy(\"a\"), shadow(\"b\"))\n");
+    fs::remove_file(&path).expect("remove nested requirement source");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "a -3\n");
+}
+
+#[test]
+fn nil_tests_combined_with_and_or_and_not_narrow_each_binding() {
+    let path = fixture_path("combined-nil-tests");
+    fs::write(
+        &path,
+        "val both = fn(a:num|nil, b:num|nil):num {\n\
+             if (a != nil && b != nil) { a + b } else { 0 }\n\
+         }\n\
+         val either = fn(a:num|nil, b:num|nil):num {\n\
+             if (a == nil || b == nil) { return 0 }\n\
+             a + b\n\
+         }\n\
+         val negated = fn(a:num|nil):num { if (!(a == nil)) { a } else { 1 } }\n\
+         val member = fn(r:map):num { if (r.x != nil && r.y != nil) { r.x + r.y } else { 0 } }\n\
+         println(both(1, 2), both(nil, 2), either(3, 4), either(3, nil), negated(5), negated(nil), member({x: 1, y: 2}))\n",
+    )
+    .expect("write combined nil test source");
+    let output = slug().arg(&path).output().expect("run combined nil tests");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3 0 7 0 5 1 3\n");
+
+    // Either side of a holding `||` may be nil.
+    fs::write(
+        &path,
+        "val f = fn(a:num|nil, b:num|nil):num { if (a != nil || b != nil) { a + b } else { 0 } }\n",
+    )
+    .expect("write disjunction source");
+    let output = slug().arg(&path).output().expect("run disjunction source");
+    fs::remove_file(&path).expect("remove combined nil test source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("operator `+` does not accept num|nil"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn a_nil_test_narrows_a_member_of_an_immutable_binding() {
     let path = fixture_path("member-narrowing");
     let run = |source: &str| {
