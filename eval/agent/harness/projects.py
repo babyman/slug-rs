@@ -17,6 +17,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import http_grader
+
 CASE_TIMEOUT_SECONDS = 20
 
 PROGRAMS = {
@@ -174,8 +176,11 @@ def run_case(slug, slug_home, module_path, module, case, prelude=""):
 
 def grade(slug, slug_home, project_dir, module_path, module):
     """Runs every case and returns per-case outcomes."""
+    suite = load_suite(project_dir)
+    if suite.get("kind") == "http":
+        return http_grader.grade(slug, slug_home, project_dir, module_path, module, suite, load_cases(project_dir))
     outcomes = []
-    prelude = load_suite(project_dir).get("prelude", "")
+    prelude = suite.get("prelude", "")
     for case in load_cases(project_dir):
         passed, detail = run_case(slug, slug_home, module_path, module, case, prelude)
         outcomes.append({"id": case["id"], "kind": case["kind"], "passed": passed, "detail": detail})

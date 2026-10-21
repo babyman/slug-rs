@@ -1,0 +1,79 @@
+// The grader's server: routes that exercise the agent's `http` module. The
+// grader replaces {options} and {module}, starts this program, and reads the
+// port from its first line of output.
+val tcp = import("slug.net.tcp")
+val http = import("{module}")
+val {fromBytes, sort, join, toInt} = import("slug.string")
+
+// `data` as text, or "<bytes>" when it is not UTF-8.
+val text = fn(data:bytes):str {
+    defer onerror(_) { return "<bytes>" }
+    fromBytes(data)
+}
+
+// The request as sorted `key=value` lines, which the grader compares exactly.
+val echo = fn(request) {
+    val section = fn(prefix:str, values:map):list<str> {
+        val names = keys(values)
+        val go = fn(i:num, out:list<str>):list<str> {
+            if (i == len(names)) { return out }
+            val name = names[i]
+            val value = values[name]
+            recur(i + 1, out :+ "$prefix$name=$value")
+        }
+        go(0, [])
+    }
+    val body = text(request.body)
+    val lines = sort(
+        ["method=" + request.method, "path=" + request.path]
+            + section("param.", request.params)
+            + section("query.", request.query)
+            + section("header.", request.headers)
+    )
+    join(lines :+ ("body=" + body), "\n")
+}
+
+val repeat = fn(text:str, times:num):str {
+    if (times == 0) { text } else { recur(text + text, times - 1) }
+}
+
+val routes = [
+    ["GET", "/hello", fn(request) { "hello" }],
+    ["GET", "/users/me", fn(request) { "me" }],
+    ["GET", "/users/:id", echo],
+    ["DELETE", "/users/:id", echo],
+    ["GET", "/users/:id/posts/:post", echo],
+    ["GET", "/files/*rest", echo],
+    ["GET", "/echo", echo],
+    ["POST", "/echo", echo],
+    ["PUT", "/echo", echo],
+    ["PATCH", "/echo", echo],
+    ["DELETE", "/echo", echo],
+    ["POST", "/items", fn(request) {
+        {status: 201, headers: {Location: "/items/1"}, body: "created"}
+    }],
+    ["GET", "/status/:code", fn(request) {
+        {status: toInt(request.params.code) ?? 500, body: "status body"}
+    }],
+    ["GET", "/bytes", fn(request) { {status: 200, body: 0x"00ff10"} }],
+    ["GET", "/empty", fn(request) { {status: 200} }],
+    ["GET", "/typed", fn(request) {
+        {status: 200, headers: {"Content-Type": "application/json"}, body: "{}"}
+    }],
+    ["GET", "/wrong-length", fn(request) {
+        {status: 200, headers: {"content-length": "999"}, body: "four"}
+    }],
+    ["GET", "/headers", fn(request) {
+        {status: 200, headers: {"X-One": "1", "X-Two": "two"}, body: "h"}
+    }],
+    ["GET", "/big", fn(request) { repeat("0123456789abcdef", 16) }],
+    ["GET", "/throw", fn(request) { throw Error {type: "app.failure", msg: "on purpose"} }],
+    ["GET", "/slow", fn(request) {
+        select { after 300 /> fn(_) { nil } }
+        "slow"
+    }],
+]
+
+val listener = tcp.listen("127.0.0.1", 0)
+println(tcp.localPort(listener))
+http.serve(listener, http.router(routes), {options})

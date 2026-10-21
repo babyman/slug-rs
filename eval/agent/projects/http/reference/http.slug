@@ -1,0 +1,621 @@
+/**
+ * http — an HTTP/1.1 server over `slug.net.tcp`, the HTTP project's
+ * reference implementation.
+ *
+ * `serve(listener, handler, options)` serves each connection in its own task;
+ * `router(routes)` builds a handler that dispatches by method and path.
+ */
+
+val tcp = import("slug.net.tcp")
+val {fromBytes, toBytes, toInt, join, chars, ord, chr} = import("slug.string")
+val {send} = import("slug.channel")
+
+val reasons = {
+    [200]: "OK", [201]: "Created", [204]: "No Content", [301]: "Moved Permanently",
+    [302]: "Found", [304]: "Not Modified", [400]: "Bad Request", [404]: "Not Found",
+    [405]: "Method Not Allowed", [408]: "Request Timeout", [413]: "Content Too Large",
+    [414]: "URI Too Long", [431]: "Request Header Fields Too Large",
+    [500]: "Internal Server Error", [501]: "Not Implemented",
+    [505]: "HTTP Version Not Supported",
+}
+
+// Byte values.
+val LF = 10
+val CR = 13
+
+// --- Text helpers -----------------------------------------------------------
+
+val lower = fn(text:str):str {
+    join(chars(text) /> mapList(fn(c) {
+        val code = ord(c)
+        if (code >= 65 && code <= 90) { chr(code + 32) } else { c }
+    }))
+}
+
+val mapList = fn(items:list, f:fn):list {
+    val go = fn(i:num, out:list):list { if (i == len(items)) { out } else { recur(i + 1, out :+ f(items[i])) } }
+    go(0, [])
+}
+
+// `text` split at every `separator`, a single character.
+val split = fn(text:str, separator:str):list<str> {
+    val cs = chars(text)
+    val go = fn(i:num, start:num, out:list<str>):list<str> {
+        if (i == len(cs)) {
+            out :+ join(cs[start:i])
+        } else if (cs[i] == separator) {
+            recur(i + 1, i + 1, out :+ join(cs[start:i]))
+        } else {
+            recur(i + 1, start, out)
+        }
+    }
+    go(0, 0, [])
+}
+
+// `text` split at its first `separator`, or nil when it has none.
+val splitOnce = fn(text:str, separator:str):list<str>|nil {
+    val cs = chars(text)
+    val go = fn(i:num):list<str>|nil {
+        if (i == len(cs)) { nil } else if (cs[i] == separator) { [join(cs[0:i]), join(cs[i + 1:])] } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+val isSpace = fn(c:str):bool { c == " " || c == "\t" }
+
+val trim = fn(text:str):str {
+    val cs = chars(text)
+    val from = fn(i:num):num { if (i < len(cs) && isSpace(cs[i])) { recur(i + 1) } else { i } }
+    val to = fn(i:num):num { if (i > 0 && isSpace(cs[i - 1])) { recur(i - 1) } else { i } }
+    val start = from(0)
+    val end = to(len(cs))
+    if (start >= end) { "" } else { join(cs[start:end]) }
+}
+
+val tokenCharacters = "!#$%&'*+-.^_`|~"
+
+val isToken = fn(text:str):bool {
+    val cs = chars(text)
+    val ok = fn(c:str):bool {
+        val code = ord(c)
+        (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+            || contains(tokenCharacters, c)
+    }
+    val go = fn(i:num):bool { if (i == len(cs)) { true } else if (ok(cs[i])) { recur(i + 1) } else { false } }
+    len(cs) > 0 && go(0)
+}
+
+val contains = fn(text:str, c:str):bool {
+    val cs = chars(text)
+    val go = fn(i:num):bool { if (i == len(cs)) { false } else if (cs[i] == c) { true } else { recur(i + 1) } }
+    go(0)
+}
+
+val isDigits = fn(text:str):bool {
+    val cs = chars(text)
+    val go = fn(i:num):bool {
+        if (i == len(cs)) { true } else if (ord(cs[i]) >= 48 && ord(cs[i]) <= 57) { recur(i + 1) } else { false }
+    }
+    len(cs) > 0 && go(0)
+}
+
+val hexValue = fn(c:str):num|nil {
+    val code = ord(c)
+    if (code >= 48 && code <= 57) { code - 48 }
+    else if (code >= 97 && code <= 102) { code - 87 }
+    else if (code >= 65 && code <= 70) { code - 55 }
+    else { nil }
+}
+
+// --- Protocol errors --------------------------------------------------------
+
+// Ends the request with `status`, after which the connection closes.
+val reject = fn(status:num) {
+    throw Error {type: "http.reject", msg: "rejected", data: {status: status}}
+}
+
+// Percent-decodes `text`, with `+` as a space when `plus` is true.
+val decode = fn(text:str, plus:bool):str {
+    val cs = chars(text)
+    val go = fn(i:num, out:bytes):bytes {
+        if (i == len(cs)) {
+            out
+        } else if (cs[i] == "%") {
+            val high = if (i + 1 < len(cs)) { hexValue(cs[i + 1]) } else { nil }
+            val low = if (i + 2 < len(cs)) { hexValue(cs[i + 2]) } else { nil }
+            if (high == nil || low == nil) { reject(400) }
+            recur(i + 3, out :+ ((high ?? 0) * 16 + (low ?? 0)))
+        } else if (plus && cs[i] == "+") {
+            recur(i + 1, out :+ 32)
+        } else {
+            recur(i + 1, out + toBytes(cs[i]))
+        }
+    }
+    val decoded = go(0, 0x"")
+    defer onerror(_) { reject(400) }
+    fromBytes(decoded)
+}
+
+val parseQuery = fn(query:str):map {
+    val parts = split(query, "&")
+    val go = fn(i:num, out:map):map {
+        if (i == len(parts)) {
+            out
+        } else if (parts[i] == "") {
+            recur(i + 1, out)
+        } else {
+            val pair = splitOnce(parts[i], "=") ?? [parts[i], ""]
+            recur(i + 1, out + {[decode(pair[0], true)]: decode(pair[1], true)})
+        }
+    }
+    go(0, {})
+}
+
+// --- Reading ----------------------------------------------------------------
+
+// A channel that receives once, after `ms` milliseconds.
+val timer = fn(ms:num):chan<num> {
+    val fired:chan<num> = chan(1)
+    spawn {
+        select { after ms /> fn(_) { nil } }
+        send(fired, 1)
+    }
+    fired
+}
+
+// The index just past the blank line that ends the header section in `data`,
+// or nil when there is none yet. Lines end with LF, optionally after CR.
+val headerEnd = fn(data:bytes):num|nil {
+    val go = fn(i:num, lineStart:num):num|nil {
+        if (i >= len(data)) {
+            nil
+        } else if (data[i] == LF) {
+            val line = i - lineStart
+            if (line == 0 || (line == 1 && data[lineStart] == CR)) { i + 1 } else { recur(i + 1, i + 1) }
+        } else {
+            recur(i + 1, lineStart)
+        }
+    }
+    go(0, 0)
+}
+
+// The length of the first line of `data`, without its ending, or nil when it
+// has no LF yet.
+val firstLineLength = fn(data:bytes):num|nil {
+    val go = fn(i:num):num|nil {
+        if (i >= len(data)) { nil } else if (data[i] == LF) { i } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+// Splits a header section into lines without endings; a CR anywhere but
+// before LF is a bare CR.
+val headerLines = fn(text:str):list<str> {
+    val lines = split(text, "\n")
+    mapList(lines, fn(line) {
+        val cs = chars(line)
+        val stripped = if (len(cs) > 0 && cs[len(cs) - 1] == "\r") { join(cs[0:len(cs) - 1]) } else { line }
+        if (contains(stripped, "\r")) { reject(400) }
+        stripped
+    })
+}
+
+val parseHead = fn(head:bytes):map {
+    val text = {
+        defer onerror(_) { reject(400) }
+        fromBytes(head)
+    }
+    val lines = headerLines(text)
+    val requestLine = split(lines[0], " ")
+    if (len(requestLine) != 3) { reject(400) }
+    val method = requestLine[0]
+    val target = requestLine[1]
+    val version = requestLine[2]
+    if (!isToken(method) || len(target) == 0 || target[0] != "/") { reject(400) }
+    if (version != "HTTP/1.1" && version != "HTTP/1.0") {
+        val vs = chars(version)
+        val shaped = len(vs) == 8 && join(vs[0:5]) == "HTTP/" && isDigits(vs[5]) && vs[6] == "." && isDigits(vs[7])
+        reject(if (shaped) { 505 } else { 400 })
+    }
+    // The section ends with an empty line, and the split leaves one after it.
+    val fields = lines[1:len(lines) - 2]
+    val readFields = fn(i:num, headers:map):map {
+        if (i == len(fields)) { return headers }
+        val line = fields[i]
+        if (len(line) > 0 && isSpace(line[0])) { reject(400) }
+        val pair = splitOnce(line, ":")
+        if (pair == nil) { reject(400) }
+        val name = (pair ?? ["", ""])[0]
+        if (!isToken(name)) { reject(400) }
+        val key = lower(name)
+        val value = trim((pair ?? ["", ""])[1])
+        val joined = match headers[key] {
+            nil => value
+            existing => existing + ", " + value
+        }
+        recur(i + 1, headers + {[key]: joined})
+    }
+    val headers = readFields(0, {})
+    if (version == "HTTP/1.1" && headers["host"] == nil) { reject(400) }
+    val parts = splitOnce(target, "?") ?? [target, ""]
+    {
+        method: method,
+        path: decode(parts[0], false),
+        query: parseQuery(parts[1]),
+        version: version,
+        headers: headers,
+    }
+}
+
+// The declared body length, -1 for a chunked body, or 0 for none.
+val bodyLength = fn(headers:map):num {
+    val coding = headers["transfer-encoding"]
+    val length = headers["content-length"]
+    if (coding != nil) {
+        if (length != nil) { reject(400) }
+        if (lower(trim(coding ?? "")) != "chunked") { reject(501) }
+        return -1
+    }
+    if (length == nil) { return 0 }
+    val values = mapList(split(length ?? "", ","), trim)
+    val first = values[0]
+    val same = fn(i:num):bool { if (i == len(values)) { true } else if (values[i] == first) { recur(i + 1) } else { false } }
+    if (!isDigits(first) || !same(1)) { reject(400) }
+    toInt(first) ?? 0
+}
+
+// --- Writing ----------------------------------------------------------------
+
+val write = fn(connection, method:str, response, closing:bool) {
+    val normalized = match response {
+        text:str => {status: 200, headers: {}, body: text}
+        given:map => given
+        _ => throw Error {type: "http.response", msg: "a response is a string or a map"}
+    }
+    val status = normalized.status
+    if (int(status) != status || status < 200 || status > 599) {
+        throw Error {type: "http.response", msg: "invalid status"}
+    }
+    val given = normalized.headers ?? {}
+    val raw = normalized.body ?? ""
+    val noBody = status == 204 || status == 304
+    val body = if (noBody) { 0x"" } else {
+        match raw {
+            text:str => toBytes(text)
+            data:bytes => data
+            _ => throw Error {type: "http.response", msg: "a body is a string or bytes"}
+        }
+    }
+    val defaultType = match raw {
+        _:bytes => "application/octet-stream"
+        _ => "text/plain; charset=utf-8"
+    }
+    // Header names as strings, as given.
+    val names = mapList(keys(given), fn(key) { "$key" })
+    val has = fn(name:str):bool {
+        val go = fn(i:num):bool { if (i == len(names)) { false } else if (lower(names[i]) == name) { true } else { recur(i + 1) } }
+        go(0)
+    }
+    val lines = fn(i:num, out:str):str {
+        if (i == len(names)) { return out }
+        val name = names[i]
+        val key = lower(name)
+        val skip = key == "content-length" || (noBody && key == "content-type")
+        val value = given[names[i]]
+        recur(i + 1, if (skip) { out } else { out + name + ": " + "$value" + "\r\n" })
+    }
+    val reason = reasons[status] ?? "Unknown"
+    var head = "HTTP/1.1 $status $reason\r\n" + lines(0, "")
+    if (!noBody) {
+        val length = len(body)
+        head = head + "Content-Length: $length\r\n"
+        if (length > 0 && !has("content-type")) { head = head + "Content-Type: " + defaultType + "\r\n" }
+    }
+    if (closing && !has("connection")) { head = head + "Connection: close\r\n" }
+    val payload = toBytes(head + "\r\n")
+    tcp.write(connection, if (method == "HEAD") { payload } else { payload + body })
+}
+
+val writeEmpty = fn(connection, status:num) {
+    write(connection, "GET", {status: status}, true)
+}
+
+// Calls `handler`, turning a throw into a 500.
+val respond = fn(handler:fn, request:map) {
+    defer onerror(_) { return {status: 500} }
+    handler(request)
+}
+
+// --- Connections ------------------------------------------------------------
+
+val serveConnection = fn(connection, handler:fn, options:map) {
+    defer onerror(_) { return nil }
+    defer tcp.close(connection)
+    val idleTimeout = options.idleTimeout ?? 5000
+    val headerTimeout = options.headerTimeout ?? 5000
+    val maxHeaderBytes = options.maxHeaderBytes ?? 8192
+    val maxBodyBytes = options.maxBodyBytes ?? 1048576
+    val chunks = tcp.chunks(connection)
+    var buffer = 0x""
+
+    // Receives more bytes, until `deadline` fires: "more", "eof", or "timeout".
+    val more = fn(deadline:chan<num>):str {
+        val got = select {
+            recv chunks /> fn(value) { value }
+            recv deadline /> fn(_) { "timeout" }
+        }
+        match got {
+            "timeout" => "timeout"
+            data:bytes => {
+                buffer = buffer + data
+                "more"
+            }
+            _ => "eof"
+        }
+    }
+
+    // Receives more bytes within `ms`: "more", "eof", or "timeout".
+    val moreWithin = fn(ms:num):str {
+        val got = select {
+            recv chunks /> fn(value) { value }
+            after ms /> fn(_) { "timeout" }
+        }
+        match got {
+            "timeout" => "timeout"
+            data:bytes => {
+                buffer = buffer + data
+                "more"
+            }
+            _ => "eof"
+        }
+    }
+
+    // Drops empty lines before a request line.
+    val skipBlankLines = fn() {
+        if (len(buffer) > 0 && buffer[0] == LF) {
+            buffer = buffer[1:]
+            recur()
+        } else if (len(buffer) > 1 && buffer[0] == CR && buffer[1] == LF) {
+            buffer = buffer[2:]
+            recur()
+        }
+    }
+
+    // Reads the header section: its bytes, or a string saying why not.
+    val readHead = fn(deadline:chan<num>) {
+        skipBlankLines()
+        match headerEnd(buffer) {
+            nil => {
+                val line = firstLineLength(buffer)
+                if ((line ?? len(buffer)) > maxHeaderBytes) { reject(414) }
+                if (len(buffer) > maxHeaderBytes) { reject(431) }
+                match more(deadline) {
+                    "more" => recur(deadline)
+                    other => other
+                }
+            }
+            end => {
+                if ((firstLineLength(buffer) ?? 0) > maxHeaderBytes) { reject(414) }
+                if (end > maxHeaderBytes) { reject(431) }
+                val head = buffer[0:end]
+                buffer = buffer[end:]
+                head
+            }
+        }
+    }
+
+    // Waits for `count` buffered bytes; false at end of stream.
+    val need = fn(count:num):bool {
+        if (len(buffer) >= count) { return true }
+        match moreWithin(idleTimeout) {
+            "more" => recur(count)
+            _ => false
+        }
+    }
+
+    // Takes one line from the buffer, without its ending, or nil at end of
+    // stream.
+    val takeLine = fn():str|nil {
+        match firstLineLength(buffer) {
+            nil => {
+                if (len(buffer) > maxHeaderBytes) { reject(400) }
+                match moreWithin(idleTimeout) {
+                    "more" => recur()
+                    _ => nil
+                }
+            }
+            length => {
+                val raw = buffer[0:length]
+                buffer = buffer[length + 1:]
+                val bytesLine = if (len(raw) > 0 && raw[len(raw) - 1] == CR) { raw[0:len(raw) - 1] } else { raw }
+                defer onerror(_) { reject(400) }
+                fromBytes(bytesLine)
+            }
+        }
+    }
+
+    // The chunked body, or nil at end of stream.
+    val readChunked = fn(body:bytes):bytes|nil {
+        val line = takeLine()
+        if (line == nil) { return nil }
+        val size = parseHex(trim((splitOnce(line ?? "", ";") ?? [line ?? "", ""])[0]))
+        if (size == nil) { reject(400) }
+        val count = size ?? 0
+        if (count == 0) {
+            val trailers = fn():bool {
+                match takeLine() {
+                    nil => false
+                    "" => true
+                    _ => recur()
+                }
+            }
+            return if (trailers()) { body } else { nil }
+        }
+        if (len(body) + count > maxBodyBytes) { reject(413) }
+        if (!need(count)) { return nil }
+        val data = buffer[0:count]
+        buffer = buffer[count:]
+        match takeLine() {
+            nil => nil
+            "" => recur(body + data)
+            _ => reject(400)
+        }
+    }
+
+    // Writes `response`, or a 500 when it is not a valid response.
+    val writeResponse = fn(method:str, response, closing:bool) {
+        defer onerror(_) { writeEmpty(connection, 500) }
+        write(connection, method, response, closing)
+    }
+
+    // Reads and answers one request: "open" to read another, or "closed".
+    val handleOne = fn():str {
+        defer onerror(error) {
+            match error {
+                {type: "http.reject", data: data} => writeEmpty(connection, data.status)
+                _ => nil
+            }
+            return "closed"
+        }
+        val deadline = timer(headerTimeout)
+        val head = readHead(deadline)
+        match head {
+            "timeout" => {
+                writeEmpty(connection, 408)
+                "closed"
+            }
+            bytes:bytes => {
+                val request = parseHead(bytes)
+                val length = bodyLength(request.headers)
+                if (length > maxBodyBytes) { reject(413) }
+                val expects = lower(request.headers["expect"] ?? "") == "100-continue"
+                if (expects && length != 0) {
+                    tcp.write(connection, "HTTP/1.1 100 Continue\r\n\r\n")
+                }
+                val body = if (length == -1) {
+                    readChunked(0x"")
+                } else if (need(length)) {
+                    val data = buffer[0:length]
+                    buffer = buffer[length:]
+                    data
+                } else {
+                    nil
+                }
+                if (body == nil) { return "closed" }
+                val tokens = mapList(split(lower(request.headers["connection"] ?? ""), ","), trim)
+                val closeRequested = fn(i:num):bool {
+                    if (i == len(tokens)) { false } else if (tokens[i] == "close") { true } else { recur(i + 1) }
+                }
+                val closing = request.version == "HTTP/1.0" || closeRequested(0)
+                val full = {
+                    method: request.method,
+                    path: request.path,
+                    query: request.query,
+                    headers: request.headers,
+                    body: body ?? 0x"",
+                    params: {},
+                }
+                writeResponse(request.method, respond(handler, full), closing)
+                if (closing) { "closed" } else { "open" }
+            }
+            // End of stream partway through the header section.
+            _ => "closed"
+        }
+    }
+
+    val loop = fn() {
+        // Idle: wait for the start of the next request.
+        if (len(buffer) == 0) {
+            if (moreWithin(idleTimeout) != "more") { return nil }
+        }
+        if (handleOne() == "open") { recur() }
+    }
+    loop()
+}
+
+val parseHex = fn(text:str):num|nil {
+    val cs = chars(text)
+    val go = fn(i:num, value:num):num|nil {
+        if (i == len(cs)) { return value }
+        match hexValue(cs[i]) {
+            nil => nil
+            digit => recur(i + 1, value * 16 + digit)
+        }
+    }
+    if (len(cs) == 0 || len(cs) > 15) { nil } else { go(0, 0) }
+}
+
+/**
+ * Serves HTTP on `listener` until it is closed, each connection in its own
+ * task, calling `handler` with each request for its response.
+ */
+export val serve = fn(listener, handler:fn, options:map = {}) {
+    val loop = fn() {
+        match tcp.accept(listener) {
+            nil => nil
+            connection => {
+                spawn { serveConnection(connection, handler, options) }
+                recur()
+            }
+        }
+    }
+    loop()
+}
+
+// --- Routing ----------------------------------------------------------------
+
+// The params `pattern` matches `path` with, or nil.
+val matchPath = fn(pattern:list<str>, path:list<str>):map|nil {
+    val go = fn(i:num, params:map):map|nil {
+        if (i == len(pattern)) {
+            return if (i == len(path)) { params } else { nil }
+        }
+        val segment = pattern[i]
+        val cs = chars(segment)
+        if (len(cs) > 0 && cs[0] == "*" && i == len(pattern) - 1) {
+            return if (i < len(path)) { params + {[join(cs[1:])]: join(path[i:], "/")} } else { nil }
+        }
+        if (i >= len(path)) { return nil }
+        if (len(cs) > 0 && cs[0] == ":") {
+            if (path[i] == "") { return nil }
+            return recur(i + 1, params + {[join(cs[1:])]: path[i]})
+        }
+        if (segment == path[i]) { recur(i + 1, params) } else { nil }
+    }
+    go(0, {})
+}
+
+/**
+ * A handler that dispatches by method and path to `routes`, a list of
+ * `[method, pattern, handler]` entries.
+ */
+export val router = fn(routes:list):fn {
+    val compiled = mapList(routes, fn(route) { [route[0], split(route[1], "/"), route[2]] })
+    fn(request:map) {
+        val path = split(request.path, "/")
+        val method = request.method
+        val find = fn(i:num, allowed:list<str>) {
+            if (i == len(compiled)) {
+                if (len(allowed) == 0) { return {status: 404} }
+                return {status: 405, headers: {Allow: join(allowed, ", ")}}
+            }
+            val route = compiled[i]
+            match matchPath(route[1], path) {
+                nil => recur(i + 1, allowed)
+                params => {
+                    val routeMethod = route[0]
+                    if (routeMethod == method || (routeMethod == "GET" && method == "HEAD")) {
+                        return route[2](request + {params: params})
+                    }
+                    val add = fn(list:list<str>, name:str):list<str> {
+                        val go = fn(j:num):bool { if (j == len(list)) { false } else if (list[j] == name) { true } else { recur(j + 1) } }
+                        if (go(0)) { list } else { list :+ name }
+                    }
+                    val withMethod = add(allowed, routeMethod)
+                    recur(i + 1, if (routeMethod == "GET") { add(withMethod, "HEAD") } else { withMethod })
+                }
+            }
+        }
+        find(0, [])
+    }
+}
