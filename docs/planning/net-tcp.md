@@ -181,7 +181,7 @@ Each step ends with `make check` passing and is one commit.
 4. **Robustness.** The tests below that cover failure: peer resets, closing a
    listener while a task waits in `accept`, closing a connection while its
    reader is blocked, VM shutdown with live threads, and 200 concurrent
-   connections.
+   connections. Done.
 5. **Documentation.** `docs/language/networking.md`, and the module in the
    library listing the eval prompts give agents.
 6. **The HTTP project.** See below.

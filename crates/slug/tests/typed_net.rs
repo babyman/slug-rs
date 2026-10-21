@@ -7,9 +7,13 @@ use std::{
     env,
     fmt::Write as _,
     fs,
+    io::{BufRead, BufReader, Read, Write},
+    net::TcpStream,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Child, Command, Output, Stdio},
     sync::atomic::{AtomicUsize, Ordering},
+    thread,
+    time::{Duration, Instant},
 };
 
 use slug_native_manifest::{NativeManifest, build_dynamic};
@@ -96,14 +100,69 @@ impl Home {
         Self(home)
     }
 
-    fn run(&self, source: &str) -> Output {
+    /// The command that runs `source`, with the prelude `run` uses.
+    fn command(&self, source: &str) -> Command {
         let program = self.0.join("main.slug");
-        fs::write(&program, source).expect("write program");
-        Command::new(env!("CARGO_BIN_EXE_slug"))
-            .env("SLUG_HOME", &self.0)
-            .arg(&program)
-            .output()
-            .expect("run slug")
+        fs::write(&program, format!("{PRELUDE}{source}")).expect("write program");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_slug"));
+        command.env("SLUG_HOME", &self.0).arg(&program);
+        command
+    }
+
+    fn run(&self, source: &str) -> Output {
+        self.command(source).output().expect("run slug")
+    }
+}
+
+/// A Slug server started from `source`, which prints its port on the first
+/// line of its output.
+struct Server {
+    child: Child,
+    port: u16,
+    output: BufReader<std::process::ChildStdout>,
+    _home: Home,
+}
+
+impl Server {
+    fn start(source: &str) -> Self {
+        let home = Home::new();
+        let mut child = home
+            .command(source)
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("start slug server");
+        let mut output = BufReader::new(child.stdout.take().expect("server output"));
+        let mut line = String::new();
+        output.read_line(&mut line).expect("read server port");
+        let port = line
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("server port, got {line:?}"));
+        Self {
+            child,
+            port,
+            output,
+            _home: home,
+        }
+    }
+
+    fn connect(&self) -> TcpStream {
+        let stream = TcpStream::connect(("127.0.0.1", self.port)).expect("connect to server");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set read timeout");
+        stream
+    }
+
+    /// The rest of the server's output, once it has exited successfully.
+    fn finish(mut self) -> String {
+        let mut rest = String::new();
+        self.output
+            .read_to_string(&mut rest)
+            .expect("read server output");
+        let status = self.child.wait().expect("wait for server");
+        assert!(status.success(), "server failed: {status}\n{rest}");
+        rest
     }
 }
 
@@ -113,26 +172,11 @@ impl Drop for Home {
     }
 }
 
-/// Runs `source` after a prelude that imports the module and defines
-/// `failure(work)`, the type of the error `work` throws, and returns its
-/// standard output, failing the test when it does not succeed.
+/// Runs `source` after `PRELUDE` and returns its standard output, failing the
+/// test when it does not succeed.
 fn run(source: &str) -> String {
     let home = Home::new();
-    let output = home.run(&format!(
-        "val tcp = import(\"slug.net.tcp\")\n\
-         val {{await}} = import(\"slug.channel\")\n\
-         val {{fromBytes}} = import(\"slug.string\")\n\
-         // `text` doubled `times` times.\n\
-         val repeat = fn(text:str, times:num):str {{\n\
-             if (times == 0) {{ text }} else {{ recur(text + text, times - 1) }}\n\
-         }}\n\
-         val failure = fn(work:fn):str {{\n\
-             defer onerror(error) {{ return error.type }}\n\
-             work()\n\
-             \"no error\"\n\
-         }}\n\
-         {source}"
-    ));
+    let output = home.run(source);
     assert!(
         output.status.success(),
         "{}",
@@ -140,6 +184,21 @@ fn run(source: &str) -> String {
     );
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
+
+/// Imports the module and defines `failure(work)`, the type of the error
+/// `work` throws, and `repeat(text, times)`.
+const PRELUDE: &str = "val tcp = import(\"slug.net.tcp\")\n\
+         val {await} = import(\"slug.channel\")\n\
+         val {fromBytes} = import(\"slug.string\")\n\
+         // `text` doubled `times` times.\n\
+         val repeat = fn(text:str, times:num):str {\n\
+             if (times == 0) { text } else { recur(text + text, times - 1) }\n\
+         }\n\
+         val failure = fn(work:fn):str {\n\
+             defer onerror(error) { return error.type }\n\
+             work()\n\
+             \"no error\"\n\
+         }\n";
 
 // Serving and connecting in one program needs `spawn`.
 #[cfg(feature = "concurrency")]
@@ -407,4 +466,222 @@ fn closing_a_connection_first_sends_what_is_queued() {
              tcp.close(listener)\n"),
         "4194304 true\n"
     );
+}
+
+/// Reads from `stream` until end of stream.
+#[cfg(feature = "concurrency")]
+fn read_all(stream: &mut TcpStream) -> Vec<u8> {
+    let mut received = Vec::new();
+    stream
+        .read_to_end(&mut received)
+        .expect("read to end of stream");
+    received
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn serves_200_concurrent_clients_each_their_own_data() {
+    use std::net::Shutdown;
+
+    let server = Server::start(
+        "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+         println(tcp.localPort(listener))\n\
+         val serve = fn(connection:tcp.Connection) {\n\
+             defer tcp.close(connection)\n\
+             val echo = fn() {\n\
+                 match tcp.read(connection) {\n\
+                     nil => nil\n\
+                     data => { tcp.write(connection, data); recur() }\n\
+                 }\n\
+             }\n\
+             echo()\n\
+         }\n\
+         val loop = fn(count:num, tasks:list):list {\n\
+             if (count == 200) { return tasks }\n\
+             match tcp.accept(listener) {\n\
+                 nil => tasks\n\
+                 connection => recur(count + 1, tasks :+ spawn { serve(connection) })\n\
+             }\n\
+         }\n\
+         val tasks = loop(0, [])\n\
+         val join = fn(i:num) { if (i < len(tasks)) { await(tasks[i]); recur(i + 1) } }\n\
+         join(0)\n\
+         tcp.close(listener)\n\
+         println(len(tasks))\n",
+    );
+    let port = server.port;
+    let clients = (0..200)
+        .map(|client: u32| {
+            thread::spawn(move || {
+                let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(20)))
+                    .expect("set read timeout");
+                // Each client's data differs, and spans several chunks.
+                let sent: Vec<u8> = (0..40_000)
+                    .map(|i| ((i * 7 + client) % 251) as u8)
+                    .collect();
+                stream.write_all(&sent).expect("send");
+                stream.shutdown(Shutdown::Write).expect("shut down sending");
+                read_all(&mut stream) == sent
+            })
+        })
+        .collect::<Vec<_>>();
+    // A client that panicked counts as not echoed.
+    let echoed = clients
+        .into_iter()
+        .map(|client| client.join().unwrap_or(false))
+        .filter(|echoed| *echoed)
+        .count();
+    assert_eq!(echoed, 200);
+    assert_eq!(server.finish(), "200\n");
+}
+
+#[test]
+fn a_peer_reset_is_a_read_error() {
+    let server = Server::start(
+        "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+         println(tcp.localPort(listener))\n\
+         val connection = tcp.accept(listener)\n\
+         if (connection != nil) {\n\
+             tcp.write(connection, repeat(\"x\", 16))\n\
+             println(failure(fn() {\n\
+                 val drain = fn() { if (tcp.read(connection) != nil) { recur() } }\n\
+                 drain()\n\
+             }))\n\
+             tcp.close(connection)\n\
+         }\n\
+         tcp.close(listener)\n",
+    );
+    let mut stream = server.connect();
+    stream.write_all(b"hello").expect("send");
+    // Closing with the server's data unread makes the system reset the
+    // connection rather than end it.
+    let mut first = [0; 1];
+    stream
+        .read_exact(&mut first)
+        .expect("receive the first byte");
+    thread::sleep(Duration::from_millis(100));
+    drop(stream);
+    assert_eq!(server.finish(), "net.error\n");
+}
+
+#[test]
+fn exits_with_connections_and_a_listener_still_open() {
+    let home = Home::new();
+    let started = Instant::now();
+    let output = home.run(
+        "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+         val client = tcp.connect(\"127.0.0.1\", tcp.localPort(listener))\n\
+         val server = tcp.accept(listener)\n\
+         tcp.write(client, \"never read\")\n\
+         println(\"done\")\n",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "done\n");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn opening_and_closing_connections_releases_their_descriptors() {
+    let home = Home::new();
+    let command = home.command(
+        "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+         val port = tcp.localPort(listener)\n\
+         val cycle = fn(i:num):num {\n\
+             if (i == 400) { return i }\n\
+             val client = tcp.connect(\"127.0.0.1\", port)\n\
+             val server = tcp.accept(listener)\n\
+             tcp.write(client, \"ping\")\n\
+             if (server != nil) { tcp.read(server); tcp.close(server) }\n\
+             tcp.close(client)\n\
+             recur(i + 1)\n\
+         }\n\
+         println(cycle(0))\n\
+         tcp.close(listener)\n",
+    );
+    // With 64 descriptors, a leak of one socket a cycle fails long before
+    // the 400th.
+    let program = command.get_args().next().expect("program path").to_owned();
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("ulimit -n 64 && exec \"$0\" \"$1\"")
+        .arg(env!("CARGO_BIN_EXE_slug"))
+        .arg(program)
+        .envs(
+            command
+                .get_envs()
+                .filter_map(|(key, value)| Some((key, value?))),
+        )
+        .output()
+        .expect("run slug with few descriptors");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "400\n");
+}
+
+#[cfg(feature = "concurrency")]
+#[test]
+fn a_slow_reader_bounds_what_a_fast_peer_can_send() {
+    use std::net::Shutdown;
+
+    let server = Server::start(
+        "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+         println(tcp.localPort(listener))\n\
+         val connection = tcp.accept(listener)\n\
+         if (connection != nil) {\n\
+             // Read nothing for a while, then everything.\n\
+             select { after 1500 /> fn(_) { nil } }\n\
+             val count = fn(total:num):num {\n\
+                 match tcp.read(connection) {\n\
+                     nil => total\n\
+                     data => recur(total + len(data))\n\
+                 }\n\
+             }\n\
+             println(count(0))\n\
+             tcp.close(connection)\n\
+         }\n\
+         tcp.close(listener)\n",
+    );
+    let mut stream = server.connect();
+    let total = 64 << 20;
+    let chunk = vec![7_u8; 1 << 16];
+    // While the server is not reading, only its 16 chunks and the system's
+    // buffers can take what is sent.
+    stream.set_nonblocking(true).expect("nonblocking");
+    let mut buffered = 0;
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(1) {
+        match stream.write(&chunk) {
+            Ok(written) => buffered += written,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("send: {error}"),
+        }
+    }
+    assert!(
+        buffered < 16 << 20,
+        "the server buffered {buffered} bytes unread"
+    );
+    stream.set_nonblocking(false).expect("blocking");
+    let mut sent = buffered;
+    while sent < total {
+        let length = chunk.len().min(total - sent);
+        stream.write_all(&chunk[..length]).expect("send the rest");
+        sent += length;
+    }
+    stream.shutdown(Shutdown::Write).expect("shut down sending");
+    assert_eq!(server.finish(), format!("{total}\n"));
 }
