@@ -80,6 +80,7 @@ COMMON_DOCS = [
     "docs/language/automatic-semicolon-insertion.md",
     "docs/language/standard-input.md",
     "docs/language/filesystem.md",
+    "docs/language/networking.md",
 ]
 JSON_DOCS = [
     "docs/reference/diagnostics.md",
@@ -97,6 +98,7 @@ LIBRARY_SOURCES = [
     ("clutch/slug.core.clutch/modules", "library/core"),
     ("clutch/slug.io.fs.clutch/modules", "library/fs"),
     ("clutch/slug.db.sqlite.clutch/modules", "library/sqlite"),
+    ("clutch/slug.net.tcp.clutch/modules", "library/net"),
 ]
 
 CODING_PROMPT = """\

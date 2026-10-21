@@ -183,7 +183,7 @@ Each step ends with `make check` passing and is one commit.
    reader is blocked, VM shutdown with live threads, and 200 concurrent
    connections. Done.
 5. **Documentation.** `docs/language/networking.md`, and the module in the
-   library listing the eval prompts give agents.
+   library listing the eval prompts give agents. Done.
 6. **The HTTP project.** See below.
 
 ## Tests
