@@ -1,15 +1,19 @@
 /**
  * String operations: conversion between characters and their Unicode scalar
- * values, parsing integers, splitting into characters, sorting, and joining.
+ * values, conversion to and from UTF-8 bytes, parsing integers, splitting into
+ * characters, sorting, and joining.
  *
  * Out-of-range arguments throw `Error` values whose `type` is `string.range`;
  * a list element that is not a string throws one whose `type` is
- * `string.type`.
+ * `string.type`; bytes that are not UTF-8 throw one whose `type` is
+ * `string.utf8`.
  */
 
 // Typed native bindings, declared in this clutch's manifest.
 foreign ordRaw = fn(character:str):num
 foreign chrRaw = fn(code:num):list
+foreign fromBytesRaw = fn(data:bytes):list
+foreign toBytesRaw = fn(text:str):list
 
 /**
  * Returns the Unicode scalar value of `character`, which must be a string of
@@ -41,6 +45,28 @@ export val chr = fn(code:num):str {
         [true, character] => character
         _ => throw Error {type: "string.range", msg: "chr requires a Unicode scalar value"}
     }
+}
+
+/**
+ * Returns the string whose UTF-8 encoding is `data`:
+ * `fromBytes(0x"6869")` is "hi".
+ *
+ * Throws a `string.utf8` error when `data` is not valid UTF-8.
+ */
+@testWith([0x"6869"], "hi", [0x""], "", [0x"c3a9e282ac"], "é€")
+export val fromBytes = fn(data:bytes):str {
+    match fromBytesRaw(data) {
+        [true, text] => text
+        _ => throw Error {type: "string.utf8", msg: "the bytes are not valid UTF-8"}
+    }
+}
+
+/**
+ * Returns the UTF-8 encoding of `text`: `toBytes("hi")` is `0x"6869"`.
+ */
+@testWith(["hi"], 0x"6869", [""], 0x"", ["é€"], 0x"c3a9e282ac")
+export val toBytes = fn(text:str):bytes {
+    toBytesRaw(text)[0]
 }
 
 val requireStrings = fn(values, operation) {

@@ -1,4 +1,4 @@
-val {ord, chr, sort, join, toInt, chars} = import("slug.string")
+val {ord, chr, sort, join, toInt, chars, fromBytes, toBytes} = import("slug.string")
 val {assertEqual, assertThrows} = import("slug.test")
 
 val failure = fn(work:fn):list {
@@ -24,6 +24,32 @@ val ordAndChrRejectWhatIsNotOneScalarValue = fn() {
     assertEqual(failure(fn() { chr(1114112) }), scalar)
     assertEqual(failure(fn() { chr(-1) }), scalar)
     assertEqual(failure(fn() { chr(65.5) }), ["string.range", "chr requires an integer code"])
+}
+
+@test
+val bytesRoundTrip = fn() {
+    assertEqual(fromBytes(toBytes("GET /😀 HTTP/1.1\r\n")), "GET /😀 HTTP/1.1\r\n")
+    assertEqual(toBytes("😀"), 0x"f09f9880")
+    assertEqual(fromBytes(0x"f48fbfbf"), chr(1114111))
+    // NUL is a character like any other.
+    assertEqual(fromBytes(0x"610062"), "a\0b")
+    assertEqual(len(fromBytes(0x"610062")), 3)
+}
+
+@test
+val fromBytesRejectsWhatIsNotUtf8 = fn() {
+    val notUtf8 = ["string.utf8", "the bytes are not valid UTF-8"]
+    // A byte that never appears, an overlong form, a surrogate, a value above
+    // U+10FFFF, a truncated sequence, a lone continuation byte, and a
+    // five-byte form.
+    val cases = [0x"ff", 0x"c0af", 0x"e080af", 0x"eda080", 0x"f4908080", 0x"e282", 0x"80", 0x"f880808080", 0x"61ff"]
+    val go = fn(i:num) {
+        if (i < len(cases)) {
+            assertEqual(failure(fn() { fromBytes(cases[i]) }), notUtf8, "case $i")
+            recur(i + 1)
+        }
+    }
+    go(0)
 }
 
 @test

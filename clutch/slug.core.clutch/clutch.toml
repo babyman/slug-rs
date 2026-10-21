@@ -31,3 +31,5 @@ sqrtRaw = { symbol = "slug_core_sqrt", signature = "(f64 value) -> f64" }
 [native.functions."slug.string"]
 ordRaw = { symbol = "slug_core_ord", signature = "(str character) -> i64" }
 chrRaw = { symbol = "slug_core_chr", signature = "(i64 code, out str character) -> bool" }
+fromBytesRaw = { symbol = "slug_core_from_bytes", signature = "(bytes data, out str text) -> bool" }
+toBytesRaw = { symbol = "slug_core_to_bytes", signature = "(str text, out bytes data) -> void" }
