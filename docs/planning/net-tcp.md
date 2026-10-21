@@ -1,0 +1,217 @@
+# TCP networking: `slug.net.tcp`
+
+## Purpose
+
+Give Slug programs TCP servers and clients, so the next agent project can be
+an HTTP/1.1 server library for building web apps. The library is native, so
+we build it; agents then write the HTTP layer in Slug on top of it, and the
+best run becomes the standard HTTP module, as `slug.fmt.json` did.
+
+## Scope
+
+Version 1:
+
+- TCP over IPv4 and IPv6: listen, accept, connect, read, write, half-close,
+  close.
+- Many connections at once, each served by its own Slug task, without one
+  connection's blocking I/O stalling the others.
+- macOS and Linux.
+
+Not in version 1: TLS, UDP, DNS beyond what `getaddrinfo` does inside
+`connect` and `listen`, Windows, and embedded targets. ESP32 can later offer
+the same API over lwIP in the embedded clutch.
+
+## How blocking I/O stays off the scheduler
+
+The VM runs Slug tasks on one thread, so a native call that blocks in
+`accept` or `recv` stalls every task. `slug.io.stdin` already solves this for
+reading: a native thread does the blocking reads and sends each line into a
+channel the Slug program created, through a producer capability
+([typed native producers](../decisions/2026-10-11-typed-native-producers.md)).
+A task waiting on that channel with `select` parks, and the others run.
+
+`slug.net.tcp` uses the same mechanism:
+
+- **Accepting.** `listen` starts an accept thread that sends each accepted
+  connection into the listener's channel.
+- **Reading.** Each connection has a reader thread that `recv`s into a buffer
+  and sends each chunk as `bytes` into the connection's channel, closing the
+  channel at end of stream or on error.
+- **Backpressure.** When a channel is full, the native thread retries after a
+  short pause, as the stdin reader does, and stops calling `recv`. TCP flow
+  control then slows the peer, so a slow Slug consumer never buffers
+  unboundedly.
+
+### Handing over a connection
+
+A producer can send only scalars, text and bytes, not resource handles. The
+accept thread therefore sends an integer id, not a socket. The id names an
+entry in the listener's own pending table, and `adoptRaw(listener, id)` moves
+the socket out of that table into a new `Connection` resource. So:
+
+- Slug code never holds a raw file descriptor, and an arbitrary integer cannot
+  adopt someone else's socket, such as standard input: an id is only valid for
+  the listener that issued it, and only once.
+- Closing the listener closes every socket still pending in its table, so an
+  accepted connection that was never adopted does not leak.
+
+`connect` works the same way, with a connect thread that sends one id, or an
+error code, into a channel of its own.
+
+### Lifetimes
+
+A connection's native state is shared by Slug, which holds the `Connection`
+resource, and the reader thread. It is reference-counted:
+
+- releasing the resource, by `close` or when it is collected, calls
+  `shutdown(SHUT_RDWR)`, which wakes a reader blocked in `recv`;
+- the reader then closes its channel, releases its producer and drops its
+  reference;
+- the socket is closed when the last reference goes.
+
+If the VM shuts down first, sends return `closed`, the threads stop, and
+references drain the same way.
+
+### Writing
+
+`write` is a direct native call that sends everything it is given. A peer
+that stops reading fills the kernel's send buffer, and then the write blocks
+the scheduler. Version 1 bounds this with a send timeout (`SO_SNDTIMEO`,
+5 seconds by default, settable per connection); a write that times out throws
+`net.timeout`, and the connection should be closed. Typical responses fit in
+the send buffer, so this rarely triggers, but an HTTP server's slow-client test
+will reach it. A writer thread with its own queue would remove the limit, but
+the native interface has no way for C to receive from a Slug channel, so it is
+left for a later version.
+
+## API
+
+```slug
+val tcp = import("slug.net.tcp")
+
+// A server: one task per connection.
+val listener = tcp.listen("127.0.0.1", 8080)   // port 0 picks a free port
+println(tcp.localPort(listener))
+val serve = fn(connection) {
+    defer tcp.close(connection)
+    match tcp.read(connection, timeout = 5000) {
+        nil => nil                               // the peer closed
+        data => tcp.write(connection, data)      // echo one chunk
+    }
+}
+val loop = fn() {
+    match tcp.accept(listener) {
+        nil => nil                               // the listener was closed
+        connection => {
+            spawn { serve(connection) }
+            recur()
+        }
+    }
+}
+loop()
+```
+
+| Function | Result |
+|---|---|
+| `listen(host:str, port:num, backlog:num = 128):Listener` | A listening socket. |
+| `localPort(listener:Listener):num` | The bound port, for `port = 0`. |
+| `accept(listener:Listener, timeout:num\|nil = nil):Connection\|nil` | The next connection, or `nil` once the listener is closed. Parks only the calling task. |
+| `connect(host:str, port:num, timeout:num = 10000):Connection` | A connected socket. |
+| `read(connection:Connection, timeout:num\|nil = nil):bytes\|nil` | The next chunk, or `nil` at end of stream. |
+| `chunks(connection:Connection):chan<bytes>` | The connection's chunk channel, for a `select` over several sources. |
+| `write(connection:Connection, data:bytes\|str):nil` | Sends all of `data`. |
+| `shutdownWrite(connection:Connection):nil` | Half-close: the peer sees end of stream, and reading continues. |
+| `close(value:Connection\|Listener):nil` | Closes it; closing twice does nothing. |
+| `peer(connection:Connection):str` | The peer's address and port. |
+
+All timeouts are in milliseconds. A failure throws an `Error` whose `type` is
+`net.error`, `net.timeout`, `net.refused` or `net.address`, with the system's
+message.
+
+## Prerequisites
+
+**Converting between bytes and strings.** Slug has no conversion between
+`bytes` and `str`, and an HTTP parser needs both directions. Add
+`string.fromBytes(data:bytes):str`, which throws `string.utf8` on invalid
+UTF-8, and `string.toBytes(text:str):bytes`. Both would be natives in the core
+clutch, like `ordRaw`, so this needs no VM change.
+
+**Building up bytes.** Bytes are immutable. Measured on a release build,
+appending 4 KiB chunks to a buffer only one binding holds reuses the buffer, so
+it is linear: 16 MiB in 4,000 chunks takes 10 ms. A buffer that is also held
+elsewhere, such as in a map field or a module `var`, is copied on each append,
+which is quadratic: 4 MiB takes 0.13 s and 16 MiB about 2 s. HTTP requests are
+far smaller than that, and a request body can be collected with a uniquely
+held accumulator, so no `bytes.join` is needed yet. Revisit if the HTTP
+project's runs show copying costs.
+
+## Steps
+
+Each step ends with `make check` passing and is one commit.
+
+1. **Bytes and strings.** `string.fromBytes` and `string.toBytes`, with
+   clutch tests, and the bytes-joining measurement. Done.
+2. **Clutch skeleton.** `clutch/slug.net.tcp.clutch` with `listen`,
+   `localPort`, `accept`, `connect` and `close`, the C source, staging in
+   `scripts/stage-native-clutches.sh`, and an entry in `clutch/manifest.toml`.
+3. **Reading and writing.** The reader thread, `read`, `chunks`, `write`, the
+   send timeout, `shutdownWrite` and `peer`.
+4. **Robustness.** The tests below that cover failure: peer resets, closing a
+   listener while a task waits in `accept`, closing a connection while its
+   reader is blocked, VM shutdown with live threads, and 200 concurrent
+   connections.
+5. **Documentation.** `docs/language/networking.md`, and the module in the
+   library listing the eval prompts give agents.
+6. **The HTTP project.** See below.
+
+## Tests
+
+All on loopback with port 0, so they run in parallel and never collide:
+
+- **Rust integration tests** in `crates/slug/tests/typed_net.rs`, like
+  `typed_sqlite.rs`, run Slug programs that serve and connect within one
+  program using `spawn`, and check their output:
+  - echo, including chunks larger than one `recv` buffer;
+  - end of stream, and half-close in each direction;
+  - a refused connection, and a bad address;
+  - read and accept timeouts;
+  - 200 clients at once, each echoing its own data;
+  - backpressure: a client sends 64 MiB to a server that reads slowly, and
+    memory stays bounded;
+  - a blocked writer times out;
+  - closing a listener with a task in `accept`, which then returns `nil`;
+  - closing a connection with its reader blocked;
+  - exiting with connections still open, which leaves no thread running.
+- **Clutch tests** in Slug, run by `slug test`, for the Slug-level wrappers.
+- **A Rust client** in some tests, so a Slug server is also checked against
+  behaviour Slug did not produce.
+
+## The HTTP project
+
+Agents write an HTTP/1.1 server library and a small example web app with it,
+in Slug, against `slug.net.tcp`.
+
+- **Grading.** A Python harness starts the agent's example app and sends raw
+  requests over sockets. Its hidden cases cover:
+  - request-line and header parsing, including folding and case;
+  - `Content-Length` and chunked request bodies;
+  - keep-alive and pipelined requests;
+  - `400`, `404`, `405`, `413` and `431` responses;
+  - routing with path parameters and query strings;
+  - concurrent clients;
+  - a slow client sending one byte at a time, and idle-connection timeouts.
+- **What agents deliver.** A library with routes, handlers, request and
+  response values, and a response builder, plus the example app, so the run
+  also shows whether the library is pleasant to build apps with.
+- **Python baseline.** The same task, using only the `socket` module and the
+  rest of the standard library, but not `http.server`, `socketserver` or
+  `wsgiref`, so both sides write the same layers.
+- **References.** A Python reference first, to validate the hidden suite.
+  The Slug reference comes from the best run, as it did for JSON.
+
+## Decisions
+
+- Windows is left out of version 1.
+- The write timeout defaults to 5 seconds.
+- Agents in the HTTP project get `slug.net.tcp` only, with no stub HTTP
+  module.
