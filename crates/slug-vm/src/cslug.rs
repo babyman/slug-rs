@@ -387,6 +387,14 @@ impl ArtifactHost {
         self.register_foreign(function)
     }
 
+    /// Whether the artifact root declares a `main` entrypoint.
+    #[must_use]
+    pub fn has_entrypoint(&self) -> bool {
+        self.state.artifact.modules[self.state.artifact.root]
+            .program
+            .has_entrypoint()
+    }
+
     /// Executes the artifact root, including its declared entrypoint.
     ///
     /// # Errors

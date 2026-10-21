@@ -818,6 +818,11 @@ ordinary callable declarations. If no eligible local `main` exists, evaluation
 ends after the top-level statements. A top-level failure prevents entrypoint
 invocation.
 
+When `main` returns a number, the runtime exits with it as the process's
+status. It must be an integer from 0 to 255; any other number is reported as an
+error and the status is 1. Any other result, including `nil`, is success, as is
+the last value of a program without `main`.
+
 ```slug
 val main = fn() {
   println("serve")

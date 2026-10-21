@@ -65,8 +65,10 @@ configured library root for `<program>.slug`. This supports installed tools
 such as `slug hello Ada` when `$SLUG_HOME/lib/hello.slug` is available. An
 explicit `.slug` extension is retained during the fallback lookup.
 
-Successful execution exits with status zero. Parse, semantic, module-loading,
-or runtime failure exits nonzero and writes a Slug diagnostic to standard error.
+Successful execution exits with status zero, unless `main` returns a number,
+which becomes the exit status (see [Program entrypoint](language-specification.md#program-entrypoint)).
+Parse, semantic, module-loading, or runtime failure exits nonzero and writes a
+Slug diagnostic to standard error.
 The optional runner flag `--diagnostic-format=json`, placed before the entry
 program, selects the versioned JSON diagnostic representation defined in
 [Error Behavior](errors.md#command-line-json-diagnostics). The optional runner

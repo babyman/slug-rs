@@ -11,7 +11,7 @@ use slug::{
 };
 use slug_frontend::{ArtifactHost, SourceError};
 use slug_vm::{
-    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError, Vm,
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError, Value, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -447,7 +447,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         }
     }
     match host.run() {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(result) => exit_status(host.has_entrypoint(), &result, json),
         Err(error) => {
             eprint_runtime_error(&error, path, "", json);
             ExitCode::from(1)
@@ -507,16 +507,43 @@ fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: b
     program.set_module_name(entry_module);
     register_native_modules(&mut vm);
     match vm.run_program(&program) {
-        Ok(_) => {
+        Ok(result) => {
             for warning in loader.take_warnings() {
                 eprintln!("slug: warning: {warning}");
             }
-            ExitCode::SUCCESS
+            exit_status(program.has_entrypoint(), &result, json)
         }
         Err(error) => {
             eprint_runtime_error(&error, &resolved_path, &source, json);
             ExitCode::from(1)
         }
+    }
+}
+
+/// The process's exit status: the number `main` returned, when it returned
+/// one, and otherwise success. A number that is not an integer from 0 to 255
+/// is reported and fails.
+fn exit_status(entrypoint: bool, result: &Value, json: bool) -> ExitCode {
+    let number = match result {
+        _ if !entrypoint => return ExitCode::SUCCESS,
+        Value::Int(number) => u8::try_from(*number).ok(),
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Value::Float(number) if number.fract() == 0.0 && (0.0..=255.0).contains(number) => {
+            Some(*number as u8)
+        }
+        Value::Float(_) => None,
+        _ => return ExitCode::SUCCESS,
+    };
+    if let Some(status) = number {
+        ExitCode::from(status)
+    } else {
+        eprint_startup_error(
+            "host",
+            "exit_status",
+            format!("main returned {result}; an exit status is an integer from 0 to 255"),
+            json,
+        );
+        ExitCode::from(1)
     }
 }
 

@@ -64,6 +64,58 @@ fn invokes_a_local_zero_argument_main_after_top_level_evaluation() {
 }
 
 #[test]
+fn a_number_main_returns_is_the_exit_status() {
+    let path = fixture_path("program-entrypoint-status");
+    let artifact = fixture_path("program-entrypoint-status.cslug");
+    let cases = [
+        ("3", Some(3), ""),
+        ("2.0", Some(2), ""),
+        ("\"done\"", Some(0), ""),
+        (
+            "256",
+            Some(1),
+            "slug: main returned 256; an exit status is an integer from 0 to 255\n",
+        ),
+        (
+            "1.5",
+            Some(1),
+            "slug: main returned 1.5; an exit status is an integer from 0 to 255\n",
+        ),
+    ];
+    for (result, status, error) in cases {
+        fs::write(&path, format!("val main = fn() {{ {result} }}\n")).expect("write source");
+        let output = slug().arg(&path).output().expect("run source");
+        assert_eq!(output.status.code(), status, "{result}");
+        assert!(
+            String::from_utf8(output.stderr).unwrap().starts_with(error),
+            "{result}"
+        );
+
+        let compile = slug()
+            .args([
+                "compile",
+                path.to_str().unwrap(),
+                artifact.to_str().unwrap(),
+            ])
+            .output()
+            .expect("compile source");
+        assert!(compile.status.success(), "{compile:?}");
+        let output = slug()
+            .args(["run", artifact.to_str().unwrap()])
+            .output()
+            .expect("run artifact");
+        assert_eq!(output.status.code(), status, "{result} artifact");
+    }
+
+    // A program without `main` succeeds whatever its last value is.
+    fs::write(&path, "7\n").expect("write top-level source");
+    let output = slug().arg(&path).output().expect("run top-level source");
+    fs::remove_file(path).expect("remove source");
+    fs::remove_file(artifact).expect("remove artifact");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
 fn passes_raw_program_arguments_to_a_list_main() {
     let path = fixture_path("program-entrypoint-list");
     fs::write(

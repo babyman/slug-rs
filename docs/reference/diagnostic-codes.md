@@ -64,8 +64,8 @@ source diagnostic, with its own code.
 
 ## Command-line startup codes
 
-A command-line failure before a program runs has category `usage`, `io`,
-`host`, or `artifact`. Every `usage` failure has code `usage`; its message
+A command-line failure before a program runs, or the one failure after it,
+has category `usage`, `io`, `host`, or `artifact`. Every `usage` failure has code `usage`; its message
 names the subcommand. Other startup failures use these codes:
 
 | Code | Category | Failure |
@@ -75,6 +75,7 @@ names the subcommand. Other startup failures use these codes:
 | `artifact_write` | io | A `.cslug` file cannot be written. |
 | `clutch` | host | A clutch cannot be activated. |
 | `builtin` | host | Host builtins cannot be registered. |
+| `exit_status` | host | `main` returned a number that is not an integer from 0 to 255. |
 | `compile` | artifact | A program cannot be compiled into an artifact or report. |
 | `encode` | artifact | An artifact cannot be encoded. |
 | `decode` | artifact | A `.cslug` file cannot be decoded. |
