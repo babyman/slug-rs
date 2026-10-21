@@ -742,7 +742,7 @@ fn computed_map_pattern_keys_support_expressions_and_lexical_bindings() {
 #[test]
 fn rejects_unhashable_computed_map_pattern_keys_from_source() {
     let path = fixture_path("invalid-computed-map-pattern-key");
-    fs::write(&path, "match ({status: \"ok\"}) { {[[]]: _} => true }\n")
+    fs::write(&path, "match ({status: \"ok\"}) { {[[{}]]: _} => true }\n")
         .expect("write invalid computed map pattern source");
     let output = slug()
         .arg(&path)
@@ -755,7 +755,7 @@ fn rejects_unhashable_computed_map_pattern_keys_from_source() {
     assert!(
         String::from_utf8(output.stderr)
             .expect("stderr is UTF-8")
-            .starts_with("slug: runtime error: list cannot be used as a map key")
+            .starts_with("slug: runtime error: a list containing map cannot be used as a map key")
     );
 }
 

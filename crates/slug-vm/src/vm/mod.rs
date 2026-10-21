@@ -65,8 +65,8 @@ use frames::{CallSpan, Frame, LocalSlot, ProvidedArguments};
 pub use installation::InstalledProgram;
 use operations::{
     add, add_num, bit_not, bitwise, construct_struct, copy_value, divide, divide_num, index_value,
-    is_map_key, list_append, list_prepend, matches_pattern, modulo, modulo_num, multiply,
-    multiply_num, negate, numbers, shift, slice_value, subtract, subtract_num,
+    is_map_key, list_append, list_prepend, map_key_error, matches_pattern, modulo, modulo_num,
+    multiply, multiply_num, negate, numbers, shift, slice_value, subtract, subtract_num,
 };
 
 const MIN_I64_AS_F64: f64 = -9_223_372_036_854_775_808.0;
@@ -2766,10 +2766,7 @@ impl Vm {
         let mut entries = Vec::with_capacity(count);
         for pair in values.chunks_exact(2) {
             if !is_map_key(&pair[0]) {
-                return Err(self.error_at(
-                    RuntimeErrorKind::Type,
-                    format!("{} cannot be used as a map key", pair[0].type_name()),
-                ));
+                return Err(self.error_at(RuntimeErrorKind::Type, map_key_error(&pair[0])));
             }
             entries.push((pair[0].clone(), pair[1].clone()));
         }

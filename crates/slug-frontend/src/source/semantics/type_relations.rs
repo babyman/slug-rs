@@ -4,9 +4,18 @@ use super::super::semantic::Type;
 
 pub(super) fn is_map_key_type(value: &Type) -> bool {
     match value {
-        Type::Bool | Type::Num | Type::Str | Type::Bytes | Type::Enum(_) | Type::Resource(_) => {
-            true
-        }
+        // Lists and structs are keys when their parts are, which a struct's
+        // field types do not always show; the runtime checks them.
+        Type::Bool
+        | Type::Num
+        | Type::Str
+        | Type::Bytes
+        | Type::Enum(_)
+        | Type::Resource(_)
+        | Type::Channel(_)
+        | Type::List(None)
+        | Type::Struct(_) => true,
+        Type::List(Some(element)) => is_map_key_type(element) || is_dynamic_operation_type(element),
         Type::Union(members) => members.iter().all(is_map_key_type),
         _ => false,
     }

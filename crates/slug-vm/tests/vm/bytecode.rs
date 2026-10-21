@@ -789,7 +789,7 @@ fn computed_map_pattern_keys_use_dynamic_operands() {
 fn rejects_unhashable_computed_map_pattern_keys() {
     let mut main = Chunk::new("main", 0);
     let value = main.constant(Value::map(Vec::new()));
-    let key = main.constant(Value::list(Vec::new()));
+    let key = main.constant(Value::map(Vec::new()));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
         .emit(Op::Constant(key))
@@ -806,7 +806,7 @@ fn rejects_unhashable_computed_map_pattern_keys() {
 
     let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
     assert_eq!(error.kind, RuntimeErrorKind::Type);
-    assert_eq!(error.message, "list cannot be used as a map key");
+    assert_eq!(error.message, "map cannot be used as a map key");
 }
 
 #[test]

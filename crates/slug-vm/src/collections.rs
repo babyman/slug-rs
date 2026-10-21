@@ -28,6 +28,12 @@ pub(crate) enum MapKey {
     Enum(Rc<EnumValue>),
     /// A native resource, by identity: equal only to itself.
     Resource(usize),
+    /// A channel, by identity: equal only to itself.
+    Channel(usize),
+    /// A list of keys, equal to a list of equal keys in the same order.
+    List(Vec<MapKey>),
+    /// A struct, by its schema's identity and its fields' keys in order.
+    Struct(usize, Vec<MapKey>),
 }
 
 impl MapKey {
@@ -56,6 +62,20 @@ impl MapKey {
             Value::NativeResource(resource) => {
                 Some(Self::Resource(Rc::as_ptr(resource).cast::<()>() as usize))
             }
+            Value::Channel(channel) => {
+                Some(Self::Channel(Rc::as_ptr(channel).cast::<()>() as usize))
+            }
+            Value::List(values) => values
+                .iter()
+                .map(Self::from_value)
+                .collect::<Option<_>>()
+                .map(Self::List),
+            Value::Struct(value) => value
+                .values
+                .iter()
+                .map(Self::from_value)
+                .collect::<Option<_>>()
+                .map(|fields| Self::Struct(Rc::as_ptr(&value.schema) as usize, fields)),
             _ => None,
         }
     }
@@ -632,6 +652,9 @@ impl MapIndex {
                 (5u8, &*value.module, &*value.name, &*value.case).hash(&mut hasher);
             }
             MapKey::Resource(address) => (6u8, address).hash(&mut hasher),
+            MapKey::Channel(address) => (9u8, address).hash(&mut hasher),
+            MapKey::List(values) => (7u8, values).hash(&mut hasher),
+            MapKey::Struct(schema, fields) => (8u8, schema, fields).hash(&mut hasher),
         }
         Some(hasher.finish() as usize & self.mask())
     }

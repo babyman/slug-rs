@@ -78,10 +78,7 @@ pub(super) fn add_num(left: Value, right: Value) -> Result<Value, String> {
 pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let Value::Map(entries) = left {
         if !is_map_key(&right) {
-            return Err((
-                RuntimeErrorKind::Type,
-                format!("{} cannot be used as a map key", right.type_name()),
-            ));
+            return Err((RuntimeErrorKind::Type, map_key_error(&right)));
         }
         return Ok(Value::Map(entries.remove(&right)));
     }
@@ -609,10 +606,7 @@ fn resolve_map_pattern_keys(
                 })?,
             };
             if !is_map_key(&key) {
-                return Err((
-                    RuntimeErrorKind::Type,
-                    format!("{} cannot be used as a map key", key.type_name()),
-                ));
+                return Err((RuntimeErrorKind::Type, map_key_error(&key)));
             }
             Ok(key)
         })
@@ -621,6 +615,28 @@ fn resolve_map_pattern_keys(
 
 pub(super) fn is_map_key(value: &Value) -> bool {
     MapKey::from_value(value).is_some()
+}
+
+/// Why `value` cannot be a map key, naming the part of a list or struct that
+/// cannot.
+pub(super) fn map_key_error(value: &Value) -> String {
+    fn unhashable(value: &Value) -> &'static str {
+        let part = match value {
+            Value::List(values) => values.iter().find(|part| !is_map_key(part)),
+            Value::Struct(value) => value.values.iter().find(|part| !is_map_key(part)),
+            _ => None,
+        };
+        part.map_or(value.type_name(), unhashable)
+    }
+    let part = unhashable(value);
+    if part == value.type_name() {
+        format!("{part} cannot be used as a map key")
+    } else {
+        format!(
+            "a {} containing {part} cannot be used as a map key",
+            value.type_name()
+        )
+    }
 }
 
 pub(super) fn index_value(

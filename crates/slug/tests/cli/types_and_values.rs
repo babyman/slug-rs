@@ -1231,6 +1231,61 @@ fn enum_values_are_map_keys() {
 }
 
 #[test]
+fn lists_structs_and_channels_are_map_keys() {
+    let path = fixture_path("composite-map-keys");
+    fs::write(
+        &path,
+        "val grid = {[[0, 0]]: \"origin\", [[1, 2]]: \"a\"}\n\
+         val Point = struct { x, y }\n\
+         val Other = struct { x, y }\n\
+         val points = {[Point {x: 1, y: 2}]: \"p\"}\n\
+         val lookup = fn(key) { points[key] }\n\
+         val ready = chan(1)\n\
+         val channels = {[ready]: \"ready\"}\n\
+         val fill = fn(i:num, m:map):map { if (i == 100) { m } else { recur(i + 1, m + {[[i, \"x\"]]: i}) } }\n\
+         val large = fill(0, {})\n\
+         println(grid[[0, 0]], grid[[1.0, 2]], grid[[2, 1]], lookup(Point {x: 1, y: 2}), lookup(Other {x: 1, y: 2}))\n\
+         println(channels[ready], channels[chan(1)], large[[42, \"x\"]], len(large - [3, \"x\"]))\n",
+    )
+    .expect("write composite key source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run composite key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "origin a nil p nil\nready nil 42 99\n"
+    );
+
+    for (source, message) in [
+        (
+            "{[[1, nil]]: 1}",
+            "a list containing nil cannot be used as a map key",
+        ),
+        (
+            "{[[1, [2, {}]]]: 1}",
+            "a list containing map cannot be used as a map key",
+        ),
+        ("{[{}]: 1}", "map cannot be used as a map key"),
+    ] {
+        fs::write(&path, format!("println({source})\n")).expect("write invalid key source");
+        let output = slug().arg(&path).output().expect("run invalid key source");
+        assert_eq!(output.status.code(), Some(1), "{source}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{source}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::remove_file(&path).expect("remove composite key source");
+}
+
+#[test]
 fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
     let run = |source: &str| {
@@ -1305,12 +1360,16 @@ fn rejects_every_non_key_collection_value_from_source() {
     let path = fixture_path("invalid-map-key-categories");
     for (name, source, expected) in [
         ("nil", "{[nil]: 1}\n", "nil cannot be used as a map key"),
-        ("list", "{[[]]: 1}\n", "list cannot be used as a map key"),
+        (
+            "list",
+            "{[[nil]]: 1}\n",
+            "a list containing nil cannot be used as a map key",
+        ),
         ("map", "{[{}]: 1}\n", "map cannot be used as a map key"),
         (
             "struct",
-            "val User = struct { name = \"Slug\" }\n{[User {}]: 1}\n",
-            "struct cannot be used as a map key",
+            "val User = struct { tags = {} }\n{[User {}]: 1}\n",
+            "a struct containing map cannot be used as a map key",
         ),
     ] {
         fs::write(&path, source).expect("write invalid map-key source");

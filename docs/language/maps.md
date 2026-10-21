@@ -30,11 +30,16 @@ runtime type error when the literal is evaluated. Use `+` to overwrite a key.
 Newlines immediately inside the braces or after an entry comma are whitespace;
 entries remain comma-delimited.
 
-A key must be hashable. Numbers, strings, bytes, booleans, enum values, and
-native resources are hashable. An enum value equals another of the same case
-of the same enum, and a resource equals only itself, so `{[file]: state}`
-keys state by the resource itself, whether or not it is still open. `nil`,
-lists, maps, functions, and structs are not valid map keys.
+A key must be hashable. Numbers, strings, bytes, booleans, enum values,
+native resources, and channels are hashable, and so are lists and structs
+whose elements and fields all are. An enum value equals another of the same
+case of the same enum, and a resource or channel equals only itself, so
+`{[file]: state}` keys state by the resource itself, whether or not it is
+still open. A list equals a list of equal elements in the same order, so
+`{[[x, y]]: cell}` keys a grid by coordinates, and a struct equals a struct
+of the same schema with equal fields. `nil`, maps, and functions are not valid
+map keys, and neither is a list or struct containing one; the error names
+what it contains.
 An integer and a float key are equal only when the float exactly represents
 that integer, so `1` and `1.0` address the same key without conflating large
 integers above binary64's exact range. `0` and `-0.0` are equal. Every Slug

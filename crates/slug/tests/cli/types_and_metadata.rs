@@ -92,7 +92,7 @@ fn selects_body_derived_subtract_alternatives_at_known_calls() {
 
     fs::write(
         &path,
-        "val remove = fn(map, key) { map - key }\nremove({[1]: \"one\"}, [])\n",
+        "val remove = fn(map, key) { map - key }\nremove({[1]: \"one\"}, {})\n",
     )
     .expect("write invalid map-key subtraction source");
     let output = slug()
@@ -109,7 +109,7 @@ fn selects_body_derived_subtract_alternatives_at_known_calls() {
     fs::write(
         &path,
         "val remove = fn(map, key) { map - key }\n\
-         val key:any|nil = []\n\
+         val key:any|nil = {}\n\
          remove({[1]: \"one\"}, key)\n",
     )
     .expect("write dynamic map-key subtraction source");
@@ -438,7 +438,7 @@ fn inferred_alternatives_widen_at_dynamic_call_boundaries() {
         &path,
         "val remove = fn(map, key) { map - key }\n\
          val selected = if (true) { remove } else { remove }\n\
-         selected({[1]: \"one\"}, [])\n",
+         selected({[1]: \"one\"}, {})\n",
     )
     .expect("write structural inferred subtract source");
     let output = slug()
