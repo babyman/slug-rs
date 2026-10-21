@@ -4,7 +4,9 @@ use super::super::semantic::Type;
 
 pub(super) fn is_map_key_type(value: &Type) -> bool {
     match value {
-        Type::Bool | Type::Num | Type::Str | Type::Bytes => true,
+        Type::Bool | Type::Num | Type::Str | Type::Bytes | Type::Enum(_) | Type::Resource(_) => {
+            true
+        }
         Type::Union(members) => members.iter().all(is_map_key_type),
         _ => false,
     }

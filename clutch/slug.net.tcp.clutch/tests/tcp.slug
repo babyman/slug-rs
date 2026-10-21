@@ -37,3 +37,15 @@ val acceptAfterCloseReturnsNil = fn() {
     tcp.close(listener)
     assertEqual(tcp.accept(listener), nil)
 }
+
+@test
+val connectionsAreMapKeys = fn() {
+    val listener = tcp.listen("127.0.0.1", 0)
+    defer tcp.close(listener)
+    val first = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    val second = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    defer tcp.close(first)
+    defer tcp.close(second)
+    val names = {[first.handle]: "first", [second.handle]: "second"}
+    assertEqual([names[first.handle], names[second.handle]], ["first", "second"])
+}

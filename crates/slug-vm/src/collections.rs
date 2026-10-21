@@ -11,7 +11,7 @@ use core::hash::{BuildHasher, Hash, Hasher};
 use crate::platform::MapHasher;
 use core::ops::Deref;
 
-use crate::Value;
+use crate::{EnumValue, Value};
 
 /// Canonical, hashable map-key representation.
 ///
@@ -24,6 +24,10 @@ pub(crate) enum MapKey {
     Float(u64),
     Str(Str),
     Bytes(Rc<Vec<u8>>),
+    /// An enum value, equal to another of the same module, type, and case.
+    Enum(Rc<EnumValue>),
+    /// A native resource, by identity: equal only to itself.
+    Resource(usize),
 }
 
 impl MapKey {
@@ -48,6 +52,10 @@ impl MapKey {
             Value::Float(value) if value.is_finite() => Some(Self::Float(value.to_bits())),
             Value::Str(value) => Some(Self::Str(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.clone())),
+            Value::Enum(value) => Some(Self::Enum(value.clone())),
+            Value::NativeResource(resource) => {
+                Some(Self::Resource(Rc::as_ptr(resource).cast::<()>() as usize))
+            }
             _ => None,
         }
     }
@@ -620,6 +628,10 @@ impl MapIndex {
             MapKey::Float(bits) => (2u8, bits).hash(&mut hasher),
             MapKey::Str(value) => (3u8, &*value).hash(&mut hasher),
             MapKey::Bytes(value) => (4u8, value.as_slice()).hash(&mut hasher),
+            MapKey::Enum(value) => {
+                (5u8, &*value.module, &*value.name, &*value.case).hash(&mut hasher);
+            }
+            MapKey::Resource(address) => (6u8, address).hash(&mut hasher),
         }
         Some(hasher.finish() as usize & self.mask())
     }

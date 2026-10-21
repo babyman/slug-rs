@@ -992,7 +992,7 @@ impl StructValue {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct EnumValue {
     #[doc(hidden)]
     pub module: Rc<str>,

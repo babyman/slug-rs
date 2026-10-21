@@ -1205,6 +1205,32 @@ fn number_bytes_and_boolean_literals_are_map_keys() {
 }
 
 #[test]
+fn enum_values_are_map_keys() {
+    let path = fixture_path("enum-map-keys");
+    fs::write(
+        &path,
+        "enum Color { Red, Green, Blue }\n\
+         val hex = {[Color.Red]: \"#f00\", [Color.Blue]: \"#00f\"}\n\
+         // Past the size where a map indexes its keys by hash.\n\
+         val fill = fn(i:num, m:map):map { if (i == 100) { m } else { recur(i + 1, m + {[i]: i}) } }\n\
+         val large = fill(0, {}) + {[Color.Green]: \"green\"}\n\
+         println(hex[Color.Red], hex[Color.Green], keys(hex), large[Color.Green], len(large - Color.Green))\n",
+    )
+    .expect("write enum key source");
+    let output = slug().arg(&path).output().expect("run enum key source");
+    fs::remove_file(&path).expect("remove enum key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "#f00 nil [Color.Red, Color.Blue] green 100\n"
+    );
+}
+
+#[test]
 fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
     let run = |source: &str| {
