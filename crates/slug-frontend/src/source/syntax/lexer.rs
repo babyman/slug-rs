@@ -239,37 +239,42 @@ impl Lexer {
 }
 
 impl Lexer {
-    fn newline_continues(&self, tokens: &[Token]) -> bool {
-        matches!(
-            tokens.last().map(|token| &token.kind),
-            Some(
-                TokenKind::Eq
-                    | TokenKind::EqEq
-                    | TokenKind::BangEq
-                    | TokenKind::Less
-                    | TokenKind::LessEq
-                    | TokenKind::Greater
-                    | TokenKind::GreaterEq
-                    | TokenKind::AndAnd
-                    | TokenKind::OrOr
-                    | TokenKind::QuestionQuestion
-                    | TokenKind::Ampersand
-                    | TokenKind::Pipe
-                    | TokenKind::ShiftLeft
-                    | TokenKind::ShiftRight
-                    | TokenKind::Plus
-                    | TokenKind::PlusColon
-                    | TokenKind::Minus
-                    | TokenKind::Star
-                    | TokenKind::Slash
-                    | TokenKind::Percent
-                    | TokenKind::Colon
-                    | TokenKind::ColonPlus
-                    | TokenKind::At
-                    | TokenKind::Caret
-                    | TokenKind::Dot
-            )
-        ) || self.next_starts_infix()
+    /// Whether a newline after `tokens` continues the expression. A `>` that
+    /// closes a type's arguments, as at the end of `type T = list<num>`, does
+    /// not, though a comparison's `>` does.
+    fn newline_continues(&self, tokens: &[Token], closes_type: bool) -> bool {
+        (!closes_type
+            && matches!(
+                tokens.last().map(|token| &token.kind),
+                Some(
+                    TokenKind::Eq
+                        | TokenKind::EqEq
+                        | TokenKind::BangEq
+                        | TokenKind::Less
+                        | TokenKind::LessEq
+                        | TokenKind::Greater
+                        | TokenKind::GreaterEq
+                        | TokenKind::AndAnd
+                        | TokenKind::OrOr
+                        | TokenKind::QuestionQuestion
+                        | TokenKind::Ampersand
+                        | TokenKind::Pipe
+                        | TokenKind::ShiftLeft
+                        | TokenKind::ShiftRight
+                        | TokenKind::Plus
+                        | TokenKind::PlusColon
+                        | TokenKind::Minus
+                        | TokenKind::Star
+                        | TokenKind::Slash
+                        | TokenKind::Percent
+                        | TokenKind::Colon
+                        | TokenKind::ColonPlus
+                        | TokenKind::At
+                        | TokenKind::Caret
+                        | TokenKind::Dot
+                )
+            ))
+            || self.next_starts_infix()
     }
     fn next_starts_infix(&self) -> bool {
         let mut index = self.index;
@@ -366,6 +371,11 @@ impl Lexer {
         // a block, while a block inside parentheses still separates its own
         // statements.
         let mut open: Vec<bool> = Vec::new();
+        // The `<`s still open after a type constructor such as `list` or
+        // `chan`, and the token count just after the last `>` that closed
+        // one, so a line ending in a type is not read as a comparison.
+        let mut type_angles = 0usize;
+        let mut type_closed_at = None;
         while let Some(character) = self.peek() {
             let span = self.span();
             match character {
@@ -379,7 +389,11 @@ impl Lexer {
                 '\n' => {
                     let blank = self.current_line_is_blank();
                     self.next();
-                    if open.last().is_none_or(|brace| *brace) && !self.newline_continues(&result) {
+                    let closes_type = type_closed_at == Some(result.len());
+                    if open.last().is_none_or(|brace| *brace)
+                        && !self.newline_continues(&result, closes_type)
+                    {
+                        type_angles = 0;
                         self.push(
                             &mut result,
                             if blank {
@@ -619,6 +633,16 @@ impl Lexer {
                         self.next();
                         TokenKind::ShiftLeft
                     } else {
+                        if matches!(
+                            result.last().map(|token: &Token| &token.kind),
+                            Some(TokenKind::Fn | TokenKind::Struct)
+                        ) || matches!(
+                            result.last().map(|token: &Token| &token.kind),
+                            Some(TokenKind::Name(name))
+                                if matches!(name.as_str(), "list" | "map" | "task" | "chan")
+                        ) {
+                            type_angles += 1;
+                        }
                         TokenKind::Less
                     };
                     self.push(&mut result, kind, span);
@@ -634,7 +658,19 @@ impl Lexer {
                     } else {
                         TokenKind::Greater
                     };
+                    let closing = match kind {
+                        TokenKind::Greater => 1,
+                        TokenKind::ShiftRight => 2,
+                        _ => 0,
+                    };
+                    let closes = closing > 0 && type_angles >= closing;
+                    if closes {
+                        type_angles -= closing;
+                    }
                     self.push(&mut result, kind, span);
+                    if closes {
+                        type_closed_at = Some(result.len());
+                    }
                 }
                 '0'..='9' => {
                     let mut text = String::new();

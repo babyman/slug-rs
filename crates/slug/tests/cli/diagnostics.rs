@@ -155,6 +155,29 @@ fn a_line_beginning_with_a_prefix_operator_starts_a_statement() {
 }
 
 #[test]
+fn a_line_ending_in_type_arguments_ends_the_statement() {
+    let path = fixture_path("type-argument-line-end");
+    fs::write(
+        &path,
+        "val Pair = struct { a, b }\n\
+         type Pairs = list<struct<Pair>>\n\
+         type Table = map<str, list<num>>\n\
+         type Grid = list<list<num>>\n\
+         val ready:chan<num> = chan(1)\n\
+         val wide = 3 >\n  2\n\
+         println(wide)\n",
+    )
+    .expect("write type argument source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run type argument source");
+    fs::remove_file(path).expect("remove type argument source");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "true\n");
+}
+
+#[test]
 fn an_unknown_name_is_a_compile_error_with_suggestions() {
     let path = fixture_path("unknown-names");
     let run = |source: &str, json: bool| {
