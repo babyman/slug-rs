@@ -37,7 +37,7 @@ for file in "$root"/docs/language/*; do
     test "$name" = 'README.md' || grep -F "\`$name\`" "$language_index" >/dev/null
 done
 
-if grep -R -n -E '[[:blank:]]+$' "$root/docs"; then
+if grep -R -I -n -E '[[:blank:]]+$' "$root/docs"; then
     printf '%s\n' 'documentation contains trailing whitespace' >&2
     exit 1
 fi
