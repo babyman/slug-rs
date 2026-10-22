@@ -1,7 +1,7 @@
 /**
  * String operations: conversion between characters and their Unicode scalar
- * values, conversion to and from UTF-8 bytes, parsing integers, splitting into
- * characters, sorting, and joining.
+ * values, conversion to and from UTF-8 bytes, parsing integers, splitting,
+ * trimming, changing ASCII case, sorting, and joining.
  *
  * Out-of-range arguments throw `Error` values whose `type` is `string.range`;
  * a list element that is not a string throws one whose `type` is
@@ -198,4 +198,80 @@ export val chars = fn(text:str):list<str> {
         if (i == len(text)) { out } else { recur(i + 1, out :+ text[i]) }
     }
     go(0, [])
+}
+
+/**
+ * Returns the parts of `text` between occurrences of `separator`, in order:
+ * `split("a,b,,c", ",")` is `["a", "b", "", "c"]`. Text without the separator
+ * is one part, and `join(split(text, separator), separator)` is `text`.
+ *
+ * Throws a `string.range` error when `separator` is empty.
+ */
+@testWith(
+    ["a,b,,c", ","], ["a", "b", "", "c"],
+    ["key: value: more", ": "], ["key", "value", "more"],
+    ["none", ","], ["none"],
+    ["", ","], [""],
+    [",x,", ","], ["", "x", ""]
+)
+export val split = fn(text:str, separator:str):list<str> {
+    val width = len(separator)
+    if (width == 0) {
+        throw Error {type: "string.range", msg: "split requires a non-empty separator"}
+    }
+    val go = fn(i:num, start:num, parts:list<str>):list<str> {
+        if (i + width > len(text)) {
+            parts :+ text[start:]
+        } else if (text[i:i + width] == separator) {
+            recur(i + width, i + width, parts :+ text[start:i])
+        } else {
+            recur(i + 1, start, parts)
+        }
+    }
+    go(0, 0, [])
+}
+
+val isSpace = fn(c:str):bool { c == " " || c == "\t" || c == "\r" || c == "\n" }
+
+/**
+ * Returns `text` without the spaces, tabs, carriage returns, and newlines at
+ * its start and end: `trim("  a b\n")` is `"a b"`.
+ */
+@testWith(["  a b\n"], "a b", ["\t\r\n"], "", ["x"], "x", [""], "")
+export val trim = fn(text:str):str {
+    val from = fn(i:num):num { if (i < len(text) && isSpace(text[i])) { recur(i + 1) } else { i } }
+    val to = fn(i:num):num { if (i > 0 && isSpace(text[i - 1])) { recur(i - 1) } else { i } }
+    val start = from(0)
+    text[start:to(len(text))]
+}
+
+// `text` with each character in `from` (an inclusive range of ASCII codes)
+// moved by `shift`.
+val shiftCase = fn(text:str, from:num, to:num, shift:num):str {
+    val go = fn(i:num, out:str):str {
+        if (i == len(text)) {
+            return out
+        }
+        val code = ordRaw(text[i])
+        recur(i + 1, out + (if (code >= from && code <= to) { chr(code + shift) } else { text[i] }))
+    }
+    go(0, "")
+}
+
+/**
+ * Returns `text` with its ASCII letters in lowercase: `lower("Content-Type")`
+ * is `"content-type"`. Other characters are unchanged.
+ */
+@testWith(["Content-Type"], "content-type", ["ÉTÉ 42"], "ÉtÉ 42", [""], "")
+export val lower = fn(text:str):str {
+    shiftCase(text, 65, 90, 32)
+}
+
+/**
+ * Returns `text` with its ASCII letters in uppercase: `upper("get")` is
+ * `"GET"`. Other characters are unchanged.
+ */
+@testWith(["get"], "GET", ["été"], "éTé", [""], "")
+export val upper = fn(text:str):str {
+    shiftCase(text, 97, 122, -32)
 }

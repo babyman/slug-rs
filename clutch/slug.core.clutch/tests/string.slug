@@ -1,4 +1,4 @@
-val {ord, chr, sort, join, toInt, chars, fromBytes, toBytes} = import("slug.string")
+val {ord, chr, sort, join, toInt, chars, fromBytes, toBytes, split, trim, lower, upper} = import("slug.string")
 val {assertEqual, assertThrows} = import("slug.test")
 
 val failure = fn(work:fn):list {
@@ -89,4 +89,25 @@ val toIntRejectsEverythingButDecimalDigits = fn() {
     assertEqual(toInt("1_000"), nil)
     assertEqual(toInt("٣"), nil)
     assertEqual(toInt("x") ?? 0, 0)
+}
+
+@test
+val splitRejectsAnEmptySeparator = fn() {
+    assertEqual(failure(fn() { split("abc", "") }), ["string.range", "split requires a non-empty separator"])
+}
+
+@test
+val splitAndJoinRoundTrip = fn() {
+    val text = "GET /a?b=c HTTP/1.1"
+    assertEqual(join(split(text, " "), " "), text)
+    assertEqual(split("aaa", "aa"), ["", "a"])
+    assertEqual(split("été|été", "|"), ["été", "été"])
+}
+
+@test
+val headerLinesTrimAndLower = fn() {
+    val line = "Content-Length:   42 \r"
+    val parts = split(line, ":")
+    assertEqual([lower(parts[0]), trim(parts[1])], ["content-length", "42"])
+    assertEqual(upper(lower("MiXeD")), "MIXED")
 }
