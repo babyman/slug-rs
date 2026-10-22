@@ -3026,11 +3026,11 @@ fn check_expression_inner(
                 }
                 let checked =
                     check_expression_with_flow(&case.value, &mut scoped, type_parameters)?;
-                if checked.continuation == Continuation::FallsThrough
-                    && case.guard.is_none()
-                    && let Some(value_type) = case_subject_type
-                {
-                    surviving_subject_types.push(value_type);
+                // A case that falls through leaves the subject with the type
+                // it narrowed it to, or, narrowing nothing, the type that
+                // reached it.
+                if checked.continuation == Continuation::FallsThrough && case.guard.is_none() {
+                    surviving_subject_types.push(case_subject_type.unwrap_or(reaching_type));
                 }
                 results.push(checked.value_type);
             }

@@ -2109,6 +2109,41 @@ fn a_nested_function_narrows_what_the_body_requires_of_a_parameter() {
 }
 
 #[test]
+fn a_match_case_that_narrows_nothing_keeps_the_subject_type_it_reached() {
+    let path = fixture_path("match-survivor-types");
+    // The second case narrows nothing, so after the first match `body` may
+    // still be anything but a string, and the second match's wildcard is
+    // reachable. A case that returns still narrows what follows.
+    fs::write(
+        &path,
+        "val kind = fn(body) {\n\
+           val size = match body { text:str => 1; other => 2 }\n\
+           match body { _:str => \"text\"; _ => \"other\" }\n\
+         }\n\
+         val next = fn(x:num|nil) {\n\
+           match x { nil => return 0; _ => nil }\n\
+           x + 1\n\
+         }\n\
+         println(kind(\"s\"), kind(0x\"00\"), next(2), next(nil))\n",
+    )
+    .expect("write match survivor source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run match survivor source");
+    fs::remove_file(&path).expect("remove match survivor source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "text other 3 0\n"
+    );
+}
+
+#[test]
 fn nil_tests_combined_with_and_or_and_not_narrow_each_binding() {
     let path = fixture_path("combined-nil-tests");
     fs::write(
