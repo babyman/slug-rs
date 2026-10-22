@@ -507,7 +507,8 @@ def execute(run, arguments, slug, install, results_dir, references, codex_home):
         "model": arguments.model,
         "session": summary,
         "slug_runs": len(invocations),
-        "slug_failures": sum(1 for item in invocations if item.get("exit") not in (0, None)),
+        "slug_failures": failures(invocations),
+        "slug_stopped": stopped(invocations),
         "codes": [code for item in invocations for code in item.get("codes", [])],
         "report_runs": sum(1 for item in invocations if item.get("command") == "report"),
         "language": language(run),
@@ -521,7 +522,8 @@ def execute(run, arguments, slug, install, results_dir, references, codex_home):
         if arguments.agent == "codex":
             invocations = codex_python_commands(stdout)
             record["slug_runs"] = len(invocations)
-            record["slug_failures"] = sum(1 for item in invocations if item.get("exit") not in (0, None))
+            record["slug_failures"] = failures(invocations)
+            record["slug_stopped"] = stopped(invocations)
         record["python_version"] = platform.python_version()
         record["program_runs"] = dict(collections.Counter(item.get("program") for item in invocations))
     record.update(check(run, workspace, slug, references))
@@ -789,6 +791,17 @@ def command_run(arguments):
         shutil.rmtree(install, ignore_errors=True)
     print(f"results: {out}")
     summarize(out)
+
+
+def failures(invocations):
+    """Runs that failed. A negative exit is a run stopped by a signal, such as
+    a server the agent stops when it is done testing, which is not a failure."""
+    return sum(1 for item in invocations if (item.get("exit") or 0) > 0)
+
+
+def stopped(invocations):
+    """Runs stopped by a signal."""
+    return sum(1 for item in invocations if (item.get("exit") or 0) < 0)
 
 
 def git_head():
