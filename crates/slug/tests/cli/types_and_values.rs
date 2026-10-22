@@ -2144,6 +2144,66 @@ fn a_match_case_that_narrows_nothing_keeps_the_subject_type_it_reached() {
 }
 
 #[test]
+fn list_literals_of_differing_types_are_tuples() {
+    let path = fixture_path("tuple-literals");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write tuple source");
+        let output = slug().arg(&path).output().expect("run tuple source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A pair of a list and a map keeps each element's type, through a
+    // constant index, a negative one, and destructuring, and is still a list.
+    let (code, stdout, stderr) = run(
+        "val parse = fn() { [[1, 2], {host: \"x\", te: \"chunked\"}] }\n\
+         val parsed = parse()\n\
+         val [parts, headers] = parse()\n\
+         println(parsed[1][\"te\"], parsed[-1].host, len(parsed[0]), headers.host, parts[0] + 1)\n\
+         println(len(parsed), [...parsed, 3], parsed :+ 4, {[[1, \"a\"]]: \"key\"}[[1, \"a\"]])\n\
+         var grow = [1, \"a\"]\n\
+         grow = grow :+ 2\n\
+         val pairs = [[1, \"a\"]] :+ [2, \"b\"]\n\
+         println(grow, pairs[1][1] + \"!\", [1, 2, 3] :+ 4)\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "chunked x 2 x 2\n\
+         2 [[1, 2], {\"host\": \"x\", \"te\": \"chunked\"}, 3] [[1, 2], {\"host\": \"x\", \"te\": \"chunked\"}, 4] key\n\
+         [1, \"a\", 2] b! [1, 2, 3, 4]\n"
+    );
+
+    // A list literal checked against a tuple annotation has its elements'
+    // types, in a declaration, a function result, and a return.
+    let (code, stdout, stderr) = run("val point:[num, num] = [1, 2]\n\
+         val bounds = fn(a:num, b:num):[num, num] { if (a > b) { return [b, a] }\n [a, b] }\n\
+         val split = fn():[list, map] { [[1], {a: 1}] }\n\
+         println(point, bounds(3, 1)[1] + 1, split()[1][\"a\"])\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "[1, 2] 4 1\n");
+
+    for (source, message) in [
+        (
+            "val p:[num, str] = [1, 2]\n",
+            "expected [num, str], got [num, num]",
+        ),
+        (
+            "val p:[num, num] = [1, 2, 3]\n",
+            "expected [num, num], got list<num>",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    fs::remove_file(&path).expect("remove tuple source");
+}
+
+#[test]
 fn nil_tests_combined_with_and_or_and_not_narrow_each_binding() {
     let path = fixture_path("combined-nil-tests");
     fs::write(

@@ -561,6 +561,31 @@ impl Type {
         }
     }
 
+    /// A tuple as the list it also is, of the union of its elements; any
+    /// other type as it is.
+    pub(super) fn as_list(&self) -> Self {
+        match self {
+            Self::Tuple(elements) if elements.is_empty() => Self::List(None),
+            Self::Tuple(elements) => Self::List(Some(Box::new(Self::union(elements.clone())))),
+            other => other.clone(),
+        }
+    }
+
+    /// The type with every tuple in it widened to a list, for a `var`, whose
+    /// later values need not keep its first value's length.
+    pub(super) fn widen_tuples(&self) -> Self {
+        match self {
+            Self::Tuple(_) => self.as_list().widen_tuples(),
+            Self::List(Some(element)) => Self::List(Some(Box::new(element.widen_tuples()))),
+            Self::Map(Some((key, value))) => Self::Map(Some((
+                Box::new(key.widen_tuples()),
+                Box::new(value.widen_tuples()),
+            ))),
+            Self::Union(members) => Self::union(members.iter().map(Self::widen_tuples)),
+            other => other.clone(),
+        }
+    }
+
     pub(super) fn is_assignable_to(&self, expected: &Self) -> bool {
         if self == expected || matches!(self, Self::Never | Self::Unknown) {
             return true;
@@ -578,6 +603,12 @@ impl Type {
                 Self::List(actual) => {
                     optional_covariant_assignable(actual.as_deref(), expected.as_deref())
                 }
+                // A tuple is a list of its elements.
+                Self::Tuple(actual) => expected.as_deref().is_none_or(|expected| {
+                    actual
+                        .iter()
+                        .all(|actual| actual.is_assignable_to(expected))
+                }),
                 _ => false,
             },
             Self::Map(expected) => match self {
@@ -616,7 +647,7 @@ impl Type {
                         && actual
                             .iter()
                             .zip(expected)
-                            .all(|(actual, expected)| actual == expected)
+                            .all(|(actual, expected)| actual.is_assignable_to(expected))
                 }
                 _ => false,
             },

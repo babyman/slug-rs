@@ -521,6 +521,8 @@ impl Environment {
                 };
                 binding.nil_start = Some(NilStart { site, assignments });
             }
+            // A `var`'s later values need not keep its first value's length.
+            binding.value_type = binding.value_type.widen_tuples();
             binding.declared = Some(binding.value_type.clone());
         }
     }

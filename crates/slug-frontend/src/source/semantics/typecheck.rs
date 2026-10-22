@@ -2295,6 +2295,7 @@ fn check_function_body(
     let completed = check_expression_with_flow(body, &mut scoped, type_parameters)?.value_type;
     if let Some(expected) = &expected {
         let result = result_expression(body);
+        let completed = as_expected_tuple(expected, result, completed.clone(), &scoped);
         require(expected, &completed, &result.span).map_err(|error| error.with_extent(result))?;
     }
     // The function produces its body's value or any `return`'s, which were
@@ -2479,6 +2480,7 @@ fn check_expression_inner(
                 })
                 .transpose()?;
             if let Some(expected) = &declared {
+                let actual = as_expected_tuple(expected, value, actual.clone(), environment);
                 require(expected, &actual, &expression.span)
                     .map_err(|error| explain_nil_start(error, value, environment))?;
             }
@@ -2613,20 +2615,34 @@ fn check_expression_inner(
         ExprKind::List(values) => {
             let mut elements = Vec::new();
             let mut lost_precision = false;
+            // Whether every element's position is known: no spread of a list
+            // whose length is not.
+            let mut positional = true;
             for value in values {
                 match value {
                     ListElement::Value(value) => {
                         elements.push(check_expression(value, environment, type_parameters)?);
                     }
                     ListElement::Spread(value) => {
-                        let spread = check_expression(value, environment, type_parameters)?;
-                        if let Type::List(Some(element)) = spread {
-                            elements.push(*element);
-                        } else {
-                            lost_precision = true;
+                        match check_expression(value, environment, type_parameters)? {
+                            Type::Tuple(spread) => elements.extend(spread),
+                            Type::List(Some(element)) => {
+                                positional = false;
+                                elements.push(*element);
+                            }
+                            _ => lost_precision = true,
                         }
                     }
                 }
+            }
+            // A literal whose elements differ in type is a tuple, so each
+            // keeps its own: `[parts, headers][1]` is the map. One whose
+            // elements share a type is a list of it.
+            let mut distinct = elements.clone();
+            distinct.sort_by_key(ToString::to_string);
+            distinct.dedup();
+            if positional && !lost_precision && distinct.len() > 1 {
+                return Ok(Type::Tuple(elements));
             }
             Ok(Type::List(
                 (!elements.is_empty() && !lost_precision).then(|| Box::new(Type::union(elements))),
@@ -2765,6 +2781,7 @@ fn check_expression_inner(
         ExprKind::Return { value } => {
             let actual = check_expression(value, environment, type_parameters)?;
             if let Some(expected) = environment.expected_return() {
+                let actual = as_expected_tuple(&expected, value, actual.clone(), environment);
                 require(&expected, &actual, &value.span).map_err(|error| {
                     explain_nil_start(error.with_extent(value), value, environment)
                 })?;
@@ -3175,6 +3192,11 @@ fn check_expression_inner(
             let collection_expression = collection;
             let collection = check_expression(collection, environment, type_parameters)?;
             let index_type = check_expression(index, environment, type_parameters)?;
+            if let Type::Tuple(elements) = &collection
+                && let Some(element) = constant_index(index, elements.len())
+            {
+                return Ok(elements[element].clone());
+            }
             let result = index_result(&collection, &index_type, &expression.span)?;
             if let Some(schema) = known_struct_schema(&collection, environment)
                 && let ExprKind::Value(Value::Str(name)) = &index.kind
@@ -3463,9 +3485,10 @@ fn binary_result(
             numeric_operands(left, right, span)?;
             Ok(Type::Num)
         }
-        Binary::Append => list_append_result(left, right, span),
-        Binary::Prepend => list_append_result(right, left, span),
-        Binary::Add => add_result(left, right, span),
+        // A tuple takes part in list operations as the list it also is.
+        Binary::Append => list_append_result(&left.as_list(), right, span),
+        Binary::Prepend => list_append_result(&right.as_list(), left, span),
+        Binary::Add => add_result(&left.as_list(), &right.as_list(), span),
         Binary::Multiply => multiply_result(left, right, span),
         Binary::Pipeline => Ok(right.clone()),
     }
@@ -3643,6 +3666,62 @@ fn list_append_result(list: &Type, value: &Type, span: &SourceSpan) -> Result<Ty
     }
 }
 
+/// `actual`, the type of `value`, as the tuple `expected` asks for when
+/// `value` is a list literal of that many elements, each with its own type:
+/// `[lo, hi]` is a `[num, num]` where one is expected, though alone it is a
+/// `list<num>`.
+fn as_expected_tuple(
+    expected: &Type,
+    value: &Expr,
+    actual: Type,
+    environment: &Environment,
+) -> Type {
+    let ExprKind::List(items) = &value.kind else {
+        return actual;
+    };
+    let wants = |length: usize| match expected {
+        Type::Tuple(elements) => elements.len() == length,
+        Type::Union(members) => members
+            .iter()
+            .any(|member| matches!(member, Type::Tuple(elements) if elements.len() == length)),
+        _ => false,
+    };
+    if actual.is_assignable_to(expected) || !wants(items.len()) {
+        return actual;
+    }
+    let elements = items
+        .iter()
+        .map(|item| match item {
+            ListElement::Value(element) => environment.recorded_expression_type(&element.span),
+            ListElement::Spread(_) => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    elements.map_or(actual, Type::Tuple)
+}
+
+/// The position a constant integer index, possibly negative, names in a
+/// collection of `length` elements, when it is in range.
+fn constant_index(index: &Expr, length: usize) -> Option<usize> {
+    let value = match &index.kind {
+        ExprKind::Value(Value::Int(value)) => *value,
+        ExprKind::Prefix { operators, value } if operators.len() == 1 => {
+            match (&operators[0].0, &value.kind) {
+                (super::ast::Prefix::Negate, ExprKind::Value(Value::Int(value))) => {
+                    value.checked_neg()?
+                }
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let length = i64::try_from(length).ok()?;
+    let position = if value < 0 { length + value } else { value };
+    (0..length)
+        .contains(&position)
+        .then(|| usize::try_from(position).ok())
+        .flatten()
+}
+
 fn index_result(collection: &Type, index: &Type, span: &SourceSpan) -> Result<Type, SourceError> {
     if is_dynamic_operation_type(collection) || is_dynamic_operation_type(index) {
         return Ok(Type::Unknown);
@@ -3671,6 +3750,9 @@ fn index_result(collection: &Type, index: &Type, span: &SourceSpan) -> Result<Ty
             require_operation_operand(&Type::Str, index, span)?;
             Ok(Type::Unknown)
         }
+        // A constant index into a tuple reads its element; the caller handles
+        // that, so any other index reads one of the elements.
+        Type::Tuple(_) => index_result(&collection.as_list(), index, span),
         // A value of a union type is one of its members, so indexing it
         // yields any of their results, when every member can be indexed.
         Type::Union(members) => members
@@ -3689,6 +3771,7 @@ fn slice_result(collection: &Type, span: &SourceSpan) -> Result<Type, SourceErro
     }
     match collection {
         Type::List(element) => Ok(Type::List(element.clone())),
+        Type::Tuple(_) => slice_result(&collection.as_list(), span),
         Type::Bytes => Ok(Type::Bytes),
         Type::Str => Ok(Type::Str),
         Type::Union(members)
@@ -4265,7 +4348,18 @@ fn bind_case_pattern(pattern: &Pattern, value_type: &Type, environment: &mut Env
             bind_case_pattern(pattern, value_type, environment);
         }
         Pattern::List { items, rest } => {
-            let element = match value_type {
+            // Without a rest, a tuple's items bind its elements in order.
+            if let Type::Tuple(elements) = value_type
+                && rest.is_none()
+                && elements.len() == items.len()
+            {
+                for (item, element) in items.iter().zip(elements) {
+                    bind_case_pattern(item, element, environment);
+                }
+                return;
+            }
+            let widened = value_type.as_list();
+            let element = match &widened {
                 Type::List(Some(element)) => element.as_ref(),
                 Type::Bytes => &Type::Num,
                 _ => &Type::Unknown,
@@ -4787,6 +4881,9 @@ fn infer(
         (Type::List(Some(expected)), Type::List(Some(actual))) => {
             infer(expected, actual, substitutions, span)
         }
+        (Type::List(Some(_)), Type::Tuple(_)) => {
+            infer(expected, &actual.as_list(), substitutions, span)
+        }
         (Type::Channel(Some(expected)), Type::Channel(Some(actual))) => {
             infer_channel_payload(expected, actual, substitutions, span)
         }
@@ -4975,6 +5072,14 @@ fn require(expected: &Type, actual: &Type, span: &SourceSpan) -> Result<(), Sour
     if actual.is_assignable_to(expected) {
         Ok(())
     } else {
+        // Where no tuple is expected, a tuple is shown as the list it also
+        // is: `expected list<num>, got list<num|str>`.
+        let shown = if expected.to_string().contains('[') {
+            actual.clone()
+        } else {
+            actual.widen_tuples()
+        };
+        let actual = &shown;
         let expected_display = expected.to_string();
         let actual_display = actual.to_string();
         let (expected_display, actual_display) = if expected_display == actual_display {
