@@ -60,7 +60,7 @@ test-native:
 # repository as SLUG_HOME.
 test-clutches:
 	cargo build -p slug
-	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.net.tcp.clutch
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch
 
 bench-native-scalar:
 	sh scripts/benchmark-native-scalar.sh

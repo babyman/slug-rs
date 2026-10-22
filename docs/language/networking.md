@@ -1,6 +1,8 @@
 # TCP networking
 
 The `slug.net.tcp` module provides TCP servers and clients over IPv4 and IPv6.
+For HTTP, the `slug.net.http` module serves HTTP/1.1 over it, with a router;
+its source documents its API.
 A server accepts connections and serves each in its own task:
 
 ```slug

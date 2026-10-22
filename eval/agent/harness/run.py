@@ -90,9 +90,13 @@ JSON_DOCS = [
 REPORT_DOCS = ["docs/reference/capability-report.md"]
 # Library modules a project asks agents to write, with their source files,
 # withheld from that project's documentation and install so its agents do not
-# find one ready-made: `slug.fmt.json` is the JSON project's chosen solution.
-# Other runs have them as ordinary library modules.
-WITHHELD_MODULES = {"json": {"slug.fmt.json": "json.slug"}}
+# find one ready-made: `slug.fmt.json` is the JSON project's chosen solution,
+# and `slug.net.http` the HTTP project's. Other runs have them as ordinary
+# library modules.
+WITHHELD_MODULES = {
+    "json": {"slug.fmt.json": "json.slug"},
+    "http": {"slug.net.http": "http.slug"},
+}
 
 
 def withheld(run):
@@ -105,6 +109,7 @@ LIBRARY_SOURCES = [
     ("clutch/slug.io.fs.clutch/modules", "library/fs"),
     ("clutch/slug.db.sqlite.clutch/modules", "library/sqlite"),
     ("clutch/slug.net.tcp.clutch/modules", "library/net"),
+    ("clutch/slug.net.http.clutch/modules", "library/http"),
 ]
 
 CODING_PROMPT = """\
