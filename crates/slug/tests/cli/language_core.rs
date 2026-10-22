@@ -188,7 +188,9 @@ fn slices_lists_with_an_omitted_start() {
     fs::write(
         &path,
         "val values = [10, 20, 30, 40, 50]\n\
-         println(values[:2], values[0:2], values[1:4:2], values[-3:])\n",
+         println(values[:2], values[0:2], values[1:4:2], values[-3:])\n\
+         // An end before the start is an empty slice, as for strings and bytes.\n\
+         println(values[3:1], values[3:1:2], values[-1:-3], \"abc\"[2:1] == \"\", 0x\"0102\"[2:1])\n",
     )
     .expect("write slice source");
     let output = slug().arg(&path).output().expect("run slice source");
@@ -201,7 +203,7 @@ fn slices_lists_with_an_omitted_start() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "[10, 20] [10, 20] [20, 40] [30, 40, 50]\n"
+        "[10, 20] [10, 20] [20, 40] [30, 40, 50]\n[] [] [] true 0x\"\"\n"
     );
 }
 

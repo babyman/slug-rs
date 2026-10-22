@@ -755,7 +755,9 @@ pub(super) fn slice_value(
             if step == 1 {
                 let start = usize::try_from(start).expect("slice bounds are non-negative");
                 let end = usize::try_from(end).expect("slice bounds are non-negative");
-                return Ok(Value::List(values.view(start, end)));
+                // An end before the start is an empty slice, as for strings
+                // and bytes.
+                return Ok(Value::List(values.view(start, end.max(start))));
             }
             let mut indexes = Vec::new();
             let mut index = start;
