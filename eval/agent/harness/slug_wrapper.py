@@ -17,6 +17,7 @@ from environment variables set by the harness:
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -105,28 +106,45 @@ def main():
         return 1
 
     arguments = ([JSON_FLAG] if diagnostics == "json" else []) + rest
-    # Standard input passes straight through: reading it here first would
-    # block every invocation whose input never ends, such as a terminal.
-    completed = subprocess.run([real] + arguments, capture_output=True)
-    stderr = completed.stderr.decode("utf-8", "replace")
-    if fixes == "off":
-        stderr = strip_fixes(stderr) if diagnostics == "json" else strip_text_fixes(stderr)
-    sys.stdout.buffer.write(completed.stdout)
-    sys.stderr.write(stderr)
+    returncode, stderr = run(real, arguments, fixes, diagnostics)
 
     codes = codes_from(stderr)
-    if completed.returncode != 0 and diagnostics != "json" and command != "report":
+    if returncode != 0 and diagnostics != "json" and command != "report":
         codes = shadow_codes(real, rest)
     record.update(
         {
-            "exit": completed.returncode,
+            "exit": returncode,
             "seconds": round(time.monotonic() - started, 3),
             "codes": codes,
             "stderr_head": stderr[:400],
         }
     )
     append(record)
-    return completed.returncode
+    return returncode
+
+
+def run(real, arguments, fixes, diagnostics):
+    """Runs the real binary and returns its exit status and filtered standard
+    error. Standard input and output pass straight through, so a server's
+    output appears as it prints, not when it exits; standard error is
+    filtered and passed on a line at a time. A signal that stops the wrapper
+    stops the program too."""
+    process = subprocess.Popen([real] + arguments, stderr=subprocess.PIPE)
+
+    def forward(number, _frame):
+        process.send_signal(number)
+
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, forward)
+    lines = []
+    for raw in process.stderr:
+        line = raw.decode("utf-8", "replace")
+        if fixes == "off":
+            line = strip_fixes(line) if diagnostics == "json" else strip_text_fixes(line)
+        sys.stderr.write(line)
+        sys.stderr.flush()
+        lines.append(line)
+    return process.wait(), "".join(lines)
 
 
 def shadow_codes(real, rest):
