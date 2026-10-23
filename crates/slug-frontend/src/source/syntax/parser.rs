@@ -1134,11 +1134,12 @@ impl Parser {
             TokenKind::Select => return self.select(span),
             TokenKind::Match => return self.match_expression(span),
             TokenKind::Struct => return self.struct_schema(span),
+            TokenKind::Copy => return Err(self.prefix_copy(&token)),
             _ => {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
                     SourceErrorCode::ExpectedSyntax,
                     "expected expression",
-                    span,
+                    &token,
                 ));
             }
         };
@@ -1333,6 +1334,50 @@ impl Parser {
             },
             span,
         })
+    }
+    /// An error for `copy` written before the value it copies, as in other
+    /// languages' prefix forms. When `copy value { fields }` follows, the
+    /// value parses as a struct construction, and moving `copy` after it is
+    /// the one reading, so that is offered as a fix.
+    fn prefix_copy(&mut self, copy: &Token) -> SourceError {
+        let error = SourceError::at_token(
+            SourceErrorCode::ExpectedSyntax,
+            "`copy` follows the value it copies, as in `value copy { field: new }`",
+            copy,
+        );
+        let start = self.peek().span.clone();
+        let Ok(Expr {
+            kind: ExprKind::StructInit { schema, .. },
+            ..
+        }) = self.postfix()
+        else {
+            return error;
+        };
+        error.with_fix_edits(
+            "move `copy` after the value",
+            vec![
+                SourceEdit {
+                    range: SourceRange {
+                        start: SourcePosition {
+                            line: copy.span.line,
+                            column: copy.span.column,
+                        },
+                        end: SourcePosition {
+                            line: start.line,
+                            column: start.column,
+                        },
+                    },
+                    text: String::new(),
+                },
+                SourceEdit {
+                    range: SourceRange {
+                        start: schema.end,
+                        end: schema.end,
+                    },
+                    text: " copy".into(),
+                },
+            ],
+        )
     }
     fn struct_copy(&mut self, value: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
         let fields = self.struct_fields(&span)?;

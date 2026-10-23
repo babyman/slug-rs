@@ -171,3 +171,27 @@ fn a_nil_result_ending_in_another_value_only_suggests_nil() {
         "val f = fn():nil { 5; nil }"
     );
 }
+
+#[test]
+fn a_prefix_copy_is_fixed_by_moving_copy_after_the_value() {
+    for (source, fixed) in [
+        (
+            "val P = struct { x:num, y:num }\nval p = P { x: 1, y: 2 }\nval q = copy p { y: 5 }\nq.x + q.y",
+            "val P = struct { x:num, y:num }\nval p = P { x: 1, y: 2 }\nval q = p copy { y: 5 }\nq.x + q.y",
+        ),
+        (
+            "val P = struct { x:num, y:num }\nval W = struct { p:struct<P> }\nval m = W { p: P { x: 1, y: 2 } }\nval q = copy m.p {\n  y: 5\n}\nq.x + q.y",
+            "val P = struct { x:num, y:num }\nval W = struct { p:struct<P> }\nval m = W { p: P { x: 1, y: 2 } }\nval q = m.p copy {\n  y: 5\n}\nq.x + q.y",
+        ),
+    ] {
+        let error = compile("fixes.slug", source).expect_err(source);
+        assert!(
+            error.message.contains("`copy` follows"),
+            "{}",
+            error.message
+        );
+        assert_eq!(only_fix(source).as_deref(), Some(fixed), "{source}");
+        assert_eq!(run(fixed), slug_vm::Value::Int(6), "{fixed}");
+    }
+    assert_eq!(only_fix("val q = copy p"), None);
+}

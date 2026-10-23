@@ -226,13 +226,18 @@ impl SourceError {
             .map_or(&[], |corrections| &corrections.suggestions)
     }
 
-    fn with_fix(mut self, message: impl Into<String>, edit: SourceEdit) -> Self {
+    fn with_fix(self, message: impl Into<String>, edit: SourceEdit) -> Self {
+        self.with_fix_edits(message, vec![edit])
+    }
+
+    /// A fix made of several edits, applied together.
+    fn with_fix_edits(mut self, message: impl Into<String>, edits: Vec<SourceEdit>) -> Self {
         self.corrections
             .get_or_insert_default()
             .fixes
             .push(SourceFix {
                 message: message.into(),
-                edits: vec![edit],
+                edits,
             });
         self
     }

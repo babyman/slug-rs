@@ -20,7 +20,7 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 | `unterminated_literal` | parse | A string, byte literal, block comment, or documentation block without its closing delimiter. | `unterminated string` |
 | `invalid_number` | parse | A malformed number literal, including separators, hexadecimal digits, exponents, non-finite values, and integers larger than 9223372036854775807. An out-of-range integer offers to append `.0`, making it a float: as a fix when the float holds the same value, and otherwise as a suggestion, since the float rounds it. | `invalid number separator` |
 | `invalid_byte_literal` | parse | A malformed `0x"..."` byte literal. | `byte literal must contain complete hexadecimal byte pairs` |
-| `expected_syntax` | parse | The next token cannot continue the construct being parsed. | `expected }` |
+| `expected_syntax` | parse | The next token cannot continue the construct being parsed. A `copy` written before the value it copies offers to move it after: `copy p { x: 1 }` becomes `p copy { x: 1 }`. | `expected }` |
 | `invalid_documentation` | parse | A malformed or misplaced documentation block or tag. | `every non-empty documentation line must begin with *` |
 | `top_level_only` | parse, semantic | A declaration form used below top level. | `export declarations are only valid at top level` |
 | `invalid_parameters` | parse | A parameter list with a misplaced, repeated, or defaulted variadic parameter. | `variadic parameter must be final` |
