@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab measure-vm-memory docs-generate docs-check check ci
+.PHONY: fmt fmt-check lint test slim test-vm test-cli test-frontend test-loader test-nil-loader test-desktop-loader test-slug test-modules test-server test-repl test-native test-clutches bench-native-scalar stage-native-clutches test-filesystem-clutch bench-vm bench-source bench-ab measure-vm-memory docs-generate docs-check check ci
 
 fmt:
 	cargo fmt --all
@@ -52,8 +52,15 @@ test-repl:
 test-native:
 	cargo test -p slug --test typed_native
 	cargo test -p slug --test typed_sqlite
+	cargo test -p slug --test typed_net
 	cargo test -p slug --test typed_core
 	cargo test -p slug-native-manifest
+
+# The clutches' own tests, written in Slug and run by `slug test` with this
+# repository as SLUG_HOME.
+test-clutches:
+	cargo build -p slug
+	SLUG_HOME=$(CURDIR) target/debug/slug --allow-unexported test clutch/slug.core.clutch clutch/slug.net.tcp.clutch clutch/slug.net.http.clutch
 
 bench-native-scalar:
 	sh scripts/benchmark-native-scalar.sh
@@ -86,6 +93,6 @@ docs-generate:
 docs-check:
 	sh scripts/docs-check.sh
 
-check: fmt-check lint test slim docs-check
+check: fmt-check lint test slim docs-check test-clutches
 
 ci: check

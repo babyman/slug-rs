@@ -5,6 +5,8 @@
 
 use std::{collections::HashMap, fmt, path::PathBuf};
 
+use slug_vm::{MissingModule, SourceDiagnostic, VmHostError};
+
 /// Opaque host-defined identity for one resolved module.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ModuleKey(String);
@@ -183,6 +185,11 @@ impl ModuleResolver for StaticModuleResolver {
             .ok_or_else(|| ModuleLoadError::NotFound {
                 name: request.name.into(),
                 searched: vec!["static providers".into()],
+                suggestions: suggest_module_names(
+                    request.name,
+                    self.providers.keys().map(String::as_str),
+                ),
+                elsewhere: Vec::new(),
             })
     }
 }
@@ -191,10 +198,33 @@ impl ModuleResolver for StaticModuleResolver {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleLoadError {
     InvalidName(String),
-    NotFound { name: String, searched: Vec<String> },
-    Read { location: String, message: String },
-    Source { location: String, message: String },
-    Clutch { location: String, message: String },
+    NotFound {
+        name: String,
+        searched: Vec<String>,
+        /// Available module names close to `name`, nearest first.
+        suggestions: Vec<String>,
+        /// Files with the module's name outside the searched directories,
+        /// relative to the directory searched, such as `../jobs.slug`.
+        elsewhere: Vec<String>,
+    },
+    Read {
+        location: String,
+        message: String,
+    },
+    /// The module's source does not parse or type check.
+    Compile {
+        location: String,
+        error: Box<SourceDiagnostic>,
+    },
+    /// The module compiled but could not be installed or initialized.
+    Source {
+        location: String,
+        message: String,
+    },
+    Clutch {
+        location: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for ModuleLoadError {
@@ -203,6 +233,7 @@ impl fmt::Display for ModuleLoadError {
             Self::InvalidName(name) => write!(f, "invalid module name `{name}`"),
             Self::NotFound { name, .. } => write!(f, "module `{name}` was not found"),
             Self::Read { location, message } => write!(f, "cannot read {location}: {message}"),
+            Self::Compile { location, error } => write!(f, "cannot compile {location}: {error}"),
             Self::Source { location, message } => {
                 write!(f, "cannot compile {location}: {message}")
             }
@@ -214,6 +245,92 @@ impl fmt::Display for ModuleLoadError {
 }
 
 impl std::error::Error for ModuleLoadError {}
+
+impl From<ModuleLoadError> for VmHostError {
+    fn from(error: ModuleLoadError) -> Self {
+        let message = error.to_string();
+        match error {
+            ModuleLoadError::NotFound {
+                name,
+                suggestions,
+                elsewhere,
+                ..
+            } => Self::not_found(message).with_missing_module(MissingModule {
+                name,
+                suggestions,
+                elsewhere,
+            }),
+            ModuleLoadError::Compile { error, .. } => Self::compile(message, *error),
+            _ => Self::new(message),
+        }
+    }
+}
+
+/// The most suggestions [`suggest_module_names`] returns.
+pub const MAX_MODULE_SUGGESTIONS: usize = 3;
+
+/// Returns the names in `available` that `name` most likely meant, nearest
+/// first. Names with the same last segment, such as `slug.io.stdin` for
+/// `slug.stdin`, are returned when there are any; otherwise names within a
+/// small edit distance, such as `slug.string` for `slug.strng`. The distance
+/// allowed grows with the length of the last segment, so a shared prefix such
+/// as `slug.` does not make unrelated names close.
+pub fn suggest_module_names<'a>(
+    name: &str,
+    available: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let last = |name: &str| name.rsplit('.').next().unwrap_or(name).to_owned();
+    let segment = last(name);
+    let limit = (segment.chars().count() / 3).max(1);
+    let mut same_segment = Vec::new();
+    let mut close = Vec::new();
+    for candidate in available {
+        if candidate == name {
+            continue;
+        }
+        let distance = edit_distance(name, candidate);
+        if last(candidate) == segment {
+            same_segment.push((distance, candidate));
+        } else if distance <= limit {
+            close.push((distance, candidate));
+        }
+    }
+    let mut ranked = if same_segment.is_empty() {
+        close
+    } else {
+        same_segment
+    };
+    ranked.sort_unstable();
+    ranked.dedup();
+    ranked
+        .into_iter()
+        .take(MAX_MODULE_SUGGESTIONS)
+        .map(|(_, candidate)| candidate.to_owned())
+        .collect()
+}
+
+/// The optimal string alignment distance between `left` and `right`:
+/// insertions, deletions, substitutions, and adjacent transpositions.
+fn edit_distance(left: &str, right: &str) -> usize {
+    let left = left.chars().collect::<Vec<_>>();
+    let right = right.chars().collect::<Vec<_>>();
+    let mut previous_previous = vec![0; right.len() + 1];
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    for (i, left_char) in left.iter().enumerate() {
+        let mut current = vec![i + 1; right.len() + 1];
+        for (j, right_char) in right.iter().enumerate() {
+            let cost = usize::from(left_char != right_char);
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + cost);
+            if i > 0 && j > 0 && *left_char == right[j - 1] && left[i - 1] == *right_char {
+                current[j + 1] = current[j + 1].min(previous_previous[j - 1] + 1);
+            }
+        }
+        previous_previous = std::mem::replace(&mut previous, current);
+    }
+    previous[right.len()]
+}
 
 /// Converts a dotted logical module name into its relative source path.
 ///
@@ -246,8 +363,30 @@ mod tests {
 
     use super::{
         ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource,
-        StaticModuleProvider, StaticModuleResolver, module_path,
+        StaticModuleProvider, StaticModuleResolver, module_path, suggest_module_names,
     };
+
+    #[test]
+    fn suggests_moved_and_misspelled_module_names() {
+        let available = [
+            "slug.io.stdin",
+            "slug.io.fs",
+            "slug.string",
+            "slug.std",
+            "slug.math",
+        ];
+        assert_eq!(
+            suggest_module_names("slug.stdin", available),
+            ["slug.io.stdin"]
+        );
+        assert_eq!(
+            suggest_module_names("slug.strng", available),
+            ["slug.string"]
+        );
+        assert_eq!(suggest_module_names("slug.mtah", available), ["slug.math"]);
+        assert!(suggest_module_names("json", available).is_empty());
+        assert!(suggest_module_names("slug.std", available).is_empty());
+    }
 
     #[test]
     fn maps_valid_dotted_names_to_relative_slug_paths() {
@@ -292,6 +431,8 @@ mod tests {
             ModuleLoadError::NotFound {
                 name: "slug.unavailable".into(),
                 searched: vec!["static providers".into()],
+                suggestions: Vec::new(),
+                elsewhere: Vec::new(),
             }
         );
     }

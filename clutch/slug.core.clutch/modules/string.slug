@@ -1,0 +1,277 @@
+/**
+ * String operations: conversion between characters and their Unicode scalar
+ * values, conversion to and from UTF-8 bytes, parsing integers, splitting,
+ * trimming, changing ASCII case, sorting, and joining.
+ *
+ * Out-of-range arguments throw `Error` values whose `type` is `string.range`;
+ * a list element that is not a string throws one whose `type` is
+ * `string.type`; bytes that are not UTF-8 throw one whose `type` is
+ * `string.utf8`.
+ */
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign ordRaw = fn(character:str):num
+foreign chrRaw = fn(code:num):list
+foreign fromBytesRaw = fn(data:bytes):list
+foreign toBytesRaw = fn(text:str):list
+
+/**
+ * Returns the Unicode scalar value of `character`, which must be a string of
+ * exactly one character: `ord("A")` is 65 and `ord("é")` is 233.
+ *
+ * Throws a `string.range` error when `character` is not one character long.
+ */
+@testWith(["A"], 65, ["é"], 233, ["€"], 8364)
+export val ord = fn(character:str):num {
+    if (len(character) != 1) {
+        throw Error {type: "string.range", msg: "ord requires a string of exactly one character"}
+    }
+    ordRaw(character)
+}
+
+/**
+ * Returns the one-character string whose Unicode scalar value is `code`:
+ * `chr(65)` is "A" and `chr(233)` is "é".
+ *
+ * Throws a `string.range` error when `code` is not an integer from 0 through
+ * 0x10FFFF, or is a surrogate from 0xD800 through 0xDFFF.
+ */
+@testWith([65], "A", [233], "é", [8364], "€")
+export val chr = fn(code:num):str {
+    if (int(code) != code) {
+        throw Error {type: "string.range", msg: "chr requires an integer code"}
+    }
+    match chrRaw(code) {
+        [true, character] => character
+        _ => throw Error {type: "string.range", msg: "chr requires a Unicode scalar value"}
+    }
+}
+
+/**
+ * Returns the string whose UTF-8 encoding is `data`:
+ * `fromBytes(0x"6869")` is "hi".
+ *
+ * Throws a `string.utf8` error when `data` is not valid UTF-8.
+ */
+@testWith([0x"6869"], "hi", [0x""], "", [0x"c3a9e282ac"], "é€")
+export val fromBytes = fn(data:bytes):str {
+    match fromBytesRaw(data) {
+        [true, text] => text
+        _ => throw Error {type: "string.utf8", msg: "the bytes are not valid UTF-8"}
+    }
+}
+
+/**
+ * Returns the UTF-8 encoding of `text`: `toBytes("hi")` is `0x"6869"`.
+ */
+@testWith(["hi"], 0x"6869", [""], 0x"", ["é€"], 0x"c3a9e282ac")
+export val toBytes = fn(text:str):bytes {
+    toBytesRaw(text)[0]
+}
+
+val requireStrings = fn(values, operation) {
+    val check = fn(i) {
+        if (i < len(values)) {
+            match values[i] {
+                _:str => recur(i + 1)
+                _ => throw Error {type: "string.type", msg: "$operation requires a list of strings"}
+            }
+        }
+    }
+    check(0)
+}
+
+val merge = fn(left, right, i, j, out) {
+    if (i == len(left)) {
+        out + right[j:]
+    } else if (j == len(right)) {
+        out + left[i:]
+    } else if (right[j] < left[i]) {
+        recur(left, right, i, j + 1, out :+ right[j])
+    } else {
+        recur(left, right, i + 1, j, out :+ left[i])
+    }
+}
+
+val mergeSort = fn(values) {
+    if (len(values) <= 1) {
+        values
+    } else {
+        val middle = int(len(values) / 2)
+        merge(mergeSort(values[0:middle]), mergeSort(values[middle:]), 0, 0, [])
+    }
+}
+
+/**
+ * Returns `strings` in ascending order by Slug's string ordering, the order of
+ * `<`: lexicographic by UTF-8 bytes, so `"B"` sorts before `"a"`. Equal
+ * strings keep their original order. `strings` is unchanged.
+ *
+ * Throws a `string.type` error when an element is not a string.
+ */
+@testWith([["pear", "Apple", "fig", "apple"]], ["Apple", "apple", "fig", "pear"], [[]], [])
+export val sort = fn(strings:list<str>):list<str> {
+    requireStrings(strings, "sort")
+    mergeSort(strings)
+}
+
+/**
+ * Returns the elements of `strings` concatenated, with `separator` between
+ * each adjacent pair: `join(["a", "b", "c"], ", ")` is `"a, b, c"`. An empty
+ * list joins to `""`.
+ *
+ * Throws a `string.type` error when an element is not a string.
+ */
+@testWith([["x", "y"]], "xy", [["c", "a"], ", "], "c, a", [[]], "")
+export val join = fn(strings:list<str>, separator:str = ""):str {
+    requireStrings(strings, "join")
+    val go = fn(i:num, out:str):str {
+        if (i == len(strings)) {
+            out
+        } else if (i == 0) {
+            recur(1, strings[0])
+        } else {
+            recur(i + 1, out + separator + strings[i])
+        }
+    }
+    go(0, "")
+}
+
+/**
+ * Returns the integer that `text` writes in decimal, with an optional leading
+ * `-` or `+`: `toInt("42")` is 42 and `toInt("-7")` is -7. Returns `nil` when
+ * `text` is not such an integer, including when it has spaces, a fraction,
+ * or digits beyond the range of a Slug integer, so `toInt(text) ?? 0` gives a
+ * default.
+ */
+@testWith(
+    ["42"], 42,
+    ["-7"], -7,
+    ["+5"], 5,
+    ["007"], 7,
+    ["1.5"], nil,
+    [""], nil
+)
+export val toInt = fn(text:str):num|nil {
+    val sign = if (len(text) > 0) { text[0] } else { "" }
+    val negative = sign == "-"
+    val start = if (negative || sign == "+") { 1 } else { 0 }
+    // Accumulating toward the most negative integer covers it, which has no
+    // positive counterpart. `limit` is the least value that can take one more
+    // digit: `(x - x % 10) / 10` divides exactly, rounding toward zero.
+    val go = fn(i:num, value:num):num|nil {
+        if (i == len(text)) {
+            return value
+        }
+        val c = text[i]
+        if (c < "0" || c > "9") {
+            return nil
+        }
+        val digit = ordRaw(c) - 48
+        val floor = -9223372036854775807 - 1 + digit
+        val limit = (floor - floor % 10) / 10
+        if (value < limit) { nil } else { recur(i + 1, value * 10 - digit) }
+    }
+    if (start == len(text)) {
+        return nil
+    }
+    val magnitude = go(start, 0)
+    if (magnitude == nil) {
+        nil
+    } else if (negative) {
+        magnitude
+    } else if (magnitude == -9223372036854775807 - 1) {
+        nil
+    } else {
+        -magnitude
+    }
+}
+
+/**
+ * Returns the characters of `text` as a list of one-character strings, in
+ * order: `chars("héllo")` is `["h", "é", "l", "l", "o"]`. `join(chars(text))`
+ * is `text`.
+ */
+@testWith(["héllo"], ["h", "é", "l", "l", "o"], [""], [])
+export val chars = fn(text:str):list<str> {
+    val go = fn(i:num, out:list<str>):list<str> {
+        if (i == len(text)) { out } else { recur(i + 1, out :+ text[i]) }
+    }
+    go(0, [])
+}
+
+/**
+ * Returns the parts of `text` between occurrences of `separator`, in order:
+ * `split("a,b,,c", ",")` is `["a", "b", "", "c"]`. Text without the separator
+ * is one part, and `join(split(text, separator), separator)` is `text`.
+ *
+ * Throws a `string.range` error when `separator` is empty.
+ */
+@testWith(
+    ["a,b,,c", ","], ["a", "b", "", "c"],
+    ["key: value: more", ": "], ["key", "value", "more"],
+    ["none", ","], ["none"],
+    ["", ","], [""],
+    [",x,", ","], ["", "x", ""]
+)
+export val split = fn(text:str, separator:str):list<str> {
+    val width = len(separator)
+    if (width == 0) {
+        throw Error {type: "string.range", msg: "split requires a non-empty separator"}
+    }
+    val go = fn(i:num, start:num, parts:list<str>):list<str> {
+        if (i + width > len(text)) {
+            parts :+ text[start:]
+        } else if (text[i:i + width] == separator) {
+            recur(i + width, i + width, parts :+ text[start:i])
+        } else {
+            recur(i + 1, start, parts)
+        }
+    }
+    go(0, 0, [])
+}
+
+val isSpace = fn(c:str):bool { c == " " || c == "\t" || c == "\r" || c == "\n" }
+
+/**
+ * Returns `text` without the spaces, tabs, carriage returns, and newlines at
+ * its start and end: `trim("  a b\n")` is `"a b"`.
+ */
+@testWith(["  a b\n"], "a b", ["\t\r\n"], "", ["x"], "x", [""], "")
+export val trim = fn(text:str):str {
+    val from = fn(i:num):num { if (i < len(text) && isSpace(text[i])) { recur(i + 1) } else { i } }
+    val to = fn(i:num):num { if (i > 0 && isSpace(text[i - 1])) { recur(i - 1) } else { i } }
+    val start = from(0)
+    text[start:to(len(text))]
+}
+
+// `text` with each character in `from` (an inclusive range of ASCII codes)
+// moved by `shift`.
+val shiftCase = fn(text:str, from:num, to:num, shift:num):str {
+    val go = fn(i:num, out:str):str {
+        if (i == len(text)) {
+            return out
+        }
+        val code = ordRaw(text[i])
+        recur(i + 1, out + (if (code >= from && code <= to) { chr(code + shift) } else { text[i] }))
+    }
+    go(0, "")
+}
+
+/**
+ * Returns `text` with its ASCII letters in lowercase: `lower("Content-Type")`
+ * is `"content-type"`. Other characters are unchanged.
+ */
+@testWith(["Content-Type"], "content-type", ["ÉTÉ 42"], "ÉtÉ 42", [""], "")
+export val lower = fn(text:str):str {
+    shiftCase(text, 65, 90, 32)
+}
+
+/**
+ * Returns `text` with its ASCII letters in uppercase: `upper("get")` is
+ * `"GET"`. Other characters are unchanged.
+ */
+@testWith(["get"], "GET", ["été"], "éTé", [""], "")
+export val upper = fn(text:str):str {
+    shiftCase(text, 97, 122, -32)
+}

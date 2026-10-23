@@ -1,0 +1,289 @@
+// The JSON project's hidden suite (eval/agent/projects/json/cases.json),
+// written as Slug tests by eval/agent/projects/json/make_slug_tests.py; do not
+// edit by hand. Each case's id is the comment above its example.
+
+val json = import("slug.fmt.json")
+val {assertEqual, assertThrows} = import("slug.test")
+
+val S = struct { x }
+
+@testWith(
+    // parse-null
+    ["null"], nil,
+    // parse-true
+    ["true"], true,
+    // parse-false
+    ["false"], false,
+    // parse-zero
+    ["0"], 0,
+    // parse-negative-zero
+    ["-0"], 0,
+    // parse-integer
+    ["42"], 42,
+    // parse-negative
+    ["-17"], -17,
+    // parse-fraction
+    ["3.25"], 3.25,
+    // parse-negative-fraction
+    ["-0.5"], -0.5,
+    // parse-exponent
+    ["1e3"], 1000,
+    // parse-negative-exponent
+    ["2.5E-3"], 0.0025,
+    // parse-plus-exponent
+    ["1E+2"], 100,
+    // parse-large-exponent
+    ["6.02e23"], 6.02e23,
+    // parse-twelve-digits
+    ["123456789012"], 123456789012,
+    // parse-one-point-zero
+    ["1.0"], 1,
+    // parse-string
+    ["\"hello\""], "hello",
+    // parse-empty-string
+    ["\"\""], "",
+    // parse-simple-escapes
+    ["\"a\\\"b\\\\c\\/d\""], "a\"b\\c/d",
+    // parse-control-escapes
+    ["\"\\b\\f\\n\\r\\t\""], "\10\14\n\r\t",
+    // parse-unicode-escapes
+    ["\"\\u0041\\u00e9\""], "Aé",
+    // parse-uppercase-hex
+    ["\"\\u00C9\""], "É",
+    // parse-surrogate-pair
+    ["\"\\ud83d\\ude00\""], "😀",
+    // parse-nul-escape
+    ["\"\\u0000\""], "\0",
+    // parse-raw-utf8
+    ["\"日本\""], "日本",
+    // parse-empty-array
+    ["[]"], [],
+    // parse-array
+    ["[1, \"two\", null]"], [1, "two", nil],
+    // parse-nested-arrays
+    ["[[[]], [1, [2]]]"], [[[]], [1, [2]]],
+    // parse-empty-object
+    ["{}"], {},
+    // parse-object
+    ["{\"a\": 1, \"b\": [true]}"], {"a": 1, "b": [true]},
+    // parse-nested-objects
+    ["{\"a\": {\"b\": {\"c\": null}}}"], {"a": {"b": {"c": nil}}},
+    // parse-whitespace
+    [" \t\n\r[ 1 ,\n 2 ]\n "], [1, 2],
+    // parse-duplicate-keys
+    ["{\"a\": 1, \"a\": 2}"], {"a": 2},
+    // parse-escaped-key
+    ["{\"x\\ty\": 1}"], {"x\ty": 1},
+    // parse-deep-nesting
+    ["[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"], [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],
+    // parse-long-array
+    ["[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199]"], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199],
+    // number-many-digits
+    ["3.141592653589793238462643383279"], 3.141592653589793,
+    // number-exact-expansion
+    ["0.1000000000000000055511151231257827"], 0.1,
+    // number-largest
+    ["1.7976931348623157e308"], 1.7976931348623157e308,
+    // number-smallest-normal
+    ["2.2250738585072014e-308"], 2.2250738585072014e-308,
+    // number-smallest-subnormal
+    ["4.9406564584124654e-324"], 5e-324,
+    // number-subnormal-rounding
+    ["2.4703282292062328e-324"], 5e-324,
+    // number-huge-integer
+    ["123456789012345678901234567890"], 1.2345678901234568e+29,
+    // number-small-many-digits
+    ["0.000001234567890123456789"], 1.2345678901234567e-06,
+    // number-tie-to-even
+    ["1.00000000000000011102230246251565404236316680908203125"], 1.0,
+    // number-just-above-tie
+    ["1.00000000000000011102230246251565404236316680908203126"], 1.0000000000000002,
+    // number-exact-large-integer
+    ["9007199254740993"], 9007199254740993,
+    // number-exponent-integer
+    ["7.2057594037927933e16"], 72057594037927933,
+    // number-smallest-integer
+    ["-9223372036854775808"], -9223372036854775807 - 1,
+    // number-beyond-integer
+    ["9223372036854775808"], 9.223372036854776e+18,
+    // number-underflow
+    ["1e-400"], 0
+)
+val parses = fn(text:str) { json.parse(text) }
+
+// Where parsing `text` fails.
+val failsAt = fn(text:str):num {
+    assertThrows(fn() { json.parse(text) }, "json.parse").data.offset
+}
+
+@testWith(
+    // error-empty
+    [""], 0,
+    // error-only-space
+    ["   "], 3,
+    // error-trailing-comma-array
+    ["[1,]"], 3,
+    // error-missing-comma
+    ["[1 2]"], 3,
+    // error-missing-colon
+    ["{\"a\" 1}"], 5,
+    // error-trailing-comma-object
+    ["{\"a\": 1,}"], 8,
+    // error-unquoted-key
+    ["{a: 1}"], 1,
+    // error-truncated-true
+    ["tru"], 3,
+    // error-truncated-null
+    ["nul"], 3,
+    // error-leading-zero
+    ["01"], 1,
+    // error-trailing-dot
+    ["1."], 2,
+    // error-leading-dot
+    [".5"], 0,
+    // error-plus-sign
+    ["+1"], 0,
+    // error-empty-exponent
+    ["1e"], 2,
+    // error-unterminated-string
+    ["\"abc"], 4,
+    // error-invalid-escape
+    ["\"a\\x\""], 3,
+    // error-invalid-hex
+    ["\"\\u12g4\""], 5,
+    // error-raw-control
+    ["\"a\nb\""], 2,
+    // error-lone-high-surrogate
+    ["\"\\ud83d\""], 1,
+    // error-lone-low-surrogate
+    ["\"\\ude00\""], 1,
+    // error-trailing-content
+    ["[1] x"], 4,
+    // error-unclosed-array
+    ["["], 1,
+    // error-unclosed-object
+    ["{\"a\":"], 5,
+    // error-nan
+    ["NaN"], 0,
+    // error-bare-minus
+    ["-"], 1,
+    // error-missing-array-comma
+    ["[\"a\" \"b\"]"], 5
+)
+val reportsTheOffset = failsAt
+
+// Numbers too large for binary64 fail; the spec does not fix the offset.
+val failsWith = fn(text:str):str {
+    assertThrows(fn() { json.parse(text) }, "json.parse").type
+}
+
+@testWith(
+    // error-number-out-of-range
+    ["1e400"], "json.parse",
+    // error-number-just-too-large
+    ["17976931348623159e292"], "json.parse"
+)
+val rejects = failsWith
+
+@testWith(
+    // roundtrip-canonical
+    [" { \"b\" : [ 1 , 2 ] , \"a\" : \"x\" } "], "{\"a\":\"x\",\"b\":[1,2]}",
+    // roundtrip-escapes
+    ["\"\\u00e9\\n\""], "\"é\\n\"",
+    // roundtrip-numbers
+    ["[1.50, 2E1, -0.5e1]"], "[1.5,20,-5]",
+    // roundtrip-nested
+    ["{\"k\": {\"j\": [{\"i\": null}]}}"], "{\"k\":{\"j\":[{\"i\":null}]}}",
+    // roundtrip-control
+    ["\"\\u001F\""], "\"\\u001f\"",
+    // roundtrip-slash
+    ["\"\\/\""], "\"/\""
+)
+val roundTrips = fn(text:str):str { json.stringify(json.parse(text)) }
+
+@testWith(
+    // stringify-null
+    [nil], "null",
+    // stringify-true
+    [true], "true",
+    // stringify-integer
+    [42], "42",
+    // stringify-fraction
+    [-0.5], "-0.5",
+    // stringify-integral-float
+    [1.0], "1",
+    // stringify-small
+    [0.0025], "0.0025",
+    // stringify-million
+    [1000000], "1000000",
+    // stringify-string
+    ["hi"], "\"hi\"",
+    // stringify-quote-escapes
+    ["q\"b\\s/"], "\"q\\\"b\\\\s/\"",
+    // stringify-control-escapes
+    ["\n\r\t\10\14"], "\"\\n\\r\\t\\b\\f\"",
+    // stringify-unicode-escapes
+    ["\1\37"], "\"\\u0001\\u001f\"",
+    // stringify-raw-utf8
+    ["é😀"], "\"é😀\"",
+    // stringify-empty-array
+    [[]], "[]",
+    // stringify-array
+    [[1, "a", nil, [true]]], "[1,\"a\",null,[true]]",
+    // stringify-empty-object
+    [{}], "{}",
+    // stringify-sorted-keys
+    [{"b": 1, "a": 2, "c": {"z": [], "y": nil}}], "{\"a\":2,\"b\":1,\"c\":{\"y\":null,\"z\":[]}}",
+    // stringify-byte-ordered-keys
+    [{"B": 1, "a": 2, "_": 3}], "{\"B\":1,\"_\":3,\"a\":2}",
+    // stringify-non-ascii-keys
+    [{"é": 1, "z": 2}], "{\"z\":2,\"é\":1}"
+)
+val writes = fn(value):str { json.stringify(value) }
+
+// What writing `value` throws.
+val refuses = fn(value):str {
+    assertThrows(fn() { json.stringify(value) }, "json.type").type
+}
+
+@testWith(
+    // type-function
+    [fn() { 1 }], "json.type",
+    // type-non-string-key
+    [{[1]: "x"}], "json.type",
+    // type-nested-function
+    [[1, fn() { 2 }]], "json.type",
+    // type-bytes
+    [0x"00"], "json.type",
+    // type-struct
+    [S { x: 1 }], "json.type"
+)
+val rejectsValuesWithoutAJsonForm = refuses
+
+// size-large-document: records like the suite's, written and read back. The
+// suite times 4000; 1000 keep this check quick, since it is not timed here.
+@test
+val roundTripsALargeDocument = fn() {
+    val record = fn(index:num) {
+        val tag = index % 13
+        {
+            id: index,
+            name: "record $index café",
+            note: if (index % 7 == 0) { "line\nbreak\t\"quoted\"" } else { nil },
+            tags: ["a", "b", "$tag"],
+            active: index % 2 == 0,
+            nested: {depth: [index, [index + 1, {leaf: index % 5}]]},
+        }
+    }
+    val records = fn(i:num, out:list):list { if (i == 1000) { out } else { recur(i + 1, out :+ record(i)) } }
+    val written = json.stringify(records(0, []))
+    assertEqual(json.parse(written), records(0, []))
+    assertEqual(json.stringify(json.parse(written)), written)
+}
+
+// size-deep-nesting: arrays nested 1000 deep.
+@test
+val roundTripsDeepNesting = fn() {
+    val text = "[" * 1000 + "]" * 1000
+    assertEqual(json.stringify(json.parse(text)), text)
+}

@@ -150,10 +150,10 @@ fn interpolates_identifier_values_in_non_raw_strings() {
         .expect("run unknown interpolation source");
     fs::remove_file(path).expect("remove unknown interpolation source");
     assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .starts_with("slug: runtime error:")
+        stderr.starts_with("slug: semantic error: unknown name `missing`"),
+        "{stderr}"
     );
 }
 
@@ -188,7 +188,9 @@ fn slices_lists_with_an_omitted_start() {
     fs::write(
         &path,
         "val values = [10, 20, 30, 40, 50]\n\
-         println(values[:2], values[0:2], values[1:4:2], values[-3:])\n",
+         println(values[:2], values[0:2], values[1:4:2], values[-3:])\n\
+         // An end before the start is an empty slice, as for strings and bytes.\n\
+         println(values[3:1], values[3:1:2], values[-1:-3], \"abc\"[2:1] == \"\", 0x\"0102\"[2:1])\n",
     )
     .expect("write slice source");
     let output = slug().arg(&path).output().expect("run slice source");
@@ -201,7 +203,7 @@ fn slices_lists_with_an_omitted_start() {
     );
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "[10, 20] [10, 20] [20, 40] [30, 40, 50]\n"
+        "[10, 20] [10, 20] [20, 40] [30, 40, 50]\n[] [] [] true 0x\"\"\n"
     );
 }
 
@@ -757,5 +759,326 @@ fn rejects_arithmetic_that_overflows_to_infinity() {
         String::from_utf8(output.stderr)
             .unwrap()
             .starts_with("slug: runtime error: numeric operation produced a non-finite number")
+    );
+}
+
+#[test]
+fn nested_closures_capture_the_binding_they_name() {
+    let path = fixture_path("nested-closure-captures");
+    fs::write(
+        &path,
+        // A function that already captured `p` creates a closure that also
+        // uses it; and in `parent`, local slot 0 (`x`) must not stand in
+        // for the enclosing function's slot 0 (`g`).
+        "val reused = fn() {\n\
+           var p = 1\n\
+           val inner = fn() { p = p + 1\n val f = fn() { p }\n f() }\n\
+           inner()\n\
+         }\n\
+         val clash = fn() {\n\
+           val g = \"g\"\n\
+           val parent = fn(x) { val child = fn() { x + g }\n child() }\n\
+           parent(\"x\")\n\
+         }\n\
+         val deep = fn() {\n\
+           val v = \"deep\"\n\
+           val b = fn(q) { val c = fn(r) { val d = fn() { v }\n d() }\n c(1) }\n\
+           b(2)\n\
+         }\n\
+         val shared = fn() {\n\
+           var n = 0\n\
+           val outer = fn() { val bump = fn() { n = n + 1 }\n bump()\n bump()\n n }\n\
+           outer() + n\n\
+         }\n\
+         println(reused(), clash(), deep(), shared())\n",
+    )
+    .expect("write nested closure source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nested closure source");
+    fs::remove_file(path).expect("remove nested closure source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "2 xg deep 4\n");
+}
+
+#[test]
+fn local_functions_call_themselves_by_name() {
+    let path = fixture_path("local-self-reference");
+    fs::write(
+        &path,
+        // The local `go` shadows the module's; a nested closure reaches the
+        // enclosing function by name; and a later overload calls the set.
+        "val go = 99\n\
+         val shadow = fn() {\n\
+           val go = fn(n) { if (n == 0) { \"inner\" } else { go(n - 1) } }\n\
+           go(2)\n\
+         }\n\
+         val nested = fn() {\n\
+           val walk = fn(xs) {\n\
+             match xs { [] => 0 ; [head, ...rest] => { val add = fn() { head + walk(rest) }\n add() } }\n\
+           }\n\
+           walk([1, 2, 3])\n\
+         }\n\
+         val overloads = fn() {\n\
+           val f = fn(a) { \"one \" + a }\n\
+           val f = fn(a, b) { f(a) + b }\n\
+           f(\"x\", \"y\")\n\
+         }\n\
+         println(go, shadow(), nested(), overloads())\n",
+    )
+    .expect("write local self-reference source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run local self-reference source");
+    fs::remove_file(path).expect("remove local self-reference source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "99 inner 6 one xy\n"
+    );
+}
+
+#[test]
+fn else_may_start_a_line() {
+    let path = fixture_path("else-newline");
+    fs::write(
+        &path,
+        "val grade = fn(x) {\n\
+           if (x > 1) {\n\
+             \"big\"\n\
+           }\n\
+         \n\
+           // a comment between\n\
+           else if (x > 0) {\n\
+             \"one\"\n\
+           }\n\
+           else {\n\
+             \"small\"\n\
+           }\n\
+         }\n\
+         val limit = 2\n\
+         println(grade(5), grade(1), grade(0), limit)\n",
+    )
+    .expect("write else source");
+    let output = slug().arg(&path).output().expect("run else source");
+    fs::remove_file(path).expect("remove else source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "big one small 2\n"
+    );
+}
+
+#[test]
+fn bracketed_expressions_continue_across_lines_inside_blocks() {
+    let path = fixture_path("multiline-brackets-in-blocks");
+    fs::write(
+        &path,
+        // Inside a function body, a list and a call continue across lines,
+        // while a callback block inside the call still separates its own
+        // statements. An exact map pattern closes like any brace.
+        "val add = fn(a, b) { a + b }\n\
+         val apply = fn(f) { f() }\n\
+         val body = fn() {\n\
+           val xs = [\n\
+             1,\n\
+             2,\n\
+           ]\n\
+           val sum = add(xs[0],\n\
+             xs[1])\n\
+           apply(fn() {\n\
+             val a = sum\n\
+             val b = 10\n\
+             a + b\n\
+           })\n\
+         }\n\
+         val m = {a: 1}\n\
+         val shape = match m {\n\
+           {|a|} => \"exact\"\n\
+           _ => \"other\"\n\
+         }\n\
+         println(body(), [shape,\n\
+           \"after\"])\n",
+    )
+    .expect("write multiline bracket source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run multiline bracket source");
+    fs::remove_file(path).expect("remove multiline bracket source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "13 [\"exact\", \"after\"]\n"
+    );
+}
+
+#[test]
+fn nil_coalescing_defaults_only_nil_and_short_circuits() {
+    let path = fixture_path("nil-coalescing");
+    fs::write(
+        &path,
+        "val maybe = fn(x):str|nil { x }\n\
+         val number = fn(x):num|nil { x }\n\
+         val needStr = fn(s:str) { s }\n\
+         var calls = 0\n\
+         val side = fn() { calls = calls + 1\n \"side\" }\n\
+         val counts = {a: 2}\n\
+         val User = struct { nickname = nil, name }\n\
+         val ada = User { name: \"Ada\" }\n\
+         println(needStr(maybe(\"x\") ?? \"\"), needStr(maybe(nil) ?? \"empty\"))\n\
+         println(maybe(\"kept\") ?? side(), calls, maybe(nil) ?? side(), calls)\n\
+         println(counts[\"a\"] ?? 0, counts[\"b\"] ?? 0, ada.nickname ?? ada.name ?? \"anonymous\")\n\
+         println(number(nil) ?? 0 > 3, number(5) ?? 0 > 3, false ?? true, 0 ?? 1)\n\
+         val total = counts[\"z\"]\n\
+           ?? 10\n\
+         val later = fn() {\n\
+           ???\n\
+         }\n\
+         println(total)\n",
+    )
+    .expect("write nil coalescing source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run nil coalescing source");
+    fs::remove_file(path).expect("remove nil coalescing source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "x empty\nkept 0 side 1\n2 0 Ada\nfalse true false 0\n10\n"
+    );
+}
+
+#[test]
+fn reserved_words_are_keys_properties_and_field_names() {
+    let path = fixture_path("reserved-word-keys");
+    fs::write(
+        &path,
+        "val m = {nil: 1, true: 2, if: 3, copy: 4}\n\
+         val f = fn() {\n\
+           val inner = {\n\
+             default: \"d\",\n\
+             type: \"t\",\n\
+           }\n\
+           inner.default\n\
+         }\n\
+         val Config = struct { copy = false, return }\n\
+         val c = Config { return: \"r\", copy: true }\n\
+         val picked = match m {\n\
+           {nil: one, if: three} => one + three\n\
+           _ => 0\n\
+         }\n\
+         println(m, m.nil, m.copy, f(), c.copy, c.return, picked)\n",
+    )
+    .expect("write reserved word key source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run reserved word key source");
+    fs::remove_file(path).expect("remove reserved word key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"nil\": 1, true: 2, \"if\": 3, \"copy\": 4} 1 4 d true r 4\n"
+    );
+}
+
+#[test]
+fn less_than_is_not_a_type_application_however_far_the_next_greater_is() {
+    let path = fixture_path("less-than-lookahead");
+    fs::write(
+        &path,
+        // The `> (` six lines below once made `i < size` parse as `i<...>(`.
+        "val size = 3\n\
+         val at = fn(i) { if (i < size) { \"in\" } else { \"out\" } }\n\
+         val id = fn<T>(x:T):T { x }\n\
+         val nested:list<list<str>> = [[\"a\"]]\n\
+         val table:map<str, list<num>> = {a: [1]}\n\
+         val check = fn(n) {\n\
+           if (n > (size - 1)) { \"big\" } else { \"small\" }\n\
+         }\n\
+         println(at(1), at(5), check(9), id<list<str>>([\"b\"]), nested, table, 16 >> 2)\n",
+    )
+    .expect("write lookahead source");
+    let output = slug().arg(&path).output().expect("run lookahead source");
+    fs::remove_file(path).expect("remove lookahead source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "in out big [\"b\"] [[\"a\"]] {\"a\": [1]} 4\n"
+    );
+}
+
+#[test]
+fn local_functions_may_call_functions_declared_later_in_their_block() {
+    let path = fixture_path("hoisted-local-functions");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write hoisting source");
+        let output = slug().arg(&path).output().expect("run hoisting source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stdout, stderr) = run("val g = fn() { \"outer g\" }\n\
+         val outer = fn() {\n\
+           val isEven = fn(n) { if (n == 0) { true } else { isOdd(n - 1) } }\n\
+           val isOdd = fn(n) { if (n == 0) { false } else { isEven(n - 1) } }\n\
+           val f = fn() { g() }\n\
+           val g = fn() { \"inner g\" }\n\
+           [isEven(10), isOdd(7), f()]\n\
+         }\n\
+         println(outer())\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "[true, true, \"inner g\"]\n");
+
+    // Using a function before its declaration has run, or a value declared
+    // later, is reported where it is used.
+    let (code, _, stderr) =
+        run("val f = fn() {\n  val r = later()\n  val later = fn() { 1 }\n  r\n}\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("`later` is used before its declaration"),
+        "{stderr}"
+    );
+    let (code, _, stderr) =
+        run("val f = fn() {\n  val use = fn() { value + 1 }\n  val value = 1\n  use()\n}\n");
+    fs::remove_file(&path).expect("remove hoisting source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("`value` is declared later in this block"),
+        "{stderr}"
     );
 }

@@ -1,0 +1,10 @@
+val text = cfg("text", "4096")
+val digits = {"0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9}
+val sum = fn(i, total) {
+  if (i == len(text)) { total } else {
+    val digit = digits[text[i]]
+    if (digit == nil) { nil } else { recur(i + 1, total + digit) }
+  }
+}
+val total = sum(0, 0)
+if (len(text) == 0 || total == nil) { println("invalid") } else { println(total) }

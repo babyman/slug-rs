@@ -5,14 +5,17 @@
 
 mod configuration;
 mod conformance;
+pub mod diagnostic;
 mod fixture;
 mod host;
+mod report;
 mod server;
 
 pub use configuration::{Configuration, ConfigurationValue};
 pub use conformance::FixtureRunner;
 pub use fixture::{FixtureMetadata, FixtureMetadataError, FixtureOutcome};
 pub use host::{DesktopLoader, build_default_host_vm, default_library_root};
+pub use report::capability_report_json;
 pub use server::run_server;
 
 /// Versioned interactive-session protocol and server support.

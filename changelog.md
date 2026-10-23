@@ -2,6 +2,423 @@
 
 ## Unreleased
 
+- After branches rejoin, a binding's type is the union of its types in them.
+  A narrowed `var` that one branch set to `nil` previously kept its narrowed
+  type, so `if (x != nil) { if (c) { x = nil }; x + 1 }` compiled and failed
+  only when `c` held; it is now a compile error.
+
+- A nil test narrows a string-keyed member of an immutable binding: after
+  `r.error != nil`, `r.error` is not `nil` on that path, through `&&`, past an
+  early `return`, and in functions defined there. Previously only a name was
+  narrowed, so code had to bind the member first. A `var`'s members are not
+  narrowed, since an assignment may replace the value.
+
+- `slug.fmt.json` reads and writes JSON: `parse` reads a document into maps,
+  lists, strings, numbers, booleans, and `nil`, with every integer that fits
+  in 64 bits exact and other numbers correctly rounded, and `stringify` writes
+  compact, canonical JSON with sorted keys. Errors are `json.parse` with the
+  offset and `json.type`. It is the library an agent wrote in the JSON
+  project's json-fixes-2 run, chosen for passing every case and every extra
+  check and parsing a 1 MB document in 0.66 s, five or more times faster than
+  the others. The project's hidden suite runs as its Slug tests.
+
+- Agent evaluation installs leave out clutch test directories, which hold
+  project suites' hidden cases, and modules a project asks agents to write,
+  now `slug.fmt.json`. The JSON project's suite gains a case for an integer
+  written with an exponent, `7.2057594037927933e16`.
+
+- The core clutch's behaviour is tested in Slug: `@testWith` examples on
+  `slug.math`, `slug.string`, and `slug.fmt.toml` functions, which also
+  document them, and test files under its `[tests]`. `make check` runs them
+  with `make test-clutches`. The Rust tests keep one check of each native
+  binding against a freshly built library.
+
+- `slug test` runs a clutch's tests:
+  `slug --allow-unexported test ./path/to/name.clutch`. It runs every `@test`
+  function and `@testWith` example in the clutch's modules and its declared
+  test files, prints each failure with its expected and actual values, and
+  exits nonzero when any fail. The new `slug.test` module provides
+  `assertEqual`, `assertNotEqual`, `assertTrue`, `assertFalse`, `assertNear`,
+  `assertThrows`, and `fail`, which throw `test.failure` errors.
+
+- A clutch declares its test files with `[tests] files = [...]` in
+  `clutch.toml`. Each is a module named after the clutch and the file's path,
+  so `tests/string.slug` in `slug.core.clutch` is `slug.core.tests.string`,
+  and resolves only when slug runs with `--allow-unexported`.
+
+- `slug.fmt.toml` reads TOML documents into maps, lists, strings, integers,
+  and booleans, with comments, bare, quoted, and dotted keys, `[table]`
+  headers, arrays, and inline tables. Floats, dates, multi-line strings,
+  non-decimal integers, and arrays of tables are reported as unsupported.
+  Errors are `toml.parse` with the line and column. Data format modules are
+  named `slug.fmt.*`.
+
+- `describe(module, unexported = false)` returns a module's top-level
+  declarations, each with its name, whether it is exported or mutable, its
+  documentation, its tags with their evaluated arguments, and its value, so
+  a Slug program can find `@test` and `@testWith` declarations. Unexported
+  declarations need the new `--allow-unexported` runner flag, which grants the
+  `describe.unexported` permission; without it the request is a `permission`
+  runtime error. Builtins now accept named arguments.
+
+- The specification now describes integer arithmetic: when `/` gives an
+  integer or a float, the sign of `%`, and `math.div` for an exact quotient
+  rounded toward zero. The Tiny project's hidden suite gains a
+  `large-division` group, which the reference failed until it used
+  `math.div`.
+
+- `slug.math` adds `div(left, right)`, the quotient rounded toward zero and
+  exact for integers of any size, where `int(a / b)` loses precision because
+  `/` gives a float for an inexact division. `slug.string` adds
+  `toInt(text)`, which parses a decimal integer with an optional sign and
+  returns `nil` for anything else, including values out of range. Agents
+  writing the Tiny interpreter hand-wrote both in most runs.
+
+- Match cases written on one line without a newline or `;` between them are
+  reported as ``match cases are separated by a newline or `;` ``, with a fix
+  replacing a `,` and a suggested `;` otherwise, instead of
+  `expected match case separator`. A function `match` body written with a
+  subject, as in `fn(x) match x { ... }`, now says that such a body matches
+  its arguments, instead of `expected { after match subject`.
+
+- An assignment that discards a change a call inside it makes is a compile
+  error, `lost_update`. In `output = output :+ render(evaluate(x))`, `output`
+  is read before `evaluate` runs, so anything `evaluate` appends to it is
+  overwritten; the error names the call and suggests binding its result
+  first. Agents writing the Tiny interpreter lost nested `print` output this
+  way in four of five runs.
+
+- A `|` between match patterns is reported as
+  ``alternative match patterns are separated by `,`, not `|` `` with a fix
+  that replaces it, instead of ``expected => after match pattern``.
+
+- `i64::MIN % -1` is `0` rather than an integer overflow error; only the
+  quotient of that division overflows.
+
+- An unannotated `val` or `var` keeps the part of its value's type that the
+  checker cannot infer dynamic, as it is where the value is used directly,
+  instead of widening it to `any|nil`. `fn() { val b = parse(); b }` can now be
+  used wherever `fn() { parse() }` can, where a list was previously rejected
+  with `expected list, got any|nil`; likewise `[parse()]` keeps dynamic
+  elements. Annotated bindings and struct fields are unchanged.
+
+- A name that nothing declares is a compile error that suggests the names in
+  scope it most likely misspells, as in
+  ``unknown name `pirntln`; did you mean `println`?``, with each suggestion
+  offered as a replacement edit. Such a name previously compiled and failed
+  only when its use ran. Names the runtime provides, the exports of
+  `slug.builtin` and the VM's `cfg`, `int`, and `stacktrace`, are known, as are
+  the names a `{*}` import selects. When the compiler cannot know every name,
+  as in an interactive session, the name is still looked up when it runs.
+
+- Parameter type inference follows paths through the body: a parameter is
+  constrained only when every path that finishes constrains it alike. A
+  function that returns `a + b` early for strings and later divides `a` now
+  accepts strings, where the division made `a` a number everywhere and, with
+  dynamic arguments, compiled the early addition as numeric-only, which
+  faulted at runtime. A parameter compared with a literal has that literal's
+  type on the comparison's path, so `if (n == 0) { 1 } else { recur(n - 1) }`
+  still infers `num`. Migration: a recursive helper whose base case returns a
+  parameter untouched, such as `gcd(a, b)` returning `a`, now leaves it
+  dynamic; annotate it to keep it checked when compiling.
+
+- A line that begins with `-` or `!` touching its operand starts a statement:
+  after `val k = f(x)`, a line `-k + 1` is no longer read as
+  `val k = f(x) - k + 1`, which failed at runtime with ``unknown name `k` ``,
+  and a line `!done` is no longer a parse error. A line beginning with `- `
+  (a space after the `-`) or `!=` still continues the expression before it.
+
+- A `var` that starts as `nil` takes the type of its first assignment:
+  after `var ahead = nil` and `ahead = next()`, `ahead` is `nil` or a token
+  everywhere, including in closures, where it was `any|nil`. A later
+  assignment of another type is an error that names where the type came from
+  and what to declare:
+  ``expected num|nil, got str: `best` is `num|nil`, from its first value `nil`
+  and its first assignment at 2:8; to hold both, declare
+  `var best:num|str|nil = nil` ``. A `var` with no assignment, or whose first
+  assignment's type is unknown, is still `any|nil`; struct fields are
+  unchanged. Migration: a `var` that holds several types besides `nil` needs
+  them declared.
+
+- Lists, maps, and tasks are covariant: `val mixed:list<num|str> = [1, 2]` and
+  `var record:map<str, any|nil> = {kind: "text"}` now check, where element
+  types previously had to match exactly. Channels, which also take values in,
+  still match exactly. Union normalization drops a member another member
+  covers, so a function returning `{a: 1}` or `{a: 1, b: nil}` is typed
+  `map<str, num|nil>` rather than a union of the two map types.
+
+- Indexing or slicing a value whose type is a union of collections, such as
+  a function's result that is one of two map shapes, now checks each member
+  and yields any of their results: `{a: 1}` or `{a: "x"}` indexed by `a` is
+  `num|str|nil`. Previously it failed with
+  ``operator `[]` does not accept map<str, num>|map<str, str> and str``. A
+  union with a member that cannot be indexed, such as `nil`, is still an
+  error.
+
+- A type mismatch whose value is a `var` that started as `nil` now says so and
+  names the declaration to annotate:
+  ``expected num, got any: `held` starts as `nil`, so its type is `any|nil`;
+  declare the type it holds, as in `var held:num|nil = nil` ``. A nested
+  function sees such a `var` only by its declared type, so state filled in by
+  one closure and read by another previously failed with a bare
+  `expected num, got any`.
+
+- A function whose unannotated parameters meet in a `+`, `-`, or `*` is typed
+  by that operation's overloads only when every value it returns is the
+  operation itself. `fn(a, b) { val sum = a + b; [sum] }` was typed as
+  returning `num`, so indexing its result failed to check and
+  `val total:num = wrap(1, 2)` accepted a list. Other functions keep the
+  result their body is checked to produce.
+
+- The specification now states the string escapes: double-quoted strings
+  interpret `\n`, `\r`, `\t`, `\b`, `\f`, `\\`, `\"`, `\$`, and octal escapes,
+  and single-quoted strings are raw.
+
+- Functions declared in a block with `val name = fn ...` can call functions
+  declared later in the same block, so local helpers can be mutually
+  recursive, as module-level functions already could. Previously the call
+  compiled to a module lookup and failed at runtime with `unknown name`.
+  Calling such a function before its declaration has run, or using a value
+  the block declares later, is now a compile-time error at the use. A local
+  function shadowing an outer one of the same name is now called by functions
+  declared earlier in the block too.
+
+- `a < b` is no longer misread as a type application when a `>` followed by
+  `(` appears anywhere later in the file, which reported
+  `expected > in type application` far from any generic call. Nested type
+  arguments may also close with `>>`, as in `list<list<str>>` and
+  `id<list<str>>(xs)`, which previously failed to parse.
+
+- A module function named like an implicit builtin now replaces the builtin
+  in the checker, as the specification and the runtime already did, rather
+  than adding an overload. `fs.close(file)` with an unannotated or
+  `nil`-initialized `file` previously failed with
+  `ambiguous overload for close`, and `fs.close(channel)` type-checked and
+  then failed at runtime.
+
+- `task remains blocked with no runnable work` now reports where the blocked
+  task waits, with its call frames: the `select`, receive, or await that can
+  never complete. Previously it had no location.
+
+- A `module_not_found` for a module whose file is in a directory above the
+  search, as when a test in `tests/` imports a sibling of `tests/`, adds a
+  suggestion naming that file, such as `../jobs.slug`.
+
+- `slug.std`'s `map` and `find` accept lists that contain `nil`. `map` is no
+  longer generic: its result holds whatever its function returns, so it is a
+  plain `list`, where its old signature claimed the input's element type, and
+  `val xs:list<str> = map(["a"], fn(s) { len(s) })` type-checked and then
+  failed at runtime. `find` takes `list<T|nil>` and still returns `T|nil`.
+
+- A `defer onerror` handler's value, which becomes the function's result when
+  it recovers from an error, is now part of the function's inferred result and
+  is checked against a declared result type. Previously
+  `fn(f) { defer onerror(e) { e } ; f() ; nil }` was inferred to return `nil`,
+  so using the returned error, as in `errorOf(...).type`, failed to type-check.
+
+- Reserved words may be map keys, property names, and struct field names:
+  `{nil: 1, copy: true}`, `m.copy`, `struct { default = 0 }`. Previously these
+  failed with misleading errors such as `expected statement separator` at the
+  `:`. A map pattern with a reserved key needs an explicit pattern,
+  `{nil: value}`.
+
+- New `??` operator: `a ?? b` is `a` unless it is `nil`, and otherwise
+  evaluates `b`. Its type is `a`'s without `nil`, joined with `b`'s, so
+  `fs.readLine(file) ?? ""` is a `str` and `counts[word] ?? 0` defaults a
+  missing entry. It binds more tightly than comparison and groups to the right.
+
+- A `var` or struct field whose first value is `nil` may later hold any value:
+  `var best = nil` then `best = 5`, and `struct { error = nil }` constructed
+  with `error: "boom"`, previously failed with `expected nil, got ...`. A
+  `val` that is `nil` stays exactly `nil`. An annotated `var` now keeps its
+  annotation after assignments: `var x:num|nil = nil`, `x = 5`, `x = nil`
+  previously failed, because the first assignment replaced the declared type.
+  Inside a nested function, a captured `var` reads as its declared type.
+
+- A function's inferred result now includes the values of its early
+  `return`s, and a declared result type is checked at each `return`.
+  Previously `fn(n) { if (n == 0) { return "a" } ; 5 }` was inferred as `num`,
+  so `val x:num = f(0)` passed checking and bound `"a"`; a recursive helper
+  that returned early and ended in `recur(...)` was inferred as `never`; and
+  `return "zero"` in a function declared `:num` was not reported.
+
+- A list, call, or other bracketed expression inside a function body or
+  other block may span lines, as at module level: `f(1,` then `2)` on the
+  next line previously failed with `expected expression` inside any `{ }`.
+  An exact map pattern `{| |}` also no longer makes newlines inside later
+  brackets separate statements.
+
+- `limit` is now an ordinary name except directly after `nursery`, so
+  `val limit = 10` works. A reserved word used as a name now reports
+  `` `copy` is a reserved word and cannot be used as a name `` instead of
+  `expected match pattern` or `expected parameter name`, and the language
+  specification lists the reserved words.
+
+- An `else` at the start of a line continues the `if` before it, so `}` and
+  `else {` may be on separate lines. Previously the `if` ended at the newline
+  and the `else` failed with `expected expression`.
+
+- A `var` holding a recursive function can be reassigned. The checker cannot
+  infer such a function's result, and an unknown result or parameter in a
+  function type now matches any type, so `var f = fn(n) { ... f(n - 1) }`
+  followed by `f = fn(n) { "new" }` no longer fails with
+  `expected fn<unknown, any|nil>, got fn<str, any|nil>`.
+
+- A function declared inside another function can call itself by name, as in
+  `val go = fn(n) { if (n == 0) { 0 } else { go(n - 1) } }`. Previously only
+  module-level functions could; a local one compiled, then failed when called
+  with the error unknown name `go`. A local function that called an outer
+  function of the same name, such as `val log = fn(x) { log("> " + x) }`, now
+  calls itself instead; rename it.
+
+- Fixed nested closures capturing the wrong binding. A closure created inside
+  a function that had already used a captured name, as in
+  `fn() { val q = p ; val f = fn() { p } ; f() }`, failed with `capture 0 does
+  not exist` or silently read another captured value; a parameter could stand
+  in for an enclosing function's local in the same slot, so
+  `fn(x) { fn() { x + g } }` read `x` for `g`; and a name captured across
+  three or more function levels could resolve against the wrong function.
+
+- A match case's binding or wildcard no longer has the whole subject type: it
+  excludes what earlier unguarded cases match whole, such as `nil`. In
+  `match fs.readLine(file) { nil => "" ; line => line }`, `line` is `str`, so
+  the match can be a function's `str` result; previously `line` was `str|nil`
+  and the function failed with `expected str, got str|nil`. A named subject
+  narrows the same way inside the case.
+
+- A function whose result does not match its declared type now points at the
+  expression that produced the result, with its range, instead of the body's
+  opening `{`.
+
+- An integer literal larger than 9223372036854775807 now reports
+  `integer literal is out of range; the largest is 9223372036854775807`
+  instead of `invalid number`, and offers to append `.0`, making it a float:
+  as a fix when the float holds the value exactly, and otherwise as a
+  suggestion whose message gives the rounded value. Parse and semantic
+  diagnostics can now carry `suggestions`.
+
+- An import of a module that does not exist now has the code
+  `module_not_found`, previously `module`, and suggests close module names:
+  `import("slug.stdin")` suggests `slug.io.stdin`, and `import("utlis")`
+  suggests a sibling `utils.slug`. The diagnostic points at the module name's
+  string literal, and each suggestion is an edit replacing it, in a new
+  `suggestions` member that holds likely but not certain corrections, separate
+  from `fixes`. `defer onerror` sees such a failure with type
+  `module_not_found`.
+
+- Text diagnostics now render the same document as `--diagnostic-format=json`:
+  after the source excerpt and frames they show the code, expected and actual
+  values, native error code, fixes and suggestions with their edits, and the
+  cause. The range is underlined rather than marked with one caret.
+
+- An unannotated parameter constrained more than once in its body takes the
+  narrower type when one constraint is assignable to the other. A number
+  parameter passed on to a helper's unconstrained parameter, as in
+  `fn(e) { if (e < 0) { -e } else { helper(e) } }`, previously failed with
+  `parameter `e` has incompatible body requirements: num and any|nil`.
+
+- Importing a module whose source does not compile now reports that module's
+  own error. With `--diagnostic-format=json`, the `module` diagnostic's `cause`
+  is the module's `parse` or `semantic` diagnostic, with its code, location,
+  range, expected and actual values, and fixes; previously they were flattened
+  into the message. Text output shows the module's error and source line under
+  `caused by:`. A module whose own import fails to compile reports the
+  innermost failing module. Errors at the end of input now show their source
+  line.
+
+- String `len`, indexing, and slicing no longer scan the whole string. Each
+  string keeps its character count, ASCII strings index in constant time, and
+  others look positions up in a table built on first use, so loops over a
+  string's characters are linear rather than quadratic: a JSON parser on a
+  130 KB document went from 3.72 s to 0.18 s. `slug.string` adds `chars`,
+  which returns a string's characters as a list.
+
+- An unannotated parameter that its body gives no type is now dynamic inside
+  the function, so a result returned through it no longer fails static
+  checking. `val s:str = go(2, "")` with a recursive helper
+  `fn(i, out) { ... recur(i - 1, out + "x") }` previously reported
+  `expected str, got any|nil`; it now compiles, and a mismatch is a runtime
+  error as for other dynamic values.
+
+- Double-quoted strings support `\b` (backspace) and `\f` (form feed)
+  escapes. Previously `"\b"` was an unknown escape and kept its backslash.
+
+- `slug.string` adds `sort`, a stable ascending sort of a list of strings in
+  the order of `<`, and `join`, which concatenates a list of strings with an
+  optional separator. Both throw `string.type` errors for a non-string element.
+
+- The core clutch adds `slug.string`, the start of a string library. `ord`
+  returns a one-character string's Unicode scalar value and `chr` returns the
+  character for a scalar value: `ord("é")` is 233 and `chr(8364)` is `"€"`.
+  Both throw `string.range` errors for invalid arguments. They are typed
+  foreign functions in the core clutch's native library.
+
+- Strings support `<`, `<=`, `>`, and `>=`, comparing lexicographically by
+  UTF-8 bytes, so `"Z" < "a"` and `"ab" < "abc"`. Ordering a string against a
+  number remains a type error. An unannotated parameter compared with a number
+  literal is still inferred as `num`, one compared with a string literal is
+  inferred as `str`, and comparing two unannotated parameters no longer forces
+  them to be numbers, so `fn(a, b) { a < b }` works for strings.
+
+- Enum cases and struct schema fields can be separated by a comma, one or more
+  newlines, or both, with an optional trailing comma, so one case or field per
+  line no longer needs commas. Semicolons and consecutive commas are not
+  separators. Two members with no separator report `expected comma or newline
+  between enum cases` or `... between struct fields`. Struct construction and
+  copy still require commas between fields. An enum or struct left open at the
+  end of a file reports `expected }` with its safe fix.
+
+- `slug app.slug`, with a bare file name, now imports modules beside the
+  program. It previously failed with `cannot read :` because the program's
+  directory was taken to be the empty path; `slug ./app.slug` was unaffected.
+
+- Diagnostics offer machine-applicable `fixes` when a fix cannot change the
+  rest of the program: inserting a closing `)`, `]`, `}`, or `|}` missing at
+  the end of a file, and deleting an unreachable match case whose patterns
+  evaluate nothing. A block or match missing its `}` at the end of a file now
+  reports `expected }` instead of a missing statement separator. Rust hosts
+  apply fixes with `slug_frontend::apply_fix`; `SourcePosition` and
+  `SourceRange` are now exported.
+
+- Diagnostics report `expected` and `actual` when known: `val x:num = "a"`
+  reports `num` and `str`, and `[1` at the end of a file reports `` `]` `` and
+  `end of input`. Rust hosts read `SourceError::expected` and `::actual`.
+
+- `--diagnostic-format=json` and the interactive server now emit the same
+  version 2 diagnostic document, defined in `docs/reference/diagnostics.md`.
+  `kind` is removed in favour of `code`; every member is always present; the
+  command line also reports native error details; and interactive source
+  errors use the categories `parse` and `semantic` instead of `source`. The
+  REPL shows errors as `semantic error (type_mismatch): ...`.
+
+- Parse and semantic diagnostics carry a `range`: the start and exclusive end
+  of the offending source. A type error in `1 + "a"` covers the whole
+  expression, and a parse error covers the offending token. `location` is
+  unchanged. Runtime diagnostics keep point locations. Rust hosts read
+  `SourceError::range`.
+
+- Every diagnostic now has a stable `code`, such as `expected_syntax`,
+  `type_mismatch`, or `divide_by_zero`, in `--diagnostic-format=json`
+  documents and interactive server diagnostics. Codes name failure classes and
+  stay fixed when message wording changes; `docs/reference/diagnostic-codes.md`
+  lists them. Rust hosts read source codes as `SourceError::code`.
+
+- `slug report program.slug` (or `program.cslug`) prints a JSON capability
+  report without running the program: every module, the modules each one
+  imports, `import` calls with computed names, the host-supplied builtins it
+  references such as `println` and `cfg`, and its `foreign` and `resource`
+  declarations. Reports name modules by import name, so the same program
+  reports identically on any machine and two versions can be compared in
+  review. See `docs/reference/capability-report.md`.
+
+- Slug values have one JSON form, defined in `docs/reference/value-json.md`
+  and available to Rust hosts as `Value::to_json`. Scalars and lists are plain
+  JSON; maps, bytes, structs, enum cases, and opaque values such as functions
+  are tagged objects. Map entries are sorted, so equal values encode
+  identically. `--diagnostic-format=json` documents for thrown errors now
+  carry the payload in a `thrown` member, and the interactive server uses this
+  form for submitted values and diagnostic payloads.
+
 - Pipeline calls such as `x /> f()` and calls that supply every parameter of
   a function with defaults take the fast call path, and pattern matches no
   longer allocate for their bindings. `slug.std` `map`/`filter`/`reduce`

@@ -742,7 +742,7 @@ fn computed_map_pattern_keys_support_expressions_and_lexical_bindings() {
 #[test]
 fn rejects_unhashable_computed_map_pattern_keys_from_source() {
     let path = fixture_path("invalid-computed-map-pattern-key");
-    fs::write(&path, "match ({status: \"ok\"}) { {[[]]: _} => true }\n")
+    fs::write(&path, "match ({status: \"ok\"}) { {[[{}]]: _} => true }\n")
         .expect("write invalid computed map pattern source");
     let output = slug()
         .arg(&path)
@@ -755,7 +755,7 @@ fn rejects_unhashable_computed_map_pattern_keys_from_source() {
     assert!(
         String::from_utf8(output.stderr)
             .expect("stderr is UTF-8")
-            .starts_with("slug: runtime error: list cannot be used as a map key")
+            .starts_with("slug: runtime error: a list containing map cannot be used as a map key")
     );
 }
 
@@ -1004,7 +1004,10 @@ fn reports_source_location_for_non_matching_destructuring() {
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(stderr.starts_with("slug: runtime error: destructuring pattern did not match\n"));
     assert!(stderr.contains(&format!("    --> {}:1:14\n", path.display())));
-    assert!(stderr.ends_with("\n  in main\n"));
+    assert!(
+        stderr.ends_with("\n  in main\n  = code: match\n"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -1133,7 +1136,10 @@ fn reports_uncaught_throws_with_their_source_location_and_call_frames() {
     assert!(stderr.starts_with("slug: runtime error: uncaught throw: [\"bad\", 7]\n"));
     assert!(stderr.contains(&format!("    --> {}:2:1\n", path.display())));
     assert!(stderr.contains(&format!("\n  in <fn #0> at {}:4:", path.display())));
-    assert!(stderr.ends_with("\n  in main\n"));
+    assert!(
+        stderr.ends_with("\n  in main\n  = code: thrown\n"),
+        "{stderr}"
+    );
 }
 
 #[test]

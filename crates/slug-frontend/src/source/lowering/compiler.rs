@@ -11,7 +11,7 @@ use slug_vm::{
 };
 
 use super::{
-    SourceError,
+    SourceEdit, SourceError, SourceErrorCode, SourcePosition, SourceRange,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ForeignSignature, ListElement,
         MapPatternKey, MatchCase, Parameter, Pattern, Prefix, RestPattern, SelectCaseKind,
@@ -36,7 +36,18 @@ pub(super) struct Compiler {
     expression_types: HashMap<SourceSpan, super::semantic::Type>,
     callable_identities: Vec<CallableIdentity>,
     guard_comparisons: bool,
+    /// The names the runtime provides to every module, when they are known
+    /// at compile time. A name that is neither these nor declared is then
+    /// an error; otherwise it is looked up when it runs.
+    implicit_globals: Option<HashSet<String>>,
+    /// The name the module is imported by, which its enum values carry.
+    module_name: Option<String>,
+    /// The names `{*}` declarations define, when they are known.
+    selected_globals: Option<HashSet<String>>,
 }
+
+/// The VM's own builtins, which it installs in every module's globals.
+const VM_BUILTINS: [&str; 4] = ["cfg", "int", "stacktrace", "describe"];
 
 pub(super) struct CompiledProgram {
     pub(super) program: Program,
@@ -71,7 +82,83 @@ impl Compiler {
             expression_types: analysis.expression_types.clone(),
             callable_identities: Vec::new(),
             guard_comparisons: false,
+            implicit_globals: None,
+            module_name: None,
+            selected_globals: analysis.selected_globals.clone(),
         }
+    }
+
+    /// Makes a name that is neither declared nor one of `names`, the
+    /// exports of the implicit `slug.builtin` module, nor a VM builtin an
+    /// error at compile time.
+    pub(super) fn with_module_name(mut self, name: &str) -> Self {
+        self.module_name = Some(name.into());
+        self
+    }
+
+    pub(super) fn with_implicit_globals(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.implicit_globals = Some(
+            names
+                .into_iter()
+                .chain(VM_BUILTINS.map(String::from))
+                .collect(),
+        );
+        self
+    }
+
+    /// Whether `name` is certainly not a global the runtime will have.
+    fn is_unknown_global(&self, name: &str) -> bool {
+        let (Some(implicit), Some(selected)) = (&self.implicit_globals, &self.selected_globals)
+        else {
+            return false;
+        };
+        !implicit.contains(name) && !selected.contains(name)
+    }
+
+    /// The error for a name that nothing declares, suggesting the names in
+    /// scope that it most likely misspells.
+    fn unknown_name(&self, name: &str, expression: &Expr, state: &State) -> SourceError {
+        let mut candidates = state.visible().into_keys().collect::<HashSet<_>>();
+        candidates.extend(self.globals.keys().cloned());
+        candidates.extend(self.implicit_globals.iter().flatten().cloned());
+        candidates.extend(self.selected_globals.iter().flatten().cloned());
+        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+        candidates.sort();
+        let suggestions =
+            slug_loader::suggest_module_names(name, candidates.iter().map(String::as_str));
+        let message = match suggestions.as_slice() {
+            [] => format!("unknown name `{name}`"),
+            [suggestion] => format!("unknown name `{name}`; did you mean `{suggestion}`?"),
+            suggestions => format!(
+                "unknown name `{name}`; did you mean one of {}?",
+                suggestions
+                    .iter()
+                    .map(|suggestion| format!("`{suggestion}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        let range = SourceRange {
+            start: expression.extent_start(),
+            end: expression.end,
+        };
+        suggestions.into_iter().fold(
+            SourceError::semantic(
+                SourceErrorCode::UnknownName,
+                message,
+                expression.span.clone(),
+            )
+            .with_extent(expression),
+            |error, suggestion| {
+                error.with_suggestion(
+                    format!("replace with `{suggestion}`"),
+                    SourceEdit {
+                        range,
+                        text: suggestion,
+                    },
+                )
+            },
+        )
     }
     #[allow(clippy::too_many_lines)]
     pub(super) fn compile(mut self) -> Result<CompiledProgram, SourceError> {
@@ -269,6 +356,7 @@ impl Compiler {
         for (arguments, span) in candidates {
             if entrypoint.is_some() {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidEntrypoint,
                     "program has more than one eligible `main` entrypoint",
                     span,
                 ));
@@ -278,7 +366,11 @@ impl Compiler {
                 .get(&span)
                 .cloned()
                 .ok_or_else(|| {
-                    SourceError::semantic("cannot identify program entrypoint", span.clone())
+                    SourceError::semantic(
+                        SourceErrorCode::InvalidEntrypoint,
+                        "cannot identify program entrypoint",
+                        span.clone(),
+                    )
                 })?;
             entrypoint = Some(Entrypoint::new(
                 arguments,
@@ -288,8 +380,17 @@ impl Compiler {
         Ok(entrypoint)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
+        self.expression_inner(state, expression)
+            .map_err(|error| error.claimed_by(expression))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn expression_inner(
+        &mut self,
+        state: &mut State,
+        expression: &Expr,
+    ) -> Result<(), SourceError> {
         match &expression.kind {
             ExprKind::Value(value) => {
                 let constant = state.constant(value.clone());
@@ -307,6 +408,7 @@ impl Compiler {
                             self.expression(
                                 state,
                                 &Expr {
+                                    end: expression.end,
                                     kind: ExprKind::Name(name.clone()),
                                     span: expression.span.clone(),
                                 },
@@ -326,11 +428,32 @@ impl Compiler {
                 state.emit(Op::Nil, &expression.span);
             }
             ExprKind::NotImplemented => state.emit(Op::NotImplemented, &expression.span),
+            ExprKind::Name(name) if state.before_declaration(name) => {
+                return Err(SourceError::semantic(
+                    SourceErrorCode::UnknownName,
+                    format!("`{name}` is used before its declaration"),
+                    expression.span.clone(),
+                )
+                .with_extent(expression));
+            }
             ExprKind::Name(name) => match state.lookup(name).or_else(|| {
                 self.globals
                     .get(name)
                     .map(|mutable| Binding::Global { mutable: *mutable })
             }) {
+                None if state.declared_later(name) => {
+                    return Err(SourceError::semantic(
+                        SourceErrorCode::UnknownName,
+                        format!(
+                            "`{name}` is declared later in this block; only a function declared with `fn` can be used before its declaration"
+                        ),
+                        expression.span.clone(),
+                    )
+                    .with_extent(expression));
+                }
+                None if self.is_unknown_global(name) => {
+                    return Err(self.unknown_name(name, expression, state));
+                }
                 Some(Binding::Global { .. }) | None => {
                     state.emit(Op::GetGlobal(name.clone()), &expression.span);
                 }
@@ -340,7 +463,9 @@ impl Compiler {
                 Some(Binding::Capture { slot, .. }) => {
                     state.emit(Op::GetCapture(slot), &expression.span);
                 }
-                Some(Binding::Outer { .. }) => unreachable!("outer bindings are captured lazily"),
+                Some(Binding::Inherited { .. }) => {
+                    unreachable!("inherited bindings are captured lazily")
+                }
             },
             ExprKind::Declare {
                 mutable,
@@ -382,8 +507,21 @@ impl Compiler {
                     }
                 });
                 self.tags(state, tags, declaration, &expression.span)?;
+                // A local function is bound before its body is compiled, so
+                // the body can call it by name; captures are live, so the
+                // slot holds the function by the time the body runs. Module
+                // functions already resolve by name when called.
+                let own_slot = callable_name
+                    .filter(|_| existing_callable.is_none() && !state.is_root())
+                    .map(|name| {
+                        state
+                            .claim_hoisted(name)
+                            .unwrap_or_else(|| state.declare(name.clone(), *mutable, true))
+                    });
                 self.expression(state, value)?;
-                if let Some(binding) = existing_callable {
+                if let Some(slot) = own_slot {
+                    state.emit(Op::SetLocal(slot), &expression.span);
+                } else if let Some(binding) = existing_callable {
                     match binding {
                         Binding::Global { .. } => state.emit(
                             Op::GetGlobal(callable_name.expect("callable name").clone()),
@@ -395,8 +533,8 @@ impl Compiler {
                         Binding::Capture { .. } => {
                             unreachable!("current scope cannot contain a capture")
                         }
-                        Binding::Outer { .. } => {
-                            unreachable!("current scope cannot contain an outer binding")
+                        Binding::Inherited { .. } => {
+                            unreachable!("current scope cannot contain an inherited binding")
                         }
                     }
                     state.emit(Op::CombineOverloads, &expression.span);
@@ -411,8 +549,8 @@ impl Compiler {
                         Binding::Capture { .. } => {
                             unreachable!("current scope cannot contain a capture")
                         }
-                        Binding::Outer { .. } => {
-                            unreachable!("current scope cannot contain an outer binding")
+                        Binding::Inherited { .. } => {
+                            unreachable!("current scope cannot contain an inherited binding")
                         }
                     }
                 } else {
@@ -450,21 +588,25 @@ impl Compiler {
                     })
                     .ok_or_else(|| {
                         SourceError::semantic(
+                            SourceErrorCode::UnknownName,
                             format!("unknown name `{name}`"),
                             expression.span.clone(),
                         )
+                        .with_extent(expression)
                     })?;
                 let mutable = match binding {
                     Binding::Global { mutable }
                     | Binding::Local { mutable, .. }
                     | Binding::Capture { mutable, .. }
-                    | Binding::Outer { mutable, .. } => mutable,
+                    | Binding::Inherited { mutable } => mutable,
                 };
                 if !mutable {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::ImmutableAssignment,
                         format!("cannot assign to immutable binding `{name}`"),
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 self.expression(state, value)?;
                 // Stores consume their operand, while assignment expressions evaluate to it.
@@ -479,15 +621,19 @@ impl Compiler {
                     Binding::Capture { slot, .. } => {
                         state.emit(Op::SetCapture(slot), &expression.span);
                     }
-                    Binding::Outer { .. } => unreachable!("outer bindings are captured lazily"),
+                    Binding::Inherited { .. } => {
+                        unreachable!("inherited bindings are captured lazily")
+                    }
                 }
             }
             ExprKind::Return { value } => {
                 if !state.allows_return() {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidControlFlow,
                         "return is only valid inside a function",
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 self.tail_expression(state, value)?;
                 state.emit(Op::Return, &expression.span);
@@ -502,6 +648,7 @@ impl Compiler {
                 error_name,
             } => {
                 let deferred = Expr {
+                    end: expression.end,
                     kind: ExprKind::Function {
                         type_parameters: Vec::new(),
                         parameters: error_name
@@ -528,17 +675,22 @@ impl Compiler {
             ExprKind::Recur(_) => {
                 if !state.allows_return() {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidControlFlow,
                         "recur is only valid inside a function",
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidControlFlow,
                     "recur is only valid in tail position",
                     expression.span.clone(),
-                ));
+                )
+                .with_extent(expression));
             }
             ExprKind::Spawn(body) => {
                 let function = Expr {
+                    end: expression.end,
                     kind: ExprKind::Function {
                         type_parameters: Vec::new(),
                         parameters: Vec::new(),
@@ -602,6 +754,7 @@ impl Compiler {
                     body.as_ref().clone()
                 } else {
                     Expr {
+                        end: expression.end,
                         kind: ExprKind::Function {
                             type_parameters: Vec::new(),
                             parameters: Vec::new(),
@@ -622,9 +775,11 @@ impl Compiler {
             ExprKind::Match { subject, cases } => {
                 let subject = subject.as_deref().ok_or_else(|| {
                     SourceError::semantic(
+                        SourceErrorCode::InvalidMatch,
                         "match requires a subject or pipeline input",
                         expression.span.clone(),
                     )
+                    .with_extent(expression)
                 })?;
                 self.compile_match(state, subject, cases, false)?;
             }
@@ -646,9 +801,11 @@ impl Compiler {
                             self.compile_match(state, left, cases, false)?;
                         } else if matches!(&right.kind, ExprKind::Match { .. }) {
                             return Err(SourceError::semantic(
+                                SourceErrorCode::InvalidMatch,
                                 "pipeline match must omit its subject",
                                 right.span.clone(),
-                            ));
+                            )
+                            .with_extent(right));
                         } else {
                             self.expression(state, left)?;
                             self.compile_pipeline_call(state, right)?;
@@ -656,6 +813,15 @@ impl Compiler {
                     }
                     Binary::And => {
                         let end = state.jump_if_false(&expression.span);
+                        state.emit(Op::Pop, &expression.span);
+                        self.expression(state, right)?;
+                        state.patch(end);
+                    }
+                    Binary::Coalesce => {
+                        state.emit(Op::Duplicate, &expression.span);
+                        state.emit(Op::Nil, &expression.span);
+                        state.emit(Op::Equal, &expression.span);
+                        let end = state.jump_if_false_pop(&expression.span);
                         state.emit(Op::Pop, &expression.span);
                         self.expression(state, right)?;
                         state.patch(end);
@@ -843,7 +1009,12 @@ impl Compiler {
                     let key = state.constant(Value::string(case.clone()));
                     state.emit(Op::Constant(key), &expression.span);
                     let value = state.constant(Value::Enum(Rc::new(EnumValue {
-                        module: self.path.clone().into(),
+                        module: self
+                            .module_name
+                            .as_ref()
+                            .unwrap_or(&self.path)
+                            .clone()
+                            .into(),
                         name: name.clone().into(),
                         case: case.clone().into(),
                     })));
@@ -882,9 +1053,11 @@ impl Compiler {
                         && !constant_keys.insert(canonical)
                     {
                         return Err(SourceError::semantic(
+                            SourceErrorCode::RepeatedMapKey,
                             format!("map literal repeats key `{constant}`"),
                             key.span.clone(),
-                        ));
+                        )
+                        .with_extent(key));
                     }
                     self.expression(state, key)?;
                     self.expression(state, value)?;
@@ -896,9 +1069,11 @@ impl Compiler {
                 for field in fields {
                     if !seen.insert(field.name.as_str()) {
                         return Err(SourceError::semantic(
+                            SourceErrorCode::DuplicateName,
                             format!("duplicate struct field '{}'", field.name),
                             expression.span.clone(),
-                        ));
+                        )
+                        .with_extent(expression));
                     }
                     if let Some(default) = &field.default {
                         self.expression(state, default)?;
@@ -974,6 +1149,7 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
+                hoist_functions(state, values);
                 let runtime_scope = values.iter().any(contains_scoped_defer);
                 if runtime_scope {
                     state.emit(Op::EnterScope, &expression.span);
@@ -1101,7 +1277,12 @@ impl Compiler {
         let mut ends = Vec::new();
         for case in cases {
             let constraints = self.match_constraints.get(&case.span).ok_or_else(|| {
-                SourceError::semantic("missing resolved match constraints", case.span.clone())
+                SourceError::semantic(
+                    SourceErrorCode::Internal,
+                    "missing resolved match constraints",
+                    case.span.clone(),
+                )
+                .with_end(case.end)
             })?;
             let (pattern, names, operands) =
                 lower_case_patterns(&case.patterns, constraints, &case.span)?;
@@ -1285,13 +1466,17 @@ impl Compiler {
                     .map(|mutable| Binding::Global { mutable: *mutable })
             })
             .ok_or_else(|| {
-                SourceError::semantic(format!("unknown pinned binding `{name}`"), span.clone())
+                SourceError::semantic(
+                    SourceErrorCode::UnknownName,
+                    format!("unknown pinned binding `{name}`"),
+                    span.clone(),
+                )
             })?;
         match binding {
             Binding::Global { .. } => state.emit(Op::GetGlobal(name.into()), span),
             Binding::Local { slot, .. } => state.emit(Op::GetLocal(slot), span),
             Binding::Capture { slot, .. } => state.emit(Op::GetCapture(slot), span),
-            Binding::Outer { .. } => unreachable!("outer bindings are captured lazily"),
+            Binding::Inherited { .. } => unreachable!("inherited bindings are captured lazily"),
         }
         Ok(())
     }
@@ -1306,6 +1491,7 @@ impl Compiler {
         if matches!(pattern, Pattern::MapAll) {
             if !state.is_root() {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::TopLevelOnly,
                     "{*} declarations are only valid at top level",
                     span.clone(),
                 ));
@@ -1347,7 +1533,7 @@ impl Compiler {
                 Binding::Global { .. } => state.emit(Op::DefineGlobal(name.clone()), span),
                 Binding::Local { slot, .. } => state.emit(Op::SetLocal(*slot), span),
                 Binding::Capture { .. } => unreachable!("new bindings cannot be captures"),
-                Binding::Outer { .. } => unreachable!("new bindings cannot be outer bindings"),
+                Binding::Inherited { .. } => unreachable!("new bindings cannot be inherited"),
             }
         }
         let end = state.jump(span);
@@ -1359,14 +1545,17 @@ impl Compiler {
         state.patch(end);
         Ok(())
     }
+    #[allow(clippy::too_many_lines)]
     fn tail_expression(&mut self, state: &mut State, expression: &Expr) -> Result<(), SourceError> {
         match &expression.kind {
             ExprKind::Recur(arguments) => {
                 if !state.allows_return() {
                     return Err(SourceError::semantic(
+                        SourceErrorCode::InvalidControlFlow,
                         "recur is only valid inside a function",
                         expression.span.clone(),
-                    ));
+                    )
+                    .with_extent(expression));
                 }
                 let positional = arguments
                     .iter()
@@ -1408,6 +1597,7 @@ impl Compiler {
             }
             ExprKind::Block(values) => {
                 state.enter_scope();
+                hoist_functions(state, values);
                 let runtime_scope = values.iter().any(contains_scoped_defer);
                 if runtime_scope {
                     state.emit(Op::EnterScope, &expression.span);
@@ -1448,9 +1638,11 @@ impl Compiler {
             ExprKind::Match { subject, cases } => {
                 let subject = subject.as_deref().ok_or_else(|| {
                     SourceError::semantic(
+                        SourceErrorCode::InvalidMatch,
                         "match requires a subject or pipeline input",
                         expression.span.clone(),
                     )
+                    .with_extent(expression)
                 })?;
                 self.compile_match(state, subject, cases, true)?;
             }
@@ -1466,6 +1658,7 @@ impl Compiler {
         parent: &mut State,
     ) -> Result<(Chunk, Vec<Capture>), SourceError> {
         let mut state = State::function(parameters, parent.visible());
+        state.inherit_later(parent);
         for (slot, parameter) in parameter_metadata.iter().enumerate() {
             if let Some(default) = &parameter.default {
                 let end = state.jump_if_provided(slot, &default.span);
@@ -1484,6 +1677,7 @@ impl Compiler {
         let ExprKind::Block(values) = &body.kind else {
             return self.tail_expression(state, body);
         };
+        hoist_functions(state, values);
         for (index, value) in values.iter().enumerate() {
             if index + 1 == values.len() {
                 self.tail_expression(state, value)?;
@@ -1499,6 +1693,31 @@ impl Compiler {
     }
 }
 
+/// Declares the slot of each function a block declares by name, so the
+/// block's functions can call one another whatever their order. Only
+/// functions are hoisted: a function body runs after the block has declared
+/// it, while other values could be read before they exist.
+fn hoist_functions(state: &mut State, values: &[Expr]) {
+    if state.is_root() {
+        return;
+    }
+    for value in values {
+        if let ExprKind::Declare {
+            pattern: Pattern::Binding(name),
+            value: declared,
+            mutable,
+            ..
+        } = &value.kind
+        {
+            if matches!(declared.kind, ExprKind::Function { .. }) {
+                state.hoist(name, *mutable);
+            } else {
+                state.declare_later(name);
+            }
+        }
+    }
+}
+
 fn plain_parameters(
     parameters: &[Parameter],
     span: &SourceSpan,
@@ -1508,6 +1727,7 @@ fn plain_parameters(
     for parameter in parameters {
         if !parameter.discard && !names.insert(&parameter.name) {
             return Err(SourceError::semantic(
+                SourceErrorCode::DuplicateName,
                 format!("duplicate parameter '{}'", parameter.name),
                 span.clone(),
             ));
@@ -1567,6 +1787,7 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
         Pattern::MapAll => unreachable!("{{*}} declarations do not lower to match bytecode"),
         Pattern::EnumCase { path, case } => {
             let mut value = Expr {
+                end: SourcePosition { line: 1, column: 1 },
                 kind: ExprKind::Name(path.split('.').next().expect("enum path has a name").into()),
                 span: SourceSpan::new("<internal>", 1, 1),
             };
@@ -1576,9 +1797,11 @@ fn lower_pattern(pattern: &Pattern, operands: &mut Vec<PatternOperand>) -> Match
                 .chain(std::iter::once(case.as_str()))
             {
                 value = Expr {
+                    end: SourcePosition { line: 1, column: 1 },
                     kind: ExprKind::Index {
                         collection: Box::new(value),
                         index: Box::new(Expr {
+                            end: SourcePosition { line: 1, column: 1 },
                             kind: ExprKind::Value(Value::string(member)),
                             span: SourceSpan::new("<internal>", 1, 1),
                         }),
@@ -1600,6 +1823,7 @@ fn lower_case_patterns(
 ) -> Result<(MatchPattern, Vec<String>, Vec<PatternOperand>), SourceError> {
     if patterns.len() != constraints.len() {
         return Err(SourceError::semantic(
+            SourceErrorCode::Internal,
             "missing resolved match constraint",
             span.clone(),
         ));
@@ -1609,6 +1833,7 @@ fn lower_case_patterns(
         .any(|pattern| matches!(pattern.pattern, Pattern::MapAll))
     {
         return Err(SourceError::semantic(
+            SourceErrorCode::TopLevelOnly,
             "{*} is only valid in a top-level declaration",
             span.clone(),
         ));
@@ -1625,6 +1850,7 @@ fn lower_case_patterns(
     for pattern in patterns {
         if !pattern_bindings(&pattern.pattern, span)?.is_empty() {
             return Err(SourceError::semantic(
+                SourceErrorCode::InvalidPattern,
                 "match alternatives cannot introduce bindings",
                 span.clone(),
             ));
@@ -1718,6 +1944,7 @@ fn lower_match_type(
         | Type::Channel(Some(_))
         | Type::Tuple(_)
         | Type::Generic(_) => Err(SourceError::semantic(
+            SourceErrorCode::InvalidMatch,
             "match type constraint is not runtime-checkable",
             SourceSpan::new("<internal>", 1, 1),
         )),
@@ -1761,6 +1988,7 @@ fn pattern_bindings(pattern: &Pattern, span: &SourceSpan) -> Result<Vec<String>,
     let mut seen = HashSet::new();
     if let Some(name) = names.iter().find(|name| !seen.insert(name.as_str())) {
         return Err(SourceError::semantic(
+            SourceErrorCode::DuplicateName,
             format!("duplicate match binding `{name}`"),
             span.clone(),
         ));

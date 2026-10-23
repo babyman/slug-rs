@@ -1,0 +1,8 @@
+val {readLine} = import("slug.io.stdin")
+
+val greet = fn(name) { "hello, $name" }
+val loud = cfg("loud", false)
+
+val name = readLine()
+val message = greet(if (name == nil) { "world" } else { name })
+println(if (loud) { message + "!" } else { message })

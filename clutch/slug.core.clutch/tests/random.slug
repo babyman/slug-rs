@@ -1,0 +1,68 @@
+val random = import("slug.random")
+val string = import("slug.string")
+val {assertEqual, assertTrue, assertThrows} = import("slug.test")
+
+@test
+val nextIsXorshift32 = fn() {
+    val r = random.generator(1)
+    assertEqual([r.next(), r.next(), r.next(), r.next()], [270369, 67634689, 2647435461, 307599695])
+}
+
+@test
+val aZeroSeedStillVaries = fn() {
+    val r = random.generator(0)
+    assertEqual([r.next(), r.next()], [1359758873, 3761132862])
+}
+
+@test
+val sameSeedSameSequence = fn() {
+    val a = random.generator(7)
+    val b = random.generator(7)
+    assertEqual([a.below(100), a.float(), a.next()], [b.below(100), b.float(), b.next()])
+}
+
+@test
+val betweenIsInclusive = fn() {
+    val r = random.generator(42)
+    assertEqual([r.between(1, 6), r.between(1, 6), r.between(1, 6), r.between(1, 6), r.between(1, 6)], [1, 5, 4, 3, 1])
+    val dice = random.generator(3)
+    val roll = fn(n:num, seen:map):map {
+        if (n == 0) { seen } else { recur(n - 1, seen + {[string.chr(48 + dice.between(1, 6))]: true}) }
+    }
+    assertEqual(string.sort(keys(roll(200, {}))), ["1", "2", "3", "4", "5", "6"])
+}
+
+@test
+val floatIsAtLeastZeroAndBelowOne = fn() {
+    val r = random.generator(9)
+    val check = fn(n:num):bool {
+        if (n == 0) { true } else {
+            val x = r.float()
+            if (x < 0 || x >= 1) { false } else { recur(n - 1) }
+        }
+    }
+    assertTrue(check(500))
+}
+
+@test
+val shuffleKeepsTheElements = fn() {
+    val r = random.generator(5)
+    val shuffled = r.shuffle(["a", "b", "c", "d", "e", "f"])
+    assertEqual(string.sort(shuffled), ["a", "b", "c", "d", "e", "f"])
+    assertEqual(random.generator(5).shuffle(["a", "b", "c", "d", "e", "f"]), shuffled)
+    assertEqual(r.shuffle([]), [])
+}
+
+@test
+val pickChoosesAnElement = fn() {
+    val r = random.generator(11)
+    assertTrue(r.pick([10, 20, 30]) % 10 == 0)
+}
+
+@test
+val emptyRangesThrow = fn() {
+    val r = random.generator(1)
+    assertEqual(assertThrows(fn() { r.below(0) }).type, "random.range")
+    assertEqual(assertThrows(fn() { r.between(3, 2) }).type, "random.range")
+    assertEqual(assertThrows(fn() { r.pick([]) }).type, "random.range")
+}

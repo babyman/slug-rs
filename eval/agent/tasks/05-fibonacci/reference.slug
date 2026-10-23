@@ -1,0 +1,5 @@
+val n = cfg("n", 10)
+val fib = fn(a, b, i, out) {
+  if (i == n) { out } else { recur(b, a + b, i + 1, if (out == "") { "$a" } else { out + ", $a" }) }
+}
+println(fib(0, 1, 0, ""))

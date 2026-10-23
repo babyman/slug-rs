@@ -1,0 +1,10 @@
+val numbers = cfg("numbers", [12, 18, 30])
+val gcd = fn(a, b) { if (b == 0) { a } else { recur(b, a % b) } }
+val fold = fn(i, g, l) {
+  if (i == len(numbers)) { [g, l] } else {
+    val n = numbers[i]
+    recur(i + 1, gcd(g, n), int(l * n / gcd(l, n)))
+  }
+}
+val [g, l] = fold(1, numbers[0], numbers[0])
+println("gcd $g lcm $l")

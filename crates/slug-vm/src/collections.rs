@@ -11,7 +11,7 @@ use core::hash::{BuildHasher, Hash, Hasher};
 use crate::platform::MapHasher;
 use core::ops::Deref;
 
-use crate::Value;
+use crate::{EnumValue, Value};
 
 /// Canonical, hashable map-key representation.
 ///
@@ -24,6 +24,16 @@ pub(crate) enum MapKey {
     Float(u64),
     Str(Str),
     Bytes(Rc<Vec<u8>>),
+    /// An enum value, equal to another of the same module, type, and case.
+    Enum(Rc<EnumValue>),
+    /// A native resource, by identity: equal only to itself.
+    Resource(usize),
+    /// A channel, by identity: equal only to itself.
+    Channel(usize),
+    /// A list of keys, equal to a list of equal keys in the same order.
+    List(Vec<MapKey>),
+    /// A struct, by its schema's identity and its fields' keys in order.
+    Struct(usize, Vec<MapKey>),
 }
 
 impl MapKey {
@@ -48,6 +58,24 @@ impl MapKey {
             Value::Float(value) if value.is_finite() => Some(Self::Float(value.to_bits())),
             Value::Str(value) => Some(Self::Str(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.clone())),
+            Value::Enum(value) => Some(Self::Enum(value.clone())),
+            Value::NativeResource(resource) => {
+                Some(Self::Resource(Rc::as_ptr(resource).cast::<()>() as usize))
+            }
+            Value::Channel(channel) => {
+                Some(Self::Channel(Rc::as_ptr(channel).cast::<()>() as usize))
+            }
+            Value::List(values) => values
+                .iter()
+                .map(Self::from_value)
+                .collect::<Option<_>>()
+                .map(Self::List),
+            Value::Struct(value) => value
+                .values
+                .iter()
+                .map(Self::from_value)
+                .collect::<Option<_>>()
+                .map(|fields| Self::Struct(Rc::as_ptr(&value.schema) as usize, fields)),
             _ => None,
         }
     }
@@ -58,24 +86,104 @@ impl MapKey {
 /// The text lives in a growable buffer behind an `Rc`, so `+` can append to a
 /// string that nothing else references instead of copying it. Every other
 /// operation treats it as an immutable `str`.
+///
+/// Slug positions count Unicode scalar values, so the string also keeps its
+/// scalar count, and an all-ASCII string, whose scalar and byte positions
+/// agree, indexes in constant time. A string with other characters builds a
+/// table of byte offsets on its first positional access.
 #[doc(hidden)]
-#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Str(Rc<String>);
+#[derive(Clone)]
+pub struct Str(Rc<StrData>);
+
+#[derive(Clone)]
+struct StrData {
+    text: String,
+    scalars: usize,
+    /// The byte offset of every `OFFSET_STRIDE`th scalar, for non-ASCII text.
+    offsets: core::cell::OnceCell<Box<[usize]>>,
+}
+
+/// Scalars between recorded offsets: a lookup in non-ASCII text scans at most
+/// this many characters.
+const OFFSET_STRIDE: usize = 64;
+
+impl StrData {
+    fn new(text: String) -> Self {
+        let scalars = text.chars().count();
+        Self {
+            text,
+            scalars,
+            offsets: core::cell::OnceCell::new(),
+        }
+    }
+}
 
 impl Str {
     /// Appends `text`, copying this string first only if it is shared.
     pub(crate) fn append(mut self, text: impl fmt::Display) -> Self {
         use core::fmt::Write;
-        if let Some(buffer) = Rc::get_mut(&mut self.0) {
-            write!(buffer, "{text}").expect("writing to a String cannot fail");
+        if let Some(data) = Rc::get_mut(&mut self.0) {
+            let before = data.text.len();
+            write!(data.text, "{text}").expect("writing to a String cannot fail");
+            data.scalars += data.text[before..].chars().count();
+            data.offsets = core::cell::OnceCell::new();
             return self;
         }
         // A shared string is copied once into a buffer with room for the
         // appended text, rather than cloned at its exact length and grown.
-        let mut buffer = String::with_capacity(self.0.len() + 16);
-        buffer.push_str(&self.0);
+        let mut buffer = String::with_capacity(self.0.text.len() + 16);
+        buffer.push_str(&self.0.text);
+        let before = buffer.len();
         write!(buffer, "{text}").expect("writing to a String cannot fail");
-        Self(Rc::new(buffer))
+        let scalars = self.0.scalars + buffer[before..].chars().count();
+        Self(Rc::new(StrData {
+            text: buffer,
+            scalars,
+            offsets: core::cell::OnceCell::new(),
+        }))
+    }
+
+    /// The number of Unicode scalar values, which is the string's Slug length.
+    #[must_use]
+    pub(crate) fn char_len(&self) -> usize {
+        self.0.scalars
+    }
+
+    /// The byte offset of scalar position `position`, which may equal the
+    /// length to name the end of the text.
+    pub(crate) fn byte_offset(&self, position: usize) -> usize {
+        let data = &*self.0;
+        if data.scalars == data.text.len() || position == 0 {
+            return position;
+        }
+        if position >= data.scalars {
+            return data.text.len();
+        }
+        let offsets = data.offsets.get_or_init(|| {
+            data.text
+                .char_indices()
+                .step_by(OFFSET_STRIDE)
+                .map(|(offset, _)| offset)
+                .collect()
+        });
+        let base = offsets[position / OFFSET_STRIDE];
+        data.text[base..]
+            .char_indices()
+            .nth(position % OFFSET_STRIDE)
+            .map_or(data.text.len(), |(offset, _)| base + offset)
+    }
+
+    /// The scalar at `position`, if it is in bounds.
+    pub(crate) fn char_at(&self, position: usize) -> Option<char> {
+        if position >= self.0.scalars {
+            return None;
+        }
+        self.0.text[self.byte_offset(position)..].chars().next()
+    }
+
+    /// The text between scalar positions `start` and `end`.
+    pub(crate) fn scalar_range(&self, start: usize, end: usize) -> &str {
+        &self.0.text[self.byte_offset(start)..self.byte_offset(end)]
     }
 
     #[cfg(any(feature = "metrics", test))]
@@ -84,89 +192,115 @@ impl Str {
     }
 }
 
+impl PartialEq for Str {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.text == other.0.text
+    }
+}
+
+impl Eq for Str {}
+
+impl PartialOrd for Str {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Str {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.0.text.cmp(&other.0.text)
+    }
+}
+
+impl Hash for Str {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.text.hash(state);
+    }
+}
+
 impl Deref for Str {
     type Target = str;
 
     fn deref(&self) -> &str {
-        &self.0
+        &self.0.text
     }
 }
 
 impl AsRef<str> for Str {
     fn as_ref(&self) -> &str {
-        &self.0
+        &self.0.text
     }
 }
 
 impl core::borrow::Borrow<str> for Str {
     fn borrow(&self) -> &str {
-        &self.0
+        &self.0.text
     }
 }
 
 impl fmt::Display for Str {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self.0.as_str(), formatter)
+        fmt::Display::fmt(self.0.text.as_str(), formatter)
     }
 }
 
 impl fmt::Debug for Str {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.0.as_str(), formatter)
+        fmt::Debug::fmt(self.0.text.as_str(), formatter)
     }
 }
 
 impl From<String> for Str {
     fn from(value: String) -> Self {
-        Self(Rc::new(value))
+        Self(Rc::new(StrData::new(value)))
     }
 }
 
 impl From<&str> for Str {
     fn from(value: &str) -> Self {
-        Self(Rc::new(value.into()))
+        Self(Rc::new(StrData::new(value.into())))
     }
 }
 
 impl From<&String> for Str {
     fn from(value: &String) -> Self {
-        Self(Rc::new(value.clone()))
+        Self(Rc::new(StrData::new(value.clone())))
     }
 }
 
 impl From<Box<str>> for Str {
     fn from(value: Box<str>) -> Self {
-        Self(Rc::new(value.into()))
+        Self(Rc::new(StrData::new(value.into())))
     }
 }
 
 impl From<Rc<str>> for Str {
     fn from(value: Rc<str>) -> Self {
-        Self(Rc::new(value.as_ref().into()))
+        Self(Rc::new(StrData::new(value.as_ref().into())))
     }
 }
 
 impl From<Cow<'_, str>> for Str {
     fn from(value: Cow<'_, str>) -> Self {
-        Self(Rc::new(value.into_owned()))
+        Self(Rc::new(StrData::new(value.into_owned())))
     }
 }
 
 impl From<char> for Str {
     fn from(value: char) -> Self {
-        Self(Rc::new(value.into()))
+        Self(Rc::new(StrData::new(value.into())))
     }
 }
 
 impl PartialEq<str> for Str {
     fn eq(&self, other: &str) -> bool {
-        self.0.as_str() == other
+        self.0.text.as_str() == other
     }
 }
 
 impl PartialEq<&str> for Str {
     fn eq(&self, other: &&str) -> bool {
-        self.0.as_str() == *other
+        self.0.text.as_str() == *other
     }
 }
 
@@ -514,6 +648,13 @@ impl MapIndex {
             MapKey::Float(bits) => (2u8, bits).hash(&mut hasher),
             MapKey::Str(value) => (3u8, &*value).hash(&mut hasher),
             MapKey::Bytes(value) => (4u8, value.as_slice()).hash(&mut hasher),
+            MapKey::Enum(value) => {
+                (5u8, &*value.module, &*value.name, &*value.case).hash(&mut hasher);
+            }
+            MapKey::Resource(address) => (6u8, address).hash(&mut hasher),
+            MapKey::Channel(address) => (9u8, address).hash(&mut hasher),
+            MapKey::List(values) => (7u8, values).hash(&mut hasher),
+            MapKey::Struct(schema, fields) => (8u8, schema, fields).hash(&mut hasher),
         }
         Some(hasher.finish() as usize & self.mask())
     }
@@ -897,5 +1038,47 @@ mod str_tests {
         let text = text.append(1).append('!');
         assert!(text.is_uniquely_owned());
         assert_eq!(text, "slug1!");
+    }
+
+    #[test]
+    fn positions_count_scalars_in_ascii_and_non_ascii_text() {
+        let ascii = Str::from("slug");
+        assert_eq!(
+            (ascii.char_len(), ascii.char_at(3), ascii.char_at(4)),
+            (4, Some('g'), None)
+        );
+        assert_eq!(ascii.scalar_range(1, 3), "lu");
+
+        // Long enough to cross several offset-table strides.
+        let text: String = (0..300)
+            .map(|i| if i % 3 == 0 { 'é' } else { 'a' })
+            .collect();
+        let text = Str::from(text);
+        let expected: Vec<char> = text.chars().collect();
+        assert_eq!(text.char_len(), 300);
+        for position in [0, 1, 63, 64, 65, 128, 199, 299] {
+            assert_eq!(
+                text.char_at(position),
+                Some(expected[position]),
+                "{position}"
+            );
+        }
+        assert_eq!(text.char_at(300), None);
+        let slice: String = expected[60..130].iter().collect();
+        assert_eq!(text.scalar_range(60, 130), slice);
+        assert_eq!(text.scalar_range(0, 300), &*text);
+    }
+
+    #[test]
+    fn appending_updates_the_length_and_offsets() {
+        let text = Str::from("aé");
+        assert_eq!(text.char_at(1), Some('é'));
+        let text = text.append("😀b");
+        assert_eq!(text.char_len(), 4);
+        assert_eq!((text.char_at(2), text.char_at(3)), (Some('😀'), Some('b')));
+        let shared = text.clone();
+        let extended = shared.append("ü");
+        assert_eq!((text.char_len(), extended.char_len()), (4, 5));
+        assert_eq!(extended.char_at(4), Some('ü'));
     }
 }

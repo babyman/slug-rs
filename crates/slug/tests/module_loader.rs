@@ -50,6 +50,8 @@ impl ModuleResolver for OpaqueKeyResolver {
                 return Err(ModuleLoadError::NotFound {
                     name: request.name.into(),
                     searched: Vec::new(),
+                    suggestions: Vec::new(),
+                    elsewhere: Vec::new(),
                 });
             }
         };
@@ -74,6 +76,8 @@ impl ModuleResolver for MemoryResolver {
             .ok_or_else(|| ModuleLoadError::NotFound {
                 name: request.name.into(),
                 searched: Vec::new(),
+                suggestions: Vec::new(),
+                elsewhere: Vec::new(),
             })?;
         Ok(ModuleSource {
             key: ModuleKey::new(format!("memory:{}", request.name)),
@@ -1463,7 +1467,7 @@ fn in_memory_resolver_preserves_snapshots_cycles_and_checked_failures() {
     let error = Vm::with_host(Rc::new(loader))
         .run_named(&missing, "main")
         .expect_err("missing in-memory imports must be checked runtime errors");
-    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert_eq!(error.kind, RuntimeErrorKind::ModuleNotFound);
 }
 
 #[test]
@@ -1526,7 +1530,7 @@ fn source_imports_check_module_name_values_and_loader_failures() {
     let error = Vm::with_module_loader(loader)
         .run_named(&program, "main")
         .expect_err("missing imports must fail");
-    assert_eq!(error.kind, RuntimeErrorKind::Module);
+    assert_eq!(error.kind, RuntimeErrorKind::ModuleNotFound);
     assert_eq!(error.message, "module `missing` was not found");
     fs::remove_dir_all(root).expect("remove module test directory");
 }
@@ -1815,6 +1819,102 @@ fn imports_transparent_type_aliases_through_module_type_paths() {
         "{error}"
     );
     fs::remove_dir_all(root).expect("remove alias module directory");
+}
+
+#[test]
+fn imports_struct_type_aliases_with_their_schema_identity() {
+    let root = root("struct-alias-imports");
+    fs::create_dir_all(&root).expect("create struct alias module directory");
+    // The schema is private; importers name the type only through the alias.
+    fs::write(
+        root.join("shapes.slug"),
+        "val PointSchema = struct { x: num, y: num }\n\
+         /**\n\
+          * A point on the plane.\n\
+          */\n\
+         export type Point = struct<PointSchema>\n\
+         export type Points = list<Point>\n\
+         export val point = fn(x:num, y:num):Point { PointSchema {x: x, y: y} }\n\
+         export val Size = struct { width: num }\n\
+         export type Box = struct<Size>\n",
+    )
+    .expect("write struct alias module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val shapes = import(\"shapes\")\n\
+             val sum = fn(p:shapes.Point):num { p.x + p.y }\n\
+             val all:shapes.Points = [shapes.point(1, 2)]\n\
+             val box:shapes.Box = shapes.Size {width: 4}\n\
+             export val value = sum(all[0]) + box.width\n",
+        )
+        .expect("compile importer using struct aliases");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main")
+        .expect("run importer using struct aliases");
+    assert_eq!(vm.exported_values(&program).to_string(), "{\"value\": 7}");
+
+    for (source, message) in [
+        (
+            "val shapes = import(\"shapes\")\nval sum = fn(p:shapes.Point):num { p.x }\nsum({x: 1, y: 2})\n",
+            "expected struct<PointSchema>, got map<str, num>",
+        ),
+        (
+            "val shapes = import(\"shapes\")\nval sum = fn(p:shapes.Point):num { p.z }\n",
+            "struct has no field `z`",
+        ),
+        (
+            "val shapes = import(\"shapes\")\nval box:shapes.Box = shapes.Size {width: \"wide\"}\n",
+            "expected num, got str",
+        ),
+    ] {
+        let error = loader
+            .compile_source(&main_path.to_string_lossy(), source)
+            .expect_err("an imported struct alias is checked");
+        assert!(error.to_string().contains(message), "{error}");
+    }
+    fs::remove_dir_all(root).expect("remove struct alias module directory");
+}
+
+#[test]
+fn matches_enum_types_in_the_declaring_module_and_its_importers() {
+    let root = root("enum-type-matches");
+    fs::create_dir_all(&root).expect("create enum module directory");
+    fs::write(
+        root.join("colors.slug"),
+        "export enum Color { Red, Blue }\n\
+         export val kind = fn(value) { match value { _:Color => \"color\"; _ => \"other\" } }\n",
+    )
+    .expect("write enum module");
+    let main_path = root.join("main.slug");
+    let loader = ModuleLoader::new(&root, None);
+    let program = loader
+        .compile_source(
+            &main_path.to_string_lossy(),
+            "val colors = import(\"colors\")\n\
+             val kind = fn(value) { match value { _:colors.Color => \"color\"; _ => \"other\" } }\n\
+             export val value = [colors.kind(colors.Color.Red), colors.kind(3), kind(colors.Color.Blue), kind(3)]\n",
+        )
+        .expect("compile enum importer");
+    let mut vm = Vm::with_module_loader(loader.clone());
+    vm.run_named(&program, "main").expect("run enum importer");
+    assert_eq!(
+        vm.exported_values(&program).to_string(),
+        "{\"value\": [\"color\", \"other\", \"color\", \"other\"]}"
+    );
+
+    let error = loader
+        .compile_source(&main_path.to_string_lossy(), "@test\ntype Name = str\n")
+        .expect_err("a tag cannot prefix a type alias");
+    assert!(
+        error
+            .to_string()
+            .contains("tags cannot prefix a type alias"),
+        "{error}"
+    );
+    fs::remove_dir_all(root).expect("remove enum module directory");
 }
 
 #[test]

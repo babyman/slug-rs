@@ -1,0 +1,141 @@
+/**
+ * Plays the reference game and prints the input script it used, for making
+ * test cases. Usage: slug bot.slug <frames> <skill> <seed>
+ *
+ * The bot aims under the nearest column of live aliens and fires, and dodges
+ * falling shots. `skill` from 0 to 100 sets how often it dodges; `seed`
+ * varies its choices. Notable moments are printed as `# frame: event`.
+ */
+val game = import("game")
+val math = import("slug.math")
+
+val abs = fn(n:num):num { if (n < 0) { -n } else { n } }
+
+val main = fn(args:list) {
+    val string = import("slug.string")
+    val frames = string.toInt(args[0]) ?? 3000
+    val skill = string.toInt(args[1]) ?? 80
+    var seed = string.toInt(args[2]) ?? 1
+
+    // A small linear congruential generator for the bot's own choices.
+    val random = fn(n:num):num {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        math.div(seed, 65536) % n
+    }
+
+    var last = ""
+    var lastScore = 0
+    var lastShips = -1
+    var lastRack = 0
+    var lastFg = ""
+    var lastSaucer = 0
+    var lastSaucerHit = 0
+    var lastAliens = 55
+    var fireHeld = false
+    var startPresses = 0
+
+    val emit = fn(frame:num, keys:str) {
+        if (keys != last) {
+            println(frame, if (keys == "") { "-" } else { keys })
+            last = keys
+        }
+    }
+
+    // The nearest column with a live alien, as a player Xr to stand at.
+    val target = fn(s:map):num|nil {
+        val aliens = s.aliens
+        val alive = fn(c:num, r:num):bool {
+            if (r == 5) { false } else if (aliens[c + 11 * r] != 0) { true } else { recur(c, r + 1) }
+        }
+        val best = fn(c:num, found:num|nil):num|nil {
+            if (c == 11) { found } else {
+                val x = (s.refAlienXr + 16 * c) & 255
+                val better = alive(c, 0) && (found == nil || abs(x - s.playerXr) < abs(found - s.playerXr))
+                recur(c + 1, if (better) { x } else { found })
+            }
+        }
+        best(0, nil)
+    }
+
+    // A falling shot that will land on the player soon.
+    val danger = fn(s:map):num|nil {
+        val check = fn(i:num):num|nil {
+            if (i == 3) { nil } else {
+                val shot = s.shots[i]
+                val active = (shot.status & 0x80) != 0 && (shot.status & 1) == 0
+                if (active && shot.yr < 90 && shot.xr + 2 >= s.playerXr && shot.xr <= s.playerXr + 18) {
+                    shot.xr
+                } else {
+                    recur(i + 1)
+                }
+            }
+        }
+        check(0)
+    }
+
+    val play = fn(frame:num) {
+        if (frame < frames) {
+            val s = game.state()
+            if (s.score != lastScore) {
+                println("#", frame, "score", s.score)
+                lastScore = s.score
+            }
+            if (s.ships != lastShips) {
+                println("#", frame, "ships", s.ships)
+                lastShips = s.ships
+            }
+            if (s.rack != lastRack) {
+                println("#", frame, "rack", s.rack)
+                lastRack = s.rack
+            }
+            if (s.saucerActive != lastSaucer) {
+                println("#", frame, if (s.saucerActive != 0) { "saucer" } else { "saucer gone" })
+                lastSaucer = s.saucerActive
+            }
+            if (s.saucerHit != lastSaucerHit) {
+                if (s.saucerHit != 0) { println("#", frame, "saucer hit") }
+                lastSaucerHit = s.saucerHit
+            }
+            if (s.numAliens != lastAliens && s.numAliens <= 8) {
+                println("#", frame, "aliens", s.numAliens)
+            }
+            lastAliens = s.numAliens
+            if (s.fg != lastFg) {
+                println("#", frame, "state", s.fg)
+                lastFg = s.fg
+            }
+            var left = false
+            var right = false
+            var fire = false
+            var start = false
+            if (s.fg == "waitStart") {
+                start = frame % 120 == 60
+            } else {
+                val shotAt = danger(s)
+                // Lead the saucer: a shot takes about 42 frames to reach it.
+                val lead = if (s.saucerDelta == 2) { 32 } else { -24 }
+                val saucerGoal = s.saucerXr + lead
+                val chase = s.saucerActive != 0 && s.saucerHit == 0 && saucerGoal >= 0x30 && saucerGoal <= 0xD9 && random(100) < skill
+                val goal = if (chase) { saucerGoal } else { target(s) }
+                if (shotAt != nil && random(100) < skill) {
+                    if (shotAt < s.playerXr + 8 && s.playerXr < 0xD9) { right = true } else { left = true }
+                } else if (goal != nil) {
+                    if (goal > s.playerXr + 1) { right = true } else if (goal < s.playerXr - 1) { left = true }
+                    if (abs(goal - s.playerXr) <= 3 && s.shotStatus == 0 && !fireHeld) {
+                        fire = true
+                    }
+                }
+                if (s.shotStatus == 0 && !fireHeld && random(100) < 5) { fire = true }
+            }
+            fireHeld = fire
+            val keys = (if (left) { "left " } else { "" }) + (if (right) { "right " } else { "" }) +
+                (if (fire) { "space " } else { "" }) + (if (start) { "enter" } else { "" })
+            emit(frame, string.trim(keys))
+            game.tick(left, right, fire, start)
+            recur(frame + 1)
+        }
+    }
+    game.powerOn()
+    play(0)
+    println("end", frames)
+}

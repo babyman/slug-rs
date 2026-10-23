@@ -6,7 +6,7 @@ use std::{
 
 use slug_vm::SourceSpan;
 
-use super::{SourceError, ast::TypeAnnotation, environment::Environment};
+use super::{SourceError, SourceErrorCode, ast::TypeAnnotation, environment::Environment};
 
 /// Private identity shared by nominal source declarations.
 ///
@@ -490,6 +490,22 @@ impl Type {
         }
         flattened.sort_by_key(sort_key);
         flattened.dedup();
+        // A member that another member already covers adds nothing, such as
+        // `list<num>` beside `list<num|str>`. Of two members that cover each
+        // other, the first is kept.
+        let covered = (0..flattened.len())
+            .filter(|&index| {
+                let member = &flattened[index];
+                flattened.iter().enumerate().any(|(other_index, other)| {
+                    other_index != index
+                        && member.is_assignable_to(other)
+                        && (!other.is_assignable_to(member) || other_index < index)
+                })
+            })
+            .collect::<Vec<_>>();
+        for index in covered.into_iter().rev() {
+            flattened.remove(index);
+        }
         match flattened.len() {
             0 => Self::Never,
             1 => flattened.pop().expect("one normalized union member"),
@@ -545,6 +561,31 @@ impl Type {
         }
     }
 
+    /// A tuple as the list it also is, of the union of its elements; any
+    /// other type as it is.
+    pub(super) fn as_list(&self) -> Self {
+        match self {
+            Self::Tuple(elements) if elements.is_empty() => Self::List(None),
+            Self::Tuple(elements) => Self::List(Some(Box::new(Self::union(elements.clone())))),
+            other => other.clone(),
+        }
+    }
+
+    /// The type with every tuple in it widened to a list, for a `var`, whose
+    /// later values need not keep its first value's length.
+    pub(super) fn widen_tuples(&self) -> Self {
+        match self {
+            Self::Tuple(_) => self.as_list().widen_tuples(),
+            Self::List(Some(element)) => Self::List(Some(Box::new(element.widen_tuples()))),
+            Self::Map(Some((key, value))) => Self::Map(Some((
+                Box::new(key.widen_tuples()),
+                Box::new(value.widen_tuples()),
+            ))),
+            Self::Union(members) => Self::union(members.iter().map(Self::widen_tuples)),
+            other => other.clone(),
+        }
+    }
+
     pub(super) fn is_assignable_to(&self, expected: &Self) -> bool {
         if self == expected || matches!(self, Self::Never | Self::Unknown) {
             return true;
@@ -560,8 +601,14 @@ impl Type {
             Self::Union(members) => members.iter().any(|member| self.is_assignable_to(member)),
             Self::List(expected) => match self {
                 Self::List(actual) => {
-                    optional_argument_assignable(actual.as_deref(), expected.as_deref())
+                    optional_covariant_assignable(actual.as_deref(), expected.as_deref())
                 }
+                // A tuple is a list of its elements.
+                Self::Tuple(actual) => expected.as_deref().is_none_or(|expected| {
+                    actual
+                        .iter()
+                        .all(|actual| actual.is_assignable_to(expected))
+                }),
                 _ => false,
             },
             Self::Map(expected) => match self {
@@ -576,7 +623,7 @@ impl Type {
             },
             Self::Task(expected) => match self {
                 Self::Task(actual) => {
-                    optional_argument_assignable(actual.as_deref(), expected.as_deref())
+                    optional_covariant_assignable(actual.as_deref(), expected.as_deref())
                 }
                 _ => false,
             },
@@ -600,7 +647,7 @@ impl Type {
                         && actual
                             .iter()
                             .zip(expected)
-                            .all(|(actual, expected)| actual == expected)
+                            .all(|(actual, expected)| actual.is_assignable_to(expected))
                 }
                 _ => false,
             },
@@ -616,20 +663,42 @@ fn optional_argument_assignable(actual: Option<&Type>, expected: Option<&Type>) 
     }
 }
 
+/// Lists, maps, and tasks only give their elements out, so one whose elements
+/// fit the expected element type fits; a channel, which also takes them in,
+/// matches exactly.
+fn optional_covariant_assignable(actual: Option<&Type>, expected: Option<&Type>) -> bool {
+    match (actual, expected) {
+        (_, None) | (None | Some(Type::Unknown), Some(_)) => true,
+        (Some(actual), Some(expected)) => actual.is_assignable_to(expected),
+    }
+}
+
 fn optional_pair_assignable(
     actual: Option<&(Box<Type>, Box<Type>)>,
     expected: Option<&(Box<Type>, Box<Type>)>,
 ) -> bool {
     match (actual, expected) {
         (_, None) | (None, Some(_)) => true,
-        (Some(actual), Some(expected)) => actual == expected,
+        (Some(actual), Some(expected)) => {
+            actual.0.is_assignable_to(&expected.0) && actual.1.is_assignable_to(&expected.1)
+        }
     }
 }
 
+/// Signatures match position by position, where `unknown` on either side, a
+/// result or parameter the checker could not infer, such as a recursive
+/// function's own result, matches any type.
 fn optional_signature_assignable(actual: Option<&[Type]>, expected: Option<&[Type]>) -> bool {
     match (actual, expected) {
         (_, None) | (None, Some(_)) => true,
-        (Some(actual), Some(expected)) => actual == expected,
+        (Some(actual), Some(expected)) => {
+            actual.len() == expected.len()
+                && actual.iter().zip(expected).all(|(actual, expected)| {
+                    actual == expected
+                        || matches!(actual, Type::Unknown)
+                        || matches!(expected, Type::Unknown)
+                })
+        }
     }
 }
 
@@ -768,6 +837,7 @@ fn reject_alias_applications(
                 Some(super::environment::TypeMember::Alias(_))
             ) {
                 return Err(SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
                     format!("type alias `{name}` cannot accept type arguments"),
                     span.clone(),
                 ));
@@ -830,7 +900,7 @@ pub(super) fn resolve_resource_references(
     }
 }
 
-fn resolve_schema_references(
+pub(super) fn resolve_schema_references(
     value_type: Type,
     span: &SourceSpan,
     environment: &Environment,
@@ -853,6 +923,7 @@ fn resolve_schema_references(
             let name = identity.name;
             let binding = environment.lookup(&name).ok_or_else(|| {
                 SourceError::semantic(
+                    SourceErrorCode::InvalidTypeArguments,
                     format!("struct type argument `{name}` must resolve to a schema binding"),
                     span.clone(),
                 )
@@ -860,6 +931,7 @@ fn resolve_schema_references(
             binding.schema_identity.clone().map_or_else(
                 || {
                     Err(SourceError::semantic(
+                        SourceErrorCode::InvalidTypeArguments,
                         format!("struct type argument `{name}` must resolve to a schema binding"),
                         span.clone(),
                     ))
@@ -951,6 +1023,7 @@ fn resolve_application(
         }
         let TypeAnnotation::Name(name) = &arguments[0] else {
             return Err(SourceError::semantic(
+                SourceErrorCode::InvalidTypeArguments,
                 "struct type argument must be a schema name",
                 span.clone(),
             ));
@@ -975,6 +1048,7 @@ fn resolve_application(
         ("fn", _) => Err(wrong_type_arity(name, "at least 1", span)),
         ("schema", _) => Err(wrong_type_arity(name, "0", span)),
         _ => Err(SourceError::semantic(
+            SourceErrorCode::UnknownType,
             format!("unknown type constructor `{name}`"),
             span.clone(),
         )),
@@ -983,6 +1057,7 @@ fn resolve_application(
 
 fn wrong_type_arity(name: &str, expected: &str, span: &SourceSpan) -> SourceError {
     SourceError::semantic(
+        SourceErrorCode::InvalidTypeArguments,
         format!("type `{name}` expects {expected} argument(s)"),
         span.clone(),
     )

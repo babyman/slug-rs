@@ -93,6 +93,27 @@ fn parses_the_decision_record_fs_example() {
 }
 
 #[test]
+fn parses_per_platform_link_arguments() {
+    let manifest = NativeManifest::from_clutch_source(&native(
+        "[native.link_args]\nmacos-aarch64 = [\"native/vendor/libx.a\", \"-framework\", \"Cocoa\"]\n",
+    ))
+    .expect("valid manifest");
+
+    assert_eq!(
+        manifest.link_args.get("macos-aarch64").map(Vec::as_slice),
+        Some(
+            [
+                "native/vendor/libx.a".to_owned(),
+                "-framework".to_owned(),
+                "Cocoa".to_owned()
+            ]
+            .as_slice()
+        )
+    );
+    assert!(!manifest.link_args.contains_key("linux-x86_64"));
+}
+
+#[test]
 fn canonical_text_ignores_formatting_names_and_key_order() {
     let compact = native(
         "[native.functions.m.f]\n\
@@ -181,6 +202,11 @@ fn rejects_invalid_manifests_with_their_location() {
             "unknown key `abi`",
         ),
         (native("source = \"native/source\"\n"), "native", "unknown key `source`"),
+        (
+            native("[native.link_args]\nmacos-aarch64 = \"-lm\"\n"),
+            "native.link_args.macos-aarch64",
+            "must be an array of strings",
+        ),
         (
             "[native]\nprofile = \"core\"\nheaders = [\"a\\\\b.h\"]\n".to_owned(),
             "native.headers",

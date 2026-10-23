@@ -20,7 +20,7 @@ use slug_vm::{InteractiveExecution, VmProgress};
 #[cfg(feature = "concurrency")]
 use slug_vm::{InteractiveTask, VmProgress};
 
-use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response};
+use super::{Diagnostic, Event, EventOrigin, PROTOCOL_VERSION, Request, Response, value_json};
 use crate::DesktopLoader;
 
 mod builtins;
@@ -31,8 +31,8 @@ use builtins::{
     native_println,
 };
 use presentation::{
-    InitializeParams, SubmitParams, completed_result, protocol_value, required_params,
-    session_result, stalled_result,
+    InitializeParams, SubmitParams, completed_result, required_params, session_result,
+    stalled_result,
 };
 
 /// The protocol event stream used for host or program output.
@@ -714,7 +714,7 @@ impl Server {
                 Response::success(id, Some(session), stalled_result(pending))
             }
             Ok(pending) => {
-                let value = protocol_value(&last);
+                let value = value_json(&last);
                 Response::success(id, Some(session), completed_result(&value, pending))
             }
             Err(error) => {
@@ -857,7 +857,7 @@ impl Server {
                 Response::success(
                     id,
                     Some(session.into()),
-                    json!({ "value": protocol_value(&value) }),
+                    json!({ "value": value_json(&value) }),
                 )
             }
             VmProgress::Failed(error) => Response::failure(

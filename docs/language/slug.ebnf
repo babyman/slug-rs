@@ -43,7 +43,11 @@ defer_stmt = "defer" , [ "onsuccess" | ( "onerror" , "(" , identifier , ")" ) ] 
 foreign_decl = "foreign" , identifier , "=" , "fn" , [ type_parameters ] ,
                "(" , [ parameters ] , ")" , [ ":" , type_annotation ] , [ ";" ] ;
 resource_decl = "resource" , identifier ;
-enum_decl = "enum" , identifier , "{" , [ identifier , { "," , identifier } , [ "," ] ] , "}" ;
+enum_decl = "enum" , identifier , "{" , { NEWLINE } ,
+            [ identifier , { member_sep , identifier } , [ member_sep ] ] , "}" ;
+(* Enum cases and struct schema fields are separated by a comma, one or more
+   newlines, or both, with at most one comma. ";" is not a member separator. *)
+member_sep = { NEWLINE } , "," , { NEWLINE } | NEWLINE , { NEWLINE } ;
 type_alias_decl = "type" , identifier , "=" , type_annotation ;
 
 expression_stmt = expression ;
@@ -54,7 +58,8 @@ assignment = identifier , "=" , assignment | logical_or ;
 logical_or = logical_and , { "||" , logical_and } ;
 logical_and = equality , { "&&" , equality } ;
 equality = comparison , { ( "==" | "!=" ) , comparison } ;
-comparison = bitwise_or , { ( "<" | "<=" | ">" | ">=" ) , bitwise_or } ;
+comparison = coalesce , { ( "<" | "<=" | ">" | ">=" ) , coalesce } ;
+coalesce = bitwise_or , [ "??" , coalesce ] ;
 bitwise_or = bitwise_xor , { "|" , bitwise_xor } ;
 bitwise_xor = bitwise_and , { "^" , bitwise_and } ;
 bitwise_and = shift , { "&" , shift } ;
@@ -80,8 +85,8 @@ index_suffix = "[" , index_args , "]" ;
 dot_suffix = "." , identifier ;
 
 (* Struct construction and persistent copy are postfix forms. *)
-struct_init = "{" , [ struct_init_fields ] , "}" ;
-struct_copy = "copy" , "{" , [ struct_init_fields ] , "}" ;
+struct_init = "{" , { NEWLINE } , [ struct_init_fields ] , "}" ;
+struct_copy = "copy" , "{" , { NEWLINE } , [ struct_init_fields ] , "}" ;
 
 primary = literal
         | identifier
@@ -156,15 +161,20 @@ index_args = expression
 map_literal = "{" , [ map_entries ] , "}" ;
 map_entries = map_entry , { "," , map_entry } , [ "," ] ;
 map_entry = map_key , ":" , expression ;
-(* Bare identifiers and quoted strings denote string keys unless bracketed. *)
-map_key = identifier | string | "[" , expression , "]" ;
+(* Bare identifiers, reserved words other than true and false, and quoted
+   strings denote string keys; numbers, bytes, and booleans are keys of their
+   own type. *)
+map_key = identifier | string | [ "-" ] , number | bytes | boolean | "[" , expression , "]" ;
 
-struct_schema = "struct" , "{" , [ struct_schema_fields ] , "}" ;
-struct_schema_fields = struct_schema_field , { "," , struct_schema_field } , [ "," ] ;
+struct_schema = "struct" , "{" , { NEWLINE } , [ struct_schema_fields ] , "}" ;
+struct_schema_fields = struct_schema_field , { member_sep , struct_schema_field } , [ member_sep ] ;
 (* Struct-field tags are not supported. *)
 struct_schema_field = identifier , [ ":" , type_annotation ] , [ "=" , expression ] ;
 
-struct_init_fields = struct_init_field , { "," , struct_init_field } , [ "," ] ;
+(* Construction and copy fields require commas; newlines may follow a comma
+   or precede the closing brace. *)
+init_sep = "," , { NEWLINE } ;
+struct_init_fields = struct_init_field , { init_sep , struct_init_field } , [ init_sep ] , { NEWLINE } ;
 struct_init_field = identifier , ":" , expression ;
 
 match_expr = "match" , [ expression ] , "{" , [ match_case , { case_sep , match_case } ] , "}" ;
@@ -215,10 +225,11 @@ map_pattern_body = "*" | map_pattern_entry , { "," , map_pattern_entry } , [ ","
 map_pattern_entry = spread_pattern
                   | ( identifier | string ) , ":" , match_pattern
                   | identifier
+                  | ( [ "-" ] , number | bytes | boolean ) , ":" , match_pattern
                   | "[" , expression , "]" , ":" , match_pattern
                   ;
-(* Bare identifiers and static string keys denote strings; quoted and computed
-   keys require a value pattern. *)
+(* Bare identifiers and static string keys denote strings; quoted, literal,
+   and computed keys require a value pattern. *)
 
 block = "{" , { statement_sep } , { statement , { statement_sep } } , "}" ;
 (* In expression position, braces are classified structurally: map-entry shapes
@@ -259,7 +270,7 @@ raw_string = "'" , { raw_char } , "'" ;
 triple_string = '"""' , { string_char } , '"""' ;
 triple_raw_string = "'''" , { raw_char } , "'''" ;
 
-(* Escapes: \n \r \t \\ \" \$ and octal (0-7 up to 3 digits). Raw strings have no escapes. *)
+(* Escapes: \n \r \t \b \f \\ \" \$ and octal (0-7 up to 3 digits). Raw strings have no escapes. *)
 string_char = ANY_CHAR_EXCEPT_QUOTE_OR_BACKSLASH | escape_seq ;
 raw_char = ANY_CHAR_EXCEPT_SINGLE_QUOTE ;
 

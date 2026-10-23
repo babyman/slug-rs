@@ -1,0 +1,14 @@
+val text = cfg("text", "hello world")
+val shift = cfg("shift", 3)
+val alphabet = "abcdefghijklmnopqrstuvwxyz"
+val position = fn(c, i) {
+  if (i == len(alphabet)) { -1 } else if (alphabet[i] == c) { i } else { recur(c, i + 1) }
+}
+val encode = fn(i, out) {
+  if (i == len(text)) { out } else {
+    val p = position(text[i], 0)
+    val c = if (p < 0) { text[i] } else { alphabet[((p + shift) % 26 + 26) % 26] }
+    recur(i + 1, out + c)
+  }
+}
+println(encode(0, ""))

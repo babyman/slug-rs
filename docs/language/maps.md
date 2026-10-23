@@ -18,7 +18,10 @@ val multiline = {
 ```
 
 A bare identifier or quoted string in a map literal is a string key. Therefore
-`{name: x}`, `{"name": x}`, and `{["name"]: x}` use the same key. Bracketing a
+`{name: x}`, `{"name": x}`, and `{["name"]: x}` use the same key. A number
+literal, possibly negated, a bytes literal, `true`, or `false` is a key of its
+own type: `{200: "OK", -1: "below", 0x"00": "zero", true: "yes"}`. Every other
+reserved word is a string key, so `{nil: 1}` has the key `"nil"`. Bracketing a
 key evaluates an expression, so `{[field]: x}` uses the value of `field` as its
 key. Map literal entries are evaluated in source order. A literal must not
 repeat a key, including through equal keys such as `1` and `1.0`: a repeated
@@ -27,14 +30,22 @@ runtime type error when the literal is evaluated. Use `+` to overwrite a key.
 Newlines immediately inside the braces or after an entry comma are whitespace;
 entries remain comma-delimited.
 
-A key must be hashable. Numbers, strings, bytes, and booleans are hashable.
-`nil`, lists, maps, functions, and structs are not valid map keys.
+A key must be hashable. Numbers, strings, bytes, booleans, enum values,
+native resources, and channels are hashable, and so are lists and structs
+whose elements and fields all are. An enum value equals another of the same
+case of the same enum, and a resource or channel equals only itself, so
+`{[file]: state}` keys state by the resource itself, whether or not it is
+still open. A list equals a list of equal elements in the same order, so
+`{[[x, y]]: cell}` keys a grid by coordinates, and a struct equals a struct
+of the same schema with equal fields. `nil`, maps, and functions are not valid
+map keys, and neither is a list or struct containing one; the error names
+what it contains.
 An integer and a float key are equal only when the float exactly represents
 that integer, so `1` and `1.0` address the same key without conflating large
 integers above binary64's exact range. `0` and `-0.0` are equal. Every Slug
 number is finite, so `NaN` and infinities cannot be map keys.
 
-Map patterns use the same bare, quoted, and bracketed key forms. A bracketed
+Map patterns use the same bare, quoted, literal, and bracketed key forms; a literal key needs an explicit pattern, as in `{200: status}`. A bracketed
 map-pattern key is evaluated once before its pattern is tested; an unhashable
 result follows the runtime type-error path.
 

@@ -1,18 +1,17 @@
 use std::{
-    env,
-    fmt::Write as FmtWrite,
-    fs,
+    env, fs,
     io::Write as IoWrite,
     path::{Path, PathBuf},
     process::ExitCode,
 };
 
-use serde::Serialize;
-use slug::{DesktopLoader, build_default_host_vm, default_library_root};
-use slug_frontend::{ArtifactHost, SourceError, SourceErrorKind};
+use slug::{
+    DesktopLoader, build_default_host_vm, capability_report_json, default_library_root,
+    diagnostic::{Diagnostic, DiagnosticCategory},
+};
+use slug_frontend::{ArtifactHost, SourceError};
 use slug_vm::{
-    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError,
-    RuntimeErrorKind, SourceSpan, Vm,
+    NativeArity, NativeCall, NativeModule, NativeOwnedValue, NativeStatus, RuntimeError, Value, Vm,
 };
 
 fn native_print(call: &mut NativeCall<'_>) -> NativeStatus {
@@ -55,17 +54,13 @@ fn native_len(call: &mut NativeCall<'_>) -> NativeStatus {
         Err(error) => return call.raise(error),
     };
     let length = match value.kind() {
-        slug_vm::NativeValueKind::String => match value.as_str() {
-            Ok(value) => value.chars().count(),
-            Err(error) => return call.raise(error),
-        },
         slug_vm::NativeValueKind::Bytes => match value.as_bytes() {
             Ok(value) => value.len(),
             Err(error) => return call.raise(error),
         },
-        slug_vm::NativeValueKind::List | slug_vm::NativeValueKind::Map => {
-            value.len().expect("collection kind has a length")
-        }
+        slug_vm::NativeValueKind::String
+        | slug_vm::NativeValueKind::List
+        | slug_vm::NativeValueKind::Map => value.len().expect("text and collections have a length"),
         kind => {
             return call.raise(slug_vm::NativeError::new(
                 "native.type",
@@ -193,10 +188,15 @@ fn main() -> ExitCode {
     let mut args = env::args();
     let executable = args.next().unwrap_or_else(|| "slug".into());
     let mut remaining = args.collect::<Vec<_>>().into_iter().peekable();
-    let json = remaining
-        .peek()
-        .is_some_and(|argument| argument == "--diagnostic-format=json");
-    if json {
+    // Leading options, in any order, before the command or program.
+    let mut json = false;
+    let mut allow_unexported = false;
+    while let Some(option) = remaining.peek() {
+        match option.as_str() {
+            "--diagnostic-format=json" => json = true,
+            "--allow-unexported" => allow_unexported = true,
+            _ => break,
+        }
         remaining.next();
     }
     match remaining.next().as_deref() {
@@ -211,7 +211,7 @@ fn main() -> ExitCode {
                 "slim build"
             };
             println!(
-                "slug-vm {} ({build})\n\nUsage:\n  {executable} [--diagnostic-format=json] program.slug [arguments...]\n  {executable} [--diagnostic-format=json] compile program.slug output.cslug\n  {executable} [--diagnostic-format=json] run program.cslug [arguments...]\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len. Compiled .cslug artifacts are closed programs and run without source resolution.",
+                "slug-vm {} ({build})\n\nUsage:\n  {executable} [--diagnostic-format=json] [--allow-unexported] program.slug [arguments...]\n  {executable} [--diagnostic-format=json] compile program.slug output.cslug\n  {executable} [--diagnostic-format=json] run program.cslug [arguments...]\n  {executable} [--diagnostic-format=json] report program.slug|program.cslug\n\nSupports the Slug core: bindings, functions, blocks, conditionals, match, return, throw, defer, recur, collections, arithmetic and logic, calls, print, println, and len. Compiled .cslug artifacts are closed programs and run without source resolution.",
                 env!("CARGO_PKG_VERSION"),
             );
             ExitCode::SUCCESS
@@ -246,6 +246,18 @@ fn main() -> ExitCode {
             }
             compile(&source_path, &output_path, json)
         }
+        Some("report") => {
+            let (Some(path), None) = (remaining.next(), remaining.next()) else {
+                eprint_startup_error(
+                    "usage",
+                    "report",
+                    "report requires exactly one .slug or .cslug path".into(),
+                    json,
+                );
+                return ExitCode::from(1);
+            };
+            report(&path, json)
+        }
         Some("run") => {
             let Some(artifact_path) = remaining.next() else {
                 eprint_startup_error("usage", "run", "run requires a .cslug path".into(), json);
@@ -255,12 +267,13 @@ fn main() -> ExitCode {
         }
         Some(path) => {
             let program_arguments = remaining.collect::<Vec<_>>();
-            run(path, &program_arguments, json)
+            run(path, &program_arguments, json, allow_unexported)
         }
     }
 }
 
-fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
+/// Reads an entry source and builds the desktop loader that resolves its imports.
+fn load_entry_source(path: &str, json: bool) -> Result<(String, String, DesktopLoader), ExitCode> {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let library_root = default_library_root(slug_home.as_deref());
@@ -277,15 +290,11 @@ fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
                 format!("cannot read {}: {error}", path.display()),
                 json,
             );
-            return ExitCode::from(1);
+            return Err(ExitCode::from(1));
         }
     };
-    let source_root = configured_source_root.unwrap_or_else(|| {
-        resolved_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .into()
-    });
+    let source_root =
+        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -295,10 +304,25 @@ fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
             Ok(host) => host,
             Err(error) => {
                 eprint_startup_error("host", "clutch", error.to_string(), json);
-                return ExitCode::from(1);
+                return Err(ExitCode::from(1));
             }
         };
-    let resolved_path = resolved_path.to_string_lossy();
+    Ok((resolved_path.to_string_lossy().into_owned(), source, loader))
+}
+
+/// The directory holding a program file. A bare file name's parent is the
+/// empty path, which names no directory, so it means the current directory.
+fn program_directory(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
+    let (resolved_path, source, loader) = match load_entry_source(path, json) {
+        Ok(entry) => entry,
+        Err(code) => return code,
+    };
     let artifact = match loader.compile_artifact(&resolved_path, &source) {
         Ok(artifact) => artifact,
         Err(error) => {
@@ -325,6 +349,56 @@ fn compile(path: &str, output_path: &str, json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn report(path: &str, json: bool) -> ExitCode {
+    let report = if Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension == "cslug")
+    {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprint_startup_error(
+                    "io",
+                    "artifact_read",
+                    format!("cannot read {path}: {error}"),
+                    json,
+                );
+                return ExitCode::from(1);
+            }
+        };
+        match slug_vm::cslug::decode(&bytes, slug_vm::cslug::Limits::default()) {
+            Ok(artifact) => slug_frontend::capability_report(&artifact),
+            Err(error) => {
+                eprint_startup_error("artifact", "decode", error.to_string(), json);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        let (resolved_path, source, loader) = match load_entry_source(path, json) {
+            Ok(entry) => entry,
+            Err(code) => return code,
+        };
+        match loader.capability_report(&resolved_path, &source) {
+            Ok(report) => report,
+            Err(error) => {
+                eprint_startup_error("artifact", "compile", error.to_string(), json);
+                return ExitCode::from(1);
+            }
+        }
+    };
+    // Name the entry as given, not by its resolved absolute path, so reports
+    // of the same program agree across machines.
+    let mut report = report;
+    report.entry = path.into();
+    report.modules[0].name = path.into();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&capability_report_json(&report))
+            .expect("report JSON is serializable")
+    );
+    ExitCode::SUCCESS
+}
+
 fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -346,7 +420,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         }
     };
     let artifact_path = Path::new(path);
-    let source_root = artifact_path.parent().unwrap_or_else(|| Path::new("."));
+    let source_root = program_directory(artifact_path);
     let entry_module = artifact_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -373,7 +447,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
         }
     }
     match host.run() {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(result) => exit_status(host.has_entrypoint(), &result, json),
         Err(error) => {
             eprint_runtime_error(&error, path, "", json);
             ExitCode::from(1)
@@ -381,7 +455,7 @@ fn run_artifact(path: &str, program_arguments: &[String], json: bool) -> ExitCod
     }
 }
 
-fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
+fn run(path: &str, program_arguments: &[String], json: bool, allow_unexported: bool) -> ExitCode {
     let configured_source_root = env::var_os("SLUG_FIXTURE_MODULE_ROOT").map(PathBuf::from);
     let slug_home = env::var_os("SLUG_HOME").map(PathBuf::from);
     let library_root = default_library_root(slug_home.as_deref());
@@ -401,12 +475,8 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let source_root = configured_source_root.unwrap_or_else(|| {
-        resolved_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .into()
-    });
+    let source_root =
+        configured_source_root.unwrap_or_else(|| program_directory(&resolved_path).into());
     let entry_module = resolved_path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -423,26 +493,25 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if allow_unexported {
+        loader.grant(slug_vm::DESCRIBE_UNEXPORTED);
+    }
     let resolved_path = resolved_path.to_string_lossy();
     let mut program = match loader.compile_source(&resolved_path, &source) {
         Ok(program) => program,
         Err(error) => {
-            let category = match error.kind {
-                SourceErrorKind::Parse => "parse",
-                SourceErrorKind::Semantic => "semantic",
-            };
-            eprint_source_error(category, &error, &resolved_path, &source, json);
+            eprint_source_error(&error, &resolved_path, &source, json);
             return ExitCode::from(1);
         }
     };
     program.set_module_name(entry_module);
     register_native_modules(&mut vm);
     match vm.run_program(&program) {
-        Ok(_) => {
+        Ok(result) => {
             for warning in loader.take_warnings() {
                 eprintln!("slug: warning: {warning}");
             }
-            ExitCode::SUCCESS
+            exit_status(program.has_entrypoint(), &result, json)
         }
         Err(error) => {
             eprint_runtime_error(&error, &resolved_path, &source, json);
@@ -451,268 +520,115 @@ fn run(path: &str, program_arguments: &[String], json: bool) -> ExitCode {
     }
 }
 
-#[derive(Serialize)]
-struct JsonDiagnostic {
-    version: u8,
-    category: String,
-    kind: Option<String>,
-    message: String,
-    location: Option<JsonLocation>,
-    frames: Vec<JsonFrame>,
-    cause: Option<Box<JsonDiagnostic>>,
-}
-
-#[derive(Serialize)]
-struct JsonLocation {
-    path: String,
-    line: u32,
-    column: u32,
-}
-
-#[derive(Serialize)]
-struct JsonFrame {
-    function: String,
-    location: Option<JsonLocation>,
+/// The process's exit status: the number `main` returned, when it returned
+/// one, and otherwise success. A number that is not an integer from 0 to 255
+/// is reported and fails.
+fn exit_status(entrypoint: bool, result: &Value, json: bool) -> ExitCode {
+    let number = match result {
+        _ if !entrypoint => return ExitCode::SUCCESS,
+        Value::Int(number) => u8::try_from(*number).ok(),
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Value::Float(number) if number.fract() == 0.0 && (0.0..=255.0).contains(number) => {
+            Some(*number as u8)
+        }
+        Value::Float(_) => None,
+        _ => return ExitCode::SUCCESS,
+    };
+    if let Some(status) = number {
+        ExitCode::from(status)
+    } else {
+        eprint_startup_error(
+            "host",
+            "exit_status",
+            format!("main returned {result}; an exit status is an integer from 0 to 255"),
+            json,
+        );
+        ExitCode::from(1)
+    }
 }
 
 fn eprint_startup_error(category: &str, kind: &str, message: String, json: bool) {
-    if json {
-        eprint_json_diagnostic(&JsonDiagnostic {
-            version: 1,
-            category: category.into(),
-            kind: Some(kind.into()),
-            message,
-            location: None,
-            frames: Vec::new(),
-            cause: None,
-        });
+    let category = match category {
+        "usage" => DiagnosticCategory::Usage,
+        "io" => DiagnosticCategory::Io,
+        "host" => DiagnosticCategory::Host,
+        _ => DiagnosticCategory::Artifact,
+    };
+    // A usage kind names the subcommand, so it is not a unique code.
+    let code = if category == DiagnosticCategory::Usage {
+        "usage"
     } else {
-        eprintln!("slug: {message}");
-    }
+        kind
+    };
+    eprint_diagnostic(&Diagnostic::new(category, code, message), "", "", json);
 }
 
-fn eprint_source_error(
-    category: &str,
-    error: &SourceError,
-    input_path: &str,
-    input: &str,
-    json: bool,
-) {
-    if json {
-        eprint_json_diagnostic(&source_diagnostic(category, error));
-        return;
-    }
-    eprintln!(
-        "{}",
-        render_source_error(category, error, input_path, input)
-    );
-}
-
-fn render_source_error(
-    category: &str,
-    error: &SourceError,
-    input_path: &str,
-    input: &str,
-) -> String {
-    let headline = format!("slug: {category} error: {}", error.message);
-    render_source_context(&headline, error.span.as_ref(), input_path, input)
-        .unwrap_or_else(|| format!("slug: {category} error: {error}"))
+fn eprint_source_error(error: &SourceError, input_path: &str, input: &str, json: bool) {
+    eprint_diagnostic(&Diagnostic::from_source(error), input_path, input, json);
 }
 
 fn eprint_runtime_error(error: &RuntimeError, input_path: &str, input: &str, json: bool) {
+    let sources = source_reader(input_path, input);
+    eprint_diagnostic(
+        &Diagnostic::from_runtime_in(error, &sources),
+        input_path,
+        input,
+        json,
+    );
+}
+
+/// Prints `diagnostic` as one JSON line, or as text rendering the same
+/// members.
+fn eprint_diagnostic(diagnostic: &Diagnostic, input_path: &str, input: &str, json: bool) {
     if json {
-        eprint_json_diagnostic(&runtime_diagnostic(error));
-        return;
-    }
-    eprintln!("{}", render_runtime_error(error, input_path, input));
-}
-
-fn eprint_json_diagnostic(diagnostic: &JsonDiagnostic) {
-    println_to_stderr(
-        &serde_json::to_string(&diagnostic).expect("diagnostic JSON is serializable"),
-    );
-}
-
-fn println_to_stderr(text: &str) {
-    eprintln!("{text}");
-}
-
-fn source_diagnostic(category: &str, error: &SourceError) -> JsonDiagnostic {
-    JsonDiagnostic {
-        version: 1,
-        category: category.into(),
-        kind: None,
-        message: error.message.clone(),
-        location: error.span.as_ref().map(json_location),
-        frames: Vec::new(),
-        cause: None,
-    }
-}
-
-fn runtime_diagnostic(error: &RuntimeError) -> JsonDiagnostic {
-    let category = if error.kind == RuntimeErrorKind::Module {
-        "module"
+        eprintln!(
+            "{}",
+            serde_json::to_string(diagnostic).expect("diagnostic JSON is serializable")
+        );
     } else {
-        "runtime"
-    };
-    JsonDiagnostic {
-        version: 1,
-        category: category.into(),
-        kind: Some(runtime_kind(&error.kind).into()),
-        message: error.message.clone(),
-        location: error.span.as_ref().map(json_location),
-        frames: error
-            .frames
-            .iter()
-            .map(|frame| JsonFrame {
-                function: frame.function.clone(),
-                location: frame.span.as_ref().map(json_location),
-            })
-            .collect(),
-        cause: error
-            .cause
-            .as_deref()
-            .map(|cause| Box::new(runtime_diagnostic(cause))),
+        eprintln!(
+            "{}",
+            diagnostic.render_text(&source_reader(input_path, input))
+        );
     }
 }
 
-fn json_location(span: &SourceSpan) -> JsonLocation {
-    JsonLocation {
-        path: span.path.to_string(),
-        line: span.line,
-        column: span.column,
-    }
-}
-
-fn runtime_kind(kind: &RuntimeErrorKind) -> &'static str {
-    match kind {
-        RuntimeErrorKind::InvalidBytecode => "invalid_bytecode",
-        RuntimeErrorKind::Type => "type",
-        RuntimeErrorKind::Name => "name",
-        RuntimeErrorKind::Arity => "arity",
-        RuntimeErrorKind::DivideByZero => "divide_by_zero",
-        RuntimeErrorKind::InvalidCall => "invalid_call",
-        RuntimeErrorKind::Native => "native",
-        RuntimeErrorKind::NativeContract => "native_contract",
-        RuntimeErrorKind::Module => "module",
-        RuntimeErrorKind::NotImplemented => "not_implemented",
-        RuntimeErrorKind::Match => "match",
-        RuntimeErrorKind::Thrown => "thrown",
-    }
-}
-
-fn render_runtime_error(error: &RuntimeError, input_path: &str, input: &str) -> String {
-    let headline = format!("slug: runtime error: {}", error.message);
-    let Some(mut rendered) =
-        render_source_context(&headline, error.span.as_ref(), input_path, input)
-    else {
-        return format!("slug: {error}");
-    };
-    for frame in &error.frames {
-        write!(rendered, "\n  in {}", frame.function).expect("writing to a string cannot fail");
-        if let Some(span) = &frame.span {
-            write!(rendered, " at {}:{}:{}", span.path, span.line, span.column)
-                .expect("writing to a string cannot fail");
-        }
-    }
-    rendered
-}
-
-fn render_source_context(
-    headline: &str,
-    span: Option<&SourceSpan>,
-    input_path: &str,
-    input: &str,
-) -> Option<String> {
-    let span = span?;
-    let source = if span.path.as_ref() == input_path {
-        Some(input.to_owned())
-    } else {
-        fs::read_to_string(span.path.as_ref()).ok()
-    };
-    let source = source?;
-    let line = source.lines().nth(span.line.saturating_sub(1) as usize)?;
-
-    let mut rendered = format!(
-        "{headline}\n    --> {}:{}:{}\n",
-        span.path, span.line, span.column
-    );
-    let first_line = span.line.saturating_sub(2).max(1);
-    let line_width = span.line.to_string().len();
-    for (index, source_line) in source
-        .lines()
-        .enumerate()
-        .skip(first_line as usize - 1)
-        .take((span.line - first_line + 1) as usize)
-    {
-        let number = index + 1;
-        let source_line = expand_tabs(source_line);
-        if number == span.line as usize {
-            writeln!(rendered, "  > {number:>line_width$} | {source_line}")
-                .expect("writing to a string cannot fail");
+/// Reads diagnostic source text by path, using the entry's text for the
+/// entry so that an unsaved or since-changed file is not reread.
+fn source_reader<'a>(input_path: &'a str, input: &'a str) -> impl Fn(&str) -> Option<String> + 'a {
+    move |path| {
+        if path == input_path {
+            Some(input.to_owned())
         } else {
-            writeln!(rendered, "    {number:>line_width$} | {source_line}")
-                .expect("writing to a string cannot fail");
+            fs::read_to_string(path).ok()
         }
     }
-    let caret_offset = display_column(line, span.column);
-    write!(
-        rendered,
-        "    {} | {}^ here",
-        " ".repeat(line_width),
-        " ".repeat(caret_offset)
-    )
-    .expect("writing to a string cannot fail");
-    Some(rendered)
-}
-
-fn expand_tabs(text: &str) -> String {
-    let mut expanded = String::new();
-    let mut column = 0;
-    for character in text.chars() {
-        if character == '\t' {
-            let spaces = 4 - (column % 4);
-            expanded.push_str(&" ".repeat(spaces));
-            column += spaces;
-        } else {
-            expanded.push(character);
-            column += 1;
-        }
-    }
-    expanded
-}
-
-fn display_column(text: &str, source_column: u32) -> usize {
-    let characters = source_column.saturating_sub(1) as usize;
-    let mut column = 0;
-    for character in text.chars().take(characters) {
-        if character == '\t' {
-            column += 4 - (column % 4);
-        } else {
-            column += 1;
-        }
-    }
-    column
 }
 
 #[cfg(test)]
 mod tests {
-    use slug_frontend::{SourceError, SourceErrorKind};
+    use slug::diagnostic::Diagnostic;
+    use slug_frontend::{SourceError, SourceErrorCode, SourceErrorKind};
     use slug_vm::SourceSpan;
 
-    use super::render_source_error;
+    use super::source_reader;
 
     #[test]
     fn falls_back_when_diagnostic_source_is_unavailable() {
         let error = SourceError {
             kind: SourceErrorKind::Parse,
+            code: SourceErrorCode::ExpectedSyntax,
             message: "expected expression".into(),
             span: Some(SourceSpan::new("missing.slug", 4, 2)),
+            range: None,
+            expected: None,
+            actual: None,
+            corrections: None,
         };
 
         assert_eq!(
-            render_source_error("parse", &error, "input.slug", "val = 1\n"),
-            "slug: parse error: expected expression at missing.slug:4:2"
+            Diagnostic::from_source(&error).render_text(&source_reader("input.slug", "val = 1\n")),
+            "slug: parse error: expected expression\n    --> missing.slug:4:2\n  = code: expected_syntax"
         );
     }
 }

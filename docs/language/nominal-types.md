@@ -70,6 +70,12 @@ export enum SeekFrom {
 val from:SeekFrom = SeekFrom.Start
 ```
 
+Cases are separated by a comma, one or more newlines, or both, and a trailing
+comma is allowed, so `enum Colour { red, green, blue }` and one case per line
+are equivalent. Two cases with no separator between them, such as
+`enum Colour { red green }`, are a parse error: `expected comma or newline
+between enum cases`. Semicolons and consecutive commas do not separate cases.
+
 Cases are always qualified. `SeekFrom.Start` is a valid enum-value expression;
 bare `Start` is an unknown name. The same rule applies to match patterns:
 
@@ -100,6 +106,18 @@ assignability, overload selection, callable-signature identity, and runtime
 matching. An alias does not create a value, a constructor, or a new nominal
 identity. Recursive alias definitions are source errors. Generic aliases and
 strong typedefs are outside this feature.
+
+An alias of a struct type names the schema where the alias is declared, so a
+module can export a struct type while keeping its schema private:
+
+```slug
+val PointSchema = struct { x: num, y: num }
+export type Point = struct<PointSchema>
+export val point = fn(x:num, y:num):Point { PointSchema {x: x, y: y} }
+```
+
+An importer writes `shapes.Point`, and its field accesses are checked against
+`PointSchema`, though it cannot name or construct the schema.
 
 ## Imports
 

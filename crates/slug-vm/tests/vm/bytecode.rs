@@ -431,6 +431,24 @@ fn reports_checked_integer_overflow() {
 }
 
 #[test]
+fn takes_the_remainder_of_the_most_negative_integer() {
+    // `i64::MIN / -1` overflows, but its remainder is 0.
+    for op in [Op::Modulo, Op::ModuloNum] {
+        let mut main = Chunk::new("main", 0);
+        let left = main.constant(Value::Int(i64::MIN));
+        let right = main.constant(Value::Int(-1));
+        main.emit(Op::Constant(left))
+            .emit(Op::Constant(right))
+            .emit(op)
+            .emit(Op::Return);
+        assert_eq!(
+            Vm::new().run(&program_with_main(main), 0).unwrap(),
+            Value::Int(0)
+        );
+    }
+}
+
+#[test]
 fn appends_values_through_private_list_bytecode() {
     let mut main = Chunk::new("main", 0);
     let one = main.constant(Value::Int(1));
@@ -771,7 +789,7 @@ fn computed_map_pattern_keys_use_dynamic_operands() {
 fn rejects_unhashable_computed_map_pattern_keys() {
     let mut main = Chunk::new("main", 0);
     let value = main.constant(Value::map(Vec::new()));
-    let key = main.constant(Value::list(Vec::new()));
+    let key = main.constant(Value::map(Vec::new()));
     main.emit(Op::Constant(value))
         .emit(Op::Duplicate)
         .emit(Op::Constant(key))
@@ -788,7 +806,7 @@ fn rejects_unhashable_computed_map_pattern_keys() {
 
     let error = Vm::new().run(&program_with_main(main), 0).unwrap_err();
     assert_eq!(error.kind, RuntimeErrorKind::Type);
-    assert_eq!(error.message, "list cannot be used as a map key");
+    assert_eq!(error.message, "map cannot be used as a map key");
 }
 
 #[test]
@@ -1157,4 +1175,45 @@ fn generated_malformed_private_bytecode_returns_checked_errors() {
         let result = result.expect("malformed private bytecode must not panic");
         assert!(result.is_err());
     }
+}
+
+#[test]
+fn orders_strings_by_utf8_bytes_and_rejects_mixed_operands() {
+    let compare = |left: &str, op: Op, right: Value| {
+        let mut main = Chunk::new("main", 0);
+        let left = main.constant(Value::string(left));
+        let right = main.constant(right);
+        main.emit(Op::Constant(left))
+            .emit(Op::Constant(right))
+            .emit(op)
+            .emit(Op::Return);
+        Vm::new().run(&program_with_main(main), 0)
+    };
+    for (left, op, right, expected) in [
+        ("apple", Op::Less, "banana", true),
+        ("b", Op::Greater, "a", true),
+        ("Z", Op::Less, "a", true),
+        ("ab", Op::Less, "abc", true),
+        ("é", Op::Greater, "z", true),
+        ("same", Op::Less, "same", false),
+        ("b", Op::GuardLess, "a", false),
+        ("a", Op::GuardGreater, "", true),
+    ] {
+        assert_eq!(
+            compare(left, op.clone(), Value::string(right)).unwrap(),
+            Value::Bool(expected),
+            "{left:?} {op:?} {right:?}"
+        );
+    }
+
+    let error = compare("Slug", Op::Less, Value::Int(1)).unwrap_err();
+    assert_eq!(error.kind, RuntimeErrorKind::Type);
+    assert_eq!(
+        error.message,
+        "expected two numbers or two strings, got str and num"
+    );
+    assert_eq!(
+        compare("Slug", Op::GuardLess, Value::Int(1)).unwrap(),
+        Value::Bool(false)
+    );
 }

@@ -29,6 +29,20 @@ pub enum Builtin {
     Cfg,
     Int,
     Stacktrace,
+    Describe,
+}
+
+impl Builtin {
+    /// The names a call may give the builtin's parameters, in order.
+    #[must_use]
+    pub const fn parameter_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Cfg => &["key", "default"],
+            Self::Int => &["value"],
+            Self::Stacktrace => &["error"],
+            Self::Describe => &["module", "unexported"],
+        }
+    }
 }
 
 /// A FIFO channel with bounded buffering and parked task wait queues.
@@ -436,9 +450,14 @@ impl Channel {
         let Some(producer) = self.native_producer.get() else {
             return false;
         };
+        // Read before draining: a producer closes after its last send, so
+        // every value it sent is then queued and drains with the others.
+        let producer_closed = producer.is_closed();
         let values = producer.drain(usize::MAX);
-        let changed = !values.is_empty() || producer.is_closed();
         let mut state = self.state.borrow_mut();
+        // A channel closed by an earlier drain is no progress; reporting it
+        // as progress forever would keep the scheduler from running tasks.
+        let changed = !values.is_empty() || (producer_closed && !state.closed);
         let mut resumed = Vec::new();
         let mut rejected_senders = Vec::new();
         for value in values {
@@ -449,7 +468,7 @@ impl Channel {
                 state.messages.push_back(value.into_value());
             }
         }
-        if producer.is_closed() {
+        if producer_closed {
             state.closed = true;
             resumed.extend(
                 state
@@ -460,6 +479,7 @@ impl Channel {
             rejected_senders.extend(state.senders.drain(..).map(|(sender, _)| sender));
         }
         drop(state);
+        let changed = changed || !resumed.is_empty() || !rejected_senders.is_empty();
         for (receiver, value) in resumed {
             receiver.resume(Ok(value));
         }
@@ -866,6 +886,15 @@ impl Task {
         }
     }
 
+    /// For a task still suspended, the error reporting that it can never
+    /// resume, located where it waits.
+    pub(crate) fn blocked_error(&self) -> Option<crate::RuntimeError> {
+        match &self.state.borrow().phase {
+            TaskPhase::Pending(execution) => Some(execution.blocked_error()),
+            TaskPhase::Running | TaskPhase::Settled(_) => None,
+        }
+    }
+
     pub(crate) fn cancel(&self, error: &crate::RuntimeError) {
         let mut state = self.state.borrow_mut();
         let phase = mem::replace(&mut state.phase, TaskPhase::Running);
@@ -963,7 +992,7 @@ impl StructValue {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct EnumValue {
     #[doc(hidden)]
     pub module: Rc<str>,

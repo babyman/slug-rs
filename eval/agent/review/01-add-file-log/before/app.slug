@@ -1,0 +1,10 @@
+val {reduce} = import("slug.std")
+
+val total = fn(values) { reduce(values, 0, fn(sum, value) { sum + value }) }
+
+val report = fn(name, values) {
+  println("$name:", total(values))
+}
+
+report("north", [3, 4, 5])
+report("south", [10, 2])

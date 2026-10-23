@@ -1,7 +1,12 @@
-use alloc::{borrow::ToOwned, boxed::Box, string::String, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{fmt, fmt::Write as _};
 
-use crate::{SourceSpan, Value};
+use crate::{SourceDiagnostic, SourceSpan, Value};
 
 use super::Vm;
 
@@ -16,9 +21,13 @@ pub enum RuntimeErrorKind {
     Native,
     NativeContract,
     Module,
+    ModuleNotFound,
     NotImplemented,
     Match,
     Thrown,
+    /// An operation the host's user has not granted, such as describing a
+    /// module's unexported declarations.
+    Permission,
 }
 
 /// A Slug-level runtime error, never a host panic.
@@ -31,6 +40,39 @@ pub struct RuntimeError {
     pub thrown: Option<Box<Value>>,
     pub native: Option<Box<NativeErrorDetails>>,
     pub cause: Option<Box<RuntimeError>>,
+    /// For an error raised by an import, why the module could not be
+    /// imported, when that is known.
+    pub import_failure: Option<Box<ImportFailure>>,
+}
+
+/// Why an import failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImportFailure {
+    /// The module's source does not compile.
+    Compile(SourceDiagnostic),
+    /// No module has the name.
+    NotFound(crate::MissingModule),
+}
+
+impl RuntimeError {
+    /// The source error of an imported module that failed to compile.
+    #[must_use]
+    pub fn compile_error(&self) -> Option<&SourceDiagnostic> {
+        match self.import_failure.as_deref() {
+            Some(ImportFailure::Compile(error)) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// The name of a module an import did not find, and the names it most
+    /// likely meant.
+    #[must_use]
+    pub fn missing_module(&self) -> Option<&crate::MissingModule> {
+        match self.import_failure.as_deref() {
+            Some(ImportFailure::NotFound(missing)) => Some(missing),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -136,7 +178,33 @@ impl Vm {
                 })
                 .collect(),
             cause: None,
+            import_failure: None,
         }
+    }
+
+    /// A module error for a failed import, keeping the source error of a
+    /// module that failed to compile.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn import_error(
+        &self,
+        error: &crate::VmHostError,
+        span: Option<SourceSpan>,
+    ) -> RuntimeError {
+        let (kind, failure) = if error.is_not_found() {
+            (
+                RuntimeErrorKind::ModuleNotFound,
+                error.missing_module().cloned().map(ImportFailure::NotFound),
+            )
+        } else {
+            (
+                RuntimeErrorKind::Module,
+                error.compile_error().cloned().map(ImportFailure::Compile),
+            )
+        };
+        let mut runtime_error = self.error(kind, error.to_string(), span);
+        runtime_error.import_failure = failure.map(Box::new);
+        runtime_error
     }
 
     pub(super) fn thrown(&self, value: Value, span: Option<SourceSpan>) -> RuntimeError {
@@ -182,8 +250,10 @@ fn fault_type(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Native => "native",
         RuntimeErrorKind::NativeContract => "native_contract",
         RuntimeErrorKind::Module => "module",
+        RuntimeErrorKind::ModuleNotFound => "module_not_found",
         RuntimeErrorKind::NotImplemented => "not_implemented",
         RuntimeErrorKind::Match => "match",
         RuntimeErrorKind::Thrown => "thrown",
+        RuntimeErrorKind::Permission => "permission",
     }
 }

@@ -1,0 +1,113 @@
+val {ord, chr, sort, join, toInt, chars, fromBytes, toBytes, split, trim, lower, upper} = import("slug.string")
+val {assertEqual, assertThrows} = import("slug.test")
+
+val failure = fn(work:fn):list {
+    val error = assertThrows(work)
+    [error.type, error.msg]
+}
+
+@test
+val charactersRoundTrip = fn() {
+    assertEqual(ord("😀"), 128512)
+    assertEqual(ord(chr(1114111)), 1114111)
+    assertEqual(chr(128512), "😀")
+    assertEqual(chr(0) == "\0", true)
+}
+
+@test
+val ordAndChrRejectWhatIsNotOneScalarValue = fn() {
+    val oneCharacter = ["string.range", "ord requires a string of exactly one character"]
+    val scalar = ["string.range", "chr requires a Unicode scalar value"]
+    assertEqual(failure(fn() { ord("") }), oneCharacter)
+    assertEqual(failure(fn() { ord("ab") }), oneCharacter)
+    assertEqual(failure(fn() { chr(55296) }), scalar)
+    assertEqual(failure(fn() { chr(1114112) }), scalar)
+    assertEqual(failure(fn() { chr(-1) }), scalar)
+    assertEqual(failure(fn() { chr(65.5) }), ["string.range", "chr requires an integer code"])
+}
+
+@test
+val bytesRoundTrip = fn() {
+    assertEqual(fromBytes(toBytes("GET /😀 HTTP/1.1\r\n")), "GET /😀 HTTP/1.1\r\n")
+    assertEqual(toBytes("😀"), 0x"f09f9880")
+    assertEqual(fromBytes(0x"f48fbfbf"), chr(1114111))
+    // NUL is a character like any other.
+    assertEqual(fromBytes(0x"610062"), "a\0b")
+    assertEqual(len(fromBytes(0x"610062")), 3)
+}
+
+@test
+val fromBytesRejectsWhatIsNotUtf8 = fn() {
+    val notUtf8 = ["string.utf8", "the bytes are not valid UTF-8"]
+    // A byte that never appears, an overlong form, a surrogate, a value above
+    // U+10FFFF, a truncated sequence, a lone continuation byte, and a
+    // five-byte form.
+    val cases = [0x"ff", 0x"c0af", 0x"e080af", 0x"eda080", 0x"f4908080", 0x"e282", 0x"80", 0x"f880808080", 0x"61ff"]
+    val go = fn(i:num) {
+        if (i < len(cases)) {
+            assertEqual(failure(fn() { fromBytes(cases[i]) }), notUtf8, "case $i")
+            recur(i + 1)
+        }
+    }
+    go(0)
+}
+
+@test
+val sortAndJoinRejectNonStrings = fn() {
+    val mixed = keys({a: 1, [2]: 2})
+    assertEqual(failure(fn() { sort(mixed) }), ["string.type", "sort requires a list of strings"])
+    assertEqual(failure(fn() { join(mixed, "-") }), ["string.type", "join requires a list of strings"])
+}
+
+@test
+val sortLeavesItsArgumentAlone = fn() {
+    val words = ["pear", "é", "b"]
+    assertEqual(sort(words), ["b", "pear", "é"])
+    assertEqual(words, ["pear", "é", "b"])
+}
+
+@test
+val charsRoundTripsThroughJoin = fn() {
+    assertEqual(chars("h😀"), ["h", "😀"])
+    assertEqual(join(chars("round trip")), "round trip")
+}
+
+@test
+val toIntCoversTheIntegerRangeExactly = fn() {
+    assertEqual(toInt("9223372036854775807"), 9223372036854775807)
+    assertEqual(toInt("-9223372036854775808"), -9223372036854775807 - 1)
+    assertEqual(toInt("9223372036854775808"), nil)
+    assertEqual(toInt("-9223372036854775809"), nil)
+    assertEqual(toInt("99999999999999999999"), nil)
+    assertEqual(toInt("-0"), 0)
+}
+
+@test
+val toIntRejectsEverythingButDecimalDigits = fn() {
+    assertEqual(toInt("-"), nil)
+    assertEqual(toInt(" 1"), nil)
+    assertEqual(toInt("1_000"), nil)
+    assertEqual(toInt("٣"), nil)
+    assertEqual(toInt("x") ?? 0, 0)
+}
+
+@test
+val splitRejectsAnEmptySeparator = fn() {
+    assertEqual(failure(fn() { split("abc", "") }), ["string.range", "split requires a non-empty separator"])
+}
+
+@test
+val splitAndJoinRoundTrip = fn() {
+    val text = "GET /a?b=c HTTP/1.1"
+    assertEqual(join(split(text, " "), " "), text)
+    assertEqual(split("aaa", "aa"), ["", "a"])
+    assertEqual(split("été|été", "|"), ["été", "été"])
+}
+
+@test
+val headerLinesTrimAndLower = fn() {
+    val line = "Content-Length:   42 \r"
+    val parts = split(line, ":")
+    assertEqual([lower(parts[0]), trim(parts[1])], ["content-length", "42"])
+    assertEqual(upper(lower("MiXeD")), "MIXED")
+}

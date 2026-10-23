@@ -1,0 +1,16 @@
+val pairs = cfg("pairs", [[10, 2], [7, 0], [9, 3]])
+val divide = fn(a, b) {
+  if (b == 0) { throw Error { type: "math.domain", msg: "division by zero" } }
+  int(a / b)
+}
+val attempt = fn(a, b) {
+  defer onerror(err) { println("error:", err.msg) }
+  println(divide(a, b))
+}
+val each = fn(i) {
+  if (i < len(pairs)) {
+    attempt(pairs[i][0], pairs[i][1])
+    recur(i + 1)
+  }
+}
+each(0)

@@ -1,0 +1,115 @@
+/**
+ * The game's sound effects, synthesized: the original machine made them
+ * with analog circuits, so these are approximations. `all()` returns
+ * [name, samples] pairs of 8-bit unsigned mono samples at `rate`.
+ */
+val random = import("slug.random")
+
+export val rate = 11025
+
+// Renders `seconds` of sound; `voice(t)` gives each sample, from -1 to 1.
+val render = fn(seconds:num, voice:fn):bytes {
+    val n = int(seconds * rate)
+    val go = fn(i:num, out:bytes):bytes {
+        if (i == n) { out } else {
+            val v = voice(i / rate)
+            val level = int(128 + 110 * (if (v > 1) { 1 } else if (v < -1) { -1 } else { v }))
+            recur(i + 1, out :+ level)
+        }
+    }
+    go(0, 0x"")
+}
+
+// A square-wave oscillator whose frequency may change: returns a function
+// from frequency to the next sample.
+val square = fn():fn {
+    var phase = 0.0
+    fn(frequency:num):num {
+        phase = phase + frequency / rate
+        if (phase >= 1) { phase = phase - int(phase) }
+        if (phase < 0.5) { 1 } else { -1 }
+    }
+}
+
+// White noise from a seeded generator, so every run sounds the same.
+val noise = fn(seed:num):fn {
+    val generator = random.generator(seed)
+    fn():num { generator.float() * 2 - 1 }
+}
+
+// Noise smoothed toward its previous value: lower `smooth` is darker.
+val rumble = fn(seed:num, smooth:num):fn {
+    val white = noise(seed)
+    var last = 0.0
+    fn():num {
+        last = last + (white() - last) * smooth
+        last
+    }
+}
+
+val decay = fn(t:num, length:num):num {
+    if (t >= length) { 0 } else { 1 - t / length }
+}
+
+// The four notes of the marching fleet, falling in pitch.
+val fleet = fn(frequency:num):bytes {
+    val wave = square()
+    render(0.14, fn(t) { 0.9 * wave(frequency) * decay(t, 0.14) })
+}
+
+val shot = fn():bytes {
+    val wave = square()
+    val hiss = noise(1)
+    render(0.32, fn(t) {
+        val frequency = 1400 - 3600 * t
+        (0.6 * wave(if (frequency < 200) { 200 } else { frequency }) + 0.3 * hiss()) * decay(t, 0.32)
+    })
+}
+
+val invaderHit = fn():bytes {
+    val wave = square()
+    val crash = rumble(2, 0.5)
+    render(0.28, fn(t) { (0.4 * wave(320 - 600 * t) + 0.8 * crash()) * decay(t, 0.28) })
+}
+
+val playerDeath = fn():bytes {
+    val crash = rumble(3, 0.18)
+    render(1.1, fn(t) { 2.2 * crash() * decay(t, 1.1) })
+}
+
+// The saucer's siren loops, so it is a whole number of warble cycles.
+val ufo = fn():bytes {
+    val wave = square()
+    render(0.5, fn(t) {
+        val cycle = (t * 8) - int(t * 8)
+        val warble = if (cycle < 0.5) { cycle * 2 } else { 2 - cycle * 2 }
+        0.45 * wave(520 + 260 * warble)
+    })
+}
+
+val ufoHit = fn():bytes {
+    val wave = square()
+    render(1.0, fn(t) {
+        val cycle = (t * 14) - int(t * 14)
+        0.6 * wave(1100 - 500 * cycle) * decay(t, 1.0)
+    })
+}
+
+val extraShip = fn():bytes {
+    val wave = square()
+    render(0.9, fn(t) {
+        val on = (t * 18) - int(t * 18) < 0.5
+        if (on) { 0.5 * wave(1250) } else { wave(1250) * 0 }
+    })
+}
+
+/**
+ * Every sound, as [name, samples] pairs.
+ */
+export val all = fn():list {
+    [
+        ["fleet1", fleet(98)], ["fleet2", fleet(87)], ["fleet3", fleet(78)], ["fleet4", fleet(73)],
+        ["shot", shot()], ["invaderHit", invaderHit()], ["playerDeath", playerDeath()],
+        ["ufo", ufo()], ["ufoHit", ufoHit()], ["extraShip", extraShip()],
+    ]
+}

@@ -65,12 +65,18 @@ configured library root for `<program>.slug`. This supports installed tools
 such as `slug hello Ada` when `$SLUG_HOME/lib/hello.slug` is available. An
 explicit `.slug` extension is retained during the fallback lookup.
 
-Successful execution exits with status zero. Parse, semantic, module-loading,
-or runtime failure exits nonzero and writes a Slug diagnostic to standard error.
+Successful execution exits with status zero, unless `main` returns a number,
+which becomes the exit status (see [Program entrypoint](language-specification.md#program-entrypoint)).
+Parse, semantic, module-loading, or runtime failure exits nonzero and writes a
+Slug diagnostic to standard error.
 The optional runner flag `--diagnostic-format=json`, placed before the entry
 program, selects the versioned JSON diagnostic representation defined in
-[Error Behavior](errors.md#command-line-json-diagnostics). Arguments after the
-entry program are program arguments and cannot select this runner mode.
+[Error Behavior](errors.md#command-line-json-diagnostics). The optional runner
+flag `--allow-unexported` grants the program the `describe.unexported`
+permission, so `describe(module, unexported = true)` may return a module's
+unexported declarations; only the user running slug can grant it. Runner flags
+may appear in either order. Arguments after the entry program are program
+arguments and cannot select a runner mode.
 The final expression value is not implicitly printed by the command-line
 runner. `print` and `println` write to standard output; only `println` appends
 a newline. `slug.io.stderr.println` writes to standard error.
@@ -92,8 +98,8 @@ modules and builtins available with the behavior exercised by their source:
 
 - builtins including `import`, `int`, `len`, `keys`, `print`, `println`, `chan`,
   and `close`;
-- `slug.std`, `slug.io.stdin`, and `slug.math` from the installed `slug.core`
-  Clutch, and `slug.test`, for assertions and core collection operations;
+- `slug.std`, `slug.io.stdin`, `slug.math`, and `slug.string` from the
+  installed `slug.core` Clutch, and `slug.test`, for assertions and core collection operations;
 - `slug.channel` for channel operations, `await`, `send`, and `recv`;
 - `slug.io.fs` for explicit-lifecycle file resources when a fixture or library
   program imports it and the host installs the experimental filesystem clutch;

@@ -47,6 +47,11 @@ available call-site coordinates. If a failure replaced another while unwinding,
 the rendering recursively includes the prior failure under `caused by:`.
 `stacktrace` does not read source files or render source excerpts.
 
+The command line renders each diagnostic as text from the same
+[diagnostic document](../reference/diagnostics.md#text-form) it writes in JSON
+mode, so text and JSON report the same code, location, expected and actual
+values, fixes, suggestions, frames, and cause.
+
 Diagnostic text is not a stable contract unless conformance fixture metadata
 marks it exact. See Runtime Requirements, “Error observability”, for the
 portable compatibility rules.
@@ -60,24 +65,7 @@ program path; an argument of the same spelling after the path remains a program
 argument. Standard output and program-authored standard-error output retain
 their usual behavior.
 
-Version 1 documents use this shape:
-
-```json
-{
-  "version": 1,
-  "category": "parse",
-  "kind": null,
-  "message": "expected binding name",
-  "location": { "path": "example.slug", "line": 1, "column": 5 },
-  "frames": [],
-  "cause": null
-}
-```
-
-`category` is `parse`, `semantic`, `module`, `runtime`, `io`, or `host`.
-`kind` is null for source errors and identifies runtime or startup subtypes
-when available. `location` is null when no source position is available.
-Runtime `frames` identify Slug call sites; `cause` recursively carries a
-replacement error retained during unwinding. The JSON schema deliberately does
-not serialize arbitrary thrown values or native data because Slug has no stable
-value serialization yet.
+Each document is a version 2 [diagnostic document](../reference/diagnostics.md),
+the same document the interactive server reports for the same failure. Match on
+its `code`, listed in [Diagnostic Codes](../reference/diagnostic-codes.md),
+never on its `message`.

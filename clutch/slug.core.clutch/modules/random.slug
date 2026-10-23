@@ -1,0 +1,95 @@
+/**
+ * slug.random — seeded pseudo-random numbers
+ *
+ * `generator(seed)` returns a generator, a map of functions sharing one
+ * state. The same seed always gives the same sequence, on every platform, so a
+ * game or a test can replay a run exactly. The numbers come from xorshift32;
+ * they are not suitable for cryptography.
+ *
+ * ```slug
+ * val random = import("slug.random")
+ * val dice = random.generator(42)
+ * dice.between(1, 6)
+ * ```
+ */
+
+val MASK = 0xFFFFFFFF
+val RANGE = 4294967296
+
+/**
+ * A generator seeded with the integer `seed`; seeds that are equal modulo
+ * 2^32 give the same sequence. It has these functions:
+ *
+ * - `next()`: the next number, an integer from 0 to 2^32 - 1.
+ * - `below(n)`: an integer from 0 to `n - 1`, each equally likely, for `n`
+ *   from 1 to 2^32.
+ * - `between(low, high)`: an integer from `low` to `high` inclusive.
+ * - `float()`: a number at least 0 and below 1.
+ * - `pick(items)`: one element of a non-empty list.
+ * - `shuffle(items)`: a new list with the elements in random order.
+ *
+ * `below`, `between`, and `pick` throw an `Error` of type `random.range` for
+ * an empty range.
+ */
+export val generator = fn(seed:num):map {
+    // xorshift32 never leaves 0, so a zero seed starts elsewhere.
+    var state = if ((seed & MASK) == 0) { 0x9E3779B9 } else { seed & MASK }
+
+    val next = fn():num {
+        var x = state
+        x = x ^ ((x << 13) & MASK)
+        x = x ^ (x >> 17)
+        x = x ^ ((x << 5) & MASK)
+        state = x
+        x
+    }
+
+    // Rejects the top of the range that would favour small results.
+    val below = fn(n:num):num {
+        if (n < 1 || n > RANGE) {
+            throw Error {type: "random.range", msg: "below needs n from 1 to 2^32"}
+        }
+        val limit = RANGE - RANGE % n
+        val draw = fn():num {
+            val x = next()
+            if (x < limit) { x % n } else { recur() }
+        }
+        draw()
+    }
+
+    val between = fn(low:num, high:num):num {
+        if (high < low) {
+            throw Error {type: "random.range", msg: "between needs low <= high"}
+        }
+        low + below(high - low + 1)
+    }
+
+    val float = fn():num {
+        next() / 4294967296.0
+    }
+
+    val pick = fn(items:list) {
+        if (len(items) == 0) {
+            throw Error {type: "random.range", msg: "pick needs a non-empty list"}
+        }
+        items[below(len(items))]
+    }
+
+    // Fisher-Yates, from the end.
+    val shuffle = fn(items:list):list {
+        val go = fn(i:num, xs:list):list {
+            if (i < 1) { xs } else {
+                val j = below(i + 1)
+                val swapped = if (i == j) { xs } else {
+                    val low = if (j < i) { j } else { i }
+                    val high = if (j < i) { i } else { j }
+                    xs[:low] + [xs[high]] + xs[low + 1:high] + [xs[low]] + xs[high + 1:]
+                }
+                recur(i - 1, swapped)
+            }
+        }
+        go(len(items) - 1, items)
+    }
+
+    {next: next, below: below, between: between, float: float, pick: pick, shuffle: shuffle}
+}

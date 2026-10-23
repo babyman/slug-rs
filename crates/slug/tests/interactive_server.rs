@@ -209,8 +209,8 @@ fn session_infers_wrappers_from_retained_callable_signatures() {
     let rejected = submit(&mut server, 5, &session, "apply(\"text\")");
     assert!(!rejected.ok);
     assert_eq!(
-        rejected.error.expect("semantic diagnostic").kind.as_deref(),
-        Some("semantic")
+        rejected.error.expect("semantic diagnostic").category,
+        DiagnosticCategory::Semantic
     );
 }
 
@@ -248,8 +248,8 @@ fn configured_server_resolves_and_typechecks_builtin_imports() {
     let missing = submit(&mut server, 4, &session, "import(\"missing.module\")");
     assert!(!missing.ok);
     assert_eq!(
-        missing.error.expect("runtime diagnostic").kind.as_deref(),
-        Some("module")
+        missing.error.expect("runtime diagnostic").category,
+        DiagnosticCategory::Module
     );
 }
 
@@ -469,14 +469,7 @@ fn failed_slim_retained_cells_do_not_commit_their_bindings() {
 
     let failure = submit(&mut server, 5, &session, "select { send queue, true }");
     assert!(!failure.ok);
-    assert_eq!(
-        failure
-            .error
-            .expect("retained cell failure")
-            .kind
-            .as_deref(),
-        Some("thrown")
-    );
+    assert_eq!(failure.error.expect("retained cell failure").code, "thrown");
 
     let unavailable = submit(&mut server, 6, &session, "leaked");
     assert!(!unavailable.ok);
@@ -484,14 +477,13 @@ fn failed_slim_retained_cells_do_not_commit_their_bindings() {
         unavailable
             .error
             .expect("uncommitted binding diagnostic")
-            .kind
-            .as_deref(),
-        Some("name")
+            .code,
+        "name"
     );
     assert_eq!(
         submit(&mut server, 7, &session, "queue").result,
         completed(
-            serde_json::json!({ "kind": "chan", "display": "<chan>" }),
+            serde_json::json!({ "$opaque": "chan", "display": "<chan>" }),
             "idle",
         )
     );
@@ -563,8 +555,8 @@ fn invalid_and_semantic_submissions_clear_pending_source() {
     let invalid = submit(&mut server, 3, &session, "val =");
     assert!(!invalid.ok);
     assert_eq!(
-        invalid.error.expect("parse diagnostic").kind.as_deref(),
-        Some("parse")
+        invalid.error.expect("parse diagnostic").category,
+        DiagnosticCategory::Parse
     );
 
     let reusable = submit(&mut server, 4, &session, "1 + 2");
@@ -573,8 +565,8 @@ fn invalid_and_semantic_submissions_clear_pending_source() {
     let semantic = submit(&mut server, 5, &session, "1 + true");
     assert!(!semantic.ok);
     assert_eq!(
-        semantic.error.expect("semantic diagnostic").kind.as_deref(),
-        Some("semantic")
+        semantic.error.expect("semantic diagnostic").category,
+        DiagnosticCategory::Semantic
     );
     let reusable = submit(&mut server, 6, &session, "3 + 4");
     assert_eq!(reusable.result, completed(serde_json::json!(7), "idle"));
@@ -635,8 +627,8 @@ fn session_retains_incomplete_strings_but_clears_complete_semantic_failures() {
     let failed = submit(&mut server, 7, &session, "}");
     assert!(!failed.ok);
     assert_eq!(
-        failed.error.expect("semantic diagnostic").kind.as_deref(),
-        Some("semantic")
+        failed.error.expect("semantic diagnostic").category,
+        DiagnosticCategory::Semantic
     );
     assert_eq!(
         submit(&mut server, 8, &session, "1 + 2").result,
@@ -675,7 +667,7 @@ fn compile_failures_do_not_commit_session_state() {
     assert!(!failed.ok);
     assert_eq!(
         failed.error.expect("source diagnostic").category,
-        DiagnosticCategory::Source
+        DiagnosticCategory::Semantic
     );
 
     let preserved = submit(&mut server, 5, &session, "x");
@@ -683,10 +675,7 @@ fn compile_failures_do_not_commit_session_state() {
     assert_eq!(preserved.result, completed(serde_json::json!(10), "idle"));
     let absent = submit(&mut server, 6, &session, "broken");
     assert!(!absent.ok);
-    assert_eq!(
-        absent.error.expect("runtime diagnostic").kind.as_deref(),
-        Some("name")
-    );
+    assert_eq!(absent.error.expect("runtime diagnostic").code, "name");
 }
 
 #[test]
@@ -996,9 +985,8 @@ fn pending_cell_bindings_are_not_visible_before_settlement() {
         unavailable
             .error
             .expect("uncommitted binding diagnostic")
-            .kind
-            .as_deref(),
-        Some("name")
+            .code,
+        "name"
     );
 
     let producer = state
@@ -1052,18 +1040,14 @@ fn poll_delivers_a_background_task_failure() {
 
     let failure = server.handle_line(&request(4, "session.poll", Some(&session), None).to_string());
     assert!(!failure.ok);
-    assert_eq!(
-        failure.error.expect("background failure").kind.as_deref(),
-        Some("thrown")
-    );
+    assert_eq!(failure.error.expect("background failure").code, "thrown");
 }
 
 #[test]
 fn diagnostic_projection_preserves_source_and_runtime_structure() {
     let source = compile("interactive-source.slug", "val = 1").expect_err("invalid source");
     let source = Diagnostic::from_source(&source);
-    assert_eq!(source.category, DiagnosticCategory::Source);
-    assert_eq!(source.kind.as_deref(), Some("parse"));
+    assert_eq!(source.category, DiagnosticCategory::Parse);
     assert_eq!(
         source.location.expect("location").path,
         "interactive-source.slug"
@@ -1076,8 +1060,8 @@ fn diagnostic_projection_preserves_source_and_runtime_structure() {
     assert_eq!(runtime.kind, RuntimeErrorKind::Thrown);
     let runtime = Diagnostic::from_runtime(&runtime);
     assert_eq!(runtime.category, DiagnosticCategory::Runtime);
-    assert_eq!(runtime.kind.as_deref(), Some("thrown"));
-    assert_eq!(runtime.thrown.expect("thrown value").display, "42");
+    assert_eq!(runtime.code, "thrown");
+    assert_eq!(runtime.thrown.expect("thrown value"), serde_json::json!(42));
 
     let host = Diagnostic::host("io_failure", "cannot write output");
     assert_eq!(host.category, DiagnosticCategory::Host);
@@ -1088,14 +1072,58 @@ fn diagnostic_projection_preserves_source_and_runtime_structure() {
 }
 
 #[test]
+fn submitted_diagnostics_carry_stable_codes() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    for (id, source, code) in [
+        (3, "val =", "expected_syntax"),
+        (4, "missing_name", "name"),
+        (5, "val zero = 0\n1 / zero", "divide_by_zero"),
+    ] {
+        let response = submit(&mut server, id, &session, source);
+        assert_eq!(response.error.expect("diagnostic").code, code, "{source}");
+    }
+
+    let parse = submit(&mut server, 6, &session, "val =")
+        .error
+        .expect("parse diagnostic");
+    let range = parse.range.expect("parse range");
+    assert_eq!((range.start.column, range.end.column), (5, 6));
+}
+
+#[test]
+fn submitted_values_use_the_value_json_form() {
+    let mut server = initialized_server();
+    let session = open_session(&mut server);
+
+    let value = submit(
+        &mut server,
+        3,
+        &session,
+        "val Point = struct { y, x }\n[{b: 2.0, a: 0x\"0a\"}, Point {y: 1, x: 2}, fn() { nil }]",
+    );
+    assert_eq!(
+        value.result,
+        completed(
+            serde_json::json!([
+                { "$map": [["a", { "$bytes": "0a" }], ["b", 2]] },
+                { "$struct": { "y": 1, "x": 2 } },
+                { "$opaque": "fn", "display": "<fn>" },
+            ]),
+            "idle"
+        )
+    );
+}
+
+#[test]
 fn submitted_diagnostics_retain_source_kinds_and_locations() {
     let mut server = initialized_server();
     let session = open_session(&mut server);
 
     let parse = submit(&mut server, 3, &session, "val =");
     let parse = parse.error.expect("parse diagnostic");
-    assert_eq!(parse.category, DiagnosticCategory::Source);
-    assert_eq!(parse.kind.as_deref(), Some("parse"));
+    assert_eq!(parse.category, DiagnosticCategory::Parse);
     assert_eq!(
         parse.location.expect("parse location").path,
         "<interactive:s1>"
@@ -1103,8 +1131,7 @@ fn submitted_diagnostics_retain_source_kinds_and_locations() {
 
     let semantic = submit(&mut server, 4, &session, "1 + true");
     let semantic = semantic.error.expect("semantic diagnostic");
-    assert_eq!(semantic.category, DiagnosticCategory::Source);
-    assert_eq!(semantic.kind.as_deref(), Some("semantic"));
+    assert_eq!(semantic.category, DiagnosticCategory::Semantic);
     assert_eq!(
         semantic.location.expect("semantic location").path,
         "<interactive:s1>"
@@ -1113,7 +1140,7 @@ fn submitted_diagnostics_retain_source_kinds_and_locations() {
     let runtime = submit(&mut server, 5, &session, "1 / 0");
     let runtime = runtime.error.expect("runtime diagnostic");
     assert_eq!(runtime.category, DiagnosticCategory::Runtime);
-    assert_eq!(runtime.kind.as_deref(), Some("divide_by_zero"));
+    assert_eq!(runtime.code, "divide_by_zero");
     assert_eq!(
         runtime.location.expect("runtime location").path,
         "<interactive:s1>"
@@ -1189,9 +1216,26 @@ fn server_binary_returns_structured_slug_diagnostics_on_protocol_stdout() {
     assert_eq!(messages.len(), 4);
     assert_eq!(messages[2]["id"], 3);
     assert_eq!(messages[2]["ok"], false);
-    assert_eq!(messages[2]["error"]["category"], "source");
-    assert_eq!(messages[2]["error"]["kind"], "semantic");
+    assert_eq!(messages[2]["error"]["version"], 2);
+    assert_eq!(messages[2]["error"]["category"], "semantic");
     assert_eq!(messages[3]["result"], serde_json::Value::Null);
+
+    // The command line reports the same failure with the same document.
+    let path = std::env::temp_dir().join(format!("slug-server-schema-{}.slug", std::process::id()));
+    std::fs::write(&path, "1 + true\n").expect("write schema source");
+    let output = Command::new(env!("CARGO_BIN_EXE_slug"))
+        .arg("--diagnostic-format=json")
+        .arg(&path)
+        .output()
+        .expect("run schema source");
+    std::fs::remove_file(&path).expect("remove schema source");
+    let mut cli: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("CLI diagnostic JSON");
+    let mut server = messages[2]["error"].clone();
+    for document in [&mut cli, &mut server] {
+        document["location"]["path"] = serde_json::Value::Null;
+    }
+    assert_eq!(cli, server);
 }
 
 #[test]

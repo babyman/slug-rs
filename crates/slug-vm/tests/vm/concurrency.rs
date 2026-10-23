@@ -329,6 +329,53 @@ fn closing_a_native_producer_drains_events_then_closes_its_receiver() {
 }
 
 #[test]
+fn a_closed_native_channel_does_not_keep_tasks_from_running() {
+    fn closed_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        assert_eq!(
+            producer.try_send(slug_vm::NativeSendValue::integer(7)),
+            slug_vm::NativeProducerStatus::Sent
+        );
+        producer.close();
+        call.return_value(channel)
+    }
+    fn later_channel(call: &mut NativeCall<'_>) -> NativeStatus {
+        let (channel, producer) = call.channel(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let _ = producer.try_send(slug_vm::NativeSendValue::integer(35));
+        });
+        call.return_value(channel)
+    }
+
+    let module = NativeModule::new("test.producer_closed_progress", ()).unwrap();
+    let closed = module
+        .function("closed_channel", NativeArity::Exact(0), closed_channel)
+        .unwrap();
+    let later = module
+        .function("later_channel", NativeArity::Exact(0), later_channel)
+        .unwrap();
+    // Once one channel has closed, a task waiting on another must still run
+    // when its value arrives; a closed channel counted as progress on every
+    // round would keep the root, waiting inside `main`, spinning instead.
+    let program = compile(
+        "native-producer-closed-progress.slug",
+        "val main = fn() {\n\
+             val channel = closed_channel()\n\
+             val first = select { recv channel }\n\
+             val second = later_channel()\n\
+             val task = spawn { select { recv second } }\n\
+             first + select { await task }\n\
+         }\n",
+    )
+    .expect("compile closed native channel source");
+    let mut vm = Vm::new();
+    vm.define_native(closed).unwrap();
+    vm.define_native(later).unwrap();
+    assert_eq!(vm.run_program(&program).unwrap(), Value::Int(42));
+}
+
+#[test]
 fn native_and_slug_senders_share_a_channel_buffer_bound() {
     struct ProducerState(Mutex<Option<slug_vm::NativeChannelProducer>>);
 

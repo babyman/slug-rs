@@ -1,0 +1,195 @@
+/**
+ * slug.arcade — a 1-bit arcade display, keyboard input, and a 60 Hz frame clock
+ *
+ * A program opens the display once, then repeats: read input, update its
+ * state, `present` a frame of bits, and call `frame`, which shows the frame
+ * and waits for the next 60 Hz tick. `frame` returns false when the player
+ * closes the window (or presses Escape), and the program should then `close`.
+ *
+ * A frame is `height` rows of `width` bits, each row `width / 8` bytes, with
+ * the least significant bit of a byte leftmost. With `rotate: true` the frame
+ * is shown turned 90 degrees counter-clockwise, as on an upright arcade
+ * monitor: bit `u` of row `v` appears at column `v`, line `width - 1 - u`.
+ *
+ * Headless mode. When the environment variable SLUG_ARCADE_HEADLESS names an
+ * input script, no window opens, frames do not wait, and input comes from the
+ * script. Each script line is one of:
+ *
+ *     <frame> <key>...   from this frame on, exactly these keys are held
+ *                        (`-` or no keys means none)
+ *     end <frame>        `frame` returns false once this many frames are done
+ *     dump <frame>       write that frame's bits to $SLUG_ARCADE_OUT/frame-<n>.bin
+ *     shot <frame>       write that frame as PNG to $SLUG_ARCADE_OUT/frame-<n>.png
+ *
+ * Frames are numbered from 0; the frame that a `frame` call completes is the
+ * number `frameCount` returned before the call. Input lines must be in frame
+ * order, `#` starts a comment, and SLUG_ARCADE_OUT defaults to the current
+ * directory. SLUG_ARCADE_HEADLESS set to `-` means no input, and the run
+ * then ends after 600 frames. When SLUG_ARCADE_RECORD names a file, every
+ * frame's bits are appended to it; when SLUG_ARCADE_HASHES does, each
+ * frame's 64-bit FNV-1a hash is appended, as 8 little-endian bytes.
+ *
+ * Sound. `sound` defines a named sound from 8-bit unsigned mono samples (128
+ * is silence); `play` starts it from the beginning, `loop` plays it over and
+ * over, and `stop` stops it. Headless runs make no sound; when
+ * SLUG_ARCADE_SOUNDS names a file, each `play`, `loop`, and `stop` call is
+ * written to it as a line `<frame> <play|loop|stop> <name>`, with the frame
+ * that the next `frame` call completes.
+ *
+ * Failures throw `Error` values whose `type` is `native.arcade`.
+ */
+
+/**
+ * The key names that `down` and `pressed` accept.
+ */
+export val keys = [
+    "left", "right", "up", "down", "space", "enter", "escape", "tab",
+    "backspace", "shift", "control",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+]
+
+// Typed native bindings, declared in this clutch's manifest.
+foreign openRaw = fn(title:str, width:num, height:num, rotate:num, scale:num):num
+foreign overlayRaw = fn(x:num, y:num, width:num, height:num, rgb:num):num
+foreign presentRaw = fn(bits:bytes):num
+foreign frameRaw = fn():bool
+foreign downRaw = fn(key:str):bool
+foreign pressedRaw = fn(key:str):bool
+foreign frameCountRaw = fn():num
+foreign screenshotRaw = fn(path:str, scale:num):num
+foreign soundRaw = fn(name:str, samples:bytes, rate:num):num
+foreign playRaw = fn(name:str, mode:num):num
+foreign closeRaw = fn():nil
+
+val fail = fn(msg:str) {
+    throw Error {type: "native.arcade", msg: msg}
+}
+
+val checked = fn(status:num, what:str):nil {
+    match status {
+        0 => nil
+        1 => fail("the display is already open")
+        2 => fail("invalid size for " + what)
+        3 => fail("cannot read the SLUG_ARCADE_HEADLESS input script")
+        4 => fail("the display is not open")
+        5 => fail("cannot write " + what)
+        6 => fail("cannot open a window")
+        7 => fail("no sound is named " + what)
+        _ => fail("unexpected status from " + what)
+    }
+}
+
+val known = fn(key:str):str {
+    val find = fn(i) {
+        if (i == len(keys)) {
+            fail("unknown key `" + key + "`")
+        } else if (keys[i] == key) {
+            key
+        } else {
+            recur(i + 1)
+        }
+    }
+    find(0)
+}
+
+/**
+ * Opens the display for frames of `width` by `height` bits; `width` must be a
+ * multiple of 8. Options: `rotate` (default false) shows frames turned for an
+ * upright monitor, and `scale` (default 2) enlarges the window.
+ */
+export val open = fn(title:str, width:num, height:num, options = {}):nil {
+    val rotate = if (options.rotate ?? false) { 1 } else { 0 }
+    checked(openRaw(title, width, height, rotate, options.scale ?? 2), "the display")
+}
+
+/**
+ * Colours lit pixels inside a rectangle of the displayed frame, given in
+ * displayed coordinates, with `rgb` such as 0x20ff20 for green. Later
+ * rectangles take precedence. Lit pixels outside every rectangle are white.
+ */
+export val overlay = fn(x:num, y:num, width:num, height:num, rgb:num):nil {
+    checked(overlayRaw(x, y, width, height, rgb), "an overlay")
+}
+
+/**
+ * Sets the frame that the next `frame` call shows.
+ */
+export val present = fn(bits:bytes):nil {
+    checked(presentRaw(bits), "the presented frame")
+}
+
+/**
+ * Shows the presented frame, waits for the next 60 Hz tick, and reads input.
+ * Returns false when the window has closed or the headless script has ended.
+ */
+export val frame = fn():bool {
+    frameRaw()
+}
+
+/**
+ * Whether `key` (one of `keys`) is held during the current frame.
+ */
+export val down = fn(key:str):bool {
+    downRaw(known(key))
+}
+
+/**
+ * Whether `key` went down at the start of the current frame.
+ */
+export val pressed = fn(key:str):bool {
+    pressedRaw(known(key))
+}
+
+/**
+ * The number of frames completed so far.
+ */
+export val frameCount = fn():num {
+    frameCountRaw()
+}
+
+/**
+ * Writes the presented frame as a PNG image, as displayed, with each pixel
+ * enlarged to `scale` by `scale` (default 2).
+ */
+export val screenshot = fn(path:str, scale = 2):nil {
+    checked(screenshotRaw(path, scale), path)
+}
+
+/**
+ * Defines, or redefines, the sound `name` from `samples`, 8-bit unsigned mono
+ * samples at `rate` per second (default 22050). Up to 32 sounds; a name is 1
+ * to 31 bytes.
+ */
+export val sound = fn(name:str, samples:bytes, rate = 22050):nil {
+    checked(soundRaw(name, samples, rate), "sound " + name)
+}
+
+/**
+ * Plays the sound `name` once, from its start.
+ */
+export val play = fn(name:str):nil {
+    checked(playRaw(name, 0), name)
+}
+
+/**
+ * Plays the sound `name` over and over until `stop`.
+ */
+export val loop = fn(name:str):nil {
+    checked(playRaw(name, 1), name)
+}
+
+/**
+ * Stops the sound `name`.
+ */
+export val stop = fn(name:str):nil {
+    checked(playRaw(name, 2), name)
+}
+
+/**
+ * Closes the display. Closing twice is harmless.
+ */
+export val close = fn():nil {
+    closeRaw()
+}

@@ -23,6 +23,7 @@ open state are validated by the native boundary.
 
 `readLine(file):str|nil` returns one line without a final `\n`, also removing
 the preceding `\r` from CRLF input. Empty lines are `""`; end of file is `nil`.
+`fs.readLine(file) ?? ""` gives a `str`, with `""` at end of file.
 To bound native memory use, a line may contain at most 16 MiB of UTF-8 bytes;
 reading a longer line throws a `native.io` error. A line containing a NUL byte
 also throws a `native.io` error.

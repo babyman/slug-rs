@@ -309,6 +309,9 @@ dependencies = [
 [[package]]
 name = "slug-loader"
 version = "0.1.0"
+dependencies = [
+ "slug-vm",
+]
 
 [[package]]
 name = "slug-native-adapter"

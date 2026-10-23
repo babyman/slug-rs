@@ -41,6 +41,10 @@ a specified feature is implemented.
 | [experimental-clutches.md](reference/experimental-clutches.md) | Version-0 local clutch composition experiment. |
 | [conformance-fixtures.md](reference/conformance-fixtures.md) | Portable fixture-sidecar contract. |
 | [native-abi.md](reference/native-abi.md) | Native calls, values, resources, threading, and future binary ABI contract. |
+| [value-json.md](reference/value-json.md) | The one JSON encoding of every Slug value. |
+| [diagnostics.md](reference/diagnostics.md) | The version 2 diagnostic document shared by the CLI and the interactive server. |
+| [diagnostic-codes.md](reference/diagnostic-codes.md) | Stable codes for parse, semantic, runtime, and startup diagnostics. |
+| [capability-report.md](reference/capability-report.md) | `slug report`: what a program can touch outside its own Slug code. |
 
 ### Engineering
 
@@ -64,6 +68,7 @@ a specified feature is implemented.
 | [immutable-collection-value-redesign.md](planning/immutable-collection-value-redesign.md) | Staged collection and `Value` representation work that preserves immutable semantics. |
 | [interactive-slim-retained-cells.md](planning/interactive-slim-retained-cells.md) | Retained interactive cells with one execution model across runtime configurations. |
 | [numeric-representation-decision.md](planning/numeric-representation-decision.md) | Outstanding numeric semantics, representation, and VM-performance decision plan. |
+| [agent-facing-direction.md](planning/agent-facing-direction.md) | Product direction for agent-written, human-reviewed code, with ordered work and measures. |
 | [completed/](planning/completed/) | Retained plans for completed or superseded implementation work, including: |
 | [cslug-whole-program-artifacts.md](planning/completed/cslug-whole-program-artifacts.md) | Completed `.cslug` codec, verifier, host persistence, and firmware artifact path. |
 | [esp32-s3-static-clutch-gpio.md](planning/completed/esp32-s3-static-clutch-gpio.md) | Completed ESP32-S3 static-provider GPIO plan and on-device verification record. |

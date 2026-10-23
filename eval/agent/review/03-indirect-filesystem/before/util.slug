@@ -1,0 +1,5 @@
+/**
+ * Formatting helpers.
+ */
+
+export val label = fn(name, value) { "$name = $value" }

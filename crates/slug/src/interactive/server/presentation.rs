@@ -1,11 +1,10 @@
-//! JSON-facing request decoding and value projection for interactive sessions.
+//! JSON-facing request decoding and result shapes for interactive sessions.
 //!
 //! Session scheduling stays in the parent server. This module owns the
 //! protocol representation so transport changes cannot alter VM lifecycle.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use slug_vm::Value as SlugValue;
 
 use super::super::{Diagnostic, Request};
 
@@ -42,43 +41,6 @@ pub(super) fn session_result(pending: bool) -> Value {
 
 const fn session_state(pending: bool) -> &'static str {
     if pending { "stalled" } else { "idle" }
-}
-
-pub(super) fn protocol_value(value: &SlugValue) -> Value {
-    match value {
-        SlugValue::Nil => Value::Null,
-        SlugValue::Bool(value) => Value::Bool(*value),
-        SlugValue::Int(value) => json!(value),
-        SlugValue::Float(value) if value.is_finite() => json!(value),
-        SlugValue::Str(value) => json!(value.as_ref()),
-        SlugValue::List(values) => Value::Array(values.iter().map(protocol_value).collect()),
-        _ => json!({ "kind": value_kind(value), "display": value.to_string() }),
-    }
-}
-
-fn value_kind(value: &SlugValue) -> &'static str {
-    match value {
-        SlugValue::Uninitialized | SlugValue::Binding { .. } => "binding",
-        SlugValue::Nil => "nil",
-        SlugValue::Bool(_) => "bool",
-        SlugValue::Int(_) | SlugValue::Float(_) => "num",
-        SlugValue::Str(_) => "str",
-        SlugValue::Bytes(_) => "bytes",
-        SlugValue::List(_) => "list",
-        SlugValue::Map(_) => "map",
-        SlugValue::StructSchema(_) => "struct_schema",
-        SlugValue::Struct(_) => "struct",
-        SlugValue::Enum(_) => "enum",
-        SlugValue::Channel(_) => "chan",
-        SlugValue::Closure(_)
-        | SlugValue::Native(_)
-        | SlugValue::DeclaredNative { .. }
-        | SlugValue::Builtin(_) => "fn",
-        #[cfg(feature = "concurrency")]
-        SlugValue::Task(_) => "task",
-        SlugValue::NativeResource(_) => "native_resource",
-        SlugValue::Overloads(_) => "overloads",
-    }
 }
 
 pub(super) fn required_params<T>(request: &Request, method: &str) -> Result<T, Box<Diagnostic>>

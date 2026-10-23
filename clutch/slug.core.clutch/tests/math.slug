@@ -1,0 +1,34 @@
+val math = import("slug.math")
+val {assertEqual, assertThrows} = import("slug.test")
+
+val MIN = -9223372036854775807 - 1
+
+// The thrown error's type and message.
+val failure = fn(work:fn):list {
+    val error = assertThrows(work)
+    [error.type, error.msg]
+}
+
+@test
+val addOverflows = fn() {
+    assertEqual(failure(fn() { math.add(9223372036854775807, 1) }), ["math.range", "integer addition overflowed"])
+    assertEqual(failure(fn() { math.add(-9223372036854775807, -2) }), ["math.range", "integer addition overflowed"])
+}
+
+@test
+val sqrtOfANegativeIsADomainError = fn() {
+    assertEqual(failure(fn() { math.sqrt(-1.0) }), ["math.domain", "sqrt requires a non-negative number"])
+}
+
+@test
+val divIsExactWhereFloatDivisionIsNot = fn() {
+    assertEqual(math.div(MIN, 1), MIN)
+    assertEqual(math.div(-7, 2) * 2 + -7 % 2, -7)
+    assertEqual(int(9223372036854775807 / 3) == math.div(9223372036854775807, 3), false)
+}
+
+@test
+val divRejectsZeroAndTheOneOverflow = fn() {
+    assertEqual(failure(fn() { math.div(1, 0) }), ["math.domain", "div requires a non-zero divisor"])
+    assertEqual(failure(fn() { math.div(MIN, -1) }), ["math.range", "integer division overflowed"])
+}

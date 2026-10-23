@@ -18,7 +18,7 @@ use slug_loader::{
 };
 use slug_vm::{
     ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program,
-    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleExports,
+    Value, Vm, VmConfiguration, VmHost, VmHostError, VmModuleDescription, VmModuleExports,
     cslug::{Artifact, ImportEdge, Module as ArtifactModule},
     native_resource_registry,
 };
@@ -45,6 +45,12 @@ struct ModuleRuntimeServices {
     native_resources: slug_vm::NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
+}
+
+/// Source text retained for one module of a compiled artifact.
+pub(crate) struct ArtifactSource {
+    pub(crate) diagnostic_name: String,
+    pub(crate) text: String,
 }
 
 /// The storage-independent state shared by all requests for one module graph.
@@ -157,11 +163,11 @@ impl ModuleGraph {
                 &source.key,
                 &source.diagnostic_name,
                 &source.text,
-                request.name != "slug.builtin",
+                Some(request.name),
             )
-            .map_err(|error| ModuleLoadError::Source {
+            .map_err(|error| ModuleLoadError::Compile {
                 location: source.diagnostic_name.clone(),
-                message: error.to_string(),
+                error: Box::new((&error).into()),
             })?;
         compilation.program.set_module_name(request.name);
         // The resolver key, rather than the diagnostic label, is the stable
@@ -207,7 +213,7 @@ impl ModuleGraph {
         path: &str,
         source: &str,
     ) -> Result<Program, SourceError> {
-        self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, true)
+        self.compile_source_for_module(resolver, &ModuleKey::new(path), path, source, None)
             .map(|compilation| compilation.program)
     }
 
@@ -223,9 +229,22 @@ impl ModuleGraph {
         path: &str,
         source: &str,
     ) -> Result<Artifact, ModuleLoadError> {
+        self.compile_artifact_with_sources(resolver, path, source)
+            .map(|(artifact, _)| artifact)
+    }
+
+    /// Like [`Self::compile_artifact`], also returning each module's source
+    /// text at its module index.
+    pub(crate) fn compile_artifact_with_sources(
+        &self,
+        resolver: &dyn ModuleResolver,
+        path: &str,
+        source: &str,
+    ) -> Result<(Artifact, Vec<ArtifactSource>), ModuleLoadError> {
         let mut modules = Vec::new();
         let mut indexes = HashMap::new();
         let mut imports = Vec::new();
+        let mut sources = Vec::new();
         let key = ModuleKey::new(path);
         let root = self.collect_artifact_module(
             resolver,
@@ -236,12 +255,14 @@ impl ModuleGraph {
             &mut modules,
             &mut indexes,
             &mut imports,
+            &mut sources,
         )?;
-        Ok(Artifact {
+        let artifact = Artifact {
             root,
             modules,
             imports,
-        })
+        };
+        Ok((artifact, sources))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -255,21 +276,16 @@ impl ModuleGraph {
         modules: &mut Vec<ArtifactModule>,
         indexes: &mut HashMap<ModuleKey, usize>,
         imports: &mut Vec<ImportEdge>,
+        sources: &mut Vec<ArtifactSource>,
     ) -> Result<usize, ModuleLoadError> {
         if let Some(index) = indexes.get(key) {
             return Ok(*index);
         }
         let mut compilation = self
-            .compile_source_for_module(
-                resolver,
-                key,
-                diagnostic_name,
-                source,
-                name != "slug.builtin",
-            )
-            .map_err(|error| ModuleLoadError::Source {
+            .compile_source_for_module(resolver, key, diagnostic_name, source, Some(name))
+            .map_err(|error| ModuleLoadError::Compile {
                 location: diagnostic_name.into(),
-                message: error.to_string(),
+                error: Box::new((&error).into()),
             })?;
         compilation.program.set_module_name(name);
         compilation.program.set_module_key(key.as_str());
@@ -289,11 +305,15 @@ impl ModuleGraph {
             name: name.into(),
             program: compilation.program,
         });
+        sources.push(ArtifactSource {
+            diagnostic_name: diagnostic_name.into(),
+            text: source.into(),
+        });
         for import_name in
             crate::source::static_import_names(diagnostic_name, source).map_err(|error| {
-                ModuleLoadError::Source {
+                ModuleLoadError::Compile {
                     location: diagnostic_name.into(),
-                    message: error.to_string(),
+                    error: Box::new((&error).into()),
                 }
             })?
         {
@@ -307,6 +327,7 @@ impl ModuleGraph {
                 modules,
                 indexes,
                 imports,
+                sources,
             )?;
             imports.push(ImportEdge {
                 importer: index,
@@ -323,9 +344,9 @@ impl ModuleGraph {
         key: &ModuleKey,
         diagnostic_name: &str,
         source: &str,
-        include_implicit_builtins: bool,
+        module_name: Option<&str>,
     ) -> Result<crate::source::CompiledSource, SourceError> {
-        compile_with_resolver(diagnostic_name, source, include_implicit_builtins, |name| {
+        compile_with_resolver(diagnostic_name, source, module_name, |name| {
             self.semantic_snapshot(resolver, ModuleRequest::new(Some(key), name))
         })
     }
@@ -353,7 +374,7 @@ impl ModuleGraph {
                 &source.key,
                 &source.diagnostic_name,
                 &source.text,
-                request.name != "slug.builtin",
+                Some(request.name),
             )
             .ok()
             .map(|compilation| compilation.snapshot);
@@ -438,6 +459,7 @@ impl ModuleGraph {
             program: program.program().clone(),
             exports: Value::map(Vec::new()),
             metadata: vm.module_metadata().to_vec(),
+            values: HashMap::new(),
             live_exports: vm.live_exported_values(program.program()),
         };
         self.state
@@ -452,14 +474,26 @@ impl ModuleGraph {
             if let Some(activation) = activation.as_mut() {
                 activation.cleanup();
             }
-            return Err(ModuleLoadError::Source {
-                location: source.diagnostic_name.clone(),
-                message: error.to_string(),
+            // A module whose own import failed to compile reports that
+            // source error, which is what needs fixing.
+            return Err(match error.compile_error().cloned().map(Box::new) {
+                Some(compile_error) => ModuleLoadError::Compile {
+                    location: compile_error.span.as_ref().map_or_else(
+                        || source.diagnostic_name.clone(),
+                        |span| span.path.to_string(),
+                    ),
+                    error: compile_error,
+                },
+                None => ModuleLoadError::Source {
+                    location: source.diagnostic_name.clone(),
+                    message: error.to_string(),
+                },
             });
         }
         let instance = ModuleInstance {
             exports: vm.exported_values(program.program()),
             metadata: vm.module_metadata().to_vec(),
+            values: vm.declared_values(),
             ..instance
         };
         self.state
@@ -482,9 +516,9 @@ impl ModuleGraph {
         }
         let declarations =
             foreign_declarations(&source.diagnostic_name, &source.text).map_err(|error| {
-                ModuleLoadError::Source {
+                ModuleLoadError::Compile {
                     location: source.diagnostic_name.clone(),
-                    message: error.to_string(),
+                    error: Box::new((&error).into()),
                 }
             })?;
         host.check_foreign_declarations(source, module_name, &declarations)
@@ -505,11 +539,11 @@ impl ModuleGraph {
                 &source.key,
                 &source.diagnostic_name,
                 &source.text,
-                module_name != "slug.builtin",
+                Some(module_name),
             )
-            .map_err(|error| ModuleLoadError::Source {
+            .map_err(|error| ModuleLoadError::Compile {
                 location: source.diagnostic_name.clone(),
-                message: error.to_string(),
+                error: Box::new((&error).into()),
             })?;
         compilation.program.set_module_name(module_name);
         compilation.program.set_module_key(source.key.as_str());
@@ -543,6 +577,7 @@ impl ModuleGraph {
             program,
             exports: exports.clone(),
             metadata: Vec::new(),
+            values: HashMap::new(),
             live_exports: exports,
         };
         self.state
@@ -572,10 +607,26 @@ pub struct ModuleInstance {
     pub program: Program,
     pub exports: Value,
     pub metadata: Vec<ModuleDeclaration>,
+    /// Every top-level binding's value as initialization left it, exported or
+    /// not, for `describe`.
+    pub values: HashMap<String, Value>,
     pub(crate) live_exports: Value,
 }
 
 impl ModuleInstance {
+    /// Its declarations and their values, as `describe` reports them.
+    #[must_use]
+    pub fn description(&self) -> VmModuleDescription {
+        VmModuleDescription {
+            declarations: self.metadata.clone(),
+            values: self
+                .values
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        }
+    }
+
     /// Returns the live export map used by runtime `import()` calls.
     #[must_use]
     pub fn live_exports(&self) -> Value {
@@ -666,6 +717,20 @@ impl ModuleHost {
     /// Returns checked loader or source errors when a static dependency is unavailable.
     pub fn compile_artifact(&self, path: &str, source: &str) -> Result<Artifact, ModuleLoadError> {
         self.state.graph.compile_artifact(self, path, source)
+    }
+
+    /// Compiles entry source and its static imports and reports their capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when a static dependency is
+    /// unavailable or invalid.
+    pub fn capability_report(
+        &self,
+        path: &str,
+        source: &str,
+    ) -> Result<crate::CapabilityReport, ModuleLoadError> {
+        self.state.graph.capability_report(self, path, source)
     }
 
     #[doc(hidden)]
@@ -824,13 +889,22 @@ impl VmHost for ModuleHost {
         let importer = importer.map(ModuleKey::new);
         let instance = self
             .initialize_request(ModuleRequest::new(importer.as_ref(), name))
-            .map_err(|error| match error {
-                ModuleLoadError::NotFound { .. } => VmHostError::not_found(error.to_string()),
-                error => VmHostError::new(error.to_string()),
-            })?;
+            .map_err(VmHostError::from)?;
         Ok(VmModuleExports {
             exports: instance.live_exports,
         })
+    }
+
+    fn describe_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleDescription, VmHostError> {
+        let importer = importer.map(ModuleKey::new);
+        let instance = self
+            .initialize_request(ModuleRequest::new(importer.as_ref(), name))
+            .map_err(VmHostError::from)?;
+        Ok(instance.description())
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value> {

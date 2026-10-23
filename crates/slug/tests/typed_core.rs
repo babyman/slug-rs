@@ -1,5 +1,7 @@
-//! `slug.io.stdin` and `slug.math` on typed native bindings, built from the
-//! `slug.core` clutch as clutch staging builds it.
+//! `slug.io.stdin`, `slug.math`, and `slug.string` on typed native bindings, built from the
+//! `slug.core` clutch as clutch staging builds it. Each native binding is exercised here against
+//! a freshly built library; the modules' behaviour is tested in Slug, by the clutch's own tests,
+//! which `make test-clutches` runs.
 
 use std::{
     env,
@@ -65,6 +67,9 @@ fn slug_home(directory: &TemporaryDirectory) {
         "modules/std.slug",
         "modules/stdin.slug",
         "modules/math.slug",
+        "modules/string.slug",
+        "modules/toml.slug",
+        "modules/test.slug",
         "native/source/core.c",
         "native/source/slug_core.h",
     ] {
@@ -78,7 +83,10 @@ fn slug_home(directory: &TemporaryDirectory) {
         "[modules]\n\
          \"slug.std\" = \"slug.core.clutch\"\n\
          \"slug.io.stdin\" = \"slug.core.clutch\"\n\
-         \"slug.math\" = \"slug.core.clutch\"\n",
+         \"slug.math\" = \"slug.core.clutch\"\n\
+         \"slug.string\" = \"slug.core.clutch\"\n\
+         \"slug.fmt.toml\" = \"slug.core.clutch\"\n\
+         \"slug.test\" = \"slug.core.clutch\"\n",
     )
     .expect("write repository manifest");
     let manifest = NativeManifest::from_clutch_source(
@@ -174,19 +182,15 @@ fn adds_and_takes_square_roots() {
 }
 
 #[test]
-fn throws_typed_math_errors() {
+fn converts_characters_and_unicode_scalar_values() {
     let output = run_cli(
-        "val math = import(\"slug.math\")\n\
-         val failure = fn(work) { defer onerror(err) { err.type + \": \" + err.msg }; work() }\n\
-         println(failure(fn() { math.add(9223372036854775807, 1) }))\n\
-         println(failure(fn() { math.add(-9223372036854775807, -2) }))\n\
-         println(failure(fn() { math.sqrt(-1.0) }))\n",
+        "val {ord, chr} = import(\"slug.string\")\n\
+         println(ord(\"A\"), ord(\"\u{e9}\"), ord(\"\u{20ac}\"), ord(\"\u{1f600}\"), ord(chr(1114111)))\n\
+         println(chr(65), chr(233), chr(8364), chr(128512), chr(0) == \"\\0\")\n",
         b"",
     );
     assert_eq!(
         stdout(&output),
-        "math.range: integer addition overflowed\n\
-         math.range: integer addition overflowed\n\
-         math.domain: sqrt requires a non-negative number\n"
+        "65 233 8364 128512 1114111\nA \u{e9} \u{20ac} \u{1f600} true\n"
     );
 }

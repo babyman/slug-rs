@@ -187,7 +187,7 @@ fn repl_renders_structured_source_errors() {
 
     assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(stderr.contains("source error (semantic):"));
+    assert!(stderr.contains("semantic error (type_mismatch):"));
     assert!(stderr.contains("<interactive:s1>:"));
 }
 
@@ -234,7 +234,7 @@ fn repl_reports_invalid_source_without_a_continuation_prompt() {
     let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(!stdout.contains(". "));
-    assert!(stderr.contains("source error (parse): expected binding name"));
+    assert!(stderr.contains("parse error (expected_syntax): expected binding name"));
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn repl_returns_to_the_primary_prompt_after_a_structured_error() {
     let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(stdout.contains("> > 3\n> "));
-    assert!(stderr.contains("source error (parse): expected binding name"));
+    assert!(stderr.contains("parse error (expected_syntax): expected binding name"));
 }
 
 #[test]

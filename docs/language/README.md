@@ -38,6 +38,7 @@ normative.
 | `structs.md` | Schema identity, construction, defaults, field access, and equality. |
 | `strings.md` | String literals and string operations. |
 | `standard-input.md` | Process-standard-input stream and interactive helpers. |
+| `networking.md` | TCP listeners and connections, reading, writing, and backpressure. |
 | `value-pinning-in-match-patterns.md` | Pinning existing values in match patterns. |
 | `variadic-functions-and-spread-syntax.md` | Variadic parameters and spread arguments. |
 

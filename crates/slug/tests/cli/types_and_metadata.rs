@@ -92,7 +92,7 @@ fn selects_body_derived_subtract_alternatives_at_known_calls() {
 
     fs::write(
         &path,
-        "val remove = fn(map, key) { map - key }\nremove({[1]: \"one\"}, [])\n",
+        "val remove = fn(map, key) { map - key }\nremove({[1]: \"one\"}, {})\n",
     )
     .expect("write invalid map-key subtraction source");
     let output = slug()
@@ -109,7 +109,7 @@ fn selects_body_derived_subtract_alternatives_at_known_calls() {
     fs::write(
         &path,
         "val remove = fn(map, key) { map - key }\n\
-         val key:any|nil = []\n\
+         val key:any|nil = {}\n\
          remove({[1]: \"one\"}, key)\n",
     )
     .expect("write dynamic map-key subtraction source");
@@ -438,7 +438,7 @@ fn inferred_alternatives_widen_at_dynamic_call_boundaries() {
         &path,
         "val remove = fn(map, key) { map - key }\n\
          val selected = if (true) { remove } else { remove }\n\
-         selected({[1]: \"one\"}, [])\n",
+         selected({[1]: \"one\"}, {})\n",
     )
     .expect("write structural inferred subtract source");
     let output = slug()
@@ -470,6 +470,79 @@ fn inferred_alternatives_widen_at_dynamic_call_boundaries() {
             .starts_with("slug: runtime error:")
     );
     fs::remove_file(path).expect("remove dynamic inferred plus source");
+}
+
+#[test]
+fn inferred_alternatives_describe_only_functions_that_return_the_operation() {
+    let path = fixture_path("inferred-alternative-result");
+    for (source, stdout) in [
+        (
+            "val wrap = fn(left, right) { val sum = left + right; [sum] }\n\
+             println(wrap(1, 2)[0])\n",
+            "3\n",
+        ),
+        (
+            "val double = fn(value, count) {\n\
+             \x20   if (value < 100) { recur(value + value, count + count) } else { [value, count] }\n\
+             }\n\
+             println(double(3, 1))\n",
+            "[192, 64]\n",
+        ),
+        (
+            "val scale = fn(value, factor) { val product = value * factor; {product: product} }\n\
+             println(scale(5, 2).product)\n",
+            "10\n",
+        ),
+    ] {
+        fs::write(&path, source).expect("write wrapped operation source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run wrapped operation source");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            stdout,
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fs::write(
+        &path,
+        "val wrap = fn(left, right) { val sum = left + right; [sum] }\n\
+         val total:num = wrap(1, 2)\n",
+    )
+    .expect("write mismatched wrapped operation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run mismatched wrapped operation source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("expected num, got list")
+    );
+
+    fs::write(
+        &path,
+        "val combine = fn(left, right) {\n\
+         \x20   if (left < 0) { recur(left + 1, right) } else { left + right }\n\
+         }\n\
+         val text:str = combine(1, 2)\n",
+    )
+    .expect("write returned operation source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run returned operation source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("expected str, got num")
+    );
+    fs::remove_file(path).expect("remove inferred alternative result source");
 }
 
 #[test]
@@ -1110,7 +1183,7 @@ fn infers_block_results_without_leaking_block_bindings() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(
-        stderr.starts_with("slug: runtime error: unknown name `local`"),
+        stderr.starts_with("slug: semantic error: unknown name `local`"),
         "{stderr}"
     );
 }

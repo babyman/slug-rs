@@ -1,0 +1,17 @@
+val inputs = cfg("inputs", ["([]{})", "([)]", "((", ""])
+val closing = {")": "(", "]": "[", "}": "{"}
+val balanced = fn(text, i, stack) {
+  if (i == len(text)) { len(stack) == 0 } else {
+    val c = text[i]
+    if (c == "(" || c == "[" || c == "{") { recur(text, i + 1, stack :+ c) } else if (closing[c] != nil) {
+      if (len(stack) > 0 && stack[-1] == closing[c]) { recur(text, i + 1, stack[0:-1]) } else { false }
+    } else { recur(text, i + 1, stack) }
+  }
+}
+val each = fn(i) {
+  if (i < len(inputs)) {
+    println(if (balanced(inputs[i], 0, [])) { "yes" } else { "no" })
+    recur(i + 1)
+  }
+}
+each(0)

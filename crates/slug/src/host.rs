@@ -2,7 +2,7 @@
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs, io,
     path::{Path, PathBuf},
     rc::Rc,
@@ -16,7 +16,8 @@ use slug_frontend::{
 use slug_loader::{ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource};
 use slug_vm::{
     NativeDescriptorError, NativeFunction, NativeResourceRegistry, Program, Value, Vm,
-    VmConfiguration, VmHost, VmHostError, VmModuleExports, native_resource_registry,
+    VmConfiguration, VmHost, VmHostError, VmModuleDescription, VmModuleExports,
+    native_resource_registry,
 };
 
 use crate::Configuration;
@@ -35,6 +36,8 @@ struct DesktopLoaderState {
     native_resources: NativeResourceRegistry,
     warnings: RefCell<Vec<String>>,
     shutdown_errors: RefCell<Vec<String>>,
+    /// What the user running slug granted, such as `describe.unexported`.
+    permissions: RefCell<HashSet<String>>,
 }
 
 impl DesktopLoader {
@@ -100,6 +103,7 @@ impl DesktopLoader {
                 native_resources: native_resource_registry(),
                 warnings: RefCell::new(Vec::new()),
                 shutdown_errors: RefCell::new(Vec::new()),
+                permissions: RefCell::new(HashSet::new()),
             }),
         }
     }
@@ -172,6 +176,20 @@ impl DesktopLoader {
         source: &str,
     ) -> Result<slug_vm::cslug::Artifact, ModuleLoadError> {
         self.state.graph.compile_artifact(self, path, source)
+    }
+
+    /// Compiles entry source and its static imports and reports their capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns checked loader or source errors when a static dependency is
+    /// unavailable or invalid.
+    pub fn capability_report(
+        &self,
+        path: &str,
+        source: &str,
+    ) -> Result<slug_frontend::CapabilityReport, ModuleLoadError> {
+        self.state.graph.capability_report(self, path, source)
     }
 
     /// Resolves one import without initializing it.
@@ -292,6 +310,22 @@ impl ModuleGraphHost for DesktopLoader {
     }
 }
 
+impl DesktopLoader {
+    /// Grants `permission`, such as [`slug_vm::DESCRIBE_UNEXPORTED`], to the
+    /// programs this loader runs. Only the user running slug grants one.
+    pub fn grant(&self, permission: &str) {
+        // Test modules use their clutch's unexported declarations, so they
+        // resolve under the same permission.
+        if permission == slug_vm::DESCRIBE_UNEXPORTED {
+            self.state.resolver.enable_test_modules();
+        }
+        self.state
+            .permissions
+            .borrow_mut()
+            .insert(permission.into());
+    }
+}
+
 impl VmHost for DesktopLoader {
     fn import_module(
         &self,
@@ -303,13 +337,28 @@ impl VmHost for DesktopLoader {
             .state
             .graph
             .initialize(self, ModuleRequest::new(importer.as_ref(), name))
-            .map_err(|error| match error {
-                ModuleLoadError::NotFound { .. } => VmHostError::not_found(error.to_string()),
-                error => VmHostError::new(error.to_string()),
-            })?;
+            .map_err(VmHostError::from)?;
         Ok(VmModuleExports {
             exports: instance.live_exports(),
         })
+    }
+
+    fn describe_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleDescription, VmHostError> {
+        let importer = importer.map(ModuleKey::new);
+        let instance = self
+            .state
+            .graph
+            .initialize(self, ModuleRequest::new(importer.as_ref(), name))
+            .map_err(VmHostError::from)?;
+        Ok(instance.description())
+    }
+
+    fn permits(&self, permission: &str) -> bool {
+        self.state.permissions.borrow().contains(permission)
     }
 
     fn builtin_globals(&self) -> HashMap<String, Value> {

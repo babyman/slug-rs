@@ -37,6 +37,15 @@ fi
 if selected slug.db.sqlite.clutch "$@"; then
   stage slug.db.sqlite.clutch slug_db_sqlite
 fi
+if selected slug.net.tcp.clutch "$@"; then
+  stage slug.net.tcp.clutch slug_net_tcp
+fi
 if selected slug.core.clutch "$@"; then
   stage slug.core.clutch slug_core
+fi
+if selected slug.arcade.clutch "$@"; then
+  # The shim links the vendored raylib, so build it first.
+  sh clutch/slug.arcade.clutch/native/vendor/build-raylib.sh "$platform" \
+    "clutch/slug.arcade.clutch/native/$platform/libraylib.a"
+  stage slug.arcade.clutch slug_arcade
 fi

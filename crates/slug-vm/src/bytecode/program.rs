@@ -991,6 +991,13 @@ impl Program {
         &self.bindings
     }
 
+    /// Distinct global names this program reads, defines, or assigns. A name
+    /// absent from [`Program::bindings`] is supplied by the host at runtime.
+    #[must_use]
+    pub fn global_references(&self) -> &[String] {
+        &self.global_names
+    }
+
     #[must_use]
     pub fn declarations(&self) -> &[ModuleDeclaration] {
         &self.declarations

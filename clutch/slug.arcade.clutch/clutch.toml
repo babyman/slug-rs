@@ -1,0 +1,32 @@
+[modules]
+"slug.arcade" = { source = "modules/arcade.slug" }
+
+[native]
+profile = "core"
+headers = ["native/source/slug_arcade.h"]
+sources = ["native/source/arcade.c"]
+
+# The vendored raylib is built into native/<platform>/libraylib.a by
+# native/vendor/build-raylib.sh when the clutch is staged.
+[native.link_args]
+"macos-aarch64" = ["native/macos-aarch64/libraylib.a", "-Wl,-framework,Cocoa", "-Wl,-framework,IOKit", "-Wl,-framework,CoreVideo", "-Wl,-framework,OpenGL", "-Wl,-framework,CoreAudio", "-Wl,-framework,AudioToolbox"]
+"macos-x86_64" = ["native/macos-x86_64/libraylib.a", "-Wl,-framework,Cocoa", "-Wl,-framework,IOKit", "-Wl,-framework,CoreVideo", "-Wl,-framework,OpenGL", "-Wl,-framework,CoreAudio", "-Wl,-framework,AudioToolbox"]
+"linux-x86_64" = ["native/linux-x86_64/libraylib.a", "-lGL", "-lX11", "-lpthread", "-ldl", "-lrt", "-lm"]
+
+[native.libraries]
+"macos-aarch64" = "native/macos-aarch64/libslug_arcade.dylib"
+"macos-x86_64" = "native/macos-x86_64/libslug_arcade.dylib"
+"linux-x86_64" = "native/linux-x86_64/libslug_arcade.so"
+
+[native.functions."slug.arcade"]
+openRaw = { symbol = "slug_arcade_open", signature = "(cstr title, i32 width, i32 height, i32 rotate, i32 scale) -> i32" }
+overlayRaw = { symbol = "slug_arcade_overlay", signature = "(i32 x, i32 y, i32 width, i32 height, u32 rgb) -> i32" }
+presentRaw = { symbol = "slug_arcade_present", signature = "(bytes bits) -> i32" }
+frameRaw = { symbol = "slug_arcade_frame", signature = "() -> bool" }
+downRaw = { symbol = "slug_arcade_down", signature = "(cstr key) -> bool" }
+pressedRaw = { symbol = "slug_arcade_pressed", signature = "(cstr key) -> bool" }
+frameCountRaw = { symbol = "slug_arcade_frame_count", signature = "() -> i64" }
+screenshotRaw = { symbol = "slug_arcade_screenshot", signature = "(cstr path, i32 scale) -> i32" }
+soundRaw = { symbol = "slug_arcade_sound", signature = "(cstr name, bytes samples, i32 rate) -> i32" }
+playRaw = { symbol = "slug_arcade_play", signature = "(cstr name, i32 mode) -> i32" }
+closeRaw = { symbol = "slug_arcade_close", signature = "() -> void" }

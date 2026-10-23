@@ -1,0 +1,5 @@
+val prefix = "slug."
+val library = prefix + "std"
+val {map} = import(library)
+
+println(map([1, 2, 3], fn(n) { n + 1 }))

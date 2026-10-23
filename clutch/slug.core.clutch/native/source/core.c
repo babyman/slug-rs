@@ -117,3 +117,91 @@ bool slug_core_add(int64_t left, int64_t right, int64_t *sum) {
 }
 
 double slug_core_sqrt(double value) { return sqrt(value); }
+
+int64_t slug_core_ord(const char *text, size_t length) {
+  if (length == 0) return -1;
+  const unsigned char *bytes = (const unsigned char *)text;
+  /* Slug strings are valid UTF-8, so the lead byte gives the sequence length
+   * and every continuation byte is present. */
+  if (bytes[0] < 0x80) return bytes[0];
+  if (bytes[0] < 0xE0) return ((int64_t)(bytes[0] & 0x1F) << 6) | (bytes[1] & 0x3F);
+  if (bytes[0] < 0xF0) {
+    return ((int64_t)(bytes[0] & 0x0F) << 12) | ((int64_t)(bytes[1] & 0x3F) << 6) |
+           (bytes[2] & 0x3F);
+  }
+  return ((int64_t)(bytes[0] & 0x07) << 18) | ((int64_t)(bytes[1] & 0x3F) << 12) |
+         ((int64_t)(bytes[2] & 0x3F) << 6) | (bytes[3] & 0x3F);
+}
+
+bool slug_core_chr(int64_t code, const char **text, size_t *length) {
+  static _Thread_local char buffer[4];
+  if (code < 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return false;
+  size_t size = 0;
+  if (code < 0x80) {
+    buffer[size++] = (char)code;
+  } else if (code < 0x800) {
+    buffer[size++] = (char)(0xC0 | (code >> 6));
+    buffer[size++] = (char)(0x80 | (code & 0x3F));
+  } else if (code < 0x10000) {
+    buffer[size++] = (char)(0xE0 | (code >> 12));
+    buffer[size++] = (char)(0x80 | ((code >> 6) & 0x3F));
+    buffer[size++] = (char)(0x80 | (code & 0x3F));
+  } else {
+    buffer[size++] = (char)(0xF0 | (code >> 18));
+    buffer[size++] = (char)(0x80 | ((code >> 12) & 0x3F));
+    buffer[size++] = (char)(0x80 | ((code >> 6) & 0x3F));
+    buffer[size++] = (char)(0x80 | (code & 0x3F));
+  }
+  *text = buffer;
+  *length = size;
+  return true;
+}
+
+/* Whether `data` is well-formed UTF-8: no overlong forms, surrogates, or
+ * values above U+10FFFF. */
+static bool valid_utf8(const uint8_t *data, size_t length) {
+  size_t i = 0;
+  while (i < length) {
+    uint8_t lead = data[i];
+    size_t size;
+    uint8_t low = 0x80, high = 0xBF;
+    if (lead < 0x80) {
+      i++;
+      continue;
+    } else if (lead >= 0xC2 && lead <= 0xDF) {
+      size = 2;
+    } else if (lead >= 0xE0 && lead <= 0xEF) {
+      size = 3;
+      if (lead == 0xE0) low = 0xA0;
+      if (lead == 0xED) high = 0x9F;
+    } else if (lead >= 0xF0 && lead <= 0xF4) {
+      size = 4;
+      if (lead == 0xF0) low = 0x90;
+      if (lead == 0xF4) high = 0x8F;
+    } else {
+      return false;
+    }
+    if (length - i < size) return false;
+    if (data[i + 1] < low || data[i + 1] > high) return false;
+    for (size_t k = 2; k < size; k++) {
+      if (data[i + k] < 0x80 || data[i + k] > 0xBF) return false;
+    }
+    i += size;
+  }
+  return true;
+}
+
+bool slug_core_from_bytes(const uint8_t *data, size_t data_length, const char **text,
+                          size_t *length) {
+  if (!valid_utf8(data, data_length)) return false;
+  *text = data_length == 0 ? "" : (const char *)data;
+  *length = data_length;
+  return true;
+}
+
+void slug_core_to_bytes(const char *text, size_t text_length, const uint8_t **data,
+                        size_t *length) {
+  static const uint8_t empty[1] = {0};
+  *data = text_length == 0 ? empty : (const uint8_t *)text;
+  *length = text_length;
+}

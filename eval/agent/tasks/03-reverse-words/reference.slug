@@ -1,0 +1,15 @@
+val text = cfg("text", "the quick brown fox")
+val split = fn(i, word, words) {
+  if (i == len(text)) {
+    if (len(word) > 0) { words :+ word } else { words }
+  } else if (text[i] == " ") {
+    recur(i + 1, "", if (len(word) > 0) { words :+ word } else { words })
+  } else {
+    recur(i + 1, word + text[i], words)
+  }
+}
+val join = fn(words, i, out) {
+  if (i < 0) { out } else if (out == "") { recur(words, i - 1, words[i]) } else { recur(words, i - 1, out + " " + words[i]) }
+}
+val words = split(0, "", [])
+println(join(words, len(words) - 1, ""))

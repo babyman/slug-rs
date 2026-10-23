@@ -1,0 +1,26 @@
+val words = cfg("words", ["fig", "apple", "kiwi", "pear", "plum", "date"])
+val group = fn(i, groups) {
+  if (i == len(words)) { groups } else {
+    val size = len(words[i])
+    val existing = groups[size]
+    recur(i + 1, groups + {[size]: if (existing == nil) { [words[i]] } else { existing :+ words[i] }})
+  }
+}
+val groups = group(0, {})
+val longest = fn(sizes, i, best) {
+  if (i == len(sizes)) { best } else if (sizes[i] > best) { recur(sizes, i + 1, sizes[i]) } else { recur(sizes, i + 1, best) }
+}
+val show = fn(values, i, out) {
+  if (i == len(values)) { out } else {
+    val value = values[i]
+    recur(values, i + 1, if (i == 0) { value } else { out + " " + value })
+  }
+}
+val print = fn(size, last) {
+  if (size <= last) {
+    val members = groups[size]
+    if (members != nil) { println("$size:", show(members, 0, "")) }
+    recur(size + 1, last)
+  }
+}
+print(1, longest(keys(groups), 0, 0))

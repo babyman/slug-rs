@@ -2,24 +2,49 @@ use std::collections::{HashMap, HashSet};
 
 use slug_vm::{BinaryOperator, Capture, Chunk, Constant, Op, SourceSpan, Value};
 
+/// Where a name lives, as seen by one function. In `State::outer`, a
+/// `Local` is a slot of the enclosing function and a `Capture` is a slot of
+/// this function's own captures.
 #[derive(Clone, Debug)]
 pub(super) enum Binding {
-    Global { mutable: bool },
-    Local { slot: usize, mutable: bool },
-    Capture { slot: usize, mutable: bool },
-    Outer { source: Capture, mutable: bool },
+    Global {
+        mutable: bool,
+    },
+    Local {
+        slot: usize,
+        mutable: bool,
+    },
+    Capture {
+        slot: usize,
+        mutable: bool,
+    },
+    /// A name the enclosing function itself sees from further out. The
+    /// enclosing function resolves it, capturing it in turn, when this one
+    /// is finished.
+    Inherited {
+        mutable: bool,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum CaptureRequest {
+    /// A capture of the enclosing function's local or capture slot.
     Direct(Capture),
-    ThroughParent(Capture),
+    /// A name the enclosing function must capture from further out.
+    ThroughParent(String),
 }
 
 pub(super) struct State {
     chunk: Chunk,
     scopes: Vec<HashMap<String, Binding>>,
     callables: Vec<HashSet<String>>,
+    /// Per scope, the local functions whose slots were declared when the
+    /// block began and are not yet claimed by their declarations.
+    hoisted: Vec<HashSet<String>>,
+    /// Per scope, the other names the block declares later; and those of the
+    /// enclosing functions' blocks. Such a name cannot be used yet.
+    later: Vec<HashSet<String>>,
+    outer_later: HashSet<String>,
     outer: HashMap<String, Binding>,
     captures: Vec<CaptureRequest>,
     root: bool,
@@ -34,6 +59,9 @@ impl State {
             chunk: Chunk::new("main", 0),
             scopes: vec![HashMap::new()],
             callables: vec![HashSet::new()],
+            hoisted: vec![HashSet::new()],
+            later: vec![HashSet::new()],
+            outer_later: HashSet::new(),
             outer: HashMap::new(),
             captures: Vec::new(),
             root: true,
@@ -56,6 +84,9 @@ impl State {
             chunk: Chunk::new("<fn>", parameters.len()),
             scopes: vec![parameters_scope],
             callables: vec![HashSet::new()],
+            hoisted: vec![HashSet::new()],
+            later: vec![HashSet::new()],
+            outer_later: HashSet::new(),
             outer,
             captures: Vec::new(),
             root: false,
@@ -163,12 +194,81 @@ impl State {
     pub(super) fn enter_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.callables.push(HashSet::new());
+        self.hoisted.push(HashSet::new());
+        self.later.push(HashSet::new());
     }
     pub(super) fn leave_scope(&mut self) {
         self.scopes.pop();
         self.callables.pop();
+        self.hoisted.pop();
+        self.later.pop();
+    }
+    /// Records a name the current block declares later, other than a hoisted
+    /// function.
+    pub(super) fn declare_later(&mut self, name: &str) {
+        self.later
+            .last_mut()
+            .expect("a compiler state always has a scope")
+            .insert(name.into());
+    }
+    /// Whether `name` is declared later in an enclosing block, here or in an
+    /// enclosing function, and so cannot be used yet.
+    pub(super) fn declared_later(&self, name: &str) -> bool {
+        self.later.iter().any(|later| later.contains(name)) || self.outer_later.contains(name)
+    }
+    /// The names a nested function cannot use yet.
+    pub(super) fn inherit_later(&mut self, parent: &State) {
+        self.outer_later = parent
+            .later
+            .iter()
+            .flatten()
+            .chain(&parent.outer_later)
+            .cloned()
+            .collect();
+    }
+    /// Declares a local function's slot when its block begins, so functions
+    /// declared earlier in the block can call it; its declaration claims it.
+    pub(super) fn hoist(&mut self, name: &str, mutable: bool) {
+        let hoisted = self
+            .hoisted
+            .last_mut()
+            .expect("a compiler state always has a scope");
+        if hoisted.insert(name.into()) {
+            self.declare(name.into(), mutable, false);
+        }
+    }
+    /// Whether `name`, read in this function, is a local function hoisted in
+    /// an enclosing scope of it whose declaration has not run yet. A nested
+    /// function may refer to it, since that runs later, but a direct use
+    /// would find no function.
+    pub(super) fn before_declaration(&self, name: &str) -> bool {
+        for (scope, hoisted) in self.scopes.iter().zip(&self.hoisted).rev() {
+            if scope.contains_key(name) {
+                return hoisted.contains(name);
+            }
+        }
+        false
+    }
+    /// The slot hoisted for `name` in this scope, now claimed by its
+    /// declaration as a callable binding.
+    pub(super) fn claim_hoisted(&mut self, name: &str) -> Option<usize> {
+        if !self.hoisted.last_mut()?.remove(name) {
+            return None;
+        }
+        let Some(Binding::Local { slot, .. }) = self.scopes.last()?.get(name) else {
+            return None;
+        };
+        let slot = *slot;
+        self.callables
+            .last_mut()
+            .expect("a compiler state always has a callable scope")
+            .insert(name.into());
+        Some(slot)
     }
     pub(super) fn declare(&mut self, name: String, mutable: bool, callable: bool) -> usize {
+        if let Some(later) = self.later.last_mut() {
+            later.remove(&name);
+        }
         let slot = self.next_local;
         self.next_local += 1;
         self.scopes
@@ -206,23 +306,24 @@ impl State {
         {
             return Some(binding);
         }
-        let binding = self.outer.get(name).cloned()?;
-        match binding {
-            Binding::Global { .. } | Binding::Capture { .. } => Some(binding),
-            Binding::Local { slot, mutable } => {
-                let slot = self.request_capture(CaptureRequest::Direct(Capture::Local(slot)));
-                let binding = Binding::Capture { slot, mutable };
-                self.outer.insert(name.into(), binding.clone());
-                Some(binding)
-            }
-            Binding::Outer { source, mutable } => {
-                let slot = self.request_capture(CaptureRequest::ThroughParent(source));
-                let binding = Binding::Capture { slot, mutable };
-                self.outer.insert(name.into(), binding.clone());
-                Some(binding)
-            }
-        }
+        self.lookup_outer(name)
     }
+    /// Resolves a name from outside this function, capturing it on first use.
+    fn lookup_outer(&mut self, name: &str) -> Option<Binding> {
+        let binding = self.outer.get(name).cloned()?;
+        let (request, mutable) = match binding {
+            Binding::Global { .. } | Binding::Capture { .. } => return Some(binding),
+            Binding::Local { slot, mutable } => {
+                (CaptureRequest::Direct(Capture::Local(slot)), mutable)
+            }
+            Binding::Inherited { mutable } => (CaptureRequest::ThroughParent(name.into()), mutable),
+        };
+        let slot = self.request_capture(request);
+        let binding = Binding::Capture { slot, mutable };
+        self.outer.insert(name.into(), binding.clone());
+        Some(binding)
+    }
+    /// The names a function nested here sees, as that function sees them.
     pub(super) fn visible(&self) -> HashMap<String, Binding> {
         let mut result: HashMap<String, Binding> = self
             .outer
@@ -230,18 +331,9 @@ impl State {
             .map(|(name, binding)| {
                 let binding = match binding {
                     Binding::Global { mutable } => Binding::Global { mutable: *mutable },
-                    Binding::Local { slot, mutable } => Binding::Outer {
-                        source: Capture::Local(*slot),
-                        mutable: *mutable,
-                    },
-                    Binding::Capture { slot, mutable } => Binding::Capture {
-                        slot: *slot,
-                        mutable: *mutable,
-                    },
-                    Binding::Outer { source, mutable } => Binding::Outer {
-                        source: source.clone(),
-                        mutable: *mutable,
-                    },
+                    Binding::Local { mutable, .. }
+                    | Binding::Capture { mutable, .. }
+                    | Binding::Inherited { mutable } => Binding::Inherited { mutable: *mutable },
                 };
                 (name.clone(), binding)
             })
@@ -256,9 +348,10 @@ impl State {
             .into_iter()
             .map(|capture| match capture {
                 CaptureRequest::Direct(capture) => capture,
-                CaptureRequest::ThroughParent(capture) => {
-                    Capture::Capture(self.request_capture(CaptureRequest::Direct(capture)))
-                }
+                CaptureRequest::ThroughParent(name) => match self.lookup_outer(&name) {
+                    Some(Binding::Capture { slot, .. }) => Capture::Capture(slot),
+                    other => unreachable!("inherited name `{name}` resolved to {other:?}"),
+                },
             })
             .collect()
     }
@@ -276,21 +369,6 @@ impl State {
         }
         let slot = self.captures.len();
         self.captures.push(capture);
-        if let Some(CaptureRequest::Direct(source)) = self.captures.last() {
-            for binding in self.outer.values_mut() {
-                if let Binding::Outer {
-                    source: outer_source,
-                    mutable,
-                } = binding
-                    && outer_source == source
-                {
-                    *binding = Binding::Capture {
-                        slot,
-                        mutable: *mutable,
-                    };
-                }
-            }
-        }
         slot
     }
 }
@@ -320,6 +398,28 @@ mod tests {
         ));
         let middle_captures = root.resolve_child_captures(middle.captures());
         assert_eq!(middle_captures, vec![Capture::Local(0)]);
+    }
+
+    #[test]
+    fn a_child_captures_its_parents_capture_rather_than_reusing_its_slot() {
+        let mut root = State::root();
+        root.declare("value".into(), false, false);
+
+        let mut parent = State::function(&[], root.visible());
+        assert!(matches!(
+            parent.lookup("value"),
+            Some(Binding::Capture { slot: 0, .. })
+        ));
+        let mut child = State::function(&[], parent.visible());
+        assert!(matches!(
+            child.lookup("value"),
+            Some(Binding::Capture { slot: 0, .. })
+        ));
+        assert_eq!(
+            parent.resolve_child_captures(child.captures()),
+            vec![Capture::Capture(0)]
+        );
+        assert_eq!(parent.captures().len(), 1);
     }
 
     #[test]

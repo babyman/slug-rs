@@ -57,7 +57,27 @@ statement_sep = ";" | NEWLINE ;
 
 Newlines separate statements only where the lexer and parser permit automatic
 statement termination. Authors should use parentheses or a continued operator
-expression when a value spans lines.
+expression when a value spans lines. A newline after an infix operator, or
+before a line that begins with one, continues the expression. `-` and `!` are
+also prefix operators, so a line beginning with `-` continues only when a space
+follows the `-`, and one beginning with `!` only as `!=`: after `val k = f(x)`,
+a line `-k + 1` is a statement of its own, while `    - k` subtracts. No
+statement begins with `else`, so an `else` at the start of a line, after any
+blank or comment lines, continues the `if` before it; a `;` before `else` still
+ends that `if`.
+
+These words are reserved and cannot be used as names: `copy`, `defer`, `else`,
+`enum`, `export`, `false`, `fn`, `foreign`, `if`, `match`, `nil`, `nursery`,
+`onerror`, `onsuccess`, `recur`, `resource`, `return`, `select`, `spawn`,
+`struct`, `throw`, `true`, `val`, and `var`. `limit` is a keyword only directly
+after `nursery`, and is an ordinary name elsewhere. A reserved word may still
+be a map key, a property name after `.`, or a struct field name, none of which
+binds a name: `{nil: 1, copy: true}` has the string keys `"nil"` and
+`"copy"`, read as `m.nil` and `m.copy`. `true` and `false` are the exception
+as map keys: like number and bytes literals, they are keys of their own type,
+so `{true: 1}` has the boolean key `true`. A map pattern with a reserved key
+needs an explicit pattern, `{nil: value}`, since the shorthand `{nil}` would
+bind it.
 
 Blocks are expressions containing statements:
 
@@ -87,6 +107,23 @@ Strings are Slug's only textual value type. The language does not expose a
 separate symbol or atom value; implementations may still intern identifiers
 internally.
 
+Double-quoted strings interpret escapes and `$identifier` interpolation. The
+escapes are `\n`, `\r`, `\t`, `\b` (backspace), `\f` (form feed), `\\`, `\"`,
+`\$`, and a backslash followed by one to three octal digits, such as `\101`
+for `A`. A backslash followed by any other character is kept as written, so
+`"\q"` is the two characters `\q`. Single-quoted strings are raw: they
+interpret no escapes and no interpolation, so `'\\'` is two backslashes, `'\n'`
+is a backslash and an `n`, and `'"'` is one double quote. Tripled quotes
+(`'''` and `"""`) write multiline strings with the same rules as their single
+forms; a newline right after the opening delimiter or right before the closing
+one is omitted.
+
+```slug
+'say "hi"' == "say \"hi\""
+'\\' == "\\\\"
+len("\\") == 1
+```
+
 Bytes use pairs of hexadecimal digits. `0x""` is the empty bytes value; a
 non-empty bytes literal must contain a whole number of pairs.
 
@@ -101,7 +138,10 @@ bytes[1:] == 0x"0304"
 0x"0102" + 0x"0304" == 0x"01020304"
 ```
 
-Numbers may contain underscore separators. A bare identifier or quoted string
+Numbers may contain underscore separators. An integer literal without a
+fraction or exponent must be at most 9223372036854775807; a larger one is an
+`invalid_number` error, and written with a fraction (`.0`) it is a float.
+A bare identifier or quoted string
 used as a map key is a string key, so `{name: "Slug"}` and
 `{"name": "Slug"}` are indexed with `["name"]`. A bracketed map key evaluates
 an expression instead:
@@ -130,10 +170,46 @@ var_expr = "var" , match_pattern , [ ":" , type_annotation ] , "=" , expression 
 assignment = identifier , "=" , assignment | logical_or ;
 ```
 
-Bindings are lexical. A name resolves to its nearest enclosing binding. An
+Bindings are lexical. A name resolves to its nearest enclosing binding.
+Inside a function, a block's `val name = fn ...` and `var name = fn ...`
+declarations are visible throughout that block, so its functions may call one
+another in any order, as at module level. Using such a function directly
+before its declaration has run, or using another binding before the block
+declares it, is a static error at the use. A name that is not declared, and
+is not one the runtime provides to every module, is a static error that
+suggests the names in scope it most likely misspells. The runtime provides
+the exports of `slug.builtin` and the VM functions `cfg`, `int`, and
+`stacktrace`. When the compiler cannot know every name the runtime will
+provide, because `slug.builtin` is not available to it, a `{*}` declaration
+selects from a map whose entries are known only when it runs, or the source is
+an interactive session's, whose host may add names, an undeclared name is
+instead looked up when it runs and is an error then. An
 assignment changes an existing `var` binding and is invalid for a `val` binding
 or an unknown name. It evaluates to the value assigned, so an assignment may be
 the final expression of a function body or appear inside another expression.
+An assignment whose value reads the `var` before calling a function that may
+assign it, directly or through the functions it calls, is a static error,
+because the assignment would discard the call's change: in
+`output = output :+ render(evaluate(x))`, an `output` appended to while
+`evaluate` runs is overwritten. Bind the call's result first and read the
+`var` after it. Only calls of functions declared with `val name = fn ...` are
+followed, and only through functions nested in the one that declares the
+`var`, which share the same `var`.
+
+A binding's type is set by its first value. A `var` has a declared type that
+every later assignment must conform to: its annotation, or else the type of
+its initializer, except for a `nil` initializer, since `nil` there means no
+value yet. A `var` that starts as `nil` is declared `nil` with the type of its
+first assignment written in its scope, including one in a nested function,
+and is `any|nil` when it has none or that assignment's type is unknown. So
+`var count = 0` accepts only numbers, and after `var best = nil` and
+`best = 5`, `best = "s"` is an error that names the declaration to write,
+`var best:num|str|nil = nil`. An accumulator such as `count = count + 1`
+takes the type its other assignments give it. A `val` is never assigned again,
+so `val none = nil` stays exactly `nil`. Within a function, an assignment or a
+nil test refines the type that following code reads, but never the declared
+type; a nested function reads a captured `var` by its declared type, since it
+may run after any later assignment.
 
 At module top level, `{*}` may be used as a declaration pattern. It requires a
 map with string keys and creates one top-level binding per entry. This is the
@@ -165,6 +241,7 @@ Operator precedence, from lowest to highest, is:
 | `&&` | left |
 | `==` `!=` | left |
 | `<` `<=` `>` `>=` | left |
+| `??` | right |
 | `|` `^` `&` | left |
 | `<<` `>>` | left |
 | `+` `-` | left |
@@ -175,6 +252,23 @@ Operator precedence, from lowest to highest, is:
 | pipeline `/>` | left |
 | calls, indexing, dot access, struct initialization and copy | left |
 
+`a ?? b` is `a` unless `a` is `nil`, in which case it evaluates and is `b`;
+`b` is not evaluated otherwise. Only `nil` selects `b`: `false ?? true`,
+`0 ?? 1`, and `"" ?? "x"` keep their left operand. Its type is `a`'s type
+without `nil`, joined with `b`'s, so `readLine(file) ?? ""` is a `str` and
+`counts[word] ?? 0` defaults a missing map entry. `??` binds more tightly than
+comparison and less than the bitwise and arithmetic operators, and groups to
+the right, so `a ?? b ?? c` tries each in turn and `count ?? 0 > 3` compares
+`count ?? 0`. A line beginning with `??` continues the expression before it.
+
+Arithmetic on two integers gives an integer, and one whose result does not fit
+is a runtime error. `/` gives an integer only when the division is exact and a
+float otherwise, so `7 / 2` is `3.5`. `%` gives the remainder with the sign of
+the dividend: `-7 % 2` is `-1`. For the quotient rounded toward zero, use
+`div` from `slug.math`: `math.div(-7, 2)` is `-3`, exact for integers of any
+size. `int(a / b)` is not exact for large integers, because the float quotient
+holds only 53 bits.
+
 Bitwise operators (`&`, `|`, and `^`) accept two integers or byte operands.
 When either operand is bytes, an integer from `0` through `255` becomes a
 one-byte value and the result is bytes. A shorter non-empty bytes operand
@@ -184,6 +278,13 @@ of a bytes operand. Shifts (`<<`, `>>`) accept integers only. A shift count
 must be an integer from `0` through `63`; invalid operand or shift-count
 combinations are checked runtime type errors. Right shifts are arithmetic: they
 preserve the sign of a negative integer.
+
+Ordering comparisons (`<`, `<=`, `>`, `>=`) accept two numbers or two strings.
+Strings compare lexicographically by their UTF-8 bytes, which is also their
+Unicode scalar value order: `"Z" < "a"`, `"ab" < "abc"`, and `"é" > "z"`.
+Comparing a number with a string, or ordering any other value, is a checked
+runtime type error, and a statically known incompatible pair is a semantic
+error. `==` and `!=` compare strings by content.
 
 ```slug
 0x"ff00" & 0x"0ff0" == 0x"0f00"
@@ -277,7 +378,12 @@ type_parameters  = "<" , identifier , { "," , identifier } , ">" ;
 parameter        = { tag } , [ "..." ] , ( identifier | "_" ) ,
                    [ ":" , type_annotation ] , [ "=" , expression ] ;
 match_body       = "match" , "{" , [ match_case , { case_sep , match_case } ] , "}" ;
+case_sep         = ";" | NEWLINE ;
 ```
+
+Match cases are separated by a newline or `;`, as statements are; a `,`
+separates the alternative patterns of one case. A function's `match` body
+matches its arguments and takes no subject.
 
 Parameters may have default expressions. A variadic parameter uses `...` and
 must be final. Calls accept positional, named, and spread arguments:
@@ -410,8 +516,8 @@ rule and current implementation boundary.
 ## Pattern matching
 
 `match` selects the first matching case. A case may have a guard introduced by
-`if`. Pattern alternatives in one case are allowed only when they do not create
-bindings. If the subject is a map literal, it must be parenthesized to avoid
+`if`. Pattern alternatives in one case are separated by `,`, as in
+`"+", "-" => ...`, and are allowed only when they do not create bindings. If the subject is a map literal, it must be parenthesized to avoid
 being read as the case block: `match ({name: "Slug"}) { {name} => name }`.
 A guard whose ordering comparison receives incompatible operand types evaluates
 to `false`, allowing matching to continue with the next case; ordering
@@ -508,7 +614,11 @@ call frames.
 
 Recursion is Slug's only source-language looping construct. Slug has no
 `while`, `for`, or `loop` form, and it has no `break` or `continue` statement.
-Programs express repetition by calling a function recursively. In a tail
+Programs express repetition by calling a function recursively. A function
+declared with `val name = fn ...` or `var name = fn ...` may call itself by
+`name` in its body, at module level or inside another function; inside a
+function the new binding is visible to the body, so it shadows any outer
+binding of the same name there. In a tail
 position, `recur(...)` is the stack-safe form: it restarts the current function
 with new argument values instead of making another call.
 
@@ -542,7 +652,8 @@ throw or checked runtime fault is unwinding.
 `defer onerror(err)` receives the original thrown value for `throw value`. For
 a checked VM fault it receives a string-keyed map with `type`, `msg`, and
 `data` fields. `type` is one of `invalid_bytecode`, `type`, `name`, `arity`,
-`divide_by_zero`, `invalid_call`, `native`, `module`, or `match`; `msg` is its
+`divide_by_zero`, `invalid_call`, `native`, `module`, `module_not_found`, or
+`match`; `msg` is its
 diagnostic message; and `data` is `nil` until a fault defines structured extra
 data.
 
@@ -616,7 +727,10 @@ the imported overload set.
 `slug.builtin` is the small, host-provided foundation module. When the host
 registers matching bindings, its exports are implicitly available in every
 module and may also be imported explicitly with `import("slug.builtin")`.
-Local declarations take precedence over implicit builtin bindings. A host that
+Local declarations take precedence over implicit builtin bindings: a module
+that declares a function named like a builtin, such as `close`, replaces the
+builtin there rather than adding an overload to it, so `slug.io.fs`'s `close`
+accepts only files. A host that
 does not provide `slug.builtin` injects nothing; it does not create unbound
 placeholder names.
 
@@ -707,6 +821,11 @@ ordinary callable declarations. If no eligible local `main` exists, evaluation
 ends after the top-level statements. A top-level failure prevents entrypoint
 invocation.
 
+When `main` returns a number, the runtime exits with it as the process's
+status. It must be an integer from 0 to 255; any other number is reported as an
+error and the status is 1. Any other result, including `nil`, is success, as is
+the last value of a program without `main`.
+
 ```slug
 val main = fn() {
   println("serve")
@@ -759,14 +878,39 @@ The current Rust subset accepts tags on `val`, `var`, `foreign`, `resource`,
 and `enum` declarations and on function parameters. It evaluates their
 arguments in the current lexical environment when the corresponding declaration
 or function literal is evaluated; declaration tags run before the declared
-value. Tagged foreign declarations retain their metadata, but host resolution
-and `slug.meta` introspection are not implemented yet.
+value. Tagged foreign declarations retain their metadata. `describe` reports a
+module's top-level declaration tags, as described below.
 
 The subset also parses strict documentation blocks on top-level `val`, `var`,
-`foreign`, `resource`, and `enum` declarations, as well as a first module doc
-block followed by a blank line. It retains top-level declaration documentation
-and evaluated tag metadata in the module model; metadata introspection is not
-implemented yet.
+`foreign`, `resource`, `enum`, and `type` declarations, as well as a first
+module doc block followed by a blank line. It retains top-level declaration
+documentation and evaluated tag metadata in the module model, which `describe`
+reports. A type alias has no runtime declaration, so its documentation is for
+readers of the source only, and a tag on one is a parse error.
+
+`describe(module, unexported = false)` initializes the module named `module`,
+resolved as `import` resolves it, and returns its top-level declarations in
+source order, one map per declared binding:
+
+| Key | Value |
+|---|---|
+| `name` | the binding's name |
+| `exported` | whether the declaration is exported |
+| `mutable` | whether it is a `var` |
+| `documentation` | its doc block's text without the `*` markers, or `nil` |
+| `tags` | its tags in order, each `{name, arguments}`, with the arguments as evaluated |
+| `value` | the binding's value when the module finished initializing |
+
+```slug
+val examples = describe("calc")[0].tags   // [{name: "testWith", arguments: [[1, 2], 3]}]
+```
+
+By default only exported declarations are returned. `unexported = true` adds
+the others, which bypasses the module's encapsulation, so it is allowed only
+when the user running slug grants the `describe.unexported` permission with
+`--allow-unexported`; otherwise it is a `permission` runtime error. A host
+without module metadata, such as one running a compiled `.cslug` artifact,
+reports that it cannot describe modules.
 
 ```slug
 @deprecated
@@ -827,7 +971,8 @@ A doc block uses `/** ... */`. Every non-empty content line must begin with
 is exported, allowing intervening tags, the `export` modifier, and comments.
 The first meaningful doc
 block in a module is the module documentation when it is followed by a blank
-line. Documentation and tags are observable through `slug.meta` introspection.
+line. Top-level declaration documentation and tags are observable through
+`describe`.
 
 ## Static checking
 
@@ -851,16 +996,36 @@ struct-field annotations. Its semantic analysis rejects directly provable
 annotation mismatches in declarations, parameter defaults, function returns,
 struct defaults, and calls to statically known annotated functions. It infers
 body-derived `num` parameter types from division, modulo, unary negation, and
-ordinary ordering comparisons. Function expressions infer structural
+ordering comparisons with a number literal, and `str` from ordering
+comparisons with a string literal. Function expressions infer structural
 `fn<R, P...>` value types from their parameter annotations or solved body facts,
 and declared or inferred results. That precision is retained through ordinary
 bindings and collection inference. It infers generic arguments from
 annotated call positions and supports explicit type applications. Successful
-match type constraints narrow case-local bindings. Semantic analysis tracks an
+match type constraints narrow case-local bindings. A binding or wildcard case
+without a constraint has the subject's type less what earlier unguarded cases
+match whole: a `nil` literal, or a binding or wildcard pattern with or without
+a constraint. So in `match line { nil => "" ; text => text }`, where `line` is
+`str|nil`, `text` is `str`, and when the subject is a name, it narrows the same
+way inside the case. Semantic analysis tracks an
 expression's value type separately from whether its control flow can continue:
 `return`, `throw`, and `recur(...)` terminate their current flow even when a
-payload remains relevant to function result checking. Broader flow-sensitive
-narrowing and inference for dynamic expression forms remain future work.
+payload remains relevant to function result checking: a function's result
+type is the union of its body's value, every `return` value in it, including
+one in a match case or a `defer onerror` handler, and the value of each
+`defer onerror` handler, which becomes the result when it recovers. A
+declared result type is checked at each of them. A nil test narrows a name,
+and also a string-keyed member of an immutable binding, such as a `val`,
+parameter, or pattern binding: after `r.error != nil`, `r.error` and
+`r["error"]` are not `nil` on that path, as they are past
+`if (r.error == nil) { return ... }`. A `var`'s members are not narrowed,
+since an assignment may replace the value. A member stays narrowed after
+branches only when every branch that continues narrowed it. Nil tests combine:
+where `a != nil && b != nil` holds, neither is `nil`; where
+`a == nil || b == nil` fails, as past `if (a == nil || b == nil) { return 0 }`,
+neither is `nil`; and `!` swaps where a test holds and fails. Broader
+flow-sensitive narrowing and inference for dynamic expression forms remain
+future work.
 
 Operators, indexing, and slicing check
 statically known operand families. Numeric arithmetic, bitwise and shift
@@ -950,6 +1115,19 @@ val names:list<str|nil> = ["Ada", nil]
 val scores:map<str, num|nil> = {ada: 10, bob: nil}
 ```
 
+Lists, maps, and tasks only give their elements out, so they are covariant: a
+`list<A>` conforms to `list<B>` when `A` conforms to `B`, a `map<K, V>` to
+`map<J, W>` when `K` conforms to `J` and `V` to `W`, and a `task<A>` to
+`task<B>` when `A` conforms to `B`. A channel also takes values in, so
+`chan<A>` conforms only to `chan<A>`. Union normalization drops a member that
+another member covers, so `list<num>|list<num|str>` is `list<num|str>`.
+
+```slug
+val mixed:list<num|str> = [1, 2]
+var record:map<str, any|nil> = {kind: "text"}
+record = {kind: "number", value: 1}
+```
+
 An unannotated parameter derives its type from constraints in its declaring
 function body; callers validate the completed signature but never contribute to
 its inference. A direct call in that body may use an already-known, uniquely
@@ -957,9 +1135,43 @@ resolved callee signature to constrain a parameter passed to one of its bound
 argument positions. This is still body-derived inference: the call does not
 derive or alter the callee's signature. Dynamic or structural calls, spreads,
 ambiguous alternatives, and unsupported recursive inference cycles do not add
-such a constraint and retain dynamic behavior. Division, modulo, unary
-negation, and ordinary ordering comparisons infer `num` when they require an
-unannotated parameter to be numeric.
+such a constraint and retain dynamic behavior. Division, modulo, and unary
+negation infer `num` when they require an unannotated parameter to be numeric.
+An ordering comparison infers `num` for an unannotated parameter compared with
+a number literal and `str` for one compared with a string literal. Comparing
+two unannotated parameters adds no constraint, because they may be two
+numbers or two strings. When one path through the body constrains a parameter
+more than once, every constraint must hold: if one constraint's type is
+assignable to the other's, the parameter takes the narrower type, so passing a
+`num` parameter on to a callee's `any|nil` parameter keeps it `num`.
+Constraints of which neither is assignable to the other, such as `num` and
+`str`, are a static error.
+
+Constraints follow the paths a call can take. A parameter is constrained only
+when every path that finishes, by the body's end or a `return`, constrains it
+to the same type; a path that throws does not finish. So the branches of an
+`if` or `match`, the right operand of `&&`, `||`, and `??`, and the code after
+an early `return` constrain only their own paths:
+
+```slug
+val arithmetic = fn(op, a, b) {
+  if (op == "+" && isText(a)) { return a + b }   // a stays dynamic,
+  a / b                                          // so "x" + "y" is allowed
+}
+```
+
+On the path where a parameter equals a literal, such as the `then` branch of
+`if (n == 0)` or the right operand of `n != 0 && ...`, the parameter has the
+literal's type. A recursive helper whose base case returns a parameter
+untouched leaves that parameter dynamic. A parameter default runs whenever its
+argument is omitted, so its constraints hold on every path.
+
+A nested function may never run, so it adds no constraint to an enclosing
+function's parameter. It does narrow one the enclosing body already has: in
+`fn(c) { defer tcp.close(c); val serve = fn() { tcp.read(c) }; serve() }`,
+`close` accepts a listener or a connection and `read` only a connection, so
+`c` is a connection. A nested function's own parameter of the same name is a
+different binding.
 
 A direct `value == nil` or `value != nil` test for an unannotated parameter
 partitions its body requirements by reachable branch. The nil branch contributes
@@ -975,9 +1187,16 @@ val divideOrZero = fn(value) {
 This direct-comparison rule does not extend to aliases, arbitrary predicates,
 or mutation-sensitive facts. If the body supplies no unique type, the parameter
 widens to `any|nil`; `fn(value)` and `fn(value:any|nil)` therefore have
-identical input signatures only in that fallback case. An unannotated binding
+identical input signatures only in that fallback case. Inside the body, such a
+parameter is dynamic rather than `any|nil`: its value, and a result derived
+from it, are checked at runtime, so `fn(out) { out }` or a recursive helper
+returning its accumulator can be used where a `str` is required. An explicit
+`any|nil` annotation keeps its static meaning. An unannotated binding
 is inferred from its initializer, and an unannotated function result is inferred
-from all reachable result expressions. An explicit annotation remains the
+from all reachable result expressions. A part of an initializer's type that the
+checker cannot infer, such as the result of a call to such a helper, stays
+dynamic in the binding, as it is where the value is used directly: after
+`val b = helper()`, `b` may be used wherever `helper()` may. An explicit annotation remains the
 declaration's public type even when its value is inferred more narrowly:
 
 ```slug
@@ -1069,10 +1288,23 @@ uncertainty must not be converted into the deliberate source-level `any` type.
 The built-in `schema` type describes schema values and does not accept type
 arguments. The common parameterized forms are `list<T>`, `map<K, V>`,
 `chan<T>`, `task<T>`, and `struct<Name>`. A bracketed type such as `[str, num]` is a
-fixed-length tuple type. A function type is written `fn<R, P1, P2, ...>`,
+fixed-length tuple type. A list literal whose elements differ in type, with no
+spread of a list of unknown length, is a tuple, so `[parts, headers]` keeps
+each element's type: a constant index, including a negative one, reads that
+element's type, and a list pattern without a rest binds each element's type.
+A literal whose elements share a type is a list of it. A list literal checked
+against a tuple annotation, in a declaration, a function result, or a
+`return`, takes its elements' types, so `fn():[num, num] { [lo, hi] }` holds.
+A tuple is assignable to a tuple of the same length whose elements its own
+are assignable to, and to a list whose element type its elements are; it takes
+part in every other list operation as that list. A `var` initialized with a
+tuple holds a list, since its later values need not have that length. A function type is written `fn<R, P1, P2, ...>`,
 where the first argument is the return type and the remaining arguments are
 the parameter types. For example, `fn<num, num, num>` denotes a function that
-returns `num` and accepts two `num` parameters.
+returns `num` and accepts two `num` parameters. Two function types match when
+they have the same number of arguments and each pair is equal, or one of the
+pair is a result or parameter the checker could not infer, such as a
+recursive function's own result, which matches any type.
 
 Resource types, enums, and aliases are declared as specified in
 [Nominal types](nominal-types.md). There is no built-in broad `resource` type.

@@ -4,7 +4,7 @@
 //! not discover process environment, command-line arguments, or configuration.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
@@ -14,6 +14,7 @@ use std::{
 use slug_loader::{
     ForeignDeclaration, ModuleActivation as ModuleActivationLease, ModuleActivationTransaction,
     ModuleKey, ModuleLoadError, ModuleRequest, ModuleResolver, ModuleSource, module_path,
+    suggest_module_names,
 };
 use slug_vm::{NativeDescriptorError, NativeFunction, Value};
 #[doc(hidden)]
@@ -40,6 +41,9 @@ pub struct DesktopResolver {
     activation_state: Rc<RefCell<DesktopActivationState>>,
     /// Text-result switches of each staged typed activation.
     typed_text_results: Rc<RefCell<HashMap<ModuleActivationLease, TextResults>>>,
+    /// Whether indexed clutches' test modules resolve, which only the user
+    /// running slug enables.
+    test_modules: Cell<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -161,7 +165,15 @@ impl DesktopResolver {
             activation_sources: Rc::new(RefCell::new(HashMap::new())),
             activation_state: Rc::new(RefCell::new(DesktopActivationState::default())),
             typed_text_results: Rc::new(RefCell::new(HashMap::new())),
+            test_modules: Cell::new(false),
         }
+    }
+
+    /// Lets indexed clutches' test modules resolve. They see their clutch's
+    /// unexported declarations, so a host enables them only when its user
+    /// grants that.
+    pub fn enable_test_modules(&self) {
+        self.test_modules.set(true);
     }
 
     /// Stages the native registrations required by a resolved module.
@@ -363,6 +375,38 @@ impl DesktopResolver {
             }
         }
     }
+
+    /// Resolves `name` when it is an indexed clutch's test module, which
+    /// requires test modules to be enabled.
+    fn resolve_test_module(&self, name: &str) -> Option<Result<ModuleSource, ModuleLoadError>> {
+        let path = self.clutch_repository.test_module(name)?;
+        if !self.test_modules.get() {
+            return Some(Err(ModuleLoadError::Clutch {
+                location: name.into(),
+                message: format!(
+                    "`{name}` is a clutch test module, which resolves only when slug runs with --allow-unexported"
+                ),
+            }));
+        }
+        Some(
+            path.map_err(|message| ModuleLoadError::Clutch {
+                location: name.into(),
+                message,
+            })
+            .and_then(|path| {
+                let text = fs::read_to_string(&path).map_err(|error| ModuleLoadError::Read {
+                    location: path.to_string_lossy().into_owned(),
+                    message: error.to_string(),
+                })?;
+                Ok(ModuleSource {
+                    key: ModuleKey::new(path.to_string_lossy()),
+                    diagnostic_name: path.to_string_lossy().into_owned(),
+                    text,
+                    activation: None,
+                })
+            }),
+        )
+    }
 }
 
 fn remove_foreign_batch(
@@ -387,11 +431,20 @@ impl ModuleResolver for DesktopResolver {
     fn resolve(&self, request: ModuleRequest<'_>) -> Result<ModuleSource, ModuleLoadError> {
         let relative = module_path(request.name)?;
         let mut candidates = Vec::new();
+        // A bare importer file name has the empty path as its parent, which
+        // names no directory; it means the current directory.
         if let Some(importer) = request
             .importer
             .map(ModuleKey::as_str)
             .map(Path::new)
             .and_then(Path::parent)
+            .map(|parent| {
+                if parent.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    parent
+                }
+            })
         {
             candidates.push((importer, importer.join(&relative)));
         }
@@ -455,14 +508,117 @@ impl ModuleResolver for DesktopResolver {
                 activation: lease,
             });
         }
-        Err(ModuleLoadError::NotFound {
-            name: request.name.into(),
+        if let Some(source) = self.resolve_test_module(request.name) {
+            return source;
+        }
+        Err(self.not_found(request.name, &candidates, &relative))
+    }
+}
+
+/// How many directories above a searched one to look for a misplaced module.
+const MODULE_SEARCH_ANCESTORS: usize = 4;
+
+/// The module's file in a directory above any searched root, where a program
+/// in a subdirectory, such as `tests/`, might expect its import to find it.
+/// Each is relative to the root it is above, such as `../jobs.slug`.
+fn modules_above<'a>(roots: impl Iterator<Item = &'a Path>, relative: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for root in roots {
+        // A relative root such as `.` has no ancestors of its own.
+        let Ok(root) = root.canonicalize() else {
+            continue;
+        };
+        let mut up = PathBuf::new();
+        for ancestor in root.ancestors().skip(1).take(MODULE_SEARCH_ANCESTORS) {
+            up.push("..");
+            if ancestor.join(relative).is_file() {
+                let shown = up.join(relative).to_string_lossy().into_owned();
+                if !found.contains(&shown) {
+                    found.push(shown);
+                }
+                break;
+            }
+        }
+    }
+    found
+}
+
+impl DesktopResolver {
+    /// The not-found error for `name`, with close module names and any file
+    /// of that name above the directories searched.
+    fn not_found(
+        &self,
+        name: &str,
+        candidates: &[(&Path, PathBuf)],
+        relative: &Path,
+    ) -> ModuleLoadError {
+        let local = local_module_names(candidates);
+        let library_root = self.library_root.as_deref();
+        let elsewhere = modules_above(
+            candidates
+                .iter()
+                .filter(|(root, _)| Some(*root) != library_root)
+                .map(|(root, _)| *root),
+            relative,
+        );
+        ModuleLoadError::NotFound {
+            name: name.into(),
             searched: candidates
                 .iter()
                 .map(|(_, path)| path.to_string_lossy().into_owned())
                 .collect(),
-        })
+            suggestions: suggest_module_names(
+                name,
+                local
+                    .iter()
+                    .map(String::as_str)
+                    .chain(self.clutch_repository.module_names()),
+            ),
+            elsewhere,
+        }
     }
+}
+
+/// The modules in each searched root's top directory and in the directory
+/// each search looked in, as candidates for a not-found suggestion. Reading
+/// only those directories keeps a failed import from walking a source tree.
+fn local_module_names(candidates: &[(&Path, PathBuf)]) -> Vec<String> {
+    let mut names = Vec::new();
+    for (root, path) in candidates {
+        let mut directories = vec![root.to_path_buf()];
+        if let Some(parent) = path.parent()
+            && parent != *root
+        {
+            directories.push(parent.to_path_buf());
+        }
+        for directory in directories {
+            let Ok(entries) = fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_none_or(|extension| extension != "slug") {
+                    continue;
+                }
+                let Ok(relative) = path
+                    .with_extension("")
+                    .strip_prefix(root)
+                    .map(Path::to_path_buf)
+                else {
+                    continue;
+                };
+                let name = relative
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                if module_path(&name).is_ok() {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
 }
 
 impl DesktopResolver {
@@ -645,6 +801,98 @@ mod tests {
 
         assert_eq!(source.text, "export val answer = 42\n");
         assert!(source.activation.is_some());
+        fs::remove_dir_all(root).expect("remove temporary resolver directory");
+    }
+
+    #[test]
+    fn resolves_declared_clutch_test_modules_only_when_enabled() {
+        let root = root();
+        let repository_root = root.join("repository");
+        let clutch = repository_root.join("demo.clutch");
+        fs::create_dir_all(clutch.join("modules")).expect("create clutch module directory");
+        fs::create_dir_all(clutch.join("tests/unit")).expect("create clutch test directory");
+        fs::write(clutch.join("modules/lib.slug"), "export val answer = 42\n")
+            .expect("write clutch module");
+        fs::write(
+            clutch.join("tests/unit/lib.slug"),
+            "export val checked = true\n",
+        )
+        .expect("write clutch test");
+        fs::write(
+            repository_root.join("manifest.toml"),
+            "[modules]\n\"demo.lib\" = \"demo.clutch\"\n",
+        )
+        .expect("write repository manifest");
+        let manifest = |files: &str| {
+            fs::write(
+                clutch.join("clutch.toml"),
+                format!(
+                    "[modules]\n\"demo.lib\" = {{ source = \"modules/lib.slug\" }}\n\n[tests]\nfiles = [{files}]\n"
+                ),
+            )
+            .expect("write clutch manifest");
+        };
+
+        // A test file's name is the clutch's, then its path, without `.slug`.
+        manifest("\"tests/unit/lib.slug\"");
+        let repository =
+            ClutchRepository::from_manifest(&repository_root).expect("load clutch repository");
+        let resolver = DesktopResolver::with_clutch_repository(&root, None, repository);
+        let error = resolver
+            .resolve(ModuleRequest::new(None, "demo.tests.unit.lib"))
+            .expect_err("test modules are not enabled");
+        assert!(
+            error.to_string().contains(
+                "`demo.tests.unit.lib` is a clutch test module, which resolves only when slug runs with --allow-unexported"
+            ),
+            "{error}"
+        );
+        resolver.enable_test_modules();
+        let source = resolver
+            .resolve(ModuleRequest::new(None, "demo.tests.unit.lib"))
+            .expect("resolve test module");
+        assert_eq!(source.text, "export val checked = true\n");
+        assert!(source.activation.is_none());
+
+        // A missing test file is reported when the module resolves, not when
+        // the repository loads, so it does not break other programs.
+        manifest("\"tests/missing.slug\"");
+        let repository =
+            ClutchRepository::from_manifest(&repository_root).expect("load clutch repository");
+        let resolver = DesktopResolver::with_clutch_repository(&root, None, repository);
+        resolver.enable_test_modules();
+        let error = resolver
+            .resolve(ModuleRequest::new(None, "demo.tests.missing"))
+            .expect_err("the test file is missing");
+        assert!(
+            error.to_string().contains("cannot access test file"),
+            "{error}"
+        );
+
+        // Invalid declarations are manifest errors.
+        for (files, message) in [
+            (
+                "\"../escape.slug\"",
+                "test file `../escape.slug` escapes the clutch root",
+            ),
+            (
+                "\"tests/notes.txt\"",
+                "test file `tests/notes.txt` must name a `.slug` file",
+            ),
+            (
+                "\"tests/bad-name.slug\"",
+                "would be module `demo.tests.bad-name`",
+            ),
+            (
+                "\"lib.slug\"",
+                "module `demo.lib` has more than one clutch provider",
+            ),
+        ] {
+            manifest(files);
+            let error = ClutchRepository::from_manifest(&repository_root)
+                .expect_err("invalid test declaration");
+            assert!(error.to_string().contains(message), "{files}: {error}");
+        }
         fs::remove_dir_all(root).expect("remove temporary resolver directory");
     }
 

@@ -1,0 +1,5 @@
+[modules]
+"slug.net.http" = { source = "modules/http.slug" }
+
+[tests]
+files = ["tests/http.slug"]

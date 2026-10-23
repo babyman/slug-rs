@@ -1,0 +1,12 @@
+val a = cfg("a", [1, 4, 9])
+val b = cfg("b", [2, 3, 10, 11])
+val merge = fn(i, j, out) {
+  if (i == len(a) && j == len(b)) { out } else if (j == len(b) || (i < len(a) && a[i] <= b[j])) { recur(i + 1, j, out :+ a[i]) } else { recur(i, j + 1, out :+ b[j]) }
+}
+val show = fn(values, i, out) {
+  if (i == len(values)) { out } else {
+    val value = values[i]
+    recur(values, i + 1, if (i == 0) { "$value" } else { out + " $value" })
+  }
+}
+println(show(merge(0, 0, []), 0, ""))

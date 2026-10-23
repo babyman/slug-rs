@@ -10,7 +10,11 @@ A struct expression creates a new schema identity every time it is evaluated.
 Its value has type `schema`; values constructed through a direct known schema
 binding `S` have type `struct<S>`. `schema` itself has no type arguments.
 Fields are ordered by their declaration order and names must be unique. A field
-without a default is required.
+without a default is required. Schema fields are separated by a comma, one or
+more newlines, or both, and a trailing comma is allowed. Two fields with no
+separator between them, such as `x: num y: num`, are a parse error: `expected
+comma or newline between struct fields`. Semicolons and consecutive commas do
+not separate fields.
 
     val User = struct {
       name,
@@ -24,7 +28,10 @@ default expressions.
 
 The current Rust subset accepts fields with optional annotations and defaults.
 During compilation, a statically known default must conform to its field
-annotation. Known local, aliased, and imported schema bindings retain their
+annotation. An unannotated field's type is set by its default, as a `var`'s is
+by its initializer: `count = 0` accepts only numbers, while a `nil` default,
+`error = nil`, declares `any|nil`, so construction and copying may give the
+field any value. A field with neither has no static type. Known local, aliased, and imported schema bindings retain their
 field metadata for construction, copy, and direct field-access checks;
 annotations do not coerce runtime values.
 
@@ -38,6 +45,10 @@ existing struct value.
 Applying a schema to a brace-delimited field list constructs a value:
 
     val user = User {name: "Slug"}
+
+Construction and copy fields require commas, with an optional trailing comma;
+newlines may follow a comma or precede the closing brace. A missing comma is a
+parse error: `expected comma between struct fields`.
 
 The schema expression is evaluated first, followed by provided field expressions
 in source order. Construction fails through the checked runtime type-error path

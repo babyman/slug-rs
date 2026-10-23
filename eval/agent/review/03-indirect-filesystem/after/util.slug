@@ -1,0 +1,13 @@
+/**
+ * Formatting helpers.
+ */
+
+val fs = import("slug.io.fs")
+
+export val label = fn(name, value) { "$name = $value" }
+
+export val save = fn(path, text) {
+  val file = fs.openWrite(path)
+  fs.write(file, text)
+  fs.close(file)
+}

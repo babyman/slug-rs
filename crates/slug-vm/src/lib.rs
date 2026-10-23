@@ -14,6 +14,7 @@ extern crate alloc;
 mod bytecode;
 mod collections;
 pub mod cslug;
+mod json;
 mod native;
 mod platform;
 mod runtime_host;
@@ -22,6 +23,7 @@ mod scheduler_signal;
 #[cfg(target_os = "none")]
 #[path = "scheduler_signal_embedded.rs"]
 mod scheduler_signal;
+mod source_diagnostic;
 mod value;
 mod vm;
 
@@ -51,7 +53,12 @@ pub use native::{
 };
 /// Experimental VM-to-host callbacks. This trait is not a stable embedding API.
 pub use runtime_host::{
-    EmptyVmConfiguration, VmConfiguration, VmHost, VmHostError, VmModuleExports,
+    DESCRIBE_UNEXPORTED, EmptyVmConfiguration, MissingModule, VmConfiguration, VmHost, VmHostError,
+    VmModuleDescription, VmModuleExports,
+};
+pub use source_diagnostic::{
+    SourceDiagnostic, SourceEdit, SourceErrorKind, SourceFix, SourcePosition, SourceRange,
+    apply_fix,
 };
 #[cfg(feature = "concurrency")]
 pub use value::Task;
@@ -67,6 +74,6 @@ pub use vm::InteractiveTask;
 #[cfg(feature = "metrics")]
 pub use vm::VmMetrics;
 pub use vm::{
-    CallFrame, InstalledProgram, InteractiveEnvironment, NativeErrorDetails, RuntimeError,
-    RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
+    CallFrame, ImportFailure, InstalledProgram, InteractiveEnvironment, NativeErrorDetails,
+    RuntimeError, RuntimeErrorKind, Vm, VmLayoutMetrics, VmProgress, VmResult,
 };

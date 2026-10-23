@@ -1,0 +1,71 @@
+val http = import("slug.net.http")
+val tcp = import("slug.net.tcp")
+val {await} = import("slug.channel")
+val {fromBytes} = import("slug.string")
+val {assertEqual} = import("slug.test")
+
+val request = fn(method:str, path:str):map {
+    {method: method, path: path, query: {}, headers: {}, body: 0x"", params: {}}
+}
+
+val routes = http.router([
+    ["GET", "/users/me", fn(request) { "me" }],
+    ["GET", "/users/:id", fn(request) { "user " + request.params.id }],
+    ["DELETE", "/users/:id", fn(request) { "deleted " + request.params.id }],
+    ["GET", "/files/*rest", fn(request) { "file " + request.params.rest }],
+])
+
+@test
+val routesMatchByPatternInOrder = fn() {
+    assertEqual(routes(request("GET", "/users/me")), "me")
+    assertEqual(routes(request("GET", "/users/7")), "user 7")
+    assertEqual(routes(request("HEAD", "/users/7")), "user 7")
+    assertEqual(routes(request("DELETE", "/users/7")), "deleted 7")
+    assertEqual(routes(request("GET", "/files/a/b")), "file a/b")
+    assertEqual(routes(request("GET", "/files/")), "file ")
+}
+
+@test
+val unmatchedRoutesAre404And405 = fn() {
+    assertEqual(routes(request("GET", "/files")), {status: 404})
+    assertEqual(routes(request("GET", "/users/")), {status: 404})
+    assertEqual(routes(request("PUT", "/users/7")), {status: 405, headers: {Allow: "GET, HEAD, DELETE"}})
+}
+
+// Sends `text` to a server for `handler` and returns everything it answers
+// before it closes the connection.
+val exchange = fn(handler:fn, text:str):str {
+    val listener = tcp.listen("127.0.0.1", 0)
+    val server = spawn { http.serve(listener, handler, {idleTimeout: 1000}) }
+    val client = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    tcp.write(client, text)
+    val collect = fn(received:bytes):bytes {
+        match tcp.read(client, timeout = 5000) {
+            nil => received
+            data => recur(received + data)
+        }
+    }
+    val answer = fromBytes(collect(0x""))
+    tcp.close(client)
+    tcp.close(listener)
+    await(server)
+    answer
+}
+
+@test
+val servesRequestsOverTcp = fn() {
+    val answer = exchange(routes, "GET /users/7 HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nuser 7")
+}
+
+@test
+val rejectsMalformedRequests = fn() {
+    val answer = exchange(routes, "GET /users/7 HTTP/1.1\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}
+
+@test
+val answersAnInvalidResponseWith500 = fn() {
+    val answer = exchange(fn(request) { {status: "abc"} }, "GET / HTTP/1.0\r\n\r\n")
+    assertEqual(answer, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+}

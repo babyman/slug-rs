@@ -1,0 +1,3 @@
+val {map} = import("slug.std")
+
+println(map([1, 2, 3], fn(n) { n + 1 }))

@@ -1,0 +1,147 @@
+val s = import("slug.string")
+val tasks = import("slug.channel")
+val fs = import("slug.io.fs")
+val { map, filter, reduce, flatMap } = import("slug.std")
+
+export enum Status { Ok, Failed, Skipped, TimedOut }
+
+export val Job = struct { name, action, deps = [], retries = 0, timeout = 0 }
+
+export val Outcome = struct { status, value = nil, attempts = 0, error = nil }
+
+val invalid = fn(data) {
+    throw Error { type: "jobs.invalid", msg: "invalid jobs: " + data.reason, data: data }
+}
+
+val statusText = fn(status) {
+    match status {
+        Status.Ok => "ok"
+        Status.Failed => "failed"
+        Status.Skipped => "skipped"
+        Status.TimedOut => "timed_out"
+    }
+}
+
+// Checks names and dependencies, then returns the waves: each wave holds the
+// sorted names whose dependencies all lie in earlier waves.
+val waves = fn(jobs) {
+    val names = fn(i, seen) {
+        if (i == len(jobs)) { seen } else {
+            val name = jobs[i].name
+            if (seen[name] != nil) { invalid({reason: "duplicate", name: name}) }
+            recur(i + 1, seen + {[name]: jobs[i]})
+        }
+    }
+    val byName = names(0, {})
+    val missing = fn(i) {
+        if (i < len(jobs)) {
+            val job = jobs[i]
+            val check = fn(k) {
+                if (k < len(job.deps)) {
+                    if (byName[job.deps[k]] == nil) {
+                        invalid({reason: "missing", name: job.name, dependency: job.deps[k]})
+                    }
+                    recur(k + 1)
+                }
+            }
+            check(0)
+            recur(i + 1)
+        }
+    }
+    missing(0)
+    val ready = fn(job, done) {
+        val all = fn(k) { if (k == len(job.deps)) { true } else if (done[job.deps[k]] == nil) { false } else { recur(k + 1) } }
+        all(0)
+    }
+    val peel = fn(remaining, done, out) {
+        if (len(remaining) == 0) { return out }
+        val wave = s.sort(remaining /> filter(fn(job) { ready(job, done) }) /> map(fn(job) { job.name }))
+        if (len(wave) == 0) {
+            invalid({reason: "cycle", names: s.sort(remaining /> map(fn(job) { job.name }))})
+        }
+        val marked = wave /> reduce(done, fn(acc, name) { acc + {[name]: true} })
+        recur(remaining /> filter(fn(job) { marked[job.name] == nil }), marked, out :+ wave)
+    }
+    peel(jobs, {}, [])
+}
+
+export val plan = fn(jobs:list) { waves(jobs) }
+
+// One attempt: ["ok", value], ["error", msg], or ["timeout", nil].
+val attempt = fn(job, inputs) {
+    val call = fn() {
+        defer onerror(err) { return ["error", err.msg] }
+        ["ok", job.action(inputs)]
+    }
+    if (job.timeout > 0) {
+        nursery {
+            val running = spawn { call() }
+            select {
+                await running /> fn(result) { result }
+                after job.timeout /> fn(_) { ["timeout", nil] }
+            }
+        }
+    } else {
+        call()
+    }
+}
+
+val execute = fn(job, inputs) {
+    val go = fn(made:num) {
+        val [kind, value] = attempt(job, inputs)
+        val attempts = made + 1
+        if (kind == "ok") {
+            Outcome { status: Status.Ok, value: value, attempts: attempts }
+        } else if (attempts <= job.retries) {
+            recur(attempts)
+        } else if (kind == "timeout") {
+            Outcome { status: Status.TimedOut, attempts: attempts, error: "timeout" }
+        } else {
+            Outcome { status: Status.Failed, attempts: attempts, error: value }
+        }
+    }
+    go(0)
+}
+
+export val run = fn(jobs:list, concurrency = 4, log = nil) {
+    if (concurrency < 1 || int(concurrency) != concurrency) {
+        invalid({reason: "concurrency"})
+    }
+    val order = waves(jobs) /> flatMap(fn(wave) { wave })
+    val byName = jobs /> reduce({}, fn(acc, job) { acc + {[job.name]: job} })
+    val file = if (log != nil) { fs.openWrite(log) } else { nil }
+    defer { if (file != nil) { fs.close(file) } }
+    val settle = fn(name, outcome) {
+        if (file != nil) {
+            val text = statusText(outcome.status)
+            val attempts = outcome.attempts
+            fs.write(file, "$name $text $attempts\n")
+        }
+        outcome
+    }
+    val handles = nursery limit concurrency {
+        val start = fn(i, handles) {
+            if (i == len(order)) { return handles }
+            val job = byName[order[i]]
+            val deps = job.deps /> map(fn(dep) { [dep, handles[dep]] })
+            val handle = spawn {
+                val gather = fn(k, inputs) {
+                    if (k == len(deps)) { inputs } else {
+                        val [dep, waiting] = deps[k]
+                        val outcome = tasks.await(waiting)
+                        if (outcome.status != Status.Ok) { nil } else { recur(k + 1, inputs + {[dep]: outcome.value}) }
+                    }
+                }
+                val inputs = gather(0, {})
+                if (inputs == nil) {
+                    settle(job.name, Outcome { status: Status.Skipped })
+                } else {
+                    settle(job.name, execute(job, inputs))
+                }
+            }
+            recur(i + 1, handles + {[job.name]: handle})
+        }
+        start(0, {})
+    }
+    order /> reduce({}, fn(acc, name) { acc + {[name]: tasks.await(handles[name])} })
+}

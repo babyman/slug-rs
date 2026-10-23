@@ -17,3 +17,6 @@
 
 # Host-specific benchmark evidence; scripts recreate these files locally.
 /docs/planning/local/
+
+# Agent evaluation results; the harness recreates them locally.
+/eval/agent/results/

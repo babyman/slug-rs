@@ -1165,6 +1165,127 @@ fn full_positional_calls_skip_defaults_and_pipelines_prepend_their_value() {
 }
 
 #[test]
+fn number_bytes_and_boolean_literals_are_map_keys() {
+    let path = fixture_path("literal-map-keys");
+    fs::write(
+        &path,
+        "val reasons = {200: \"OK\", 404: \"Not Found\"}\n\
+         val mixed = {-1: \"negative\", 1.5: \"float\", 0x\"00\": \"bytes\", true: \"yes\", false: \"no\"}\n\
+         val named = {nil: 1, copy: 2}\n\
+         val found = match ({201: \"Created\", true: \"t\"}) {\n\
+           {201: reason, true: flag} => reason + flag\n\
+           _ => \"none\"\n\
+         }\n\
+         println(reasons[404], mixed[-1], mixed[1.5], mixed[0x\"00\"], mixed[true], mixed[false], named.nil, found)\n\
+         println({ -1 })\n",
+    )
+    .expect("write literal key source");
+    let output = slug().arg(&path).output().expect("run literal key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "Not Found negative float bytes yes no 1 Createdt\n-1\n"
+    );
+
+    fs::write(&path, "val m = {1: 1}\nmatch m { {1} => 1; _ => 0 }\n")
+        .expect("write shorthand source");
+    let output = slug().arg(&path).output().expect("run shorthand source");
+    fs::remove_file(&path).expect("remove literal key source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a literal map pattern key needs a pattern"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn enum_values_are_map_keys() {
+    let path = fixture_path("enum-map-keys");
+    fs::write(
+        &path,
+        "enum Color { Red, Green, Blue }\n\
+         val hex = {[Color.Red]: \"#f00\", [Color.Blue]: \"#00f\"}\n\
+         // Past the size where a map indexes its keys by hash.\n\
+         val fill = fn(i:num, m:map):map { if (i == 100) { m } else { recur(i + 1, m + {[i]: i}) } }\n\
+         val large = fill(0, {}) + {[Color.Green]: \"green\"}\n\
+         println(hex[Color.Red], hex[Color.Green], keys(hex), large[Color.Green], len(large - Color.Green))\n",
+    )
+    .expect("write enum key source");
+    let output = slug().arg(&path).output().expect("run enum key source");
+    fs::remove_file(&path).expect("remove enum key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "#f00 nil [Color.Red, Color.Blue] green 100\n"
+    );
+}
+
+#[test]
+fn lists_structs_and_channels_are_map_keys() {
+    let path = fixture_path("composite-map-keys");
+    fs::write(
+        &path,
+        "val grid = {[[0, 0]]: \"origin\", [[1, 2]]: \"a\"}\n\
+         val Point = struct { x, y }\n\
+         val Other = struct { x, y }\n\
+         val points = {[Point {x: 1, y: 2}]: \"p\"}\n\
+         val lookup = fn(key) { points[key] }\n\
+         val ready = chan(1)\n\
+         val channels = {[ready]: \"ready\"}\n\
+         val fill = fn(i:num, m:map):map { if (i == 100) { m } else { recur(i + 1, m + {[[i, \"x\"]]: i}) } }\n\
+         val large = fill(0, {})\n\
+         println(grid[[0, 0]], grid[[1.0, 2]], grid[[2, 1]], lookup(Point {x: 1, y: 2}), lookup(Other {x: 1, y: 2}))\n\
+         println(channels[ready], channels[chan(1)], large[[42, \"x\"]], len(large - [3, \"x\"]))\n",
+    )
+    .expect("write composite key source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run composite key source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "origin a nil p nil\nready nil 42 99\n"
+    );
+
+    for (source, message) in [
+        (
+            "{[[1, nil]]: 1}",
+            "a list containing nil cannot be used as a map key",
+        ),
+        (
+            "{[[1, [2, {}]]]: 1}",
+            "a list containing map cannot be used as a map key",
+        ),
+        ("{[{}]: 1}", "map cannot be used as a map key"),
+    ] {
+        fs::write(&path, format!("println({source})\n")).expect("write invalid key source");
+        let output = slug().arg(&path).output().expect("run invalid key source");
+        assert_eq!(output.status.code(), Some(1), "{source}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{source}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::remove_file(&path).expect("remove composite key source");
+}
+
+#[test]
 fn map_literals_reject_a_repeated_key() {
     let path = fixture_path("map-literal-repeated-keys");
     let run = |source: &str| {
@@ -1239,12 +1360,16 @@ fn rejects_every_non_key_collection_value_from_source() {
     let path = fixture_path("invalid-map-key-categories");
     for (name, source, expected) in [
         ("nil", "{[nil]: 1}\n", "nil cannot be used as a map key"),
-        ("list", "{[[]]: 1}\n", "list cannot be used as a map key"),
+        (
+            "list",
+            "{[[nil]]: 1}\n",
+            "a list containing nil cannot be used as a map key",
+        ),
         ("map", "{[{}]: 1}\n", "map cannot be used as a map key"),
         (
             "struct",
-            "val User = struct { name = \"Slug\" }\n{[User {}]: 1}\n",
-            "struct cannot be used as a map key",
+            "val User = struct { tags = {} }\n{[User {}]: 1}\n",
+            "a struct containing map cannot be used as a map key",
         ),
     ] {
         fs::write(&path, source).expect("write invalid map-key source");
@@ -1443,4 +1568,999 @@ fn keys_rejects_a_value_that_is_not_a_map() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn strings_order_lexicographically_by_utf8_bytes() {
+    let path = fixture_path("string-ordering");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write string ordering source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run string ordering source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run(
+        "println(\"apple\" < \"banana\", \"b\" > \"a\", \"a\" <= \"a\", \"a\" >= \"b\", \"Z\" < \"a\", \"ab\" < \"abc\", \"é\" > \"z\")\n\
+         val before = fn(a, b) { a < b }\n\
+         println(before(1, 2), before(\"pear\", \"fig\"))\n\
+         val small = fn(n) { n < 10 }\n\
+         val early = fn(word) { word < \"m\" }\n\
+         println(small(3), early(\"kiwi\"))\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "true true true false true true true\ntrue false\ntrue true\n"
+    );
+
+    // A literal on the other side still decides an unannotated parameter's type.
+    let (code, _, stderr) = run("val small = fn(n) { n < 10 }\nprintln(small(\"a\"))\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("semantic error: expected num, got str"),
+        "{stderr}"
+    );
+
+    let (code, _, stderr) = run("println(1 < \"a\")\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("semantic error: operator `<` does not accept num and str"),
+        "{stderr}"
+    );
+
+    let (code, _, stderr) = run("val before = fn(a, b) { a < b }\nprintln(before(1, \"a\"))\n");
+    fs::remove_file(&path).expect("remove string ordering source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("runtime error: expected two numbers or two strings, got num and str"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn enum_cases_and_struct_fields_separate_with_commas_or_newlines() {
+    let path = fixture_path("member-separators");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write separator source");
+        let output = slug().arg(&path).output().expect("run separator source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run("enum Lines {\n    red\n    green\n}\n\
+         enum Commas { red, green, blue }\n\
+         enum Mixed {\n    red,\n    green\n    blue,\n}\n\
+         val Point = struct {\n    x: num\n    y: num = 2\n}\n\
+         val Pair = struct { left: num, right: num }\n\
+         val S:schema = struct{\n    name:str,\n    age:num = 1,\n}\n\
+         println(Lines.green, Commas.blue, Mixed.blue)\n\
+         println(Point {\n  x: 1\n}, Pair { left: 1, right: 2 }, S { name: \"s\" })\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "Lines.green Commas.blue Mixed.blue\n\
+         struct {\"x\": 1, \"y\": 2} struct {\"left\": 1, \"right\": 2} struct {\"name\": \"s\", \"age\": 1}\n"
+    );
+
+    for (source, message) in [
+        (
+            "val Point = struct {\n    x: num y: num\n}\n",
+            "expected comma or newline between struct fields",
+        ),
+        (
+            "val Point = struct { x: num }\nprintln(Point { x: 1 y: 2 })\n",
+            "expected comma between struct fields",
+        ),
+        (
+            "val Point = struct { x, y }\nprintln(Point {\n  x: 1\n  y: 2\n})\n",
+            "expected comma between struct fields",
+        ),
+        (
+            "enum Colour { red green }\n",
+            "expected comma or newline between enum cases",
+        ),
+        (
+            "enum Colour { red; green }\n",
+            "expected comma or newline between enum cases",
+        ),
+        (
+            "val Point = struct { x; y }\n",
+            "expected comma or newline between struct fields",
+        ),
+        ("enum Colour { red,, green }\n", "expected enum case name"),
+        (
+            "val Point = struct { x,, y }\n",
+            "expected struct field name",
+        ),
+        (
+            "val Point = struct { x, y }\nprintln(Point { x: 1,, y: 2 })\n",
+            "expected struct field name",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains(&format!("parse error: {message}")),
+            "{source}: {stderr}"
+        );
+    }
+    fs::remove_file(&path).expect("remove separator source");
+}
+
+#[test]
+fn double_quoted_strings_escape_backspace_and_form_feed() {
+    let path = fixture_path("backspace-form-feed");
+    fs::write(
+        &path,
+        "println(\"\\b\" == \"\\10\", \"\\f\" == \"\\14\", len(\"a\\bb\\fc\"), '\\b' == \"\\\\b\")\n",
+    )
+    .expect("write escape source");
+    let output = slug().arg(&path).output().expect("run escape source");
+    fs::remove_file(&path).expect("remove escape source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "true true 5 true\n"
+    );
+}
+
+#[test]
+fn unconstrained_parameters_are_dynamic_inside_their_body() {
+    let path = fixture_path("unconstrained-parameters");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write unconstrained parameter source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run unconstrained parameter source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run("val identity = fn(value) { value }\n\
+         val text:str = identity(\"ok\")\n\
+         val repeat = fn():str {\n\
+         \x20 val go = fn(i, out) { if (i == 0) { out } else { recur(i - 1, out + \"x\") } }\n\
+         \x20 go(3, \"\")\n\
+         }\n\
+         val collect = fn(i, out) { if (i == 0) { out } else { recur(i - 1, out :+ i) } }\n\
+         val items:list = collect(2, [])\n\
+         println(text, repeat(), items)\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "ok xxx [2, 1]\n");
+
+    // An explicit any|nil annotation keeps its static meaning.
+    let (code, _, stderr) =
+        run("val pass = fn(value:any|nil) { value }\nval text:str = pass(\"a\")\n");
+    fs::remove_file(&path).expect("remove unconstrained parameter source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("semantic error: expected str, got any|nil"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn compatible_parameter_requirements_combine_to_the_narrower_type() {
+    let path = fixture_path("parameter-requirements");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write parameter requirement source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run parameter requirement source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // `e` is a number from `e < 0` and is also passed on to an unconstrained
+    // parameter, in either order.
+    let (code, stdout, stderr) = run(
+        "val pass = fn(flag, value) { if (flag) { value } else { 0 } }\n\
+         val before = fn(e) { if (e < 0) { -e } else { pass(true, e) } }\n\
+         val after = fn(e) { pass(true, e) * (if (e < 0) { -1 } else { 1 }) }\n\
+         println(before(-3), before(2), after(-4))\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "3 2 4\n");
+
+    // The combined requirement is still checked at calls.
+    let (code, _, stderr) = run("val pass = fn(value) { value }\n\
+         val f = fn(e) { if (e < 0) { 1 } else { pass(e) } }\n\
+         f(\"x\")\n");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("semantic error"), "{stderr}");
+
+    // Requirements with no common type still conflict.
+    let (code, _, stderr) = run("val g = fn(x) { if (x < 0) { 1 } else { -x } }\n\
+         val h = fn(x) { if (x < 0) { 1 } else { x < \"a\" } }\n");
+    fs::remove_file(&path).expect("remove parameter requirement source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("parameter `x` has incompatible body requirements: num and str"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn match_bindings_exclude_types_matched_by_earlier_cases() {
+    let path = fixture_path("match-binding-narrowing");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write match narrowing source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run match narrowing source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // After `nil =>`, the binding, a wildcard's subject name, and a binding
+    // after a constrained case are all `str`.
+    let (code, stdout, stderr) = run("val g = fn(x):str|nil { x }\n\
+         val f = fn(p):str { match g(p) { nil => \"none\" ; line => line } }\n\
+         val h = fn(p):str { val v = g(p)\n match v { nil => \"none\" ; _ => v } }\n\
+         val k = fn(p):nil { match g(p) { s: str => nil ; other => other } }\n\
+         println(f(\"a\"), f(nil), h(\"b\"), k(nil))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "a none b nil\n");
+
+    // A guarded case may not match, so it narrows nothing, and the error
+    // covers the expression that produced the result.
+    let (code, _, stderr) = run("val g = fn(x):str|nil { x }\n\
+         val f = fn(p, q):str {\n  match g(p) { nil if q => \"\" ; line => line }\n}\n");
+    fs::remove_file(&path).expect("remove match narrowing source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected str, found str|nil"), "{stderr}");
+    assert!(stderr.contains(":3:3\n"), "{stderr}");
+}
+
+#[test]
+fn recursive_function_variables_accept_reassignment() {
+    let path = fixture_path("recursive-function-variable");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write recursive function variable source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run recursive function variable source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // The recursive function's result is not inferred, so any function with
+    // the same parameters may replace it, at module level or locally.
+    let (code, stdout, stderr) = run(
+        "var f = fn(n) { if (n == 0) { \"old\" } else { f(n - 1) } }\n\
+         val first = f(1)\n\
+         f = fn(n) { \"new\" }\n\
+         val local = fn() {\n\
+           var g = fn(n) { if (n == 0) { \"old\" } else { g(n - 1) } }\n\
+           g = fn(n) { \"new\" }\n\
+           g(0)\n\
+         }\n\
+         println(first, f(0), local())\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "old new new\n");
+
+    // Known results must still match.
+    let (code, _, stderr) = run("var g = fn(n:num):num { n }\ng = fn(n:num):str { \"x\" }\n");
+    fs::remove_file(&path).expect("remove recursive function variable source");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("expected fn<num, num>, found fn<str, num>"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn early_returns_join_and_check_a_functions_result() {
+    let path = fixture_path("early-return-results");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write early return source");
+        let output = slug().arg(&path).output().expect("run early return source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A recursive helper that returns early has its returns' type, not
+    // `never`, and a return inside a match case or an onerror handler counts.
+    let (code, stdout, stderr) = run("val peel = fn(n, out) {\n\
+           if (n == 0) { return out }\n\
+           recur(n - 1, out :+ n)\n\
+         }\n\
+         val pick = fn(x):str { match x { 0 => { return \"zero\" }\n _ => \"other\" } }\n\
+         val rescue = fn():str {\n\
+           defer onerror(e) { return e.msg }\n\
+           throw Error { type: \"t\", msg: \"caught\" }\n\
+         }\n\
+         println(peel(3, [])[0], pick(0), rescue())\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "3 zero caught\n");
+
+    // An early return's type is part of the inferred result.
+    let (code, _, stderr) =
+        run("val f = fn(n) {\n  if (n == 0) { return \"a\" }\n  5\n}\nval x:num = f(0)\n");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, found num|str"), "{stderr}");
+
+    // A declared result is checked at each return.
+    let (code, _, stderr) = run("val f = fn(n):num {\n  if (n == 0) { return \"zero\" }\n  n\n}\n");
+    fs::remove_file(&path).expect("remove early return source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, found str"), "{stderr}");
+    assert!(stderr.contains(":2:24\n"), "{stderr}");
+}
+
+#[test]
+fn a_nil_first_value_takes_its_var_type_from_the_first_assignment() {
+    let path = fixture_path("nil-first-value");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write nil first value source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run nil first value source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A `var` that starts as `nil` takes `nil` with the type of its first
+    // assignment, even one in a closure, and an accumulator's is found from
+    // its other assignments; an annotated `var` keeps its annotation; a
+    // field that starts as `nil` may hold anything; and a `val` stays
+    // exactly `nil`.
+    let (code, stdout, stderr) = run("var best = nil\n\
+         best = 5\n\
+         val first:num = best\n\
+         best = nil\n\
+         var held = nil\n\
+         val keep = fn(v:num) { held = v }\n\
+         keep(2)\n\
+         val doubled = if (held != nil) { held * 2 } else { 0 }\n\
+         var count = nil\n\
+         val bump = fn() { if (count == nil) { count = 0 } else { count = count + 1 } }\n\
+         bump()\n\
+         bump()\n\
+         var mixed:num|str|nil = nil\n\
+         mixed = 5\n\
+         mixed = \"s\"\n\
+         val none = nil\n\
+         val kept:str|nil = none\n\
+         val S = struct { e = nil, n = 0 }\n\
+         println(first, best, doubled, count, mixed, kept, S { e: \"text\" }.e, S { e: {k: 1} }.e)\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "5 nil 4 1 s nil text {\"k\": 1}\n");
+
+    // A later assignment of another type is a mismatch where it is written,
+    // and a mismatch at a use names the first assignment. The first
+    // assignment is the first written, even in a closure that runs later.
+    for (source, message) in [
+        (
+            "var best = nil\nbest = 5\nbest = \"s\"\n",
+            "expected num|nil, got str: `best` is `num|nil`, from its first value `nil` and \
+             its first assignment at 2:8; to hold both, declare `var best:num|str|nil = nil`",
+        ),
+        (
+            "var best = nil\nbest = 5\nval s:str = best\n",
+            "expected str, got num: `best` is `num|nil`, from its first value `nil` and its \
+             first assignment at 2:8",
+        ),
+        (
+            "var x = nil\nval later = fn() { x = \"late\" }\nx = 5\n",
+            "expected str|nil, got num: `x` is `str|nil`, from its first value `nil` and its \
+             first assignment at 2:24",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+
+    // A concrete first value still fixes the type.
+    for source in [
+        "var x = 0\nx = \"s\"\n",
+        "var x = 0\nx = nil\n",
+        "val S = struct { n = 0 }\nS { n: \"seven\" }\n",
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains("semantic error: expected num"),
+            "{source}: {stderr}"
+        );
+    }
+
+    // With no assignment its type is `any|nil`, so a mismatch names the
+    // declaration to annotate.
+    for source in [
+        "var n = 1\nvar held = nil\nval take = fn() { if (held != nil) { n = held } }\n",
+        "var held = nil\nval take = fn():num { if (held != nil) { return held }; 0 }\n",
+        "val P = struct { n:num }\nvar held = nil\nval make = fn() { if (held != nil) { P { n: held } } }\n",
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains(
+                "expected num, got any: `held` starts as `nil`, so its type is `any|nil`; \
+                 declare the type it holds, as in `var held:num|nil = nil`"
+            ),
+            "{source}: {stderr}"
+        );
+    }
+    let (code, _, stderr) = run("var held:num|nil = nil\nvar n = 1\n\
+         val take = fn() { if (held != nil) { n = held } }\nheld = 2\ntake()\nprintln(n)\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    fs::remove_file(&path).expect("remove nil first value source");
+}
+
+#[test]
+fn a_binding_keeps_the_dynamic_type_of_its_value() {
+    let path = fixture_path("dynamic-binding");
+    fs::write(
+        &path,
+        "val helper = fn(out) { out }\n\
+         val block = fn() { val b = helper([1])\nb }\n\
+         var other = []\n\
+         other = if (len(other) > 0) { [2] } else { block() }\n\
+         val [first, second] = helper([3, 4])\n\
+         val nested = [helper(5)]\n\
+         val five:num = nested[0]\n\
+         println(other, first + second, five)\n",
+    )
+    .expect("write dynamic binding source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run dynamic binding source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "[1] 7 5\n");
+
+    // An annotation still sets the binding's type.
+    fs::write(&path, "val b:any|nil = 1\nval n:num = b\n").expect("write annotated source");
+    let output = slug().arg(&path).output().expect("run annotated source");
+    fs::remove_file(&path).expect("remove dynamic binding source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("expected num, got any|nil"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_nested_function_narrows_what_the_body_requires_of_a_parameter() {
+    let path = fixture_path("nested-parameter-requirements");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write nested requirement source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run nested requirement source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // The body requires `num|str` of `x`; a nested function narrows that to
+    // `num`, in either order.
+    let (code, stdout, stderr) = run("val show = fn(value:num|str):str { \"$value\" }\n\
+         val before = fn(x) { show(x); val negate = fn() { -x }; negate() }\n\
+         val after = fn(x) { val negate = fn() { -x }; show(x); negate() }\n\
+         println(before(4), after(5))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "-4 -5\n");
+
+    // The narrowed requirement is checked at calls.
+    let (code, _, stderr) = run("val show = fn(value:num|str):str { \"$value\" }\n\
+         val f = fn(x) { show(x); val negate = fn() { -x }; negate() }\n\
+         f(\"a\")\n");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, got str"), "{stderr}");
+
+    // A nested function adds no requirement of its own, and its own
+    // parameter of the same name is a different binding.
+    let (code, stdout, stderr) = run("val show = fn(value:num|str):str { \"$value\" }\n\
+         val lazy = fn(x) { val negate = fn() { -x }; x }\n\
+         val shadow = fn(x) { show(x); val negate = fn(x) { -x }; negate(3) }\n\
+         println(lazy(\"a\"), shadow(\"b\"))\n");
+    fs::remove_file(&path).expect("remove nested requirement source");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "a -3\n");
+}
+
+#[test]
+fn a_match_case_that_narrows_nothing_keeps_the_subject_type_it_reached() {
+    let path = fixture_path("match-survivor-types");
+    // The second case narrows nothing, so after the first match `body` may
+    // still be anything but a string, and the second match's wildcard is
+    // reachable. A case that returns still narrows what follows.
+    fs::write(
+        &path,
+        "val kind = fn(body) {\n\
+           val size = match body { text:str => 1; other => 2 }\n\
+           match body { _:str => \"text\"; _ => \"other\" }\n\
+         }\n\
+         val next = fn(x:num|nil) {\n\
+           match x { nil => return 0; _ => nil }\n\
+           x + 1\n\
+         }\n\
+         println(kind(\"s\"), kind(0x\"00\"), next(2), next(nil))\n",
+    )
+    .expect("write match survivor source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run match survivor source");
+    fs::remove_file(&path).expect("remove match survivor source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "text other 3 0\n"
+    );
+}
+
+#[test]
+fn list_literals_of_differing_types_are_tuples() {
+    let path = fixture_path("tuple-literals");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write tuple source");
+        let output = slug().arg(&path).output().expect("run tuple source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A pair of a list and a map keeps each element's type, through a
+    // constant index, a negative one, and destructuring, and is still a list.
+    let (code, stdout, stderr) = run(
+        "val parse = fn() { [[1, 2], {host: \"x\", te: \"chunked\"}] }\n\
+         val parsed = parse()\n\
+         val [parts, headers] = parse()\n\
+         println(parsed[1][\"te\"], parsed[-1].host, len(parsed[0]), headers.host, parts[0] + 1)\n\
+         println(len(parsed), [...parsed, 3], parsed :+ 4, {[[1, \"a\"]]: \"key\"}[[1, \"a\"]])\n\
+         var grow = [1, \"a\"]\n\
+         grow = grow :+ 2\n\
+         val pairs = [[1, \"a\"]] :+ [2, \"b\"]\n\
+         println(grow, pairs[1][1] + \"!\", [1, 2, 3] :+ 4)\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "chunked x 2 x 2\n\
+         2 [[1, 2], {\"host\": \"x\", \"te\": \"chunked\"}, 3] [[1, 2], {\"host\": \"x\", \"te\": \"chunked\"}, 4] key\n\
+         [1, \"a\", 2] b! [1, 2, 3, 4]\n"
+    );
+
+    // A list literal checked against a tuple annotation has its elements'
+    // types, in a declaration, a function result, and a return.
+    let (code, stdout, stderr) = run("val point:[num, num] = [1, 2]\n\
+         val bounds = fn(a:num, b:num):[num, num] { if (a > b) { return [b, a] }\n [a, b] }\n\
+         val split = fn():[list, map] { [[1], {a: 1}] }\n\
+         println(point, bounds(3, 1)[1] + 1, split()[1][\"a\"])\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "[1, 2] 4 1\n");
+
+    for (source, message) in [
+        (
+            "val p:[num, str] = [1, 2]\n",
+            "expected [num, str], got [num, num]",
+        ),
+        (
+            "val p:[num, num] = [1, 2, 3]\n",
+            "expected [num, num], got list<num>",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    fs::remove_file(&path).expect("remove tuple source");
+}
+
+#[test]
+fn nil_tests_combined_with_and_or_and_not_narrow_each_binding() {
+    let path = fixture_path("combined-nil-tests");
+    fs::write(
+        &path,
+        "val both = fn(a:num|nil, b:num|nil):num {\n\
+             if (a != nil && b != nil) { a + b } else { 0 }\n\
+         }\n\
+         val either = fn(a:num|nil, b:num|nil):num {\n\
+             if (a == nil || b == nil) { return 0 }\n\
+             a + b\n\
+         }\n\
+         val negated = fn(a:num|nil):num { if (!(a == nil)) { a } else { 1 } }\n\
+         val member = fn(r:map):num { if (r.x != nil && r.y != nil) { r.x + r.y } else { 0 } }\n\
+         println(both(1, 2), both(nil, 2), either(3, 4), either(3, nil), negated(5), negated(nil), member({x: 1, y: 2}))\n",
+    )
+    .expect("write combined nil test source");
+    let output = slug().arg(&path).output().expect("run combined nil tests");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "3 0 7 0 5 1 3\n");
+
+    // Either side of a holding `||` may be nil.
+    fs::write(
+        &path,
+        "val f = fn(a:num|nil, b:num|nil):num { if (a != nil || b != nil) { a + b } else { 0 } }\n",
+    )
+    .expect("write disjunction source");
+    let output = slug().arg(&path).output().expect("run disjunction source");
+    fs::remove_file(&path).expect("remove combined nil test source");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("operator `+` does not accept num|nil"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_nil_test_narrows_a_member_of_an_immutable_binding() {
+    let path = fixture_path("member-narrowing");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write member narrowing source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run member narrowing source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let prelude = "val f = fn(n) { if (n > 0) { {error: {at: 1}} } else { {error: nil} } }\n";
+
+    // A member tested against nil, by `.` or `[]`, through `&&`, past an early
+    // return, and inside a function defined on the narrowed path.
+    let (code, stdout, stderr) = run(&format!(
+        "{prelude}\
+         val r = f(1)\n\
+         if (r.error != nil) {{ println(r.error + {{kind: \"dot\"}}) }}\n\
+         if (r[\"error\"] != nil) {{ println(r[\"error\"] + {{kind: \"index\"}}) }}\n\
+         val check = fn(result) {{\n\
+             if (result.error == nil) {{ return \"ok\" }}\n\
+             result.error + {{kind: \"early\"}}\n\
+         }}\n\
+         println(check(r), check(f(0)))\n\
+         val both = fn(a) {{ if (a.x != nil && a.x > 1) {{ \"big\" }} else {{ \"small\" }} }}\n\
+         println(both({{x: 2}}), both({{x: nil}}))\n\
+         if (r.error != nil) {{ val later = fn() {{ r.error + {{kind: \"closure\"}} }}\nprintln(later()) }}\n"
+    ));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "{\"at\": 1, \"kind\": \"dot\"}\n\
+         {\"at\": 1, \"kind\": \"index\"}\n\
+         {\"at\": 1, \"kind\": \"early\"} ok\n\
+         big small\n\
+         {\"at\": 1, \"kind\": \"closure\"}\n"
+    );
+
+    // A `var`'s member, and a member after branches that disagree, stay
+    // possibly nil.
+    for source in [
+        "var v = f(1)\nif (v.error != nil) { v.error + {kind: \"x\"} }\n",
+        "val r = f(1)\nif (r.error != nil) { 1 } else { 2 }\nr.error + {kind: \"x\"}\n",
+    ] {
+        let (code, _, stderr) = run(&format!("{prelude}{source}"));
+        assert_eq!(code, Some(1), "{source}");
+        assert!(
+            stderr.contains("operator `+` does not accept map<str, num>|nil and map<str, str>"),
+            "{source}: {stderr}"
+        );
+    }
+    fs::remove_file(&path).expect("remove member narrowing source");
+}
+
+#[test]
+fn branches_rejoin_with_the_union_of_their_types() {
+    let path = fixture_path("branch-merge");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write branch merge source");
+        let output = slug().arg(&path).output().expect("run branch merge source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // A branch that assigns `nil` to a narrowed `var` makes it possibly nil
+    // again after the branches rejoin, where it previously kept the narrowed
+    // type and failed only when that branch ran.
+    let (code, _, stderr) = run("val f = fn(c) {\n\
+           var x:num|nil = 5\n\
+           if (x != nil) {\n\
+             if (c) { x = nil }\n\
+             x + 1\n\
+           }\n\
+         }\n");
+    assert_eq!(code, Some(1));
+    assert!(
+        stderr.contains("operator `+` does not accept num|nil and num"),
+        "{stderr}"
+    );
+
+    // Branches that agree keep their type, and narrowing in both keeps it.
+    let (code, stdout, stderr) = run("val f = fn(c) {\n\
+           var x:num|nil = nil\n\
+           if (c) { x = 1 } else { x = 2 }\n\
+           val y:num = x\n\
+           y + 1\n\
+         }\n\
+         val g = fn(v:num|nil) {\n\
+           if (v == nil) { return 0 }\n\
+           if (v > 1) { v } else { v + 1 }\n\
+         }\n\
+         println(f(true), f(false), g(nil), g(5), g(1))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "2 3 0 5 2\n");
+    fs::remove_file(&path).expect("remove branch merge source");
+}
+
+#[test]
+fn lists_maps_and_tasks_are_covariant_and_channels_are_not() {
+    let path = fixture_path("collection-variance");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write collection variance source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run collection variance source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run("val mixed:list<num|str> = [1, 2]\n\
+         var record:map<str, any|nil> = {kind: \"text\"}\n\
+         record = {kind: \"number\", value: 1}\n\
+         val nested:list<list<num|nil>> = [[1], [2]]\n\
+         val widen = fn(pending:task<num>) { val wider:task<num|str> = pending; wider }\n\
+         println(mixed, record, nested)\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "[1, 2] {\"kind\": \"number\", \"value\": 1} [[1], [2]]\n"
+    );
+
+    // A covered union member is dropped, so a mismatch names one map type.
+    for (source, message) in [
+        (
+            "val numbers:list<num> = [1, \"a\"]\n",
+            "expected list<num>, got list<num|str>",
+        ),
+        (
+            "val c:chan<num|str> = chan<num>(1)\n",
+            "expected chan<num|str>, got chan<num>",
+        ),
+        (
+            "val pick = fn(c) { if (c) { {a: 1} } else { {a: 1, b: nil} } }\nval n:num = pick(true)\n",
+            "expected num, got map<str, num|nil>",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+
+    // The more specific overload still wins, whichever is declared first.
+    let (code, stdout, stderr) = run("val f = fn(xs:list<num|str>) { \"mixed\" }\n\
+         val f = fn(xs:list<num>) { \"numbers\" }\n\
+         println(f([1]), f([1, \"a\"]))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "numbers mixed\n");
+    fs::remove_file(&path).expect("remove collection variance source");
+}
+
+#[test]
+fn indexing_a_union_of_collections_yields_any_member_result() {
+    let path = fixture_path("union-index");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write union index source");
+        let output = slug().arg(&path).output().expect("run union index source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let (code, stdout, stderr) = run(
+        "val pick = fn(c) { if (c) { {a: 1} } else { {a: \"x\", b: nil} } }\n\
+         val list:list<num>|list<str> = [1, 2]\n\
+         val text:str|list<str> = \"ab\"\n\
+         println(pick(true).a, pick(false)[\"b\"], list[0], list[1:], text[0], text[1:])\n",
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "1 nil 1 [2] a b\n");
+
+    for (source, message) in [
+        (
+            "val pick = fn(c) { if (c) { {a: 1} } else { {a: \"x\"} } }\nval n:num = pick(true).a\n",
+            "expected num, got num|str|nil",
+        ),
+        (
+            "val m:map<str, num>|nil = nil\nm.a\n",
+            "operator `[]` does not accept map<str, num>|nil and str",
+        ),
+        (
+            "val l:list<num>|list<str> = [1]\nl[\"a\"]\n",
+            "operator `[]` does not accept list<num>|list<str> and str",
+        ),
+    ] {
+        let (code, _, stderr) = run(source);
+        assert_eq!(code, Some(1), "{source}");
+        assert!(stderr.contains(message), "{source}: {stderr}");
+    }
+    fs::remove_file(&path).expect("remove union index source");
+}
+
+#[test]
+fn nil_coalescing_removes_nil_from_the_left_type() {
+    let path = fixture_path("nil-coalescing-types");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write nil coalescing type source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run nil coalescing type source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stderr) = run("val maybe = fn(x):str|nil { x }\nval s:str = maybe(nil) ?? \"\"\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    let (code, stderr) = run("val maybe = fn(x):str|nil { x }\nval n:num = maybe(nil) ?? 0\n");
+    fs::remove_file(&path).expect("remove nil coalescing type source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected num, found num|str"), "{stderr}");
+}
+
+#[test]
+fn an_error_handlers_value_joins_the_function_result() {
+    let path = fixture_path("onerror-result");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write onerror result source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run onerror result source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, stdout, stderr) = run("val errorOf = fn(f) {\n\
+           defer onerror(e) { e }\n\
+           f()\n\
+           nil\n\
+         }\n\
+         val caught = errorOf(fn() { throw Error { type: \"t\", msg: \"m\" } })\n\
+         println(caught.type, errorOf(fn() { 1 }))\n");
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "t nil\n");
+
+    // A declared result is checked against the handler's value.
+    let (code, _, stderr) = run("val f = fn():str {\n  defer onerror(e) { 0 }\n  \"ok\"\n}\n");
+    fs::remove_file(&path).expect("remove onerror result source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("expected str, found num"), "{stderr}");
+}
+
+#[test]
+fn std_list_helpers_accept_lists_containing_nil() {
+    let path = fixture_path("std-lists-with-nil");
+    fs::write(
+        &path,
+        "val {map, find} = import(\"slug.std\")\n\
+         val flags = map([0, nil, \"2\"], fn(v) { v == nil })\n\
+         val lengths = map([\"a\", \"bb\"], fn(s) { len(s) })\n\
+         val found:num|nil = find([nil, 3, 4], fn(v) { v != nil && v > 3 })\n\
+         println(flags, lengths, found)\n",
+    )
+    .expect("write std nil list source");
+    let output = slug().arg(&path).output().expect("run std nil list source");
+    fs::remove_file(path).expect("remove std nil list source");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "[false, true, false] [1, 2] 4\n"
+    );
+}
+
+#[test]
+fn a_declaration_replaces_an_implicit_builtin_of_the_same_name() {
+    let path = fixture_path("builtin-shadowing");
+    let run = |source: &str| {
+        fs::write(&path, source).expect("write builtin shadowing source");
+        let output = slug()
+            .arg(&path)
+            .output()
+            .expect("run builtin shadowing source");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    // `fs.close` is one function, so an unannotated or nil-initialized
+    // argument resolves to it, and the builtin `close` still closes channels.
+    let (code, stdout, stderr) = run("val fs = import(\"slug.io.fs\")\n\
+         val closeFile = fn(file) { fs.close(file) }\n\
+         var file = nil\n\
+         file = fs.openWrite(\"builtin-shadowing.txt\")\n\
+         if (file != nil) { closeFile(file) }\n\
+         val ch = chan(1)\n\
+         close(ch)\n\
+         println(\"closed\")\n");
+    let _ = fs::remove_file(path.with_file_name("builtin-shadowing.txt"));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "closed\n");
+
+    // A module's own `close` replaces the builtin there, as it does at runtime.
+    let (code, _, stderr) = run("val close = fn(x:num) { x }\nclose(chan(1))\n");
+    fs::remove_file(&path).expect("remove builtin shadowing source");
+    assert_eq!(code, Some(1));
+    assert!(stderr.contains("semantic error: expected num"), "{stderr}");
 }

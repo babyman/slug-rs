@@ -1,0 +1,4 @@
+val util = import("util")
+
+println(util.label("width", 3))
+println(util.label("height", 4))

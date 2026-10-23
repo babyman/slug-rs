@@ -7,9 +7,7 @@ use std::{
 
 use rustyline::{DefaultEditor, error::ReadlineError};
 use serde_json::{Value, json};
-use slug::interactive::{
-    Diagnostic, DiagnosticCategory, Event, IncomingMessage, PROTOCOL_VERSION, Request, Response,
-};
+use slug::interactive::{Diagnostic, Event, IncomingMessage, PROTOCOL_VERSION, Request, Response};
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os();
@@ -512,16 +510,8 @@ fn render_diagnostic_indented(
     errors: &mut dyn Write,
     indent: &str,
 ) -> io::Result<()> {
-    let kind = diagnostic
-        .kind
-        .as_deref()
-        .unwrap_or(diagnostic.code.as_str());
-    let category = match diagnostic.category {
-        DiagnosticCategory::Source => "source",
-        DiagnosticCategory::Runtime => "runtime",
-        DiagnosticCategory::Protocol => "protocol",
-        DiagnosticCategory::Host => "host",
-    };
+    let category = diagnostic.category.as_str();
+    let kind = diagnostic.code.as_str();
     writeln!(
         errors,
         "{indent}{category} error ({kind}): {}",
@@ -535,12 +525,12 @@ fn render_diagnostic_indented(
         )?;
     }
     if let Some(thrown) = &diagnostic.thrown {
-        writeln!(errors, "{indent}  thrown: {}", thrown.display)?;
+        writeln!(errors, "{indent}  thrown: {thrown}")?;
     }
     if let Some(native) = &diagnostic.native {
         write!(errors, "{indent}  native: {}", native.code)?;
         if let Some(data) = &native.data {
-            write!(errors, " ({}: {})", data.kind, data.display)?;
+            write!(errors, " ({data})")?;
         }
         writeln!(errors)?;
     }

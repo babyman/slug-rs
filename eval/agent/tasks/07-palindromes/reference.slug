@@ -1,0 +1,12 @@
+val words = cfg("words", ["level", "slug", "noon", "a", "ab"])
+val palindrome = fn(word, i) {
+  if (i >= len(word) / 2) { true } else if (word[i] != word[len(word) - 1 - i]) { false } else { recur(word, i + 1) }
+}
+val report = fn(i) {
+  if (i < len(words)) {
+    val word = words[i]
+    println("$word:", if (palindrome(word, 0)) { "yes" } else { "no" })
+    recur(i + 1)
+  }
+}
+report(0)

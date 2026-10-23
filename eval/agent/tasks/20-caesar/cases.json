@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {},
+    {
+      "text": "xyz abc",
+      "shift": 4
+    },
+    {
+      "text": "slug",
+      "shift": -1
+    }
+  ]
+}

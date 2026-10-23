@@ -1,0 +1,369 @@
+/**
+ * Reads TOML documents (https://toml.io), the format of slug.toml
+ * configuration and clutch manifests.
+ *
+ * `parse` supports the part of TOML 1.0 those files use: comments, bare and
+ * quoted keys, dotted keys, `[table]` headers, basic and literal strings,
+ * decimal integers, booleans, arrays, and inline tables. Floats, dates and
+ * times, multi-line strings, non-decimal integers, and arrays of tables
+ * (`[[name]]`) are reported as unsupported rather than misread.
+ *
+ * A document that is not valid, or uses an unsupported feature, throws an
+ * `Error` whose `type` is `toml.parse` and whose `data` is `{line, column}`,
+ * both counted from 1.
+ */
+
+val {toInt, chr, join} = import("slug.string")
+
+/**
+ * Returns the TOML document `text` as a map: a table is a map with string
+ * keys, an array a list, a string a `str`, an integer a `num`, and a boolean a
+ * `bool`. `parse("[a]\nb = 1")` is `{a: {b: 1}}`.
+ */
+@testWith(
+    ["[a]\nb = 1"], {a: {b: 1}},
+    ["x = 'raw'\ny = [1, 2]\nz = { k = true }"], {x: "raw", y: [1, 2], z: {k: true}},
+    [""], {}
+)
+export val parse = fn(text:str):map {
+    // Each step returns the position after what it read; values come back as
+    // `[value, position]`. `state` carries the document being built, the
+    // current table's path, and the tables a header has defined.
+    val n = len(text)
+
+    val fail = fn(i:num, message:str) {
+        val locate = fn(j:num, line:num, column:num) {
+            if (j == i) {
+                {line: line, column: column}
+            } else if (text[j] == "\n") {
+                recur(j + 1, line + 1, 1)
+            } else {
+                recur(j + 1, line, column + 1)
+            }
+        }
+        throw Error {type: "toml.parse", msg: message, data: locate(0, 1, 1)}
+    }
+
+    val at = fn(i:num):str { if (i < n) { text[i] } else { "" } }
+
+    val skipSpaces = fn(i:num):num {
+        if (at(i) == " " || at(i) == "\t") { recur(i + 1) } else { i }
+    }
+
+    val skipComment = fn(i:num):num {
+        if (at(i) == "#") {
+            val go = fn(j:num):num { if (j < n && text[j] != "\n") { recur(j + 1) } else { j } }
+            go(i + 1)
+        } else {
+            i
+        }
+    }
+
+    // Spaces, comments, and line breaks, as allowed inside an array.
+    val skipBlank = fn(i:num):num {
+        val j = skipComment(skipSpaces(i))
+        if (at(j) == "\n") {
+            recur(j + 1)
+        } else if (at(j) == "\r" && at(j + 1) == "\n") {
+            recur(j + 2)
+        } else {
+            j
+        }
+    }
+
+    // The rest of a line after a header or key/value: only a comment.
+    val endLine = fn(i:num):num {
+        val j = skipComment(skipSpaces(i))
+        if (j == n) {
+            j
+        } else if (at(j) == "\n") {
+            j + 1
+        } else if (at(j) == "\r" && at(j + 1) == "\n") {
+            j + 2
+        } else {
+            fail(j, "expected the end of the line")
+        }
+    }
+
+    val bareKeyChar = fn(c:str):bool {
+        (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_" || c == "-"
+    }
+
+    val hexValue = fn(i:num, count:num):num {
+        val digits = {"0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
+            "a": 10, "b": 11, "c": 12, "d": 13, "e": 14, "f": 15, "A": 10, "B": 11, "C": 12, "D": 13, "E": 14, "F": 15}
+        val go = fn(j:num, value:num):num {
+            if (j == i + count) {
+                value
+            } else {
+                val digit = digits[at(j)]
+                if (digit == nil) {
+                    fail(j, "expected a hexadecimal digit")
+                } else {
+                    recur(j + 1, value * 16 + digit)
+                }
+            }
+        }
+        go(i, 0)
+    }
+
+    val basicString = fn(i:num):list {
+        if (at(i + 1) == "\"" && at(i + 2) == "\"") {
+            fail(i, "multi-line strings are not supported")
+        }
+        val escapes = {"\"": "\"", "\\": "\\", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+        val go = fn(j:num, out:str):list {
+            val c = at(j)
+            if (c == "") {
+                fail(j, "unterminated string")
+            } else if (c == "\"") {
+                [out, j + 1]
+            } else if (c == "\n") {
+                fail(j, "a string must end on its line")
+            } else if (c == "\\") {
+                val e = at(j + 1)
+                val simple = escapes[e]
+                if (simple != nil) {
+                    recur(j + 2, out + simple)
+                } else if (e == "u" || e == "U") {
+                    val count = if (e == "u") { 4 } else { 8 }
+                    recur(j + 2 + count, out + chr(hexValue(j + 2, count)))
+                } else {
+                    fail(j + 1, "invalid escape")
+                }
+            } else {
+                recur(j + 1, out + c)
+            }
+        }
+        go(i + 1, "")
+    }
+
+    val literalString = fn(i:num):list {
+        if (at(i + 1) == "'" && at(i + 2) == "'") {
+            fail(i, "multi-line strings are not supported")
+        }
+        val go = fn(j:num):list {
+            val c = at(j)
+            if (c == "") {
+                fail(j, "unterminated string")
+            } else if (c == "\n") {
+                fail(j, "a string must end on its line")
+            } else if (c == "'") {
+                [text[i + 1:j], j + 1]
+            } else {
+                recur(j + 1)
+            }
+        }
+        go(i + 1)
+    }
+
+    val simpleKey = fn(i:num):list {
+        val c = at(i)
+        if (c == "\"") {
+            basicString(i)
+        } else if (c == "'") {
+            literalString(i)
+        } else if (bareKeyChar(c)) {
+            val go = fn(j:num):num { if (bareKeyChar(at(j))) { recur(j + 1) } else { j } }
+            val end = go(i)
+            [text[i:end], end]
+        } else {
+            fail(i, "expected a key")
+        }
+    }
+
+    // A dotted key such as `a."b.c".d`, as a list of its parts.
+    val keyPath = fn(i:num):list {
+        val go = fn(j:num, parts:list):list {
+            val [part, after] = simpleKey(skipSpaces(j))
+            val next = skipSpaces(after)
+            if (at(next) == ".") {
+                recur(next + 1, parts :+ part)
+            } else {
+                [parts :+ part, next]
+            }
+        }
+        go(i, [])
+    }
+
+    val isDigit = fn(c:str):bool { c >= "0" && c <= "9" }
+
+    val number = fn(i:num):list {
+        // Digits, signs, and the characters of floats and dates, so an
+        // unsupported form is reported whole rather than misread.
+        val go = fn(j:num):num {
+            val c = at(j)
+            if (isDigit(c) || c == "_" || c == "+" || c == "-" || c == "." || c == "e" || c == "E" || c == ":" || c == "x" || c == "o" || c == "b" || c == "T" || c == "Z") {
+                recur(j + 1)
+            } else {
+                j
+            }
+        }
+        val end = go(i)
+        val start = if (at(i) == "+" || at(i) == "-") { i + 1 } else { i }
+        val has = fn(characters:str):bool {
+            val go = fn(j:num):bool {
+                if (j == end) {
+                    false
+                } else {
+                    val c = text[j]
+                    val match_ = fn(k:num):bool {
+                        if (k == len(characters)) { false } else if (characters[k] == c) { true } else { recur(k + 1) }
+                    }
+                    if (match_(0)) { true } else { recur(j + 1) }
+                }
+            }
+            go(start)
+        }
+        if (has("xob")) { fail(i, "only decimal integers are supported") }
+        if (has(".eE")) { fail(i, "floats are not supported") }
+        if (has(":TZ+-")) { fail(i, "dates and times are not supported") }
+        // The digits without underscores, each of which must sit between two
+        // digits.
+        val digits = fn(j:num, out:str):str {
+            if (j == end) {
+                out
+            } else if (text[j] != "_") {
+                recur(j + 1, out + text[j])
+            } else if (j > start && j + 1 < end && isDigit(text[j - 1]) && isDigit(text[j + 1])) {
+                recur(j + 1, out)
+            } else {
+                fail(j, "an underscore must sit between two digits")
+            }
+        }
+        val plain = digits(start, "")
+        if (len(plain) == 0) { fail(i, "invalid integer") }
+        if (len(plain) > 1 && plain[0] == "0") { fail(i, "an integer must not have a leading zero") }
+        val result = toInt((if (at(i) == "-") { "-" } else { "" }) + plain)
+        if (result == nil) { fail(i, "integer is out of range") }
+        [result, end]
+    }
+
+    val word = fn(i:num, spelling:str, result):list {
+        if (i + len(spelling) <= n && text[i:i + len(spelling)] == spelling && !bareKeyChar(at(i + len(spelling)))) {
+            [result, i + len(spelling)]
+        } else {
+            fail(i, "expected a value")
+        }
+    }
+
+    val value = fn(i:num):list {
+        val c = at(i)
+        if (c == "\"") {
+            basicString(i)
+        } else if (c == "'") {
+            literalString(i)
+        } else if (c == "t") {
+            word(i, "true", true)
+        } else if (c == "f") {
+            word(i, "false", false)
+        } else if (c == "[") {
+            array(i)
+        } else if (c == "{") {
+            inlineTable(i)
+        } else if (c == "i" || c == "n") {
+            fail(i, "floats are not supported")
+        } else if (isDigit(c) || c == "+" || c == "-") {
+            number(i)
+        } else {
+            fail(i, "expected a value")
+        }
+    }
+
+    val array = fn(i:num):list {
+        val go = fn(j:num, items:list):list {
+            val k = skipBlank(j)
+            if (at(k) == "]") {
+                [items, k + 1]
+            } else {
+                val [item, after] = value(k)
+                val next = skipBlank(after)
+                if (at(next) == ",") {
+                    recur(next + 1, items :+ item)
+                } else if (at(next) == "]") {
+                    [items :+ item, next + 1]
+                } else {
+                    fail(next, "expected `,` or `]` in an array")
+                }
+            }
+        }
+        go(i + 1, [])
+    }
+
+    val inlineTable = fn(i:num):list {
+        val first = skipSpaces(i + 1)
+        if (at(first) == "}") {
+            return [{}, first + 1]
+        }
+        val go = fn(j:num, table:map):list {
+            val [path, afterKey] = keyPath(j)
+            if (at(afterKey) != "=") { fail(afterKey, "expected `=` after a key") }
+            val [item, afterValue] = value(skipSpaces(afterKey + 1))
+            val updated = assign(table, path, item, j)
+            val next = skipSpaces(afterValue)
+            if (at(next) == ",") {
+                recur(skipSpaces(next + 1), updated)
+            } else if (at(next) == "}") {
+                [updated, next + 1]
+            } else {
+                fail(next, "expected `,` or `}` in an inline table")
+            }
+        }
+        go(first, {})
+    }
+
+    // `table` with `value` at `path`, creating the tables along it. A key is
+    // defined once; a path cannot pass through a value that is not a table.
+    val assign = fn(table:map, path:list, item, i:num):map {
+        val key = path[0]
+        val existing = table[key]
+        if (len(path) == 1) {
+            if (existing != nil) { fail(i, "key `$key` is defined twice") }
+            table + {[key]: item}
+        } else {
+            val inner = match existing {
+                nil => {}
+                m: map => m
+                _ => fail(i, "key `$key` is not a table")
+            }
+            table + {[key]: assign(inner, path[1:], item, i)}
+        }
+    }
+
+    // `table` with a table at `path`, creating it when it does not exist.
+    val ensureTable = fn(table:map, path:list, i:num):map {
+        if (len(path) == 0) {
+            return table
+        }
+        val key = path[0]
+        val inner = match table[key] {
+            nil => {}
+            m: map => m
+            _ => fail(i, "key `$key` is not a table")
+        }
+        table + {[key]: ensureTable(inner, path[1:], i)}
+    }
+
+    // `defined` holds each table a header named, by its path's parts joined
+    // with a character no key can contain unquoted.
+    val document = fn(i:num, root:map, current:list, defined:map):map {
+        val j = skipBlank(i)
+        if (j >= n) {
+            root
+        } else if (at(j) == "[") {
+            if (at(j + 1) == "[") { fail(j, "arrays of tables are not supported") }
+            val [path, after] = keyPath(j + 1)
+            if (at(after) != "]") { fail(after, "expected `]` after a table name") }
+            val id = join(path, "\0")
+            if (defined[id] != nil) { fail(j, "table [" + join(path, ".") + "] is defined twice") }
+            recur(endLine(after + 1), ensureTable(root, path, j), path, defined + {[id]: true})
+        } else {
+            val [path, afterKey] = keyPath(j)
+            if (at(afterKey) != "=") { fail(afterKey, "expected `=` after a key") }
+            val [item, afterValue] = value(skipSpaces(afterKey + 1))
+            recur(endLine(afterValue), assign(root, current + path, item, j), current, defined)
+        }
+    }
+
+    document(0, {}, [], {})
+}

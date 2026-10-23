@@ -1,5 +1,5 @@
 use super::{
-    SourceError,
+    SourceEdit, SourceError, SourceErrorCode, SourcePosition, SourceRange,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, MatchCase,
         Parameter, Pattern, Prefix, RestPattern, SelectCase, SelectCaseKind, StringPart,
@@ -9,6 +9,8 @@ use super::{
 use slug_vm::{DeferMode, SourceSpan, Value};
 
 /// Stateful parser for the source front end.
+const STRUCT_FIELD_SEPARATOR: &str = "expected comma or newline between struct fields";
+
 pub(super) struct Parser {
     tokens: Vec<Token>,
     index: usize,
@@ -40,6 +42,19 @@ impl Parser {
     fn kind(&self) -> &TokenKind {
         &self.peek().kind
     }
+    /// The exclusive end of the last consumed token, which ends any
+    /// expression completed by that token.
+    /// Where the next token begins.
+    fn position(&self) -> SourcePosition {
+        let span = &self.peek().span;
+        SourcePosition {
+            line: span.line,
+            column: span.column,
+        }
+    }
+    fn previous_end(&self) -> SourcePosition {
+        self.tokens[self.index.saturating_sub(1)].end
+    }
     fn next(&mut self) -> Token {
         let token = self.peek().clone();
         self.index += 1;
@@ -52,8 +67,144 @@ impl Parser {
         if self.matches(kind) {
             Ok(self.next())
         } else {
-            Err(SourceError::at(message, self.peek().span.clone()))
+            Err(self.expected_token(kind, message))
         }
+    }
+    /// An error requiring `kind` at the next token. At the end of input the
+    /// parser has already read everything as inside the open construct, so
+    /// inserting its closing delimiter after the last token completes the
+    /// program as parsed; that is the one fix offered.
+    fn expected_token(&self, kind: &TokenKind, message: &str) -> SourceError {
+        let mut error =
+            SourceError::at_token(SourceErrorCode::ExpectedSyntax, message, self.peek());
+        error.expected = Some(kind.describe().into());
+        if let (TokenKind::End, Some(text)) = (self.kind(), kind.closing_text()) {
+            let at = self.previous_end();
+            error = error.with_fix(
+                format!("insert `{text}`"),
+                SourceEdit {
+                    range: SourceRange { start: at, end: at },
+                    text: text.into(),
+                },
+            );
+        }
+        error
+    }
+    /// An error for match cases not separated by a newline or `;`. A `,`,
+    /// which other languages use, can only mean a separator here, so it is
+    /// replaced; otherwise a `;` is likely what is missing.
+    fn missing_case_separator(&self) -> SourceError {
+        let token = self.peek();
+        let comma = matches!(token.kind, TokenKind::Comma);
+        let message = if comma {
+            "match cases are separated by a newline or `;`, not `,`"
+        } else {
+            "match cases are separated by a newline or `;`"
+        };
+        let error = SourceError::at_token(SourceErrorCode::ExpectedSyntax, message, token);
+        if comma {
+            error.with_fix(
+                "replace `,` with `;`",
+                SourceEdit {
+                    range: SourceRange {
+                        start: SourcePosition {
+                            line: token.span.line,
+                            column: token.span.column,
+                        },
+                        end: token.end,
+                    },
+                    text: ";".into(),
+                },
+            )
+        } else {
+            let at = self.previous_end();
+            error.with_suggestion(
+                "insert `;`",
+                SourceEdit {
+                    range: SourceRange { start: at, end: at },
+                    text: ";".into(),
+                },
+            )
+        }
+    }
+    /// An error for a `|` between a match case's patterns, which other
+    /// languages use for alternatives, offering the `,` that Slug uses.
+    fn pattern_alternative_pipe(&self) -> SourceError {
+        let token = self.peek();
+        let mut error = SourceError::at_token(
+            SourceErrorCode::ExpectedSyntax,
+            "alternative match patterns are separated by `,`, not `|`, as in `\"+\", \"-\" => ...`",
+            token,
+        );
+        error.expected = Some(TokenKind::Arrow.describe().into());
+        error.with_fix(
+            "replace `|` with `,`",
+            SourceEdit {
+                range: SourceRange {
+                    start: SourcePosition {
+                        line: token.span.line,
+                        column: token.span.column,
+                    },
+                    end: token.end,
+                },
+                text: ",".into(),
+            },
+        )
+    }
+    /// The text of a token that names a map key, property, or struct field:
+    /// an identifier or, since a key is never a binding, a reserved word.
+    /// A literal map key at `index`, with the tokens it spans: a number,
+    /// possibly negated, bytes, `true`, or `false`. Other reserved words are
+    /// string keys, as names are.
+    fn literal_key_at(&self, index: usize) -> Option<(Value, usize)> {
+        let kind = |offset: usize| self.tokens.get(index + offset).map(|token| &token.kind);
+        match kind(0)? {
+            TokenKind::Int(value) => Some((Value::Int(*value), 1)),
+            TokenKind::Float(value) => Some((Value::Float(*value), 1)),
+            TokenKind::Bytes(value) => Some((Value::Bytes(value.clone().into()), 1)),
+            TokenKind::True => Some((Value::Bool(true), 1)),
+            TokenKind::False => Some((Value::Bool(false), 1)),
+            TokenKind::Minus => match kind(1)? {
+                TokenKind::Int(value) => Some((Value::Int(value.checked_neg()?), 2)),
+                TokenKind::Float(value) => Some((Value::Float(-value), 2)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    /// Takes a literal map key at the current token, if there is one.
+    fn literal_key(&mut self) -> Option<Expr> {
+        let (value, count) = self.literal_key_at(self.index)?;
+        let span = self.peek().span.clone();
+        for _ in 0..count {
+            self.next();
+        }
+        Some(Expr {
+            end: self.previous_end(),
+            span,
+            kind: ExprKind::Value(value),
+        })
+    }
+    fn key_name(kind: &TokenKind) -> Option<String> {
+        match kind {
+            TokenKind::Name(name) => Some(name.clone()),
+            other => other.reserved_word().map(str::to_owned),
+        }
+    }
+    /// An error for `token` where a name was expected, saying so when it is
+    /// a reserved word, the likely mistake.
+    fn expected_name(token: &Token, message: &str) -> SourceError {
+        let mut error = match token.kind.reserved_word() {
+            Some(word) => SourceError::at(
+                SourceErrorCode::ExpectedSyntax,
+                format!("`{word}` is a reserved word and cannot be used as a name"),
+                token.span.clone(),
+            ),
+            None => SourceError::at(SourceErrorCode::ExpectedSyntax, message, token.span.clone()),
+        }
+        .with_end(token.end);
+        error.actual = Some(token.kind.describe().into());
+        error
     }
     fn separators(&mut self) {
         while self.is_separator() {
@@ -61,11 +212,18 @@ impl Parser {
         }
     }
     fn is_separator(&self) -> bool {
-        matches!(self.kind(), TokenKind::Sep | TokenKind::BlankSep)
+        matches!(
+            self.kind(),
+            TokenKind::Sep | TokenKind::BlankSep | TokenKind::Semicolon
+        )
     }
     fn enter_nesting(&mut self, span: SourceSpan) -> Result<(), SourceError> {
         if self.nesting == MAX_PARSE_NESTING {
-            return Err(SourceError::at("source nesting limit exceeded", span));
+            return Err(SourceError::at(
+                SourceErrorCode::NestingLimitExceeded,
+                "source nesting limit exceeded",
+                span,
+            ));
         }
         self.nesting += 1;
         Ok(())
@@ -81,11 +239,16 @@ impl Parser {
             expressions.push(self.statement()?);
             if !matches!(
                 self.kind(),
-                TokenKind::End | TokenKind::Sep | TokenKind::BlankSep | TokenKind::Documentation(_)
+                TokenKind::End
+                    | TokenKind::Sep
+                    | TokenKind::BlankSep
+                    | TokenKind::Semicolon
+                    | TokenKind::Documentation(_)
             ) {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
+                    SourceErrorCode::ExpectedSyntax,
                     "expected statement separator",
-                    self.peek().span.clone(),
+                    self.peek(),
                 ));
             }
             self.separators();
@@ -99,6 +262,7 @@ impl Parser {
             DocumentationPrefix::Declaration(content) => Some(content),
             DocumentationPrefix::Module { content, span } => {
                 return Ok(Expr {
+                    end: self.previous_end(),
                     kind: ExprKind::Documentation(content),
                     span,
                 });
@@ -112,9 +276,10 @@ impl Parser {
         }
         let exported = if self.matches(&TokenKind::Export) {
             if self.nesting != 0 {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
+                    SourceErrorCode::TopLevelOnly,
                     "export declarations are only valid at top level",
-                    self.peek().span.clone(),
+                    self.peek(),
                 ));
             }
             self.next();
@@ -132,14 +297,16 @@ impl Parser {
                     | TokenKind::Enum
             ) || matches!(self.kind(), TokenKind::Name(name) if name == "type"))
         {
-            return Err(SourceError::at(
+            return Err(SourceError::at_token(
+                SourceErrorCode::InvalidDocumentation,
                 "documentation blocks and tags must prefix a val, var, foreign, resource, or enum declaration",
-                self.peek().span.clone(),
+                self.peek(),
             ));
         }
         if self.matches(&TokenKind::NotImplemented) {
             let span = self.next().span;
             return Ok(Expr {
+                end: self.previous_end(),
                 kind: ExprKind::NotImplemented,
                 span,
             });
@@ -148,6 +315,7 @@ impl Parser {
             let span = self.next().span;
             let value = self.expression()?;
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Return {
                     value: Box::new(value),
@@ -158,6 +326,7 @@ impl Parser {
             let span = self.next().span;
             let value = self.expression()?;
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Throw {
                     value: Box::new(value),
@@ -174,7 +343,7 @@ impl Parser {
                 self.consume(&TokenKind::LParen, "expected ( after onerror")?;
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at("expected error binding name", token.span));
+                    return Err(Self::expected_name(&token, "expected error binding name"));
                 };
                 self.consume(&TokenKind::RParen, "expected ) after error binding")?;
                 (DeferMode::Error, Some(name))
@@ -183,6 +352,7 @@ impl Parser {
             };
             let value = self.expression()?;
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Defer {
                     value: Box::new(value),
@@ -194,9 +364,10 @@ impl Parser {
         if matches!(self.kind(), TokenKind::Val | TokenKind::Var) {
             let mutable = matches!(self.next().kind, TokenKind::Var);
             if self.matches(&TokenKind::Eq) {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
+                    SourceErrorCode::ExpectedSyntax,
                     "expected binding name",
-                    self.peek().span.clone(),
+                    self.peek(),
                 ));
             }
             let pattern = self.pattern()?;
@@ -209,6 +380,7 @@ impl Parser {
             self.consume(&TokenKind::Eq, "expected =")?;
             let value = self.expression()?;
             return Ok(Expr {
+                end: self.previous_end(),
                 span: value.span.clone(),
                 kind: ExprKind::Declare {
                     mutable,
@@ -228,15 +400,22 @@ impl Parser {
             let span = self.next().span;
             if self.nesting != 0 {
                 return Err(SourceError::at(
+                    SourceErrorCode::TopLevelOnly,
                     "resource declarations are only valid at top level",
                     span,
                 ));
             }
             let token = self.next();
             let TokenKind::Name(name) = token.kind else {
-                return Err(SourceError::at("expected resource type name", token.span));
+                return Err(SourceError::at(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected resource type name",
+                    token.span,
+                )
+                .with_end(token.end));
             };
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Resource {
                     exported,
@@ -250,43 +429,57 @@ impl Parser {
             let span = self.next().span;
             if self.nesting != 0 {
                 return Err(SourceError::at(
+                    SourceErrorCode::TopLevelOnly,
                     "enum declarations are only valid at top level",
                     span,
                 ));
             }
             let token = self.next();
             let TokenKind::Name(name) = token.kind else {
-                return Err(SourceError::at("expected enum type name", token.span));
+                return Err(SourceError::at(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected enum type name",
+                    token.span,
+                )
+                .with_end(token.end));
             };
             self.consume(&TokenKind::LBrace, "expected { after enum name")?;
-            self.separators();
+            self.newlines();
             let mut cases = Vec::new();
             while !self.matches(&TokenKind::RBrace) {
+                if self.matches(&TokenKind::End) {
+                    return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+                }
                 let token = self.next();
                 let TokenKind::Name(case) = token.kind else {
-                    return Err(SourceError::at("expected enum case name", token.span));
+                    return Err(SourceError::at(
+                        SourceErrorCode::ExpectedSyntax,
+                        "expected enum case name",
+                        token.span,
+                    )
+                    .with_end(token.end));
                 };
                 if cases.contains(&case) {
                     return Err(SourceError::at(
+                        SourceErrorCode::DuplicateName,
                         format!("duplicate enum case `{case}`"),
                         token.span,
-                    ));
+                    )
+                    .with_end(token.end));
                 }
                 cases.push(case);
-                if !self.matches(&TokenKind::Comma) {
-                    break;
-                }
-                self.next();
-                self.separators();
-                if self.matches(&TokenKind::RBrace) {
-                    break;
-                }
+                self.declaration_separator("expected comma or newline between enum cases")?;
             }
-            self.consume(&TokenKind::RBrace, "expected } after enum cases")?;
+            self.next();
             if cases.is_empty() {
-                return Err(SourceError::at("enum must declare at least one case", span));
+                return Err(SourceError::at(
+                    SourceErrorCode::EmptyEnum,
+                    "enum must declare at least one case",
+                    span,
+                ));
             }
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Enum {
                     exported,
@@ -301,23 +494,33 @@ impl Parser {
             let span = self.next().span;
             if self.nesting != 0 {
                 return Err(SourceError::at(
+                    SourceErrorCode::TopLevelOnly,
                     "type aliases are only valid at top level",
                     span,
                 ));
             }
-            if documentation.is_some() || !tags.is_empty() {
-                return Err(SourceError::at(
-                    "documentation blocks and tags cannot prefix a type alias",
-                    self.peek().span.clone(),
+            // A type has no runtime declaration for tags to describe. Its
+            // documentation is for readers of the source.
+            if !tags.is_empty() {
+                return Err(SourceError::at_token(
+                    SourceErrorCode::InvalidDocumentation,
+                    "tags cannot prefix a type alias",
+                    self.peek(),
                 ));
             }
             let token = self.next();
             let TokenKind::Name(name) = token.kind else {
-                return Err(SourceError::at("expected type alias name", token.span));
+                return Err(SourceError::at(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected type alias name",
+                    token.span,
+                )
+                .with_end(token.end));
             };
             self.consume(&TokenKind::Eq, "expected = after type alias name")?;
             let annotation = self.type_annotation()?;
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::TypeAlias {
                     exported,
@@ -339,15 +542,16 @@ impl Parser {
         let span = self.next().span;
         if self.nesting != 0 {
             return Err(SourceError::at(
+                SourceErrorCode::TopLevelOnly,
                 "foreign declarations are only valid at top level",
                 span,
             ));
         }
         let name = self.next();
-        let TokenKind::Name(name) = name.kind else {
-            return Err(SourceError::at(
+        let TokenKind::Name(name) = name.kind.clone() else {
+            return Err(Self::expected_name(
+                &name,
                 "expected foreign declaration name",
-                name.span,
             ));
         };
         self.consume(&TokenKind::Eq, "expected = after foreign declaration name")?;
@@ -359,6 +563,7 @@ impl Parser {
                 let parameter = self.next();
                 let TokenKind::Name(parameter) = parameter.kind else {
                     return Err(SourceError::at(
+                        SourceErrorCode::ExpectedSyntax,
                         "expected type parameter name",
                         parameter.span,
                     ));
@@ -378,6 +583,7 @@ impl Parser {
             let variadic = if self.matches(&TokenKind::Ellipsis) {
                 if has_variadic {
                     return Err(SourceError::at(
+                        SourceErrorCode::InvalidParameters,
                         "function can have only one variadic parameter",
                         self.next().span,
                     ));
@@ -389,7 +595,7 @@ impl Parser {
             };
             let parameter = self.next();
             let TokenKind::Name(name) = parameter.kind else {
-                return Err(SourceError::at("expected parameter name", parameter.span));
+                return Err(Self::expected_name(&parameter, "expected parameter name"));
             };
             let annotation = if self.matches(&TokenKind::Colon) {
                 self.next();
@@ -405,6 +611,7 @@ impl Parser {
             };
             if variadic && default.is_some() {
                 return Err(SourceError::at(
+                    SourceErrorCode::InvalidParameters,
                     "variadic parameters cannot have defaults",
                     parameter.span,
                 ));
@@ -423,9 +630,10 @@ impl Parser {
             }
             self.next();
             if has_variadic && !self.matches(&TokenKind::RParen) {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
+                    SourceErrorCode::InvalidParameters,
                     "variadic parameter must be final",
-                    self.peek().span.clone(),
+                    self.peek(),
                 ));
             }
         }
@@ -437,6 +645,7 @@ impl Parser {
             None
         };
         Ok(Expr {
+            end: self.previous_end(),
             span,
             kind: ExprKind::Foreign {
                 exported,
@@ -455,9 +664,10 @@ impl Parser {
     fn documentation_prefix(&mut self) -> Result<DocumentationPrefix, SourceError> {
         if let TokenKind::Documentation(content) = self.kind() {
             if self.nesting != 0 {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
+                    SourceErrorCode::InvalidDocumentation,
                     "documentation blocks are only valid at top level",
-                    self.peek().span.clone(),
+                    self.peek(),
                 ));
             }
             let content = content.clone();
@@ -487,7 +697,14 @@ impl Parser {
         let name = match token.kind {
             TokenKind::Name(name) => name,
             TokenKind::Export => "export".into(),
-            _ => return Err(SourceError::at("expected tag name", token.span)),
+            _ => {
+                return Err(SourceError::at(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected tag name",
+                    token.span,
+                )
+                .with_end(token.end));
+            }
         };
         let mut arguments = Vec::new();
         if self.matches(&TokenKind::LParen) {
@@ -524,6 +741,7 @@ impl Parser {
             let value = self.expression()?;
             self.leave_nesting();
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Assign {
                     name,
@@ -558,30 +776,33 @@ impl Parser {
                 TokenKind::LessEq => (Binary::LessEqual, 4),
                 TokenKind::Greater => (Binary::Greater, 4),
                 TokenKind::GreaterEq => (Binary::GreaterEqual, 4),
-                TokenKind::Pipe => (Binary::BitOr, 5),
-                TokenKind::Caret => (Binary::BitXor, 6),
-                TokenKind::Ampersand => (Binary::BitAnd, 7),
-                TokenKind::ShiftLeft => (Binary::ShiftLeft, 8),
-                TokenKind::ShiftRight => (Binary::ShiftRight, 8),
-                TokenKind::Plus => (Binary::Add, 9),
-                TokenKind::Minus => (Binary::Subtract, 9),
-                TokenKind::Star => (Binary::Multiply, 10),
-                TokenKind::Slash => (Binary::Divide, 10),
-                TokenKind::Percent => (Binary::Modulo, 10),
-                TokenKind::ColonPlus => (Binary::Append, 11),
-                TokenKind::PlusColon => (Binary::Prepend, 11),
+                TokenKind::QuestionQuestion => (Binary::Coalesce, 5),
+                TokenKind::Pipe => (Binary::BitOr, 6),
+                TokenKind::Caret => (Binary::BitXor, 7),
+                TokenKind::Ampersand => (Binary::BitAnd, 8),
+                TokenKind::ShiftLeft => (Binary::ShiftLeft, 9),
+                TokenKind::ShiftRight => (Binary::ShiftRight, 9),
+                TokenKind::Plus => (Binary::Add, 10),
+                TokenKind::Minus => (Binary::Subtract, 10),
+                TokenKind::Star => (Binary::Multiply, 11),
+                TokenKind::Slash => (Binary::Divide, 11),
+                TokenKind::Percent => (Binary::Modulo, 11),
+                TokenKind::ColonPlus => (Binary::Append, 12),
+                TokenKind::PlusColon => (Binary::Prepend, 12),
                 _ => break,
             };
             if precedence < minimum {
                 break;
             }
             let span = self.next().span;
-            let right = self.binary(if matches!(operator, Binary::Prepend) {
+            // `+:` and `??` group to the right.
+            let right = self.binary(if matches!(operator, Binary::Prepend | Binary::Coalesce) {
                 precedence
             } else {
                 precedence + 1
             })?;
             left = Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Binary {
                     left: Box::new(left),
@@ -612,6 +833,7 @@ impl Parser {
             let span = self.next().span;
             let right = self.postfix()?;
             value = Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Binary {
                     left: Box::new(value),
@@ -625,6 +847,7 @@ impl Parser {
         } else {
             let span = operators[0].1.clone();
             Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Prefix {
                     operators,
@@ -645,6 +868,7 @@ impl Parser {
                 self.leave_nesting();
                 let span = value.span.clone();
                 value = Expr {
+                    end: self.previous_end(),
                     span,
                     kind: ExprKind::Call {
                         callee: Box::new(value),
@@ -661,9 +885,10 @@ impl Parser {
                     }
                     self.next();
                 }
-                self.consume(&TokenKind::Greater, "expected > in type application")?;
+                self.consume_type_close("expected > in type application")?;
                 let span = value.span.clone();
                 value = Expr {
+                    end: self.previous_end(),
                     span,
                     kind: ExprKind::TypeApply {
                         callee: Box::new(value),
@@ -678,18 +903,22 @@ impl Parser {
             } else if self.matches(&TokenKind::Dot) {
                 let span = self.next().span;
                 let name = self.next();
-                let name = match name.kind {
-                    TokenKind::Name(name) => name,
-                    // `select` is reserved only where it begins a select
-                    // expression; maps and module exports may still use it.
-                    TokenKind::Select => "select".into(),
-                    _ => return Err(SourceError::at("expected property name", name.span)),
+                // Any key may follow `.`, reserved words included.
+                let Some(name) = Self::key_name(&name.kind) else {
+                    return Err(SourceError::at(
+                        SourceErrorCode::ExpectedSyntax,
+                        "expected property name",
+                        name.span,
+                    )
+                    .with_end(name.end));
                 };
                 let index = Expr {
+                    end: self.previous_end(),
                     span: span.clone(),
                     kind: ExprKind::Value(Value::string(name)),
                 };
                 value = Expr {
+                    end: self.previous_end(),
                     span,
                     kind: ExprKind::Index {
                         collection: Box::new(value),
@@ -710,16 +939,48 @@ impl Parser {
         Ok(value)
     }
 
+    /// Consumes the `>` closing a type's arguments. The lexer reads `>>` as
+    /// one shift token, so in `list<list<str>>` it is split: the first `>`
+    /// closes the inner type and the second remains for the outer one.
+    fn consume_type_close(&mut self, message: &str) -> Result<Token, SourceError> {
+        if !self.matches(&TokenKind::ShiftRight) {
+            return self.consume(&TokenKind::Greater, message);
+        }
+        let shift = self.peek().clone();
+        let mut rest = shift.clone();
+        rest.kind = TokenKind::Greater;
+        rest.span.column += 1;
+        self.tokens[self.index] = rest;
+        Ok(Token {
+            kind: TokenKind::Greater,
+            end: SourcePosition {
+                line: shift.span.line,
+                column: shift.span.column + 1,
+            },
+            span: shift.span,
+        })
+    }
     fn starts_type_application_call(&self) -> bool {
         if !self.matches(&TokenKind::Less) {
             return false;
         }
+        // Only tokens that can appear in a type may lie between `<` and its
+        // `>`; any other ends the search, so `i < size) { ... }` is a
+        // comparison however far away the next `> (` is.
         let mut depth = 0usize;
         for (offset, token) in self.tokens[self.index..].iter().enumerate() {
             match token.kind {
                 TokenKind::Less => depth += 1,
-                TokenKind::Greater => {
-                    depth -= 1;
+                TokenKind::Greater | TokenKind::ShiftRight => {
+                    let closes = if matches!(token.kind, TokenKind::ShiftRight) {
+                        2
+                    } else {
+                        1
+                    };
+                    if closes > depth {
+                        return false;
+                    }
+                    depth -= closes;
                     if depth == 0 {
                         return matches!(
                             self.tokens
@@ -729,7 +990,16 @@ impl Parser {
                         );
                     }
                 }
-                _ => {}
+                TokenKind::Name(_)
+                | TokenKind::Dot
+                | TokenKind::Pipe
+                | TokenKind::Comma
+                | TokenKind::LBracket
+                | TokenKind::RBracket
+                | TokenKind::Fn
+                | TokenKind::Struct
+                | TokenKind::Nil => {}
+                _ => return false,
             }
         }
         false
@@ -760,6 +1030,7 @@ impl Parser {
             };
             self.consume(&TokenKind::RBracket, "expected ]")?;
             return Ok(Expr {
+                end: self.previous_end(),
                 span,
                 kind: ExprKind::Slice {
                     collection: Box::new(collection),
@@ -774,6 +1045,7 @@ impl Parser {
         };
         self.consume(&TokenKind::RBracket, "expected ]")?;
         Ok(Expr {
+            end: self.previous_end(),
             span,
             kind: ExprKind::Index {
                 collection: Box::new(collection),
@@ -789,6 +1061,7 @@ impl Parser {
                 let spread = self.next();
                 if has_named {
                     return Err(SourceError::at(
+                        SourceErrorCode::InvalidArgumentOrder,
                         "spread argument cannot appear after a named argument",
                         spread.span,
                     ));
@@ -811,9 +1084,10 @@ impl Parser {
                 });
             } else {
                 if has_named {
-                    return Err(SourceError::at(
+                    return Err(SourceError::at_token(
+                        SourceErrorCode::InvalidArgumentOrder,
                         "positional argument cannot appear after a named argument",
-                        self.peek().span.clone(),
+                        self.peek(),
                     ));
                 }
                 arguments.push(CallArgument::Positional(self.expression()?));
@@ -860,9 +1134,20 @@ impl Parser {
             TokenKind::Select => return self.select(span),
             TokenKind::Match => return self.match_expression(span),
             TokenKind::Struct => return self.struct_schema(span),
-            _ => return Err(SourceError::at("expected expression", span)),
+            TokenKind::Copy => return Err(self.prefix_copy(&token)),
+            _ => {
+                return Err(SourceError::at_token(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected expression",
+                    &token,
+                ));
+            }
         };
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            end: self.previous_end(),
+            kind,
+            span,
+        })
     }
     fn select(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         let delimiter = self.consume(&TokenKind::LBrace, "expected { after select")?;
@@ -891,7 +1176,13 @@ impl Parser {
                     SelectCaseKind::Await(self.select_header_expression()?)
                 }
                 TokenKind::Name(name) if name == "_" => SelectCaseKind::Default,
-                _ => return Err(SourceError::at("expected select case", case_span)),
+                _ => {
+                    return Err(SourceError::at(
+                        SourceErrorCode::ExpectedSyntax,
+                        "expected select case",
+                        case_span,
+                    ));
+                }
             };
             let handler = if self.matches(&TokenKind::Pipeline) {
                 self.next();
@@ -905,12 +1196,15 @@ impl Parser {
         self.consume(&TokenKind::RBrace, "expected } after select cases")?;
         self.leave_nesting();
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Select(cases),
             span,
         })
     }
     fn nursery(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
-        let limit = if self.matches(&TokenKind::Limit) {
+        // `limit` is a keyword only here: a nursery body begins with `fn` or
+        // `{`, so a name directly after `nursery` can only be `limit`.
+        let limit = if matches!(self.kind(), TokenKind::Name(name) if name == "limit") {
             self.next();
             // A following block begins the nursery body rather than a struct
             // initializer applied to the limit expression.
@@ -929,13 +1223,15 @@ impl Parser {
                 self.map_or_block(delimiter.span)?
             }
             _ => {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
+                    SourceErrorCode::ExpectedSyntax,
                     "nursery expects a function or block",
-                    self.peek().span.clone(),
+                    self.peek(),
                 ));
             }
         };
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Nursery {
                 limit,
                 body: Box::new(body),
@@ -952,6 +1248,7 @@ impl Parser {
             _ => self.prefix()?,
         };
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Spawn(Box::new(body)),
             span,
         })
@@ -986,11 +1283,19 @@ impl Parser {
         let delimiter = self.consume(&TokenKind::LBrace, "expected { after struct")?;
         self.enter_nesting(delimiter.span)?;
         let mut fields = Vec::new();
-        self.separators();
+        self.newlines();
         while !self.matches(&TokenKind::RBrace) {
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             let token = self.next();
-            let TokenKind::Name(name) = token.kind else {
-                return Err(SourceError::at("expected struct field name", token.span));
+            let Some(name) = Self::key_name(&token.kind) else {
+                return Err(SourceError::at(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected struct field name",
+                    token.span,
+                )
+                .with_end(token.end));
             };
             let annotation = if self.matches(&TokenKind::Colon) {
                 self.next();
@@ -1009,11 +1314,12 @@ impl Parser {
                 annotation,
                 default,
             });
-            self.struct_field_separator()?;
+            self.declaration_separator(STRUCT_FIELD_SEPARATOR)?;
         }
         self.next();
         self.leave_nesting();
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::StructSchema(fields),
             span,
         })
@@ -1021,6 +1327,7 @@ impl Parser {
     fn struct_init(&mut self, schema: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
         let fields = self.struct_fields(&span)?;
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::StructInit {
                 schema: Box::new(schema),
                 fields,
@@ -1028,9 +1335,54 @@ impl Parser {
             span,
         })
     }
+    /// An error for `copy` written before the value it copies, as in other
+    /// languages' prefix forms. When `copy value { fields }` follows, the
+    /// value parses as a struct construction, and moving `copy` after it is
+    /// the one reading, so that is offered as a fix.
+    fn prefix_copy(&mut self, copy: &Token) -> SourceError {
+        let error = SourceError::at_token(
+            SourceErrorCode::ExpectedSyntax,
+            "`copy` follows the value it copies, as in `value copy { field: new }`",
+            copy,
+        );
+        let start = self.peek().span.clone();
+        let Ok(Expr {
+            kind: ExprKind::StructInit { schema, .. },
+            ..
+        }) = self.postfix()
+        else {
+            return error;
+        };
+        error.with_fix_edits(
+            "move `copy` after the value",
+            vec![
+                SourceEdit {
+                    range: SourceRange {
+                        start: SourcePosition {
+                            line: copy.span.line,
+                            column: copy.span.column,
+                        },
+                        end: SourcePosition {
+                            line: start.line,
+                            column: start.column,
+                        },
+                    },
+                    text: String::new(),
+                },
+                SourceEdit {
+                    range: SourceRange {
+                        start: schema.end,
+                        end: schema.end,
+                    },
+                    text: " copy".into(),
+                },
+            ],
+        )
+    }
     fn struct_copy(&mut self, value: Expr, span: SourceSpan) -> Result<Expr, SourceError> {
         let fields = self.struct_fields(&span)?;
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::StructCopy {
                 value: Box::new(value),
                 fields,
@@ -1041,39 +1393,78 @@ impl Parser {
     fn struct_fields(&mut self, span: &SourceSpan) -> Result<Vec<(String, Expr)>, SourceError> {
         self.enter_nesting(span.clone())?;
         let mut fields = Vec::new();
-        self.separators();
+        self.newlines();
         while !self.matches(&TokenKind::RBrace) {
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             let token = self.next();
-            let TokenKind::Name(name) = token.kind else {
-                return Err(SourceError::at("expected struct field name", token.span));
+            let Some(name) = Self::key_name(&token.kind) else {
+                return Err(SourceError::at(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected struct field name",
+                    token.span,
+                )
+                .with_end(token.end));
             };
             self.consume(&TokenKind::Colon, "expected : after struct field name")?;
             fields.push((name, self.expression()?));
-            self.struct_field_separator()?;
+            self.initializer_separator()?;
         }
         self.next();
         self.leave_nesting();
         Ok(fields)
     }
-    fn struct_field_separator(&mut self) -> Result<(), SourceError> {
+    fn is_newline(&self) -> bool {
+        matches!(self.kind(), TokenKind::Sep | TokenKind::BlankSep)
+    }
+    fn newlines(&mut self) {
+        while self.is_newline() {
+            self.next();
+        }
+    }
+    /// Consumes the separator after an enum case or struct schema field: one
+    /// comma, one or more newlines, or both, with at most one comma. Without
+    /// one, the next token must close the braces.
+    fn declaration_separator(&mut self, message: &str) -> Result<(), SourceError> {
+        let newline_before = self.is_newline();
+        self.newlines();
+        let comma = self.matches(&TokenKind::Comma);
+        if comma {
+            self.next();
+            self.newlines();
+        }
+        if newline_before || comma || self.closes_members() {
+            Ok(())
+        } else {
+            Err(SourceError::at_token(
+                SourceErrorCode::ExpectedSyntax,
+                message,
+                self.peek(),
+            ))
+        }
+    }
+    /// Consumes the separator after a struct construction or copy field: a
+    /// comma, with newlines allowed after it or before the closing brace.
+    fn initializer_separator(&mut self) -> Result<(), SourceError> {
         if self.matches(&TokenKind::Comma) {
             self.next();
-            self.separators();
-        } else if self.is_separator() {
-            self.separators();
-            if !self.matches(&TokenKind::RBrace) {
-                return Err(SourceError::at(
-                    "expected , between struct fields",
-                    self.peek().span.clone(),
-                ));
-            }
-        } else if !self.matches(&TokenKind::RBrace) {
-            return Err(SourceError::at(
-                "expected , between struct fields",
-                self.peek().span.clone(),
-            ));
+            self.newlines();
+            return Ok(());
         }
-        Ok(())
+        self.newlines();
+        if self.closes_members() {
+            Ok(())
+        } else {
+            Err(SourceError::at_token(
+                SourceErrorCode::ExpectedSyntax,
+                "expected comma between struct fields",
+                self.peek(),
+            ))
+        }
+    }
+    fn closes_members(&self) -> bool {
+        self.matches(&TokenKind::RBrace) || self.matches(&TokenKind::End)
     }
     fn list(&mut self, span: SourceSpan) -> Result<Expr, SourceError> {
         self.enter_nesting(span.clone())?;
@@ -1098,6 +1489,7 @@ impl Parser {
         self.consume(&TokenKind::RBracket, "expected ]")?;
         self.leave_nesting();
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::List(values),
             span,
         })
@@ -1106,18 +1498,26 @@ impl Parser {
         if self.matches(&TokenKind::RBrace) {
             self.next();
             return Ok(Expr {
+                end: self.previous_end(),
                 kind: ExprKind::Map(Vec::new()),
                 span,
             });
         }
         let first_entry = self.next_non_separator_index();
-        let map = ((matches!(
-            self.tokens.get(first_entry).map(|token| &token.kind),
-            Some(TokenKind::Name(_) | TokenKind::Interpolated(_))
-        )) && matches!(
-            self.tokens.get(first_entry + 1).map(|token| &token.kind),
-            Some(TokenKind::Colon)
-        )) || self.starts_computed_map_key(first_entry);
+        let colon_at = |index: usize| {
+            matches!(
+                self.tokens.get(index).map(|token| &token.kind),
+                Some(TokenKind::Colon)
+            )
+        };
+        let map = (self.tokens.get(first_entry).is_some_and(|token| {
+            matches!(token.kind, TokenKind::Interpolated(_))
+                || Self::key_name(&token.kind).is_some()
+        }) && colon_at(first_entry + 1))
+            || self
+                .literal_key_at(first_entry)
+                .is_some_and(|(_, count)| colon_at(first_entry + count))
+            || self.starts_computed_map_key(first_entry);
         if map {
             self.map(span)
         } else {
@@ -1127,7 +1527,12 @@ impl Parser {
     fn next_non_separator_index(&self) -> usize {
         self.tokens[self.index..]
             .iter()
-            .position(|token| !matches!(token.kind, TokenKind::Sep | TokenKind::BlankSep))
+            .position(|token| {
+                !matches!(
+                    token.kind,
+                    TokenKind::Sep | TokenKind::BlankSep | TokenKind::Semicolon
+                )
+            })
             .map_or(self.index, |offset| self.index + offset)
     }
     fn starts_computed_map_key(&self, index: usize) -> bool {
@@ -1160,7 +1565,9 @@ impl Parser {
         let mut entries = Vec::new();
         self.separators();
         loop {
-            let key = if self.matches(&TokenKind::LBracket) {
+            let key = if let Some(key) = self.literal_key() {
+                key
+            } else if self.matches(&TokenKind::LBracket) {
                 self.next();
                 let key = self.expression()?;
                 self.consume(&TokenKind::RBracket, "expected ]")?;
@@ -1168,7 +1575,9 @@ impl Parser {
             } else {
                 let token = self.next();
                 let kind = match token.kind {
-                    TokenKind::Name(name) => ExprKind::Value(Value::string(name)),
+                    ref kind if Self::key_name(kind).is_some() => {
+                        ExprKind::Value(Value::string(Self::key_name(kind).expect("checked above")))
+                    }
                     TokenKind::Interpolated(parts) => {
                         if let [StringPart::Text(value)] = parts.as_slice() {
                             ExprKind::Value(Value::string(value.clone()))
@@ -1176,9 +1585,17 @@ impl Parser {
                             ExprKind::Interpolate(parts)
                         }
                     }
-                    _ => return Err(SourceError::at("expected map key", token.span)),
+                    _ => {
+                        return Err(SourceError::at(
+                            SourceErrorCode::ExpectedSyntax,
+                            "expected map key",
+                            token.span,
+                        )
+                        .with_end(token.end));
+                    }
                 };
                 Expr {
+                    end: self.previous_end(),
                     span: token.span,
                     kind,
                 }
@@ -1199,6 +1616,7 @@ impl Parser {
         self.consume(&TokenKind::RBrace, "expected }")?;
         self.leave_nesting();
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Map(entries),
             span,
         })
@@ -1209,13 +1627,17 @@ impl Parser {
         self.separators();
         while !self.matches(&TokenKind::RBrace) {
             if self.matches(&TokenKind::End) {
-                return Err(SourceError::at("expected }", self.peek().span.clone()));
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
             }
             values.push(self.statement()?);
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
-                return Err(SourceError::at(
+                return Err(SourceError::at_token(
+                    SourceErrorCode::ExpectedSyntax,
                     "expected statement separator",
-                    self.peek().span.clone(),
+                    self.peek(),
                 ));
             }
             self.separators();
@@ -1223,6 +1645,7 @@ impl Parser {
         self.next();
         self.leave_nesting();
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Block(values),
             span,
         })
@@ -1239,7 +1662,12 @@ impl Parser {
             loop {
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at("expected type parameter", token.span));
+                    return Err(SourceError::at(
+                        SourceErrorCode::ExpectedSyntax,
+                        "expected type parameter",
+                        token.span,
+                    )
+                    .with_end(token.end));
                 };
                 type_parameters.push(name);
                 if !self.matches(&TokenKind::Comma) {
@@ -1263,9 +1691,11 @@ impl Parser {
                     let token = self.next();
                     if has_variadic {
                         return Err(SourceError::at(
+                            SourceErrorCode::InvalidParameters,
                             "function can have only one variadic parameter",
                             token.span,
-                        ));
+                        )
+                        .with_end(token.end));
                     }
                     true
                 } else {
@@ -1273,7 +1703,7 @@ impl Parser {
                 };
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at("expected parameter name", token.span));
+                    return Err(Self::expected_name(&token, "expected parameter name"));
                 };
                 let discard = name == "_";
                 let name = if discard {
@@ -1295,9 +1725,11 @@ impl Parser {
                 };
                 if variadic && default.is_some() {
                     return Err(SourceError::at(
+                        SourceErrorCode::InvalidParameters,
                         "variadic parameters cannot have defaults",
                         token.span,
-                    ));
+                    )
+                    .with_end(token.end));
                 }
                 parameters.push(Parameter {
                     name,
@@ -1316,9 +1748,10 @@ impl Parser {
                     break;
                 }
                 if has_variadic {
-                    return Err(SourceError::at(
+                    return Err(SourceError::at_token(
+                        SourceErrorCode::InvalidParameters,
                         "variadic parameter must be final",
-                        self.peek().span.clone(),
+                        self.peek(),
                     ));
                 }
             }
@@ -1332,18 +1765,27 @@ impl Parser {
         };
         let body = if self.matches(&TokenKind::Match) {
             let match_span = self.next().span;
+            if !self.matches(&TokenKind::LBrace) {
+                return Err(self.expected_token(
+                    &TokenKind::LBrace,
+                    "a function's `match` body matches its arguments and takes no subject: write `fn(x) match { ... }`, or `fn(x) { match x { ... } }`",
+                ));
+            }
             let subject = if parameters.len() == 1 {
                 Expr {
+                    end: self.previous_end(),
                     kind: ExprKind::Name(parameters[0].name.clone()),
                     span: match_span.clone(),
                 }
             } else {
                 Expr {
+                    end: self.previous_end(),
                     kind: ExprKind::List(
                         parameters
                             .iter()
                             .map(|parameter| {
                                 ListElement::Value(Expr {
+                                    end: self.previous_end(),
                                     kind: ExprKind::Name(parameter.name.clone()),
                                     span: match_span.clone(),
                                 })
@@ -1358,6 +1800,7 @@ impl Parser {
             self.block()?
         };
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Function {
                 type_parameters,
                 parameters,
@@ -1374,6 +1817,7 @@ impl Parser {
         self.consume(&TokenKind::RParen, "expected )")?;
         self.leave_nesting();
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Recur(arguments),
             span,
         })
@@ -1400,8 +1844,9 @@ impl Parser {
         self.separators();
         while !self.matches(&TokenKind::RBrace) {
             if self.matches(&TokenKind::End) {
-                return Err(SourceError::at("expected }", self.peek().span.clone()));
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
             }
+            let start = self.position();
             let mut patterns = vec![self.case_pattern()?];
             while self.matches(&TokenKind::Comma) {
                 self.next();
@@ -1413,6 +1858,9 @@ impl Parser {
             } else {
                 None
             };
+            if self.matches(&TokenKind::Pipe) {
+                return Err(self.pattern_alternative_pipe());
+            }
             let case_span = self
                 .consume(&TokenKind::Arrow, "expected => after match pattern")?
                 .span;
@@ -1420,20 +1868,23 @@ impl Parser {
             cases.push(MatchCase {
                 patterns,
                 guard,
+                start,
+                end: value.end,
                 value,
                 span: case_span,
             });
+            if self.matches(&TokenKind::End) {
+                return Err(self.expected_token(&TokenKind::RBrace, "expected }"));
+            }
             if !matches!(self.kind(), TokenKind::RBrace) && !self.is_separator() {
-                return Err(SourceError::at(
-                    "expected match case separator",
-                    self.peek().span.clone(),
-                ));
+                return Err(self.missing_case_separator());
             }
             self.separators();
         }
         self.next();
         self.leave_nesting();
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::Match { subject, cases },
             span,
         })
@@ -1460,9 +1911,11 @@ impl Parser {
             TokenKind::Interpolated(parts) => {
                 let [StringPart::Text(value)] = parts.as_slice() else {
                     return Err(SourceError::at(
+                        SourceErrorCode::InvalidPattern,
                         "interpolated strings are not match patterns",
                         token.span,
-                    ));
+                    )
+                    .with_end(token.end));
                 };
                 Ok(Pattern::Literal(Value::string(value.clone())))
             }
@@ -1486,7 +1939,12 @@ impl Parser {
                     self.next();
                     let token = self.next();
                     let TokenKind::Name(part) = token.kind else {
-                        return Err(SourceError::at("expected enum case name", token.span));
+                        return Err(SourceError::at(
+                            SourceErrorCode::ExpectedSyntax,
+                            "expected enum case name",
+                            token.span,
+                        )
+                        .with_end(token.end));
                     };
                     if self.matches(&TokenKind::Dot) {
                         path.push('.');
@@ -1502,14 +1960,14 @@ impl Parser {
             TokenKind::Caret => {
                 let token = self.next();
                 let TokenKind::Name(name) = token.kind else {
-                    return Err(SourceError::at("expected pinned binding name", token.span));
+                    return Err(Self::expected_name(&token, "expected pinned binding name"));
                 };
                 Ok(Pattern::Pinned(name))
             }
             TokenKind::LBracket => self.list_pattern(&token.span),
             TokenKind::LBrace => self.map_pattern(&token.span),
             TokenKind::LExactMap => self.exact_map_pattern(&token.span),
-            _ => Err(SourceError::at("expected match pattern", token.span)),
+            _ => Err(Self::expected_name(&token, "expected match pattern")),
         }
     }
     fn rest_pattern(&mut self) -> RestPattern {
@@ -1532,9 +1990,10 @@ impl Parser {
                 if self.matches(&TokenKind::Ellipsis) {
                     rest = Some(self.rest_pattern());
                     if !self.matches(&TokenKind::RBracket) {
-                        return Err(SourceError::at(
+                        return Err(SourceError::at_token(
+                            SourceErrorCode::InvalidPattern,
                             "list spread pattern must be final",
-                            self.peek().span.clone(),
+                            self.peek(),
                         ));
                     }
                     break;
@@ -1559,6 +2018,7 @@ impl Parser {
     fn exact_map_pattern(&mut self, span: &SourceSpan) -> Result<Pattern, SourceError> {
         self.map_pattern_with_mode(span, true)
     }
+    #[allow(clippy::too_many_lines)]
     fn map_pattern_with_mode(
         &mut self,
         span: &SourceSpan,
@@ -1575,9 +2035,10 @@ impl Parser {
         if !self.matches(&closing) {
             if self.matches(&TokenKind::Star) {
                 if exact {
-                    return Err(SourceError::at(
+                    return Err(SourceError::at_token(
+                        SourceErrorCode::InvalidPattern,
                         "exact map patterns cannot select all entries",
-                        self.peek().span.clone(),
+                        self.peek(),
                     ));
                 }
                 self.next();
@@ -1588,39 +2049,66 @@ impl Parser {
             loop {
                 if self.matches(&TokenKind::Ellipsis) {
                     if exact {
-                        return Err(SourceError::at(
+                        return Err(SourceError::at_token(
+                            SourceErrorCode::InvalidPattern,
                             "exact map patterns cannot contain a spread pattern",
-                            self.peek().span.clone(),
+                            self.peek(),
                         ));
                     }
                     rest = Some(self.rest_pattern());
                     if !self.matches(&closing) {
-                        return Err(SourceError::at(
+                        return Err(SourceError::at_token(
+                            SourceErrorCode::InvalidPattern,
                             "map spread pattern must be final",
-                            self.peek().span.clone(),
+                            self.peek(),
                         ));
                     }
                     break;
                 }
-                let key = if self.matches(&TokenKind::LBracket) {
+                let key = if let Some(key) = self.literal_key() {
+                    if !self.matches(&TokenKind::Colon) {
+                        return Err(SourceError::at_token(
+                            SourceErrorCode::InvalidPattern,
+                            "a literal map pattern key needs a pattern, as in `{200: value}`",
+                            self.peek(),
+                        ));
+                    }
+                    MapPatternKey::Computed(key)
+                } else if self.matches(&TokenKind::LBracket) {
                     self.next();
                     let key = self.expression()?;
                     self.consume(&TokenKind::RBracket, "expected ]")?;
                     MapPatternKey::Computed(key)
                 } else {
                     let token = self.next();
+                    // A reserved key needs an explicit pattern, since the
+                    // shorthand would bind the reserved word as a name.
+                    if token.kind.reserved_word().is_some() && !self.matches(&TokenKind::Colon) {
+                        return Err(Self::expected_name(&token, "expected map pattern key"));
+                    }
                     match token.kind {
-                        TokenKind::Name(name) => MapPatternKey::String(name),
+                        ref kind if Self::key_name(kind).is_some() => {
+                            MapPatternKey::String(Self::key_name(kind).expect("checked above"))
+                        }
                         TokenKind::Interpolated(parts) => {
                             let [StringPart::Text(value)] = parts.as_slice() else {
                                 return Err(SourceError::at(
+                                    SourceErrorCode::InvalidPattern,
                                     "interpolated strings are not map pattern keys",
                                     token.span,
-                                ));
+                                )
+                                .with_end(token.end));
                             };
                             MapPatternKey::String(value.clone())
                         }
-                        _ => return Err(SourceError::at("expected map pattern key", token.span)),
+                        _ => {
+                            return Err(SourceError::at(
+                                SourceErrorCode::ExpectedSyntax,
+                                "expected map pattern key",
+                                token.span,
+                            )
+                            .with_end(token.end));
+                        }
                     }
                 };
                 if let MapPatternKey::String(name) = &key
@@ -1628,9 +2116,9 @@ impl Parser {
                         matches!(existing, MapPatternKey::String(existing) if existing == name)
                     })
                 {
-                    return Err(SourceError::at(
+                    return Err(SourceError::at_token(SourceErrorCode::DuplicateName,
                         format!("duplicate map pattern key `{name}`"),
-                        self.peek().span.clone(),
+                        self.peek(),
                     ));
                 }
                 let pattern = if self.matches(&TokenKind::Colon) {
@@ -1638,9 +2126,10 @@ impl Parser {
                     self.pattern()?
                 } else {
                     let MapPatternKey::String(name) = &key else {
-                        return Err(SourceError::at(
+                        return Err(SourceError::at_token(
+                            SourceErrorCode::ExpectedSyntax,
                             "expected : after computed map pattern key",
-                            self.peek().span.clone(),
+                            self.peek(),
                         ));
                     };
                     Pattern::Binding(name.clone())
@@ -1686,7 +2175,11 @@ impl Parser {
                     self.next();
                     let segment = self.next();
                     let TokenKind::Name(segment) = segment.kind else {
-                        return Err(SourceError::at("expected type name after .", segment.span));
+                        return Err(SourceError::at(
+                            SourceErrorCode::ExpectedSyntax,
+                            "expected type name after .",
+                            segment.span,
+                        ));
                     };
                     name.push('.');
                     name.push_str(&segment);
@@ -1710,7 +2203,14 @@ impl Parser {
                 return Ok(TypeAnnotation::Tuple(elements));
             }
             TokenKind::Nil => TypeAnnotation::Name("nil".into()),
-            _ => return Err(SourceError::at("expected type annotation", token.span)),
+            _ => {
+                return Err(SourceError::at(
+                    SourceErrorCode::ExpectedSyntax,
+                    "expected type annotation",
+                    token.span,
+                )
+                .with_end(token.end));
+            }
         };
         if self.matches(&TokenKind::Less) {
             self.next();
@@ -1724,7 +2224,7 @@ impl Parser {
                     self.next();
                 }
             }
-            self.consume(&TokenKind::Greater, "expected > in type annotation")?;
+            self.consume_type_close("expected > in type annotation")?;
             let TypeAnnotation::Name(name) = annotation else {
                 unreachable!("only named types have arguments")
             };
@@ -1737,6 +2237,18 @@ impl Parser {
         let condition = self.expression()?;
         self.consume(&TokenKind::RParen, "expected )")?;
         let then_branch = self.block()?;
+        // No expression begins with `else`, so one on a following line
+        // continues this `if` rather than starting a new expression.
+        let mut ahead = self.index;
+        while matches!(
+            self.tokens[ahead].kind,
+            TokenKind::Sep | TokenKind::BlankSep
+        ) {
+            ahead += 1;
+        }
+        if matches!(self.tokens[ahead].kind, TokenKind::Else) {
+            self.index = ahead;
+        }
         let else_branch = if self.matches(&TokenKind::Else) {
             self.next();
             Some(Box::new(if self.matches(&TokenKind::If) {
@@ -1749,6 +2261,7 @@ impl Parser {
             None
         };
         Ok(Expr {
+            end: self.previous_end(),
             kind: ExprKind::If {
                 condition: Box::new(condition),
                 then_branch: Box::new(then_branch),

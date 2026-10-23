@@ -1,9 +1,4 @@
-use alloc::{
-    borrow::ToOwned,
-    rc::Rc,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{borrow::ToOwned, rc::Rc, string::String, vec::Vec};
 use core::cmp::Ordering;
 
 #[cfg(feature = "metrics")]
@@ -83,10 +78,7 @@ pub(super) fn add_num(left: Value, right: Value) -> Result<Value, String> {
 pub(super) fn subtract(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let Value::Map(entries) = left {
         if !is_map_key(&right) {
-            return Err((
-                RuntimeErrorKind::Type,
-                format!("{} cannot be used as a map key", right.type_name()),
-            ));
+            return Err((RuntimeErrorKind::Type, map_key_error(&right)));
         }
         return Ok(Value::Map(entries.remove(&right)));
     }
@@ -163,13 +155,12 @@ pub(super) fn divide_num(left: Value, right: Value) -> Result<Value, (RuntimeErr
 
 pub(super) fn modulo(left: Value, right: Value) -> Result<Value, (RuntimeErrorKind, String)> {
     if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-        return left.checked_rem(*right).map(Value::Int).ok_or_else(|| {
-            if *right == 0 {
-                (RuntimeErrorKind::DivideByZero, "division by zero".into())
-            } else {
-                (RuntimeErrorKind::Type, "integer overflow".into())
-            }
-        });
+        // The remainder always fits, including `i64::MIN % -1`, which is 0:
+        // only the quotient of that division overflows.
+        if *right == 0 {
+            return Err((RuntimeErrorKind::DivideByZero, "division by zero".into()));
+        }
+        return Ok(Value::Int(left.wrapping_rem(*right)));
     }
     let (a, b) = numbers(left, right).map_err(|message| (RuntimeErrorKind::Type, message))?;
     if b == 0.0 {
@@ -615,10 +606,7 @@ fn resolve_map_pattern_keys(
                 })?,
             };
             if !is_map_key(&key) {
-                return Err((
-                    RuntimeErrorKind::Type,
-                    format!("{} cannot be used as a map key", key.type_name()),
-                ));
+                return Err((RuntimeErrorKind::Type, map_key_error(&key)));
             }
             Ok(key)
         })
@@ -627,6 +615,28 @@ fn resolve_map_pattern_keys(
 
 pub(super) fn is_map_key(value: &Value) -> bool {
     MapKey::from_value(value).is_some()
+}
+
+/// Why `value` cannot be a map key, naming the part of a list or struct that
+/// cannot.
+pub(super) fn map_key_error(value: &Value) -> String {
+    fn unhashable(value: &Value) -> &'static str {
+        let part = match value {
+            Value::List(values) => values.iter().find(|part| !is_map_key(part)),
+            Value::Struct(value) => value.values.iter().find(|part| !is_map_key(part)),
+            _ => None,
+        };
+        part.map_or(value.type_name(), unhashable)
+    }
+    let part = unhashable(value);
+    if part == value.type_name() {
+        format!("{part} cannot be used as a map key")
+    } else {
+        format!(
+            "a {} containing {part} cannot be used as a map key",
+            value.type_name()
+        )
+    }
 }
 
 pub(super) fn index_value(
@@ -677,13 +687,12 @@ pub(super) fn index_value(
             let Value::Int(index) = index else {
                 return Err("string index must be an integer".into());
             };
-            let length = i64::try_from(value.chars().count())
-                .map_err(|_| "string is too large".to_owned())?;
+            let length =
+                i64::try_from(value.char_len()).map_err(|_| "string is too large".to_owned())?;
             let index = if *index < 0 { length + *index } else { *index };
             value
-                .chars()
-                .nth(usize::try_from(index).map_err(|_| "string index is out of bounds")?)
-                .map(|character| Value::string(character.to_string()))
+                .char_at(usize::try_from(index).map_err(|_| "string index is out of bounds")?)
+                .map(Value::string)
                 .ok_or_else(|| "string index is out of bounds".into())
         }
         Value::Map(entries) => {
@@ -728,7 +737,7 @@ pub(super) fn slice_value(
             "bytes",
         ),
         Value::Str(value) => (
-            i64::try_from(value.chars().count()).map_err(|_| "string is too large".to_owned())?,
+            i64::try_from(value.char_len()).map_err(|_| "string is too large".to_owned())?,
             "string",
         ),
         value => return Err(format!("cannot slice {}", value.type_name())),
@@ -746,7 +755,9 @@ pub(super) fn slice_value(
             if step == 1 {
                 let start = usize::try_from(start).expect("slice bounds are non-negative");
                 let end = usize::try_from(end).expect("slice bounds are non-negative");
-                return Ok(Value::List(values.view(start, end)));
+                // An end before the start is an empty slice, as for strings
+                // and bytes.
+                return Ok(Value::List(values.view(start, end.max(start))));
             }
             let mut indexes = Vec::new();
             let mut index = start;
@@ -774,16 +785,20 @@ pub(super) fn slice_value(
             ))
         }
         Value::Str(value) => {
-            let values = value.chars().collect::<Vec<_>>();
-            let mut result = String::new();
-            let mut index = start;
-            while index < end {
-                result.push(values[usize::try_from(index).expect("slice bounds are non-negative")]);
-                index = index
-                    .checked_add(step)
-                    .ok_or_else(|| "string slice step is too large".to_owned())?;
+            let start = usize::try_from(start).expect("slice bounds are non-negative");
+            let end = usize::try_from(end).expect("slice bounds are non-negative");
+            if start >= end {
+                return Ok(Value::string(""));
             }
-            Ok(Value::string(result))
+            let text = value.scalar_range(start, end);
+            if step == 1 {
+                return Ok(Value::string(text));
+            }
+            let step =
+                usize::try_from(step).map_err(|_| "string slice step is too large".to_owned())?;
+            Ok(Value::string(
+                text.chars().step_by(step).collect::<String>(),
+            ))
         }
         _ => unreachable!("collection kind was checked above"),
     }

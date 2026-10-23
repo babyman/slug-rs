@@ -4,11 +4,12 @@
 //! bytecode without knowing how modules, configuration, or native descriptors
 //! are assembled. It is not a general embedding API.
 
-use alloc::{string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::fmt;
 
 use crate::{
-    NativeDescriptorError, NativeFunction, NativeResourceRegistry, Value, platform::HashMap,
+    ModuleDeclaration, NativeDescriptorError, NativeFunction, NativeResourceRegistry,
+    SourceDiagnostic, Value, platform::HashMap,
 };
 
 /// Checked failure returned by a VM host callback.
@@ -16,6 +17,19 @@ use crate::{
 pub struct VmHostError {
     message: String,
     not_found: bool,
+    compile_error: Option<Box<SourceDiagnostic>>,
+    missing_module: Option<Box<MissingModule>>,
+}
+
+/// The module a not-found import named, and the available names it most
+/// likely meant, nearest first.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissingModule {
+    pub name: String,
+    pub suggestions: Vec<String>,
+    /// Paths, relative to a searched directory, of a file with the module's
+    /// name found outside every searched directory, such as `../jobs.slug`.
+    pub elsewhere: Vec<String>,
 }
 
 impl VmHostError {
@@ -24,6 +38,8 @@ impl VmHostError {
         Self {
             message: message.into(),
             not_found: false,
+            compile_error: None,
+            missing_module: None,
         }
     }
 
@@ -32,12 +48,46 @@ impl VmHostError {
         Self {
             message: message.into(),
             not_found: true,
+            compile_error: None,
+            missing_module: None,
         }
+    }
+
+    /// A failure because a module's source does not compile; `error` keeps
+    /// its code, range, and fixes.
+    #[must_use]
+    pub fn compile(message: impl Into<String>, error: SourceDiagnostic) -> Self {
+        Self {
+            message: message.into(),
+            not_found: false,
+            compile_error: Some(Box::new(error)),
+            missing_module: None,
+        }
+    }
+
+    /// Records the not-found module's name and the names it most likely
+    /// meant.
+    #[must_use]
+    pub fn with_missing_module(mut self, missing: MissingModule) -> Self {
+        self.missing_module = Some(Box::new(missing));
+        self
     }
 
     #[must_use]
     pub fn is_not_found(&self) -> bool {
         self.not_found
+    }
+
+    /// The source error of a module that failed to compile.
+    #[must_use]
+    pub fn compile_error(&self) -> Option<&SourceDiagnostic> {
+        self.compile_error.as_deref()
+    }
+
+    /// For a not-found module, its name and the names it most likely meant.
+    #[must_use]
+    pub fn missing_module(&self) -> Option<&MissingModule> {
+        self.missing_module.as_deref()
     }
 }
 
@@ -55,6 +105,18 @@ impl std::error::Error for VmHostError {}
 pub struct VmModuleExports {
     pub exports: Value,
 }
+
+/// An initialized module's top-level declarations, for `describe`: their
+/// metadata, in source order, and the value of each binding they declare.
+#[derive(Clone, Debug)]
+pub struct VmModuleDescription {
+    pub declarations: Vec<ModuleDeclaration>,
+    pub values: HashMap<String, Value>,
+}
+
+/// The permission that lets `describe` return a module's unexported
+/// declarations, which a host grants only when its user asks.
+pub const DESCRIBE_UNEXPORTED: &str = "describe.unexported";
 
 /// Runtime configuration callbacks required by `cfg` and typed entrypoints.
 ///
@@ -117,6 +179,32 @@ pub trait VmHost {
         importer: Option<&str>,
         name: &str,
     ) -> Result<VmModuleExports, VmHostError>;
+
+    /// Initializes a module, as [`Self::import_module`] does, and describes
+    /// its top-level declarations. Hosts without module metadata keep the
+    /// default, which reports that `describe` is unavailable.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked host failure when the module is unavailable or cannot
+    /// be initialized, or the host cannot describe modules.
+    fn describe_module(
+        &self,
+        importer: Option<&str>,
+        name: &str,
+    ) -> Result<VmModuleDescription, VmHostError> {
+        let _ = importer;
+        Err(VmHostError::new(format!(
+            "this host cannot describe modules, so `describe(\"{name}\")` is unavailable"
+        )))
+    }
+
+    /// Whether the host's user granted `permission`, such as
+    /// [`DESCRIBE_UNEXPORTED`]. Hosts grant nothing by default.
+    fn permits(&self, permission: &str) -> bool {
+        let _ = permission;
+        false
+    }
 
     /// Values exposed by the host-provided `slug.builtin` module.
     fn builtin_globals(&self) -> HashMap<String, Value>;

@@ -1,0 +1,51 @@
+val tcp = import("slug.net.tcp")
+val {await} = import("slug.channel")
+val {assertEqual, assertThrows} = import("slug.test")
+
+val failure = fn(work:fn):list {
+    val error = assertThrows(work)
+    [error.type, error.msg]
+}
+
+@test
+val portsAreIntegersFromZeroTo65535 = fn() {
+    val port = ["net.address", "a port is an integer from 0 to 65535"]
+    assertEqual(failure(fn() { tcp.listen("127.0.0.1", -1) }), port)
+    assertEqual(failure(fn() { tcp.listen("127.0.0.1", 65536) }), port)
+    assertEqual(failure(fn() { tcp.connect("127.0.0.1", 8.5) }), port)
+}
+
+@test
+val acceptReturnsEachConnection = fn() {
+    val listener = tcp.listen("127.0.0.1", 0)
+    defer tcp.close(listener)
+    val server = spawn {
+        val first = tcp.accept(listener, timeout = 5000)
+        val second = tcp.accept(listener, timeout = 5000)
+        if (first != nil) { tcp.close(first) }
+        if (second != nil) { tcp.close(second) }
+        [first != nil, second != nil]
+    }
+    tcp.close(tcp.connect("127.0.0.1", tcp.localPort(listener)))
+    tcp.close(tcp.connect("127.0.0.1", tcp.localPort(listener)))
+    assertEqual(await(server), [true, true])
+}
+
+@test
+val acceptAfterCloseReturnsNil = fn() {
+    val listener = tcp.listen("127.0.0.1", 0)
+    tcp.close(listener)
+    assertEqual(tcp.accept(listener), nil)
+}
+
+@test
+val connectionsAreMapKeys = fn() {
+    val listener = tcp.listen("127.0.0.1", 0)
+    defer tcp.close(listener)
+    val first = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    val second = tcp.connect("127.0.0.1", tcp.localPort(listener))
+    defer tcp.close(first)
+    defer tcp.close(second)
+    val names = {[first]: "first", [second]: "second"}
+    assertEqual([names[first], names[second]], ["first", "second"])
+}

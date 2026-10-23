@@ -182,14 +182,14 @@ impl Vm {
         right: Value,
         expected: Ordering,
     ) -> VmResult<bool> {
-        if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-            return Ok(left.cmp(right) == expected);
-        }
-        let (left, right) = numbers(left, right)
-            .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
-        Ok(left
-            .partial_cmp(&right)
-            .is_some_and(|ordering| ordering == expected))
+        ordering(left, right)
+            .map(|ordering| ordering == Some(expected))
+            .map_err(|(left, right)| {
+                self.error_at(
+                    RuntimeErrorKind::Type,
+                    format!("expected two numbers or two strings, got {left} and {right}"),
+                )
+            })
     }
 
     pub(super) fn numeric_compare(&mut self, expected: Ordering) -> VmResult<()> {
@@ -211,15 +211,23 @@ impl Vm {
 
     pub(super) fn guard_compare(&mut self, expected: Ordering) -> VmResult<()> {
         let (left, right) = self.pop_pair()?;
-        let result = if let (Value::Int(left), Value::Int(right)) = (&left, &right) {
-            left.cmp(right) == expected
-        } else {
-            numbers(left, right)
-                .ok()
-                .and_then(|(left, right)| left.partial_cmp(&right))
-                .is_some_and(|ordering| ordering == expected)
-        };
+        let result = ordering(left, right).ok().flatten() == Some(expected);
         self.stack.push(Value::Bool(result));
         Ok(())
+    }
+}
+
+/// The ordering of two numbers, or of two strings by their UTF-8 bytes, which
+/// is Rust's `str` ordering. Other operands return their type names.
+fn ordering(left: Value, right: Value) -> Result<Option<Ordering>, (&'static str, &'static str)> {
+    match (&left, &right) {
+        (Value::Int(left), Value::Int(right)) => Ok(Some(left.cmp(right))),
+        (Value::Str(left), Value::Str(right)) => Ok(Some(left.as_bytes().cmp(right.as_bytes()))),
+        _ => {
+            let names = (left.type_name(), right.type_name());
+            numbers(left, right)
+                .map(|(left, right)| left.partial_cmp(&right))
+                .map_err(|_| names)
+        }
     }
 }

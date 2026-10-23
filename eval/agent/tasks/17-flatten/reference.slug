@@ -1,0 +1,14 @@
+val nested = cfg("nested", [1, [2, [3, 4]], [], [[5]]])
+val flatten = fn(value) {
+  match value {
+    [...items] => reduce(items)
+    item => [item]
+  }
+}
+val reduce = fn(items) {
+  val go = fn(i, out) {
+    if (i == len(items)) { out } else { recur(i + 1, out + flatten(items[i])) }
+  }
+  go(0, [])
+}
+println(flatten(nested))
