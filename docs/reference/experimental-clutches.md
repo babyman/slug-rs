@@ -87,6 +87,16 @@ module is installed. It does not search system paths or fall back to a host
 plugin. A C source that sends into a Slug channel includes the generated
 `slug_producer.h` from beside its shim.
 
+`link` names system libraries the shim links with `-l`. `native.link_args`
+adds linker arguments for one platform: an argument starting with `-` is
+passed as written, and any other is a path inside the clutch, such as a
+vendored static library. `slug.arcade` uses it for its vendored raylib:
+
+```toml
+[native.link_args]
+"macos-aarch64" = ["native/macos-aarch64/libraylib.a", "-Wl,-framework,Cocoa"]
+```
+
 Optionally, a clutch declares its test files, which a test runner finds
 through the manifest rather than by listing directories:
 

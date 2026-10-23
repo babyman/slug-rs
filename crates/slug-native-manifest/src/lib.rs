@@ -82,6 +82,9 @@ pub struct NativeManifest {
     pub headers: Vec<String>,
     pub sources: Vec<String>,
     pub link: Vec<String>,
+    /// Platform name to extra linker arguments. An argument starting with `-`
+    /// is passed as written; any other is a path relative to the clutch.
+    pub link_args: BTreeMap<String, Vec<String>>,
     /// Platform name to dynamic library path, relative to the clutch.
     pub libraries: BTreeMap<String, String>,
     /// Ordered by module, then resource name.
@@ -150,6 +153,7 @@ impl NativeManifest {
                 "headers",
                 "sources",
                 "link",
+                "link_args",
                 "libraries",
                 "resources",
                 "functions",
@@ -175,6 +179,16 @@ impl NativeManifest {
         }
         let sources = string_list(native, "sources", "native")?;
         let link = string_list(native, "link", "native")?;
+        let link_args = match optional_table(native, "link_args", "native")? {
+            Some(table) => table
+                .keys()
+                .map(|platform| {
+                    string_list(table, platform, "native.link_args")
+                        .map(|args| (platform.clone(), args))
+                })
+                .collect::<Result<BTreeMap<_, _>, _>>()?,
+            None => BTreeMap::new(),
+        };
         let libraries = optional_table(native, "libraries", "native")?
             .into_iter()
             .flatten()
@@ -221,6 +235,7 @@ impl NativeManifest {
             headers,
             sources,
             link,
+            link_args,
             libraries,
             resources,
             functions,

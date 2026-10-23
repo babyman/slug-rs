@@ -86,6 +86,13 @@ pub fn build_dynamic(
     for library in &manifest.link {
         command.arg(format!("-l{library}"));
     }
+    for argument in manifest.link_args.get(platform).into_iter().flatten() {
+        if argument.starts_with('-') {
+            command.arg(argument);
+        } else {
+            command.arg(clutch_root.join(contained(argument, "native.link_args")?));
+        }
+    }
     // The C math functions are part of the C library everywhere except Linux,
     // where they live in a separate libm.
     if platform.starts_with("linux-") {
