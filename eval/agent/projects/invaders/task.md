@@ -502,7 +502,8 @@ Each iteration:
    `numAliens`.
 5. If `adjustScore` is set: clear it, add `scoreDelta` to `p1Score` modulo
    10000, and print `p1Score` at 0x271C.
-6. If `numAliens` is 0, the rack is cleared: go to **the rack's end** and stop.
+6. If `numAliens` is 0, the rack is cleared: skip the rest of this iteration
+   and go to **the rack's end**, running its step now, in this slot.
 7. Set `aShotReloadRate` from `h`, the hundreds of `p1Score`
    (`p1Score / 100`, rounded down): 0x30 if `h` is at most 2, 0x10 if at most
    10, 0x0B if at most 20, 0x08 if at most 30, and 0x07 otherwise.
@@ -540,9 +541,10 @@ otherwise, `rackDirection` to 0, and `refAlienDY` to 0xF8.
 ### The rack's end
 
 If `playerAlive` is not 0xFF, wait until it is. Otherwise set `isrDelay` to
-0x30 and wait until it is 0, unless `playerAlive` stops being 0xFF first,
-which turns this into waiting until it is 0xFF again. Each wait checks its
-condition once per step, starting in this step.
+0x30 and wait until it is 0. Each step of that wait checks `isrDelay` first:
+if it is 0 the wait is over; otherwise, if `playerAlive` is not 0xFF, the
+wait becomes waiting until `playerAlive` is 0xFF, checked again at once.
+Each wait checks its condition once per step, starting in this step.
 
 Then: set `suspendPlay` to 0, clear the playfield, and do the RAM reset. Let
 `n` be `(rack count & 7) + 1`; set the rack count to `n`, the starting `yr`
