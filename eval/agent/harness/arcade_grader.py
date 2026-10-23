@@ -8,7 +8,8 @@ and SLUG_ARCADE_HASHES collecting each frame's 64-bit hash. Frames are
 compared in windows of `window` frames: a window's digest is the first 16 hex
 digits of the SHA-256 of its frames' hashes, and cases.json stores each
 case's digests. A case passes when the program shows exactly `frames` frames
-and every digest matches.
+and every digest matches, and its sound log (SLUG_ARCADE_SOUNDS: one line
+per play, loop, or stop call) has exactly the case's `sounds` lines.
 """
 
 import hashlib
@@ -29,7 +30,8 @@ def digests(hashes, window):
 
 
 def run(slug, slug_home, project_dir, program_path, script, seconds):
-    """Runs a program on an input script and returns (hashes, error)."""
+    """Runs a program on an input script and returns (hashes, sound lines,
+    error)."""
     with tempfile.TemporaryDirectory(prefix="slug-eval-arcade-") as directory:
         directory = Path(directory)
         for source in Path(program_path).parent.glob("*.slug"):
@@ -43,11 +45,13 @@ def run(slug, slug_home, project_dir, program_path, script, seconds):
         shutil.copyfile(program_path, program)
         (directory / "script.txt").write_text(script)
         hashes = directory / "hashes.bin"
+        sounds = directory / "sounds.txt"
         environment = {
             **os.environ,
             "SLUG_HOME": str(slug_home),
             "SLUG_ARCADE_HEADLESS": str(directory / "script.txt"),
             "SLUG_ARCADE_HASHES": str(hashes),
+            "SLUG_ARCADE_SOUNDS": str(sounds),
             "SLUG_ARCADE_OUT": str(directory),
         }
         try:
@@ -60,19 +64,20 @@ def run(slug, slug_home, project_dir, program_path, script, seconds):
                 env=environment,
             )
         except subprocess.TimeoutExpired:
-            return None, f"timed out after {seconds} s"
+            return None, None, f"timed out after {seconds} s"
         if completed.returncode != 0:
-            return None, (completed.stderr.strip() or completed.stdout.strip())[:300] or f"exit {completed.returncode}"
+            return None, None, (completed.stderr.strip() or completed.stdout.strip())[:300] or f"exit {completed.returncode}"
         if not hashes.exists():
-            return None, "no frames shown (was slug.arcade opened and closed?)"
-        return hashes.read_bytes(), None
+            return None, None, "no frames shown (was slug.arcade opened and closed?)"
+        lines = sounds.read_text().splitlines() if sounds.exists() else []
+        return hashes.read_bytes(), lines, None
 
 
 def grade(slug, slug_home, project_dir, program_path, suite):
     window = suite["window"]
     outcomes = []
     for case in suite["cases"]:
-        hashes, error = run(slug, slug_home, project_dir, program_path, case["script"], case["seconds"])
+        hashes, sounds, error = run(slug, slug_home, project_dir, program_path, case["script"], case["seconds"])
         if error is not None:
             outcomes.append({"id": case["id"], "kind": "arcade", "passed": False, "detail": error})
             continue
@@ -84,6 +89,11 @@ def grade(slug, slug_home, project_dir, program_path, suite):
             detail = f"frames {mismatch * window}-{mismatch * window + window - 1} differ"
         elif frames != case["frames"]:
             detail = f"showed {frames} frames, expected {case['frames']}"
+        elif sounds != case["sounds"]:
+            line = next((i for i, (a, b) in enumerate(zip(sounds, case["sounds"])) if a != b), min(len(sounds), len(case["sounds"])))
+            got = sounds[line] if line < len(sounds) else "nothing"
+            wanted = case["sounds"][line] if line < len(case["sounds"]) else "nothing"
+            detail = f"sound call {line + 1} is `{got}`, expected `{wanted}`"
         else:
             detail = ""
         outcomes.append({"id": case["id"], "kind": "arcade", "passed": detail == "", "detail": detail})

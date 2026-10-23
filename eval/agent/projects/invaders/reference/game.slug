@@ -269,6 +269,19 @@ var alienShotDelta = 0xFC
 var shotSync = 1
 var numAliens = 0xFF
 
+// Sound: the RAM copies of the sound ports and the fleet timing.
+var soundPort3 = 0
+var soundPort5 = 1
+var changeFleetSnd = 1
+var fleetSndCnt = 0x40
+var fleetSndReload = 0
+var fleetSndHold = 0x10
+var extraHold = 0
+
+// The values last written to the sound ports, which the RAM reset leaves.
+var port3 = 0
+var port5 = 0
+
 var saucerStart = 0
 var saucerActive = 0
 var saucerHit = 0
@@ -354,6 +367,24 @@ val resetRam = fn() {
     sauScoreIdx = 0
     shotCount = 0
     tillSaucer = 0x600
+    soundPort3 = 0
+    soundPort5 = 1
+    changeFleetSnd = 1
+    fleetSndCnt = 0x40
+    fleetSndReload = 0
+    fleetSndHold = 0x10
+    extraHold = 0
+}
+
+// SoundBits3On and SoundBits3Off.
+val soundOn = fn(bits:num) {
+    soundPort3 = soundPort3 | bits
+    port3 = soundPort3
+}
+
+val soundOff = fn(mask:num) {
+    soundPort3 = soundPort3 & mask
+    port3 = soundPort3
 }
 
 // --------------------------------------------------------------- the rack
@@ -453,6 +484,7 @@ val alienExplodeTime = fn() {
         eraseSimple(offsetOf(expAlienYr, expAlienXr), 16)
         shotStatus = 4
         alienIsExploding = 0
+        soundOff(0xF7)
     }
 }
 
@@ -543,6 +575,7 @@ val afterDeath = fn() {
     } else {
         removeShip()
         suspendPlay = 1
+        soundOn(0x20)
         fg = "game"
         gameLoop()
     }
@@ -572,6 +605,7 @@ val gameObj0 = fn():bool {
             } else {
                 eraseSimple(offsetOf(playerYr, playerXr), 16)
                 resetPlayerObject()
+                soundOff(0)
                 if (invaded != 0 || gameMode == 0) {
                     false
                 } else {
@@ -646,6 +680,7 @@ val gameObj1 = fn() {
 val missExplode = fn() {
     shotStatus = 3
     alienIsExploding = 0
+    soundOff(0xF7)
 }
 
 // PlayerShotHit (foreground).
@@ -659,6 +694,7 @@ val playerShotHit = fn() {
                 saucerHit = 1
                 shotStatus = 4
                 alienIsExploding = 0
+                soundOff(0xF7)
             } else {
                 val b6 = (b + 6) & 255
                 if (refAlienYr < 0x90 && refAlienYr >= b6) {
@@ -674,6 +710,7 @@ val playerShotHit = fn() {
                         missExplode()
                     } else {
                         setData(index, 0)
+                        soundOn(0x08)
                         adjustScore = 1
                         scoreDelta = if (row[0] < 2) { 10 } else if (row[0] < 4) { 20 } else { 30 }
                         drawSprite(expAlienYr, expAlienXr, rom.alienExplosion)
@@ -825,11 +862,15 @@ val drawSaucer = fn() {
 val removeSaucer = fn() {
     clearSmall(offsetOf(saucerYr, saucerXr), 24)
     resetSaucer()
+    soundOff(0xFE)
 }
 
 val saucerHitSequence = fn() {
+    soundOff(0xFE)
     saucerHitTime = (saucerHitTime - 1) & 255
     if (saucerHitTime == 0x1F) {
+        soundPort5 = soundPort5 | 0x10
+        port5 = soundPort5 & 0x30
         saucerPic = rom.saucerExplosion
         drawSaucer()
     } else if (saucerHitTime == 0x18) {
@@ -844,6 +885,8 @@ val saucerHitSequence = fn() {
         scoreDelta = shown[0]
         printMessage(offsetOf(saucerYr, saucerXr), shown[1])
     } else if (saucerHitTime == 0) {
+        soundPort5 = soundPort5 & 0xEF
+        port5 = soundPort5 & 0x20
         removeSaucer()
     }
 }
@@ -925,6 +968,27 @@ val runObjects = fn(k:num):bool {
     if (k == 5) { false } else if (runObject(k)) { true } else { recur(k + 1) }
 }
 
+// TimeFleetSound (end-of-screen interrupt): plays the next fleet note.
+val timeFleetSound = fn() {
+    fleetSndHold = (fleetSndHold - 1) & 255
+    if (fleetSndHold == 0) { port5 = soundPort5 & 0x30 }
+    if (playerOK == 0) {
+        port5 = soundPort5 & 0x30
+    } else {
+        fleetSndCnt = (fleetSndCnt - 1) & 255
+        if (fleetSndCnt == 0) {
+            port5 = soundPort5
+            if (numAliens == 0) {
+                port5 = soundPort5 & 0x30
+            } else {
+                fleetSndCnt = fleetSndReload
+                changeFleetSnd = 1
+                fleetSndHold = 4
+            }
+        }
+    }
+}
+
 val midScreen = fn() {
     vblank = 0
     if (suspendPlay != 0 && gameMode != 0) {
@@ -937,6 +1001,7 @@ val endOfScreen = fn() {
     vblank = 0x80
     isrDelay = (isrDelay - 1) & 255
     if (suspendPlay != 0 && gameMode != 0) {
+        timeFleetSound()
         shotSync = obj2Extra
         drawAlien()
         if (!runObjects(0)) { timeToSaucer() }
@@ -1036,6 +1101,7 @@ val startRack = fn() {
     restoreShields()
     initRack()
     suspendPlay = 1
+    soundOn(0x20)
     fg = "game"
     gameLoop()
 }
@@ -1104,6 +1170,7 @@ val gameOverDelay = fn() {
     if (isrDelay == 0) {
         clearPlayField()
         gameMode = 0
+        port5 = 0
         waitStartSetup()
         waitStart()
     }
@@ -1136,10 +1203,12 @@ val gameOverCommon = fn() {
 val invadedLoop = fn() {
     fg = "invaded"
     playerShotHit()
+    soundOn(0x04)
     if (playerAlive == 0xFF) {
         suspendPlay = 0
         drawNumShips(0)
         printShips(0)
+        soundOff(0xFB)
         gameOverCommon()
     }
 }
@@ -1155,12 +1224,30 @@ val extraShip = fn() {
         drawSimple(scr(0x2501) + 512 * ships, rom.player)
         printShips(ships + 1)
         player1Ex = 0
+        extraHold = 0xFF
+        soundOn(0x10)
     }
 }
 
 val reloadRate = fn() {
     val hundreds = math.div(p1Score, 100)
     aShotReloadRate = if (hundreds <= 2) { 0x30 } else if (hundreds <= 10) { 0x10 } else if (hundreds <= 20) { 0x0B } else if (hundreds <= 30) { 0x08 } else { 0x07 }
+}
+
+// FleetDelayExShip: picks the next fleet note and its delay, and ends the
+// extra-ship sound.
+val fleetDelayExShip = fn() {
+    if (changeFleetSnd != 0) {
+        val find = fn(j:num):num {
+            if (numAliens >= rom.fleetCounts[j]) { j } else { recur(j + 1) }
+        }
+        fleetSndReload = rom.fleetDelays[find(0)]
+        val next = ((soundPort5 & 0x0F) << 1) & 0xFF
+        soundPort5 = (if (next == 0x10) { 1 } else { next }) | (soundPort5 & 0x30)
+        changeFleetSnd = 0
+    }
+    extraHold = (extraHold - 1) & 255
+    if (extraHold == 0) { soundOff(0xEF) }
 }
 
 // One iteration of the game loop.
@@ -1180,6 +1267,11 @@ val gameLoop = fn() {
         reloadRate()
         extraShip()
         if (numAliens < 9) { alienShotDelta = 0xFB }
+        // ShotSound, the player-hit sound, FleetDelayExShip, CtrlSaucerSound.
+        if (shotStatus != 0) { soundOn(0x02) } else { soundOff(0xFD) }
+        if (playerAlive != 0xFF) { soundOn(0x04) }
+        fleetDelayExShip()
+        if (saucerActive == 0) { soundOff(0xFE) } else if (saucerHit == 0) { soundOn(0x01) }
     }
 }
 
@@ -1228,6 +1320,13 @@ export val tick = fn(left:bool, right:bool, fire:bool, start:bool):bytes {
     endOfScreen()
     foreground()
     vram
+}
+
+/**
+ * The sound ports' current values, [port 3, port 5].
+ */
+export val ports = fn():list {
+    [port3, port5]
 }
 
 /**

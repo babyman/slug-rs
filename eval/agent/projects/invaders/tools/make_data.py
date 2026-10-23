@@ -34,6 +34,8 @@ REGIONS = [
     ("saucerExplosion", 0x1D7C, 24, "The saucer exploding, 24 columns."),
     ("alienStartTable", 0x1DA3, 8, "Starting Yr of the reference alien for racks 2 to 9."),
     ("font", 0x1E00, 0x200, "64 characters of 8 columns; see the character codes in the task."),
+    ("fleetCounts", 0x1A11, 16, "Alien counts for the fleet sound's delays: the first entry that numAliens is at least selects the delay."),
+    ("fleetDelays", 0x1A21, 16, "End-of-screen interrupts between fleet notes, one per fleetCounts entry."),
     ("rom0800", 0x0800, 256, "ROM bytes 0x0800-0x08FF (game code). Bit 0 of entry n picks the saucer's direction after the shot count becomes n."),
     ("messageScoreHeader", 0x1AE4, 28, '" SCORE<1> HI-SCORE SCORE<2> "'),
     ("messagePlayPlayer1", 0x1B70, 14, '"PLAY PLAYER<1>"'),

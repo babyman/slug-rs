@@ -113,6 +113,16 @@ export val font =
     0x"1c281c260f0b0018041112261c26020e080d120f141207260008080808080000"
 
 /**
+ * Alien counts for the fleet sound's delays: the first entry that numAliens is at least selects the delay.
+ */
+export val fleetCounts = 0x"322b241c16110d0a0807060504030201"
+
+/**
+ * End-of-screen interrupts between fleet notes, one per fleetCounts entry.
+ */
+export val fleetDelays = 0x"342e27221c181513100e0d0c0b090705"
+
+/**
  * ROM bytes 0x0800-0x08FF (game code). Bit 0 of entry n picks the saucer's direction after the shot count becomes n.
  */
 export val rom0800 =

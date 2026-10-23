@@ -1,20 +1,61 @@
 /**
- * Space Invaders: runs the game in reference/game.slug on slug.arcade.
+ * Space Invaders: runs the game in game.slug on slug.arcade.
  */
 val arcade = import("slug.arcade")
 val game = import("game")
+val sounds = import("sounds")
+
+// The sound-port bits, in the order their sounds are started each frame:
+// [port, bit, sound]. The saucer's siren loops while its bit is set.
+val BITS = [
+    [0, 0x01, "ufo"], [0, 0x02, "shot"], [0, 0x04, "playerDeath"], [0, 0x08, "invaderHit"],
+    [0, 0x10, "extraShip"], [1, 0x01, "fleet1"], [1, 0x02, "fleet2"], [1, 0x04, "fleet3"],
+    [1, 0x08, "fleet4"], [1, 0x10, "ufoHit"],
+]
+
+// The ports as heard: nothing while the amplifier bit (port 3, 0x20) is off.
+val audible = fn(ports:list):list {
+    if ((ports[0] & 0x20) != 0) { [ports[0] & 0x1F, ports[1] & 0x1F] } else { [0, 0] }
+}
+
+// Starts each sound whose bit came on, and stops the siren when its bit goes off.
+val playSounds = fn(before:list, after:list) {
+    val go = fn(i:num) {
+        if (i < len(BITS)) {
+            val bit = BITS[i]
+            val was = (before[bit[0]] & bit[1]) != 0
+            val now = (after[bit[0]] & bit[1]) != 0
+            if (now && !was) {
+                if (bit[2] == "ufo") { arcade.loop("ufo") } else { arcade.play(bit[2]) }
+            } else if (was && !now && bit[2] == "ufo") {
+                arcade.stop("ufo")
+            }
+            recur(i + 1)
+        }
+    }
+    go(0)
+}
 
 val main = fn() {
     arcade.open("Space Invaders", 256, 224, {rotate: true, scale: 3})
     arcade.overlay(0, 32, 224, 32, 0xff2020)
     arcade.overlay(0, 184, 224, 56, 0x20ff20)
     arcade.overlay(16, 240, 118, 16, 0x20ff20)
-    game.powerOn()
-    val loop = fn() {
-        val screen = game.tick(arcade.down("left"), arcade.down("right"), arcade.down("space"), arcade.down("enter"))
-        arcade.present(screen)
-        if (arcade.frame()) { recur() }
+    val define = fn(list:list) {
+        if (len(list) > 0) {
+            arcade.sound(list[0][0], list[0][1], sounds.rate)
+            recur(list[1:])
+        }
     }
-    loop()
+    define(sounds.all())
+    game.powerOn()
+    val loop = fn(heard:list) {
+        val screen = game.tick(arcade.down("left"), arcade.down("right"), arcade.down("space"), arcade.down("enter"))
+        val now = audible(game.ports())
+        playSounds(heard, now)
+        arcade.present(screen)
+        if (arcade.frame()) { recur(now) }
+    }
+    loop([0, 0])
     arcade.close()
 }

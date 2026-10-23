@@ -26,10 +26,12 @@ arcade.overlay(0, 184, 224, 56, 0x20ff20)
 arcade.overlay(16, 240, 118, 16, 0x20ff20)
 ```
 
-Each frame: read the keys with `arcade.down` (left: `"left"`, right:
-`"right"`, fire: `"space"`, start: `"enter"`), run the frame's game logic,
-`arcade.present` the video RAM, and call `arcade.frame()`. Present exactly
-once per frame, starting with frame 0.
+Before the first frame, define the game's ten sounds with `arcade.sound`
+(see **Sound**). Each frame: read the keys with `arcade.down` (left:
+`"left"`, right: `"right"`, fire: `"space"`, start: `"enter"`), run the
+frame's game logic, make the frame's sound calls, `arcade.present` the video
+RAM, and call `arcade.frame()`. Present exactly once per frame, starting
+with frame 0.
 
 You cannot open a window here. Run the game headless with an input script,
 as `slug.arcade` describes: for example
@@ -50,7 +52,9 @@ shot 600
 end 601
 ```
 
-writes `out/frame-600.png`, a screenshot you can look at. The tests run
+writes `out/frame-600.png`, a screenshot you can look at. Headless runs make
+no sound, but with `SLUG_ARCADE_SOUNDS=sounds.txt` they log every `play`,
+`loop`, and `stop` call; the tests compare that log too. The tests run
 scripts like this, up to 20000 frames long, with a time limit of 20 seconds
 plus one second for every 150 frames, so the game must run at least that
 fast.
@@ -192,6 +196,13 @@ The game's variables, with the values the **RAM reset** sets:
 | `sauScoreIdx` | 0 | position in `saucerScoreTable`, 0-14 |
 | `shotCount` | 0 | player shots ended |
 | `tillSaucer` | 0x600 | a 16-bit countdown to the next saucer |
+| `soundPort3` | 0 | the sound bits for port 3 |
+| `soundPort5` | 1 | the sound bits for port 5: the next fleet note |
+| `changeFleetSnd` | 1 | a fleet note was played: choose the next |
+| `fleetSndCnt` | 0x40 | end-of-screen interrupts until the next fleet note |
+| `fleetSndReload` | 0 | the delay between fleet notes |
+| `fleetSndHold` | 0x10 | end-of-screen interrupts until the note is released |
+| `extraHold` | 0 | game-loop iterations until the extra-ship sound ends |
 
 The RAM reset does not change these, which power-on sets:
 
@@ -205,6 +216,7 @@ The RAM reset does not change these, which power-on sets:
 | `adjustScore`, `scoreDelta` | 0, 0 | a pending score increase |
 | `player1Ex` | 1 | the extra ship is still to be awarded |
 | `aShotReloadRate` | 8 | how soon aliens fire again |
+| `port3`, `port5` | 0, 0 | the values on the two sound ports |
 
 The **data page** is 256 bytes, all 0 at power-on:
 
@@ -225,7 +237,8 @@ The **mid-screen interrupt**: when `suspendPlay` and `gameMode` are both
 non-zero, run the game objects from object 1, then the **alien cursor**.
 
 The **end-of-screen interrupt**: decrement `isrDelay`. Then, when
-`suspendPlay` and `gameMode` are both non-zero: set `shotSync` to `obj2Extra`,
+`suspendPlay` and `gameMode` are both non-zero: run the **fleet timer**, set
+`shotSync` to `obj2Extra`,
 **draw the alien**, run the game objects from object 0, and, unless an object
 handler left the interrupt (only object 0 can), run the **saucer timer**.
 
@@ -251,7 +264,7 @@ When `playerAlive` is not 0xFF, the player is exploding:
 4. Otherwise the explosion is over: erase simple the player's position, 16
    rows. Reset the player object: `obj0Timer` 0x80, `obj0Extra` 0,
    `playerAlive` 0xFF, `expAnimateTimer` 5, `expAnimateCnt` 0x0C, `playerPic`
-   `player`, `playerXr` 0x30. If `invaded` is 0 and `gameMode` is not 0, the
+   `player`, `playerXr` 0x30. Turn the sound bits off with mask 0. If `invaded` is 0 and `gameMode` is not 0, the
    foreground goes on with **after a death**, and the handler leaves the
    interrupt.
 
@@ -380,14 +393,18 @@ The handler acts only when `shotSync` is 2:
 To **draw the saucer**, draw simple `saucerPic` at the offset of
 `(0xD0, saucerXr)`. To **remove the saucer**, clear small 24 rows there, then
 set `saucerStart` 0, `saucerActive` 0, `saucerHit` 0, `saucerHitTime` 0x20,
-`saucerPic` `saucer`, `saucerXr` 0x29, and `saucerDelta` 2.
+`saucerPic` `saucer`, `saucerXr` 0x29, and `saucerDelta` 2, and turn the
+sound bits off with mask 0xFE.
 
-**The saucer hit sequence**: decrement `saucerHitTime`. At 0x1F, set
-`saucerPic` to `saucerExplosion` and draw the saucer. At 0x18, award the
+**The saucer hit sequence**: turn the sound bits off with mask 0xFE, and
+decrement `saucerHitTime`. At 0x1F, set bit 0x10 of `soundPort5`, set `port5`
+to `soundPort5 & 0x30`, set `saucerPic` to `saucerExplosion`, and draw the
+saucer. At 0x18, award the
 saucer's score: `saucerScoreTable[sauScoreIdx]` is 0x05, 0x10, 0x15, or 0x30
 for 50, 100, 150, or 300 points; set `scoreDelta` to the points and
 `adjustScore` to 1, and print the matching message (`messageSaucer50` and so
-on, 3 characters) at the saucer's offset. At 0, remove the saucer.
+on, 3 characters) at the saucer's offset. At 0, clear bit 0x10 of
+`soundPort5`, set `port5` to `soundPort5 & 0x20`, and remove the saucer.
 
 ### The aliens
 
@@ -422,8 +439,8 @@ At the first live index: set `alienCurIndex` to it, and `alienPosYr` and
 
 **Draw the alien** (end-of-screen interrupt): if `alienIsExploding` is not 0,
 decrement `expAlienTimer`, and when it reaches 0, erase simple 16 rows at the
-offset of `(expAlienYr, expAlienXr)`, set `shotStatus` to 4, and set
-`alienIsExploding` to 0. Otherwise, if the data-page byte at `alienCurIndex`
+offset of `(expAlienYr, expAlienXr)`, set `shotStatus` to 4, set
+`alienIsExploding` to 0, and turn the sound bits off with mask 0xF7. Otherwise, if the data-page byte at `alienCurIndex`
 is not 0, draw its sprite at `(alienPosYr, alienPosXr)`; then set
 `waitOnDraw` to 0. The sprite is the 16 bytes of `alienSprites` from offset
 `rot(alienRow & 0xFE)`, plus 0x30 when `alienFrame` is 1.
@@ -478,8 +495,8 @@ bottom line; OR the shield buffer onto the screen, for each shield `k` from
 `0x406 + k * 0x5A0`; set `refAlienYr` and `alienPosYr` to the starting `yr`,
 `refAlienXr` and `alienPosXr` to the starting `xr`, `refAlienDX` to the
 starting delta (but 2 if it is 3), and `rackDirection` to 1 if `refAlienDX`
-is 0xFE and 0 otherwise; set `suspendPlay` to 1; and go to **the game
-loop**, running one iteration now.
+is 0xFE and 0 otherwise; set `suspendPlay` to 1; turn on sound bit 0x20; and
+go to **the game loop**, running one iteration now.
 
 **Remove a ship**: if the reserve ships `n` are not 0, set them to `n - 1`,
 **draw the reserve ships** `n - 1`, and print the digit `n` at 0x2501.
@@ -509,11 +526,26 @@ Each iteration:
    10, 0x0B if at most 20, 0x08 if at most 30, and 0x07 otherwise.
 8. **The extra ship**: if `player1Ex` is set and `h` is at least 15: add one
    reserve ship (`n` ships now), draw simple `player` at `0x2501 + 512n`,
-   print the digit `n + 1` at 0x2501, and clear `player1Ex`.
+   print the digit `n + 1` at 0x2501, clear `player1Ex`, set `extraHold` to
+   0xFF, and turn on sound bit 0x10.
 9. If `numAliens` is below 9, set `alienShotDelta` to 0xFB.
+10. If `shotStatus` is not 0, turn on sound bit 0x02; otherwise turn the
+    sound bits off with mask 0xFD.
+11. If `playerAlive` is not 0xFF, turn on sound bit 0x04.
+12. **The fleet note**: if `changeFleetSnd` is set, set `fleetSndReload` to
+    `fleetDelays[j]`, for the first `j` with `numAliens >= fleetCounts[j]`;
+    move the note: with `low = (soundPort5 & 0x0F) << 1`, but 1 if that is
+    0x10, set `soundPort5` to `low | (soundPort5 & 0x30)`; and clear
+    `changeFleetSnd`. Then decrement `extraHold`, and if it is now 0, turn
+    the sound bits off with mask 0xEF.
+13. If `saucerActive` is 0, turn the sound bits off with mask 0xFE; otherwise,
+    if `saucerHit` is 0, turn on sound bit 0x01.
 
 **The player's shot hit**: only when `shotStatus` is 2. Let `b` be
 `shotYr`.
+
+Wherever this sets `alienIsExploding` to 0, it then turns the sound bits off
+with mask 0xF7.
 
 1. If `b` is at least 0xD8, the shot missed: set `shotStatus` to 3 and
    `alienIsExploding` to 0, and stop.
@@ -527,7 +559,8 @@ Each iteration:
    row's `yr`, `expAlienXr` to the column's `xr`, and `shotStatus` to 5.
 6. If the data-page byte at the row and column's index is 0, the shot hit an
    alien shot: set `shotStatus` to 3 and `alienIsExploding` to 0, and stop.
-7. Otherwise set that byte to 0; set `adjustScore` to 1 and `scoreDelta` to
+7. Otherwise set that byte to 0; turn on sound bit 0x08; set `adjustScore` to
+   1 and `scoreDelta` to
    10 for row 0 or 1, 20 for row 2 or 3, and 30 for any other row; draw
    `alienExplosion` at `(expAlienYr, expAlienXr)`; and set `expAlienTimer` to
    0x10.
@@ -556,16 +589,18 @@ buffer, set every alien alive, and wait 26 slots for the rack.
 In the slot after the interrupt the player's explosion ended in: set
 `suspendPlay` to 0. If there are no reserve ships, print the digit 0 at
 0x2501 and go to **game over**. Otherwise remove a ship, set `suspendPlay` to
-1, and go to the game loop, running one iteration now.
+1, turn on sound bit 0x20, and go to the game loop, running one iteration
+now.
 
 ### Invasion
 
 When the alien cursor finds the aliens have invaded, set `invaded` to 1. In
 the next slot, set `playerAlive` to 0 and go to **invaded**, running its step
 now. Each step of
-**invaded**: run the player's shot hit; then, if `playerAlive` is 0xFF, set
-`suspendPlay` to 0, draw the reserve ships 0, print the digit 0 at 0x2501, and
-go to **game over**.
+**invaded**: run the player's shot hit and turn on sound bit 0x04; then, if
+`playerAlive` is 0xFF, set `suspendPlay` to 0, draw the reserve ships 0,
+print the digit 0 at 0x2501, turn the sound bits off with mask 0xFB, and go
+to **game over**.
 
 ### Game over
 
@@ -574,5 +609,49 @@ If `p1Score` is greater than `hiScore`, set `hiScore` to it and print it at
 print a character and set `isrDelay` to 7, and print the next when a step
 finds `isrDelay` is 1. The first character is printed now. When a step finds
 `isrDelay` is 1 after all 10 characters, set `isrDelay` to 0x80, and when a
-step finds it 0, clear the playfield, set `gameMode` to 0, show the start
-screen, and run its step now.
+step finds it 0, clear the playfield, set `gameMode` to 0, set `port5` to 0,
+show the start screen, and run its step now.
+
+## Sound
+
+The original machine has no sound chip: the program sets bits on two output
+ports, `port3` and `port5`, and each bit drives a sound circuit.
+
+**Turning on sound bit `b`** sets `soundPort3` to `soundPort3 | b`, and
+**turning the sound bits off with mask `m`** sets it to `soundPort3 & m`;
+both then set `port3` to `soundPort3`. (The RAM reset clears `soundPort3`
+but leaves `port3`.) `port5` is set only where this specification says so.
+
+**The fleet timer** (end-of-screen interrupt), which plays the marching
+notes:
+
+1. Decrement `fleetSndHold`; if it is now 0, set `port5` to
+   `soundPort5 & 0x30`.
+2. If `playerOK` is 0, set `port5` to `soundPort5 & 0x30` and stop.
+3. Decrement `fleetSndCnt`. If it is not 0, stop.
+4. Set `port5` to `soundPort5`. If `numAliens` is 0, set `port5` to
+   `soundPort5 & 0x30` and stop.
+5. Set `fleetSndCnt` to `fleetSndReload`, `changeFleetSnd` to 1, and
+   `fleetSndHold` to 4.
+
+### Sounds
+
+Define these ten sounds before the first frame, with samples of your own
+design (the original's were analog; approximate them as you like):
+
+| Name | Port bit | What it is |
+|---|---|---|
+| `ufo` | `port3` 0x01 | the saucer's siren, which loops |
+| `shot` | `port3` 0x02 | the player fires |
+| `playerDeath` | `port3` 0x04 | the player explodes |
+| `invaderHit` | `port3` 0x08 | an alien explodes |
+| `extraShip` | `port3` 0x10 | the extra ship is awarded |
+| `fleet1`-`fleet4` | `port5` 0x01, 0x02, 0x04, 0x08 | the four fleet notes, falling in pitch |
+| `ufoHit` | `port5` 0x10 | the saucer explodes |
+
+`port3` bit 0x20 is the amplifier: while it is clear, every bit counts as
+clear. After each frame's game logic, compare each bit, as it counts, with
+its value after the previous frame's (all clear before frame 0). For each bit
+in the table's order, if it came on, call `arcade.loop("ufo")` for `ufo` and
+`arcade.play(name)` for the others; if `ufo`'s bit went off, call
+`arcade.stop("ufo")`. Make no other `play`, `loop`, or `stop` calls.
