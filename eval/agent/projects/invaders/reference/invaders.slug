@@ -1,0 +1,20 @@
+/**
+ * Space Invaders: runs the game in reference/game.slug on slug.arcade.
+ */
+val arcade = import("slug.arcade")
+val game = import("game")
+
+val main = fn() {
+    arcade.open("Space Invaders", 256, 224, {rotate: true, scale: 3})
+    arcade.overlay(0, 32, 224, 32, 0xff2020)
+    arcade.overlay(0, 184, 224, 56, 0x20ff20)
+    arcade.overlay(16, 240, 118, 16, 0x20ff20)
+    game.powerOn()
+    val loop = fn() {
+        val screen = game.tick(arcade.down("left"), arcade.down("right"), arcade.down("space"), arcade.down("enter"))
+        arcade.present(screen)
+        if (arcade.frame()) { recur() }
+    }
+    loop()
+    arcade.close()
+}

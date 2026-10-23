@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import arcade_grader
 import http_grader
 
 CASE_TIMEOUT_SECONDS = 20
@@ -179,6 +180,8 @@ def grade(slug, slug_home, project_dir, module_path, module):
     suite = load_suite(project_dir)
     if suite.get("kind") == "http":
         return http_grader.grade(slug, slug_home, project_dir, module_path, module, suite, load_cases(project_dir))
+    if suite.get("kind") == "arcade":
+        return arcade_grader.grade(slug, slug_home, project_dir, module_path, suite)
     outcomes = []
     prelude = suite.get("prelude", "")
     for case in load_cases(project_dir):

@@ -110,6 +110,7 @@ LIBRARY_SOURCES = [
     ("clutch/slug.db.sqlite.clutch/modules", "library/sqlite"),
     ("clutch/slug.net.tcp.clutch/modules", "library/net"),
     ("clutch/slug.net.http.clutch/modules", "library/http"),
+    ("clutch/slug.arcade.clutch/modules", "library/arcade"),
 ]
 
 CODING_PROMPT = """\
@@ -270,6 +271,12 @@ def prepare_workspace(run, run_temp):
         )
     if run["kind"] == "project":
         shutil.copyfile(PROJECTS / run["task"] / "task.md", workspace / "spec.md")
+        # Files a project provides, such as the invaders project's ROM data.
+        provided = PROJECTS / run["task"] / "workspace"
+        if provided.is_dir():
+            for source in provided.iterdir():
+                if source.is_file():
+                    shutil.copyfile(source, workspace / source.name)
     if run["kind"] == "review":
         for side in ("before", "after"):
             shutil.copytree(REVIEWS / run["task"] / side, workspace / side)

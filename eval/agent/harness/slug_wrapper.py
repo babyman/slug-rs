@@ -13,6 +13,9 @@ from environment variables set by the harness:
   `fixes` of diagnostics and the `edits` of their `suggestions`, keeping each
   suggestion's message, in JSON and in text alike.
 - SLUG_EVAL_REPORT: `off` rejects `slug report` as an unknown command would be.
+
+Programs run headless unless the agent sets SLUG_ARCADE_HEADLESS itself, so a
+slug.arcade program never opens a window on the machine running the evaluation.
 """
 
 import json
@@ -129,6 +132,7 @@ def run(real, arguments, fixes, diagnostics):
     output appears as it prints, not when it exits; standard error is
     filtered and passed on a line at a time. A signal that stops the wrapper
     stops the program too."""
+    os.environ.setdefault("SLUG_ARCADE_HEADLESS", "-")
     process = subprocess.Popen([real] + arguments, stderr=subprocess.PIPE)
 
     def forward(number, _frame):

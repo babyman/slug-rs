@@ -1,0 +1,1245 @@
+/**
+ * Space Invaders game logic, ported from the original ROM.
+ *
+ * The game draws into a 1-bit video RAM exactly as the ROM does; invaders.slug
+ * shows it with slug.arcade. Names follow the ROM's RAM variables (see the task's
+ * description of the model). Coordinates are the ROM's: `yr` counts pixels
+ * up from the bottom of the screen and `xr` is the video-RAM row plus 32.
+ */
+val rom = import("data")
+val math = import("slug.math")
+
+// ---------------------------------------------------------------- video RAM
+
+val zeros = fn(n:num):bytes {
+    val grow = fn(acc:bytes):bytes {
+        if (len(acc) >= n) { acc[:n] } else { recur(acc + acc) }
+    }
+    if (n == 0) { 0x"" } else { grow(0x"00") }
+}
+
+var vram = zeros(7168)
+var collision = 0
+
+// The video-RAM offset of a ROM screen address.
+val scr = fn(address:num):num { address - 0x2400 }
+
+// The video-RAM offset and shift of a pixel position.
+val offsetOf = fn(yr:num, xr:num):num { (xr - 32) * 32 + (yr >> 3) }
+
+val peek = fn(a:num):num {
+    if (a >= 0 && a < 7168) { vram[a] } else { 0 }
+}
+
+// Applies writes, a list of [offset, byte] in ascending offset order.
+// Offsets outside the video RAM are ignored.
+val write = fn(writes:list) {
+    val go = fn(i:num, pos:num, acc:bytes):bytes {
+        if (i == len(writes)) {
+            acc + vram[pos:]
+        } else {
+            val w = writes[i]
+            val a = w[0]
+            if (a < pos || a >= 7168) {
+                recur(i + 1, pos, acc)
+            } else {
+                recur(i + 1, a + 1, (acc + vram[pos:a]) :+ w[1])
+            }
+        }
+    }
+    vram = go(0, 0, 0x"")
+}
+
+// Writes one byte per row from `a`, computed by `f(i, old)`.
+val rows = fn(a:num, n:num, f:fn) {
+    val go = fn(i:num, ws:list):list {
+        if (i == n) { ws } else {
+            val at = a + 32 * i
+            recur(i + 1, ws :+ [at, f(i, peek(at)) & 255])
+        }
+    }
+    write(go(0, []))
+}
+
+// DrawSimpSprite: copies `pic` byte-aligned at `a`.
+val drawSimple = fn(a:num, pic:bytes) {
+    rows(a, len(pic), fn(i, old) { pic[i] })
+}
+
+// ClearSmallSprite: clears one byte in each of `n` rows.
+val clearSmall = fn(a:num, n:num) {
+    rows(a, n, fn(i, old) { 0 })
+}
+
+// EraseSimpleSprite: clears two bytes in each of `n` rows.
+val eraseSimple = fn(a:num, n:num) {
+    val go = fn(i:num, ws:list):list {
+        if (i == n) { ws } else {
+            val at = a + 32 * i
+            recur(i + 1, ws :+ [at, 0] :+ [at + 1, 0])
+        }
+    }
+    write(go(0, []))
+}
+
+// The shifted sprite routines: `op(old, new)` combines each byte.
+val shifted = fn(yr:num, xr:num, pic:bytes, op:fn) {
+    val a = offsetOf(yr, xr)
+    val s = yr & 7
+    val go = fn(i:num, ws:list):list {
+        if (i == len(pic)) { ws } else {
+            val p = pic[i] << s
+            val at = a + 32 * i
+            recur(i + 1, ws :+ [at, op(peek(at), p & 255) & 255] :+ [at + 1, op(peek(at + 1), p >> 8) & 255])
+        }
+    }
+    write(go(0, []))
+}
+
+// DrawSprite: overwrites.
+val drawSprite = fn(yr:num, xr:num, pic:bytes) {
+    shifted(yr, xr, pic, fn(old, new) { new })
+}
+
+// DrawShiftedSprite: ORs onto the screen.
+val drawShifted = fn(yr:num, xr:num, pic:bytes) {
+    shifted(yr, xr, pic, fn(old, new) { old | new })
+}
+
+// EraseShifted: clears the sprite's bits.
+val eraseShifted = fn(yr:num, xr:num, pic:bytes) {
+    shifted(yr, xr, pic, fn(old, new) { old & ~new })
+}
+
+// DrawSprCollision: ORs, setting `collision` when any bit was already lit.
+val drawCollide = fn(yr:num, xr:num, pic:bytes) {
+    collision = 0
+    shifted(yr, xr, pic, fn(old, new) {
+        if ((old & new) != 0) { collision = 1 }
+        old | new
+    })
+}
+
+// ClearPlayField: clears bytes 2-27 of every row.
+val clearPlayField = fn() {
+    val blank = zeros(26)
+    val go = fn(r:num, acc:bytes):bytes {
+        if (r == 224) { acc } else {
+            recur(r + 1, acc + vram[r * 32:r * 32 + 2] + blank + vram[r * 32 + 28:r * 32 + 32])
+        }
+    }
+    vram = go(0, 0x"")
+}
+
+// DrawBottomLine: byte 2 of every row becomes 1.
+val drawBottomLine = fn() {
+    rows(2, 224, fn(i, old) { 1 })
+}
+
+// ------------------------------------------------------------------- text
+
+val drawChar = fn(a:num, code:num):num {
+    drawSimple(a, rom.font[code * 8:code * 8 + 8])
+    a + 256
+}
+
+val printMessage = fn(a:num, message:bytes):num {
+    val go = fn(i:num, at:num):num {
+        if (i == len(message)) { at } else { recur(i + 1, drawChar(at, message[i])) }
+    }
+    go(0, a)
+}
+
+val digitChar = fn(d:num):num { 0x1A + d }
+
+// Print4Digits: a score from 0 to 9999.
+val print4 = fn(a:num, value:num) {
+    val a1 = drawChar(a, digitChar(math.div(value, 1000) % 10))
+    val a2 = drawChar(a1, digitChar(math.div(value, 100) % 10))
+    val a3 = drawChar(a2, digitChar(math.div(value, 10) % 10))
+    drawChar(a3, digitChar(value % 10))
+}
+
+// DrawHexByte: two digits.
+val print2 = fn(a:num, value:num) {
+    drawChar(drawChar(a, digitChar(math.div(value, 10) % 10)), digitChar(value % 10))
+}
+
+// ------------------------------------------------------------------- state
+
+// Player-1 data page (ROM 0x2100): alien flags 0-54, the shield buffer at
+// 0x42, the starting delta and position at 0xFB-0xFD, the rack count at 0xFE,
+// and the reserve ships at 0xFF.
+var pdata = zeros(256)
+
+val setData = fn(i:num, v:num) {
+    pdata = pdata[:i] + (0x"00" | (v & 255)) + pdata[i + 1:]
+}
+
+val setDataRange = fn(i:num, values:bytes) {
+    pdata = pdata[:i] + values + pdata[i + len(values):]
+}
+
+val Shot = struct {
+    status:num, step:num, track:num, cfir:num, blow:num, frame:num, pic:bytes, yr:num, xr:num,
+}
+
+val rollingInit = Shot {status: 0, step: 0, track: 0, cfir: 0, blow: 4, frame: 0, pic: rom.rollingShot[:3], yr: 0, xr: 0}
+val plungerInit = Shot {status: 0, step: 0, track: 1, cfir: 0, blow: 4, frame: 0, pic: rom.plungerShot[:3], yr: 0, xr: 0}
+val squigglyInit = Shot {status: 0, step: 0, track: 1, cfir: 6, blow: 4, frame: 0, pic: rom.squigglyShot[:3], yr: 0, xr: 0}
+
+// Interrupt and foreground bookkeeping.
+var vblank = 0
+var isrDelay = 0
+var suspendPlay = 0
+var gameMode = 0
+var fg = "start"
+var gameOverChar = 0
+var rackDelayCount = 0
+var keyLeft = false
+var keyRight = false
+var keyFire = false
+var keyStart = false
+
+// Score and status (ROM 0x20C0-0x20FF, not reset between racks).
+var numCoins = 0
+var p1Score = 0
+var hiScore = 0
+var adjustScore = 0
+var scoreDelta = 0
+var player1Ex = 1
+var aShotReloadRate = 8
+
+// The RAM mirror (ROM 0x2000-0x20BF), reset by resetRam.
+var waitOnDraw = 1
+var alienIsExploding = 0
+var expAlienTimer = 0x10
+var alienRow = 0
+var alienFrame = 0
+var alienCurIndex = 0
+var refAlienDY = 0
+var refAlienDX = 2
+var refAlienYr = 0x78
+var refAlienXr = 0x38
+var alienPosYr = 0x78
+var alienPosXr = 0x38
+var rackDirection = 0
+val rackDownDelta = 0xF8
+
+var obj0Timer = 0x80
+var obj0Extra = 0
+var playerAlive = 0xFF
+var expAnimateTimer = 5
+var expAnimateCnt = 0x0C
+var playerPic = rom.player
+val playerYr = 0x20
+var playerXr = 0x30
+
+var obj1Timer = 0
+var obj1Extra = 0
+var shotStatus = 0
+var shotBlowTimer = 0x10
+var shotPic = rom.playerShot
+var shotYr = 0x28
+var shotXr = 0x30
+var fireBounce = 0
+
+var obj2Timer = 0
+var obj2Extra = 2
+var rolling = rollingInit
+var obj3Timer = 0
+var obj3Extra = 0
+var plunger = plungerInit
+var obj4Timer = 0
+var obj4Extra = 0
+var squiggly = squigglyInit
+var ash = rollingInit
+var otherShot1 = 0
+var otherShot2 = 0
+
+var expAlienYr = 0
+var expAlienXr = 0
+var playerOK = 1
+var enableAlienFire = 0
+var alienFireDelay = 0x30
+var oneAlien = 0
+var invaded = 0
+var skipPlunger = 0
+var alienShotDelta = 0xFC
+var shotSync = 1
+var numAliens = 0xFF
+
+var saucerStart = 0
+var saucerActive = 0
+var saucerHit = 0
+var saucerHitTime = 0x20
+var saucerPic = rom.saucer
+val saucerYr = 0xD0
+var saucerXr = 0x29
+var saucerDelta = 2
+var sauScoreIdx = 0
+var shotCount = 0
+var tillSaucer = 0x600
+
+val resetPlayerObject = fn() {
+    obj0Timer = 0x80
+    obj0Extra = 0
+    playerAlive = 0xFF
+    expAnimateTimer = 5
+    expAnimateCnt = 0x0C
+    playerPic = rom.player
+    playerXr = 0x30
+}
+
+val resetPlayerShot = fn() {
+    shotStatus = 0
+    shotBlowTimer = 0x10
+    shotPic = rom.playerShot
+    shotYr = 0x28
+    shotXr = 0x30
+}
+
+val resetSaucer = fn() {
+    saucerStart = 0
+    saucerActive = 0
+    saucerHit = 0
+    saucerHitTime = 0x20
+    saucerPic = rom.saucer
+    saucerXr = 0x29
+    saucerDelta = 2
+}
+
+// CopyRAMMirror.
+val resetRam = fn() {
+    waitOnDraw = 1
+    alienIsExploding = 0
+    expAlienTimer = 0x10
+    alienRow = 0
+    alienFrame = 0
+    alienCurIndex = 0
+    refAlienDY = 0
+    refAlienDX = 2
+    refAlienYr = 0x78
+    refAlienXr = 0x38
+    alienPosYr = 0x78
+    alienPosXr = 0x38
+    rackDirection = 0
+    resetPlayerObject()
+    obj1Timer = 0
+    obj1Extra = 0
+    resetPlayerShot()
+    fireBounce = 0
+    obj2Timer = 0
+    obj2Extra = 2
+    rolling = rollingInit
+    obj3Timer = 0
+    obj3Extra = 0
+    plunger = plungerInit
+    obj4Timer = 0
+    obj4Extra = 0
+    squiggly = squigglyInit
+    collision = 0
+    expAlienYr = 0
+    expAlienXr = 0
+    playerOK = 1
+    enableAlienFire = 0
+    alienFireDelay = 0x30
+    oneAlien = 0
+    invaded = 0
+    skipPlunger = 0
+    alienShotDelta = 0xFC
+    shotSync = 1
+    numAliens = 0xFF
+    resetSaucer()
+    sauScoreIdx = 0
+    shotCount = 0
+    tillSaucer = 0x600
+}
+
+// --------------------------------------------------------------- the rack
+
+// Cnt16s: counts the 16s that bring `a` up to `h`, with the ROM's wrap quirk.
+val cnt16s = fn(a0:num, h:num):list {
+    val wrap = fn(a:num, c:num):list {
+        val a2 = (a + 16) & 255
+        if ((a2 & 0x80) != 0) { recur(a2, c + 1) } else { [a2, c + 1] }
+    }
+    val start = if (a0 >= h) { wrap(a0, 0) } else { [a0, 0] }
+    val count = fn(a:num, c:num, guard:num):list {
+        if (a >= h || guard == 64) { [a, c] } else { recur((a + 16) & 255, (c + 1) & 255, guard + 1) }
+    }
+    count(start[0], start[1], 0)
+}
+
+// FindRow: [row, row Yr] for a target Yr.
+val findRow = fn(target:num):list {
+    val r = cnt16s(refAlienYr, target)
+    [(r[1] - 1) & 255, (r[0] - 16) & 255]
+}
+
+// FindColumn: [column (from 1), column Xr] for a target Xr.
+val findColumn = fn(target:num):list {
+    val r = cnt16s(refAlienXr, target)
+    [r[1], (r[0] - 16) & 255]
+}
+
+val rlc3 = fn(b:num):num { ((b << 3) | (b >> 5)) & 255 }
+
+// GetAlienStatPtr: the data-page index of a row and column.
+val alienIndex = fn(row:num, column:num):num {
+    (rlc3(row) + row + row + row + column - 1) & 255
+}
+
+// GetAlienCoords: [Yr, Xr, row] of an alien index.
+val alienCoords = fn(index:num):list {
+    val byRow = fn(a:num, yr:num, row:num):list {
+        if ((((a - 11) & 255) & 0x80) != 0) { [a, yr, row] } else { recur((a - 11) & 255, (yr + 16) & 255, row + 1) }
+    }
+    val r = byRow(index, refAlienYr, 0)
+    val byColumn = fn(a:num, xr:num):num {
+        if (a == 0) { xr } else { recur((a - 1) & 255, (xr + 16) & 255) }
+    }
+    [r[1], byColumn(r[0], refAlienXr), r[2]]
+}
+
+val startInvaded = fn() {
+    invaded = 1
+    fg = "invadedStart"
+}
+
+// CursorNextAlien (mid-screen interrupt).
+val cursorNextAlien = fn() {
+    if (playerOK != 0 && waitOnDraw == 0) {
+        val search = fn(a0:num, d:num) {
+            val a = (a0 + 1) & 255
+            if (a == 55) {
+                if (d - 1 == 0) {
+                    nil
+                } else {
+                    alienCurIndex = 0
+                    val dy = refAlienDY
+                    refAlienDY = 0
+                    refAlienYr = (refAlienYr + dy) & 255
+                    refAlienXr = (refAlienXr + refAlienDX) & 255
+                    alienFrame = (alienFrame + 1) & 1
+                    if (pdata[0] == 1) { found(0) } else { recur(0, d - 1) }
+                }
+            } else if (pdata[a] == 1) {
+                found(a)
+            } else {
+                recur(a, d)
+            }
+        }
+        val found = fn(a:num) {
+            alienCurIndex = a
+            val c = alienCoords(a)
+            alienPosYr = c[0]
+            alienPosXr = c[1]
+            if (c[0] < 0x28) {
+                startInvaded()
+            } else {
+                alienRow = c[2]
+                waitOnDraw = 1
+            }
+        }
+        search(alienCurIndex, 2)
+    }
+}
+
+// AExplodeTime.
+val alienExplodeTime = fn() {
+    expAlienTimer = (expAlienTimer - 1) & 255
+    if (expAlienTimer == 0) {
+        eraseSimple(offsetOf(expAlienYr, expAlienXr), 16)
+        shotStatus = 4
+        alienIsExploding = 0
+    }
+}
+
+// DrawAlien (end-of-screen interrupt).
+val drawAlien = fn() {
+    if (alienIsExploding != 0) {
+        alienExplodeTime()
+    } else {
+        if (pdata[alienCurIndex] != 0) {
+            val offset = rlc3(alienRow & 0xFE) + (if (alienFrame != 0) { 0x30 } else { 0 })
+            drawSprite(alienPosYr, alienPosXr, rom.alienSprites[offset:offset + 16])
+        }
+        waitOnDraw = 0
+    }
+}
+
+// RackBump: scans the edge column the rack is moving toward.
+val rackBump = fn() {
+    val lit = fn(a:num, i:num):bool {
+        if (i == 23) { false } else if (vram[a + i] != 0) { true } else { recur(a, i + 1) }
+    }
+    if (rackDirection == 0) {
+        if (lit(scr(0x3EA4), 0)) {
+            refAlienDX = 0xFE
+            rackDirection = 1
+            refAlienDY = rackDownDelta
+        }
+    } else if (lit(scr(0x2524), 0)) {
+        refAlienDX = if (numAliens == 1) { 3 } else { 2 }
+        rackDirection = 0
+        refAlienDY = rackDownDelta
+    }
+}
+
+val countAliens = fn() {
+    val go = fn(i:num, n:num):num {
+        if (i == 55) { n } else { recur(i + 1, if (pdata[i] != 0) { n + 1 } else { n }) }
+    }
+    numAliens = go(0, 0)
+    if (numAliens == 1) { oneAlien = 1 }
+}
+
+// --------------------------------------------------------------- player
+
+val beamMatch = fn(xr:num):bool { (xr & 0x80) == vblank }
+
+val drawPlayer = fn() {
+    drawSimple(offsetOf(playerYr, playerXr), playerPic)
+}
+
+// Draws `count` reserve ships from 0x2701 and clears the rest of the line.
+val drawNumShips = fn(count:num) {
+    val icons = fn(n:num, a:num):num {
+        if (n == 0) { a } else {
+            drawSimple(a, rom.player)
+            recur(n - 1, a + 512)
+        }
+    }
+    val clear = fn(a:num) {
+        clearSmall(a, 16)
+        if (((a + 512 + 0x2400) >> 8) != 0x35) { recur(a + 512) }
+    }
+    clear(icons(count, scr(0x2701)))
+}
+
+val printShips = fn(n:num) {
+    drawChar(scr(0x2501), digitChar(n & 0x0F))
+}
+
+val removeShip = fn() {
+    val ships = pdata[0xFF]
+    if (ships != 0) {
+        setData(0xFF, ships - 1)
+        drawNumShips(ships - 1)
+        printShips(ships)
+    }
+}
+
+val drawScore = fn() { print4(scr(0x271C), p1Score) }
+val drawHiScore = fn() { print4(scr(0x2F1C), hiScore) }
+
+// The end of the player's explosion when the game goes on or ends.
+val afterDeath = fn() {
+    suspendPlay = 0
+    if (pdata[0xFF] == 0) {
+        printShips(0)
+        gameOverCommon()
+    } else {
+        removeShip()
+        suspendPlay = 1
+        fg = "game"
+        gameLoop()
+    }
+}
+
+// GameObj0: moves and draws the player. Returns true when the player's
+// explosion ends in game mode, which leaves the interrupt.
+val gameObj0 = fn():bool {
+    if (playerAlive != 0xFF) {
+        expAnimateTimer = (expAnimateTimer - 1) & 255
+        if (expAnimateTimer != 0) {
+            false
+        } else {
+            val image = playerAlive
+            playerOK = 0
+            enableAlienFire = 0
+            alienFireDelay = 0x30
+            expAnimateTimer = 5
+            expAnimateCnt = (expAnimateCnt - 1) & 255
+            if (expAnimateCnt != 0) {
+                val next = (image + 1) & 1
+                playerAlive = next
+                playerPic = rom.playerBlowups[next * 16:next * 16 + 16]
+                drawPlayer()
+                obj0Extra = 0
+                false
+            } else {
+                eraseSimple(offsetOf(playerYr, playerXr), 16)
+                resetPlayerObject()
+                if (invaded != 0 || gameMode == 0) {
+                    false
+                } else {
+                    fg = "afterDeath"
+                    true
+                }
+            }
+        }
+    } else {
+        playerOK = 1
+        if (enableAlienFire == 0) {
+            alienFireDelay = (alienFireDelay - 1) & 255
+            if (alienFireDelay == 0) { enableAlienFire = 1 }
+        }
+        if (keyRight) {
+            if (playerXr != 0xD9) { playerXr = playerXr + 1 }
+        } else if (keyLeft) {
+            if (playerXr != 0x30) { playerXr = playerXr - 1 }
+        }
+        drawPlayer()
+        obj0Extra = 0
+        false
+    }
+}
+
+// EndOfBlowup: removes the player's shot.
+val endOfBlowup = fn() {
+    eraseShifted(shotYr, shotXr, shotPic)
+    resetPlayerShot()
+    sauScoreIdx = if (sauScoreIdx + 1 >= 15) { 0 } else { sauScoreIdx + 1 }
+    shotCount = (shotCount + 1) & 255
+    if (saucerActive == 0) {
+        if ((rom.rom0800[shotCount] & 1) != 0) {
+            saucerXr = 0x29
+            saucerDelta = 2
+        } else {
+            saucerXr = 0xE0
+            saucerDelta = 0xFE
+        }
+    }
+}
+
+// GameObj1: the player's shot.
+val gameObj1 = fn() {
+    if (beamMatch(shotXr) && shotStatus != 0) {
+        if (shotStatus == 1) {
+            shotStatus = 2
+            shotXr = (playerXr + 8) & 255
+            drawShifted(shotYr, shotXr, shotPic)
+        } else if (shotStatus == 2) {
+            eraseShifted(shotYr, shotXr, shotPic)
+            shotYr = (shotYr + 4) & 255
+            drawCollide(shotYr, shotXr, shotPic)
+            if (collision != 0) { alienIsExploding = collision }
+        } else if (shotStatus == 3) {
+            shotBlowTimer = (shotBlowTimer - 1) & 255
+            if (shotBlowTimer == 0) {
+                endOfBlowup()
+            } else if (shotBlowTimer == 0x0F) {
+                eraseShifted(shotYr, shotXr, shotPic)
+                shotPic = rom.playerShotExplosion
+                shotYr = (shotYr - 2) & 255
+                shotXr = (shotXr - 3) & 255
+                drawShifted(shotYr, shotXr, shotPic)
+            }
+        } else if (shotStatus != 5) {
+            endOfBlowup()
+        }
+    }
+}
+
+val missExplode = fn() {
+    shotStatus = 3
+    alienIsExploding = 0
+}
+
+// PlayerShotHit (foreground).
+val playerShotHit = fn() {
+    if (shotStatus == 2) {
+        val b = shotYr
+        if (b >= 0xD8) {
+            missExplode()
+        } else if (alienIsExploding != 0) {
+            if (b >= 0xCE) {
+                saucerHit = 1
+                shotStatus = 4
+                alienIsExploding = 0
+            } else {
+                val b6 = (b + 6) & 255
+                if (refAlienYr < 0x90 && refAlienYr >= b6) {
+                    missExplode()
+                } else {
+                    val row = findRow(b6)
+                    val column = findColumn(shotXr)
+                    expAlienYr = row[1]
+                    expAlienXr = column[1]
+                    shotStatus = 5
+                    val index = alienIndex(row[0], column[0])
+                    if (pdata[index] == 0) {
+                        missExplode()
+                    } else {
+                        setData(index, 0)
+                        adjustScore = 1
+                        scoreDelta = if (row[0] < 2) { 10 } else if (row[0] < 4) { 20 } else { 30 }
+                        drawSprite(expAlienYr, expAlienXr, rom.alienExplosion)
+                        expAlienTimer = 0x10
+                    }
+                }
+            }
+        }
+    }
+}
+
+// PlrFireOrDemo.
+val playerFire = fn() {
+    if (playerAlive == 0xFF && obj0Timer == 0 && shotStatus == 0) {
+        if (fireBounce != 0) {
+            if (!keyFire) { fireBounce = 0 }
+        } else if (keyFire) {
+            shotStatus = 1
+            fireBounce = 1
+        }
+    }
+}
+
+// --------------------------------------------------------------- alien shots
+
+// FindInColumn: the lowest live alien's index in a column (from 1), or nil.
+val findInColumn = fn(column:num):num|nil {
+    val go = fn(index:num, n:num):num|nil {
+        if (n == 0) { nil } else if (pdata[index] != 0) { index } else { recur((index + 11) & 255, n - 1) }
+    }
+    go((column - 1) & 255, 5)
+}
+
+val shotBlowingUp = fn() {
+    val blow = (ash.blow - 1) & 255
+    ash = ash copy {blow: blow}
+    if (blow == 3) {
+        eraseShifted(ash.yr, ash.xr, ash.pic)
+        ash = ash copy {pic: rom.alienShotExplosion, xr: (ash.xr - 2) & 255, yr: (ash.yr - 2) & 255}
+        drawCollide(ash.yr, ash.xr, ash.pic)
+    } else if (blow == 0) {
+        eraseShifted(ash.yr, ash.xr, ash.pic)
+    }
+}
+
+// HandleAlienShot: starts or moves the active shot, `ash`, whose pictures
+// are `pictures`.
+val handleAlienShot = fn(pictures:bytes) {
+    if ((ash.status & 0x80) == 0) {
+        if (enableAlienFire != 0) {
+            ash = ash copy {step: 0}
+            val tooSoon = (otherShot1 != 0 && aShotReloadRate >= otherShot1) ||
+                (otherShot2 != 0 && aShotReloadRate >= otherShot2)
+            if (!tooSoon) {
+                val column = if (ash.track == 0) {
+                    val c = findColumn((playerXr + 8) & 255)[0]
+                    if (c >= 12) { 11 } else { c }
+                } else {
+                    val c = rom.columnFireTable[ash.cfir]
+                    ash = ash copy {cfir: ash.cfir + 1}
+                    c
+                }
+                val index = findInColumn(column)
+                if (index != nil) {
+                    val c = alienCoords(index)
+                    ash = ash copy {xr: (c[1] + 7) & 255, yr: (c[0] - 10) & 255, status: ash.status | 0x80, step: ash.step + 1}
+                }
+            }
+        }
+    } else if (beamMatch(ash.xr)) {
+        if ((ash.status & 1) != 0) {
+            shotBlowingUp()
+        } else {
+            ash = ash copy {step: (ash.step + 1) & 255}
+            eraseShifted(ash.yr, ash.xr, ash.pic)
+            val frame = (ash.frame + 3) % 12
+            ash = ash copy {frame: frame, pic: pictures[frame:frame + 3], yr: (ash.yr + alienShotDelta) & 255}
+            drawCollide(ash.yr, ash.xr, ash.pic)
+            if (ash.yr < 0x15) {
+                ash = ash copy {status: ash.status | 1}
+            } else if (collision != 0) {
+                if (ash.yr >= 0x1E && ash.yr < 0x27) { playerAlive = 0 }
+                ash = ash copy {status: ash.status | 1}
+            }
+        }
+    }
+}
+
+// GameObj2: the rolling shot, which aims at the player.
+val gameObj2 = fn() {
+    obj2Extra = 2
+    if (rolling.cfir == 0) {
+        rolling = rolling copy {cfir: 0xFFFF}
+    } else {
+        ash = rolling
+        otherShot1 = plunger.step
+        otherShot2 = squiggly.step
+        handleAlienShot(rom.rollingShot)
+        if (ash.blow != 0) {
+            rolling = ash
+        } else {
+            rolling = rollingInit
+            obj2Timer = 0
+            obj2Extra = 2
+        }
+    }
+}
+
+// GameObj3: the plunger shot.
+val gameObj3 = fn() {
+    if (skipPlunger == 0 && shotSync == 1) {
+        ash = plunger
+        otherShot1 = rolling.step
+        otherShot2 = squiggly.step
+        handleAlienShot(rom.plungerShot)
+        if (ash.cfir >= 16) { ash = ash copy {cfir: 0} }
+        if (ash.blow != 0) {
+            plunger = ash
+        } else {
+            plunger = plungerInit copy {cfir: ash.cfir}
+            obj3Timer = 0
+            obj3Extra = 0
+            if (numAliens == 1) { skipPlunger = 1 }
+        }
+    }
+}
+
+val squigglyShot = fn() {
+    ash = squiggly
+    otherShot1 = plunger.step
+    otherShot2 = rolling.step
+    handleAlienShot(rom.squigglyShot)
+    if (ash.cfir >= 21) { ash = ash copy {cfir: 6} }
+    if (ash.blow != 0) {
+        squiggly = ash
+    } else {
+        squiggly = squigglyInit copy {cfir: ash.cfir}
+        obj4Timer = 0
+        obj4Extra = 0
+    }
+}
+
+// --------------------------------------------------------------- saucer
+
+val drawSaucer = fn() {
+    drawSimple(offsetOf(saucerYr, saucerXr), saucerPic)
+}
+
+val removeSaucer = fn() {
+    clearSmall(offsetOf(saucerYr, saucerXr), 24)
+    resetSaucer()
+}
+
+val saucerHitSequence = fn() {
+    saucerHitTime = (saucerHitTime - 1) & 255
+    if (saucerHitTime == 0x1F) {
+        saucerPic = rom.saucerExplosion
+        drawSaucer()
+    } else if (saucerHitTime == 0x18) {
+        adjustScore = 1
+        val value = rom.saucerScoreTable[sauScoreIdx]
+        val shown = match value {
+            0x05 => [50, rom.messageSaucer50]
+            0x10 => [100, rom.messageSaucer100]
+            0x15 => [150, rom.messageSaucer150]
+            _ => [300, rom.messageSaucer300]
+        }
+        scoreDelta = shown[0]
+        printMessage(offsetOf(saucerYr, saucerXr), shown[1])
+    } else if (saucerHitTime == 0) {
+        removeSaucer()
+    }
+}
+
+// GameObj4: the squiggly shot, or the flying saucer.
+val gameObj4 = fn() {
+    if (shotSync == 2) {
+        if (saucerStart == 0 || squiggly.step != 0) {
+            squigglyShot()
+        } else if (saucerActive == 0 && numAliens < 8) {
+            squigglyShot()
+        } else {
+            if (saucerActive == 0) {
+                saucerActive = 1
+                drawSaucer()
+            }
+            if (beamMatch(saucerXr)) {
+                if (saucerHit != 0) {
+                    saucerHitSequence()
+                } else {
+                    saucerXr = (saucerXr + saucerDelta) & 255
+                    drawSaucer()
+                    if (saucerXr < 0x28 || saucerXr >= 0xE1) { removeSaucer() }
+                }
+            }
+        }
+    }
+}
+
+// TimeToSaucer (end-of-screen interrupt).
+val timeToSaucer = fn() {
+    if (refAlienYr < 0x78) {
+        if (tillSaucer == 0) {
+            tillSaucer = 0x600
+            saucerStart = 1
+        }
+        tillSaucer = (tillSaucer - 1) & 0xFFFF
+    }
+}
+
+// --------------------------------------------------------------- objects
+
+// Runs one game object's timer or handler. Returns true when the handler
+// leaves the interrupt.
+val runObject = fn(k:num):bool {
+    val timer = match k { 0 => obj0Timer; 1 => obj1Timer; 2 => obj2Timer; 3 => obj3Timer; _ => obj4Timer }
+    val extra = match k { 0 => obj0Extra; 1 => obj1Extra; 2 => obj2Extra; 3 => obj3Extra; _ => obj4Extra }
+    if (timer != 0) {
+        match k {
+            0 => { obj0Timer = timer - 1 }
+            1 => { obj1Timer = timer - 1 }
+            2 => { obj2Timer = timer - 1 }
+            3 => { obj3Timer = timer - 1 }
+            _ => { obj4Timer = timer - 1 }
+        }
+        false
+    } else if (extra != 0) {
+        match k {
+            0 => { obj0Extra = extra - 1 }
+            1 => { obj1Extra = extra - 1 }
+            2 => { obj2Extra = extra - 1 }
+            3 => { obj3Extra = extra - 1 }
+            _ => { obj4Extra = extra - 1 }
+        }
+        false
+    } else {
+        match k {
+            0 => gameObj0()
+            1 => { gameObj1(); false }
+            2 => { gameObj2(); false }
+            3 => { gameObj3(); false }
+            _ => { gameObj4(); false }
+        }
+    }
+}
+
+// RunGameObjs from object `k`. Returns true when a handler left the interrupt.
+val runObjects = fn(k:num):bool {
+    if (k == 5) { false } else if (runObject(k)) { true } else { recur(k + 1) }
+}
+
+val midScreen = fn() {
+    vblank = 0
+    if (suspendPlay != 0 && gameMode != 0) {
+        runObjects(1)
+        cursorNextAlien()
+    }
+}
+
+val endOfScreen = fn() {
+    vblank = 0x80
+    isrDelay = (isrDelay - 1) & 255
+    if (suspendPlay != 0 && gameMode != 0) {
+        shotSync = obj2Extra
+        drawAlien()
+        if (!runObjects(0)) { timeToSaucer() }
+    }
+}
+
+// --------------------------------------------------------------- foreground
+
+val drawStatus = fn() {
+    vram = zeros(7168)
+    printMessage(scr(0x241E), rom.messageScoreHeader)
+    drawScore()
+    print4(scr(0x391C), 0)
+    drawHiScore()
+    printMessage(scr(0x3501), rom.messageCredit)
+    print2(scr(0x3C01), numCoins)
+}
+
+val drawShields = fn() {
+    setDataRange(0x42, rom.shield + rom.shield + rom.shield + rom.shield)
+}
+
+// RestoreShields: ORs the shield buffer onto the screen.
+val restoreShields = fn() {
+    val shield = fn(k:num) {
+        if (k < 4) {
+            val a = scr(0x2806) + k * (0x2C0 + 0x2E0)
+            val buffer = pdata[0x42 + k * 44:0x42 + k * 44 + 44]
+            val go = fn(i:num, ws:list):list {
+                if (i == 22) { ws } else {
+                    val at = a + 32 * i
+                    recur(i + 1, ws :+ [at, peek(at) | buffer[2 * i]] :+ [at + 1, peek(at + 1) | buffer[2 * i + 1]])
+                }
+            }
+            write(go(0, []))
+            recur(k + 1)
+        }
+    }
+    shield(0)
+}
+
+val initAliens = fn() {
+    setDataRange(0, zeros(55) | 1)
+}
+
+// InitRack.
+val initRack = fn() {
+    refAlienYr = pdata[0xFC]
+    refAlienXr = pdata[0xFD]
+    alienPosYr = refAlienYr
+    alienPosXr = refAlienXr
+    val dx = pdata[0xFB]
+    refAlienDX = if (dx == 3) { 2 } else { dx }
+    rackDirection = if (refAlienDX == 0xFE) { 1 } else { 0 }
+}
+
+val waitStartSetup = fn() {
+    suspendPlay = 0
+    numCoins = 1
+    print2(scr(0x3C01), numCoins)
+    printMessage(scr(0x3501), rom.messageCredit)
+    clearPlayField()
+    printMessage(scr(0x3013), rom.messagePush)
+    printMessage(scr(0x2810), rom.messageOnly1Player)
+    fg = "waitStart"
+}
+
+val newGame = fn() {
+    numCoins = 0
+    print2(scr(0x3C01), numCoins)
+    p1Score = 0
+    drawScore()
+    print4(scr(0x391C), 0)
+    suspendPlay = 0
+    gameMode = 1
+    player1Ex = 1
+    drawStatus()
+    drawShields()
+    setData(0xFF, 3)
+    setData(0xFB, 2)
+    clearSmall(scr(0x391C), 32)
+    setData(0xFE, 0)
+    initAliens()
+    setData(0xFC, 0x78)
+    setData(0xFD, 0x38)
+    resetRam()
+    removeShip()
+    printMessage(scr(0x2B11), rom.messagePlayPlayer1)
+    isrDelay = 0xB0
+    fg = "prompt"
+    promptStep()
+}
+
+// Starts a rack: from the prompt, or after a cleared rack.
+val startRack = fn() {
+    drawBottomLine()
+    restoreShields()
+    initRack()
+    suspendPlay = 1
+    fg = "game"
+    gameLoop()
+}
+
+// Clearing the playfield and redrawing take the original's foreground
+// `slots` slots; the rack then starts.
+val rackDelay = fn(slots:num) {
+    rackDelayCount = slots
+    fg = "rackDelay"
+}
+
+val rackDelayStep = fn() {
+    rackDelayCount = rackDelayCount - 1
+    if (rackDelayCount == 0) { startRack() }
+}
+
+val promptStep = fn() {
+    if (isrDelay == 0) {
+        clearPlayField()
+        rackDelay(25)
+    } else if ((isrDelay & 4) != 0) {
+        clearSmall(scr(0x271C), 32)
+    } else {
+        drawScore()
+    }
+}
+
+val newRack = fn() {
+    suspendPlay = 0
+    clearPlayField()
+    resetRam()
+    val count = (pdata[0xFE] & 7) + 1
+    setData(0xFE, count)
+    setData(0xFC, rom.alienStartTable[count - 1])
+    setData(0xFD, 0x38)
+    drawShields()
+    initAliens()
+    rackDelay(26)
+}
+
+val rackEndWaitHit = fn() {
+    fg = "rackEndWaitHit"
+    if (playerAlive == 0xFF) { newRack() }
+}
+
+val rackEndDelay = fn() {
+    fg = "rackEndDelay"
+    if (isrDelay == 0) {
+        newRack()
+    } else if (playerAlive != 0xFF) {
+        rackEndWaitHit()
+    }
+}
+
+val rackEnd = fn() {
+    if (playerAlive != 0xFF) {
+        rackEndWaitHit()
+    } else {
+        isrDelay = 0x30
+        rackEndDelay()
+    }
+}
+
+val gameOverDelay = fn() {
+    fg = "gameOverDelay"
+    if (isrDelay == 0) {
+        clearPlayField()
+        gameMode = 0
+        waitStartSetup()
+        waitStart()
+    }
+}
+
+// PrintMessageDel of "GAME OVER ": one character, then a wait.
+val gameOverPrint = fn() {
+    fg = "gameOverPrint"
+    if (isrDelay == 1 || gameOverChar == 0) {
+        if (gameOverChar == 10) {
+            isrDelay = 0x80
+            gameOverDelay()
+        } else {
+            drawChar(scr(0x2D18) + 256 * gameOverChar, rom.messageGameOver[gameOverChar])
+            gameOverChar = gameOverChar + 1
+            isrDelay = 7
+        }
+    }
+}
+
+val gameOverCommon = fn() {
+    if (p1Score > hiScore) {
+        hiScore = p1Score
+        drawHiScore()
+    }
+    gameOverChar = 0
+    gameOverPrint()
+}
+
+val invadedLoop = fn() {
+    fg = "invaded"
+    playerShotHit()
+    if (playerAlive == 0xFF) {
+        suspendPlay = 0
+        drawNumShips(0)
+        printShips(0)
+        gameOverCommon()
+    }
+}
+
+val waitStart = fn() {
+    if (keyStart) { newGame() }
+}
+
+val extraShip = fn() {
+    if (player1Ex != 0 && math.div(p1Score, 100) >= 15) {
+        val ships = pdata[0xFF] + 1
+        setData(0xFF, ships)
+        drawSimple(scr(0x2501) + 512 * ships, rom.player)
+        printShips(ships + 1)
+        player1Ex = 0
+    }
+}
+
+val reloadRate = fn() {
+    val hundreds = math.div(p1Score, 100)
+    aShotReloadRate = if (hundreds <= 2) { 0x30 } else if (hundreds <= 10) { 0x10 } else if (hundreds <= 20) { 0x0B } else if (hundreds <= 30) { 0x08 } else { 0x07 }
+}
+
+// One iteration of the game loop.
+val gameLoop = fn() {
+    playerFire()
+    playerShotHit()
+    rackBump()
+    countAliens()
+    if (adjustScore != 0) {
+        adjustScore = 0
+        p1Score = (p1Score + scoreDelta) % 10000
+        drawScore()
+    }
+    if (numAliens == 0) {
+        rackEnd()
+    } else {
+        reloadRate()
+        extraShip()
+        if (numAliens < 9) { alienShotDelta = 0xFB }
+    }
+}
+
+val foreground = fn() {
+    match fg {
+        "waitStart" => waitStart()
+        "prompt" => promptStep()
+        "rackDelay" => rackDelayStep()
+        "game" => gameLoop()
+        "rackEndDelay" => rackEndDelay()
+        "rackEndWaitHit" => rackEndWaitHit()
+        "afterDeath" => afterDeath()
+        "invadedStart" => {
+            playerAlive = 0
+            invadedLoop()
+        }
+        "invaded" => invadedLoop()
+        "gameOverPrint" => gameOverPrint()
+        "gameOverDelay" => gameOverDelay()
+        _ => nil
+    }
+}
+
+// --------------------------------------------------------------- frames
+
+/**
+ * Powers the machine on: the score screen, then the start screen.
+ */
+export val powerOn = fn() {
+    resetRam()
+    drawStatus()
+    aShotReloadRate = 8
+    waitStartSetup()
+}
+
+/**
+ * Runs one frame with the keys held during it and returns the video RAM.
+ */
+export val tick = fn(left:bool, right:bool, fire:bool, start:bool):bytes {
+    keyLeft = left
+    keyRight = right
+    keyFire = fire
+    keyStart = start
+    midScreen()
+    foreground()
+    endOfScreen()
+    foreground()
+    vram
+}
+
+/**
+ * State for tools such as the test bot.
+ */
+export val state = fn():map {
+    {
+        fg: fg, playerXr: playerXr, playerAlive: playerAlive, obj0Timer: obj0Timer,
+        shotStatus: shotStatus, shotXr: shotXr, shotYr: shotYr,
+        aliens: pdata[:55], refAlienXr: refAlienXr, refAlienYr: refAlienYr,
+        shots: [rolling, plunger, squiggly],
+        saucerActive: saucerActive, saucerXr: saucerXr, saucerHit: saucerHit, saucerDelta: saucerDelta, hiScore: hiScore,
+        score: p1Score, ships: pdata[0xFF], rack: pdata[0xFE], numAliens: numAliens,
+    }
+}
