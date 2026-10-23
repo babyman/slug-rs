@@ -29,6 +29,13 @@
  * frame's bits are appended to it; when SLUG_ARCADE_HASHES does, each
  * frame's 64-bit FNV-1a hash is appended, as 8 little-endian bytes.
  *
+ * Sound. `sound` defines a named sound from 8-bit unsigned mono samples (128
+ * is silence); `play` starts it from the beginning, `loop` plays it over and
+ * over, and `stop` stops it. Headless runs make no sound; when
+ * SLUG_ARCADE_SOUNDS names a file, each `play`, `loop`, and `stop` call is
+ * written to it as a line `<frame> <play|loop|stop> <name>`, with the frame
+ * that the next `frame` call completes.
+ *
  * Failures throw `Error` values whose `type` is `native.arcade`.
  */
 
@@ -52,6 +59,8 @@ foreign downRaw = fn(key:str):bool
 foreign pressedRaw = fn(key:str):bool
 foreign frameCountRaw = fn():num
 foreign screenshotRaw = fn(path:str, scale:num):num
+foreign soundRaw = fn(name:str, samples:bytes, rate:num):num
+foreign playRaw = fn(name:str, mode:num):num
 foreign closeRaw = fn():nil
 
 val fail = fn(msg:str) {
@@ -67,6 +76,7 @@ val checked = fn(status:num, what:str):nil {
         4 => fail("the display is not open")
         5 => fail("cannot write " + what)
         6 => fail("cannot open a window")
+        7 => fail("no sound is named " + what)
         _ => fail("unexpected status from " + what)
     }
 }
@@ -145,6 +155,36 @@ export val frameCount = fn():num {
  */
 export val screenshot = fn(path:str, scale = 2):nil {
     checked(screenshotRaw(path, scale), path)
+}
+
+/**
+ * Defines, or redefines, the sound `name` from `samples`, 8-bit unsigned mono
+ * samples at `rate` per second (default 22050). Up to 32 sounds; a name is 1
+ * to 31 bytes.
+ */
+export val sound = fn(name:str, samples:bytes, rate = 22050):nil {
+    checked(soundRaw(name, samples, rate), "sound " + name)
+}
+
+/**
+ * Plays the sound `name` once, from its start.
+ */
+export val play = fn(name:str):nil {
+    checked(playRaw(name, 0), name)
+}
+
+/**
+ * Plays the sound `name` over and over until `stop`.
+ */
+export val loop = fn(name:str):nil {
+    checked(playRaw(name, 1), name)
+}
+
+/**
+ * Stops the sound `name`.
+ */
+export val stop = fn(name:str):nil {
+    checked(playRaw(name, 2), name)
 }
 
 /**

@@ -13,6 +13,7 @@
 #define SLUG_ARCADE_NOT_OPEN 4
 #define SLUG_ARCADE_WRITE_FAILED 5
 #define SLUG_ARCADE_NO_WINDOW 6
+#define SLUG_ARCADE_UNKNOWN_SOUND 7
 
 /* Opens the display for 1-bit frames of `width` by `height` pixels. With
  * `rotate` 1 a frame is shown turned 90 degrees counter-clockwise, as on an
@@ -42,6 +43,15 @@ int64_t slug_arcade_frame_count(void);
 
 /* Writes the presented frame, as displayed and enlarged by `scale`, as PNG. */
 int32_t slug_arcade_screenshot(const char *path, int32_t scale);
+
+/* Defines (or redefines) a named sound from 8-bit unsigned mono samples at
+ * `rate` samples a second. Up to 32 sounds; names are under 32 bytes. */
+int32_t slug_arcade_sound(const char *name, const uint8_t *samples, size_t length,
+                          int32_t rate);
+
+/* Plays a sound once from its start (`mode` 0), plays it repeatedly (1), or
+ * stops it (2). Headless runs log each call to SLUG_ARCADE_SOUNDS. */
+int32_t slug_arcade_play(const char *name, int32_t mode);
 
 /* Closes the display. Closing twice is harmless. */
 void slug_arcade_close(void);

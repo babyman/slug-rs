@@ -9,8 +9,8 @@ sources = ["native/source/arcade.c"]
 # The vendored raylib is built into native/<platform>/libraylib.a by
 # native/vendor/build-raylib.sh when the clutch is staged.
 [native.link_args]
-"macos-aarch64" = ["native/macos-aarch64/libraylib.a", "-Wl,-framework,Cocoa", "-Wl,-framework,IOKit", "-Wl,-framework,CoreVideo", "-Wl,-framework,OpenGL"]
-"macos-x86_64" = ["native/macos-x86_64/libraylib.a", "-Wl,-framework,Cocoa", "-Wl,-framework,IOKit", "-Wl,-framework,CoreVideo", "-Wl,-framework,OpenGL"]
+"macos-aarch64" = ["native/macos-aarch64/libraylib.a", "-Wl,-framework,Cocoa", "-Wl,-framework,IOKit", "-Wl,-framework,CoreVideo", "-Wl,-framework,OpenGL", "-Wl,-framework,CoreAudio", "-Wl,-framework,AudioToolbox"]
+"macos-x86_64" = ["native/macos-x86_64/libraylib.a", "-Wl,-framework,Cocoa", "-Wl,-framework,IOKit", "-Wl,-framework,CoreVideo", "-Wl,-framework,OpenGL", "-Wl,-framework,CoreAudio", "-Wl,-framework,AudioToolbox"]
 "linux-x86_64" = ["native/linux-x86_64/libraylib.a", "-lGL", "-lX11", "-lpthread", "-ldl", "-lrt", "-lm"]
 
 [native.libraries]
@@ -27,4 +27,6 @@ downRaw = { symbol = "slug_arcade_down", signature = "(cstr key) -> bool" }
 pressedRaw = { symbol = "slug_arcade_pressed", signature = "(cstr key) -> bool" }
 frameCountRaw = { symbol = "slug_arcade_frame_count", signature = "() -> i64" }
 screenshotRaw = { symbol = "slug_arcade_screenshot", signature = "(cstr path, i32 scale) -> i32" }
+soundRaw = { symbol = "slug_arcade_sound", signature = "(cstr name, bytes samples, i32 rate) -> i32" }
+playRaw = { symbol = "slug_arcade_play", signature = "(cstr name, i32 mode) -> i32" }
 closeRaw = { symbol = "slug_arcade_close", signature = "() -> void" }

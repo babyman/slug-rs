@@ -9,6 +9,8 @@
 #define MAX_OVERLAYS 16
 #define MAX_KEYS 8
 #define MAX_EVENTS 65536
+#define MAX_SOUNDS 32
+#define MAX_SOUND_NAME 32
 /* Without an input script, a headless run ends after this many frames. */
 #define UNSCRIPTED_FRAMES 600
 
@@ -16,6 +18,14 @@ typedef struct {
     int32_t x, y, width, height;
     Color color;
 } overlay;
+
+/* A named sound. `loaded` is set once raylib holds its samples. */
+typedef struct {
+    char name[MAX_SOUND_NAME];
+    Sound sound;
+    bool loaded;
+    bool looping;
+} named_sound;
 
 /* One script line: from `frame` on, `keys` are held (headless mode). */
 typedef struct {
@@ -51,6 +61,10 @@ static struct {
     const char *out_dir;
     FILE *record;
     FILE *hashes;
+    FILE *sound_log;
+    bool audio;
+    named_sound sounds[MAX_SOUNDS];
+    int sound_count;
     bool held[512];
     bool previous[512];
 } arcade;
@@ -199,6 +213,10 @@ int32_t slug_arcade_open(const char *title, int32_t width, int32_t height, int32
         if (record != NULL && record[0] != '\0') {
             arcade.record = fopen(record, "wb");
         }
+        const char *sounds = getenv("SLUG_ARCADE_SOUNDS");
+        if (sounds != NULL && sounds[0] != '\0') {
+            arcade.sound_log = fopen(sounds, "w");
+        }
         const char *hashes = getenv("SLUG_ARCADE_HASHES");
         if (hashes != NULL && hashes[0] != '\0') {
             arcade.hashes = fopen(hashes, "wb");
@@ -217,6 +235,8 @@ int32_t slug_arcade_open(const char *title, int32_t width, int32_t height, int32
             return SLUG_ARCADE_NO_WINDOW;
         }
         SetTargetFPS(60);
+        InitAudioDevice();
+        arcade.audio = IsAudioDeviceReady();
         Image image = {arcade.pixels, arcade.shown_width, arcade.shown_height, 1,
                        PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
         arcade.texture = LoadTextureFromImage(image);
@@ -332,6 +352,12 @@ bool slug_arcade_frame(void) {
         apply_script();
         return arcade.end_frame < 0 || arcade.frames < arcade.end_frame;
     }
+    for (int i = 0; i < arcade.sound_count; i++) {
+        named_sound *named = &arcade.sounds[i];
+        if (arcade.audio && named->loaded && named->looping && !IsSoundPlaying(named->sound)) {
+            PlaySound(named->sound);
+        }
+    }
     render();
     UpdateTexture(arcade.texture, arcade.pixels);
     BeginDrawing();
@@ -384,10 +410,22 @@ void slug_arcade_close(void) {
     if (!arcade.open) {
         return;
     }
+    for (int i = 0; i < arcade.sound_count; i++) {
+        if (arcade.sounds[i].loaded) {
+            UnloadSound(arcade.sounds[i].sound);
+        }
+    }
+    arcade.sound_count = 0;
     if (!arcade.headless) {
+        if (arcade.audio) {
+            CloseAudioDevice();
+        }
         UnloadTexture(arcade.texture);
         CloseWindow();
     } else {
+        if (arcade.sound_log != NULL) {
+            fclose(arcade.sound_log);
+        }
         if (arcade.record != NULL) {
             fclose(arcade.record);
         }
@@ -398,4 +436,71 @@ void slug_arcade_close(void) {
     free(arcade.bits);
     free(arcade.pixels);
     arcade.open = false;
+}
+
+static named_sound *find_sound(const char *name) {
+    for (int i = 0; i < arcade.sound_count; i++) {
+        if (strcmp(arcade.sounds[i].name, name) == 0) {
+            return &arcade.sounds[i];
+        }
+    }
+    return NULL;
+}
+
+int32_t slug_arcade_sound(const char *name, const uint8_t *samples, size_t length,
+                          int32_t rate) {
+    if (!arcade.open) {
+        return SLUG_ARCADE_NOT_OPEN;
+    }
+    size_t name_length = strlen(name);
+    if (name_length == 0 || name_length >= MAX_SOUND_NAME || length == 0 ||
+        length > 0x7FFFFFFF || rate < 1000 || rate > 96000) {
+        return SLUG_ARCADE_BAD_SIZE;
+    }
+    named_sound *named = find_sound(name);
+    if (named == NULL) {
+        if (arcade.sound_count == MAX_SOUNDS) {
+            return SLUG_ARCADE_BAD_SIZE;
+        }
+        named = &arcade.sounds[arcade.sound_count++];
+        memset(named, 0, sizeof *named);
+        memcpy(named->name, name, name_length + 1);
+    } else if (named->loaded) {
+        UnloadSound(named->sound);
+        named->loaded = false;
+    }
+    named->looping = false;
+    if (arcade.audio) {
+        /* 8-bit unsigned mono; raylib copies the samples. */
+        Wave wave = {(unsigned int)length, (unsigned int)rate, 8, 1, (void *)samples};
+        named->sound = LoadSoundFromWave(wave);
+        named->loaded = true;
+    }
+    return SLUG_ARCADE_OK;
+}
+
+int32_t slug_arcade_play(const char *name, int32_t mode) {
+    static const char *const OPERATIONS[] = {"play", "loop", "stop"};
+    if (!arcade.open) {
+        return SLUG_ARCADE_NOT_OPEN;
+    }
+    named_sound *named = find_sound(name);
+    if (named == NULL) {
+        return SLUG_ARCADE_UNKNOWN_SOUND;
+    }
+    if (mode < 0 || mode > 2) {
+        return SLUG_ARCADE_BAD_SIZE;
+    }
+    if (arcade.sound_log != NULL) {
+        fprintf(arcade.sound_log, "%lld %s %s\n", (long long)arcade.frames, OPERATIONS[mode], name);
+    }
+    named->looping = mode == 1;
+    if (named->loaded) {
+        if (mode == 2) {
+            StopSound(named->sound);
+        } else {
+            PlaySound(named->sound);
+        }
+    }
+    return SLUG_ARCADE_OK;
 }
