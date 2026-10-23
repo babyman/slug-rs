@@ -6,9 +6,10 @@
 "slug.fmt.toml" = { source = "modules/toml.slug" }
 "slug.fmt.json" = { source = "modules/json.slug" }
 "slug.test" = { source = "modules/test.slug" }
+"slug.random" = { source = "modules/random.slug" }
 
 [tests]
-files = ["tests/math.slug", "tests/string.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug"]
+files = ["tests/math.slug", "tests/string.slug", "tests/toml.slug", "tests/test.slug", "tests/json_suite.slug", "tests/json.slug", "tests/random.slug"]
 
 [native]
 profile = "events"
