@@ -16,6 +16,8 @@ jobs:
         with:
           toolchain: 1.96.1
           components: clippy, rustfmt
+      # slug.arcade builds its vendored raylib against X11 and OpenGL.
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev libgl-dev
       - run: make stage-native-clutches
       - run: make ci
 
