@@ -259,8 +259,9 @@ Otherwise the player is alive:
 
 1. Set `playerOK` to 1. If `enableAlienFire` is 0, decrement
    `alienFireDelay`, and set `enableAlienFire` to 1 when it reaches 0.
-2. If right is held and `playerXr` is not 0xD9, increment `playerXr`;
-   otherwise, if left is held and `playerXr` is not 0x30, decrement it.
+2. If right is held, increment `playerXr` unless it is 0xD9. Otherwise (right
+   is not held), if left is held, decrement `playerXr` unless it is 0x30. So
+   holding both keys at the right edge does not move the player.
 3. Draw the player and set `obj0Extra` to 0.
 
 To **draw the player**, draw simple `playerPic` at the offset of

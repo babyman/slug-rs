@@ -476,6 +476,9 @@ def execute(run, arguments, slug, install, results_dir, references, codex_home):
         "PATH": str(wrapper_directory(run_temp, install, run)) + os.pathsep + os.environ.get("PATH", ""),
         "SLUG_EVAL_PYTHON": PYTHON,
         "SLUG_HOME": str(install / "home"),
+        # The wrapper resets SLUG_HOME from this: an agent's login shell can
+        # export SLUG_HOME from the user's profile, pointing into the repo.
+        "SLUG_EVAL_HOME": str(install / "home"),
         "SLUG_EVAL_REAL": str(install / "bin" / "slug-real"),
         "SLUG_EVAL_LOG": str(log),
         "SLUG_EVAL_DIAGNOSTICS": arm["diagnostics"],

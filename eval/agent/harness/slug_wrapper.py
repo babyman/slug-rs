@@ -6,6 +6,9 @@ and appends one JSON line per invocation to the run's log. Configuration comes
 from environment variables set by the harness:
 
 - SLUG_EVAL_REAL: the real slug binary.
+- SLUG_EVAL_HOME: the isolated install's home, which always replaces
+  SLUG_HOME, since an agent's login shell may set SLUG_HOME from the user's
+  profile to the repository, where references and hidden cases live.
 - SLUG_EVAL_LOG: the JSON-lines invocation log.
 - SLUG_EVAL_DIAGNOSTICS: `text` strips `--diagnostic-format=json`; `json`
   forces it.
@@ -132,6 +135,7 @@ def run(real, arguments, fixes, diagnostics):
     output appears as it prints, not when it exits; standard error is
     filtered and passed on a line at a time. A signal that stops the wrapper
     stops the program too."""
+    os.environ["SLUG_HOME"] = os.environ["SLUG_EVAL_HOME"]
     os.environ.setdefault("SLUG_ARCADE_HEADLESS", "-")
     process = subprocess.Popen([real] + arguments, stderr=subprocess.PIPE)
 
