@@ -34,7 +34,7 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 | `unknown_type` | semantic | A type, type constructor, enum, or type module prefix that does not exist. | ``unknown type `Missing` `` |
 | `unknown_member` | semantic | A struct field or enum case that the type does not declare. | ``struct has no field `z` `` |
 | `missing_field` | semantic | A struct construction without a required field. | ``missing required struct field `name` `` |
-| `type_mismatch` | semantic | A value whose type does not satisfy its use. | `expected num, got str` |
+| `type_mismatch` | semantic | A value whose type does not satisfy its use. A function declared to produce `nil` whose body ends with another value offers to end the body with `nil`: as a fix when the value comes only from assignments, since an assignment's value is the value assigned, and otherwise as a suggestion. | `expected num, got str` |
 | `invalid_type_arguments` | semantic | Type arguments of the wrong number or kind. | `wrong number of type arguments` |
 | `recursive_type_alias` | semantic | A type alias that refers to itself. | `recursive type alias: A -> B -> A` |
 | `immutable_assignment` | semantic | An assignment to a `val` binding. | ``cannot assign to immutable binding `x` `` |

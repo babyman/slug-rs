@@ -145,3 +145,29 @@ fn uncertain_repairs_offer_no_fix() {
         assert_eq!(only_fix(source), None, "{source}");
     }
 }
+
+#[test]
+fn a_nil_result_ending_in_an_assignment_is_fixed_with_nil() {
+    for source in [
+        "var v = 0\nval f = fn():nil { v = 7 }\nf()\nv",
+        "var v = 0\nval f = fn(c:bool):nil {\n  if (c) { v = 7 }\n}\nf(true)\nv",
+        "var v = 0\nval f = fn(n:num):nil {\n  match n {\n    1 => { v = 7 }\n    _ => nil\n  }\n}\nf(1)\nv",
+    ] {
+        let fixed = only_fix(source).unwrap_or_else(|| panic!("{source}: no fix"));
+        assert!(fixed.contains("; nil"), "{fixed}");
+        assert_eq!(run(&fixed), slug_vm::Value::Int(7), "{fixed}");
+    }
+}
+
+#[test]
+fn a_nil_result_ending_in_another_value_only_suggests_nil() {
+    let error = compile("fixes.slug", "val f = fn():nil { 5 }").expect_err("a num result");
+    assert_eq!(error.fixes().len(), 0);
+    assert_eq!(error.suggestions().len(), 1);
+    assert_eq!(
+        error.suggestions()[0]
+            .apply("val f = fn():nil { 5 }")
+            .expect("applies"),
+        "val f = fn():nil { 5; nil }"
+    );
+}

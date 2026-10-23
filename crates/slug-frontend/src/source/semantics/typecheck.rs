@@ -6,7 +6,7 @@ use std::{
 use slug_vm::{CallableIdentity, DeferMode, SourceSpan, Value, ValueKind};
 
 use super::{
-    SourceError, SourceErrorCode,
+    SourceEdit, SourceError, SourceErrorCode, SourceRange,
     ast::{
         Binary, CallArgument, CasePattern, Expr, ExprKind, ListElement, MapPatternKey, MatchCase,
         Parameter, Pattern, Prefix, SelectCaseKind, Tag, TypeAnnotation,
@@ -2296,13 +2296,64 @@ fn check_function_body(
     if let Some(expected) = &expected {
         let result = result_expression(body);
         let completed = as_expected_tuple(expected, result, completed.clone(), &scoped);
-        require(expected, &completed, &result.span).map_err(|error| error.with_extent(result))?;
+        require(expected, &completed, &result.span).map_err(|error| {
+            let error = error.with_extent(result);
+            if *expected == Type::Nil {
+                end_with_nil(error, result)
+            } else {
+                error
+            }
+        })?;
     }
     // The function produces its body's value or any `return`'s, which were
     // each checked against `expected` where they occur.
     Ok(Type::union(
         std::iter::once(completed).chain(scoped.returned_types()),
     ))
+}
+
+/// Offers to end a body declared to produce `nil` with `nil`. It is a fix
+/// when the body's value comes only from assignments, which a reader may not
+/// expect to have a value, and otherwise a suggestion, since the declared
+/// result may be what is wrong.
+fn end_with_nil(error: SourceError, result: &Expr) -> SourceError {
+    let edit = SourceEdit {
+        range: SourceRange {
+            start: result.end,
+            end: result.end,
+        },
+        text: "; nil".into(),
+    };
+    if produces_only_assigned_values(result) {
+        error.with_fix(
+            "end the body with `nil`: an assignment's value is the value assigned",
+            edit,
+        )
+    } else {
+        error.with_suggestion("end the body with `nil` to produce nothing", edit)
+    }
+}
+
+/// Whether an expression's value can only be an assignment's value or `nil`.
+fn produces_only_assigned_values(expression: &Expr) -> bool {
+    match &expression.kind {
+        ExprKind::Assign { .. } | ExprKind::Value(Value::Nil) => true,
+        ExprKind::Block(values) => values.last().is_none_or(produces_only_assigned_values),
+        ExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            produces_only_assigned_values(then_branch)
+                && else_branch
+                    .as_deref()
+                    .is_none_or(produces_only_assigned_values)
+        }
+        ExprKind::Match { cases, .. } => cases
+            .iter()
+            .all(|case| produces_only_assigned_values(&case.value)),
+        _ => false,
+    }
 }
 
 /// The expression whose value a body produces: the last expression of each
