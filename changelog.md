@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The source benchmarks include real programs without a CPython twin:
+  `invaders-game` and `http-server`, from the agent evaluation references,
+  and the hold-out `tiny-interpreter`. `make bench-source` reports their Slug
+  time only, and both runners set `SLUG_HOME` to the checkout when it is unset
+  so `http-server` finds the staged `slug.net.tcp` clutch.
+
 - After branches rejoin, a binding's type is the union of its types in them.
   A narrowed `var` that one branch set to `nil` previously kept its narrowed
   type, so `if (x != nil) { if (c) { x = nil }; x + 1 }` compiled and failed

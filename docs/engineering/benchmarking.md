@@ -63,7 +63,21 @@ another:
 - `text-wrap` wraps a generated paragraph to a fixed width with indexing,
   interpolation, and concatenation.
 
-`expression-evaluator`, `graph-search`, and `text-wrap` are a hold-out set, marked `held_out` in
+A third group is real programs, copied from the agent evaluation projects'
+reference solutions so that edits there do not change them. They have no
+CPython twin, so `make bench-source` reports only their Slug time:
+
+- `invaders-game` plays the Space Invaders reference for 7,300 frames with
+  the `bot-long-1` case's recorded inputs, calling `game.tick` directly
+  without the slug.arcade clutch.
+- `http-server` serves the HTTP reference's routes to four keep-alive clients
+  in the same program, 4,228 requests over loopback. It needs the staged
+  `slug.net.tcp` clutch (`make stage-native-clutches`); both runners set
+  `SLUG_HOME` to the checkout when it is unset.
+- `tiny-interpreter` runs a small program with recursion, closures, lists,
+  and strings in the Tiny interpreter reference.
+
+`expression-evaluator`, `graph-search`, `text-wrap`, and `tiny-interpreter` are a hold-out set, marked `held_out` in
 `crates/slug-frontend/benches/source.rs` and in both reports. Check them for
 regressions, but never use them to choose or tune an optimization: they stay
 useful only while nothing has been fitted to them. When a hold-out workload

@@ -29,6 +29,8 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "crates/slug-frontend/benches/source")
 CACHE = os.path.join(ROOT, "target/bench-ab")
+# `http-server` imports the staged slug.net.tcp clutch from this checkout.
+ENVIRONMENT = {**os.environ, "SLUG_HOME": os.environ.get("SLUG_HOME", ROOT)}
 
 
 def git(*args):
@@ -100,7 +102,10 @@ def run_once(binary, source):
     """Run one fresh process; return (wall-clock seconds, stdout)."""
     started = time.perf_counter()
     process = subprocess.Popen(
-        [binary, source], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        [binary, source],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=ENVIRONMENT,
     )
     stdout, stderr = process.communicate()
     elapsed = time.perf_counter() - started
@@ -120,7 +125,7 @@ def peak_rss(binary, source):
         os.dup2(devnull, 1)
         os.dup2(devnull, 2)
         try:
-            os.execv(binary, [binary, source])
+            os.execve(binary, [binary, source], ENVIRONMENT)
         finally:
             os._exit(127)
     _, status, usage = os.wait4(pid, 0)
