@@ -208,6 +208,35 @@ fn slices_lists_with_an_omitted_start() {
 }
 
 #[test]
+fn slices_lists_and_bytes_with_a_step() {
+    let path = fixture_path("stepped-slices");
+    fs::write(
+        &path,
+        "val values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n\
+         val data = 0x\"00010203040506070809\"\n\
+         println(values[::3], values[-4::2], values[8:2:2], data[1:8:3], data[7:3:2])\n\
+         // Any positive step is allowed; one past the end selects only the start.\n\
+         println(values[3::9223372036854775807], data[3::9223372036854775807], \"abcdef\"[3::9223372036854775807])\n",
+    )
+    .expect("write stepped slice source");
+    let output = slug()
+        .arg(&path)
+        .output()
+        .expect("run stepped slice source");
+    fs::remove_file(path).expect("remove stepped slice source");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout is UTF-8"),
+        "[0, 3, 6, 9] [6, 8] [] 0x\"010407\" 0x\"\"\n[3] 0x\"03\" d\n"
+    );
+}
+
+#[test]
 fn expands_list_and_call_spreads_in_source_order() {
     let path = fixture_path("spreads");
     fs::write(

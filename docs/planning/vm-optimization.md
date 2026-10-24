@@ -1662,3 +1662,19 @@ its time cloning and dropping list elements, with one `len` call a step.
 Builds of both revisions with symbols kept (`strip = "none"`,
 line tables) ran its 30,000-step variant in 1339 and 1338 ms, so the
 difference is code layout in the stripped binaries, not the change.
+
+## Stepped slices select positions without an index vector
+
+A list or `bytes` slice with a step above 1 still collected every selected
+index into a vector, as step-1 `bytes` slices did before. It now walks the
+range with `step_by`, so the result is allocated once at its exact size. The
+loop's overflow check is gone with it. It made `xs[3::9223372036854775807]`
+fail with "list slice step is too large", although the specification allows
+any positive step; lists and `bytes` now select only the start, as strings
+already did.
+
+A microbenchmark of 3,000 `bytes[::2]` slices of 7,168 bytes and 3,000
+`list[1::3]` slices of 4,096 elements fell from 37.2 to 23.4 ms (nine
+interleaved runs against `4c329a6`). No source workload uses stepped slices.
+Seven interleaved rounds against `4c329a6`: every workload inside its spread,
+tuned geomean 1.01x, hold-out 1.00x.

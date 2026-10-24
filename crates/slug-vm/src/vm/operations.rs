@@ -759,15 +759,7 @@ pub(super) fn slice_value(
                 // and bytes.
                 return Ok(Value::List(values.view(start, end.max(start))));
             }
-            let mut indexes = Vec::new();
-            let mut index = start;
-            while index < end {
-                indexes.push(usize::try_from(index).expect("slice bounds are non-negative"));
-                index = index
-                    .checked_add(step)
-                    .ok_or_else(|| "list slice step is too large".to_owned())?;
-            }
-            Ok(Value::List(values.slice(indexes.into_iter())))
+            Ok(Value::List(values.slice(stepped(start, end, step))))
         }
         Value::Bytes(values) => {
             if step == 1 {
@@ -777,17 +769,9 @@ pub(super) fn slice_value(
                     values[start..end.max(start)].to_vec(),
                 )));
             }
-            let mut indexes = Vec::new();
-            let mut index = start;
-            while index < end {
-                indexes.push(usize::try_from(index).expect("slice bounds are non-negative"));
-                index = index
-                    .checked_add(step)
-                    .ok_or_else(|| "bytes slice step is too large".to_owned())?;
-            }
             Ok(Value::Bytes(
                 Bytes::from_shared(values)
-                    .slice(indexes.into_iter())
+                    .slice(stepped(start, end, step))
                     .into_shared(),
             ))
         }
@@ -809,6 +793,16 @@ pub(super) fn slice_value(
         }
         _ => unreachable!("collection kind was checked above"),
     }
+}
+
+/// The positions a slice with a step selects, from `start` up to `end`.
+/// Bounds are already clamped to the collection, and a step past the end
+/// selects only `start`.
+fn stepped(start: i64, end: i64, step: i64) -> impl Iterator<Item = usize> {
+    let start = usize::try_from(start).expect("slice bounds are non-negative");
+    let end = usize::try_from(end).expect("slice bounds are non-negative");
+    let step = usize::try_from(step).expect("slice steps are positive");
+    (start..end.max(start)).step_by(step)
 }
 
 fn slice_bound(

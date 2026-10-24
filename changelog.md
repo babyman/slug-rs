@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A list or `bytes` slice with a step, such as `xs[::2]`, no longer builds a
+  list of the selected positions first; a microbenchmark of stepped slices
+  runs in 0.63x the time. A step past the end, such as
+  `xs[3::9223372036854775807]`, now selects the start element, as it already
+  did for strings, instead of failing with "slice step is too large".
+
 - Native calls such as `len` and the `slug.string` functions read their
   arguments from the operand stack instead of a copy, and no longer scan
   every tracked native resource when they create none. The HTTP server
