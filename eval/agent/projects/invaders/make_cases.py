@@ -138,7 +138,7 @@ def main():
     for name, description, text in plans:
         frames = int(text.strip().splitlines()[-1].split()[1])
         seconds = 20 + frames // 150
-        hashes, sounds, error = arcade_grader.run(SLUG, REPO, HERE, HERE / "reference" / "invaders.slug", text, seconds)
+        hashes, sounds, error, _ = arcade_grader.run(SLUG, REPO, HERE, HERE / "reference" / "invaders.slug", text, seconds)
         if error is not None:
             raise SystemExit(f"{name}: reference failed: {error}")
         if len(hashes) // 8 != frames:
