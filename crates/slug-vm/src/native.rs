@@ -460,13 +460,21 @@ pub struct NativeResourceRegistry(Rc<NativeResourceRegistryInner>);
 
 struct NativeResourceRegistryInner {
     resources: RefCell<Vec<Weak<NativeResource>>>,
+    /// The tracked count at which `register` next drops dead entries: twice
+    /// the count left by the last compaction, so compaction is amortized
+    /// constant time per registered resource.
+    compact_at: Cell<usize>,
 }
+
+/// The fewest tracked entries at which `register` compacts.
+const REGISTRY_COMPACT_MINIMUM: usize = 32;
 
 #[doc(hidden)]
 #[must_use]
 pub fn native_resource_registry() -> NativeResourceRegistry {
     NativeResourceRegistry(Rc::new(NativeResourceRegistryInner {
         resources: RefCell::new(Vec::new()),
+        compact_at: Cell::new(REGISTRY_COMPACT_MINIMUM),
     }))
 }
 
@@ -477,9 +485,20 @@ impl NativeResourceRegistry {
         native_resource_registry()
     }
 
+    /// Tracks the resources a native call created. Most calls create none,
+    /// so this does nothing for them; it drops dead entries only as the list
+    /// grows, rather than scanning it on every call.
     pub(crate) fn register(&self, resources: Vec<Weak<NativeResource>>) {
+        if resources.is_empty() {
+            return;
+        }
         let mut tracked = self.0.resources.borrow_mut();
-        tracked.retain(|resource| resource.strong_count() > 0);
+        if tracked.len() >= self.0.compact_at.get() {
+            tracked.retain(|resource| resource.strong_count() > 0);
+            self.0
+                .compact_at
+                .set((tracked.len() * 2).max(REGISTRY_COMPACT_MINIMUM));
+        }
         tracked.extend(
             resources
                 .into_iter()
@@ -1731,17 +1750,25 @@ mod tests {
             .resource_type("value", |_payload: &mut ()| {}, |_payload: ()| {})
             .unwrap();
         let resource = Rc::new(NativeResource {
-            registration: resource_type.registration,
-            module: module.inner,
+            registration: resource_type.registration.clone(),
+            module: module.inner.clone(),
             payload: RefCell::new(Some(Box::new(()))),
             state: Cell::new(NativeResourceState::Open),
         });
         registry.register(vec![Rc::downgrade(&resource)]);
         assert_eq!(registry.tracked_count(), 1);
-
         drop(resource);
-        registry.register(Vec::new());
-        assert_eq!(registry.tracked_count(), 0);
+
+        for _ in 0..1000 {
+            let resource = Rc::new(NativeResource {
+                registration: resource_type.registration.clone(),
+                module: module.inner.clone(),
+                payload: RefCell::new(Some(Box::new(()))),
+                state: Cell::new(NativeResourceState::Open),
+            });
+            registry.register(vec![Rc::downgrade(&resource)]);
+        }
+        assert!(registry.tracked_count() <= REGISTRY_COMPACT_MINIMUM);
     }
 
     #[test]

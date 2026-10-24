@@ -1605,3 +1605,76 @@ scales linearly. Seven interleaved rounds against `a218e85`: tuned geomean
 1.00x and hold-out 0.97x, with `text-wrap` (hold-out) 0.93x, no workload
 slower, and `string-building` peak memory 6.2 MB to 4.6 MB. `make check`
 passed.
+
+## Real programs as workloads, and step-1 `bytes` slices
+
+VM work paused on 2026-10-13 so that real programs could choose the next
+targets. Two now exist: the Space Invaders and HTTP server references from the
+agent evaluation projects. Time profiles (Instruments, on a release build with
+symbols kept) of each:
+
+- Invaders, 20,000 headless frames: 3.14 s, 157 us a frame. Slicing was 24%
+  of the samples: a `bytes` slice collected every index into a `Vec<usize>`,
+  growing it one push at a time, then copied byte by byte. The game builds
+  video RAM from `vram[a:b]` pieces. The rest is the usual interpreter
+  spread; calls 16%, the arcade clutch's `frame` 7%.
+- The HTTP server under keep-alive load: about 8,600 requests a second for
+  `/hello` and 5,400 for an echo route, with 8 connections. The profile is
+  flat. Native calls cost about 8%, of which the native work is about 3%: each
+  call clones its arguments into a vector, drops the originals, and sweeps
+  every tracked native resource in `NativeResourceRegistry::register`.
+
+The source corpus gains three Slug-only workloads, copied from the eval
+references so that later edits there do not change them: `invaders-game`
+(7,300 frames of the `bot-long-1` inputs through `game.tick`, no clutch),
+`http-server` (the reference module serving 4,228 requests to four keep-alive
+clients in the same program), and the hold-out `tiny-interpreter` (the Tiny
+reference running a small program), whose timing was first seen in the final
+run below. The first two were profiled, so they are tuned.
+
+A step-1 `bytes` slice now copies its range directly. Seven interleaved
+rounds against `b4c0ce2`: `invaders-game` 0.72x (1031.7 to 742.1 ms), every
+other workload 0.99-1.03x, tuned geomean 0.98x, hold-out 1.01x.
+
+Next candidates from these profiles: step > 1 list and `bytes` slices still
+collect an index vector; native calls could move their arguments and sweep
+resources only when a call returns some; calls remain the largest share in
+both programs (local-slot arena, item 4 of the paused list).
+
+## Native calls read their arguments from the stack
+
+The HTTP server's profile put native calls at about 18% of its time, against
+about 4% for the natives' own work. Each call cloned its arguments into a new
+vector, dropped that vector, and truncated the stack. Then
+`NativeResourceRegistry::register` swept every tracked resource, even though
+most calls (`len`, string functions) create none.
+
+`Vm::call` now resolves any binding among the arguments in place and passes the
+natives a slice of the operand stack. The stack is set aside for the call,
+since invoking a native never touches it. `register` returns at once when a
+call created no resources. Otherwise it drops dead entries only when the list
+has doubled since the last compaction.
+
+Seven interleaved rounds against `57c64d8`: `http-server` 0.94x, `text-wrap`
+(hold-out) 0.90x, `invaders-game` 0.98x, tuned geomean 1.00x, hold-out
+0.97x. `shared-append` measured 1.08x over 15 rounds, but it spends 87% of
+its time cloning and dropping list elements, with one `len` call a step.
+Builds of both revisions with symbols kept (`strip = "none"`,
+line tables) ran its 30,000-step variant in 1339 and 1338 ms, so the
+difference is code layout in the stripped binaries, not the change.
+
+## Stepped slices select positions without an index vector
+
+A list or `bytes` slice with a step above 1 still collected every selected
+index into a vector, as step-1 `bytes` slices did before. It now walks the
+range with `step_by`, so the result is allocated once at its exact size. The
+loop's overflow check is gone with it. It made `xs[3::9223372036854775807]`
+fail with "list slice step is too large", although the specification allows
+any positive step; lists and `bytes` now select only the start, as strings
+already did.
+
+A microbenchmark of 3,000 `bytes[::2]` slices of 7,168 bytes and 3,000
+`list[1::3]` slices of 4,096 elements fell from 37.2 to 23.4 ms (nine
+interleaved runs against `4c329a6`). No source workload uses stepped slices.
+Seven interleaved rounds against `4c329a6`: every workload inside its spread,
+tuned geomean 1.01x, hold-out 1.00x.

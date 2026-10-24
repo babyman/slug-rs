@@ -282,6 +282,39 @@ fn accept_times_out_and_closing_the_listener_wakes_a_waiting_accept() {
     );
 }
 
+// A failed `main` cancels its tasks, so a task waiting in `accept`, which a
+// connection could still wake, does not keep the program running.
+#[cfg(feature = "concurrency")]
+#[test]
+fn a_failed_main_does_not_wait_for_a_task_in_accept() {
+    let home = Home::new();
+    let mut child = home
+        .command(
+            "val listener = tcp.listen(\"127.0.0.1\", 0)\n\
+             val waiting = spawn { tcp.accept(listener) }\n\
+             throw Error {type: \"test.failure\", msg: \"main failed\"}\n",
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run slug");
+    let started = Instant::now();
+    while child.try_wait().expect("poll slug").is_none() {
+        if started.elapsed() > Duration::from_secs(10) {
+            let _ = child.kill();
+            panic!("the program kept running after main failed");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().expect("wait for slug");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("main failed"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 // Serving and connecting in one program needs `spawn`.
 #[cfg(feature = "concurrency")]
 #[test]

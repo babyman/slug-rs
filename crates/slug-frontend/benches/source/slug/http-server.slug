@@ -1,0 +1,145 @@
+// An HTTP server, a real program: the eval project's reference module
+// (httpserver/http.slug, copied from eval/agent/projects/http) serving routes
+// from its grader's server.slug, with keep-alive clients in the same program.
+// Needs the staged slug.net.tcp clutch (make stage-native-clutches).
+val tcp = import("slug.net.tcp")
+val http = import("httpserver.http")
+val {fromBytes, toBytes, sort, join, split, lower, trim, toInt} = import("slug.string")
+val {await} = import("slug.channel")
+
+val CLIENTS = 4
+val ROUNDS = 150
+
+// `data` as text, or "<bytes>" when it is not UTF-8.
+val text = fn(data:bytes):str {
+    defer onerror(_) { return "<bytes>" }
+    fromBytes(data)
+}
+
+// The request as sorted `key=value` lines.
+val echo = fn(request) {
+    val section = fn(prefix:str, values:map):list<str> {
+        val names = keys(values)
+        val go = fn(i:num, out:list<str>):list<str> {
+            if (i == len(names)) { return out }
+            val name = names[i]
+            val value = values[name]
+            recur(i + 1, out :+ "$prefix$name=$value")
+        }
+        go(0, [])
+    }
+    val body = text(request.body)
+    val lines = sort(
+        ["method=" + request.method, "path=" + request.path]
+            + section("param.", request.params)
+            + section("query.", request.query)
+            + section("header.", request.headers)
+    )
+    join(lines :+ ("body=" + body), "\n")
+}
+
+val routes = [
+    ["GET", "/hello", fn(request) { "hello" }],
+    ["GET", "/users/me", fn(request) { "me" }],
+    ["GET", "/users/:id", echo],
+    ["GET", "/users/:id/posts/:post", echo],
+    ["POST", "/echo", echo],
+    ["POST", "/items", fn(request) {
+        {status: 201, headers: {Location: "/items/1"}, body: "created"}
+    }],
+    ["GET", "/headers", fn(request) {
+        {status: 200, headers: {"X-One": "1", "X-Two": "two"}, body: "h"}
+    }],
+]
+
+val request = fn(method:str, target:str, body:str):bytes {
+    val size = len(toBytes(body))
+    val length = if (size == 0) { "" } else { "Content-Length: $size\r\n" }
+    toBytes("$method $target HTTP/1.1\r\nHost: bench\r\nUser-Agent: slug-bench\r\nAccept: */*\r\n$length\r\n$body")
+}
+
+val BODY = join(["name=slug", "kind=bench", "text=" + join(["lorem ipsum dolor sit amet"] :+ "end", " ")], "&")
+
+// Each round's requests, in order.
+val REQUESTS = [
+    request("GET", "/hello", ""),
+    request("GET", "/users/42?x=1&y=two", ""),
+    request("GET", "/users/7/posts/99?sort=new", ""),
+    request("POST", "/echo", BODY),
+    request("POST", "/items", "{}"),
+    request("GET", "/headers", ""),
+    request("GET", "/missing", ""),
+]
+
+// The next chunk the server sent; it must not close the connection.
+val next = fn(connection:tcp.Connection):bytes {
+    match tcp.read(connection) {
+        nil => throw Error {type: "bench.closed", msg: "the server closed the connection"}
+        chunk => chunk
+    }
+}
+
+// Reads until `buffer` holds a whole header section; returns [header, buffer].
+val readHead = fn(connection:tcp.Connection, buffer:bytes):list {
+    val parts = split(fromBytes(buffer), "\r\n\r\n")
+    if (len(parts) > 1) { return [parts[0], buffer] }
+    recur(connection, buffer + next(connection))
+}
+
+// Learns one response's total size by reading it with its header parsed.
+val measure = fn(connection:tcp.Connection, data:bytes):num {
+    tcp.write(connection, data)
+    val [head, buffer] = readHead(connection, 0x"")
+    val lines = split(head, "\r\n")
+    val length = fn(i:num):num {
+        val parts = split(lines[i], ":")
+        if (lower(parts[0]) == "content-length") { toInt(trim(parts[1])) ?? 0 } else { recur(i + 1) }
+    }
+    val total = len(toBytes(head)) + 4 + length(1)
+    val drain = fn(have:num) { if (have < total) { recur(have + len(next(connection))) } }
+    drain(len(buffer))
+    total
+}
+
+// Sends one request and reads exactly `size` bytes of response.
+val exchange = fn(connection:tcp.Connection, data:bytes, size:num) {
+    tcp.write(connection, data)
+    val go = fn(have:num) { if (have < size) { recur(have + len(next(connection))) } }
+    go(0)
+}
+
+// One keep-alive connection: learns each response's size, then runs the
+// rounds. Returns the response bytes it read.
+val client = fn(port:num):num {
+    val connection = tcp.connect("127.0.0.1", port)
+    defer tcp.close(connection)
+    val learn = fn(i:num, sizes:list<num>):list<num> {
+        if (i == len(REQUESTS)) { sizes } else { recur(i + 1, sizes :+ measure(connection, REQUESTS[i])) }
+    }
+    val sizes = learn(0, [])
+    val round = fn(r:num, i:num, total:num):num {
+        if (r == ROUNDS) { return total }
+        if (i == len(REQUESTS)) { return recur(r + 1, 0, total) }
+        exchange(connection, REQUESTS[i], sizes[i])
+        recur(r, i + 1, total + sizes[i])
+    }
+    round(0, 0, 0)
+}
+
+val main = fn() {
+    val listener = tcp.listen("127.0.0.1", 0)
+    val port = tcp.localPort(listener)
+    val server = spawn { http.serve(listener, http.router(routes), {}) }
+    val start = fn(i:num, tasks:list):list {
+        if (i == CLIENTS) { tasks } else { recur(i + 1, tasks :+ spawn { client(port) }) }
+    }
+    val tasks = start(0, [])
+    val collect = fn(i:num, total:num):num {
+        if (i == len(tasks)) { total } else { recur(i + 1, total + await(tasks[i])) }
+    }
+    val total = collect(0, 0)
+    tcp.close(listener)
+    await(server)
+    val requests = CLIENTS * (ROUNDS + 1) * len(REQUESTS)
+    println("$requests $total")
+}

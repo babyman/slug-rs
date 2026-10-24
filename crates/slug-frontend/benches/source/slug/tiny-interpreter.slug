@@ -1,0 +1,98 @@
+// A Tiny interpreter, a real program: the eval project's reference
+// (tinylang/tiny.slug, copied from eval/agent/projects/tiny) running a Tiny
+// program with recursion, closures, lists, and strings.
+val tiny = import("tinylang.tiny")
+
+val PROGRAM = "
+fn fib(n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+print fib(17);
+
+fn counter() {
+    let count = 0;
+    return fn() { count = count + 1; return count; };
+}
+let next = counter();
+let i = 0;
+while (i < 2000) { next(); i = i + 1; }
+print next();
+
+fn setAt(values, at, value) {
+    let out = [];
+    let j = 0;
+    while (j < len(values)) {
+        if (j == at) { out = out + [value]; } else { out = out + [values[j]]; }
+        j = j + 1;
+    }
+    return out;
+}
+
+fn sieve(limit) {
+    let marks = [];
+    let i = 0;
+    while (i <= limit) { marks = marks + [true]; i = i + 1; }
+    let primes = [];
+    let p = 2;
+    while (p <= limit) {
+        if (marks[p]) {
+            primes = primes + [p];
+            let m = p * p;
+            while (m <= limit) {
+                marks = setAt(marks, m, false);
+                m = m + p;
+            }
+        }
+        p = p + 1;
+    }
+    return primes;
+}
+let primes = sieve(60);
+print primes;
+
+fn sort(values) {
+    let out = [];
+    let i = 0;
+    while (i < len(values)) {
+        let v = values[i];
+        let placed = [];
+        let inserted = false;
+        let j = 0;
+        while (j < len(out)) {
+            if (not inserted and v < out[j]) { placed = placed + [v]; inserted = true; }
+            placed = placed + [out[j]];
+            j = j + 1;
+        }
+        if (not inserted) { placed = placed + [v]; }
+        out = placed;
+        i = i + 1;
+    }
+    return out;
+}
+let seed = 7;
+let values = [];
+let k = 0;
+while (k < 120) { seed = (seed * 1103 + 12345) % 65536; values = values + [seed % 1000]; k = k + 1; }
+let sorted = sort(values);
+print [sorted[0], sorted[59], sorted[119]];
+
+let text = \"\";
+let w = 0;
+while (w < 300) { text = text + str(w % 10); w = w + 1; }
+let digits = 0;
+let c = 0;
+while (c < len(text)) { if (text[c] == \"7\") { digits = digits + 1; } c = c + 1; }
+print digits;
+"
+
+val main = fn() {
+    val lines = tiny.run(PROGRAM)
+    val go = fn(i:num) {
+        if (i < len(lines)) {
+            println(lines[i])
+            recur(i + 1)
+        }
+    }
+    go(0)
+}

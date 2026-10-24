@@ -1,5 +1,13 @@
 # Owner-driven concurrency scheduling
 
+## Status
+
+Superseded
+
+## Superseded by
+
+[A failed owner body cancels its tasks](2026-10-23-failed-owner-body-cancels-tasks.md).
+
 ## Context
 
 Root evaluation, explicit nursery bodies, spawned tasks, timers, and native

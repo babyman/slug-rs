@@ -183,11 +183,11 @@ fn a_failed_nursery_body_settles_its_owned_tasks() {
 }
 
 #[test]
-fn a_failed_root_body_joins_runnable_owned_tasks() {
+fn a_failed_root_body_cancels_its_pending_tasks() {
     let program = compile(
         "root-error-settlement.slug",
         "var child_ran = false\n\
-         spawn { child_ran = true }\n\
+         val child = spawn { child_ran = true }\n\
          throw \"root failure\"\n",
     )
     .expect("compile root error settlement source");
@@ -198,7 +198,28 @@ fn a_failed_root_body_joins_runnable_owned_tasks() {
         .expect_err("the root body must retain its failure");
     assert_eq!(error.kind, RuntimeErrorKind::Thrown);
     assert_eq!(error.message, "uncaught throw: root failure");
-    assert_eq!(vm.global("child_ran"), Some(Value::Bool(true)));
+    assert_eq!(vm.global("child_ran"), Some(Value::Bool(false)));
+}
+
+#[test]
+fn a_failed_root_body_does_not_wait_for_a_timer_task() {
+    let program = compile(
+        "root-error-timer.slug",
+        "var fired = false\n\
+         val child = spawn { select { after 2000 }; fired = true }\n\
+         select { after 1 }\n\
+         throw \"root failure\"\n",
+    )
+    .expect("compile root error timer source");
+    let mut vm = Vm::new();
+
+    let started = std::time::Instant::now();
+    let error = vm
+        .run_named(&program, "main")
+        .expect_err("the root body must retain its failure");
+    assert_eq!(error.message, "uncaught throw: root failure");
+    assert_eq!(vm.global("fired"), Some(Value::Bool(false)));
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
 }
 
 #[test]

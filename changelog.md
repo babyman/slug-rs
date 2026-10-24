@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- A list or `bytes` slice with a step, such as `xs[::2]`, no longer builds a
+  list of the selected positions first; a microbenchmark of stepped slices
+  runs in 0.63x the time. A step past the end, such as
+  `xs[3::9223372036854775807]`, now selects the start element, as it already
+  did for strings, instead of failing with "slice step is too large".
+
+- Native calls such as `len` and the `slug.string` functions read their
+  arguments from the operand stack instead of a copy, and no longer scan
+  every tracked native resource when they create none. The HTTP server
+  reference handles requests in 0.94x the time.
+
+- When `main` fails, its pending tasks are cancelled and the error is
+  reported at once, as an explicit `nursery` already did. Previously the
+  program kept running its tasks first: one waiting on a timer delayed the
+  error until the timer fired, and one waiting in `slug.net.tcp`'s `accept`
+  kept the program running forever without printing anything. A successful
+  `main` still waits for its tasks.
+
+- A step-1 `bytes` slice, `data[a:b]`, copies its range directly instead of
+  collecting every index first. The Space Invaders reference game, which
+  builds its video RAM from slices, runs in 0.72x the time.
+
+- The source benchmarks include real programs without a CPython twin:
+  `invaders-game` and `http-server`, from the agent evaluation references,
+  and the hold-out `tiny-interpreter`. `make bench-source` reports their Slug
+  time only, and both runners set `SLUG_HOME` to the checkout when it is unset
+  so `http-server` finds the staged `slug.net.tcp` clutch.
+
 - After branches rejoin, a binding's type is the union of its types in them.
   A narrowed `var` that one branch set to `nil` previously kept its narrowed
   type, so `if (x != nil) { if (c) { x = nil }; x + 1 }` compiled and failed

@@ -14,81 +14,115 @@ const WORKLOADS: &[Workload] = &[
         name: "function-call",
         held_out: false,
         expected_stdout: "100000\n",
+        python: true,
     },
     Workload {
         name: "n-body",
         held_out: false,
         expected_stdout: "ok\n",
+        python: true,
     },
     Workload {
         name: "typed-n-body",
         held_out: false,
         expected_stdout: "ok\n",
+        python: true,
     },
     Workload {
         name: "spectral-norm",
         held_out: false,
         expected_stdout: "ok\n",
+        python: true,
     },
     Workload {
         name: "typed-spectral-norm",
         held_out: false,
         expected_stdout: "ok\n",
+        python: true,
     },
     Workload {
         name: "binary-trees",
         held_out: false,
         expected_stdout: "65535\n",
+        python: true,
     },
     Workload {
         name: "fannkuch-redux",
         held_out: false,
         expected_stdout: "-488 16\n",
+        python: true,
     },
     Workload {
         name: "shared-append",
         held_out: false,
         expected_stdout: "32004000\n",
+        python: true,
     },
     Workload {
         name: "higher-order",
         held_out: false,
         expected_stdout: "15335944\n",
+        python: true,
     },
     Workload {
         name: "fib",
         held_out: false,
         expected_stdout: "196418\n",
+        python: true,
     },
     Workload {
         name: "defer-errors",
         held_out: false,
         expected_stdout: "187500\n",
+        python: true,
     },
     Workload {
         name: "word-frequency",
         held_out: false,
         expected_stdout: "509 50000 99\n",
+        python: true,
     },
     Workload {
         name: "string-building",
         held_out: false,
         expected_stdout: "378894 20000 item 20000 i\n",
+        python: true,
     },
     Workload {
         name: "expression-evaluator",
         held_out: true,
         expected_stdout: "900 1838462571\n",
+        python: true,
     },
     Workload {
         name: "graph-search",
         held_out: true,
         expected_stdout: "3000 22328 10\n",
+        python: true,
     },
     Workload {
         name: "text-wrap",
         held_out: true,
         expected_stdout: "210000 3750 60000\n",
+        python: true,
+    },
+    Workload {
+        name: "invaders-game",
+        held_out: false,
+        expected_stdout: "1180 2 1 252475 4116782444\n",
+        python: false,
+    },
+    Workload {
+        name: "http-server",
+        held_out: false,
+        expected_stdout: "4228 619800\n",
+        python: false,
+    },
+    Workload {
+        name: "tiny-interpreter",
+        held_out: true,
+        expected_stdout: "1597\n2001\n[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59]\n[7, 466, 994]\n30\n",
+        python: false,
     },
 ];
 
@@ -98,6 +132,9 @@ struct Workload {
     /// optimization.
     held_out: bool,
     expected_stdout: &'static str,
+    /// Whether a `CPython` twin exists. Real programs (the eval projects'
+    /// references) are Slug only: they are timed but have no ratio.
+    python: bool,
 }
 
 #[derive(Serialize)]
@@ -123,8 +160,8 @@ struct WorkloadReport<'a> {
     name: &'a str,
     held_out: bool,
     slug_median_ns: u128,
-    python_median_ns: u128,
-    slug_over_python: f64,
+    python_median_ns: Option<u128>,
+    slug_over_python: Option<f64>,
 }
 
 fn main() {
@@ -138,7 +175,9 @@ fn main() {
     validate_workloads(&slug, &python, &source_root);
     for workload in WORKLOADS {
         warm_up(&slug, &source_path(&source_root, "slug", workload));
-        warm_up(&python, &source_path(&source_root, "python", workload));
+        if workload.python {
+            warm_up(&python, &source_path(&source_root, "python", workload));
+        }
     }
 
     let workloads = WORKLOADS
@@ -146,7 +185,7 @@ fn main() {
         .map(|workload| benchmark_workload(&slug, &python, &source_root, workload, samples))
         .collect::<Vec<_>>();
     let report = BenchmarkReport {
-        schema_version: 2,
+        schema_version: 3,
         revision: git_revision(&root),
         worktree_dirty: git_worktree_dirty(&root),
         samples,
@@ -206,7 +245,12 @@ fn source_path(root: &Path, runtime: &str, workload: &Workload) -> PathBuf {
 
 fn validate_workloads(slug: &Path, python: &Path, source_root: &Path) {
     for workload in WORKLOADS {
-        for (runtime, executable) in [("Slug", slug), ("Python", python)] {
+        let runtimes: &[(&str, &Path)] = if workload.python {
+            &[("Slug", slug), ("Python", python)]
+        } else {
+            &[("Slug", slug)]
+        };
+        for &(runtime, executable) in runtimes {
             let source = source_path(
                 source_root,
                 if runtime == "Slug" { "slug" } else { "python" },
@@ -248,17 +292,20 @@ fn benchmark_workload<'a>(
             .map(|_| measure(slug, &source_path(source_root, "slug", workload)))
             .collect(),
     );
-    let python_median = median(
-        (0..samples)
-            .map(|_| measure(python, &source_path(source_root, "python", workload)))
-            .collect(),
-    );
+    let python_median = workload.python.then(|| {
+        median(
+            (0..samples)
+                .map(|_| measure(python, &source_path(source_root, "python", workload)))
+                .collect(),
+        )
+    });
     WorkloadReport {
         name: workload.name,
         held_out: workload.held_out,
         slug_median_ns: slug_median.as_nanos(),
-        python_median_ns: python_median.as_nanos(),
-        slug_over_python: slug_median.as_secs_f64() / python_median.as_secs_f64(),
+        python_median_ns: python_median.map(|median| median.as_nanos()),
+        slug_over_python: python_median
+            .map(|median| slug_median.as_secs_f64() / median.as_secs_f64()),
     }
 }
 
@@ -274,7 +321,12 @@ fn measure(executable: &Path, source: &Path) -> Duration {
 }
 
 fn run(executable: &Path, source: &Path) -> Output {
-    Command::new(executable)
+    let mut command = Command::new(executable);
+    // `http-server` imports the staged slug.net.tcp clutch from the checkout.
+    if env::var_os("SLUG_HOME").is_none() {
+        command.env("SLUG_HOME", workspace_root());
+    }
+    command
         .arg(source)
         .output()
         .unwrap_or_else(|error| panic!("cannot run {}: {error}", executable.display()))
@@ -318,12 +370,16 @@ fn print_report(report: &BenchmarkReport<'_>) {
     );
     println!("\nworkload                 Slug median   Python median  Slug / Python");
     for workload in &report.workloads {
+        let (python, ratio) = match (workload.python_median_ns, workload.slug_over_python) {
+            (Some(median), Some(ratio)) => (format_millis(median), format!("{ratio:.2}x")),
+            _ => ("-".to_owned(), "-".to_owned()),
+        };
         println!(
-            "{:<24} {:>11} ms {:>11} ms {:>11.2}x{}",
+            "{:<24} {:>11} ms {:>11} ms {:>12}{}",
             workload.name,
             format_millis(workload.slug_median_ns),
-            format_millis(workload.python_median_ns),
-            workload.slug_over_python,
+            python,
+            ratio,
             if workload.held_out {
                 "  (hold-out)"
             } else {
