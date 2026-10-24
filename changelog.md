@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- When `main` fails, its pending tasks are cancelled and the error is
+  reported at once, as an explicit `nursery` already did. Previously the
+  program kept running its tasks first: one waiting on a timer delayed the
+  error until the timer fired, and one waiting in `slug.net.tcp`'s `accept`
+  kept the program running forever without printing anything. A successful
+  `main` still waits for its tasks.
+
 - A step-1 `bytes` slice, `data[a:b]`, copies its range directly instead of
   collecting every index first. The Space Invaders reference game, which
   builds its video RAM from slices, runs in 0.72x the time.

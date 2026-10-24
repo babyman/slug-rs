@@ -7,8 +7,14 @@ use crate::{RuntimeError, Value, value::Task};
 use super::{TaskRunOutcome, progress::ProgressDriver, timers::TimerService};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
+/// How a nursery settles a failed child. Either policy cancels pending
+/// children when the owner's body fails.
 pub(super) enum SettlementPolicy {
+    /// The root: an unobserved child failure is reported once every task has
+    /// settled.
     Join,
+    /// An explicit nursery: the first unobserved child failure cancels the
+    /// remaining children.
     FailFast,
 }
 
@@ -138,19 +144,15 @@ impl Nursery {
             if let Some(result) = self.settle_available(result, cancellation) {
                 return result;
             }
+            // Only a successful body waits here; a failed one settled above.
             if !self.wait_for_progress() {
-                let body_error = result.as_ref().err().cloned();
                 // Report the first task that is still waiting, where it waits,
                 // rather than the settling owner.
                 let blocked = self
                     .first_blocked_error()
                     .unwrap_or_else(|| blocked.clone());
-                self.cancel_all(if body_error.is_some() {
-                    cancellation
-                } else {
-                    &blocked
-                });
-                return Err(body_error.unwrap_or(blocked));
+                self.cancel_all(&blocked);
+                return Err(blocked);
             }
         }
     }
@@ -162,10 +164,10 @@ impl Nursery {
         result: &Result<Value, RuntimeError>,
         cancellation: &RuntimeError,
     ) -> Option<Result<Value, RuntimeError>> {
-        let body_error = result.as_ref().err().cloned();
-        if self.policy == SettlementPolicy::FailFast
-            && let Some(error) = &body_error
-        {
+        // A failed body cancels its pending children under either policy:
+        // nothing can await them any more, and the root would otherwise wait
+        // indefinitely on a task served by a live native producer.
+        if let Err(error) = result {
             self.cancel_all(cancellation);
             return Some(Err(error.clone()));
         }

@@ -1366,10 +1366,12 @@ expression keyword or a builtin. `await` is generic over the task payload:
 
 Root evaluation, explicit nursery bodies, and spawned tasks suspend
 cooperatively on task, channel, timer, and `select` operations. Owner
-settlement runs after either a successful or failed body and
-propagates unobserved child failures. An explicit nursery logically cancels
-pending siblings after its first unobserved child failure; cancellation does
-not forcibly interrupt host execution.
+settlement runs after either a successful or failed body. A failed body
+cancels every pending child, at the root as in an explicit nursery, and the
+owner fails with the body's failure. After a successful body, settlement
+propagates unobserved child failures, and an explicit nursery logically
+cancels pending siblings after its first unobserved child failure;
+cancellation does not forcibly interrupt host execution.
 
 A nursery limiter admits direct children up to its limit and queues further
 direct spawns, releasing an admission slot at settlement. Awaiting a queued
@@ -1381,8 +1383,8 @@ task therefore first drives earlier ready siblings.
 A child belongs to the current dynamic nursery. Normal nursery exit waits for
 its remaining children. An explicit nursery propagates its first unobserved
 child failure and logically cancels siblings. Cancellation settles a task with
-an error but does not forcibly interrupt a host thread. The root nursery joins
-its descendants before program completion.
+an error but does not forcibly interrupt a host thread. After a successful
+body, the root nursery joins its descendants before program completion.
 
 A spawned task snapshots its immediate lexical bindings. Subsequent parent
 assignment is not visible through those captured local bindings. Captured
