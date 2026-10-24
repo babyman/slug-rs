@@ -1,7 +1,7 @@
 # Crawl
 
 <!-- DRAFT: only the sections written so far. The introduction, running and
-testing, the screen, turns, monsters, items, and the snapshot format follow
+testing, monsters, items, hunger, --More--, and the snapshot format follow
 once the reference implements them; see outline.md. -->
 
 ## Random numbers
@@ -64,10 +64,11 @@ A new game with seed `s` seeds the generator with `s`, then:
 1. `shuffle(data.colours)`: potion type `n` is called by colour `n` of the
    result until identified.
 2. `shuffle(data.titles)`: scroll type `n` gets title `n` of the result.
-3. Generates level 1.
+3. Generates level 1 (see **Levels**) and places the player there.
 
-Taking the stairs down from depth `d` generates level `d + 1`, continuing
-the same sequence of draws.
+The player starts with 12 hit points of 12, strength 16 of 16, no gold,
+experience level 1 with 0 experience points, and armour 0. The message line
+shows `Welcome to the dungeon. Find the Orb on depth 8.`
 
 ## Levels
 
@@ -229,3 +230,119 @@ and the player not shown):
 
 Cell 1 (top middle) is gone; its point is (37, 1), on the corridor along
 row 1. Trailing spaces are not shown; every map row is 80 characters.
+
+## The screen
+
+The display is 640 by 240 pixels: 24 rows of 80 characters, each character
+an 8 by 10 pixel cell. Character `c` (32 to 126) of `data.font` is drawn in
+the cell at column `col` and row `row` as 10 bytes: byte `r` of the glyph is
+byte `col` of frame row `10 * row + r`. Open the display and colour the top
+and bottom rows like this, and present the frame every frame:
+
+```slug
+arcade.open("Crawl", 640, 240, {scale: 2})
+arcade.overlay(0, 0, 640, 10, 0xffff60)
+arcade.overlay(0, 230, 640, 10, 0x60ff60)
+```
+
+The 24 rows of text:
+
+- Row 0, the **message line**: the messages of the last command, joined
+  with two spaces, or blank.
+- Rows 1 to 22: the map, map row `y` on screen row `y + 1`. Each square
+  shows, in order of precedence: `@` for the player; a monster's letter if
+  the player can see the square (see **Seeing**); otherwise what the player
+  remembers there.
+- Row 23, the **status line**:
+  `Depth:1  Gold:0  Hp:12(12)  Str:16(16)  Arm:0  Exp:1/0`, that is the
+  depth, gold, hit points (maximum in parentheses), strength (maximum in
+  parentheses), armour, and experience level `/` experience points, with two
+  spaces between fields and no padding.
+
+Rows end with spaces where their text is shorter than 80 characters.
+
+## Commands
+
+The game waits for commands. In each frame, the command is the first key
+in this list that was pressed in that frame (`arcade.pressed`); other keys
+pressed in the same frame are ignored, and a frame with none of them does
+nothing:
+
+`h`, `j`, `k`, `l`, `y`, `u`, `b`, `n`, `left`, `down`, `up`, `right`,
+`space`, `enter`
+
+| key | command |
+|---|---|
+| `h` or `left` | move west (x - 1) |
+| `j` or `down` | move south (y + 1) |
+| `k` or `up` | move north (y - 1) |
+| `l` or `right` | move east (x + 1) |
+| `y`, `u`, `b`, `n` | move north-west, north-east, south-west, south-east |
+| a move key with `shift` held (`arcade.down`) | run in that direction |
+| `space` | rest one turn |
+| `enter` | take the stairs down |
+
+Every command first clears the message line; the messages it produces are
+then shown until the next command. A command that takes game time ends one
+or more **turns**: each turn adds 1 to the turn count and then updates what
+the player sees and remembers. A command that does nothing takes no turn.
+
+### Moving
+
+The player moves one square in the direction, taking a turn, when the
+target square is floor, corridor, door, or stairs, and no monster is on it.
+A diagonal move also needs both squares that share a side with the
+player's square and the target to be floor, corridor, door, or stairs; so
+the player cannot move diagonally into or out of a doorway, or cut a corner
+of rock. A move that cannot be made does nothing and takes no turn.
+
+Standing on an item does nothing yet.
+
+### Running
+
+Running repeats moves in one direction: move as above; if the move could
+not be made, the run ends. After each move that is made (each its own
+turn), the run ends if the player now stands on a door, the stairs, or an
+item, or can see any monster. Otherwise the run continues with the next
+move. A run whose first move cannot be made takes no turn.
+
+### Resting
+
+`space` takes one turn without moving.
+
+### Stairs
+
+`enter` on the stairs takes the player down: the level at the next depth is
+generated (see **Levels**), the player is placed on it, and the command
+takes one turn. On depth 8 the stairs lead out only with the Orb; without
+it the message is `You need the Orb to leave.` and no turn passes. Off the
+stairs, the message is `I see no way down.` and no turn passes.
+
+## Seeing
+
+The player **can see** a square when it is the player's own square or one
+of its eight neighbours, or when the player is in a lit room and the square
+is in that room's rectangle, walls included. The player is **in** a room
+when the room's rectangle, walls included, holds the player's square, so
+standing in a doorway counts as being in the room. Gone cells' points are
+not rooms. In a dark room, or in a corridor, the player sees only the
+neighbours.
+
+The player **remembers** what they last saw on each square: when the game
+starts on a level, and at the end of every turn, each square the player
+can see is remembered as the glyph of the item on it, if any, or else its
+terrain. Squares never seen are remembered as spaces. A new level starts
+with nothing remembered.
+
+| glyph | item |
+|---|---|
+| `*` | gold |
+| `!` | potion |
+| `?` | scroll |
+| `:` | food |
+| `)` | weapon |
+| `]` | armour |
+| `,` | the Orb |
+
+Monsters are not remembered: a monster's letter shows only while the
+player can see its square.

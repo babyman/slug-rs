@@ -216,6 +216,11 @@ and so it can run against the agent's own game later if wanted.
    2026-10-23: the RNG and level generation (`reference/rng.slug`,
    `level.slug`), their `task.md` sections, and the Python versions
    (`python/reference/level.py`), identical on 200 seeds × depths 1–8.
+   Done 2026-10-23: commands, moving, running (straight lines; stops on a
+   door, stairs, an item, or a visible monster), resting, stairs, seeing
+   and memory, the screen text (`game.slug`, `python/reference/game.py`);
+   20 bot-played games of 600 commands identical in state and screen. About
+   6 ms per command in Slug, mostly the full-screen render.
 5. Write `task.md` from the reference, examples generated.
 6. Python reference from `task.md` only (a fresh agent, or by hand); every
    disagreement is a spec fix or a Slug reference bug. Then `python/task.md`

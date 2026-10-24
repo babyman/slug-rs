@@ -1,70 +1,55 @@
 /**
- * Crawl. For now: starts a game from `--seed`, takes the stairs down to
- * `--depth`, and shows the whole level, for checking level generation.
- * `--dump file` writes the level as JSON.
+ * Crawl: runs the game in game.slug on slug.arcade.
+ *
+ * Options: `--seed N` (default 1) starts a new game with that seed, and
+ * `--dump file` writes the game's state as JSON when the run ends.
  */
 val arcade = import("slug.arcade")
 val json = import("slug.fmt.json")
 val fs = import("slug.io.fs")
-val data = import("data")
 val rng = import("rng")
-val level = import("level")
+val game = import("game")
 val screen = import("screen")
 
-val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]", orb: ","}
+// Command keys in priority order: the first one pressed in a frame is that
+// frame's command. Arrow keys are the same as h, j, k, and l.
+val KEYS = [
+    ["h", "h"], ["j", "j"], ["k", "k"], ["l", "l"], ["y", "y"], ["u", "u"], ["b", "b"], ["n", "n"],
+    ["left", "h"], ["down", "j"], ["up", "k"], ["right", "l"], ["space", "space"], ["enter", "enter"],
+]
 
-val put = fn(rows:list, x:num, y:num, c:str):list {
-    val row = rows[y]
-    rows[:y] + [row[:x] + c + row[x + 1:]] + rows[y + 1:]
-}
-
-// The whole level, as if every square were seen.
-val reveal = fn(lv:map):list {
-    val items = fn(i:num, rows:list):list {
-        if (i == len(lv.items)) {
-            rows
-        } else {
-            val it = lv.items[i]
-            recur(i + 1, put(rows, it.x, it.y, GLYPHS[it.item.kind]))
-        }
+val pressedKey = fn(i:num):str|nil {
+    if (i == len(KEYS)) {
+        nil
+    } else if (arcade.pressed(KEYS[i][0])) {
+        KEYS[i][1]
+    } else {
+        recur(i + 1)
     }
-    val monsters = fn(i:num, rows:list):list {
-        if (i == len(lv.monsters)) {
-            rows
-        } else {
-            val m = lv.monsters[i]
-            recur(i + 1, put(rows, m.x, m.y, data.monsters[m.kind].letter))
-        }
-    }
-    put(monsters(0, items(0, lv.map)), lv.player.x, lv.player.y, "@")
 }
 
 val main = fn() {
-    val seed = cfg("seed", 1)
-    val depth = cfg("depth", 1)
-    rng.seed(seed)
-    val colours = rng.shuffle(data.colours)
-    val titles = rng.shuffle(data.titles)
-    val descend = fn(d:num):map {
-        val lv = level.generate(d)
-        if (d == depth) { lv } else { recur(d + 1) }
-    }
-    val lv = descend(1)
-    val dump = cfg("dump", "")
-    if (dump != "") {
-        val file = fs.openWrite(dump)
-        fs.write(file, json.stringify(lv + {colours: colours, titles: titles, rng: rng.getState()}) + "\n")
-        fs.close(file)
-    }
-    val text = ["seed $seed  depth $depth"] + reveal(lv) + ["potions: " + colours[:6] + "  scrolls: " + titles[:5]]
+    game.newGame(cfg("seed", 1))
     arcade.open("Crawl", screen.WIDTH, screen.HEIGHT, {scale: 2})
     arcade.overlay(0, 0, screen.WIDTH, 10, 0xffff60)
     arcade.overlay(0, 230, screen.WIDTH, 10, 0x60ff60)
-    val frame = screen.render(text)
-    val loop = fn() {
-        arcade.present(frame)
-        if (arcade.frame()) { recur() }
+    val loop = fn(frame:bytes) {
+        val key = pressedKey(0)
+        val next = if (key == nil) {
+            frame
+        } else {
+            game.command(key, arcade.down("shift"))
+            screen.render(game.text())
+        }
+        arcade.present(next)
+        if (arcade.frame()) { recur(next) }
     }
-    loop()
+    loop(screen.render(game.text()))
     arcade.close()
+    val dump = cfg("dump", "")
+    if (dump != "") {
+        val file = fs.openWrite(dump)
+        fs.write(file, json.stringify(game.current() + {rng: rng.getState(), text: game.text()}) + "\n")
+        fs.close(file)
+    }
 }

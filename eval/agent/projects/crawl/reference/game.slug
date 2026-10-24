@@ -1,0 +1,263 @@
+/**
+ * The game: its state, the player's commands, and the text the screen shows.
+ */
+val data = import("data")
+val rng = import("rng")
+val level = import("level")
+val string = import("slug.string")
+
+export val DIRECTIONS = {
+    h: [-1, 0], j: [0, 1], k: [0, -1], l: [1, 0],
+    y: [-1, -1], u: [1, -1], b: [-1, 1], n: [1, 1],
+}
+
+val GLYPHS = {gold: "*", potion: "!", scroll: "?", food: ":", weapon: ")", armour: "]", orb: ","}
+
+val PASSABLE = [level.FLOOR, level.CORRIDOR, level.DOOR, level.STAIRS]
+
+var state = {}
+
+export val current = fn():map { state }
+
+val contains = fn(xs:list, v):bool {
+    val go = fn(i:num):bool {
+        if (i == len(xs)) { false } else if (xs[i] == v) { true } else { recur(i + 1) }
+    }
+    go(0)
+}
+
+val write = fn(rows:list, x:num, y:num, text:str):list {
+    val row = rows[y]
+    rows[:y] + [row[:x] + text + row[x + len(text):]] + rows[y + 1:]
+}
+
+val inBounds = fn(x:num, y:num):bool {
+    x >= 0 && x < level.WIDTH && y >= 0 && y < level.HEIGHT
+}
+
+val terrain = fn(x:num, y:num):str {
+    if (inBounds(x, y)) { state.map[y][x] } else { level.BLANK }
+}
+
+val passable = fn(x:num, y:num):bool { contains(PASSABLE, terrain(x, y)) }
+
+// The index of the first entry of `list` at (x, y), or -1.
+val indexAt = fn(list:list, x:num, y:num):num {
+    val go = fn(i:num):num {
+        if (i == len(list)) {
+            -1
+        } else if (list[i].x == x && list[i].y == y) {
+            i
+        } else {
+            recur(i + 1)
+        }
+    }
+    go(0)
+}
+
+/**
+ * The room whose rectangle, walls included, holds (x, y), or nil.
+ */
+export val roomAt = fn(x:num, y:num):map|nil {
+    val go = fn(i:num):map|nil {
+        if (i == len(state.rooms)) {
+            nil
+        } else {
+            val r = state.rooms[i]
+            if (!r.gone && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) { r } else { recur(i + 1) }
+        }
+    }
+    go(0)
+}
+
+/**
+ * Whether the player can see (x, y): it is the player's square or one of its
+ * eight neighbours, or the player is in a lit room whose rectangle holds it.
+ */
+export val visible = fn(x:num, y:num):bool {
+    val p = state.player
+    val dx = x - p.x
+    val dy = y - p.y
+    if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
+        true
+    } else {
+        val room = roomAt(p.x, p.y)
+        room != nil && !room.dark && x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h
+    }
+}
+
+// What the player remembers at (x, y): the item there, or the terrain.
+val sight = fn(x:num, y:num):str {
+    val i = indexAt(state.items, x, y)
+    if (i >= 0) { GLYPHS[state.items[i].item.kind] } else { terrain(x, y) }
+}
+
+// Records every visible square in the player's memory.
+val see = fn() {
+    var memory = state.memory
+    val look = fn(x:num, y:num) {
+        if (inBounds(x, y)) { memory = write(memory, x, y, sight(x, y)) }
+    }
+    val p = state.player
+    val room = roomAt(p.x, p.y)
+    if (room != nil && !room.dark) {
+        val rows = fn(y:num) {
+            if (y < room.y + room.h) {
+                val cols = fn(x:num) {
+                    if (x < room.x + room.w) {
+                        look(x, y)
+                        recur(x + 1)
+                    }
+                }
+                cols(room.x)
+                recur(y + 1)
+            }
+        }
+        rows(room.y)
+    }
+    val around = fn(i:num) {
+        if (i < 9) {
+            look(p.x + i % 3 - 1, p.y + int(i / 3) - 1)
+            recur(i + 1)
+        }
+    }
+    around(0)
+    state = state copy {memory: memory}
+}
+
+val say = fn(text:str) {
+    state = state copy {messages: state.messages :+ text}
+}
+
+val enterLevel = fn(depth:num) {
+    val lv = level.generate(depth)
+    val blank = fn(i:num, rows:list):list {
+        if (i == level.HEIGHT) { rows } else { recur(i + 1, rows :+ (level.BLANK * level.WIDTH)) }
+    }
+    state = state copy {
+        depth: depth,
+        map: lv.map,
+        rooms: lv.rooms,
+        items: lv.items,
+        monsters: lv.monsters,
+        memory: blank(0, []),
+        player: state.player copy {x: lv.player.x, y: lv.player.y},
+    }
+    see()
+}
+
+/**
+ * Starts a new game with `seed`.
+ */
+export val newGame = fn(seed:num) {
+    rng.seed(seed)
+    val colours = rng.shuffle(data.colours)
+    val titles = rng.shuffle(data.titles)
+    state = {
+        seed: seed,
+        turn: 0,
+        colours: colours,
+        titles: titles,
+        messages: ["Welcome to the dungeon. Find the Orb on depth 8."],
+        player: {x: 0, y: 0, hp: 12, maxHp: 12, str: 16, maxStr: 16, gold: 0, level: 1, xp: 0, armour: 0},
+    }
+    enterLevel(1)
+}
+
+// Ends a turn: the player's action has happened.
+val endTurn = fn() {
+    state = state copy {turn: state.turn + 1}
+    see()
+}
+
+// Whether the player can step from where they stand by (dx, dy): the target
+// must be passable, and for a diagonal step so must both squares beside it.
+val canStep = fn(dx:num, dy:num):bool {
+    val p = state.player
+    passable(p.x + dx, p.y + dy) && (dx == 0 || dy == 0 || (passable(p.x + dx, p.y) && passable(p.x, p.y + dy)))
+}
+
+// Takes one step if possible and returns whether it did.
+val step = fn(dx:num, dy:num):bool {
+    val p = state.player
+    if (canStep(dx, dy) && indexAt(state.monsters, p.x + dx, p.y + dy) < 0) {
+        state = state copy {player: p copy {x: p.x + dx, y: p.y + dy}}
+        endTurn()
+        true
+    } else {
+        false
+    }
+}
+
+val monsterVisible = fn():bool {
+    val go = fn(i:num):bool {
+        if (i == len(state.monsters)) {
+            false
+        } else if (visible(state.monsters[i].x, state.monsters[i].y)) {
+            true
+        } else {
+            recur(i + 1)
+        }
+    }
+    go(0)
+}
+
+// Runs: steps until a step is impossible, or until, after a step, the player
+// stands on a door, the stairs, or an item, or can see a monster.
+val run = fn(dx:num, dy:num) {
+    if (step(dx, dy)) {
+        val p = state.player
+        val here = terrain(p.x, p.y)
+        val stop = here == level.DOOR || here == level.STAIRS || indexAt(state.items, p.x, p.y) >= 0 || monsterVisible()
+        if (!stop) { recur(dx, dy) }
+    }
+}
+
+val descend = fn() {
+    val p = state.player
+    if (terrain(p.x, p.y) != level.STAIRS) {
+        say("I see no way down.")
+    } else if (state.depth == level.DEEPEST) {
+        say("You need the Orb to leave.")
+    } else {
+        enterLevel(state.depth + 1)
+        state = state copy {turn: state.turn + 1}
+    }
+}
+
+/**
+ * Carries out one command: a direction letter (with `shift` to run),
+ * "space" to rest, or "enter" to take the stairs down. The previous
+ * command's messages are cleared first.
+ */
+export val command = fn(key:str, shift:bool) {
+    state = state copy {messages: []}
+    match key {
+        "space" => endTurn()
+        "enter" => descend()
+        _ => match DIRECTIONS[key] {
+            [dx, dy] => if (shift) { run(dx, dy) } else { step(dx, dy) }
+            _ => nil
+        }
+    }
+}
+
+/**
+ * The screen's 24 text rows: messages, the map as the player knows it, and
+ * the status line.
+ */
+export val text = fn():list {
+    val monsters = fn(i:num, rows:list):list {
+        if (i == len(state.monsters)) {
+            rows
+        } else {
+            val m = state.monsters[i]
+            recur(i + 1, if (visible(m.x, m.y)) { write(rows, m.x, m.y, data.monsters[m.kind].letter) } else { rows })
+        }
+    }
+    val p = state.player
+    val map = write(monsters(0, state.memory), p.x, p.y, "@")
+    val status = "Depth:" + state.depth + "  Gold:" + p.gold + "  Hp:" + p.hp + "(" + p.maxHp + ")  Str:" + p.str
+        + "(" + p.maxStr + ")  Arm:" + p.armour + "  Exp:" + p.level + "/" + p.xp
+    [string.join(state.messages, "  ")] + map + [status]
+}
