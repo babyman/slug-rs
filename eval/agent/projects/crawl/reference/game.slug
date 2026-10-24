@@ -359,6 +359,19 @@ val enterLevel = fn(depth:num) {
 }
 
 /**
+ * The game's snapshot: its whole state, with the generator's state as `rng`.
+ */
+export val snapshot = fn():map { state + {rng: rng.getState()} }
+
+/**
+ * Continues the game a snapshot holds, exactly as it was saved.
+ */
+export val load = fn(saved:map) {
+    rng.setState(saved.rng)
+    state = saved - "rng"
+}
+
+/**
  * Starts a new game with `seed`.
  */
 export val newGame = fn(seed:num) {
@@ -631,7 +644,7 @@ val upkeep = fn() {
     if (food <= STARVED) {
         die("Starved to death")
     } else {
-        if (food <= 0 && rng.below(5) == 0) {
+        if (food <= 0 && state.player.frozen == 0 && rng.below(5) == 0) {
             setPlayer(state.player copy {frozen: state.player.frozen + rng.below(8) + 4})
             say("You faint from lack of food.")
         }

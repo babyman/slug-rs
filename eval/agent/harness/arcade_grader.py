@@ -10,9 +10,15 @@ digits of the SHA-256 of its frames' hashes, and cases.json stores each
 case's digests. A case passes when the program shows exactly `frames` frames
 and every digest matches, and its sound log (SLUG_ARCADE_SOUNDS: one line
 per play, loop, or stop call) has exactly the case's `sounds` lines.
+
+A case may also give `args`, the program's arguments; `files`, files to
+write into its directory first (name to text); and `dump`, a JSON value the
+program must write: the grader adds `--dump dump.json` to the arguments and
+compares the parsed file with `dump`, reporting the first path that differs.
 """
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -29,9 +35,35 @@ def digests(hashes, window):
     ]
 
 
-def run(slug, slug_home, project_dir, program_path, script, seconds):
+def first_difference(got, want, path="$"):
+    """The first path at which two JSON values differ, or None."""
+    if isinstance(want, dict) and isinstance(got, dict):
+        for key in sorted(set(want) | set(got)):
+            if key not in got:
+                return f"{path}.{key} is missing"
+            if key not in want:
+                return f"{path}.{key} is not expected"
+            found = first_difference(got[key], want[key], f"{path}.{key}")
+            if found:
+                return found
+        return None
+    if isinstance(want, list) and isinstance(got, list):
+        for i, (a, b) in enumerate(zip(got, want)):
+            found = first_difference(a, b, f"{path}[{i}]")
+            if found:
+                return found
+        if len(got) != len(want):
+            return f"{path} has {len(got)} entries, expected {len(want)}"
+        return None
+    # true == 1 in Python, but not in JSON.
+    if got == want and isinstance(got, bool) == isinstance(want, bool):
+        return None
+    return f"{path} is {json.dumps(got)[:80]}, expected {json.dumps(want)[:80]}"
+
+
+def run(slug, slug_home, project_dir, program_path, script, seconds, args=(), files=None, dump=False):
     """Runs a program on an input script and returns (hashes, sound lines,
-    error)."""
+    error, dumped JSON or None)."""
     with tempfile.TemporaryDirectory(prefix="slug-eval-arcade-") as directory:
         directory = Path(directory)
         for source in Path(program_path).parent.glob("*.slug"):
@@ -44,6 +76,9 @@ def run(slug, slug_home, project_dir, program_path, script, seconds):
         program = directory / Path(program_path).name
         shutil.copyfile(program_path, program)
         (directory / "script.txt").write_text(script)
+        for name, text in (files or {}).items():
+            (directory / name).write_text(text)
+        arguments = list(args) + (["--dump", "dump.json"] if dump else [])
         hashes = directory / "hashes.bin"
         sounds = directory / "sounds.txt"
         environment = {
@@ -56,7 +91,7 @@ def run(slug, slug_home, project_dir, program_path, script, seconds):
         }
         try:
             completed = subprocess.run(
-                [slug, program.name],
+                [slug, program.name, *arguments],
                 cwd=directory,
                 capture_output=True,
                 text=True,
@@ -64,20 +99,32 @@ def run(slug, slug_home, project_dir, program_path, script, seconds):
                 env=environment,
             )
         except subprocess.TimeoutExpired:
-            return None, None, f"timed out after {seconds} s"
+            return None, None, f"timed out after {seconds} s", None
         if completed.returncode != 0:
-            return None, None, (completed.stderr.strip() or completed.stdout.strip())[:300] or f"exit {completed.returncode}"
+            return None, None, (completed.stderr.strip() or completed.stdout.strip())[:300] or f"exit {completed.returncode}", None
         if not hashes.exists():
-            return None, None, "no frames shown (was slug.arcade opened and closed?)"
+            return None, None, "no frames shown (was slug.arcade opened and closed?)", None
         lines = sounds.read_text().splitlines() if sounds.exists() else []
-        return hashes.read_bytes(), lines, None
+        dumped = None
+        if dump:
+            dump_file = directory / "dump.json"
+            if not dump_file.exists():
+                return None, None, "no dump.json written", None
+            try:
+                dumped = json.loads(dump_file.read_text())
+            except ValueError as error:
+                return None, None, f"dump.json is not JSON: {error}", None
+        return hashes.read_bytes(), lines, None, dumped
 
 
 def grade(slug, slug_home, project_dir, program_path, suite):
     window = suite["window"]
     outcomes = []
     for case in suite["cases"]:
-        hashes, sounds, error = run(slug, slug_home, project_dir, program_path, case["script"], case["seconds"])
+        hashes, sounds, error, dumped = run(
+            slug, slug_home, project_dir, program_path, case["script"], case["seconds"],
+            case.get("args", ()), case.get("files"), "dump" in case,
+        )
         if error is not None:
             outcomes.append({"id": case["id"], "kind": "arcade", "passed": False, "detail": error})
             continue
@@ -85,7 +132,10 @@ def grade(slug, slug_home, project_dir, program_path, suite):
         got = digests(hashes, window)
         expected = case["windows"]
         mismatch = next((i for i, (a, b) in enumerate(zip(got, expected)) if a != b), None)
-        if mismatch is not None:
+        state = first_difference(dumped, case["dump"]) if "dump" in case else None
+        if state is not None:
+            detail = f"final state: {state}"
+        elif mismatch is not None:
             detail = f"frames {mismatch * window}-{mismatch * window + window - 1} differ"
         elif frames != case["frames"]:
             detail = f"showed {frames} frames, expected {case['frames']}"

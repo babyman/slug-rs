@@ -233,6 +233,15 @@ and so it can run against the agent's own game later if wanted.
    2500 commands identical; `compare_references.py find` bisects a
    mismatch to its first command. Not yet exercised by the bot: a full
    pack (needs a snapshot case).
+   Done 2026-10-24: snapshots (`--load`, `--dump`; the reference's
+   `--screen` is a debug extra), arcade_grader `args`/`files`/`dump` with a
+   first-difference report, `make_cases.py` (117 cases: generation by seed
+   and by depth, targeted snapshot cases per rule, six bot games; every
+   case checked on both references), and task.md's introduction, running,
+   and snapshot sections. Fixed on the way: fainting while already frozen
+   could chain until starvation. The reference passes 117/117 through the
+   grader in about a minute. Not done: `python/task.md` and checks for the
+   Python arm (the harness offers the arm only once those exist).
 5. Write `task.md` from the reference, examples generated.
 6. Python reference from `task.md` only (a fresh agent, or by hand); every
    disagreement is a spec fix or a Slug reference bug. Then `python/task.md`

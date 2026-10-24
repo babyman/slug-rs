@@ -77,6 +77,23 @@ class Game:
                        "regen": 0, "frozen": 0, "confused": 0, "blind": 0}
         self.enter_level(1)
 
+    @classmethod
+    def load(cls, saved):
+        """The game a snapshot holds, exactly as it was saved."""
+        import copy
+        saved = copy.deepcopy(saved)
+        g = cls.__new__(cls)
+        g.rng = level.Rng(1)
+        g.rng.state = saved["rng"]
+        g.seed, g.turn, g.depth = saved["seed"], saved["turn"], saved["depth"]
+        g.colours, g.titles, g.known = saved["colours"], saved["titles"], saved["known"]
+        g.messages, g.more, g.prompt = saved["messages"], saved["more"], saved["prompt"]
+        g.showing_pack, g.dead, g.won, g.sense = saved["showingPack"], saved["dead"], saved["won"], saved["sense"]
+        g.map, g.rooms, g.items, g.monsters = saved["map"], saved["rooms"], saved["items"], saved["monsters"]
+        g.memory = [list(row) for row in saved["memory"]]
+        g.pack, g.player = saved["pack"], saved["player"]
+        return g
+
     # The level.
 
     def enter_level(self, depth):
@@ -400,7 +417,7 @@ class Game:
         if p["food"] <= STARVED:
             self.die("Starved to death")
             return
-        if p["food"] <= 0 and self.rng.below(5) == 0:
+        if p["food"] <= 0 and p["frozen"] == 0 and self.rng.below(5) == 0:
             p["frozen"] += self.rng.below(8) + 4
             self.say("You faint from lack of food.")
         every = max(3, 21 - 2 * p["level"])

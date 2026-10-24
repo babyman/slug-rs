@@ -1,13 +1,14 @@
 /**
  * Crawl: runs the game in game.slug on slug.arcade.
  *
- * Options: `--seed N` (default 1) starts a new game with that seed, and
- * `--dump file` writes the game's state as JSON when the run ends.
+ * Options: `--seed N` (default 1) starts a new game with that seed, or
+ * `--load file` continues the game in a snapshot; `--dump file` writes the
+ * game's snapshot when the run ends. `--screen file`, not in the spec, also
+ * writes the final screen's text, for tools/compare_references.py.
  */
 val arcade = import("slug.arcade")
 val json = import("slug.fmt.json")
 val fs = import("slug.io.fs")
-val rng = import("rng")
 val game = import("game")
 val screen = import("screen")
 
@@ -29,7 +30,21 @@ val pressedKey = fn(i:num):str|nil {
 }
 
 val main = fn() {
-    game.newGame(cfg("seed", 1))
+    val load = cfg("load", "")
+    if (load == "") {
+        game.newGame(cfg("seed", 1))
+    } else {
+        val file = fs.openRead(load)
+        val read = fn(acc:str):str {
+            match fs.readLine(file) {
+                line: str => recur(acc + line + "\n")
+                _ => acc
+            }
+        }
+        val text = read("")
+        fs.close(file)
+        game.load(json.parse(text))
+    }
     arcade.open("Crawl", screen.WIDTH, screen.HEIGHT, {scale: 2})
     arcade.overlay(0, 0, screen.WIDTH, 10, 0xffff60)
     arcade.overlay(0, 230, screen.WIDTH, 10, 0x60ff60)
@@ -46,10 +61,13 @@ val main = fn() {
     }
     loop(screen.render(game.text()))
     arcade.close()
-    val dump = cfg("dump", "")
-    if (dump != "") {
-        val file = fs.openWrite(dump)
-        fs.write(file, json.stringify(game.current() + {rng: rng.getState(), text: game.text()}) + "\n")
-        fs.close(file)
+    val save = fn(path:str, value) {
+        if (path != "") {
+            val file = fs.openWrite(path)
+            fs.write(file, json.stringify(value) + "\n")
+            fs.close(file)
+        }
     }
+    save(cfg("dump", ""), game.snapshot())
+    save(cfg("screen", ""), game.text())
 }

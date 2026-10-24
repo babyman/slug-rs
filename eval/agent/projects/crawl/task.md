@@ -1,8 +1,112 @@
 # Crawl
 
-<!-- DRAFT: only the sections written so far. The introduction, running and
-testing and the snapshot format follow
-once the reference implements them; see outline.md. -->
+Write `./crawl.slug`, a program that plays Crawl, a small Rogue-like game,
+on `slug.arcade`: the player explores eight levels of rooms and corridors,
+fights monsters, collects items, and escapes with the Orb from the deepest
+level. Everything below is exact: the hidden tests run your program with
+scripted keys and compare every frame it shows, and the game's final state,
+with a reference implementation's. Random choices come from a generator
+this specification defines, so the same seed and keys always give the same
+game.
+
+You may split the program into modules beside `crawl.slug`. `./data.slug`
+holds the font and the game's tables (see **Data**); do not change it (the
+tests supply their own copy). `slug.arcade`'s documentation is the comment
+at the top of `slug-docs/library/arcade/arcade.slug`. You will also need
+`slug.io.fs` to read and write files and `slug.fmt.json` for JSON.
+
+## Running and testing
+
+```
+slug crawl.slug --seed 5
+slug crawl.slug --load start.json --dump end.json
+```
+
+The program reads its options with `cfg`: `cfg("seed", 1)`, `cfg("load",
+"")`, and `cfg("dump", "")` in `crawl.slug`.
+
+- `--seed N` starts a new game with seed `N` (see **A new game**); without
+  it and without `--load`, the seed is 1.
+- `--load file` instead continues the game saved in a snapshot file (see
+  **Snapshots**), exactly as it was: nothing happens on loading, and the
+  first frame shows the snapshot's screen.
+- `--dump file`: when the run ends, after closing the display, write the
+  game's snapshot to that file.
+
+The program opens the display (see **The screen**), then runs one frame per
+`arcade.frame()` until it returns false, and then closes the display. In
+each frame it reads the keys, carries out the frame's command if there is
+one (see **Commands**), presents the screen as it is after that command,
+and calls `arcade.frame()`. Present exactly once per frame, starting with
+frame 0.
+
+You cannot open a window here. Run the game headless with an input script,
+as `slug.arcade` describes: for example
+
+```
+SLUG_ARCADE_HEADLESS=script.txt SLUG_ARCADE_OUT=out slug crawl.slug --seed 1
+```
+
+with a script such as
+
+```
+0 -
+2 l
+3 -
+4 shift l
+5 -
+6 i
+7 -
+shot 7
+end 8
+```
+
+presses `l`, runs east, shows the pack, and writes `out/frame-7.png`, a
+screenshot you can look at. The tests press each key for one frame, with at
+least one frame between presses. They run scripts up to a few thousand
+frames long, with a time limit of 20 seconds plus one second for every 150
+frames, so the game must take well under 100 milliseconds per command.
+
+## Snapshots
+
+A snapshot is one JSON object holding the whole state of a game; `--load`
+reads one and `--dump` writes one. The tests compare your dumped snapshot
+with the reference's as JSON values: key order and spacing do not matter,
+but every key below must be present with exactly the right value, and lists
+in the order given. Numbers are integers.
+
+| key | value |
+|---|---|
+| `seed` | the game's seed |
+| `rng` | the generator's state (see **Random numbers**) |
+| `turn` | the turn count |
+| `depth` | the current depth, 1 to 8 |
+| `colours` | the game's shuffled `data.colours`, 15 strings |
+| `titles` | the game's shuffled `data.titles`, 12 strings |
+| `known` | `{"potions": [...], "scrolls": [...]}`: the identified types, each list in the order they were identified |
+| `messages` | the messages showing on the message line, as a list of strings |
+| `more` | the messages waiting behind `--More--`, as a list |
+| `prompt` | the key of the item command whose prompt is showing (`"e"`, `"q"`, `"r"`, `"w"`, `"a"`, or `"d"`), or `null` |
+| `showingPack` | whether the pack is shown (`i`) |
+| `dead`, `won` | whether the player has died, or won |
+| `sense` | whether the player is sensing monsters |
+| `map` | the level's terrain: 22 strings of 80 characters |
+| `memory` | what the player remembers: 22 strings of 80 characters |
+| `rooms` | the nine cells' rooms in cell order: `{"x", "y", "w", "h", "gone", "dark"}`; a gone cell's point has `w` and `h` 1 and `dark` false |
+| `items` | the items on the level, in the order they were made or dropped: `{"x", "y", "item"}` |
+| `monsters` | the monsters, in list order: `{"x", "y", "kind", "hp", "maxHp", "state"}`, with `state` `"asleep"` or `"awake"` |
+| `pack` | the pack's entries in letter order: `{"letter", "item", "count"}` |
+| `player` | `{"x", "y", "hp", "maxHp", "str", "maxStr", "gold", "level", "xp", "weapon", "armour", "food", "regen", "frozen", "confused", "blind"}`: `weapon` and `armour` are the letters of the wielded weapon and worn armour, or `null`; `food` is the food counter, `regen` the healing counter, and `frozen`, `confused`, and `blind` the turns left of each |
+
+An item is one of `{"kind": "gold", "amount": n}`, `{"kind": "food"}`,
+`{"kind": "weapon", "type": t, "bonus": b}`, `{"kind": "armour", "type": t,
+"bonus": b}`, `{"kind": "potion", "type": t}`, `{"kind": "scroll", "type":
+t}`, or `{"kind": "orb"}`, with `t` an index into the kind's table.
+
+Every rule below is stated in terms of this state. For example, a new game
+with seed 1 has `"turn": 0`, `"depth": 1`, `"messages": ["Welcome to the
+dungeon. Find the Orb on depth 8."]`, `"more": []`, `"prompt": null`, and
+the starting pack.
 
 ## Random numbers
 
@@ -322,10 +426,12 @@ At the end of each turn, after the player's action:
 4. the player looks around (see **Seeing**).
 
 After a command (or prompt answer) has done its action, if the player is
-**frozen** for `n` turns (see **Combat** and **Hunger**), turns pass one at
-a time, as if the player rested, each taking 1 off `n`, until `n` is 0 or
-the player dies. Their messages belong to the same command. A command that
-does nothing takes no turn.
+**frozen** for `n` turns (see **Combat** and **Hunger**), then while `n`
+is above 0 and the player is alive: `n` goes down by 1, and a turn passes as
+if the player rested (so during the last frozen turn the player is no
+longer frozen). The player stays frozen through turns that freeze them
+further. Their messages belong to the same command. A command that does
+nothing takes no turn.
 
 ### Moving
 
@@ -661,9 +767,9 @@ each turn it goes down by 1, and then:
 - if it is now exactly 50: `You are starting to feel weak.`
 - if it is -850 or less, the player starves (see **The end**), and the
   rest of the upkeep does not happen;
-- otherwise, if it is 0 or less and `below(5) == 0`, the player faints:
-  frozen for `below(8) + 4` more turns, with the message
-  `You faint from lack of food.`
+- otherwise, if it is 0 or less and the player is not frozen, then if
+  `below(5) == 0` the player faints: frozen for `below(8) + 4` turns, with
+  the message `You faint from lack of food.` (No draw while frozen.)
 
 The status line shows `Hungry` while the counter is 150 to 51, `Weak` from
 50 to 1, and `Faint` at 0 or less.
