@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A step-1 `bytes` slice, `data[a:b]`, copies its range directly instead of
+  collecting every index first. The Space Invaders reference game, which
+  builds its video RAM from slices, runs in 0.72x the time.
+
 - The source benchmarks include real programs without a CPython twin:
   `invaders-game` and `http-server`, from the agent evaluation references,
   and the hold-out `tiny-interpreter`. `make bench-source` reports their Slug

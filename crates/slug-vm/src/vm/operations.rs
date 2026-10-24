@@ -770,6 +770,13 @@ pub(super) fn slice_value(
             Ok(Value::List(values.slice(indexes.into_iter())))
         }
         Value::Bytes(values) => {
+            if step == 1 {
+                let start = usize::try_from(start).expect("slice bounds are non-negative");
+                let end = usize::try_from(end).expect("slice bounds are non-negative");
+                return Ok(Value::Bytes(Rc::new(
+                    values[start..end.max(start)].to_vec(),
+                )));
+            }
             let mut indexes = Vec::new();
             let mut index = start;
             while index < end {
