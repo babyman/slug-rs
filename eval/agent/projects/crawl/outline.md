@@ -210,8 +210,12 @@ and so it can run against the agent's own game later if wanted.
    640×240 bits (glyph bytes appended per pixel row, rows concatenated)
    takes about 5 ms in the release build, so the game can redraw the whole
    screen every turn and needs no dirty-cell tracking.
-3. Rest of `data.slug` (tables, names).
-4. Reference game, rule by rule, with a snapshot test per rule.
+3. Done 2026-10-23: `data.slug` tables (as structs: a list of map literals
+   loses per-field types in the checker), `data.py` for the Python arm.
+4. Reference game, rule by rule, with a snapshot test per rule. Done
+   2026-10-23: the RNG and level generation (`reference/rng.slug`,
+   `level.slug`), their `task.md` sections, and the Python versions
+   (`python/reference/level.py`), identical on 200 seeds × depths 1–8.
 5. Write `task.md` from the reference, examples generated.
 6. Python reference from `task.md` only (a fresh agent, or by hand); every
    disagreement is a spec fix or a Slug reference bug. Then `python/task.md`

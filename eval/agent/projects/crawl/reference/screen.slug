@@ -1,0 +1,43 @@
+/**
+ * The screen: 24 text rows of 80 characters, rendered into a 640x240
+ * slug.arcade frame with the font from data.slug.
+ */
+val data = import("data")
+val string = import("slug.string")
+
+export val COLUMNS = 80
+export val ROWS = 24
+export val WIDTH = 640
+export val HEIGHT = 240
+val GLYPH = 10
+
+// One pixel row of a text row: 80 glyph bytes, blanks past the text's end.
+val pixelRow = fn(codes:bytes, r:num):bytes {
+    val go = fn(i:num, acc:bytes):bytes {
+        if (i == COLUMNS) {
+            acc
+        } else {
+            val c = if (i < len(codes)) { codes[i] } else { 32 }
+            recur(i + 1, acc :+ data.font[(c - 32) * GLYPH + r])
+        }
+    }
+    go(0, 0x"")
+}
+
+/**
+ * The frame showing `text`, a list of ROWS strings of printable ASCII.
+ */
+export val render = fn(text:list):bytes {
+    val rows = fn(t:num, acc:bytes):bytes {
+        if (t == ROWS) {
+            acc
+        } else {
+            val codes = string.toBytes(text[t])
+            val pix = fn(r:num, acc:bytes):bytes {
+                if (r == GLYPH) { acc } else { recur(r + 1, acc + pixelRow(codes, r)) }
+            }
+            recur(t + 1, pix(0, acc))
+        }
+    }
+    rows(0, 0x"")
+}
