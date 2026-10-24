@@ -243,13 +243,18 @@ impl SourceError {
         self
     }
 
-    fn with_suggestion(mut self, message: impl Into<String>, edit: SourceEdit) -> Self {
+    fn with_suggestion(self, message: impl Into<String>, edit: SourceEdit) -> Self {
+        self.with_suggestion_edits(message, vec![edit])
+    }
+
+    /// A suggestion made of several edits, applied together.
+    fn with_suggestion_edits(mut self, message: impl Into<String>, edits: Vec<SourceEdit>) -> Self {
         self.corrections
             .get_or_insert_default()
             .suggestions
             .push(SourceFix {
                 message: message.into(),
-                edits: vec![edit],
+                edits,
             });
         self
     }

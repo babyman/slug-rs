@@ -52,9 +52,10 @@ Source codes classify parse and semantic errors. Rust hosts read them as
 ## Runtime codes
 
 Runtime and module diagnostics use these codes: `invalid_bytecode`, `type`,
-`name`, `arity`, `divide_by_zero`, `invalid_call`, `native`,
+`name`, `arity`, `divide_by_zero`, `out_of_bounds`, `invalid_call`, `native`,
 `native_contract`, `module`, `module_not_found`, `not_implemented`, `match`,
-`thrown`, or `permission`. `permission` is an operation the user running slug
+`thrown`, or `permission`. `out_of_bounds` is an index past either end of a
+list, `bytes`, or string. `permission` is an operation the user running slug
 has not granted, such as `describe` of unexported declarations without
 `--allow-unexported`. `module_not_found` is an import of a module that no root or clutch
 provides; its diagnostic may carry [suggestions](diagnostics.md#suggestions).

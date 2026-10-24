@@ -521,6 +521,7 @@ pub fn runtime_code(kind: &RuntimeErrorKind) -> &'static str {
         RuntimeErrorKind::Name => "name",
         RuntimeErrorKind::Arity => "arity",
         RuntimeErrorKind::DivideByZero => "divide_by_zero",
+        RuntimeErrorKind::OutOfBounds => "out_of_bounds",
         RuntimeErrorKind::InvalidCall => "invalid_call",
         RuntimeErrorKind::Native => "native",
         RuntimeErrorKind::NativeContract => "native_contract",

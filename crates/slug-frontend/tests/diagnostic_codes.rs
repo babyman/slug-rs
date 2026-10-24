@@ -173,6 +173,42 @@ fn a_nil_result_ending_in_another_value_only_suggests_nil() {
 }
 
 #[test]
+fn assigning_a_value_that_may_be_nil_suggests_a_default() {
+    let pick = "val pick = fn(k:bool):num|nil { if (k) { 5 } else { nil } }\n";
+    for (assignment, fixed) in [
+        ("n = pick(false)", "n = pick(false) ?? 0"),
+        (
+            "n = if (1 > 2) { 5 } else { nil }",
+            "n = (if (1 > 2) { 5 } else { nil }) ?? 0",
+        ),
+    ] {
+        let source = format!("{pick}var n = 1\n{assignment}\nn");
+        let error = compile("fixes.slug", &source).expect_err(&source);
+        assert!(
+            error.message.ends_with(
+                "the value may be `nil`; give a default with `??`, or declare `var n:num|nil`"
+            ),
+            "{}",
+            error.message
+        );
+        assert_eq!(error.fixes().len(), 0);
+        assert_eq!(error.suggestions().len(), 1);
+        let applied = error.suggestions()[0].apply(&source).expect("applies");
+        assert_eq!(applied, format!("{pick}var n = 1\n{fixed}\nn"));
+        assert_eq!(run(&applied), slug_vm::Value::Int(0), "{applied}");
+    }
+    // A type with no obvious default is explained but given no suggestion.
+    let source = "val S = struct { x:num }\nval pick = fn():struct<S>|nil { nil }\nvar s = S { x: 1 }\ns = pick()";
+    let error = compile("fixes.slug", source).expect_err(source);
+    assert!(
+        error.message.contains("the value may be `nil`"),
+        "{}",
+        error.message
+    );
+    assert_eq!(error.suggestions().len(), 0);
+}
+
+#[test]
 fn a_prefix_copy_is_fixed_by_moving_copy_after_the_value() {
     for (source, fixed) in [
         (

@@ -643,7 +643,7 @@ pub(super) fn index_value(
     collection: Value,
     index: &Value,
     #[cfg(feature = "metrics")] metrics: &Rc<RefCell<VmMetrics>>,
-) -> Result<Value, String> {
+) -> Result<Value, (RuntimeErrorKind, String)> {
     match collection {
         Value::List(values) => {
             #[cfg(feature = "metrics")]
@@ -651,15 +651,19 @@ pub(super) fn index_value(
                 metrics.borrow_mut().collection_lookups += 1;
             }
             let Value::Int(index) = index else {
-                return Err("list index must be an integer".into());
+                return Err((
+                    RuntimeErrorKind::Type,
+                    "list index must be an integer".into(),
+                ));
             };
-            let length = i64::try_from(values.len()).map_err(|_| "list is too large".to_owned())?;
+            let length = i64::try_from(values.len())
+                .map_err(|_| (RuntimeErrorKind::Type, "list is too large".to_owned()))?;
             let index = if *index < 0 { length + *index } else { *index };
             usize::try_from(index)
                 .ok()
                 .and_then(|index| values.get(index))
                 .cloned()
-                .ok_or_else(|| "list index is out of bounds".into())
+                .ok_or_else(|| out_of_bounds("list"))
         }
         Value::Bytes(values) => {
             #[cfg(feature = "metrics")]
@@ -667,17 +671,20 @@ pub(super) fn index_value(
                 metrics.borrow_mut().collection_lookups += 1;
             }
             let Value::Int(index) = index else {
-                return Err("bytes index must be an integer".into());
+                return Err((
+                    RuntimeErrorKind::Type,
+                    "bytes index must be an integer".into(),
+                ));
             };
             let values = Bytes::from_shared(values);
-            let length =
-                i64::try_from(values.len()).map_err(|_| "bytes are too large".to_owned())?;
+            let length = i64::try_from(values.len())
+                .map_err(|_| (RuntimeErrorKind::Type, "bytes are too large".to_owned()))?;
             let index = if *index < 0 { length + *index } else { *index };
             values
-                .get(usize::try_from(index).map_err(|_| "bytes index is out of bounds")?)
+                .get(usize::try_from(index).map_err(|_| out_of_bounds("bytes"))?)
                 .map(i64::from)
                 .map(Value::Int)
-                .ok_or_else(|| "bytes index is out of bounds".into())
+                .ok_or_else(|| out_of_bounds("bytes"))
         }
         Value::Str(value) => {
             #[cfg(feature = "metrics")]
@@ -685,15 +692,18 @@ pub(super) fn index_value(
                 metrics.borrow_mut().collection_lookups += 1;
             }
             let Value::Int(index) = index else {
-                return Err("string index must be an integer".into());
+                return Err((
+                    RuntimeErrorKind::Type,
+                    "string index must be an integer".into(),
+                ));
             };
-            let length =
-                i64::try_from(value.char_len()).map_err(|_| "string is too large".to_owned())?;
+            let length = i64::try_from(value.char_len())
+                .map_err(|_| (RuntimeErrorKind::Type, "string is too large".to_owned()))?;
             let index = if *index < 0 { length + *index } else { *index };
             value
-                .char_at(usize::try_from(index).map_err(|_| "string index is out of bounds")?)
+                .char_at(usize::try_from(index).map_err(|_| out_of_bounds("string"))?)
                 .map(Value::string)
-                .ok_or_else(|| "string index is out of bounds".into())
+                .ok_or_else(|| out_of_bounds("string"))
         }
         Value::Map(entries) => {
             #[cfg(feature = "metrics")]
@@ -706,7 +716,10 @@ pub(super) fn index_value(
         }
         Value::Struct(value) => {
             let Value::Str(name) = index else {
-                return Err("struct index must be a string".into());
+                return Err((
+                    RuntimeErrorKind::Type,
+                    "struct index must be a string".into(),
+                ));
             };
             value
                 .schema
@@ -715,10 +728,25 @@ pub(super) fn index_value(
                 .position(|field| field.name.as_ref() == name.as_ref())
                 .and_then(|index| value.values.get(index))
                 .cloned()
-                .ok_or_else(|| format!("struct has no field '{name}'"))
+                .ok_or_else(|| {
+                    (
+                        RuntimeErrorKind::Type,
+                        format!("struct has no field '{name}'"),
+                    )
+                })
         }
-        value => Err(format!("cannot index {}", value.type_name())),
+        value => Err((
+            RuntimeErrorKind::Type,
+            format!("cannot index {}", value.type_name()),
+        )),
     }
+}
+
+fn out_of_bounds(collection: &str) -> (RuntimeErrorKind, String) {
+    (
+        RuntimeErrorKind::OutOfBounds,
+        format!("{collection} index is out of bounds"),
+    )
 }
 
 pub(super) fn slice_value(

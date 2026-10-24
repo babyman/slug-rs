@@ -1356,7 +1356,12 @@ fn exposes_checked_faults_to_defer_onerror_as_structured_values() {
            defer onerror(err) { println(err.type, err.msg, err.data)\n 42 }\n\
            1 / 0\n\
          }\n\
-         println(\"after\", fail())\n",
+         println(\"after\", fail())\n\
+         val pick = fn(xs, i) {\n\
+           defer onerror(err) { println(err.type, err.msg)\n 0 }\n\
+           xs[i]\n\
+         }\n\
+         println(\"picked\", pick([1], 3))\n",
     )
     .expect("write fault-recovering deferred source");
     let output = slug()
@@ -1368,7 +1373,7 @@ fn exposes_checked_faults_to_defer_onerror_as_structured_values() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).expect("stdout is UTF-8"),
-        "divide_by_zero division by zero nil\nafter 42\n"
+        "divide_by_zero division by zero nil\nafter 42\nout_of_bounds list index is out of bounds\npicked 0\n"
     );
     assert!(output.stderr.is_empty());
 }

@@ -2855,7 +2855,12 @@ fn check_expression_inner(
                         {
                             explain_nil_start_assignment(error, name, binding, &actual)
                         } else {
-                            explain_nil_start(error, value, environment)
+                            let error = explain_nil_start(error, value, environment);
+                            if binding.nil_start.is_none() {
+                                explain_possible_nil(error, name, value, expected, &actual)
+                            } else {
+                                error
+                            }
                         }
                     })?;
                 }
@@ -5265,6 +5270,73 @@ fn explain_nil_start(
         error.message
     );
     error
+}
+
+/// Explains an assignment whose value fits the `var` except that it may be
+/// `nil`, such as `name = find(...)` for a `var name = ""`: it names the two
+/// ways out and suggests a `??` default when the type has an obvious one.
+fn explain_possible_nil(
+    mut error: SourceError,
+    name: &str,
+    value: &Expr,
+    expected: &Type,
+    actual: &Type,
+) -> SourceError {
+    if !matches!(error.code, SourceErrorCode::TypeMismatch)
+        || !matches!(actual, Type::Union(members) if members.contains(&Type::Nil))
+        || expected.includes_nil()
+        || !actual.without_nil().is_assignable_to(expected)
+    {
+        return error;
+    }
+    error.message = format!(
+        "{}: the value may be `nil`; give a default with `??`, or declare `var {name}:{expected}|nil`",
+        error.message
+    );
+    let default = match expected {
+        Type::Str => "\"\"",
+        Type::Num => "0",
+        Type::Bool => "false",
+        Type::List(_) => "[]",
+        Type::Map(_) => "{}",
+        _ => return error,
+    };
+    // `??` binds more loosely than arithmetic, so only a value that is
+    // already a single operand takes it without parentheses.
+    let bare = matches!(
+        value.kind,
+        ExprKind::Call { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::Name(_)
+            | ExprKind::TypeApply { .. }
+    );
+    let end = SourceEdit {
+        range: SourceRange {
+            start: value.end,
+            end: value.end,
+        },
+        text: if bare {
+            format!(" ?? {default}")
+        } else {
+            format!(") ?? {default}")
+        },
+    };
+    if bare {
+        error.with_suggestion(format!("use `{default}` when the value is `nil`"), end)
+    } else {
+        let start = value.extent_start();
+        error.with_suggestion_edits(
+            format!("use `{default}` when the value is `nil`"),
+            vec![
+                SourceEdit {
+                    range: SourceRange { start, end: start },
+                    text: "(".into(),
+                },
+                end,
+            ],
+        )
+    }
 }
 
 /// Explains a mismatch in an assignment to a `var` that started as `nil`,

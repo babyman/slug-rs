@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- An index past either end of a list, `bytes`, or string is now an
+  `out_of_bounds` error, in diagnostics and in the value `defer onerror`
+  receives, instead of `type`, which it shared with real type errors. Agents
+  grouping failures by code counted their own bad test data as type errors.
+
+- Assigning a value that may be `nil` to a `var` that cannot hold it, such
+  as `letter = find(...)` after `var letter = ""`, now says so: the message
+  names a `??` default and the `var letter:str|nil` declaration, and a
+  suggestion inserts ` ?? ""` (or `0`, `false`, `[]`, `{}` by type, with
+  parentheses where `??` would bind wrongly).
+
 - Deeply nested source no longer crashes the compiler. A sum of about 1,050
   terms, a long `??` or `else if` chain, deeply nested `spawn`s, or a deep
   `list<list<...>>` annotation overflowed the stack, and a debug build

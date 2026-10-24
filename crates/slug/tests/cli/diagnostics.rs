@@ -763,6 +763,12 @@ fn json_mode_reports_stable_codes_for_every_category() {
             "runtime",
             "divide_by_zero",
         ),
+        (
+            "json-code-out-of-bounds",
+            "val xs = [1, 2]\nval i = 5\nprintln(xs[i])\n",
+            "runtime",
+            "out_of_bounds",
+        ),
     ] {
         let path = fixture_path(name);
         fs::write(&path, source).expect("write coded source");

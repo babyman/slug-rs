@@ -2128,7 +2128,7 @@ impl Vm {
                         #[cfg(feature = "metrics")]
                         &self.metrics,
                     )
-                    .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?,
+                    .map_err(|(kind, message)| self.error_at(kind, message))?,
                 );
             }
             PackedOpcode::GetSlice => {
@@ -3081,7 +3081,7 @@ impl Vm {
             #[cfg(feature = "metrics")]
             &self.metrics,
         )
-        .map_err(|message| self.error_at(RuntimeErrorKind::Type, message))?;
+        .map_err(|(kind, message)| self.error_at(kind, message))?;
         self.stack.push(value);
         Ok(())
     }
