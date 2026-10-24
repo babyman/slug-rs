@@ -1457,6 +1457,7 @@ fn decode_scalar_program(
         .find_chunk("main")
         .ok_or_else(|| Error::InvalidExecutable("program is missing main entry chunk".into()))?;
     program.validate(entry).map_err(Error::InvalidExecutable)?;
+    program.mark_cslug_local_reads();
     Ok(program)
 }
 
@@ -1929,7 +1930,9 @@ impl<'a> Reader<'a> {
 
     fn chunk(&mut self) -> Result<CompiledChunk, Error> {
         let name = self.string("chunk name")?;
-        let arity = self.usize("chunk arity")?;
+        // Arity and local count size per-call frames and installation-time
+        // analyses, so they are bounded like every other table count.
+        let arity = self.count("chunk arity")?;
         let parameter_count = self.count("chunk parameter count")?;
         let mut parameters = Vec::with_capacity(parameter_count);
         for _ in 0..parameter_count {
@@ -1944,7 +1947,7 @@ impl<'a> Reader<'a> {
             1 => Some(self.usize("chunk callable identity")?),
             _ => return Err(Error::InvalidStructure("chunk callable identity".into())),
         };
-        let locals = self.usize("chunk local count")?;
+        let locals = self.count("chunk local count")?;
         let constant_count = self.count("constant count")?;
         let mut constants = Vec::with_capacity(constant_count);
         for _ in 0..constant_count {
@@ -2552,6 +2555,80 @@ mod tests {
                 context: "chunk count"
             })
         ));
+    }
+
+    /// An artifact whose only chunk is `main`, with `arity` and `locals` as
+    /// given and `code` as `(opcode, a)` instructions.
+    fn main_artifact(arity: usize, locals: usize, code: &[(PackedOpcode, usize)]) -> Vec<u8> {
+        let mut record = vec![0; 17]; // Empty scalar metadata tables.
+        uleb(1, &mut record); // chunks
+        string("main", &mut record);
+        uleb(arity, &mut record);
+        uleb(0, &mut record); // parameters
+        record.push(0); // callable identity
+        uleb(locals, &mut record);
+        uleb(0, &mut record); // constants
+        uleb(code.len(), &mut record);
+        for (opcode, a) in code {
+            record.push(*opcode as u8);
+            uleb(*a, &mut record);
+            record.extend([0, 0, 0]); // unused operands, no span
+        }
+        let mut artifact = Vec::new();
+        encode_header(&mut artifact);
+        section(1, &[0, 1, 0], &mut artifact);
+        let mut module = Vec::new();
+        string("root", &mut module);
+        string("", &mut module);
+        uleb(record.len(), &mut module);
+        module.extend(record);
+        section(2, &module, &mut artifact);
+        section(0, &[], &mut artifact);
+        artifact
+    }
+
+    #[test]
+    fn bounds_arity_and_local_count_before_installing_a_chunk() {
+        let code = [(PackedOpcode::Nil, 0), (PackedOpcode::Return, 0)];
+        assert!(matches!(
+            decode_envelope(&main_artifact(0, usize::MAX, &code), Limits::default()),
+            Err(Error::LimitExceeded {
+                context: "chunk local count"
+            })
+        ));
+        assert!(matches!(
+            decode_envelope(&main_artifact(usize::MAX, 0, &code), Limits::default()),
+            Err(Error::LimitExceeded {
+                context: "chunk arity"
+            })
+        ));
+        decode_envelope(&main_artifact(0, 1_048_576, &code), Limits::default())
+            .expect("a local count at the entry limit decodes");
+    }
+
+    #[test]
+    fn rejects_backward_and_self_jumps() {
+        for (code, target) in [
+            (vec![(PackedOpcode::Jump, 0)], 0),
+            (
+                vec![
+                    (PackedOpcode::Nil, 0),
+                    (PackedOpcode::Pop, 0),
+                    (PackedOpcode::Jump, 1),
+                ],
+                1,
+            ),
+        ] {
+            let Err(Error::InvalidExecutable(message)) =
+                decode_envelope(&main_artifact(0, 0, &code), Limits::default())
+            else {
+                panic!("a jump to {target} must not verify");
+            };
+            assert!(
+                message.contains(&format!("jumps backward to instruction {target}")),
+                "{message}"
+            );
+        }
     }
 
     #[test]

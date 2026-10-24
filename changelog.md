@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Decoding a hostile `.cslug` artifact no longer aborts or runs for a long
+  time. A chunk's arity and local count are bounded like other table counts,
+  so a 193-byte artifact with an enormous local count no longer crashes
+  `slug report` and `slug run` on a multi-exabyte allocation. The verifier
+  keeps each instruction's stack height rather than a copy of its stack, and
+  rejects backward and self jumps, which the compiler never emits; last-read
+  analysis runs after verification within a 32 MiB budget per chunk. An
+  artifact pushing a million values verified in 17.7 s before and verifies
+  in 0.05 s now.
+
 - A list or `bytes` slice with a step, such as `xs[::2]`, no longer builds a
   list of the selected positions first; a microbenchmark of stepped slices
   runs in 0.63x the time. A step past the end, such as

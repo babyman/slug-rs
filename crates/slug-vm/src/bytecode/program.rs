@@ -1,4 +1,4 @@
-use alloc::{collections::VecDeque, string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 use core::mem;
 
 use crate::{CallableIdentity, platform::HashMap};
@@ -15,16 +15,11 @@ use super::{
     op::{BinaryOperator, CallArgumentKind, DeferMode, Instruction, Op},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StackValue {
-    Unknown,
-    MatchBinding,
-    MatchResult,
-}
-
-#[derive(Clone)]
+/// What verification tracks at an instruction: the operand-stack height and
+/// lexical scope depth on entry.
+#[derive(Clone, Copy)]
 struct VerificationState {
-    stack: Vec<StackValue>,
+    height: usize,
     scope_depth: usize,
 }
 
@@ -175,11 +170,10 @@ impl Program {
         }
     }
 
-    /// Installs chunks decoded from a `.cslug` program record.
-    pub(crate) fn set_cslug_chunks(&mut self, mut chunks: Vec<CompiledChunk>) {
-        for chunk in &mut chunks {
-            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals);
-        }
+    /// Installs chunks decoded from a `.cslug` program record. Their local
+    /// reads are marked by [`Self::mark_cslug_local_reads`] once the program
+    /// has been validated.
+    pub(crate) fn set_cslug_chunks(&mut self, chunks: Vec<CompiledChunk>) {
         self.names = chunks
             .iter()
             .enumerate()
@@ -1057,6 +1051,14 @@ impl Program {
         self.module_key = Some(module_key.into());
     }
 
+    /// Marks each decoded chunk's last local reads. The analysis trusts
+    /// verified bytecode: slots in range and jumps forward.
+    pub(crate) fn mark_cslug_local_reads(&mut self) {
+        for chunk in &mut self.chunks {
+            liveness::mark_last_local_reads(&mut chunk.code, chunk.locals);
+        }
+    }
+
     pub(crate) fn validate(&self, entry: usize) -> Result<(), String> {
         if self.names.len() != self.chunks.len() {
             return Err("program contains duplicate function chunk names".into());
@@ -1210,6 +1212,20 @@ impl Program {
             {
                 Err(format!(
                     "{} jumps to missing instruction {target}",
+                    location()
+                ))
+            }
+            // The compiler emits only forward jumps; loops restart through
+            // `recur`. Verification and last-read analysis rely on it to
+            // settle in one pass.
+            Op::Jump(target)
+            | Op::JumpIfFalse(target)
+            | Op::JumpIfFalsePop(target)
+            | Op::JumpIfProvided { target, .. }
+                if *target <= instruction_index =>
+            {
+                Err(format!(
+                    "{} jumps backward to instruction {target}",
                     location()
                 ))
             }
@@ -1441,6 +1457,12 @@ impl Program {
         }
     }
 
+    /// Checks every reachable instruction's operand-stack height and scope
+    /// depth. Jumps go forward (checked by `validate_op`), so one pass in
+    /// instruction order sees every predecessor first, and only `recur`
+    /// returns to instruction 0, with the entry state. Where paths join, the
+    /// lowest height is kept. Each instruction keeps two integers, so memory
+    /// is linear in the chunk's length.
     fn validate_stack(&self, chunk: &Chunk, initial_stack: usize) -> Result<(), String> {
         if chunk.code.is_empty() {
             return Err(format!(
@@ -1448,24 +1470,29 @@ impl Program {
                 chunk.name
             ));
         }
-        let mut stacks = vec![None; chunk.code.len()];
-        let mut pending = VecDeque::new();
-        stacks[0] = Some(VerificationState {
-            stack: vec![StackValue::Unknown; initial_stack],
+        let entry = VerificationState {
+            height: initial_stack,
             scope_depth: 0,
-        });
-        pending.push_back(0usize);
-        while let Some(index) = pending.pop_front() {
-            let state = stacks[index].as_ref().expect("queued stack state exists");
-            let instruction = &chunk.code[index];
-            let Some(next_stack) = self.apply_stack_effect(&state.stack, &instruction.op) else {
-                let (pops, _) = self.stack_effect(&instruction.op);
+        };
+        let mut states = vec![None; chunk.code.len()];
+        states[0] = Some(entry);
+        for (index, instruction) in chunk.code.iter().enumerate() {
+            let Some(state) = states[index] else {
+                continue;
+            };
+            let (pops, pushes) = self.stack_effect(&instruction.op);
+            let Some(remaining) = state.height.checked_sub(pops) else {
                 return Err(format!(
                     "function `{}` instruction {index} requires {pops} stack values, has {}",
-                    chunk.name,
-                    state.stack.len()
+                    chunk.name, state.height
                 ));
             };
+            let height = remaining.checked_add(pushes).ok_or_else(|| {
+                format!(
+                    "function `{}` instruction {index} has too many stack values",
+                    chunk.name
+                )
+            })?;
             let scope_depth = match instruction.op {
                 Op::EnterScope => state.scope_depth.checked_add(1).ok_or_else(|| {
                     format!(
@@ -1483,7 +1510,9 @@ impl Program {
             };
             let successors: Vec<usize> = match &instruction.op {
                 Op::Return | Op::Throw | Op::MatchFailure | Op::NotImplemented => Vec::new(),
-                Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => vec![0],
+                // `recur` restarts at instruction 0 with the entry state,
+                // which that instruction already has.
+                Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_) => continue,
                 Op::Jump(target) => vec![*target],
                 Op::JumpIfFalse(target)
                 | Op::JumpIfFalsePop(target)
@@ -1511,69 +1540,26 @@ impl Program {
                 ));
             }
             for successor in successors {
-                let successor_state = if matches!(
-                    instruction.op,
-                    Op::Recur(_) | Op::RecurPooled(_) | Op::RecurPositional(_)
-                ) {
-                    VerificationState {
-                        stack: vec![StackValue::Unknown; initial_stack],
-                        scope_depth: 0,
+                match &mut states[successor] {
+                    Some(existing) => {
+                        if existing.scope_depth != scope_depth {
+                            return Err(format!(
+                                "function `{}` instruction {successor} has inconsistent scope depth",
+                                chunk.name
+                            ));
+                        }
+                        existing.height = existing.height.min(height);
                     }
-                } else {
-                    VerificationState {
-                        stack: next_stack.clone(),
-                        scope_depth,
+                    slot @ None => {
+                        *slot = Some(VerificationState {
+                            height,
+                            scope_depth,
+                        });
                     }
-                };
-                if let Some(existing) = &mut stacks[successor] {
-                    if existing.scope_depth != successor_state.scope_depth {
-                        return Err(format!(
-                            "function `{}` instruction {successor} has inconsistent scope depth",
-                            chunk.name
-                        ));
-                    }
-                    if Self::merge_stack(&mut existing.stack, successor_state.stack) {
-                        pending.push_back(successor);
-                    }
-                } else {
-                    stacks[successor] = Some(successor_state);
-                    pending.push_back(successor);
                 }
             }
         }
         Ok(())
-    }
-
-    fn apply_stack_effect(&self, stack: &[StackValue], op: &Op) -> Option<Vec<StackValue>> {
-        let (pops, pushes) = self.stack_effect(op);
-        let remaining = stack.len().checked_sub(pops)?;
-        let mut next = stack[..remaining].to_vec();
-        match op {
-            Op::TryMatch { bindings, .. } | Op::TryMatchPooled { bindings, .. } => {
-                next.extend((0..*bindings).map(|_| StackValue::MatchBinding));
-                next.push(StackValue::MatchResult);
-            }
-            _ => next.extend((0..pushes).map(|_| StackValue::Unknown)),
-        }
-        Some(next)
-    }
-
-    fn merge_stack(existing: &mut Vec<StackValue>, incoming: Vec<StackValue>) -> bool {
-        if incoming.len() < existing.len() {
-            *existing = incoming;
-            return true;
-        }
-        if incoming.len() != existing.len() {
-            return false;
-        }
-        let mut changed = false;
-        for (existing, incoming) in existing.iter_mut().zip(incoming) {
-            if *existing != incoming && *existing != StackValue::Unknown {
-                *existing = StackValue::Unknown;
-                changed = true;
-            }
-        }
-        changed
     }
 
     #[allow(clippy::too_many_lines)]
