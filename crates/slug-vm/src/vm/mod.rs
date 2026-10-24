@@ -3275,7 +3275,7 @@ impl Vm {
         }
         // Invoking a native never touches the operand stack, so it is set
         // aside for the call rather than borrowed across `&mut self`.
-        let stack = std::mem::take(&mut self.stack);
+        let stack = mem::take(&mut self.stack);
         let result = self.invoke_native(function, &stack[base + 1..], resource_signature, None);
         self.stack = stack;
         let result = result?;
