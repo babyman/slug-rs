@@ -3209,37 +3209,12 @@ impl Vm {
                     cleanup_owner_depth: None,
                 });
             }
-            Value::Native(function) => {
-                let arguments = self.stack[base + 1..]
-                    .iter()
-                    .map(|value| {
-                        value
-                            .resolve()
-                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                let result = self.invoke_native(&function, &arguments, None, None)?;
-                self.stack.truncate(base);
-                self.stack.push(result);
-            }
+            Value::Native(function) => self.call_native_at(base, &function, None)?,
             Value::DeclaredNative {
                 function,
                 declaration,
                 ..
-            } => {
-                let arguments = self.stack[base + 1..]
-                    .iter()
-                    .map(|value| {
-                        value
-                            .resolve()
-                            .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))
-                    })
-                    .collect::<VmResult<Vec<_>>>()?;
-                let result =
-                    self.invoke_native(&function, &arguments, Some(&declaration.resources), None)?;
-                self.stack.truncate(base);
-                self.stack.push(result);
-            }
+            } => self.call_native_at(base, &function, Some(&declaration.resources))?,
             Value::Builtin(builtin) => {
                 let arguments = self.stack[base + 1..]
                     .iter()
@@ -3278,6 +3253,34 @@ impl Vm {
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// Calls a native with the arguments above `base` on the operand stack,
+    /// then replaces the callee and arguments with its result. The natives
+    /// read the arguments where they lie rather than from a copy.
+    fn call_native_at(
+        &mut self,
+        base: usize,
+        function: &NativeFunction,
+        resource_signature: Option<&ForeignResourceSignature>,
+    ) -> VmResult<()> {
+        // The arguments are consumed, so a binding can be resolved in place.
+        for index in base + 1..self.stack.len() {
+            if matches!(self.stack[index], Value::Binding { .. }) {
+                self.stack[index] = self.stack[index]
+                    .resolve()
+                    .map_err(|message| self.error_at(RuntimeErrorKind::Name, message))?;
+            }
+        }
+        // Invoking a native never touches the operand stack, so it is set
+        // aside for the call rather than borrowed across `&mut self`.
+        let stack = std::mem::take(&mut self.stack);
+        let result = self.invoke_native(function, &stack[base + 1..], resource_signature, None);
+        self.stack = stack;
+        let result = result?;
+        self.stack.truncate(base);
+        self.stack.push(result);
         Ok(())
     }
 

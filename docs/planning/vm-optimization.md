@@ -1640,3 +1640,25 @@ Next candidates from these profiles: step > 1 list and `bytes` slices still
 collect an index vector; native calls could move their arguments and sweep
 resources only when a call returns some; calls remain the largest share in
 both programs (local-slot arena, item 4 of the paused list).
+
+## Native calls read their arguments from the stack
+
+The HTTP server's profile put native calls at about 18% of its time, against
+about 4% for the natives' own work. Each call cloned its arguments into a new
+vector, dropped that vector, and truncated the stack. Then
+`NativeResourceRegistry::register` swept every tracked resource, even though
+most calls (`len`, string functions) create none.
+
+`Vm::call` now resolves any binding among the arguments in place and passes the
+natives a slice of the operand stack. The stack is set aside for the call,
+since invoking a native never touches it. `register` returns at once when a
+call created no resources. Otherwise it drops dead entries only when the list
+has doubled since the last compaction.
+
+Seven interleaved rounds against `57c64d8`: `http-server` 0.94x, `text-wrap`
+(hold-out) 0.90x, `invaders-game` 0.98x, tuned geomean 1.00x, hold-out
+0.97x. `shared-append` measured 1.08x over 15 rounds, but it spends 87% of
+its time cloning and dropping list elements, with one `len` call a step.
+Builds of both revisions with symbols kept (`strip = "none"`,
+line tables) ran its 30,000-step variant in 1339 and 1338 ms, so the
+difference is code layout in the stripped binaries, not the change.

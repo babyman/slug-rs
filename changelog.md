@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Native calls such as `len` and the `slug.string` functions read their
+  arguments from the operand stack instead of a copy, and no longer scan
+  every tracked native resource when they create none. The HTTP server
+  reference handles requests in 0.94x the time.
+
 - When `main` fails, its pending tasks are cancelled and the error is
   reported at once, as an explicit `nursery` already did. Previously the
   program kept running its tasks first: one waiting on a timer delayed the
