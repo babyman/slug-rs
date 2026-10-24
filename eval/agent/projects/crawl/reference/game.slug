@@ -159,33 +159,285 @@ export val newGame = fn(seed:num) {
         colours: colours,
         titles: titles,
         messages: ["Welcome to the dungeon. Find the Orb on depth 8."],
+        more: [],
+        dead: false,
         player: {x: 0, y: 0, hp: 12, maxHp: 12, str: 16, maxStr: 16, gold: 0, level: 1, xp: 0, armour: 0},
     }
     enterLevel(1)
 }
 
-// Ends a turn: the player's action has happened.
+// The eight directions in the order the rules try them.
+val ORDER = [[-1, 0], [0, 1], [0, -1], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]]
+
+// Whether a step from (x, y) by (dx, dy) is allowed by the terrain: the
+// target must be passable, and for a diagonal step so must both squares
+// beside it.
+val stepOk = fn(x:num, y:num, dx:num, dy:num):bool {
+    passable(x + dx, y + dy) && (dx == 0 || dy == 0 || (passable(x + dx, y) && passable(x, y + dy)))
+}
+
+val kindOf = fn(m:map) { data.monsters[m.kind] }
+
+val hasFlag = fn(m:map, flag:str):bool { contains(kindOf(m).flags, flag) }
+
+val setMonster = fn(i:num, m:map) {
+    state = state copy {monsters: state.monsters[:i] + [m] + state.monsters[i + 1:]}
+}
+
+val removeMonster = fn(i:num) {
+    state = state copy {monsters: state.monsters[:i] + state.monsters[i + 1:]}
+}
+
+val setPlayer = fn(p:map) {
+    state = state copy {player: p}
+}
+
+// An attack roll: hits when below(20) + 1 + level + bonus >= 10 + armour.
+val hits = fn(level:num, bonus:num, armour:num):bool {
+    rng.below(20) + 1 + level + bonus >= 10 + armour
+}
+
+val strengthHit = fn(str:num):num {
+    if (str >= 18) { 1 } else if (str <= 6) { -1 } else { 0 }
+}
+
+val strengthDamage = fn(str:num):num {
+    if (str >= 18) { 2 } else if (str == 17) { 1 } else if (str <= 6) { -1 } else { 0 }
+}
+
+val die = fn(killer:str) {
+    state = state copy {dead: true}
+    say("You die.")
+    say("Killed by the " + killer + " on depth " + state.depth + ".")
+    say("Press enter to play again.")
+}
+
+// Experience: each level from 2 needs 10, 20, 40, ... points; each level
+// gained adds roll(1, 10) to hit points and their maximum.
+val gainXp = fn(xp:num) {
+    setPlayer(state.player copy {xp: state.player.xp + xp})
+    val up = fn(need:num) {
+        val p = state.player
+        if (p.xp >= need) {
+            val gain = rng.roll(1, 10)
+            setPlayer(p copy {level: p.level + 1, hp: p.hp + gain, maxHp: p.maxHp + gain})
+            say("Welcome to level " + (p.level + 1) + ".")
+            recur(need * 2)
+        }
+    }
+    val threshold = fn(level:num, need:num):num {
+        if (level == state.player.level) { need } else { recur(level + 1, need * 2) }
+    }
+    up(threshold(1, 10))
+}
+
+// Distances from the player over passable squares, by the step rule,
+// keyed y * WIDTH + x; monsters do not block.
+val distances = fn():map {
+    val p = state.player
+    val go = fn(queue:list, head:num, dist:map):map {
+        if (head == len(queue)) {
+            dist
+        } else {
+            val c = queue[head]
+            val x = c % level.WIDTH
+            val y = (c - x) / level.WIDTH
+            val d = dist[c] + 1
+            val each = fn(i:num, q:list, dist:map):list {
+                if (i == 8) {
+                    [q, dist]
+                } else {
+                    val dx = ORDER[i][0]
+                    val dy = ORDER[i][1]
+                    val k = (y + dy) * level.WIDTH + x + dx
+                    if (stepOk(x, y, dx, dy) && dist[k] == nil) {
+                        recur(i + 1, q :+ k, dist + {[k]: d})
+                    } else {
+                        recur(i + 1, q, dist)
+                    }
+                }
+            }
+            match each(0, queue, dist) {
+                [q, nd] => recur(q, head + 1, nd)
+            }
+        }
+    }
+    val start = p.y * level.WIDTH + p.x
+    go([start], 0, {[start]: 0})
+}
+
+// Whether a monster at (x, y) is near the player: next to them, or in the
+// room the player is in.
+val near = fn(x:num, y:num):bool {
+    val p = state.player
+    val room = roomAt(p.x, p.y)
+    (x - p.x >= -1 && x - p.x <= 1 && y - p.y >= -1 && y - p.y <= 1)
+        || (room != nil && x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h)
+}
+
+// Whether (x, y) is free for a monster to step to: no monster and not the
+// player.
+val openFor = fn(x:num, y:num):bool {
+    indexAt(state.monsters, x, y) < 0 && !(x == state.player.x && y == state.player.y)
+}
+
+// Monster i attacks the player. Returns whether it is still on the level.
+val monsterAttack = fn(i:num):bool {
+    val m = state.monsters[i]
+    val kind = kindOf(m)
+    val p = state.player
+    if (hits(kind.level, 0, p.armour)) {
+        val damage = rng.roll(kind.damage[0], kind.damage[1])
+        setPlayer(p copy {hp: p.hp - damage})
+        say("The " + kind.name + " hits you.")
+        if (state.player.hp <= 0) {
+            die(kind.name)
+            true
+        } else if (hasFlag(m, "stealsGold") && state.player.gold > 0) {
+            val take = rng.below(50 + 10 * state.depth) + 2
+            val gold = state.player.gold
+            setPlayer(state.player copy {gold: if (take < gold) { gold - take } else { 0 }})
+            removeMonster(i)
+            say("Your purse feels lighter.")
+            false
+        } else {
+            true
+        }
+    } else {
+        say("The " + kind.name + " misses.")
+        true
+    }
+}
+
+// Monster i's action. `dist` gives the distances when already computed.
+// Returns [still on the level, distances or nil].
+val monsterAct = fn(i:num, dist:map|nil):list {
+    val m0 = state.monsters[i]
+    val m = if (hasFlag(m0, "regenerates") && m0.hp < m0.maxHp) { m0 copy {hp: m0.hp + 1} } else { m0 }
+    setMonster(i, m)
+    val p = state.player
+    if (m.state == "asleep") {
+        if (!hasFlag(m, "still") && near(m.x, m.y) && (hasFlag(m, "mean") || rng.below(3) == 0)) {
+            setMonster(i, m copy {state: "awake"})
+        }
+        [true, dist]
+    } else if (hasFlag(m, "still")) {
+        [true, dist]
+    } else if (hasFlag(m, "flies") && rng.below(2) == 0) {
+        val d = ORDER[rng.below(8)]
+        if (stepOk(m.x, m.y, d[0], d[1]) && openFor(m.x + d[0], m.y + d[1])) {
+            setMonster(i, m copy {x: m.x + d[0], y: m.y + d[1]})
+        }
+        [true, dist]
+    } else {
+        val dx = p.x - m.x
+        val dy = p.y - m.y
+        if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1 && stepOk(m.x, m.y, dx, dy)) {
+            [monsterAttack(i), dist]
+        } else {
+            val ds = dist ?? distances()
+            val here = ds[m.y * level.WIDTH + m.x]
+            // The first direction, in ORDER, to the open square nearest the player.
+            val best = fn(j:num, choice:list|nil, bestD:num):list|nil {
+                if (j == 8) {
+                    choice
+                } else {
+                    val d = ORDER[j]
+                    val nd = ds[(m.y + d[1]) * level.WIDTH + m.x + d[0]]
+                    if (nd != nil && nd < bestD && stepOk(m.x, m.y, d[0], d[1]) && openFor(m.x + d[0], m.y + d[1])) {
+                        recur(j + 1, d, nd)
+                    } else {
+                        recur(j + 1, choice, bestD)
+                    }
+                }
+            }
+            if (here != nil) {
+                match best(0, nil, here) {
+                    [sx, sy] => setMonster(i, m copy {x: m.x + sx, y: m.y + sy})
+                    _ => nil
+                }
+            }
+            [true, ds]
+        }
+    }
+}
+
+// Every monster acts, in list order, until the player dies.
+val monstersAct = fn() {
+    val go = fn(i:num, dist:map|nil) {
+        if (i < len(state.monsters) && !state.dead) {
+            match monsterAct(i, dist) {
+                [true, ds] => recur(i + 1, ds)
+                [_, ds] => recur(i, ds)
+            }
+        }
+    }
+    go(0, nil)
+}
+
+// Ends a turn: the player's action has happened; the monsters act, the turn
+// is counted, and the player looks around.
 val endTurn = fn() {
+    monstersAct()
     state = state copy {turn: state.turn + 1}
     see()
 }
 
-// Whether the player can step from where they stand by (dx, dy): the target
-// must be passable, and for a diagonal step so must both squares beside it.
-val canStep = fn(dx:num, dy:num):bool {
+// The player attacks monster i. Returns how many turns the player is frozen
+// for afterwards.
+val attack = fn(i:num):num {
+    val m = state.monsters[i] copy {state: "awake"}
+    setMonster(i, m)
+    val kind = kindOf(m)
     val p = state.player
-    passable(p.x + dx, p.y + dy) && (dx == 0 || dy == 0 || (passable(p.x + dx, p.y) && passable(p.x, p.y + dy)))
+    if (hits(p.level, strengthHit(p.str), kind.armour)) {
+        val roll = rng.roll(1, 2) + strengthDamage(p.str)
+        val damage = if (roll < 0) { 0 } else { roll }
+        if (m.hp - damage <= 0) {
+            removeMonster(i)
+            say("You defeat the " + kind.name + ".")
+            gainXp(kind.xp)
+        } else {
+            setMonster(i, m copy {hp: m.hp - damage})
+            say("You hit the " + kind.name + ".")
+        }
+    } else {
+        say("You miss the " + kind.name + ".")
+    }
+    if (hasFlag(m, "paralyses") && indexAt(state.monsters, m.x, m.y) >= 0) {
+        say("You are frozen by the " + kind.name + "'s gaze!")
+        rng.below(4) + 2
+    } else {
+        0
+    }
 }
 
-// Takes one step if possible and returns whether it did.
+// Turns that pass with the player doing nothing, until the player dies.
+val frozen = fn(n:num) {
+    if (n > 0 && !state.dead) {
+        endTurn()
+        recur(n - 1)
+    }
+}
+
+// Moves one square, or attacks the monster there. Returns whether the
+// player moved.
 val step = fn(dx:num, dy:num):bool {
     val p = state.player
-    if (canStep(dx, dy) && indexAt(state.monsters, p.x + dx, p.y + dy) < 0) {
-        state = state copy {player: p copy {x: p.x + dx, y: p.y + dy}}
-        endTurn()
-        true
-    } else {
+    if (!stepOk(p.x, p.y, dx, dy)) {
         false
+    } else {
+        val i = indexAt(state.monsters, p.x + dx, p.y + dy)
+        if (i >= 0) {
+            val n = attack(i)
+            endTurn()
+            frozen(n)
+            false
+        } else {
+            setPlayer(p copy {x: p.x + dx, y: p.y + dy})
+            endTurn()
+            true
+        }
     }
 }
 
@@ -202,13 +454,16 @@ val monsterVisible = fn():bool {
     go(0)
 }
 
-// Runs: steps until a step is impossible, or until, after a step, the player
-// stands on a door, the stairs, or an item, or can see a monster.
+// Runs: moves until a move is impossible, or until, after a move, the
+// player stands on a door, the stairs, or an item, can see a monster, has a
+// message, or is dead. Running never attacks.
 val run = fn(dx:num, dy:num) {
-    if (step(dx, dy)) {
-        val p = state.player
-        val here = terrain(p.x, p.y)
-        val stop = here == level.DOOR || here == level.STAIRS || indexAt(state.items, p.x, p.y) >= 0 || monsterVisible()
+    val p = state.player
+    if (indexAt(state.monsters, p.x + dx, p.y + dy) < 0 && step(dx, dy)) {
+        val q = state.player
+        val here = terrain(q.x, q.y)
+        val stop = here == level.DOOR || here == level.STAIRS || indexAt(state.items, q.x, q.y) >= 0
+            || monsterVisible() || len(state.messages) > 0 || state.dead
         if (!stop) { recur(dx, dy) }
     }
 }
@@ -226,19 +481,51 @@ val descend = fn() {
 }
 
 /**
+ * Splits messages into the page shown now and the rest: all of them if they
+ * fit in 80 columns joined by two spaces, or else the most that fit with
+ * " --More--" after them (at least one).
+ */
+val paginate = fn(messages:list):list {
+    val width = fn(n:num):num { len(string.join(messages[:n], "  ")) }
+    if (width(len(messages)) <= 80) {
+        [messages, []]
+    } else {
+        val fit = fn(n:num):num {
+            if (n < len(messages) && width(n + 1) + 9 <= 80) { recur(n + 1) } else { n }
+        }
+        val n = fit(1)
+        [messages[:n], messages[n:]]
+    }
+}
+
+val showMessages = fn(messages:list) {
+    match paginate(messages) {
+        [shown, more] => state = state copy {messages: shown, more: more}
+    }
+}
+
+/**
  * Carries out one command: a direction letter (with `shift` to run),
- * "space" to rest, or "enter" to take the stairs down. The previous
- * command's messages are cleared first.
+ * "space" to rest, or "enter" to take the stairs down. While messages wait
+ * behind --More--, only "space" does anything: it shows the next page.
+ * After the player dies, only "enter" does: it starts the next seed's game.
  */
 export val command = fn(key:str, shift:bool) {
-    state = state copy {messages: []}
-    match key {
-        "space" => endTurn()
-        "enter" => descend()
-        _ => match DIRECTIONS[key] {
-            [dx, dy] => if (shift) { run(dx, dy) } else { step(dx, dy) }
-            _ => nil
+    if (len(state.more) > 0) {
+        if (key == "space") { showMessages(state.more) }
+    } else if (state.dead) {
+        if (key == "enter") { newGame(state.seed + 1) }
+    } else {
+        state = state copy {messages: []}
+        match key {
+            "space" => endTurn()
+            "enter" => descend()
+            _ => match DIRECTIONS[key] {
+                [dx, dy] => if (shift) { run(dx, dy) } else { step(dx, dy) }
+                _ => nil
+            }
         }
+        showMessages(state.messages)
     }
 }
 
@@ -259,5 +546,6 @@ export val text = fn():list {
     val map = write(monsters(0, state.memory), p.x, p.y, "@")
     val status = "Depth:" + state.depth + "  Gold:" + p.gold + "  Hp:" + p.hp + "(" + p.maxHp + ")  Str:" + p.str
         + "(" + p.maxStr + ")  Arm:" + p.armour + "  Exp:" + p.level + "/" + p.xp
-    [string.join(state.messages, "  ")] + map + [status]
+    val more = if (len(state.more) > 0) { " --More--" } else { "" }
+    [string.join(state.messages, "  ") + more] + map + [status]
 }

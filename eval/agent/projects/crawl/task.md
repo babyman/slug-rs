@@ -1,7 +1,7 @@
 # Crawl
 
 <!-- DRAFT: only the sections written so far. The introduction, running and
-testing, monsters, items, hunger, --More--, and the snapshot format follow
+testing, items, hunger, the end of the game, and the snapshot format follow
 once the reference implements them; see outline.md. -->
 
 ## Random numbers
@@ -248,7 +248,7 @@ arcade.overlay(0, 230, 640, 10, 0x60ff60)
 The 24 rows of text:
 
 - Row 0, the **message line**: the messages of the last command, joined
-  with two spaces, or blank.
+  with two spaces, or blank; see **Messages**.
 - Rows 1 to 22: the map, map row `y` on screen row `y + 1`. Each square
   shows, in order of precedence: `@` for the player; a monster's letter if
   the player can see the square (see **Seeing**); otherwise what the player
@@ -283,28 +283,40 @@ nothing:
 | `enter` | take the stairs down |
 
 Every command first clears the message line; the messages it produces are
-then shown until the next command. A command that takes game time ends one
-or more **turns**: each turn adds 1 to the turn count and then updates what
-the player sees and remembers. A command that does nothing takes no turn.
+then shown until the next command (see **Messages**). A command that takes
+game time ends one or more **turns**. At the end of each turn, after the
+player's action:
+
+1. the monsters act, in list order (see **Monsters**), stopping if the
+   player dies;
+2. the turn count goes up by 1;
+3. the player looks around (see **Seeing**).
+
+A command that does nothing takes no turn.
 
 ### Moving
 
-The player moves one square in the direction, taking a turn, when the
-target square is floor, corridor, door, or stairs, and no monster is on it.
-A diagonal move also needs both squares that share a side with the
-player's square and the target to be floor, corridor, door, or stairs; so
-the player cannot move diagonally into or out of a doorway, or cut a corner
-of rock. A move that cannot be made does nothing and takes no turn.
+A **step** from one square to a neighbour is allowed when the target
+square is floor, corridor, door, or stairs, and, for a diagonal step, both
+squares that share a side with the start and the target are too; so no one
+moves diagonally into or out of a doorway, or cuts a corner of rock. This
+rule is the same for the player and for monsters.
+
+When the step in the command's direction is allowed, the player moves
+there, taking a turn; if a monster is on that square, the player attacks it
+instead (see **Combat**), which also takes a turn. When the step is not
+allowed, nothing happens and no turn passes.
 
 Standing on an item does nothing yet.
 
 ### Running
 
-Running repeats moves in one direction: move as above; if the move could
-not be made, the run ends. After each move that is made (each its own
-turn), the run ends if the player now stands on a door, the stairs, or an
-item, or can see any monster. Otherwise the run continues with the next
-move. A run whose first move cannot be made takes no turn.
+Running repeats moves in one direction. Before each move, if a monster is
+on the target square or the step is not allowed, the run ends; running
+never attacks. After each move (each its own turn), the run ends if the
+player now stands on a door, the stairs, or an item, can see any monster,
+is dead, or the command has produced a message. Otherwise the run continues
+with the next move. A run whose first move cannot be made takes no turn.
 
 ### Resting
 
@@ -313,8 +325,8 @@ move. A run whose first move cannot be made takes no turn.
 ### Stairs
 
 `enter` on the stairs takes the player down: the level at the next depth is
-generated (see **Levels**), the player is placed on it, and the command
-takes one turn. On depth 8 the stairs lead out only with the Orb; without
+generated (see **Levels**) and the player is placed on it. The turn count
+goes up by 1, but the new level's monsters do not act until the next turn. On depth 8 the stairs lead out only with the Orb; without
 it the message is `You need the Orb to leave.` and no turn passes. Off the
 stairs, the message is `I see no way down.` and no turn passes.
 
@@ -346,3 +358,123 @@ with nothing remembered.
 
 Monsters are not remembered: a monster's letter shows only while the
 player can see its square.
+
+## Monsters
+
+Each monster on the level has a kind (an index into `data.monsters`), a
+position, hit points and their maximum, and a state, asleep or awake.
+Monsters start asleep.
+
+At the end of each turn the monsters act one at a time, in the order of the
+level's monster list (the order they were created). A monster's action:
+
+1. If its kind has the `regenerates` flag and its hit points are below
+   their maximum, they go up by 1.
+2. **Asleep:** if its kind has the `still` flag, nothing happens.
+   Otherwise, if it is **near** the player, it wakes: at once if its kind
+   has the `mean` flag, else if `below(3) == 0`. Waking is its whole
+   action. A monster is near the player when it is on one of the player's
+   eight neighbours, or the player is in a room (see **Seeing**) whose
+   rectangle holds the monster's square, lit or dark.
+3. **Awake** and `still`: nothing happens.
+4. **Awake** with the `flies` flag: if `below(2) == 0` it flutters: it
+   draws a direction `d = below(8)` from the list below and steps that way
+   if the step is allowed and the target holds neither a monster nor the
+   player; either way that is its whole action. Otherwise it acts as
+   below.
+5. **Awake:** if the player is on a neighbouring square and the step from
+   the monster to the player is allowed, it attacks (see **Combat**).
+6. Otherwise it moves one step closer to the player along the map: it takes
+   the first direction, in the list below, whose step is allowed, whose
+   target holds neither a monster nor the player, and whose target's
+   **distance** is smallest and less than the monster's own. If there is
+   no such direction, or the monster's square has no distance, it stays.
+
+The directions, in order: west, south, north, east, north-west,
+north-east, south-west, south-east (`h`, `j`, `k`, `l`, `y`, `u`, `b`,
+`n`).
+
+The **distance** of a square is the least number of allowed steps from the
+player's square to it, counting steps through squares with monsters as if
+they were empty. The player's square has distance 0; squares no path
+reaches have none. The player does not move while the monsters act, so the
+distances are the same for every monster in a turn.
+
+Awake monsters always know where the player is: they come by the shortest
+path, even from the other side of the level.
+
+## Combat
+
+An **attack roll** by an attacker of level `L` with bonus `B` against
+armour `A` hits when `below(20) + 1 + L + B >= 10 + A`.
+
+**The player attacks** a monster by moving into it. The monster wakes
+(even if the attack misses). The player's attack roll uses the player's
+experience level, the strength bonus to hit, and the monster kind's
+`armour`. If it hits, the damage is `roll(1, 2)` plus the strength bonus
+to damage, at least 0, and the monster loses that many hit points:
+
+- at 0 or fewer it is removed from the level, the message is
+  `You defeat the kobold.` (with the kind's name), and the player gains the
+  kind's `xp` (see **Experience**);
+- otherwise the message is `You hit the kobold.`
+
+If the roll misses, the message is `You miss the kobold.`
+
+| strength | to hit | damage |
+|---|---|---|
+| 6 or less | -1 | -1 |
+| 7 to 16 | 0 | 0 |
+| 17 | 0 | +1 |
+| 18 or more | +1 | +2 |
+
+When the player attacks a monster whose kind has the `paralyses` flag
+(the floating eye) and the monster is still on the level after the attack,
+the message `You are frozen by the floating eye's gaze!` follows and the
+player is frozen for `below(4) + 2` turns. After the attack's own turn
+ends, that many more turns pass at once, as if the player rested, unless
+the player dies first. All their messages belong to the same command.
+
+**A monster attacks** the player with an attack roll of the kind's `level`,
+bonus 0, against the player's armour. If it hits, the damage is
+`roll(dice, sides)` of the kind's `damage` (no draws for `[0, 0]`), the
+player loses that many hit points, and the message is
+`The kobold hits you.` If it misses: `The kobold misses.`
+
+- If the player's hit points are then 0 or fewer, the player dies (see
+  **Death**).
+- Otherwise, if the kind has the `stealsGold` flag (the leprechaun) and the
+  player has gold, it steals `below(50 + 10 * depth) + 2` gold (all of it,
+  if the player has less) and is removed from the level, with the message
+  `Your purse feels lighter.`
+
+A monster removed in its own action is skipped over: the next monster in
+the list acts next.
+
+## Experience
+
+Experience points gained are added to the player's total. Then, while the
+total is at least the next level's threshold, the player goes up a level:
+the level rises by 1, `roll(1, 10)` is added to both the hit points and
+their maximum, and the message is `Welcome to level 2.` (with the new
+level). Level 2 needs 10 points, and each level after needs twice the one
+before: 20 for level 3, 40 for level 4, and so on.
+
+## Death
+
+When the player dies, no more monsters act that turn, and the messages
+`You die.`, `Killed by the kobold on depth 1.` (the monster's name and the
+depth), and `Press enter to play again.` follow. The turn still ends: the count goes
+up and the player looks around. Once those messages have been shown (see
+**Messages**), only `enter` does anything: it starts a new game with the
+seed one more than this game's.
+
+## Messages
+
+A command's messages are shown in the order they happened, joined with two
+spaces. If together they are longer than 80 characters, the message line
+shows only the first `n` of them followed by ` --More--`, with `n` the
+largest number (at least 1) for which that line is 80 characters or less.
+While `--More--` is showing, only `space` does anything: it shows the next
+messages by the same rule. Other keys are ignored and no turn passes. When
+the last messages are showing, the game takes commands again.
