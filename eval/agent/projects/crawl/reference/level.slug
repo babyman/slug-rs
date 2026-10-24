@@ -68,6 +68,38 @@ export val newItem = fn():map {
 }
 
 /**
+ * A free square anywhere on level `lv` (with `map`, `rooms`, `items`, and
+ * `monsters`): draw a cell until it is not gone, then x and y in its room;
+ * if that square is not floor without an item or monster, start again.
+ */
+export val freeSpot = fn(lv:map):map {
+    val occupied = fn(list:list, x:num, y:num):bool {
+        val go = fn(i:num):bool {
+            if (i == len(list)) {
+                false
+            } else if (list[i].x == x && list[i].y == y) {
+                true
+            } else {
+                recur(i + 1)
+            }
+        }
+        go(0)
+    }
+    val room = lv.rooms[rng.below(CELLS)]
+    if (room.gone) {
+        recur(lv)
+    } else {
+        val x = room.x + 1 + rng.below(room.w - 2)
+        val y = room.y + 1 + rng.below(room.h - 2)
+        if (lv.map[y][x] == FLOOR && !occupied(lv.items, x, y) && !occupied(lv.monsters, x, y)) {
+            {x: x, y: y}
+        } else {
+            recur(lv)
+        }
+    }
+}
+
+/**
  * Generates the level at `depth` (1 to DEEPEST). The result has `map` (HEIGHT
  * strings of WIDTH terrain characters), `rooms` (one per cell, in cell
  * order), `items` and `monsters` (in creation order), and `player`.

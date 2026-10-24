@@ -12,17 +12,17 @@ val game = import("game")
 val screen = import("screen")
 
 // Command keys in priority order: the first one pressed in a frame is that
-// frame's command. Arrow keys are the same as h, j, k, and l.
+// frame's command.
 val KEYS = [
-    ["h", "h"], ["j", "j"], ["k", "k"], ["l", "l"], ["y", "y"], ["u", "u"], ["b", "b"], ["n", "n"],
-    ["left", "h"], ["down", "j"], ["up", "k"], ["right", "l"], ["space", "space"], ["enter", "enter"],
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
+    "u", "v", "w", "x", "y", "z", "left", "down", "up", "right", "space", "enter",
 ]
 
 val pressedKey = fn(i:num):str|nil {
     if (i == len(KEYS)) {
         nil
-    } else if (arcade.pressed(KEYS[i][0])) {
-        KEYS[i][1]
+    } else if (arcade.pressed(KEYS[i])) {
+        KEYS[i]
     } else {
         recur(i + 1)
     }

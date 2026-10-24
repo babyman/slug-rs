@@ -1,7 +1,7 @@
 # Crawl
 
 <!-- DRAFT: only the sections written so far. The introduction, running and
-testing, items, hunger, the end of the game, and the snapshot format follow
+testing and the snapshot format follow
 once the reference implements them; see outline.md. -->
 
 ## Random numbers
@@ -67,8 +67,16 @@ A new game with seed `s` seeds the generator with `s`, then:
 3. Generates level 1 (see **Levels**) and places the player there.
 
 The player starts with 12 hit points of 12, strength 16 of 16, no gold,
-experience level 1 with 0 experience points, and armour 0. The message line
-shows `Welcome to the dungeon. Find the Orb on depth 8.`
+experience level 1 with 0 experience points, a food counter of 1300 (see
+**Hunger**), and this pack (see **Items**):
+
+```
+a) a +1 mace (weapon in hand)
+b) +1 ring mail (being worn)
+c) a food ration
+```
+
+The message line shows `Welcome to the dungeon. Find the Orb on depth 8.`
 
 ## Levels
 
@@ -251,25 +259,42 @@ The 24 rows of text:
   with two spaces, or blank; see **Messages**.
 - Rows 1 to 22: the map, map row `y` on screen row `y + 1`. Each square
   shows, in order of precedence: `@` for the player; a monster's letter if
-  the player can see the square (see **Seeing**); otherwise what the player
-  remembers there.
+  the player can see the square (see **Seeing**) or is sensing monsters
+  (see **Potions**); otherwise what the player remembers there. While the
+  pack is shown (the `i` command), these rows instead show the pack's
+  inventory lines (see **Items**), one per row from row 1, in letter order,
+  and blank rows after them.
 - Row 23, the **status line**:
-  `Depth:1  Gold:0  Hp:12(12)  Str:16(16)  Arm:0  Exp:1/0`, that is the
+  `Depth:1  Gold:0  Hp:12(12)  Str:16(16)  Arm:4  Exp:1/0`, that is the
   depth, gold, hit points (maximum in parentheses), strength (maximum in
-  parentheses), armour, and experience level `/` experience points, with two
-  spaces between fields and no padding.
+  parentheses), armour (see **Combat**), and experience level `/`
+  experience points, with two spaces between fields and no padding. When
+  the player is hungry, two spaces and `Hungry`, `Weak`, or `Faint` follow
+  (see **Hunger**).
 
 Rows end with spaces where their text is shorter than 80 characters.
 
 ## Commands
 
-The game waits for commands. In each frame, the command is the first key
-in this list that was pressed in that frame (`arcade.pressed`); other keys
-pressed in the same frame are ignored, and a frame with none of them does
-nothing:
+The game waits for commands. In each frame, the command key is the first
+key in this list that was pressed in that frame (`arcade.pressed`); other
+keys pressed in the same frame are ignored, and a frame with none of them
+does nothing:
 
-`h`, `j`, `k`, `l`, `y`, `u`, `b`, `n`, `left`, `down`, `up`, `right`,
+`a` to `z` in alphabetical order, then `left`, `down`, `up`, `right`,
 `space`, `enter`
+
+What a key does depends on what the game is waiting for, checked in this
+order:
+
+1. **`--More--` is showing:** only `space` does anything (see **Messages**).
+2. **The game is over** (see **The end**): only `enter` does anything.
+3. **The pack is shown:** only `space` does anything: it hides the pack
+   and clears the message line.
+4. **An item prompt is showing:** a letter key answers it (see **Item
+   commands**); `space` cancels it, clearing the message line with no turn
+   passing; other keys are ignored.
+5. **Otherwise**, these keys are commands; other keys are ignored:
 
 | key | command |
 |---|---|
@@ -281,18 +306,26 @@ nothing:
 | a move key with `shift` held (`arcade.down`) | run in that direction |
 | `space` | rest one turn |
 | `enter` | take the stairs down |
+| `i` | show the pack |
+| `e`, `q`, `r`, `w`, `a`, `d` | eat, quaff, read, wield, wear or take off, drop (see **Item commands**) |
 
-Every command first clears the message line; the messages it produces are
-then shown until the next command (see **Messages**). A command that takes
-game time ends one or more **turns**. At the end of each turn, after the
-player's action:
+Every command (and every answer to an item prompt) first clears the message
+line; the messages it produces are then shown until the next command (see
+**Messages**). A command that takes game time ends one or more **turns**.
+At the end of each turn, after the player's action:
 
 1. the monsters act, in list order (see **Monsters**), stopping if the
    player dies;
-2. the turn count goes up by 1;
-3. the player looks around (see **Seeing**).
+2. if the player is alive, the player's upkeep happens (see **Hunger**,
+   **Healing**, and **Potions**);
+3. the turn count goes up by 1;
+4. the player looks around (see **Seeing**).
 
-A command that does nothing takes no turn.
+After a command (or prompt answer) has done its action, if the player is
+**frozen** for `n` turns (see **Combat** and **Hunger**), turns pass one at
+a time, as if the player rested, each taking 1 off `n`, until `n` is 0 or
+the player dies. Their messages belong to the same command. A command that
+does nothing takes no turn.
 
 ### Moving
 
@@ -303,11 +336,14 @@ moves diagonally into or out of a doorway, or cuts a corner of rock. This
 rule is the same for the player and for monsters.
 
 When the step in the command's direction is allowed, the player moves
-there, taking a turn; if a monster is on that square, the player attacks it
-instead (see **Combat**), which also takes a turn. When the step is not
-allowed, nothing happens and no turn passes.
+there and picks up what lies there (see **Items**), taking a turn; if a
+monster is on that square, the player attacks it instead (see **Combat**),
+which also takes a turn. When the step is not allowed, nothing happens and
+no turn passes.
 
-Standing on an item does nothing yet.
+While the player is **confused** (see **Potions**), every move or run
+command draws `d = below(8)` first and makes a single move in direction `d`
+of the list in **Monsters**, whichever key was pressed; it is never a run.
 
 ### Running
 
@@ -315,8 +351,9 @@ Running repeats moves in one direction. Before each move, if a monster is
 on the target square or the step is not allowed, the run ends; running
 never attacks. After each move (each its own turn), the run ends if the
 player now stands on a door, the stairs, or an item, can see any monster,
-is dead, or the command has produced a message. Otherwise the run continues
-with the next move. A run whose first move cannot be made takes no turn.
+is dead, or the command has produced a message (picking something up does).
+Otherwise the run continues with the next move. A run whose first move
+cannot be made takes no turn.
 
 ### Resting
 
@@ -326,19 +363,165 @@ with the next move. A run whose first move cannot be made takes no turn.
 
 `enter` on the stairs takes the player down: the level at the next depth is
 generated (see **Levels**) and the player is placed on it. The turn count
-goes up by 1, but the new level's monsters do not act until the next turn. On depth 8 the stairs lead out only with the Orb; without
-it the message is `You need the Orb to leave.` and no turn passes. Off the
-stairs, the message is `I see no way down.` and no turn passes.
+goes up by 1, but the new level's monsters do not act until the next turn,
+and there is no upkeep. On depth 8 the stairs lead out of the dungeon: with
+the Orb in the pack the player wins (see **The end**); without it the
+message is `You need the Orb to leave.` and no turn passes. Off the stairs,
+the message is `I see no way down.` and no turn passes.
+
+## Items
+
+An item on the floor or in the pack is one of these, as in **Levels**:
+gold with an amount; food; a weapon or armour with a type and a bonus; a
+potion or scroll with a type; or the Orb.
+
+### Names
+
+Messages and the inventory name `n` of an item like this (`n` is 1 except
+for stacks):
+
+| item | one | more |
+|---|---|---|
+| food | `a food ration` | `3 food rations` |
+| weapon | `a +1 mace`, `a -1 dagger`, `a +0 long sword` | |
+| armour | `+1 ring mail`, `-1 plate mail`, `+0 leather armour` | |
+| potion, identified | `a potion of healing` | `2 potions of healing` |
+| potion, not identified | `an amber potion`, `a pink potion` | `2 amber potions` |
+| scroll, identified | `a scroll of identify` | `2 scrolls of identify` |
+| scroll, not identified | `a scroll titled "zorn plib"` | `2 scrolls titled "zorn plib"` |
+| the Orb | `the Orb` | |
+
+A weapon's or armour's bonus is always shown with its sign. An
+unidentified potion is named by its colour from the game's shuffled
+`colours` (potion type `t` has colour `t`), with `an` before a colour that
+starts with a vowel (`a`, `e`, `i`, `o`, `u`) and `a` otherwise; a scroll by
+its title from the shuffled `titles`. A potion or scroll type is
+**identified** once the player has quaffed or read one, or a scroll of
+identify has named it; identification lasts for the rest of the game.
+
+### The pack
+
+The pack holds at most 22 entries. Each has a letter, an item, and a count.
+Food, and potions or scrolls of the same type, **stack**: an item that
+stacks with an entry adds 1 to its count. Any other item gets a new entry
+with count 1 and the lowest letter from `a` to `z` that no entry has; the
+pack is kept in letter order. At most one weapon is **wielded** and at most
+one armour is **worn**; they are remembered by letter.
+
+An entry's **inventory line** is its letter, `) `, and the name of its
+count of its item, then ` (weapon in hand)` if it is the wielded weapon or
+` (being worn)` if it is the worn armour: `a) a +1 mace (weapon in hand)`.
+
+When an entry's last item leaves the pack, the entry goes, and if it was
+wielded or worn, it no longer is.
+
+### Picking up
+
+When the player moves onto a square with an item:
+
+- gold is added to the player's gold and leaves the floor, with the message
+  `You found 21 gold pieces.` (the amount);
+- any other item goes into the pack and leaves the floor, with the message
+  of its entry's inventory line (after stacking: `c) 2 food rations`); but
+  if it does not stack and the pack has 22 entries, it stays on the floor
+  and the message is `Your pack is full.`
+
+### Item commands
+
+`e`, `q`, `r`, `w`, `a`, and `d` each act on one pack entry, which the
+player names by its letter at a prompt:
+
+| key | prompt verb | kind | when there is none | wrong kind |
+|---|---|---|---|---|
+| `e` | `Eat` | food | `You have nothing to eat.` | `You can't eat that.` |
+| `q` | `Quaff` | potion | `You have nothing to quaff.` | `You can't quaff that.` |
+| `r` | `Read` | scroll | `You have nothing to read.` | `You can't read that.` |
+| `w` | `Wield` | weapon | `You have nothing to wield.` | `You can't wield that.` |
+| `a` | `Wear or take off` | armour | `You have nothing to wear.` | `You can't wear that.` |
+| `d` | `Drop` | any | `You have nothing to drop.` | |
+
+The command checks first: for `r` while the player is blind, the message
+is `You can't see to read.`; if no pack entry has the kind (any entry, for
+`d`), the message is the "when there is none" one. In both cases nothing
+more happens and no turn passes. Otherwise the message line shows the
+prompt `Quaff which item? (space to cancel)` (with the verb) and the game
+waits for an answer.
+
+A letter key answers the prompt. The message line is cleared, and:
+
+- if no entry has that letter: `You have no item x.` (the letter);
+- if the entry is not the command's kind: the "wrong kind" message;
+
+and no turn passes. Otherwise the command acts on that entry:
+
+- **Eat:** one food leaves the pack. The food counter becomes
+  `max(counter, 0) + 1100 + below(400)`, at most 2000. Message:
+  `Yum, that tasted good.` One turn.
+- **Quaff:** one potion leaves the pack, its type is identified, and it
+  takes effect (see **Potions**). One turn.
+- **Read:** one scroll leaves the pack, its type is identified, and it
+  takes effect (see **Scrolls**). One turn.
+- **Wield:** if it is already wielded: `You are already wielding that.`, no
+  turn. Otherwise it becomes the wielded weapon: `You are now wielding a +1
+  mace.` One turn.
+- **Wear or take off:** if it is the worn armour, it is taken off:
+  `You took off +1 ring mail.`, one turn. Otherwise, if other armour is
+  worn: `You are already wearing armour.`, no turn. Otherwise it becomes
+  the worn armour: `You are now wearing +1 ring mail.`, one turn.
+- **Drop:** if it is the worn armour: `You can't drop armour you are
+  wearing.`, no turn. If an item already lies on the player's square, or
+  the square is the stairs: `There is no room to drop that here.`, no
+  turn. Otherwise one item of the entry leaves the pack and is added to
+  the end of the level's item list on the player's square:
+  `Dropped a +1 mace.` (the name of one). One turn.
+
+`i` shows the pack: the message line shows `Press space to continue.` and
+rows 1 to 22 the inventory lines, until `space`. It takes no turn. With an
+empty pack the message is `You are empty-handed.` instead and the pack is
+not shown.
+
+### Potions
+
+| type | effect | message |
+|---|---|---|
+| healing | hit points + `roll(level, 4)` (the player's experience level); if that is above the maximum, the maximum goes up by 1 and the hit points become the new maximum | `You begin to feel better.` |
+| poison | strength - (`below(3) + 1`), not below 3 | `You feel very sick now.` |
+| confusion | confused for `below(8) + 8` more turns | `Wait, what's going on here?` |
+| blindness | blind for `below(50) + 50` more turns | `A cloak of darkness falls around you.` |
+| gain strength | strength + 1, and the maximum strength rises to match if it is lower | `You feel stronger.` |
+| see monsters | if the level has monsters, the player senses them until leaving the level: every monster's letter shows on the map wherever it is | `You sense the presence of monsters.`, or with no monsters `You have a strange feeling for a moment.` |
+
+Confusion and blindness are counters of turns. In the upkeep at the end of
+each turn (after hunger and healing), each that is above 0 goes down by 1;
+when confusion reaches 0 the message is `You feel less confused now.`, and
+when blindness does, `The darkness lifts.`
+
+While **blind**, the player can see no square at all (see **Seeing**):
+nothing is remembered, no monster shows unless sensed, the floating eye
+cannot freeze the player, and scrolls cannot be read.
+
+### Scrolls
+
+| type | effect | message |
+|---|---|---|
+| identify | identifies the type of the first entry in the pack, in letter order, whose potion or scroll type is not identified | that entry's inventory line, now identified (`d) 2 potions of healing`); with none, `You have nothing to identify.` |
+| teleportation | the player moves to a free square anywhere, chosen as in **Levels** (which may be the square the player is on); nothing is picked up there | `You are somewhere else.` |
+| magic mapping | every square remembered as a space is now remembered as its terrain (rock stays a space) | `A map forms in your mind.` |
+| enchant weapon | the wielded weapon's bonus + 1 | `Your mace glows blue for a moment.` (the type's name), or with no wielded weapon `Your hands tingle.` |
+| enchant armour | the worn armour's bonus + 1 | `Your ring mail glows silver for a moment.`, or with no worn armour `Your skin crawls.` |
+
+The scroll leaves the pack and its type is identified before it takes
+effect, so a scroll of identify never names itself.
 
 ## Seeing
 
-The player **can see** a square when it is the player's own square or one
-of its eight neighbours, or when the player is in a lit room and the square
-is in that room's rectangle, walls included. The player is **in** a room
-when the room's rectangle, walls included, holds the player's square, so
-standing in a doorway counts as being in the room. Gone cells' points are
-not rooms. In a dark room, or in a corridor, the player sees only the
-neighbours.
+The player **can see** a square, unless blind, when it is the player's own
+square or one of its eight neighbours, or when the player is in a lit room
+and the square is in that room's rectangle, walls included. The player is
+**in** a room when the room's rectangle, walls included, holds the player's
+square, so standing in a doorway counts as being in the room. Gone cells'
+points are not rooms. In a dark room, or in a corridor, the player sees
+only the neighbours.
 
 The player **remembers** what they last saw on each square: when the game
 starts on a level, and at the end of every turn, each square the player
@@ -357,7 +540,7 @@ with nothing remembered.
 | `,` | the Orb |
 
 Monsters are not remembered: a monster's letter shows only while the
-player can see its square.
+player can see its square, or senses monsters.
 
 ## Monsters
 
@@ -408,11 +591,16 @@ path, even from the other side of the level.
 An **attack roll** by an attacker of level `L` with bonus `B` against
 armour `A` hits when `below(20) + 1 + L + B >= 10 + A`.
 
+The player's **armour** is the worn armour's `armour` value (from
+`data.armours`) plus its bonus, or 0 with none worn.
+
 **The player attacks** a monster by moving into it. The monster wakes
 (even if the attack misses). The player's attack roll uses the player's
-experience level, the strength bonus to hit, and the monster kind's
-`armour`. If it hits, the damage is `roll(1, 2)` plus the strength bonus
-to damage, at least 0, and the monster loses that many hit points:
+experience level; as bonus, the strength bonus to hit plus the wielded
+weapon's bonus; and the monster kind's `armour`. If it hits, the damage is
+`roll(dice, sides)` of the wielded weapon's type's `damage` (`[1, 2]` with
+no weapon), plus the weapon's bonus, plus the strength bonus to damage,
+at least 0, and the monster loses that many hit points:
 
 - at 0 or fewer it is removed from the level, the message is
   `You defeat the kobold.` (with the kind's name), and the player gains the
@@ -428,25 +616,29 @@ If the roll misses, the message is `You miss the kobold.`
 | 17 | 0 | +1 |
 | 18 or more | +1 | +2 |
 
-When the player attacks a monster whose kind has the `paralyses` flag
-(the floating eye) and the monster is still on the level after the attack,
-the message `You are frozen by the floating eye's gaze!` follows and the
-player is frozen for `below(4) + 2` turns. After the attack's own turn
-ends, that many more turns pass at once, as if the player rested, unless
-the player dies first. All their messages belong to the same command.
+When the player, not blind, attacks a monster whose kind has the
+`paralyses` flag (the floating eye) and the monster is still on the level
+after the attack, the message `You are frozen by the floating eye's gaze!`
+follows and the player is frozen for `below(4) + 2` more turns (see
+**Commands**).
 
 **A monster attacks** the player with an attack roll of the kind's `level`,
-bonus 0, against the player's armour. If it hits, the damage is
-`roll(dice, sides)` of the kind's `damage` (no draws for `[0, 0]`), the
-player loses that many hit points, and the message is
-`The kobold hits you.` If it misses: `The kobold misses.`
+bonus 0, against the player's armour. If it misses, the message is
+`The kobold misses.` If it hits, the damage is `roll(dice, sides)` of the
+kind's `damage` (no draws for `[0, 0]`), the player loses that many hit
+points, the message is `The kobold hits you.`, and then:
 
-- If the player's hit points are then 0 or fewer, the player dies (see
-  **Death**).
-- Otherwise, if the kind has the `stealsGold` flag (the leprechaun) and the
+- if the player's hit points are 0 or fewer, the player dies (see
+  **The end**), killed by the kobold;
+- otherwise, if the kind has the `stealsGold` flag (the leprechaun) and the
   player has gold, it steals `below(50 + 10 * depth) + 2` gold (all of it,
   if the player has less) and is removed from the level, with the message
-  `Your purse feels lighter.`
+  `Your purse feels lighter.`;
+- otherwise, if the kind has the `stealsItem` flag (the nymph) and the pack
+  has entries that are neither wielded nor worn, it steals one whole entry,
+  `entries[below(len)]` of those in letter order, and is removed from the
+  level, with the message `The nymph stole 2 amber potions!` (the entry's
+  name and count).
 
 A monster removed in its own action is skipped over: the next monster in
 the list acts next.
@@ -460,12 +652,43 @@ their maximum, and the message is `Welcome to level 2.` (with the new
 level). Level 2 needs 10 points, and each level after needs twice the one
 before: 20 for level 3, 40 for level 4, and so on.
 
-## Death
+## Hunger
 
-When the player dies, no more monsters act that turn, and the messages
-`You die.`, `Killed by the kobold on depth 1.` (the monster's name and the
-depth), and `Press enter to play again.` follow. The turn still ends: the count goes
-up and the player looks around. Once those messages have been shown (see
+The player's **food counter** starts at 1300. In the upkeep at the end of
+each turn it goes down by 1, and then:
+
+- if it is now exactly 150: `You are starting to get hungry.`
+- if it is now exactly 50: `You are starting to feel weak.`
+- if it is -850 or less, the player starves (see **The end**), and the
+  rest of the upkeep does not happen;
+- otherwise, if it is 0 or less and `below(5) == 0`, the player faints:
+  frozen for `below(8) + 4` more turns, with the message
+  `You faint from lack of food.`
+
+The status line shows `Hungry` while the counter is 150 to 51, `Weak` from
+50 to 1, and `Faint` at 0 or less.
+
+## Healing
+
+The player heals slowly. In the upkeep, after hunger: if the player's hit
+points are below their maximum, a **healing counter** goes up by 1, and
+when it reaches `max(3, 21 - 2 * level)` (the experience level), the hit
+points go up by 1 and the counter goes back to 0. At full hit points the
+counter is 0.
+
+## The end
+
+**Death.** When the player dies, no more monsters act that turn, and the
+messages `You die.`, then `Killed by the kobold on depth 1.` (the
+monster's name and the depth) or, when starving, `Starved to death on
+depth 1.`, then `Press enter to play again.` follow. The turn still ends:
+the count goes up and the player looks around.
+
+**Winning.** Taking the stairs on depth 8 with the Orb in the pack wins
+the game, with the messages `You escape with the Orb and 123 gold.` (the
+player's gold) and `Press enter to play again.`; no turn passes.
+
+Either way the game is then over. Once its messages have been shown (see
 **Messages**), only `enter` does anything: it starts a new game with the
 seed one more than this game's.
 

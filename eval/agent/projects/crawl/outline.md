@@ -225,6 +225,14 @@ and so it can run against the agent's own game later if wanted.
    combat, experience, death and restart, `--More--`; 20 bot-played games
    of 800 commands identical. Balance: the unarmed player dies often on
    depth 1; revisit once the starting kit exists.
+   Done 2026-10-24: items (pickup, pack of 22 with stacking, names and
+   identification, starting kit, e/q/r/w/a/d/i with prompts, potions,
+   scrolls, nymph theft), hunger and fainting, healing, confusion,
+   blindness, sensing, winning with the Orb. Arrow keys stay distinct
+   from h/j/k/l (they are ignored at prompts). 20 bot-played games of
+   2500 commands identical; `compare_references.py find` bisects a
+   mismatch to its first command. Not yet exercised by the bot: a full
+   pack (needs a snapshot case).
 5. Write `task.md` from the reference, examples generated.
 6. Python reference from `task.md` only (a fresh agent, or by hand); every
    disagreement is a spec fix or a Slug reference bug. Then `python/task.md`
